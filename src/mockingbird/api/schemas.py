@@ -356,6 +356,59 @@ class ModelReadinessSummary(BaseModel):
     local_first_note: str
 
 
+class MotionZoneInput(BaseModel):
+    zone_id: str
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+
+class MotionEvaluateFrameRequest(BaseModel):
+    previous_frame: list[list[float]]
+    current_frame: list[list[float]]
+    zones: list[MotionZoneInput]
+    frame_index: int = 0
+    pixel_delta_threshold: float = 25.0
+    min_changed_ratio: float = 0.02
+
+
+class MotionScoreResponse(BaseModel):
+    zone_id: str
+    changed_pixels: int = Field(ge=0)
+    total_pixels: int = Field(ge=0)
+    changed_ratio: float
+    mean_delta: float
+    triggered: bool
+
+
+class MotionFrameScoreResponse(BaseModel):
+    frame_index: int
+    scores: list[MotionScoreResponse]
+    triggered_zone_ids: list[str]
+    strongest_zone_id: str | None
+    strongest_changed_ratio: float
+
+
+class MotionCandidateResponse(BaseModel):
+    zone_id: str
+    start_frame_index: int
+    end_frame_index: int
+    best_frame_index: int
+    peak_changed_ratio: float
+    triggered_frame_count: int = Field(ge=0)
+
+
+class MotionExtractCandidatesRequest(BaseModel):
+    frame_scores: list[MotionFrameScoreResponse]
+    min_triggered_frames: int = 2
+    max_gap_frames: int = 1
+
+
+class MotionExtractCandidatesResponse(BaseModel):
+    candidates: list[MotionCandidateResponse]
+
+
 class DetectionProposal(BaseModel):
     id: str
     run_id: str

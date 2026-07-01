@@ -40,6 +40,13 @@ from mockingbird.api.schemas import (
     ModelReadinessSummary,
     ModelAdapterRunRequest,
     ModelAdapterRunResult,
+    MotionCandidateResponse,
+    MotionEvaluateFrameRequest,
+    MotionExtractCandidatesRequest,
+    MotionExtractCandidatesResponse,
+    MotionFrameScoreResponse,
+    MotionScoreResponse,
+    MotionZoneInput,
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -52,6 +59,14 @@ from mockingbird.api.schemas import (
     ZoneCreate,
     ZoneMutationResult,
     ZoneUpdate,
+)
+from mockingbird.motion import (
+    MotionCandidate,
+    MotionFrameScore,
+    MotionScore,
+    MotionZone,
+    extract_motion_candidates,
+    score_frame_motion,
 )
 from mockingbird.repository.product_repository import ProductRepository
 
@@ -346,6 +361,73 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
     return _detection_interface_error(error)
 
 
+def _motion_evaluation_error(error: ValueError) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(error))
+
+
+def _motion_zone_from_payload(zone: MotionZoneInput) -> MotionZone:
+    return MotionZone(
+        zone_id=zone.zone_id,
+        left=zone.left,
+        top=zone.top,
+        right=zone.right,
+        bottom=zone.bottom,
+    )
+
+
+def _motion_score_response(score: MotionScore) -> MotionScoreResponse:
+    return MotionScoreResponse(
+        zone_id=score.zone_id,
+        changed_pixels=score.changed_pixels,
+        total_pixels=score.total_pixels,
+        changed_ratio=score.changed_ratio,
+        mean_delta=score.mean_delta,
+        triggered=score.triggered,
+    )
+
+
+def _motion_frame_score_response(frame_score: MotionFrameScore) -> MotionFrameScoreResponse:
+    return MotionFrameScoreResponse(
+        frame_index=frame_score.frame_index,
+        scores=[_motion_score_response(score) for score in frame_score.scores],
+        triggered_zone_ids=frame_score.triggered_zone_ids,
+        strongest_zone_id=frame_score.strongest_zone_id,
+        strongest_changed_ratio=frame_score.strongest_changed_ratio,
+    )
+
+
+def _motion_score_from_payload(score: MotionScoreResponse) -> MotionScore:
+    return MotionScore(
+        zone_id=score.zone_id,
+        changed_pixels=score.changed_pixels,
+        total_pixels=score.total_pixels,
+        changed_ratio=score.changed_ratio,
+        mean_delta=score.mean_delta,
+        triggered=score.triggered,
+    )
+
+
+def _motion_frame_score_from_payload(frame_score: MotionFrameScoreResponse) -> MotionFrameScore:
+    return MotionFrameScore(
+        frame_index=frame_score.frame_index,
+        scores=[_motion_score_from_payload(score) for score in frame_score.scores],
+        triggered_zone_ids=frame_score.triggered_zone_ids,
+        strongest_zone_id=frame_score.strongest_zone_id,
+        strongest_changed_ratio=frame_score.strongest_changed_ratio,
+    )
+
+
+def _motion_candidate_response(candidate: MotionCandidate) -> MotionCandidateResponse:
+    return MotionCandidateResponse(
+        zone_id=candidate.zone_id,
+        start_frame_index=candidate.start_frame_index,
+        end_frame_index=candidate.end_frame_index,
+        best_frame_index=candidate.best_frame_index,
+        peak_changed_ratio=candidate.peak_changed_ratio,
+        triggered_frame_count=candidate.triggered_frame_count,
+    )
+
+
 def _detection_runs_for_proposals(
     repository: ProductRepository,
     proposals: list[DetectionProposal],
@@ -365,6 +447,50 @@ def _detection_runs_for_proposals(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/api/motion/evaluate-frame", response_model=MotionFrameScoreResponse)
+async def evaluate_motion_frame(
+    payload: MotionEvaluateFrameRequest,
+) -> MotionFrameScoreResponse:
+    # This evaluates caller-provided frame planes only. Future stream samplers can
+    # call this contract; motion remains candidate evidence until later review.
+    try:
+        frame_score = score_frame_motion(
+            payload.previous_frame,
+            payload.current_frame,
+            [_motion_zone_from_payload(zone) for zone in payload.zones],
+            frame_index=payload.frame_index,
+            pixel_delta_threshold=payload.pixel_delta_threshold,
+            min_changed_ratio=payload.min_changed_ratio,
+        )
+    except ValueError as error:
+        raise _motion_evaluation_error(error) from error
+
+    return _motion_frame_score_response(frame_score)
+
+
+@app.post("/api/motion/extract-candidates", response_model=MotionExtractCandidatesResponse)
+async def extract_motion_candidate_windows(
+    payload: MotionExtractCandidatesRequest,
+) -> MotionExtractCandidatesResponse:
+    # Candidate windows are evidence for later snapshot/visit creation. This
+    # route does not create events, visits, review labels, exports, or species ID.
+    try:
+        candidates = extract_motion_candidates(
+            [
+                _motion_frame_score_from_payload(frame_score)
+                for frame_score in payload.frame_scores
+            ],
+            min_triggered_frames=payload.min_triggered_frames,
+            max_gap_frames=payload.max_gap_frames,
+        )
+    except ValueError as error:
+        raise _motion_evaluation_error(error) from error
+
+    return MotionExtractCandidatesResponse(
+        candidates=[_motion_candidate_response(candidate) for candidate in candidates],
+    )
 
 
 @app.get("/api/taxonomy/labels", response_model=list[TaxonomyLabel])

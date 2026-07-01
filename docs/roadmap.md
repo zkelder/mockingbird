@@ -188,10 +188,12 @@ Goal: build the lightweight stream-first event trigger path around user-drawn zo
 Current work:
 
 - Phase 8A: deterministic zone-aware motion scoring foundation for supplied grayscale frame planes.
-- Next likely phase: Phase 8B — explicit motion evaluation API or frame-sampler contract.
+- Phase 8B: explicit motion evaluation API contract for synthetic/manual frame-plane inputs.
+- Next likely phase: Phase 8C — frame sampler contract or motion-to-evidence proposal design.
 
 Validation:
 
 - Motion scoring stays pure and deterministic.
+- Motion evaluation API does not persist data or create product truth.
 - Stream sampling, media decoding, event/visit creation, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.

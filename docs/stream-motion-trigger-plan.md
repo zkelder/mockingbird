@@ -16,6 +16,14 @@ The foundation scores user-drawn normalized zones, reports changed pixels/ratios
 
 Later phases can connect this scoring core to stream sampling, media references, reviewable candidate creation, and species suggestions.
 
+## Phase 8B Status
+
+Phase 8B exposes the scoring foundation through a narrow backend API contract for synthetic/manual frame-plane evaluation.
+
+The API accepts caller-provided previous/current frame planes plus normalized zones, returns per-zone motion scores, and extracts debounced candidate windows from supplied frame scores. It does not decode media, connect to streams, run a stream worker, create events or visits, write review labels, create exports, or identify species.
+
+Future phases can connect sampled frames from visible streams to this contract and then design motion-to-evidence creation without changing the truth boundary.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.
