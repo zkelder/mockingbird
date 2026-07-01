@@ -72,6 +72,17 @@ npm run dev
 
 The frontend defaults to http://127.0.0.1:8000 for the API. Set `VITE_API_BASE_URL` to point at a different local API.
 
+## Local detector spike
+
+The Local Image Detector adapter is evidence-only and disabled until configured with a local model file:
+
+```sh
+export MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH=/path/to/local-detector.onnx
+export MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH=/path/to/labels.txt # optional
+```
+
+Detector outputs create detection proposals only. Users still convert, review, and correct proposals before exports or analytics treat labels as truth. MockingBird does not download model files automatically.
+
 ## Not the product center
 
 MockingBird is not centered on Windows USB camera scripts, PowerShell, CLI tools, interval analysis, snapshot loops, ROI language, or debug internals.

@@ -84,6 +84,7 @@ class ModelAdapterKind(str, Enum):
 
 class ModelAdapterStatus(str, Enum):
     available = "available"
+    not_configured = "not_configured"
     unavailable = "unavailable"
     disabled = "disabled"
 

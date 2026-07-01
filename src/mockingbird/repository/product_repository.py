@@ -13,6 +13,16 @@ from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from mockingbird.api import demo_data
+from mockingbird.detectors.local_image_detector import (
+    LOCAL_IMAGE_DETECTOR_ID,
+    SUPPORTED_IMAGE_CONTENT_TYPES,
+    LocalDetectorConfigurationError,
+    LocalDetectorOutputError,
+    LocalDetectorRuntimeUnavailableError,
+    LocalDetectorUnsupportedMediaError,
+    get_local_detector_status,
+    run_local_image_detector,
+)
 from mockingbird.api.schemas import (
     AdapterEvaluationItem,
     AdapterEvaluationOutcome,
@@ -117,7 +127,7 @@ SUPPORTED_MEDIA_EXTENSIONS = {
     ".mov": ("video/quicktime", "video"),
 }
 
-MODEL_ADAPTERS: tuple[ModelAdapter, ...] = (
+BASE_MODEL_ADAPTERS: tuple[ModelAdapter, ...] = (
     ModelAdapter(
         id="demo_rule_detector",
         name="Demo Rule Detector",
@@ -580,7 +590,7 @@ class ProductRepository:
         return Path(asset.local_path)
 
     def list_model_adapters(self) -> list[ModelAdapter]:
-        return [adapter.model_copy(deep=True) for adapter in MODEL_ADAPTERS]
+        return [adapter.model_copy(deep=True) for adapter in _model_adapters()]
 
     def get_model_adapter(self, adapter_id: str) -> ModelAdapter | None:
         adapter = _model_adapter_by_id(adapter_id)
@@ -722,6 +732,8 @@ class ProductRepository:
             raise ValueError("missing_adapter")
         if payload.adapter_id != adapter_id:
             raise ValueError("adapter_mismatch")
+        if adapter_id == LOCAL_IMAGE_DETECTOR_ID:
+            return self._run_local_image_detector_adapter(adapter, payload)
         if adapter.status != ModelAdapterStatus.available:
             raise ValueError("adapter_unavailable")
 
@@ -828,6 +840,134 @@ class ProductRepository:
                         "Model adapters create proposal evidence, not review truth. "
                         "Users must convert, review, and correct proposals before exports, "
                         "coverage, or QA treat labels as dataset truth."
+                    ),
+                )
+
+    def _run_local_image_detector_adapter(
+        self,
+        adapter: ModelAdapter,
+        payload: ModelAdapterRunRequest,
+    ) -> ModelAdapterRunResult:
+        with self.session_factory() as session:
+            with session.begin():
+                asset_model = session.get(MediaAssetModel, payload.media_asset_id)
+                if asset_model is None:
+                    raise ValueError("missing_media_asset")
+                if (
+                    asset_model.media_type != "image"
+                    or asset_model.content_type not in SUPPORTED_IMAGE_CONTENT_TYPES
+                ):
+                    raise ValueError("unsupported_media_type")
+
+                stream_model = session.get(StreamModel, asset_model.stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+
+                if not Path(asset_model.local_path).exists():
+                    raise ValueError("missing_media_file")
+
+                zone_model: ZoneModel | None = None
+                if payload.zone_ids:
+                    zone_model = self._resolve_import_zone(
+                        session,
+                        payload.zone_ids[0],
+                        stream_model.id,
+                    )
+                else:
+                    zone_model = self._default_demo_zone(session, stream_model.id)
+
+                try:
+                    detector_proposals = run_local_image_detector(
+                        local_path=asset_model.local_path,
+                        content_type=asset_model.content_type,
+                    )
+                except LocalDetectorConfigurationError as error:
+                    raise ValueError("local_detector_not_configured") from error
+                except LocalDetectorRuntimeUnavailableError as error:
+                    raise ValueError("local_detector_runtime_unavailable") from error
+                except LocalDetectorUnsupportedMediaError as error:
+                    if str(error) == "missing_media_file":
+                        raise ValueError("missing_media_file") from error
+                    raise ValueError("unsupported_media_type") from error
+                except LocalDetectorOutputError as error:
+                    raise ValueError(str(error) or "unsupported_detector_output") from error
+
+                created_at = datetime.now(UTC)
+                run_model = DetectionRunModel(
+                    id=self._next_id(session, DetectionRunModel, "detection-run"),
+                    media_asset_id=asset_model.id,
+                    source=DetectionSource.future_model.value,
+                    summary=(
+                        f"Model adapter contract run for {adapter.name} ({adapter.id}); "
+                        "local image detector proposal evidence only."
+                    ),
+                    status=DetectionRunStatus.completed.value,
+                    created_at=created_at,
+                    completed_at=created_at,
+                )
+                session.add(run_model)
+                session.flush()
+
+                proposal_models: list[DetectionProposalModel] = []
+                for detector_proposal in detector_proposals:
+                    normalized_label = self._normalize_label_from_session(
+                        session,
+                        detector_proposal.label,
+                    )
+                    suggested_subject_label, suggested_species = (
+                        self._adapter_subject_and_species(session, normalized_label)
+                    )
+                    proposal_model = DetectionProposalModel(
+                        id=self._next_id(
+                            session,
+                            DetectionProposalModel,
+                            "detection-proposal",
+                        ),
+                        run_id=run_model.id,
+                        media_asset_id=asset_model.id,
+                        stream_id=stream_model.id,
+                        zone_id=zone_model.id if zone_model else None,
+                        event_id=None,
+                        visit_id=None,
+                        label=normalized_label,
+                        confidence=detector_proposal.confidence,
+                        bbox_json=_local_detector_bbox_to_json(detector_proposal.bbox),
+                        suggested_event_type="animal_visit",
+                        suggested_subject_label=suggested_subject_label,
+                        suggested_species=suggested_species,
+                        status=DetectionProposalStatus.proposed.value,
+                        notes=(
+                            payload.notes.strip()
+                            if payload.notes and payload.notes.strip()
+                            else (
+                                "Local image detector generated proposal evidence; "
+                                "review and correction remain required."
+                            )
+                        ),
+                        created_at=created_at,
+                        decided_at=None,
+                    )
+                    session.add(proposal_model)
+                    session.flush()
+                    proposal_models.append(proposal_model)
+
+                return ModelAdapterRunResult(
+                    adapter=adapter.model_copy(deep=True),
+                    detection_run=_detection_run_from_model(run_model),
+                    proposals=[
+                        _detection_proposal_from_model(proposal)
+                        for proposal in proposal_models
+                    ],
+                    review_queue_count=len(self._review_queue_items(session)),
+                    local_first_note=(
+                        "Local image detector outputs are proposal evidence only. "
+                        "Convert, review, and correct proposals before exports, coverage, "
+                        "QA, or analytics treat labels as dataset truth."
+                    )
+                    if proposal_models
+                    else (
+                        "Local image detector completed with no proposal evidence. "
+                        "No events, visits, review labels, or dataset truth were created."
                     ),
                 )
 
@@ -2713,19 +2853,43 @@ def _source_from_model(source: CameraSourceModel) -> CameraSource:
     )
 
 
+def _model_adapters() -> tuple[ModelAdapter, ...]:
+    return (*BASE_MODEL_ADAPTERS, _local_image_detector_adapter())
+
+
+def _local_image_detector_adapter() -> ModelAdapter:
+    status = get_local_detector_status()
+    return ModelAdapter(
+        id=LOCAL_IMAGE_DETECTOR_ID,
+        name="Local Image Detector",
+        kind=ModelAdapterKind.object_detector,
+        status=ModelAdapterStatus(status.status),
+        version="spike-1",
+        description=(
+            "Local image detector spike for imported images. It creates detection "
+            "proposal evidence only and never writes reviewed truth."
+        ),
+        supported_media_types=sorted(SUPPORTED_IMAGE_CONTENT_TYPES),
+        supported_labels=["unknown_animal", "bird", "squirrel", "cat", "person", "vehicle"],
+        creates_review_truth=False,
+        local_only=True,
+        notes=status.detail,
+    )
+
+
 def _model_adapter_by_id(adapter_id: str) -> ModelAdapter | None:
-    return next((adapter for adapter in MODEL_ADAPTERS if adapter.id == adapter_id), None)
+    return next((adapter for adapter in _model_adapters() if adapter.id == adapter_id), None)
 
 
 def _model_adapter_for_detection_run(run: DetectionRunModel | None) -> ModelAdapter | None:
-    if run is None or run.summary is None or run.source != DetectionSource.demo_rule.value:
+    if run is None or run.summary is None:
         return None
 
     summary_key = run.summary.lower()
     return next(
         (
             adapter
-            for adapter in MODEL_ADAPTERS
+            for adapter in _model_adapters()
             if adapter.id.lower() in summary_key or adapter.name.lower() in summary_key
         ),
         None,
@@ -3100,6 +3264,19 @@ def _bbox_to_json(bbox: BoundingBox | None) -> str | None:
     if bbox is None:
         return None
     return json.dumps(bbox.model_dump())
+
+
+def _local_detector_bbox_to_json(bbox) -> str | None:
+    if bbox is None:
+        return None
+    return json.dumps(
+        {
+            "x": bbox.x,
+            "y": bbox.y,
+            "width": bbox.width,
+            "height": bbox.height,
+        }
+    )
 
 
 def _taxonomy_key(value: str) -> str:

@@ -39,7 +39,7 @@ export type ModelAdapterKind =
   | "motion_filter"
   | "integration"
   | "demo";
-export type ModelAdapterStatus = "available" | "unavailable" | "disabled";
+export type ModelAdapterStatus = "available" | "not_configured" | "unavailable" | "disabled";
 export type LabelCategory =
   | "bird"
   | "mammal"

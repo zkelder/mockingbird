@@ -268,6 +268,31 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
         return HTTPException(status_code=400, detail="Adapter id in path and payload must match.")
     if reason == "adapter_unavailable":
         return HTTPException(status_code=400, detail="Model adapter is not available.")
+    if reason == "local_detector_not_configured":
+        return HTTPException(
+            status_code=400,
+            detail=(
+                "Local image detector model path is not configured. Set "
+                "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH to a local model file before running it."
+            ),
+        )
+    if reason == "local_detector_runtime_unavailable":
+        return HTTPException(
+            status_code=400,
+            detail=(
+                "Local image detector runtime is unavailable. Check the configured local model "
+                "path and optional detector dependencies."
+            ),
+        )
+    if reason == "missing_media_file":
+        return _not_found("Media file", "local detector input")
+    if reason == "unsupported_detector_output":
+        return HTTPException(
+            status_code=400,
+            detail="Local image detector output format is not supported by this spike.",
+        )
+    if reason == "local_detector_failed":
+        return HTTPException(status_code=500, detail="Local image detector failed unexpectedly.")
     if reason == "unsupported_media_type":
         return HTTPException(
             status_code=400,

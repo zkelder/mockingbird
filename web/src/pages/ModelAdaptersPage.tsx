@@ -61,6 +61,9 @@ export function ModelAdaptersPage({
   );
   const selectedAdapter = adapterById.get(selectedAdapterId) ?? null;
   const selectedMedia = mediaById.get(selectedMediaId) ?? null;
+  const selectedAdapterAvailable = selectedAdapter?.status === "available";
+  const selectedAdapterSupportsMedia =
+    selectedAdapter && selectedMedia ? adapterSupportsMedia(selectedAdapter, selectedMedia) : false;
 
   async function loadPageData(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
@@ -108,6 +111,14 @@ export function ModelAdaptersPage({
     }
     if (!selectedMedia) {
       setError("Import local media before running an adapter contract.");
+      return;
+    }
+    if (!selectedAdapterAvailable) {
+      setError("Selected adapter is not available for a local evidence run.");
+      return;
+    }
+    if (!selectedAdapterSupportsMedia) {
+      setError("Selected adapter does not support this media type.");
       return;
     }
 
@@ -166,8 +177,9 @@ export function ModelAdaptersPage({
       <section className="notice-panel">
         <strong>Model adapters create evidence, not truth</strong>
         <span>
-          The local-only demo adapter does not inspect media or run a real model. Its proposals stay
-          below the product loop until a user converts, reviews, and corrects them.
+          The demo adapter simulates evidence, and the local image detector runs only when configured
+          with a local model file. Adapter proposals stay below the product loop until a user converts,
+          reviews, and corrects them.
         </span>
       </section>
 
@@ -317,6 +329,7 @@ export function ModelAdaptersPage({
                 <span className="meta-text">{formatLabel(adapter.kind)}</span>
                 <strong>{adapter.name}</strong>
                 <span>{adapter.description}</span>
+                {adapter.notes ? <span>{adapter.notes}</span> : null}
                 <div className="adapter-badge-row">
                   <StatusPill
                     label={formatLabel(adapter.status)}
@@ -377,6 +390,9 @@ export function ModelAdaptersPage({
             </select>
           </label>
           {selectedMedia ? <MediaAssetPreview asset={selectedMedia} compact /> : null}
+          {selectedAdapter?.notes ? (
+            <span className="field-helper">{selectedAdapter.notes}</span>
+          ) : null}
           <label>
             Requested labels
             <input
@@ -398,11 +414,25 @@ export function ModelAdaptersPage({
           </label>
           <button
             className="primary-action"
-            disabled={isSubmitting || !selectedAdapter || !selectedMedia}
+            disabled={
+              isSubmitting ||
+              !selectedAdapter ||
+              !selectedMedia ||
+              !selectedAdapterAvailable ||
+              !selectedAdapterSupportsMedia
+            }
             type="submit"
           >
             {isSubmitting ? "Creating evidence..." : "Create proposal evidence"}
           </button>
+          {selectedAdapter && !selectedAdapterAvailable ? (
+            <span className="meta-text">
+              Configure the adapter locally before running it. Evidence remains separate from truth.
+            </span>
+          ) : null}
+          {selectedAdapter && selectedMedia && !selectedAdapterSupportsMedia ? (
+            <span className="meta-text">Choose supported imported media for this adapter.</span>
+          ) : null}
           {!selectedMedia && !isLoading ? (
             <span className="meta-text">Import local media before running adapter contracts.</span>
           ) : null}
@@ -520,6 +550,13 @@ function formatMatchRate(rate?: number | null): string {
     return "Needs reviewed labels";
   }
   return `${Math.round(rate * 100)}%`;
+}
+
+function adapterSupportsMedia(adapter: ModelAdapter, media: MediaAsset): boolean {
+  return (
+    adapter.supported_media_types.includes(media.media_type) ||
+    adapter.supported_media_types.includes(media.content_type)
+  );
 }
 
 function evaluationTone(item: AdapterEvaluationItem): "quiet" | "review" | "truth" {
