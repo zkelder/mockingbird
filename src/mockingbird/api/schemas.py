@@ -118,6 +118,19 @@ class Visit(BaseModel):
     representative_media_path: str | None = None
 
 
+class ReviewQueueItem(BaseModel):
+    id: str
+    item_type: str
+    title: str
+    stream_id: str
+    event_id: str | None = None
+    visit_id: str | None = None
+    primary_zone_id: str | None = None
+    suggested_label: str | None = None
+    review_status: ReviewStatus
+    reason: str
+
+
 class ReviewLabel(BaseModel):
     # Review labels are dataset-grade user truth that can override detections.
     id: str

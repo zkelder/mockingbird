@@ -50,6 +50,8 @@ python -m uvicorn mockingbird.api.main:app --reload
 
 Then open http://127.0.0.1:8000/docs.
 
+The API contract includes list routes, detail routes, nested source/stream/event routes, a review queue, dataset exports, and an analytics summary.
+
 ## Not the product center
 
 MockingBird is not centered on Windows USB camera scripts, PowerShell, CLI tools, interval analysis, snapshot loops, ROI language, or debug internals.

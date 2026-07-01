@@ -15,6 +15,7 @@ from mockingbird.api.schemas import (
     ExportStatus,
     Point,
     ReviewLabel,
+    ReviewQueueItem,
     ReviewStatus,
     SourceKind,
     SourceStatus,
@@ -144,6 +145,16 @@ VISITS: list[Visit] = [
         reviewed_label=None,
         review_status=ReviewStatus.needs_review,
         representative_media_path="demo://backyard-feeder/bird-feeder-001.jpg",
+    ),
+    Visit(
+        id="visit-squirrel-ground-001",
+        event_id="event-squirrel-ground-001",
+        subject_label="squirrel",
+        species_guess=None,
+        confidence=0.91,
+        reviewed_label="squirrel",
+        review_status=ReviewStatus.reviewed,
+        representative_media_path="demo://backyard-feeder/squirrel-ground-001.jpg",
     )
 ]
 
@@ -168,6 +179,92 @@ DATASET_EXPORTS: list[DatasetExport] = [
         created_at=datetime(2026, 1, 15, 15, 0, tzinfo=UTC),
     )
 ]
+
+
+def get_source(source_id: str) -> CameraSource | None:
+    return next((source for source in SOURCES if source.id == source_id), None)
+
+
+def get_stream(stream_id: str) -> Stream | None:
+    return next((stream for stream in STREAMS if stream.id == stream_id), None)
+
+
+def get_zone(zone_id: str) -> Zone | None:
+    return next((zone for zone in ZONES if zone.id == zone_id), None)
+
+
+def get_event(event_id: str) -> Event | None:
+    return next((event for event in EVENTS if event.id == event_id), None)
+
+
+def get_visit(visit_id: str) -> Visit | None:
+    return next((visit for visit in VISITS if visit.id == visit_id), None)
+
+
+def streams_for_source(source_id: str) -> list[Stream]:
+    return [stream for stream in STREAMS if stream.source_id == source_id]
+
+
+def zones_for_stream(stream_id: str) -> list[Zone]:
+    return [zone for zone in ZONES if zone.stream_id == stream_id]
+
+
+def events_for_stream(stream_id: str) -> list[Event]:
+    return [event for event in EVENTS if event.stream_id == stream_id]
+
+
+def visits_for_event(event_id: str) -> list[Visit]:
+    return [visit for visit in VISITS if visit.event_id == event_id]
+
+
+def review_queue_items() -> list[ReviewQueueItem]:
+    queue: list[ReviewQueueItem] = []
+
+    for visit in VISITS:
+        if visit.review_status != ReviewStatus.needs_review:
+            continue
+
+        event = get_event(visit.event_id)
+        if event is None:
+            continue
+
+        # The review queue is user-facing correction work, not raw model output.
+        queue.append(
+            ReviewQueueItem(
+                id=f"review-queue-{visit.id}",
+                item_type="visit",
+                title=f"Review {visit.subject_label} visit",
+                stream_id=event.stream_id,
+                event_id=event.id,
+                visit_id=visit.id,
+                primary_zone_id=event.primary_zone_id,
+                suggested_label=visit.species_guess or visit.subject_label,
+                review_status=visit.review_status,
+                reason="Confirm or correct the suggested species label.",
+            )
+        )
+
+    visit_event_ids = {item.event_id for item in queue if item.event_id is not None}
+    for event in EVENTS:
+        if event.review_status != ReviewStatus.needs_review or event.id in visit_event_ids:
+            continue
+
+        queue.append(
+            ReviewQueueItem(
+                id=f"review-queue-{event.id}",
+                item_type="event",
+                title=event.title,
+                stream_id=event.stream_id,
+                event_id=event.id,
+                visit_id=None,
+                primary_zone_id=event.primary_zone_id,
+                suggested_label=event.detections[0].label if event.detections else None,
+                review_status=event.review_status,
+                reason="Review detected outdoor activity and correct the event meaning.",
+            )
+        )
+
+    return queue
 
 
 def build_analytics_summary() -> AnalyticsSummary:
