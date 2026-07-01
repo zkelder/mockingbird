@@ -30,6 +30,26 @@ The first vertical is backyard bird feeder monitoring and species review. The br
 
 Codex and contributor guidance lives in [AGENTS.md](AGENTS.md). The scoped task workflow lives in [docs/development-workflow.md](docs/development-workflow.md).
 
+## Local development
+
+Create a virtual environment, install the API with test dependencies, and run the local contract tests:
+
+```sh
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[test]"
+python -m pytest
+```
+
+Run the product API locally:
+
+```sh
+python -m uvicorn mockingbird.api.main:app --reload
+```
+
+Then open http://127.0.0.1:8000/docs.
+
 ## Not the product center
 
 MockingBird is not centered on Windows USB camera scripts, PowerShell, CLI tools, interval analysis, snapshot loops, ROI language, or debug internals.
