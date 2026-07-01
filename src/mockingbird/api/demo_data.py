@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 from datetime import UTC, datetime
 
 from mockingbird.api.schemas import (
@@ -181,6 +182,27 @@ DATASET_EXPORTS: list[DatasetExport] = [
 ]
 
 
+_INITIAL_SOURCES = deepcopy(SOURCES)
+_INITIAL_STREAMS = deepcopy(STREAMS)
+_INITIAL_ZONES = deepcopy(ZONES)
+_INITIAL_EVENTS = deepcopy(EVENTS)
+_INITIAL_VISITS = deepcopy(VISITS)
+_INITIAL_REVIEW_LABELS = deepcopy(REVIEW_LABELS)
+_INITIAL_DATASET_EXPORTS = deepcopy(DATASET_EXPORTS)
+
+
+def reset_demo_data() -> None:
+    global SOURCES, STREAMS, ZONES, EVENTS, VISITS, REVIEW_LABELS, DATASET_EXPORTS
+
+    SOURCES = deepcopy(_INITIAL_SOURCES)
+    STREAMS = deepcopy(_INITIAL_STREAMS)
+    ZONES = deepcopy(_INITIAL_ZONES)
+    EVENTS = deepcopy(_INITIAL_EVENTS)
+    VISITS = deepcopy(_INITIAL_VISITS)
+    REVIEW_LABELS = deepcopy(_INITIAL_REVIEW_LABELS)
+    DATASET_EXPORTS = deepcopy(_INITIAL_DATASET_EXPORTS)
+
+
 def get_source(source_id: str) -> CameraSource | None:
     return next((source for source in SOURCES if source.id == source_id), None)
 
@@ -275,7 +297,13 @@ def build_analytics_summary() -> AnalyticsSummary:
     species_counts: Counter[str] = Counter()
     for visit in VISITS:
         species_counts[visit.reviewed_label or visit.species_guess or visit.subject_label] += 1
+
+    visit_event_ids = {visit.event_id for visit in VISITS}
     for label in REVIEW_LABELS:
+        if label.target_type == "visit":
+            continue
+        if label.target_type == "event" and label.target_id in visit_event_ids:
+            continue
         species_counts[label.label] += 1
 
     zone_activity_counts: Counter[str] = Counter()

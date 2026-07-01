@@ -5,7 +5,7 @@ import type {
   CameraSource,
   DatasetExport,
   HealthStatus,
-  ReviewLabel,
+  ReviewCorrectionResult,
   ReviewQueueItem,
   Stream,
 } from "./api/types";
@@ -51,8 +51,11 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadAppData() {
-    setIsLoading(true);
+  async function loadAppData(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
+      setIsLoading(true);
+    }
     setError(null);
     try {
       const [health, sources, streams, reviewQueue, exports, analytics] = await Promise.all([
@@ -69,7 +72,9 @@ export default function App() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load MockingBird data.");
     } finally {
-      setIsLoading(false);
+      if (showLoading) {
+        setIsLoading(false);
+      }
     }
   }
 
@@ -91,14 +96,16 @@ export default function App() {
     item: ReviewQueueItem,
     label: string,
     notes: string,
-  ): Promise<ReviewLabel> {
-    // Corrections are dataset-grade user labels; status transitions arrive in a later API phase.
-    return apiClient.createReviewLabel({
+  ): Promise<ReviewCorrectionResult> {
+    // Corrections are dataset-grade user labels that refresh queue and analytics state.
+    const result = await apiClient.createReviewLabel({
       target_type: item.visit_id ? "visit" : "event",
       target_id: item.visit_id ?? item.event_id ?? item.id,
       label,
       notes: notes || undefined,
     });
+    await loadAppData({ showLoading: false });
+    return result;
   }
 
   function renderPage() {
@@ -136,7 +143,13 @@ export default function App() {
     }
 
     if (page === "stream-detail" && selectedStream) {
-      return <StreamDetailPage streamId={selectedStream.id} reviewQueue={data.reviewQueue} />;
+      return (
+        <StreamDetailPage
+          streamId={selectedStream.id}
+          reviewQueue={data.reviewQueue}
+          onOpenReview={() => setPage("review")}
+        />
+      );
     }
 
     if (page === "review") {

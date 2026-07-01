@@ -1,5 +1,7 @@
+import pytest
 from fastapi.testclient import TestClient
 
+from mockingbird.api import demo_data
 from mockingbird.api.main import app
 
 
@@ -11,6 +13,13 @@ FEEDER_ZONE_ID = "zone-feeder"
 BIRD_EVENT_ID = "event-bird-feeder-001"
 BIRD_VISIT_ID = "visit-bird-feeder-001"
 SQUIRREL_VISIT_ID = "visit-squirrel-ground-001"
+
+
+@pytest.fixture(autouse=True)
+def reset_demo_state() -> None:
+    demo_data.reset_demo_data()
+    yield
+    demo_data.reset_demo_data()
 
 
 def test_health_endpoint_works() -> None:
@@ -202,11 +211,15 @@ def test_post_review_labels_creates_correction_label() -> None:
     )
 
     assert response.status_code == 201
-    label = response.json()
+    result = response.json()
+    label = result["review_label"]
     assert label["target_type"] == "visit"
     assert label["target_id"] == BIRD_VISIT_ID
     assert label["label"] == "northern_cardinal"
     assert label["created_at"]
+    assert result["visit"]["review_status"] == "reviewed"
+    assert result["visit"]["reviewed_label"] == "northern_cardinal"
+    assert result["event"]["review_status"] == "reviewed"
 
     labels_response = client.get("/api/review-labels")
     labels = labels_response.json()
@@ -215,6 +228,71 @@ def test_post_review_labels_creates_correction_label() -> None:
         and item["label"] == "northern_cardinal"
         for item in labels
     )
+
+
+def test_visit_correction_updates_queue_and_analytics() -> None:
+    before_analytics = client.get("/api/analytics/summary").json()
+
+    response = client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "carolina_wren",
+            "notes": "Corrected after reviewing feeder visit.",
+        },
+    )
+
+    assert response.status_code == 201
+    result = response.json()
+    assert result["review_queue_count"] == 0
+    assert result["analytics"]["needs_review_count"] < before_analytics["needs_review_count"]
+    assert result["analytics"]["species_counts"]["carolina_wren"] == 1
+    assert "northern_cardinal" not in result["analytics"]["species_counts"]
+
+    visit_response = client.get(f"/api/visits/{BIRD_VISIT_ID}")
+    visit = visit_response.json()
+    assert visit["review_status"] == "reviewed"
+    assert visit["reviewed_label"] == "carolina_wren"
+
+    event_response = client.get(f"/api/events/{BIRD_EVENT_ID}")
+    assert event_response.json()["review_status"] == "reviewed"
+
+    queue_response = client.get("/api/review-queue")
+    assert all(item["visit_id"] != BIRD_VISIT_ID for item in queue_response.json())
+
+    analytics_response = client.get("/api/analytics/summary")
+    analytics = analytics_response.json()
+    assert analytics["needs_review_count"] < before_analytics["needs_review_count"]
+    assert analytics["species_counts"]["carolina_wren"] == 1
+
+
+def test_unsupported_review_target_type_returns_400() -> None:
+    response = client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "stream",
+            "target_id": STREAM_ID,
+            "label": "not_a_review_target",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Unsupported review target_type 'stream'" in response.json()["detail"]
+
+
+def test_missing_review_target_returns_404() -> None:
+    response = client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": "visit-missing",
+            "label": "carolina_wren",
+        },
+    )
+
+    assert response.status_code == 404
+    assert "Visit 'visit-missing' was not found." == response.json()["detail"]
 
 
 def test_dataset_exports_endpoint_returns_export() -> None:

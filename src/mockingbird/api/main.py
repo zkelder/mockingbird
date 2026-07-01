@@ -14,8 +14,10 @@ from mockingbird.api.schemas import (
     DatasetExport,
     Event,
     ReviewLabel,
-    ReviewLabelCreate,
+    ReviewCorrectionCreate,
+    ReviewCorrectionResult,
     ReviewQueueItem,
+    ReviewStatus,
     Stream,
     Visit,
     Zone,
@@ -44,6 +46,16 @@ def _not_found(product_type: str, product_id: str) -> HTTPException:
     return HTTPException(
         status_code=404,
         detail=f"{product_type} '{product_id}' was not found.",
+    )
+
+
+def _unsupported_target(target_type: str) -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail=(
+            f"Unsupported review target_type '{target_type}'. "
+            "Supported target types are 'visit' and 'event'."
+        ),
     )
 
 
@@ -160,8 +172,8 @@ async def list_review_labels() -> list[ReviewLabel]:
     return demo_data.REVIEW_LABELS
 
 
-@app.post("/api/review-labels", response_model=ReviewLabel, status_code=201)
-async def create_review_label(payload: ReviewLabelCreate) -> ReviewLabel:
+@app.post("/api/review-labels", response_model=ReviewCorrectionResult, status_code=201)
+async def create_review_label(payload: ReviewCorrectionCreate) -> ReviewCorrectionResult:
     label = ReviewLabel(
         id=f"review-label-{len(demo_data.REVIEW_LABELS) + 1:03d}",
         target_type=payload.target_type,
@@ -170,8 +182,48 @@ async def create_review_label(payload: ReviewLabelCreate) -> ReviewLabel:
         notes=payload.notes,
         created_at=datetime.now(UTC),
     )
-    demo_data.REVIEW_LABELS.append(label)
-    return label
+
+    if payload.target_type == "visit":
+        visit = demo_data.get_visit(payload.target_id)
+        if visit is None:
+            raise _not_found("Visit", payload.target_id)
+
+        # Review labels are user-confirmed dataset truth; detections remain evidence.
+        demo_data.REVIEW_LABELS.append(label)
+        visit.reviewed_label = payload.label
+        visit.review_status = ReviewStatus.reviewed
+
+        event = demo_data.get_event(visit.event_id)
+        if event is not None and all(
+            child_visit.review_status != ReviewStatus.needs_review
+            for child_visit in demo_data.visits_for_event(event.id)
+        ):
+            event.review_status = ReviewStatus.reviewed
+
+        return ReviewCorrectionResult(
+            review_label=label,
+            visit=visit,
+            event=event,
+            review_queue_count=len(demo_data.review_queue_items()),
+            analytics=demo_data.build_analytics_summary(),
+        )
+
+    if payload.target_type == "event":
+        event = demo_data.get_event(payload.target_id)
+        if event is None:
+            raise _not_found("Event", payload.target_id)
+
+        demo_data.REVIEW_LABELS.append(label)
+        event.review_status = ReviewStatus.reviewed
+
+        return ReviewCorrectionResult(
+            review_label=label,
+            event=event,
+            review_queue_count=len(demo_data.review_queue_items()),
+            analytics=demo_data.build_analytics_summary(),
+        )
+
+    raise _unsupported_target(payload.target_type)
 
 
 @app.get("/api/dataset-exports", response_model=list[DatasetExport])

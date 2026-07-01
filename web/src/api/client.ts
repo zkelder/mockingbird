@@ -4,8 +4,8 @@ import type {
   DatasetExport,
   Event,
   HealthStatus,
-  ReviewLabel,
-  ReviewLabelCreate,
+  ReviewCorrectionCreate,
+  ReviewCorrectionResult,
   ReviewQueueItem,
   Stream,
   Visit,
@@ -60,8 +60,8 @@ export const apiClient = {
   getReviewQueue: () => request<ReviewQueueItem[]>("/api/review-queue"),
   getDatasetExports: () => request<DatasetExport[]>("/api/dataset-exports"),
   getAnalyticsSummary: () => request<AnalyticsSummary>("/api/analytics/summary"),
-  createReviewLabel: (payload: ReviewLabelCreate) =>
-    request<ReviewLabel>("/api/review-labels", {
+  createReviewLabel: (payload: ReviewCorrectionCreate) =>
+    request<ReviewCorrectionResult>("/api/review-labels", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

@@ -148,6 +148,13 @@ class ReviewLabelCreate(BaseModel):
     notes: str | None = None
 
 
+class ReviewCorrectionCreate(BaseModel):
+    target_type: str
+    target_id: str
+    label: str
+    notes: str | None = None
+
+
 class DatasetExport(BaseModel):
     id: str
     name: str
@@ -163,3 +170,11 @@ class AnalyticsSummary(BaseModel):
     needs_review_count: int = Field(ge=0)
     species_counts: dict[str, int]
     zone_activity_counts: dict[str, int]
+
+
+class ReviewCorrectionResult(BaseModel):
+    review_label: ReviewLabel
+    visit: Visit | None = None
+    event: Event | None = None
+    review_queue_count: int = Field(ge=0)
+    analytics: AnalyticsSummary

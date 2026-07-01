@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ReviewLabel, ReviewQueueItem } from "../api/types";
+import type { ReviewCorrectionResult, ReviewQueueItem } from "../api/types";
 import { StatusPill } from "../components/StatusPill";
 import { formatLabel } from "../utils";
 
@@ -9,7 +9,7 @@ interface ReviewQueuePageProps {
     item: ReviewQueueItem,
     label: string,
     notes: string,
-  ) => Promise<ReviewLabel>;
+  ) => Promise<ReviewCorrectionResult>;
 }
 
 export function ReviewQueuePage({ items, onCreateCorrection }: ReviewQueuePageProps) {
@@ -27,8 +27,12 @@ export function ReviewQueuePage({ items, onCreateCorrection }: ReviewQueuePagePr
     setSavingId(item.id);
     setMessage(null);
     try {
-      await onCreateCorrection(item, draft.label.trim(), draft.notes.trim());
-      setMessage("Correction saved as a dataset-grade label.");
+      const result = await onCreateCorrection(item, draft.label.trim(), draft.notes.trim());
+      setMessage(
+        `Correction saved as local dataset truth. ${result.review_queue_count} item${
+          result.review_queue_count === 1 ? "" : "s"
+        } still need review.`,
+      );
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Correction could not be saved.");
     } finally {
@@ -42,6 +46,12 @@ export function ReviewQueuePage({ items, onCreateCorrection }: ReviewQueuePagePr
         <h1>Review Queue</h1>
       </div>
       {message ? <div className="notice-panel">{message}</div> : null}
+      {items.length === 0 ? (
+        <div className="all-reviewed-panel">
+          <strong>All demo visits and events are reviewed.</strong>
+          <span>Corrections are now available as local dataset-grade labels for exports and analytics.</span>
+        </div>
+      ) : null}
       <div className="queue-list">
         {items.map((item) => {
           const draft = drafts[item.id] ?? {

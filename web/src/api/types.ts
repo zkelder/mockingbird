@@ -123,6 +123,21 @@ export interface ReviewLabelCreate {
   notes?: string | null;
 }
 
+export interface ReviewCorrectionCreate {
+  target_type: string;
+  target_id: string;
+  label: string;
+  notes?: string | null;
+}
+
+export interface ReviewCorrectionResult {
+  review_label: ReviewLabel;
+  visit?: Visit | null;
+  event?: Event | null;
+  review_queue_count: number;
+  analytics: AnalyticsSummary;
+}
+
 export interface DatasetExport {
   id: string;
   name: string;

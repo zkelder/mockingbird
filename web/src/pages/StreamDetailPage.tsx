@@ -8,6 +8,7 @@ import { formatDateTime, formatLabel } from "../utils";
 interface StreamDetailPageProps {
   streamId: string;
   reviewQueue: ReviewQueueItem[];
+  onOpenReview: () => void;
 }
 
 interface StreamDetailState {
@@ -17,7 +18,7 @@ interface StreamDetailState {
   visitsByEvent: Record<string, Visit[]>;
 }
 
-export function StreamDetailPage({ streamId, reviewQueue }: StreamDetailPageProps) {
+export function StreamDetailPage({ streamId, reviewQueue, onOpenReview }: StreamDetailPageProps) {
   const [detail, setDetail] = useState<StreamDetailState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -109,12 +110,17 @@ export function StreamDetailPage({ streamId, reviewQueue }: StreamDetailPageProp
           </div>
           <div className="list-stack">
             {streamReviewItems.length > 0 ? (
-              streamReviewItems.map((item) => (
-                <div className="queue-mini" key={item.id}>
-                  <strong>{item.title}</strong>
-                  <span>{item.reason}</span>
-                </div>
-              ))
+              <>
+                {streamReviewItems.map((item) => (
+                  <div className="queue-mini" key={item.id}>
+                    <strong>{item.title}</strong>
+                    <span>{item.reason}</span>
+                  </div>
+                ))}
+                <button className="secondary-action" onClick={onOpenReview}>
+                  Open Review Queue
+                </button>
+              </>
             ) : (
               <span className="meta-text">No stream items need review.</span>
             )}

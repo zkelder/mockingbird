@@ -117,7 +117,8 @@ button {
 .queue-card,
 .event-card,
 .error-panel,
-.notice-panel {
+.notice-panel,
+.all-reviewed-panel {
   border: 1px solid #d6ddd1;
   border-radius: 8px;
   background: #fbfcf8;
@@ -218,12 +219,14 @@ button {
 
 .panel,
 .error-panel,
-.notice-panel {
+.notice-panel,
+.all-reviewed-panel {
   padding: 18px;
 }
 
 .error-panel,
-.notice-panel {
+.notice-panel,
+.all-reviewed-panel {
   display: grid;
   gap: 10px;
 }
@@ -235,6 +238,12 @@ button {
 
 .notice-panel {
   border-color: #a9c993;
+}
+
+.all-reviewed-panel {
+  border-color: #8fb78b;
+  background: #f3faef;
+  color: #245436;
 }
 
 .section-heading {
