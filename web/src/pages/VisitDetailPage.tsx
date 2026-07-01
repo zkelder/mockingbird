@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type { Detection, VisitDetail } from "../api/types";
+import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
 
@@ -163,27 +164,41 @@ export function VisitDetailPage({
         </div>
       </section>
 
+      {detail.media_asset ? (
+        <section className="panel media-evidence-panel">
+          <div className="section-heading">
+            <h2>Imported media</h2>
+            <span className="meta-text">Local evidence for this visit review</span>
+          </div>
+          <MediaAssetPreview asset={detail.media_asset} />
+        </section>
+      ) : null}
+
       <section className="split-grid">
         <div className="panel">
           <div className="section-heading">
             <h2>Detections as evidence</h2>
           </div>
           <div className="evidence-list">
-            {detail.detections.map((detection) => (
-              <div className="evidence-card" key={detection.id}>
-                <div className="item-title-row">
-                  <strong>{formatLabel(detection.label)}</strong>
-                  <span>{Math.round(detection.confidence * 100)}%</span>
+            {detail.detections.length > 0 ? (
+              detail.detections.map((detection) => (
+                <div className="evidence-card" key={detection.id}>
+                  <div className="item-title-row">
+                    <strong>{formatLabel(detection.label)}</strong>
+                    <span>{Math.round(detection.confidence * 100)}%</span>
+                  </div>
+                  <span className="meta-text">
+                    Zone:{" "}
+                    {detail.primary_zone && detection.zone_id === detail.primary_zone.id
+                      ? detail.primary_zone.name
+                      : detection.zone_id ?? "Unzoned"}
+                  </span>
+                  <span className="meta-text">{bboxSummary(detection)}</span>
                 </div>
-                <span className="meta-text">
-                  Zone:{" "}
-                  {detail.primary_zone && detection.zone_id === detail.primary_zone.id
-                    ? detail.primary_zone.name
-                    : detection.zone_id ?? "Unzoned"}
-                </span>
-                <span className="meta-text">{bboxSummary(detection)}</span>
-              </div>
-            ))}
+              ))
+            ) : (
+              <span className="meta-text">No detections are attached to this manual media visit.</span>
+            )}
           </div>
         </div>
 

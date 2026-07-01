@@ -80,6 +80,22 @@ class VisitModel(Base):
     representative_media_path: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class MediaAssetModel(Base):
+    __tablename__ = "media_assets"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey("camera_sources.id"), nullable=True)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
+    filename: Mapped[str] = mapped_column(String, nullable=False)
+    content_type: Mapped[str] = mapped_column(String, nullable=False)
+    media_type: Mapped[str] = mapped_column(String, nullable=False)
+    local_path: Mapped[str] = mapped_column(String, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String, nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class ReviewLabelModel(Base):
     __tablename__ = "review_labels"
 

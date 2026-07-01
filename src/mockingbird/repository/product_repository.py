@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import Counter
 from datetime import UTC, datetime
 import json
+from pathlib import Path
+import re
 
 from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.orm import Session
@@ -23,6 +25,8 @@ from mockingbird.api.schemas import (
     Event,
     ExportStatus,
     LocalDataStatus,
+    MediaAsset,
+    MediaImportResult,
     Point,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -43,6 +47,7 @@ from mockingbird.storage.database import (
     create_database_engine,
     create_session_factory,
     initialize_database,
+    resolve_media_root,
     resolve_database_url,
 )
 from mockingbird.storage.models import (
@@ -50,11 +55,20 @@ from mockingbird.storage.models import (
     DatasetExportModel,
     DetectionModel,
     EventModel,
+    MediaAssetModel,
     ReviewLabelModel,
     StreamModel,
     VisitModel,
     ZoneModel,
 )
+
+SUPPORTED_MEDIA_CONTENT_TYPES = {
+    "image/jpeg": "image",
+    "image/png": "image",
+    "image/webp": "image",
+    "video/mp4": "video",
+    "video/quicktime": "video",
+}
 
 
 class ProductRepository:
@@ -64,8 +78,14 @@ class ProductRepository:
     define the core product model.
     """
 
-    def __init__(self, db_url: str | None = None, engine: Engine | None = None) -> None:
+    def __init__(
+        self,
+        db_url: str | None = None,
+        engine: Engine | None = None,
+        media_root: str | Path | None = None,
+    ) -> None:
         self.db_url = resolve_database_url(db_url)
+        self.media_root = resolve_media_root(media_root)
         self.engine = engine or create_database_engine(self.db_url)
         initialize_database(self.engine)
         self.session_factory = create_session_factory(self.engine)
@@ -85,6 +105,7 @@ class ProductRepository:
         with self.session_factory() as session:
             with session.begin():
                 for model in (
+                    MediaAssetModel,
                     DetectionModel,
                     VisitModel,
                     ReviewLabelModel,
@@ -234,6 +255,7 @@ class ProductRepository:
             zone_count=self._count(session, ZoneModel),
             event_count=analytics.event_count,
             visit_count=analytics.visit_count,
+            media_asset_count=self._count(session, MediaAssetModel),
             review_label_count=self._count(session, ReviewLabelModel),
             dataset_export_count=self._count(session, DatasetExportModel),
             needs_review_count=analytics.needs_review_count,
@@ -241,8 +263,9 @@ class ProductRepository:
             seed_data_present=session.get(CameraSourceModel, demo_data.SOURCE_ID) is not None,
             local_first_note=(
                 "MockingBird stores local product metadata, zones, corrections, "
-                "review state, analytics inputs, and dataset export manifests here. "
-                "Real media storage is not implemented yet."
+                "review state, imported media references, analytics inputs, and "
+                "dataset export manifests here. Imported media stays local and is "
+                "not analyzed or transcoded in this phase."
             ),
         )
 
@@ -358,6 +381,113 @@ class ProductRepository:
     def visits_for_event(self, event_id: str) -> list[Visit]:
         with self.session_factory() as session:
             return self._visits_for_event(session, event_id)
+
+    def list_media_assets(self) -> list[MediaAsset]:
+        with self.session_factory() as session:
+            assets = session.scalars(
+                select(MediaAssetModel).order_by(MediaAssetModel.created_at, MediaAssetModel.id)
+            ).all()
+            return [_media_asset_from_model(asset) for asset in assets]
+
+    def get_media_asset(self, media_id: str) -> MediaAsset | None:
+        with self.session_factory() as session:
+            asset = session.get(MediaAssetModel, media_id)
+            return _media_asset_from_model(asset) if asset else None
+
+    def media_asset_for_path(self, media_path: str | None) -> MediaAsset | None:
+        if media_path is None:
+            return None
+
+        with self.session_factory() as session:
+            asset = session.scalar(
+                select(MediaAssetModel).where(MediaAssetModel.local_path == media_path)
+            )
+            return _media_asset_from_model(asset) if asset else None
+
+    def media_file_path(self, media_id: str) -> Path | None:
+        asset = self.get_media_asset(media_id)
+        if asset is None:
+            return None
+        return Path(asset.local_path)
+
+    def create_media_import(
+        self,
+        *,
+        content: bytes,
+        original_filename: str,
+        content_type: str,
+        stream_id: str | None = None,
+        zone_id: str | None = None,
+        title: str | None = None,
+        subject_label: str = "unknown_animal",
+        species_guess: str | None = None,
+        notes: str | None = None,
+    ) -> MediaImportResult:
+        if not content:
+            raise ValueError("empty_file")
+
+        media_type = SUPPORTED_MEDIA_CONTENT_TYPES.get(content_type)
+        if media_type is None:
+            raise ValueError("unsupported_content_type")
+
+        with self.session_factory() as session:
+            with session.begin():
+                stream_model = self._resolve_import_stream(session, stream_id)
+                zone_model = self._resolve_import_zone(session, zone_id, stream_model.id)
+                media_id = self._next_id(session, MediaAssetModel, "media-asset")
+                event_id = self._next_id(session, EventModel, "event-media")
+                visit_id = self._next_id(session, VisitModel, "visit-media")
+                filename = f"{media_id}-{_safe_filename(original_filename)}"
+                filename, local_path = self._write_media_file(filename, content)
+                created_at = datetime.now(UTC)
+
+                asset_model = MediaAssetModel(
+                    id=media_id,
+                    source_id=stream_model.source_id,
+                    stream_id=stream_model.id,
+                    filename=filename,
+                    content_type=content_type,
+                    media_type=media_type,
+                    local_path=str(local_path),
+                    original_filename=original_filename or filename,
+                    file_size_bytes=len(content),
+                    created_at=created_at,
+                    notes=notes,
+                )
+                event_model = EventModel(
+                    id=event_id,
+                    stream_id=stream_model.id,
+                    title=title.strip() if title and title.strip() else "Imported media observation",
+                    event_type="manual_media_import",
+                    started_at=created_at,
+                    ended_at=created_at,
+                    primary_zone_id=zone_model.id if zone_model else None,
+                    review_status=ReviewStatus.needs_review.value,
+                )
+                visit_model = VisitModel(
+                    id=visit_id,
+                    event_id=event_id,
+                    subject_label=subject_label.strip() or "unknown_animal",
+                    species_guess=(
+                        species_guess.strip()
+                        if species_guess and species_guess.strip()
+                        else None
+                    ),
+                    confidence=None,
+                    reviewed_label=None,
+                    review_status=ReviewStatus.needs_review.value,
+                    representative_media_path=str(local_path),
+                )
+                session.add_all([asset_model, event_model, visit_model])
+                session.flush()
+
+                return MediaImportResult(
+                    media_asset=_media_asset_from_model(asset_model),
+                    event=self._event_from_model(session, event_model),
+                    visit=_visit_from_model(visit_model),
+                    stream=_stream_from_model(stream_model),
+                    review_queue_count=len(self._review_queue_items(session)),
+                )
 
     def list_review_labels(self) -> list[ReviewLabel]:
         with self.session_factory() as session:
@@ -533,6 +663,53 @@ class ProductRepository:
         if dataset_export is None or manifest is None:
             return None
         return DatasetExportDetail(export=dataset_export, manifest=manifest)
+
+    def _resolve_import_stream(
+        self,
+        session: Session,
+        stream_id: str | None,
+    ) -> StreamModel:
+        if stream_id:
+            stream_model = session.get(StreamModel, stream_id)
+            if stream_model is None:
+                raise ValueError("missing_stream")
+            return stream_model
+
+        streams = list(session.scalars(select(StreamModel).order_by(StreamModel.id)).all())
+        if len(streams) != 1:
+            raise ValueError("stream_required")
+        return streams[0]
+
+    def _resolve_import_zone(
+        self,
+        session: Session,
+        zone_id: str | None,
+        stream_id: str,
+    ) -> ZoneModel | None:
+        if zone_id is None:
+            return None
+
+        zone_model = session.get(ZoneModel, zone_id)
+        if zone_model is None:
+            raise ValueError("missing_zone")
+        if zone_model.stream_id != stream_id:
+            raise ValueError("zone_stream_mismatch")
+        return zone_model
+
+    def _write_media_file(self, filename: str, content: bytes) -> tuple[str, Path]:
+        self.media_root.mkdir(parents=True, exist_ok=True)
+        path = self.media_root / filename
+        if path.exists():
+            name = Path(filename)
+            counter = 2
+            while True:
+                candidate = self.media_root / f"{name.stem}-{counter}{name.suffix}"
+                if not candidate.exists():
+                    path = candidate
+                    break
+                counter += 1
+        path.write_bytes(content)
+        return path.name, path
 
     def _zones_for_stream(self, session: Session, stream_id: str) -> list[Zone]:
         zones = session.scalars(
@@ -778,7 +955,7 @@ class ProductRepository:
         dataset_export: DatasetExport,
     ) -> DatasetExportManifest:
         # Dataset manifests use corrections as truth, detections as evidence,
-        # and media paths as references until local media storage exists.
+        # and imported media paths as local references.
         records, skipped_reasons = self._export_records_for_current_reviews(session, dataset_export)
         return DatasetExportManifest(
             export=dataset_export,
@@ -952,6 +1129,22 @@ def _visit_from_model(visit: VisitModel) -> Visit:
     )
 
 
+def _media_asset_from_model(asset: MediaAssetModel) -> MediaAsset:
+    return MediaAsset(
+        id=asset.id,
+        source_id=asset.source_id,
+        stream_id=asset.stream_id,
+        filename=asset.filename,
+        content_type=asset.content_type,
+        media_type=asset.media_type,
+        local_path=asset.local_path,
+        original_filename=asset.original_filename,
+        file_size_bytes=asset.file_size_bytes,
+        created_at=_as_utc(asset.created_at),
+        notes=asset.notes,
+    )
+
+
 def _review_label_from_model(label: ReviewLabelModel) -> ReviewLabel:
     return ReviewLabel(
         id=label.id,
@@ -994,6 +1187,12 @@ def _database_path_from_url(db_url: str) -> str | None:
     if path in {"", ":memory:"}:
         return None
     return path
+
+
+def _safe_filename(original_filename: str) -> str:
+    filename = Path(original_filename or "imported-media").name or "imported-media"
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip(".-")
+    return safe or "imported-media"
 
 
 def _as_utc(value: datetime) -> datetime:

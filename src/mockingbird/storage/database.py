@@ -12,6 +12,8 @@ from mockingbird.storage.models import Base
 
 DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
+DEFAULT_MEDIA_ROOT = "data/media/imports"
+MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
 
 
 def database_url_from_env() -> str:
@@ -20,6 +22,14 @@ def database_url_from_env() -> str:
 
 def resolve_database_url(db_url: str | None = None) -> str:
     return db_url or database_url_from_env()
+
+
+def media_root_from_env() -> str:
+    return os.getenv(MEDIA_ROOT_ENV_VAR, DEFAULT_MEDIA_ROOT)
+
+
+def resolve_media_root(media_root: str | Path | None = None) -> Path:
+    return Path(media_root or media_root_from_env())
 
 
 def _ensure_sqlite_parent(db_url: str) -> None:

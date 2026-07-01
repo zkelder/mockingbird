@@ -9,6 +9,8 @@ import type {
   EventDetail,
   HealthStatus,
   LocalDataStatus,
+  MediaAsset,
+  MediaImportResult,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
   ReviewQueueItem,
@@ -35,12 +37,15 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const isFormData = init?.body instanceof FormData;
+  const headers = new Headers(init?.headers);
+  if (!isFormData && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
     ...init,
+    headers,
   });
 
   if (!response.ok) {
@@ -68,6 +73,14 @@ export const apiClient = {
   getEventVisits: (eventId: string) => request<Visit[]>(`/api/events/${eventId}/visits`),
   getEventDetail: (eventId: string) => request<EventDetail>(`/api/events/${eventId}/detail`),
   getVisitDetail: (visitId: string) => request<VisitDetail>(`/api/visits/${visitId}/detail`),
+  getMediaAssets: () => request<MediaAsset[]>("/api/media"),
+  getMediaAsset: (mediaId: string) => request<MediaAsset>(`/api/media/${mediaId}`),
+  importMedia: (payload: FormData) =>
+    request<MediaImportResult>("/api/media/import", {
+      method: "POST",
+      body: payload,
+    }),
+  mediaFileUrl: (mediaId: string) => `${API_BASE_URL}/api/media/${encodeURIComponent(mediaId)}/file`,
   createZone: (payload: ZoneCreate) =>
     request<ZoneMutationResult>("/api/zones", {
       method: "POST",

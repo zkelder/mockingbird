@@ -114,6 +114,28 @@ export interface Visit {
   representative_media_path?: string | null;
 }
 
+export interface MediaAsset {
+  id: string;
+  source_id?: string | null;
+  stream_id: string;
+  filename: string;
+  content_type: string;
+  media_type: string;
+  local_path: string;
+  original_filename: string;
+  file_size_bytes: number;
+  created_at: string;
+  notes?: string | null;
+}
+
+export interface MediaImportResult {
+  media_asset: MediaAsset;
+  event: Event;
+  visit?: Visit | null;
+  stream: Stream;
+  review_queue_count: number;
+}
+
 export interface ReviewQueueItem {
   id: string;
   item_type: string;
@@ -163,6 +185,7 @@ export interface EventDetail {
   stream: Stream;
   primary_zone?: Zone | null;
   visits: Visit[];
+  media_asset?: MediaAsset | null;
   review_labels: ReviewLabel[];
   dataset_ready: boolean;
   review_summary: string;
@@ -174,6 +197,7 @@ export interface VisitDetail {
   stream: Stream;
   primary_zone?: Zone | null;
   detections: Detection[];
+  media_asset?: MediaAsset | null;
   review_labels: ReviewLabel[];
   dataset_ready: boolean;
   review_summary: string;
@@ -245,6 +269,7 @@ export interface LocalDataStatus {
   zone_count: number;
   event_count: number;
   visit_count: number;
+  media_asset_count: number;
   review_label_count: number;
   dataset_export_count: number;
   needs_review_count: number;

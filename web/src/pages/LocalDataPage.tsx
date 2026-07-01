@@ -101,15 +101,20 @@ export function LocalDataPage({
             <MetricCard label="Streams" value={status.stream_count} detail="video-centered views" />
             <MetricCard label="Zones" value={status.zone_count} detail="user-authored context" />
             <MetricCard
-              label="Needs review"
-              value={status.needs_review_count}
-              detail="local correction work"
+              label="Media"
+              value={status.media_asset_count}
+              detail="local import references"
             />
           </section>
 
           <section className="metric-grid">
             <MetricCard label="Events" value={status.event_count} detail="outdoor activity" />
             <MetricCard label="Visits" value={status.visit_count} detail="reviewable observations" />
+            <MetricCard
+              label="Needs review"
+              value={status.needs_review_count}
+              detail="local correction work"
+            />
             <MetricCard
               label="Corrections"
               value={status.review_label_count}
@@ -143,8 +148,12 @@ export function LocalDataPage({
                 <span>Seed data</span>
                 <strong>{status.seed_data_present ? "Present" : "Missing"}</strong>
               </div>
+              <div className="data-row">
+                <span>Dataset exports</span>
+                <strong>{status.dataset_export_count}</strong>
+              </div>
               <p>{status.local_first_note}</p>
-              <p>Real media storage is not implemented yet; media paths remain references.</p>
+              <p>Imported media files stay in the configured local media root and are not analyzed or transcoded.</p>
             </div>
 
             <div className="panel local-data-card">

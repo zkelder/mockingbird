@@ -14,6 +14,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { EventDetailPage } from "./pages/EventDetailPage";
 import { ExportsPage } from "./pages/ExportsPage";
 import { LocalDataPage } from "./pages/LocalDataPage";
+import { ManualImportPage } from "./pages/ManualImportPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
@@ -22,6 +23,7 @@ import { VisitDetailPage } from "./pages/VisitDetailPage";
 type Page =
   | "dashboard"
   | "streams"
+  | "import"
   | "stream-detail"
   | "event-detail"
   | "visit-detail"
@@ -51,6 +53,7 @@ const initialData: AppData = {
 const navItems: Array<{ page: Page; label: string }> = [
   { page: "dashboard", label: "Dashboard" },
   { page: "streams", label: "Streams" },
+  { page: "import", label: "Import Media" },
   { page: "review", label: "Review" },
   { page: "analytics", label: "Analytics" },
   { page: "exports", label: "Exports" },
@@ -174,6 +177,19 @@ export default function App() {
 
     if (page === "streams") {
       return <StreamsPage streams={data.streams} sources={data.sources} onOpenStream={openStream} />;
+    }
+
+    if (page === "import") {
+      return (
+        <ManualImportPage
+          streams={data.streams}
+          sources={data.sources}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
+          onOpenStream={openStream}
+          onImportComplete={() => loadAppData({ showLoading: false })}
+        />
+      );
     }
 
     if (page === "stream-detail" && selectedStream) {

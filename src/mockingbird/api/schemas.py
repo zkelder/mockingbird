@@ -138,6 +138,21 @@ class Visit(BaseModel):
     representative_media_path: str | None = None
 
 
+class MediaAsset(BaseModel):
+    # Media assets are local evidence references that feed reviewable product events.
+    id: str
+    source_id: str | None = None
+    stream_id: str
+    filename: str
+    content_type: str
+    media_type: str
+    local_path: str
+    original_filename: str
+    file_size_bytes: int = Field(ge=0)
+    created_at: datetime
+    notes: str | None = None
+
+
 class ReviewQueueItem(BaseModel):
     id: str
     item_type: str
@@ -241,6 +256,7 @@ class LocalDataStatus(BaseModel):
     zone_count: int = Field(ge=0)
     event_count: int = Field(ge=0)
     visit_count: int = Field(ge=0)
+    media_asset_count: int = Field(ge=0)
     review_label_count: int = Field(ge=0)
     dataset_export_count: int = Field(ge=0)
     needs_review_count: int = Field(ge=0)
@@ -257,11 +273,20 @@ class ReviewCorrectionResult(BaseModel):
     analytics: AnalyticsSummary
 
 
+class MediaImportResult(BaseModel):
+    media_asset: MediaAsset
+    event: Event
+    visit: Visit | None = None
+    stream: Stream
+    review_queue_count: int = Field(ge=0)
+
+
 class EventDetail(BaseModel):
     event: Event
     stream: Stream
     primary_zone: Zone | None = None
     visits: list[Visit]
+    media_asset: MediaAsset | None = None
     review_labels: list[ReviewLabel]
     dataset_ready: bool
     review_summary: str
@@ -273,6 +298,7 @@ class VisitDetail(BaseModel):
     stream: Stream
     primary_zone: Zone | None = None
     detections: list[Detection]
+    media_asset: MediaAsset | None = None
     review_labels: list[ReviewLabel]
     dataset_ready: bool
     review_summary: str

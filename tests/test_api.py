@@ -706,6 +706,7 @@ def test_local_data_status_reports_persisted_product_counts() -> None:
     assert status["zone_count"] == 3
     assert status["event_count"] == 2
     assert status["visit_count"] == 2
+    assert status["media_asset_count"] == 0
     assert status["review_label_count"] == 1
     assert status["dataset_export_count"] == 1
     assert status["needs_review_count"] >= 1
@@ -770,6 +771,7 @@ def test_reset_demo_data_does_not_duplicate_seed_rows() -> None:
     assert status["zone_count"] == 3
     assert status["event_count"] == 2
     assert status["visit_count"] == 2
+    assert status["media_asset_count"] == 0
     assert status["review_label_count"] == 1
     assert status["dataset_export_count"] == 1
 

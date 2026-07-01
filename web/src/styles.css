@@ -851,6 +851,116 @@ button {
   gap: 10px;
 }
 
+.manual-import-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(340px, 1.1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.manual-import-form,
+.media-list,
+.media-list-item,
+.media-preview,
+.media-preview-meta,
+.import-result-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.manual-import-form label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.manual-import-form input,
+.manual-import-form select,
+.manual-import-form textarea {
+  min-height: 42px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.manual-import-form input[type="file"] {
+  padding: 8px;
+}
+
+.manual-import-form textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.import-result-panel {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.import-result-panel h2 {
+  margin: 4px 0 0;
+}
+
+.media-list-item {
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.media-list-item p {
+  margin: 0;
+  color: #5c6a61;
+}
+
+.media-preview-surface {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  background: #111d18;
+}
+
+.media-preview-compact .media-preview-surface {
+  min-height: 160px;
+}
+
+.media-preview-surface img,
+.media-preview-surface video {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+}
+
+.media-preview-compact img,
+.media-preview-compact video {
+  max-height: 220px;
+}
+
+.media-preview-meta {
+  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+  align-items: center;
+  color: #627168;
+  font-size: 0.88rem;
+}
+
+.media-preview-meta strong {
+  overflow-wrap: anywhere;
+  color: #24382d;
+}
+
+.media-evidence-panel {
+  display: grid;
+  gap: 14px;
+}
+
 .export-form,
 .export-list,
 .manifest-layout,
@@ -1043,6 +1153,7 @@ button {
   .case-summary-grid,
   .manifest-summary,
   .split-grid,
+  .manual-import-layout,
   .zone-editor-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1064,6 +1175,7 @@ button {
   .stream-list-item,
   .stream-detail-heading,
   .case-readiness-panel,
+  .import-result-panel,
   .summary-row,
   .table-row {
     align-items: stretch;
@@ -1086,6 +1198,8 @@ button {
   .manifest-summary,
   .record-meta-grid,
   .split-grid,
+  .manual-import-layout,
+  .media-preview-meta,
   .zone-editor-grid {
     grid-template-columns: 1fr;
   }

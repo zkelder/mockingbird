@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import FileResponse
 
 from mockingbird.api.schemas import (
     AnalyticsSummary,
@@ -15,6 +16,8 @@ from mockingbird.api.schemas import (
     Event,
     EventDetail,
     LocalDataStatus,
+    MediaAsset,
+    MediaImportResult,
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -89,6 +92,29 @@ def _invalid_zone_polygon() -> HTTPException:
         status_code=400,
         detail="Zone polygon must contain at least 3 points.",
     )
+
+
+def _media_import_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "empty_file":
+        return HTTPException(status_code=400, detail="Imported media file is empty.")
+    if reason == "unsupported_content_type":
+        return HTTPException(status_code=400, detail="Unsupported media content type.")
+    if reason == "missing_stream":
+        return _not_found("Stream", "import target")
+    if reason == "missing_zone":
+        return _not_found("Zone", "import target")
+    if reason == "zone_stream_mismatch":
+        return HTTPException(
+            status_code=400,
+            detail="Selected zone does not belong to the selected stream.",
+        )
+    if reason == "stream_required":
+        return HTTPException(
+            status_code=400,
+            detail="Choose a stream for this media import.",
+        )
+    return HTTPException(status_code=400, detail="Media import could not be created.")
 
 
 @app.get("/health")
@@ -226,6 +252,15 @@ async def get_event_detail(event_id: str) -> EventDetail:
     if stream is None:
         raise _not_found("Stream", event.stream_id)
 
+    visits = repository.visits_for_event(event.id)
+    media_asset = next(
+        (
+            repository.media_asset_for_path(visit.representative_media_path)
+            for visit in visits
+            if visit.representative_media_path is not None
+        ),
+        None,
+    )
     dataset_ready = repository.event_is_dataset_ready(event)
     return EventDetail(
         event=event,
@@ -235,7 +270,8 @@ async def get_event_detail(event_id: str) -> EventDetail:
             if event.primary_zone_id is not None
             else None
         ),
-        visits=repository.visits_for_event(event.id),
+        visits=visits,
+        media_asset=media_asset,
         review_labels=repository.review_labels_for_event_tree(event.id),
         dataset_ready=dataset_ready,
         review_summary=repository.review_summary_for_dataset_state(dataset_ready),
@@ -290,12 +326,69 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
             else None
         ),
         detections=event.detections,
+        media_asset=repository.media_asset_for_path(visit.representative_media_path),
         review_labels=(
             repository.review_labels_for_event(event.id)
             + repository.review_labels_for_visit(visit.id)
         ),
         dataset_ready=dataset_ready,
         review_summary=repository.review_summary_for_dataset_state(dataset_ready),
+    )
+
+
+@app.get("/api/media", response_model=list[MediaAsset])
+async def list_media_assets() -> list[MediaAsset]:
+    return get_repository().list_media_assets()
+
+
+@app.post("/api/media/import", response_model=MediaImportResult, status_code=201)
+async def import_media(
+    file: UploadFile = File(...),
+    stream_id: str | None = Form(default=None),
+    zone_id: str | None = Form(default=None),
+    title: str | None = Form(default=None),
+    subject_label: str = Form(default="unknown_animal"),
+    species_guess: str | None = Form(default=None),
+    notes: str | None = Form(default=None),
+) -> MediaImportResult:
+    content = await file.read()
+    try:
+        return get_repository().create_media_import(
+            content=content,
+            original_filename=file.filename or "imported-media",
+            content_type=file.content_type or "",
+            stream_id=stream_id or None,
+            zone_id=zone_id or None,
+            title=title,
+            subject_label=subject_label,
+            species_guess=species_guess,
+            notes=notes,
+        )
+    except ValueError as error:
+        raise _media_import_error(error) from error
+
+
+@app.get("/api/media/{media_id}", response_model=MediaAsset)
+async def get_media_asset(media_id: str) -> MediaAsset:
+    asset = get_repository().get_media_asset(media_id)
+    if asset is None:
+        raise _not_found("Media asset", media_id)
+    return asset
+
+
+@app.get("/api/media/{media_id}/file")
+async def get_media_file(media_id: str) -> FileResponse:
+    repository = get_repository()
+    asset = repository.get_media_asset(media_id)
+    path = repository.media_file_path(media_id)
+    if asset is None or path is None:
+        raise _not_found("Media asset", media_id)
+    if not path.exists():
+        raise _not_found("Media file", media_id)
+    return FileResponse(
+        path,
+        media_type=asset.content_type,
+        filename=asset.original_filename,
     )
 
 
@@ -378,6 +471,5 @@ async def get_local_data_status() -> LocalDataStatus:
 
 @app.post("/api/settings/reset-demo-data", response_model=LocalDataStatus)
 async def reset_demo_data() -> LocalDataStatus:
-    # Local demo reset clears product metadata only; real media storage is not
-    # part of this phase and no files outside the configured DB are touched.
+    # Local demo reset clears product metadata only; imported media files stay on disk.
     return get_repository().reset_demo_data()
