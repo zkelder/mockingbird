@@ -8,6 +8,8 @@ This decision records the detector direction only. It does not add a model runti
 
 Phase 7F adds an unavailable-safe adapter wrapper/status path only. Real MegaDetector runtime integration remains pending.
 
+Phase 7G selects PyTorch-Wildlife / MegaDetector-family integration as the first runtime implementation path, behind an optional dependency with lazy imports and no automatic model downloads. See [megadetector-runtime-plan.md](megadetector-runtime-plan.md).
+
 ## Why MegaDetector
 
 MegaDetector-family models are a strong fit for wildlife, camera-trap, and outdoor imagery. They are useful for finding reviewable outdoor activity in imported images because they focus on broad detection categories such as animals, people, and vehicles.
@@ -38,14 +40,11 @@ The first implementation must stay constrained:
 
 ## Dependency Decision
 
-The implementation path is still pending.
+The first runtime implementation path is PyTorch-Wildlife / MegaDetector-family integration behind an optional dependency. The dependency must be isolated from core app startup and imported only inside the adapter execution path.
 
-Likely options:
+ONNX/local-image-detector remains a possible later optimization path if a compatible local artifact and output mapping are available.
 
-- PyTorch-Wildlife / MegaDetector integration as the product-aligned route.
-- ONNX/local-image-detector path only if it provides a lighter, maintainable runtime.
-
-No heavy dependency should be added without an explicit implementation phase. Phase 7E adds no dependency.
+No heavy dependency should be added without an explicit implementation phase. Phase 7G is a plan only and adds no dependency.
 
 ## Output Mapping
 

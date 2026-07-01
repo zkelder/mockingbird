@@ -163,10 +163,13 @@ Current guardrail work:
 
 - Phase 7D: model selection and runtime guardrails.
 - Phase 7E: MegaDetector-family detector decision record.
-- Next: Phase 7F — MegaDetector adapter implementation spike.
+- Phase 7F: MegaDetector adapter wrapper and unavailable-safe runtime path.
+- Phase 7G: MegaDetector runtime selection and dependency plan.
+- Next likely phase: Phase 7H — optional MegaDetector dependency/runtime integration spike.
 
 Validation:
 
 - Model adapters produce proposal evidence only.
 - User corrections remain dataset truth.
 - Adapter evaluation and rollback stay local, reviewable, and safe.
+- Real MegaDetector runtime work follows [megadetector-runtime-plan.md](megadetector-runtime-plan.md) before dependencies or inference behavior are added.

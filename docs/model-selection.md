@@ -6,7 +6,7 @@ The first real local detector candidate should prove that MockingBird can turn c
 
 It is a product safety spike, not a production accuracy claim.
 
-Phase 7E selects a MegaDetector-family local image detector as the first target direction. See [detector-decision-megadetector.md](detector-decision-megadetector.md).
+Phase 7E selects a MegaDetector-family local image detector as the first target direction. Phase 7G selects the optional PyTorch-Wildlife / MegaDetector-family runtime path while keeping implementation pending. See [detector-decision-megadetector.md](detector-decision-megadetector.md) and [megadetector-runtime-plan.md](megadetector-runtime-plan.md).
 
 ## Acceptable First Detector Type
 
@@ -31,19 +31,18 @@ A candidate model should:
 - fail clearly when output shape is unsupported
 - be removable without changing reviewed product data
 
-The selected direction is MegaDetector-family animal/person/vehicle detection. The exact runtime package, model file, version, and loading path remain pending for an explicit implementation phase.
+The selected direction is MegaDetector-family animal/person/vehicle detection. The first runtime path is PyTorch-Wildlife / MegaDetector-family integration behind an optional dependency. The exact package/version wiring, model file, and loading code remain pending for an explicit implementation phase.
 
 ## Dependency Rules
 
-Prefer the existing optional detector shell first.
+Prefer the existing optional detector shell first. Real MegaDetector runtime work must stay behind an optional extra such as `detector-megadetector` and use lazy imports inside the adapter execution path.
 
-Allowed only with explicit justification:
+Possible later optimization path:
 
-- ONNX Runtime for local model execution
-- Pillow for image loading
-- numpy for lightweight tensor preparation
+- ONNX Runtime for local model execution, only after a compatible local MegaDetector artifact and output mapping are available
+- Pillow or numpy only when the explicit implementation phase proves they are needed
 
-Avoid heavy or model-specific runtime stacks unless an explicit implementation phase justifies them. PyTorch-Wildlife / MegaDetector integration is the product-aligned candidate path, but no PyTorch, TensorFlow, OpenCV, Ultralytics, YOLO package, MegaDetector package stack, or BirdNET runtime should be added by selection docs alone.
+Avoid heavy or model-specific runtime stacks unless an explicit implementation phase justifies them. PyTorch-Wildlife / MegaDetector integration is the selected product-aligned candidate path, but no PyTorch, TensorFlow, OpenCV, Ultralytics, YOLO package, MegaDetector package stack, or BirdNET runtime should be added by selection docs alone.
 
 ## Model File Rules
 
@@ -57,7 +56,7 @@ MockingBird must not:
 - require a model file for app startup
 - hide the configured/unconfigured state from the user
 
-Use environment variables such as `MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH` and optional labels configuration such as `MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH`.
+Use environment variables such as `MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH` and optional labels configuration such as `MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH`. MegaDetector runtime work should use `MOCKINGBIRD_MEGADETECTOR_MODEL_PATH`, optional `MOCKINGBIRD_MEGADETECTOR_LABELS_PATH`, and optional `MOCKINGBIRD_MEGADETECTOR_CONFIDENCE_THRESHOLD`.
 
 ## Supported Media Scope
 

@@ -69,6 +69,9 @@ Every future implementation task must restate:
   `DetectionProposal` evidence until user review/correction.
 - MegaDetector-family integrations must remain evidence-only adapters and must
   not bypass Review Queue or Visit Detail correction.
+- Real MegaDetector runtime work must follow
+  [docs/megadetector-runtime-plan.md](docs/megadetector-runtime-plan.md) and stay
+  optional, lazy-loaded, local, and evidence-only.
 - Keep local-first storage/export assumptions in mind.
 - Respect privacy and ignore zones as first-class product concepts when those features are implemented.
 - Avoid adapter-specific models leaking into core product models.
