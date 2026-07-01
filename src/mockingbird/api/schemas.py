@@ -198,3 +198,24 @@ class ReviewCorrectionResult(BaseModel):
     event: Event | None = None
     review_queue_count: int = Field(ge=0)
     analytics: AnalyticsSummary
+
+
+class EventDetail(BaseModel):
+    event: Event
+    stream: Stream
+    primary_zone: Zone | None = None
+    visits: list[Visit]
+    review_labels: list[ReviewLabel]
+    dataset_ready: bool
+    review_summary: str
+
+
+class VisitDetail(BaseModel):
+    visit: Visit
+    event: Event
+    stream: Stream
+    primary_zone: Zone | None = None
+    detections: list[Detection]
+    review_labels: list[ReviewLabel]
+    dataset_ready: bool
+    review_summary: str

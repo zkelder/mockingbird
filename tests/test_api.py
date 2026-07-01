@@ -279,6 +279,20 @@ def test_event_detail_returns_reviewable_event() -> None:
     assert event["review_status"] == "needs_review"
 
 
+def test_event_detail_route_returns_review_case_file() -> None:
+    response = client.get(f"/api/events/{BIRD_EVENT_ID}/detail")
+
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["event"]["id"] == BIRD_EVENT_ID
+    assert detail["stream"]["id"] == STREAM_ID
+    assert detail["primary_zone"]["id"] == FEEDER_ZONE_ID
+    assert [visit["id"] for visit in detail["visits"]] == [BIRD_VISIT_ID]
+    assert detail["review_labels"] == []
+    assert detail["dataset_ready"] is False
+    assert "Needs review before export" in detail["review_summary"]
+
+
 def test_event_visits_returns_visits_for_event() -> None:
     response = client.get(f"/api/events/{BIRD_EVENT_ID}/visits")
 
@@ -307,6 +321,88 @@ def test_visit_detail_returns_bird_visit() -> None:
     assert visit["id"] == BIRD_VISIT_ID
     assert visit["event_id"] == BIRD_EVENT_ID
     assert visit["review_status"] == "needs_review"
+
+
+def test_visit_detail_route_returns_review_case_file() -> None:
+    response = client.get(f"/api/visits/{BIRD_VISIT_ID}/detail")
+
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["visit"]["id"] == BIRD_VISIT_ID
+    assert detail["event"]["id"] == BIRD_EVENT_ID
+    assert detail["stream"]["id"] == STREAM_ID
+    assert detail["primary_zone"]["id"] == FEEDER_ZONE_ID
+    assert detail["detections"][0]["label"] == "unknown_bird"
+    assert detail["review_labels"] == []
+    assert detail["dataset_ready"] is False
+    assert "Detections are evidence" in detail["review_summary"]
+
+
+def test_unknown_event_and_visit_detail_return_404() -> None:
+    unknown_detail_paths = [
+        "/api/events/event-missing/detail",
+        "/api/visits/visit-missing/detail",
+    ]
+
+    for path in unknown_detail_paths:
+        response = client.get(path)
+        assert response.status_code == 404
+        assert "was not found" in response.json()["detail"]
+
+
+def test_correcting_visit_makes_visit_detail_dataset_ready() -> None:
+    client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "carolina_wren",
+            "notes": "Corrected from detail review.",
+        },
+    )
+
+    response = client.get(f"/api/visits/{BIRD_VISIT_ID}/detail")
+
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["dataset_ready"] is True
+    assert detail["visit"]["reviewed_label"] == "carolina_wren"
+    assert detail["review_labels"][0]["target_id"] == BIRD_VISIT_ID
+    assert "Ready for local dataset export" in detail["review_summary"]
+
+
+def test_correcting_visit_adds_event_detail_correction_history() -> None:
+    client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "northern_cardinal",
+            "notes": "Confirmed from event case file.",
+        },
+    )
+
+    response = client.get(f"/api/events/{BIRD_EVENT_ID}/detail")
+
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["dataset_ready"] is True
+    assert any(
+        label["target_type"] == "visit"
+        and label["target_id"] == BIRD_VISIT_ID
+        and label["label"] == "northern_cardinal"
+        for label in detail["review_labels"]
+    )
+    assert "Ready for local dataset export" in detail["review_summary"]
+
+
+def test_detail_mutations_do_not_leak_between_tests() -> None:
+    response = client.get(f"/api/visits/{BIRD_VISIT_ID}/detail")
+
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["dataset_ready"] is False
+    assert detail["review_labels"] == []
 
 
 def test_review_queue_includes_bird_visit_needing_review() -> None:

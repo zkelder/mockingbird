@@ -10,9 +10,16 @@ interface ReviewQueuePageProps {
     label: string,
     notes: string,
   ) => Promise<ReviewCorrectionResult>;
+  onOpenEvent: (eventId: string) => void;
+  onOpenVisit: (visitId: string) => void;
 }
 
-export function ReviewQueuePage({ items, onCreateCorrection }: ReviewQueuePageProps) {
+export function ReviewQueuePage({
+  items,
+  onCreateCorrection,
+  onOpenEvent,
+  onOpenVisit,
+}: ReviewQueuePageProps) {
   const [drafts, setDrafts] = useState<Record<string, { label: string; notes: string }>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -65,7 +72,18 @@ export function ReviewQueuePage({ items, onCreateCorrection }: ReviewQueuePagePr
                   <span className="meta-text">{formatLabel(item.item_type)}</span>
                   <h2>{item.title}</h2>
                 </div>
-                <StatusPill label={formatLabel(item.review_status)} tone="review" />
+                <div className="detail-actions">
+                  {item.visit_id ? (
+                    <button className="text-action" onClick={() => onOpenVisit(item.visit_id!)}>
+                      Visit detail
+                    </button>
+                  ) : item.event_id ? (
+                    <button className="text-action" onClick={() => onOpenEvent(item.event_id!)}>
+                      Event detail
+                    </button>
+                  ) : null}
+                  <StatusPill label={formatLabel(item.review_status)} tone="review" />
+                </div>
               </div>
               <p>{item.reason}</p>
               <div className="queue-meta">

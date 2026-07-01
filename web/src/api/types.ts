@@ -158,6 +158,27 @@ export interface ReviewCorrectionResult {
   analytics: AnalyticsSummary;
 }
 
+export interface EventDetail {
+  event: Event;
+  stream: Stream;
+  primary_zone?: Zone | null;
+  visits: Visit[];
+  review_labels: ReviewLabel[];
+  dataset_ready: boolean;
+  review_summary: string;
+}
+
+export interface VisitDetail {
+  visit: Visit;
+  event: Event;
+  stream: Stream;
+  primary_zone?: Zone | null;
+  detections: Detection[];
+  review_labels: ReviewLabel[];
+  dataset_ready: boolean;
+  review_summary: string;
+}
+
 export interface DatasetExport {
   id: string;
   name: string;

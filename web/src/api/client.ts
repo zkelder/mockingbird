@@ -3,12 +3,14 @@ import type {
   CameraSource,
   DatasetExport,
   Event,
+  EventDetail,
   HealthStatus,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
   ReviewQueueItem,
   Stream,
   Visit,
+  VisitDetail,
   Zone,
   ZoneCreate,
   ZoneMutationResult,
@@ -60,6 +62,8 @@ export const apiClient = {
   getStreamZones: (streamId: string) => request<Zone[]>(`/api/streams/${streamId}/zones`),
   getStreamEvents: (streamId: string) => request<Event[]>(`/api/streams/${streamId}/events`),
   getEventVisits: (eventId: string) => request<Visit[]>(`/api/events/${eventId}/visits`),
+  getEventDetail: (eventId: string) => request<EventDetail>(`/api/events/${eventId}/detail`),
+  getVisitDetail: (visitId: string) => request<VisitDetail>(`/api/visits/${visitId}/detail`),
   createZone: (payload: ZoneCreate) =>
     request<ZoneMutationResult>("/api/zones", {
       method: "POST",

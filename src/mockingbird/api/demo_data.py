@@ -265,6 +265,55 @@ def visits_for_event(event_id: str) -> list[Visit]:
     return [visit for visit in VISITS if visit.event_id == event_id]
 
 
+def review_labels_for_event(event_id: str) -> list[ReviewLabel]:
+    return [
+        label
+        for label in REVIEW_LABELS
+        if label.target_type == "event" and label.target_id == event_id
+    ]
+
+
+def review_labels_for_visit(visit_id: str) -> list[ReviewLabel]:
+    return [
+        label
+        for label in REVIEW_LABELS
+        if label.target_type == "visit" and label.target_id == visit_id
+    ]
+
+
+def review_labels_for_event_tree(event_id: str) -> list[ReviewLabel]:
+    visit_ids = {visit.id for visit in visits_for_event(event_id)}
+    return [
+        label
+        for label in REVIEW_LABELS
+        if (label.target_type == "event" and label.target_id == event_id)
+        or (label.target_type == "visit" and label.target_id in visit_ids)
+    ]
+
+
+def visit_is_dataset_ready(visit: Visit) -> bool:
+    return visit.review_status == ReviewStatus.reviewed and (
+        visit.reviewed_label is not None
+        or bool(review_labels_for_visit(visit.id))
+        or bool(review_labels_for_event(visit.event_id))
+    )
+
+
+def event_is_dataset_ready(event: Event) -> bool:
+    visits = visits_for_event(event.id)
+    if visits:
+        return all(visit_is_dataset_ready(visit) for visit in visits)
+
+    return event.review_status == ReviewStatus.reviewed and bool(review_labels_for_event(event.id))
+
+
+def review_summary_for_dataset_state(dataset_ready: bool) -> str:
+    if dataset_ready:
+        return "Ready for local dataset export. Corrected label will be used as local dataset truth."
+
+    return "Needs review before export. Detections are evidence, not final truth."
+
+
 def review_queue_items() -> list[ReviewQueueItem]:
     queue: list[ReviewQueueItem] = []
 

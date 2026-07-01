@@ -8,6 +8,8 @@ import { formatDateTime, formatLabel } from "../utils";
 interface StreamDetailPageProps {
   streamId: string;
   reviewQueue: ReviewQueueItem[];
+  onOpenEvent: (eventId: string) => void;
+  onOpenVisit: (visitId: string) => void;
   onOpenReview: () => void;
 }
 
@@ -50,7 +52,13 @@ function rectanglePolygon(start: Point, end: Point): Point[] {
   ];
 }
 
-export function StreamDetailPage({ streamId, reviewQueue, onOpenReview }: StreamDetailPageProps) {
+export function StreamDetailPage({
+  streamId,
+  reviewQueue,
+  onOpenEvent,
+  onOpenVisit,
+  onOpenReview,
+}: StreamDetailPageProps) {
   const [detail, setDetail] = useState<StreamDetailState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -471,10 +479,15 @@ export function StreamDetailPage({ streamId, reviewQueue, onOpenReview }: Stream
               <article className="event-card" key={event.id}>
                 <div className="item-title-row">
                   <h3>{event.title}</h3>
-                  <StatusPill
-                    label={formatLabel(event.review_status)}
-                    tone={event.review_status === "needs_review" ? "review" : "good"}
-                  />
+                  <div className="detail-actions">
+                    <button className="text-action" onClick={() => onOpenEvent(event.id)}>
+                      Event detail
+                    </button>
+                    <StatusPill
+                      label={formatLabel(event.review_status)}
+                      tone={event.review_status === "needs_review" ? "review" : "good"}
+                    />
+                  </div>
                 </div>
                 <span className="meta-text">{formatDateTime(event.started_at)}</span>
                 <span className="meta-text">
@@ -493,9 +506,9 @@ export function StreamDetailPage({ streamId, reviewQueue, onOpenReview }: Stream
                 {visits.length > 0 ? (
                   <div className="visit-strip">
                     {visits.map((visit) => (
-                      <span key={visit.id}>
+                      <button key={visit.id} onClick={() => onOpenVisit(visit.id)}>
                         {formatLabel(visit.reviewed_label ?? visit.species_guess ?? visit.subject_label)}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 ) : null}

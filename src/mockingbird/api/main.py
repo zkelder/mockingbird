@@ -13,6 +13,7 @@ from mockingbird.api.schemas import (
     CameraSource,
     DatasetExport,
     Event,
+    EventDetail,
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -20,6 +21,7 @@ from mockingbird.api.schemas import (
     ReviewStatus,
     Stream,
     Visit,
+    VisitDetail,
     Zone,
     ZoneCreate,
     ZoneMutationResult,
@@ -35,10 +37,15 @@ app = FastAPI(
     ),
 )
 
-# Local Vite origins let the stream-first frontend use the API during development.
+# Local Vite dev origins let the stream-first frontend use the API.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:5174",
+        "http://localhost:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -186,6 +193,34 @@ async def get_event(event_id: str) -> Event:
     return event
 
 
+# Detail routes are review case files: detections are evidence, zones provide
+# context, and review labels are dataset-grade truth for local exports.
+@app.get("/api/events/{event_id}/detail", response_model=EventDetail)
+async def get_event_detail(event_id: str) -> EventDetail:
+    event = demo_data.get_event(event_id)
+    if event is None:
+        raise _not_found("Event", event_id)
+
+    stream = demo_data.get_stream(event.stream_id)
+    if stream is None:
+        raise _not_found("Stream", event.stream_id)
+
+    dataset_ready = demo_data.event_is_dataset_ready(event)
+    return EventDetail(
+        event=event,
+        stream=stream,
+        primary_zone=(
+            demo_data.get_zone(event.primary_zone_id)
+            if event.primary_zone_id is not None
+            else None
+        ),
+        visits=demo_data.visits_for_event(event.id),
+        review_labels=demo_data.review_labels_for_event_tree(event.id),
+        dataset_ready=dataset_ready,
+        review_summary=demo_data.review_summary_for_dataset_state(dataset_ready),
+    )
+
+
 @app.get("/api/events/{event_id}/visits", response_model=list[Visit])
 async def list_event_visits(event_id: str) -> list[Visit]:
     event = demo_data.get_event(event_id)
@@ -205,6 +240,40 @@ async def get_visit(visit_id: str) -> Visit:
     if visit is None:
         raise _not_found("Visit", visit_id)
     return visit
+
+
+@app.get("/api/visits/{visit_id}/detail", response_model=VisitDetail)
+async def get_visit_detail(visit_id: str) -> VisitDetail:
+    visit = demo_data.get_visit(visit_id)
+    if visit is None:
+        raise _not_found("Visit", visit_id)
+
+    event = demo_data.get_event(visit.event_id)
+    if event is None:
+        raise _not_found("Event", visit.event_id)
+
+    stream = demo_data.get_stream(event.stream_id)
+    if stream is None:
+        raise _not_found("Stream", event.stream_id)
+
+    dataset_ready = demo_data.visit_is_dataset_ready(visit)
+    return VisitDetail(
+        visit=visit,
+        event=event,
+        stream=stream,
+        primary_zone=(
+            demo_data.get_zone(event.primary_zone_id)
+            if event.primary_zone_id is not None
+            else None
+        ),
+        detections=event.detections,
+        review_labels=(
+            demo_data.review_labels_for_event(event.id)
+            + demo_data.review_labels_for_visit(visit.id)
+        ),
+        dataset_ready=dataset_ready,
+        review_summary=demo_data.review_summary_for_dataset_state(dataset_ready),
+    )
 
 
 @app.get("/api/review-queue", response_model=list[ReviewQueueItem])

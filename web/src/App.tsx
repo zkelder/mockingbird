@@ -11,12 +11,22 @@ import type {
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { EventDetailPage } from "./pages/EventDetailPage";
 import { ExportsPage } from "./pages/ExportsPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
+import { VisitDetailPage } from "./pages/VisitDetailPage";
 
-type Page = "dashboard" | "streams" | "stream-detail" | "review" | "analytics" | "exports";
+type Page =
+  | "dashboard"
+  | "streams"
+  | "stream-detail"
+  | "event-detail"
+  | "visit-detail"
+  | "review"
+  | "analytics"
+  | "exports";
 
 interface AppData {
   health: HealthStatus | null;
@@ -47,6 +57,8 @@ const navItems: Array<{ page: Page; label: string }> = [
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [selectedStreamId, setSelectedStreamId] = useState<string | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectedVisitId, setSelectedVisitId] = useState<string | null>(null);
   const [data, setData] = useState<AppData>(initialData);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +102,16 @@ export default function App() {
   function openStream(streamId: string) {
     setSelectedStreamId(streamId);
     setPage("stream-detail");
+  }
+
+  function openEvent(eventId: string) {
+    setSelectedEventId(eventId);
+    setPage("event-detail");
+  }
+
+  function openVisit(visitId: string) {
+    setSelectedVisitId(visitId);
+    setPage("visit-detail");
   }
 
   async function createCorrection(
@@ -147,13 +169,44 @@ export default function App() {
         <StreamDetailPage
           streamId={selectedStream.id}
           reviewQueue={data.reviewQueue}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
           onOpenReview={() => setPage("review")}
         />
       );
     }
 
+    if (page === "event-detail" && selectedEventId) {
+      return (
+        <EventDetailPage
+          eventId={selectedEventId}
+          onOpenStream={openStream}
+          onOpenVisit={openVisit}
+          onOpenReview={() => setPage("review")}
+        />
+      );
+    }
+
+    if (page === "visit-detail" && selectedVisitId) {
+      return (
+        <VisitDetailPage
+          visitId={selectedVisitId}
+          onOpenStream={openStream}
+          onOpenEvent={openEvent}
+          onCorrectionSaved={() => loadAppData({ showLoading: false })}
+        />
+      );
+    }
+
     if (page === "review") {
-      return <ReviewQueuePage items={data.reviewQueue} onCreateCorrection={createCorrection} />;
+      return (
+        <ReviewQueuePage
+          items={data.reviewQueue}
+          onCreateCorrection={createCorrection}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
+        />
+      );
     }
 
     if (page === "analytics") {
@@ -189,6 +242,22 @@ export default function App() {
               onClick={() => openStream(selectedStream.id)}
             >
               Stream Detail
+            </button>
+          ) : null}
+          {selectedEventId ? (
+            <button
+              className={page === "event-detail" ? "nav-item active" : "nav-item"}
+              onClick={() => openEvent(selectedEventId)}
+            >
+              Event Detail
+            </button>
+          ) : null}
+          {selectedVisitId ? (
+            <button
+              className={page === "visit-detail" ? "nav-item active" : "nav-item"}
+              onClick={() => openVisit(selectedVisitId)}
+            >
+              Visit Detail
             </button>
           ) : null}
         </nav>
