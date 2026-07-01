@@ -4,6 +4,7 @@ import type {
   DatasetExport,
   DatasetQualitySummary,
   HealthStatus,
+  ModelReadinessSummary,
   ReviewQueueItem,
   Stream,
 } from "../api/types";
@@ -21,6 +22,7 @@ interface DashboardPageProps {
   analytics: AnalyticsSummary | null;
   datasetCoverage: DatasetCoverageSummary | null;
   datasetQuality: DatasetQualitySummary | null;
+  modelReadiness: ModelReadinessSummary | null;
   reviewQueue: ReviewQueueItem[];
   exports: DatasetExport[];
   onOpenStream: (streamId: string) => void;
@@ -37,6 +39,7 @@ export function DashboardPage({
   analytics,
   datasetCoverage,
   datasetQuality,
+  modelReadiness,
   reviewQueue,
   exports,
   onOpenStream,
@@ -154,6 +157,66 @@ export function DashboardPage({
         onOpenReview={onOpenReview}
         variant="compact"
       />
+
+      {modelReadiness ? (
+        <section className="panel model-readiness-panel compact">
+          <div className="section-heading">
+            <div>
+              <h2>Pre-model readiness</h2>
+              <span className="meta-text">{modelReadiness.recommended_next_step}</span>
+            </div>
+            <StatusPill
+              label={
+                modelReadiness.ready_for_first_detector_spike
+                  ? "Ready for first detector spike"
+                  : "Readiness work remains"
+              }
+              tone={modelReadiness.ready_for_first_detector_spike ? "good" : "review"}
+            />
+          </div>
+          <div className="model-readiness-grid">
+            <div>
+              <span className="meta-text">Reviewed / export-ready</span>
+              <strong>
+                {modelReadiness.reviewed_record_count} / {modelReadiness.export_ready_count}
+              </strong>
+            </div>
+            <div>
+              <span className="meta-text">QA issues / high</span>
+              <strong>
+                {modelReadiness.dataset_quality_issue_count} / {modelReadiness.high_quality_issue_count}
+              </strong>
+            </div>
+            <div>
+              <span className="meta-text">Species coverage</span>
+              <strong>
+                {modelReadiness.covered_target_species_count} / {modelReadiness.target_species_count}
+              </strong>
+            </div>
+            <div>
+              <span className="meta-text">Adapter evidence</span>
+              <strong>
+                {modelReadiness.adapter_reviewed_count} / {modelReadiness.adapter_proposal_count}
+              </strong>
+            </div>
+          </div>
+          <p className="meta-text">
+            Evidence stays separate from truth. Corrected labels are dataset truth; this panel does
+            not run ML.
+          </p>
+          <div className="detail-actions">
+            <button className="secondary-action" onClick={onOpenReview}>
+              Review Queue
+            </button>
+            <button className="secondary-action" onClick={onOpenExports}>
+              Dataset Exports
+            </button>
+            <button className="secondary-action" onClick={onOpenModelAdapters}>
+              Model Adapters
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="split-grid">
         <div className="panel">

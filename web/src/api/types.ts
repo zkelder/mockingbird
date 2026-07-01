@@ -258,6 +258,35 @@ export interface AdapterEvaluationSummary {
   local_first_note: string;
 }
 
+export interface ModelReadinessChecklistItem {
+  id: string;
+  label: string;
+  status: string;
+  severity: string;
+  description: string;
+  suggested_action: string;
+  link_path?: string | null;
+}
+
+export interface ModelReadinessSummary {
+  reviewed_record_count: number;
+  export_ready_count: number;
+  dataset_quality_issue_count: number;
+  high_quality_issue_count: number;
+  reviewed_species_count: number;
+  target_species_count: number;
+  covered_target_species_count: number;
+  missing_target_species_count: number;
+  adapter_proposal_count: number;
+  adapter_reviewed_count: number;
+  adapter_match_rate?: number | null;
+  ready_for_first_detector_spike: boolean;
+  recommended_next_step: string;
+  checklist: ModelReadinessChecklistItem[];
+  generated_at: string;
+  local_first_note: string;
+}
+
 export interface DetectionProposal {
   id: string;
   run_id: string;

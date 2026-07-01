@@ -56,6 +56,8 @@ from mockingbird.api.schemas import (
     MediaImportResult,
     ModelAdapter,
     ModelAdapterKind,
+    ModelReadinessChecklistItem,
+    ModelReadinessSummary,
     ModelAdapterRunRequest,
     ModelAdapterRunResult,
     ModelAdapterStatus,
@@ -658,6 +660,57 @@ class ProductRepository:
                     "reviewed non-unknown labels and is not a deployment score."
                 ),
             )
+
+    def model_readiness_summary(self) -> ModelReadinessSummary:
+        coverage = self.dataset_coverage_summary()
+        quality = self.dataset_quality_summary()
+        evaluation = self.model_adapter_evaluation_summary()
+        taxonomy_count = len(self.list_taxonomy_labels())
+        adapters = self.list_model_adapters()
+        adapter_contract_ready = bool(adapters) and all(
+            not adapter.creates_review_truth for adapter in adapters
+        )
+        ready_for_first_detector_spike = (
+            coverage.export_ready_count > 0
+            and quality.high_count == 0
+            and taxonomy_count > 0
+            and adapter_contract_ready
+        )
+
+        return ModelReadinessSummary(
+            reviewed_record_count=coverage.reviewed_record_count,
+            export_ready_count=coverage.export_ready_count,
+            dataset_quality_issue_count=quality.issue_count,
+            high_quality_issue_count=quality.high_count,
+            reviewed_species_count=coverage.reviewed_species_count,
+            target_species_count=coverage.target_species_count,
+            covered_target_species_count=coverage.covered_target_species_count,
+            missing_target_species_count=coverage.missing_target_species_count,
+            adapter_proposal_count=evaluation.proposal_count,
+            adapter_reviewed_count=evaluation.reviewed_count,
+            adapter_match_rate=evaluation.match_rate,
+            ready_for_first_detector_spike=ready_for_first_detector_spike,
+            recommended_next_step=_model_readiness_next_step(
+                coverage=coverage,
+                quality=quality,
+                taxonomy_count=taxonomy_count,
+                adapter_contract_ready=adapter_contract_ready,
+            ),
+            checklist=_model_readiness_checklist(
+                coverage=coverage,
+                quality=quality,
+                evaluation=evaluation,
+                taxonomy_count=taxonomy_count,
+                adapter_contract_ready=adapter_contract_ready,
+            ),
+            generated_at=datetime.now(UTC),
+            local_first_note=(
+                "Pre-model readiness combines reviewed local dataset coverage, QA, "
+                "and adapter evidence guardrails. It does not run ML or inspect media. "
+                "Future detectors must create DetectionProposal evidence and user "
+                "corrections remain dataset truth."
+            ),
+        )
 
     def run_model_adapter(
         self,
@@ -2691,6 +2744,218 @@ def _adapter_evaluation_note(outcome: AdapterEvaluationOutcome) -> str:
     if outcome == AdapterEvaluationOutcome.converted_needs_review:
         return "Proposal has a review case but still needs corrected truth."
     return "Proposal evidence is awaiting conversion and review."
+
+
+def _model_readiness_next_step(
+    *,
+    coverage: DatasetCoverageSummary,
+    quality: DatasetQualitySummary,
+    taxonomy_count: int,
+    adapter_contract_ready: bool,
+) -> str:
+    if coverage.export_ready_count == 0:
+        return "Review and correct local visits/events, then create export-ready dataset records."
+    if quality.high_count > 0:
+        return "Resolve high-priority dataset QA issues before the first detector spike."
+    if taxonomy_count == 0:
+        return "Restore taxonomy labels before future detector work."
+    if not adapter_contract_ready:
+        return "Restore evidence-only adapter guardrails before future detector work."
+    if coverage.covered_target_species_count == 0:
+        return (
+            "Safe next step: try a first detector spike as proposal evidence while "
+            "continuing reviewed species coverage work."
+        )
+    if quality.issue_count > 0:
+        return (
+            "Safe next step: try a first detector spike as proposal evidence while "
+            "continuing dataset QA cleanup."
+        )
+    return (
+        "Ready for first detector spike: keep outputs in DetectionProposal and require "
+        "review corrections before exports or analytics treat labels as truth."
+    )
+
+
+def _model_readiness_checklist(
+    *,
+    coverage: DatasetCoverageSummary,
+    quality: DatasetQualitySummary,
+    evaluation: AdapterEvaluationSummary,
+    taxonomy_count: int,
+    adapter_contract_ready: bool,
+) -> list[ModelReadinessChecklistItem]:
+    checklist: list[ModelReadinessChecklistItem] = []
+
+    def add(
+        *,
+        item_id: str,
+        label: str,
+        status: str,
+        severity: str,
+        description: str,
+        suggested_action: str,
+        link_path: str | None = None,
+    ) -> None:
+        checklist.append(
+            ModelReadinessChecklistItem(
+                id=item_id,
+                label=label,
+                status=status,
+                severity=severity,
+                description=description,
+                suggested_action=suggested_action,
+                link_path=link_path,
+            )
+        )
+
+    add(
+        item_id="reviewed-local-dataset",
+        label="Reviewed local dataset",
+        status="ready" if coverage.reviewed_record_count > 0 else "blocked",
+        severity="low" if coverage.reviewed_record_count > 0 else "high",
+        description=(
+            f"{coverage.reviewed_record_count} reviewed record"
+            f"{'' if coverage.reviewed_record_count == 1 else 's'} are available."
+        ),
+        suggested_action=(
+            "Keep reviewing visits/events so future detector work has local truth."
+            if coverage.reviewed_record_count > 0
+            else "Open the Review Queue and save corrected labels."
+        ),
+        link_path="review",
+    )
+    add(
+        item_id="export-ready-records",
+        label="Export-ready corrected labels",
+        status="ready" if coverage.export_ready_count > 0 else "blocked",
+        severity="low" if coverage.export_ready_count > 0 else "high",
+        description=(
+            f"{coverage.export_ready_count} record"
+            f"{'' if coverage.export_ready_count == 1 else 's'} can export with corrected truth."
+        ),
+        suggested_action=(
+            "Use dataset exports to inspect reviewed labels and detection evidence."
+            if coverage.export_ready_count > 0
+            else "Correct review items until at least one export-ready record exists."
+        ),
+        link_path="exports",
+    )
+    add(
+        item_id="dataset-qa-high-issues",
+        label="Dataset QA high issues",
+        status="ready" if quality.high_count == 0 else "blocked",
+        severity="low" if quality.high_count == 0 else "high",
+        description=(
+            f"{quality.high_count} high-priority QA issue"
+            f"{'' if quality.high_count == 1 else 's'} remain."
+        ),
+        suggested_action=(
+            "Keep high-priority QA clear before detector spikes."
+            if quality.high_count == 0
+            else "Resolve high-priority QA issues in the Review Queue."
+        ),
+        link_path="review",
+    )
+    add(
+        item_id="dataset-qa-cleanup",
+        label="Dataset QA cleanup",
+        status="ready" if quality.issue_count == 0 else "attention",
+        severity="low" if quality.issue_count == 0 else "medium",
+        description=(
+            f"{quality.issue_count} total QA issue"
+            f"{'' if quality.issue_count == 1 else 's'} remain."
+        ),
+        suggested_action=(
+            "QA is clean for the current reviewed local dataset."
+            if quality.issue_count == 0
+            else "Use QA panels to clean unknown, freeform, missing-zone, or conflict items."
+        ),
+        link_path="analytics:dataset-quality",
+    )
+    add(
+        item_id="taxonomy-labels",
+        label="Taxonomy labels present",
+        status="ready" if taxonomy_count > 0 else "blocked",
+        severity="low" if taxonomy_count > 0 else "high",
+        description=f"{taxonomy_count} review label target{'' if taxonomy_count == 1 else 's'} are available.",
+        suggested_action=(
+            "Use taxonomy-backed corrections where possible."
+            if taxonomy_count > 0
+            else "Restore taxonomy labels before detector work."
+        ),
+    )
+
+    if coverage.target_species_count == 0:
+        species_status = "blocked"
+        species_severity = "high"
+    elif coverage.covered_target_species_count == coverage.target_species_count:
+        species_status = "ready"
+        species_severity = "low"
+    else:
+        species_status = "attention"
+        species_severity = "medium"
+    add(
+        item_id="species-coverage",
+        label="Coverage for future model work",
+        status=species_status,
+        severity=species_severity,
+        description=(
+            f"{coverage.covered_target_species_count}/{coverage.target_species_count} "
+            "target species have reviewed records."
+        ),
+        suggested_action=(
+            "Continue reviewing species examples to improve local coverage."
+            if species_status != "ready"
+            else "Keep coverage current as new reviewed observations arrive."
+        ),
+        link_path="analytics:dataset-coverage",
+    )
+    add(
+        item_id="adapter-evidence-contract",
+        label="Adapter outputs stay evidence-only",
+        status="ready" if adapter_contract_ready else "blocked",
+        severity="low" if adapter_contract_ready else "high",
+        description="Model adapters must create proposals and never write review truth.",
+        suggested_action=(
+            "Keep future detector outputs below the review/correction boundary."
+            if adapter_contract_ready
+            else "Fix adapter guardrails before adding detector work."
+        ),
+        link_path="model-adapters",
+    )
+    add(
+        item_id="adapter-evaluation-signal",
+        label="Adapter evidence evaluation",
+        status=(
+            "ready"
+            if evaluation.reviewed_count > 0
+            else "attention"
+            if evaluation.proposal_count > 0
+            else "attention"
+        ),
+        severity="low" if evaluation.reviewed_count > 0 else "medium",
+        description=(
+            f"{evaluation.reviewed_count}/{evaluation.proposal_count} adapter proposal"
+            f"{'' if evaluation.proposal_count == 1 else 's'} have reviewed truth."
+        ),
+        suggested_action=(
+            "Use evidence agreement as a readiness signal, not final truth."
+            if evaluation.reviewed_count > 0
+            else "Create, convert, and correct adapter proposals to build readiness signal."
+        ),
+        link_path="model-adapters:evaluation",
+    )
+    add(
+        item_id="proposal-review-path",
+        label="Detection proposals have review path",
+        status="ready" if adapter_contract_ready else "blocked",
+        severity="low" if adapter_contract_ready else "high",
+        description="Future detectors must normalize into DetectionProposal before visits/events are corrected.",
+        suggested_action="Convert proposal evidence into reviewable visits/events, then correct labels.",
+        link_path="detection-proposals",
+    )
+    return checklist
 
 
 def _taxonomy_label_from_model(label: TaxonomyLabelModel) -> TaxonomyLabel:

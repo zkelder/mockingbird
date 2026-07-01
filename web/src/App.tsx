@@ -7,6 +7,7 @@ import type {
   DatasetExport,
   DatasetQualitySummary,
   HealthStatus,
+  ModelReadinessSummary,
   ReviewCorrectionResult,
   ReviewQueueItem,
   Stream,
@@ -49,6 +50,7 @@ interface AppData {
   analytics: AnalyticsSummary | null;
   datasetCoverage: DatasetCoverageSummary | null;
   datasetQuality: DatasetQualitySummary | null;
+  modelReadiness: ModelReadinessSummary | null;
 }
 
 const initialData: AppData = {
@@ -60,6 +62,7 @@ const initialData: AppData = {
   analytics: null,
   datasetCoverage: null,
   datasetQuality: null,
+  modelReadiness: null,
 };
 
 const navItems: Array<{ page: Page; label: string }> = [
@@ -100,6 +103,7 @@ export default function App() {
         analytics,
         datasetCoverage,
         datasetQuality,
+        modelReadiness,
       ] = await Promise.all([
         apiClient.getHealth(),
         apiClient.getSources(),
@@ -109,6 +113,7 @@ export default function App() {
         apiClient.getAnalyticsSummary(),
         apiClient.getDatasetCoverageSummary(),
         apiClient.getDatasetQualitySummary(),
+        apiClient.getModelReadinessSummary(),
       ]);
 
       setData({
@@ -120,6 +125,7 @@ export default function App() {
         analytics,
         datasetCoverage,
         datasetQuality,
+        modelReadiness,
       });
       setSelectedStreamId((current) => current ?? streams[0]?.id ?? null);
     } catch (caught) {
@@ -203,6 +209,7 @@ export default function App() {
           analytics={data.analytics}
           datasetCoverage={data.datasetCoverage}
           datasetQuality={data.datasetQuality}
+          modelReadiness={data.modelReadiness}
           reviewQueue={data.reviewQueue}
           exports={data.exports}
           onOpenStream={openStream}
@@ -273,7 +280,10 @@ export default function App() {
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
+          onOpenReview={() => setPage("review")}
+          onOpenExports={() => setPage("exports")}
           onProposalChanged={() => loadAppData({ showLoading: false })}
+          modelReadiness={data.modelReadiness}
         />
       );
     }

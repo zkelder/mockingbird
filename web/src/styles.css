@@ -601,9 +601,11 @@ button {
 .adapter-run-form,
 .adapter-result-panel,
 .adapter-evaluation-panel,
+.model-readiness-panel,
 .adapter-list,
 .adapter-proposal-list,
-.adapter-evaluation-list {
+.adapter-evaluation-list,
+.model-readiness-checklist {
   display: grid;
   gap: 12px;
 }
@@ -672,8 +674,15 @@ button {
   gap: 12px;
 }
 
+.model-readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .adapter-result-grid div,
-.adapter-evaluation-grid div {
+.adapter-evaluation-grid div,
+.model-readiness-grid div {
   display: grid;
   gap: 4px;
   border: 1px solid #dce3d8;
@@ -682,12 +691,31 @@ button {
   background: #ffffff;
 }
 
-.adapter-evaluation-grid strong {
+.adapter-evaluation-grid strong,
+.model-readiness-grid strong {
   font-size: 1.25rem;
 }
 
 .adapter-evaluation-item .detail-actions {
   justify-content: flex-end;
+}
+
+.readiness-next-step {
+  background: #f8fbf4;
+}
+
+.readiness-checklist-item {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.readiness-checklist-item p {
+  margin: 0;
+  color: #4f5f55;
 }
 
 .confidence-meter {
@@ -1723,6 +1751,7 @@ button {
   .quality-metric-grid,
   .quality-secondary-grid,
   .adapter-evaluation-grid,
+  .model-readiness-grid,
   .adapter-result-grid,
   .detection-proposal-meta,
   .split-grid,
@@ -1780,6 +1809,7 @@ button {
   .quality-metric-grid,
   .quality-secondary-grid,
   .adapter-evaluation-grid,
+  .model-readiness-grid,
   .adapter-result-grid,
   .detection-proposal-meta,
   .record-meta-grid,

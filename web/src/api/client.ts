@@ -27,6 +27,7 @@ import type {
   MediaAsset,
   MediaImportResult,
   ModelAdapter,
+  ModelReadinessSummary,
   ModelAdapterRunRequest,
   ModelAdapterRunResult,
   ReviewCorrectionCreate,
@@ -161,6 +162,7 @@ export const apiClient = {
       `/api/model-adapters/evaluation${query ? `?${query}` : ""}`,
     );
   },
+  getModelReadinessSummary: () => request<ModelReadinessSummary>("/api/model-readiness/summary"),
   runModelAdapter: (adapterId: string, payload: ModelAdapterRunRequest) =>
     request<ModelAdapterRunResult>(`/api/model-adapters/${encodeURIComponent(adapterId)}/runs`, {
       method: "POST",

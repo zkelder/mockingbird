@@ -37,6 +37,7 @@ from mockingbird.api.schemas import (
     MediaAsset,
     MediaImportResult,
     ModelAdapter,
+    ModelReadinessSummary,
     ModelAdapterRunRequest,
     ModelAdapterRunResult,
     ReviewLabel,
@@ -629,6 +630,11 @@ async def get_model_adapter_evaluation(
         return get_repository().model_adapter_evaluation_summary(adapter_id)
     except ValueError as error:
         raise _model_adapter_error(error) from error
+
+
+@app.get("/api/model-readiness/summary", response_model=ModelReadinessSummary)
+async def get_model_readiness_summary() -> ModelReadinessSummary:
+    return get_repository().model_readiness_summary()
 
 
 @app.get("/api/model-adapters/{adapter_id}", response_model=ModelAdapter)

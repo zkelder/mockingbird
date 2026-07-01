@@ -5,6 +5,8 @@ import type {
   AdapterEvaluationSummary,
   MediaAsset,
   ModelAdapter,
+  ModelReadinessChecklistItem,
+  ModelReadinessSummary,
   ModelAdapterRunResult,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
@@ -18,17 +20,23 @@ import { formatDateTime, formatLabel } from "../utils";
 interface ModelAdaptersPageProps {
   onOpenDetectionProposals: () => void;
   onOpenEvent: (eventId: string) => void;
+  onOpenExports: () => void;
   onOpenImport: () => void;
+  onOpenReview: () => void;
   onOpenVisit: (visitId: string) => void;
   onProposalChanged: () => Promise<void>;
+  modelReadiness: ModelReadinessSummary | null;
 }
 
 export function ModelAdaptersPage({
   onOpenDetectionProposals,
   onOpenEvent,
+  onOpenExports,
   onOpenImport,
+  onOpenReview,
   onOpenVisit,
   onProposalChanged,
+  modelReadiness,
 }: ModelAdaptersPageProps) {
   const [adapters, setAdapters] = useState<ModelAdapter[]>([]);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
@@ -162,6 +170,74 @@ export function ModelAdaptersPage({
           below the product loop until a user converts, reviews, and corrects them.
         </span>
       </section>
+
+      {modelReadiness ? (
+        <section className="panel model-readiness-panel">
+          <div className="section-heading">
+            <div>
+              <h2>Pre-model readiness</h2>
+              <span className="meta-text">
+                {modelReadiness.local_first_note} Generated {formatDateTime(modelReadiness.generated_at)}.
+              </span>
+            </div>
+            <StatusPill
+              label={
+                modelReadiness.ready_for_first_detector_spike
+                  ? "Ready for first detector spike"
+                  : "Readiness work remains"
+              }
+              tone={modelReadiness.ready_for_first_detector_spike ? "good" : "review"}
+            />
+          </div>
+          <div className="model-readiness-grid">
+            <div>
+              <span className="meta-text">Reviewed local dataset</span>
+              <strong>
+                {modelReadiness.reviewed_record_count} reviewed · {modelReadiness.export_ready_count} export-ready
+              </strong>
+            </div>
+            <div>
+              <span className="meta-text">Dataset QA</span>
+              <strong>
+                {modelReadiness.dataset_quality_issue_count} issues · {modelReadiness.high_quality_issue_count} high
+              </strong>
+            </div>
+            <div>
+              <span className="meta-text">Species coverage</span>
+              <strong>
+                {modelReadiness.covered_target_species_count}/{modelReadiness.target_species_count} targets
+              </strong>
+            </div>
+            <div>
+              <span className="meta-text">Adapter evidence</span>
+              <strong>
+                {modelReadiness.adapter_reviewed_count}/{modelReadiness.adapter_proposal_count} reviewed ·{" "}
+                {formatMatchRate(modelReadiness.adapter_match_rate)}
+              </strong>
+            </div>
+          </div>
+          <div className="notice-panel readiness-next-step">
+            <strong>Safe next step</strong>
+            <span>{modelReadiness.recommended_next_step}</span>
+          </div>
+          <div className="model-readiness-checklist">
+            {modelReadiness.checklist.map((item) => (
+              <ReadinessChecklistItem item={item} key={item.id} />
+            ))}
+          </div>
+          <div className="detail-actions">
+            <button className="secondary-action" onClick={onOpenReview}>
+              Review Queue
+            </button>
+            <button className="secondary-action" onClick={onOpenExports}>
+              Dataset Exports
+            </button>
+            <button className="secondary-action" onClick={onOpenDetectionProposals}>
+              Detection Proposals
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {evaluation ? (
         <section className="panel adapter-evaluation-panel">
@@ -380,6 +456,20 @@ export function ModelAdaptersPage({
   );
 }
 
+function ReadinessChecklistItem({ item }: { item: ModelReadinessChecklistItem }) {
+  return (
+    <article className="readiness-checklist-item">
+      <div className="quality-issue-title">
+        <strong>{item.label}</strong>
+        <EvidenceBadge label={formatLabel(item.status)} tone={readinessTone(item)} />
+        <StatusPill label={formatLabel(item.severity)} tone={item.severity === "high" ? "review" : "quiet"} />
+      </div>
+      <p>{item.description}</p>
+      <span className="meta-text">{item.suggested_action}</span>
+    </article>
+  );
+}
+
 function EvaluationItemCard({
   item,
   onOpenDetectionProposals,
@@ -440,4 +530,14 @@ function evaluationTone(item: AdapterEvaluationItem): "quiet" | "review" | "trut
     return "quiet";
   }
   return "review";
+}
+
+function readinessTone(item: ModelReadinessChecklistItem): "quiet" | "review" | "truth" {
+  if (item.status === "ready") {
+    return "truth";
+  }
+  if (item.severity === "high") {
+    return "review";
+  }
+  return "quiet";
 }

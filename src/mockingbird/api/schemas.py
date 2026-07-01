@@ -311,6 +311,36 @@ class AdapterEvaluationSummary(BaseModel):
     local_first_note: str
 
 
+class ModelReadinessChecklistItem(BaseModel):
+    id: str
+    label: str
+    status: str
+    severity: str
+    description: str
+    suggested_action: str
+    link_path: str | None = None
+
+
+class ModelReadinessSummary(BaseModel):
+    # Pre-model readiness is a product guardrail. It does not run media analysis.
+    reviewed_record_count: int = Field(ge=0)
+    export_ready_count: int = Field(ge=0)
+    dataset_quality_issue_count: int = Field(ge=0)
+    high_quality_issue_count: int = Field(ge=0)
+    reviewed_species_count: int = Field(ge=0)
+    target_species_count: int = Field(ge=0)
+    covered_target_species_count: int = Field(ge=0)
+    missing_target_species_count: int = Field(ge=0)
+    adapter_proposal_count: int = Field(ge=0)
+    adapter_reviewed_count: int = Field(ge=0)
+    adapter_match_rate: float | None = Field(default=None, ge=0, le=1)
+    ready_for_first_detector_spike: bool
+    recommended_next_step: str
+    checklist: list[ModelReadinessChecklistItem]
+    generated_at: datetime
+    local_first_note: str
+
+
 class DetectionProposal(BaseModel):
     id: str
     run_id: str
