@@ -1,7 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
-import type { DatasetCoverageSummary, DatasetExport, DatasetExportManifest } from "../api/types";
+import type {
+  DatasetCoverageSummary,
+  DatasetExport,
+  DatasetExportManifest,
+  DatasetQualitySummary,
+} from "../api/types";
 import { DatasetCoveragePanel } from "../components/DatasetCoveragePanel";
+import { DatasetQualityPanel } from "../components/DatasetQualityPanel";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { PageHeader } from "../components/PageHeader";
@@ -11,7 +17,10 @@ import { formatDateTime, formatLabel, sortedEntries } from "../utils";
 interface ExportsPageProps {
   exports: DatasetExport[];
   datasetCoverage: DatasetCoverageSummary | null;
+  datasetQuality: DatasetQualitySummary | null;
   onOpenReview: () => void;
+  onOpenEvent: (eventId: string) => void;
+  onOpenVisit: (visitId: string) => void;
   onOpenDetectionProposals: () => void;
   onExportsChanged: () => Promise<void>;
 }
@@ -25,7 +34,10 @@ function mediaReferenceName(mediaPath: string): string {
 export function ExportsPage({
   exports,
   datasetCoverage,
+  datasetQuality,
   onOpenReview,
+  onOpenEvent,
+  onOpenVisit,
   onOpenDetectionProposals,
   onExportsChanged,
 }: ExportsPageProps) {
@@ -135,6 +147,13 @@ export function ExportsPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
+
+      <DatasetQualityPanel
+        quality={datasetQuality}
+        onOpenEvent={onOpenEvent}
+        onOpenReview={onOpenReview}
+        onOpenVisit={onOpenVisit}
+      />
 
       <DatasetCoveragePanel
         coverage={datasetCoverage}

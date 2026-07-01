@@ -17,6 +17,7 @@ from mockingbird.api.schemas import (
     DatasetExportCreate,
     DatasetExportDetail,
     DatasetExportManifest,
+    DatasetQualitySummary,
     DemoDetectionRunCreate,
     DemoDetectionRunResult,
     DetectionProposal,
@@ -741,6 +742,11 @@ async def get_dataset_export_manifest(export_id: str) -> DatasetExportManifest:
 @app.get("/api/dataset-coverage/summary", response_model=DatasetCoverageSummary)
 async def get_dataset_coverage_summary() -> DatasetCoverageSummary:
     return get_repository().dataset_coverage_summary()
+
+
+@app.get("/api/dataset-quality/summary", response_model=DatasetQualitySummary)
+async def get_dataset_quality_summary() -> DatasetQualitySummary:
+    return get_repository().dataset_quality_summary()
 
 
 @app.get("/api/analytics/summary", response_model=AnalyticsSummary)

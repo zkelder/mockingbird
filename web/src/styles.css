@@ -543,6 +543,60 @@ button {
   align-items: center;
 }
 
+.dataset-quality-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.quality-metric-grid,
+.quality-secondary-grid,
+.quality-issue-list {
+  display: grid;
+  gap: 12px;
+}
+
+.quality-metric-grid,
+.quality-secondary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.quality-metric-grid div,
+.quality-secondary-grid div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.quality-metric-grid strong,
+.quality-secondary-grid strong {
+  font-size: 1.45rem;
+}
+
+.quality-issue-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.quality-issue-card p {
+  margin: 6px 0;
+  color: #5c6a61;
+}
+
+.quality-issue-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .confidence-meter {
   display: grid;
   gap: 6px;
@@ -1573,6 +1627,8 @@ button {
   .species-state-grid,
   .coverage-metric-grid,
   .coverage-columns,
+  .quality-metric-grid,
+  .quality-secondary-grid,
   .detection-proposal-meta,
   .split-grid,
   .folder-import-layout,
@@ -1626,6 +1682,8 @@ button {
   .species-state-grid,
   .coverage-metric-grid,
   .coverage-columns,
+  .quality-metric-grid,
+  .quality-secondary-grid,
   .detection-proposal-meta,
   .record-meta-grid,
   .split-grid,
@@ -1639,5 +1697,9 @@ button {
 
   .stream-scene {
     min-height: 260px;
+  }
+
+  .quality-issue-card {
+    grid-template-columns: 1fr;
   }
 }

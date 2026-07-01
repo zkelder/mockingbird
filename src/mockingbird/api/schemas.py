@@ -404,6 +404,40 @@ class DatasetCoverageSummary(BaseModel):
     local_first_note: str
 
 
+class DatasetQualityIssue(BaseModel):
+    id: str
+    severity: str
+    issue_type: str
+    title: str
+    description: str
+    target_type: str
+    target_id: str
+    event_id: str | None = None
+    visit_id: str | None = None
+    media_asset_id: str | None = None
+    label: str | None = None
+    suggested_action: str
+    link_path: str | None = None
+
+
+class DatasetQualitySummary(BaseModel):
+    issue_count: int = Field(ge=0)
+    high_count: int = Field(ge=0)
+    medium_count: int = Field(ge=0)
+    low_count: int = Field(ge=0)
+    freeform_label_count: int = Field(ge=0)
+    unknown_label_count: int = Field(ge=0)
+    missing_zone_count: int = Field(ge=0)
+    missing_media_count: int = Field(ge=0)
+    conflicting_correction_count: int = Field(ge=0)
+    false_positive_count: int = Field(ge=0)
+    export_ready_count: int = Field(ge=0)
+    needs_review_count: int = Field(ge=0)
+    issues: list[DatasetQualityIssue]
+    generated_at: datetime
+    local_first_note: str
+
+
 class AnalyticsSummary(BaseModel):
     event_count: int = Field(ge=0)
     visit_count: int = Field(ge=0)

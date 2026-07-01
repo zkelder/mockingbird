@@ -2,11 +2,13 @@ import type {
   AnalyticsSummary,
   DatasetCoverageSummary,
   DatasetExport,
+  DatasetQualitySummary,
   HealthStatus,
   ReviewQueueItem,
   Stream,
 } from "../api/types";
 import { DatasetCoveragePanel } from "../components/DatasetCoveragePanel";
+import { DatasetQualityPanel } from "../components/DatasetQualityPanel";
 import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { StatusPill } from "../components/StatusPill";
@@ -18,6 +20,7 @@ interface DashboardPageProps {
   streams: Stream[];
   analytics: AnalyticsSummary | null;
   datasetCoverage: DatasetCoverageSummary | null;
+  datasetQuality: DatasetQualitySummary | null;
   reviewQueue: ReviewQueueItem[];
   exports: DatasetExport[];
   onOpenStream: (streamId: string) => void;
@@ -32,6 +35,7 @@ export function DashboardPage({
   streams,
   analytics,
   datasetCoverage,
+  datasetQuality,
   reviewQueue,
   exports,
   onOpenStream,
@@ -134,6 +138,13 @@ export function DashboardPage({
 
       <DatasetCoveragePanel
         coverage={datasetCoverage}
+        onOpenExports={onOpenExports}
+        onOpenReview={onOpenReview}
+        variant="compact"
+      />
+
+      <DatasetQualityPanel
+        quality={datasetQuality}
         onOpenExports={onOpenExports}
         onOpenReview={onOpenReview}
         variant="compact"

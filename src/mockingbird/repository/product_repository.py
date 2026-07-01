@@ -25,6 +25,8 @@ from mockingbird.api.schemas import (
     DatasetExportDetail,
     DatasetExportManifest,
     DatasetExportRecord,
+    DatasetQualityIssue,
+    DatasetQualitySummary,
     DemoDetectionRunCreate,
     DemoDetectionRunResult,
     Detection,
@@ -1090,6 +1092,10 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._dataset_coverage_summary(session)
 
+    def dataset_quality_summary(self) -> DatasetQualitySummary:
+        with self.session_factory() as session:
+            return self._dataset_quality_summary(session)
+
     def visit_is_dataset_ready(self, visit: Visit) -> bool:
         with self.session_factory() as session:
             return self._visit_is_dataset_ready(session, visit)
@@ -1727,6 +1733,289 @@ class ProductRepository:
             )
 
         return queue
+
+    def _dataset_quality_summary(self, session: Session) -> DatasetQualitySummary:
+        issues: list[DatasetQualityIssue] = []
+        export_ready_count = 0
+        needs_review_count = 0
+
+        def add_issue(
+            *,
+            severity: str,
+            issue_type: str,
+            title: str,
+            description: str,
+            target_type: str,
+            target_id: str,
+            suggested_action: str,
+            event_id: str | None = None,
+            visit_id: str | None = None,
+            media_asset_id: str | None = None,
+            label: str | None = None,
+        ) -> None:
+            issues.append(
+                DatasetQualityIssue(
+                    id=f"quality-{issue_type}-{target_type}-{target_id}",
+                    severity=severity,
+                    issue_type=issue_type,
+                    title=title,
+                    description=description,
+                    target_type=target_type,
+                    target_id=target_id,
+                    event_id=event_id,
+                    visit_id=visit_id,
+                    media_asset_id=media_asset_id,
+                    label=label,
+                    suggested_action=suggested_action,
+                    link_path=f"{target_type}:{target_id}",
+                )
+            )
+
+        def has_conflicting_corrections(labels: list[ReviewLabelModel]) -> bool:
+            normalized_labels = {
+                self._normalize_label_from_session(session, label.label)
+                for label in labels
+            }
+            return len(normalized_labels) > 1
+
+        def add_record_issues(
+            *,
+            target_type: str,
+            target_id: str,
+            event: Event,
+            visit_id: str | None,
+            label: str,
+            has_review_truth: bool,
+            dataset_ready: bool,
+            media_path: str | None,
+            media_asset_id: str | None,
+            review_label_models: list[ReviewLabelModel],
+        ) -> None:
+            nonlocal export_ready_count
+            nonlocal needs_review_count
+
+            normalized_label = self._normalize_label_from_session(session, label)
+            taxonomy_label = self._taxonomy_label_model_for_input(session, normalized_label)
+
+            if dataset_ready:
+                export_ready_count += 1
+            else:
+                needs_review_count += 1
+                add_issue(
+                    severity="high",
+                    issue_type="needs_review",
+                    title="Review needed before export",
+                    description=(
+                        "This record is not export-ready because corrected labels are not "
+                        "available as local dataset truth yet."
+                    ),
+                    target_type=target_type,
+                    target_id=target_id,
+                    event_id=event.id,
+                    visit_id=visit_id,
+                    media_asset_id=media_asset_id,
+                    label=normalized_label,
+                    suggested_action="Open the Review Queue and save a corrected label.",
+                )
+
+            if normalized_label in {"unknown_bird", "unknown_animal"}:
+                add_issue(
+                    severity="medium",
+                    issue_type="unknown_label",
+                    title="Unknown label needing review",
+                    description=(
+                        f"{_display_name_from_label(normalized_label)} is useful as a "
+                        "temporary review label, but should be resolved before clean exports."
+                    ),
+                    target_type=target_type,
+                    target_id=target_id,
+                    event_id=event.id,
+                    visit_id=visit_id,
+                    media_asset_id=media_asset_id,
+                    label=normalized_label,
+                    suggested_action="Resolve the unknown label to a reviewed species or activity label.",
+                )
+
+            if has_review_truth and taxonomy_label is None:
+                add_issue(
+                    severity="low",
+                    issue_type="freeform_label",
+                    title="Freeform label outside taxonomy",
+                    description=(
+                        "This corrected label is allowed, but it is not part of the current "
+                        "taxonomy and may need cleanup before future model work."
+                    ),
+                    target_type=target_type,
+                    target_id=target_id,
+                    event_id=event.id,
+                    visit_id=visit_id,
+                    media_asset_id=media_asset_id,
+                    label=normalized_label,
+                    suggested_action="Review whether this should map to an existing taxonomy label.",
+                )
+
+            if normalized_label == "false_positive":
+                add_issue(
+                    severity="low",
+                    issue_type="false_positive",
+                    title="False positive record",
+                    description=(
+                        "False positives are useful cleanup signals, but they should not be "
+                        "treated as species truth."
+                    ),
+                    target_type=target_type,
+                    target_id=target_id,
+                    event_id=event.id,
+                    visit_id=visit_id,
+                    media_asset_id=media_asset_id,
+                    label=normalized_label,
+                    suggested_action="Keep as cleanup evidence or exclude from species-focused exports.",
+                )
+
+            zone_missing = event.primary_zone_id is None or session.get(ZoneModel, event.primary_zone_id) is None
+            if dataset_ready and zone_missing:
+                add_issue(
+                    severity="medium",
+                    issue_type="missing_zone",
+                    title="Export-ready record missing zone context",
+                    description=(
+                        "This reviewed record can export, but zone context would make the "
+                        "dataset easier to audit and compare."
+                    ),
+                    target_type=target_type,
+                    target_id=target_id,
+                    event_id=event.id,
+                    visit_id=visit_id,
+                    media_asset_id=media_asset_id,
+                    label=normalized_label,
+                    suggested_action="Add or choose zone context for future records when possible.",
+                )
+
+            imported_media_missing = (
+                dataset_ready
+                and media_path is not None
+                and not media_path.startswith("demo://")
+                and media_asset_id is None
+            )
+            if imported_media_missing:
+                add_issue(
+                    severity="medium",
+                    issue_type="missing_media",
+                    title="Reviewed record missing local media reference",
+                    description=(
+                        "This record looks like imported media, but the local media reference "
+                        "is not attached to a media asset."
+                    ),
+                    target_type=target_type,
+                    target_id=target_id,
+                    event_id=event.id,
+                    visit_id=visit_id,
+                    media_asset_id=None,
+                    label=normalized_label,
+                    suggested_action="Recheck the local media reference before relying on this export record.",
+                )
+
+            if has_conflicting_corrections(review_label_models):
+                add_issue(
+                    severity="medium",
+                    issue_type="conflicting_corrections",
+                    title="Conflicting corrections",
+                    description=(
+                        "This target has multiple different correction labels. The latest "
+                        "label is used as truth, but cleanup will make the dataset easier to trust."
+                    ),
+                    target_type=target_type,
+                    target_id=target_id,
+                    event_id=event.id,
+                    visit_id=visit_id,
+                    media_asset_id=media_asset_id,
+                    label=normalized_label,
+                    suggested_action="Review correction history and keep the intended final label.",
+                )
+
+        visits = self._visits_for_eventless_query(session)
+        event_ids_with_visits = {visit.event_id for visit in visits}
+
+        for visit in visits:
+            event_model = session.get(EventModel, visit.event_id)
+            if event_model is None or session.get(StreamModel, event_model.stream_id) is None:
+                continue
+
+            event = self._event_from_model(session, event_model)
+            visit_labels = self._review_label_models_for_visit(session, visit.id)
+            event_labels = self._review_label_models_for_event(session, event.id)
+            label = (
+                visit.reviewed_label
+                or self._latest_label([_review_label_from_model(label) for label in visit_labels])
+                or self._latest_label([_review_label_from_model(label) for label in event_labels])
+                or visit.species_guess
+                or visit.subject_label
+            )
+            media_asset = self._media_asset_for_path_from_session(
+                session,
+                visit.representative_media_path,
+            )
+            add_record_issues(
+                target_type="visit",
+                target_id=visit.id,
+                event=event,
+                visit_id=visit.id,
+                label=label,
+                has_review_truth=bool(visit.reviewed_label or visit_labels or event_labels),
+                dataset_ready=self._visit_is_dataset_ready(session, visit),
+                media_path=visit.representative_media_path,
+                media_asset_id=media_asset.id if media_asset else None,
+                review_label_models=visit_labels,
+            )
+
+        event_models = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
+        for event_model in event_models:
+            if event_model.id in event_ids_with_visits:
+                continue
+            if session.get(StreamModel, event_model.stream_id) is None:
+                continue
+
+            event = self._event_from_model(session, event_model)
+            event_labels = self._review_label_models_for_event(session, event.id)
+            label = self._latest_label([_review_label_from_model(label) for label in event_labels]) or (
+                event.detections[0].label if event.detections else event.event_type
+            )
+            add_record_issues(
+                target_type="event",
+                target_id=event.id,
+                event=event,
+                visit_id=None,
+                label=label,
+                has_review_truth=bool(event_labels),
+                dataset_ready=self._event_is_dataset_ready(session, event),
+                media_path=None,
+                media_asset_id=None,
+                review_label_models=event_labels,
+            )
+
+        severity_counts = Counter(issue.severity for issue in issues)
+        type_counts = Counter(issue.issue_type for issue in issues)
+        return DatasetQualitySummary(
+            issue_count=len(issues),
+            high_count=severity_counts["high"],
+            medium_count=severity_counts["medium"],
+            low_count=severity_counts["low"],
+            freeform_label_count=type_counts["freeform_label"],
+            unknown_label_count=type_counts["unknown_label"],
+            missing_zone_count=type_counts["missing_zone"],
+            missing_media_count=type_counts["missing_media"],
+            conflicting_correction_count=type_counts["conflicting_corrections"],
+            false_positive_count=type_counts["false_positive"],
+            export_ready_count=export_ready_count,
+            needs_review_count=needs_review_count,
+            issues=sorted(issues, key=lambda issue: (issue.severity, issue.issue_type, issue.target_id)),
+            generated_at=datetime.now(UTC),
+            local_first_note=(
+                "Dataset QA uses corrected labels as local dataset truth. Detection and "
+                "proposal labels remain evidence until review; QA highlights cleanup targets "
+                "for exports and coverage for future model work."
+            ),
+        )
 
     def _dataset_coverage_summary(self, session: Session) -> DatasetCoverageSummary:
         coverage: dict[str, _CoverageAccumulator] = {}

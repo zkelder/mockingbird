@@ -6,6 +6,7 @@ import type {
   DatasetExportCreate,
   DatasetExportDetail,
   DatasetExportManifest,
+  DatasetQualitySummary,
   DemoDetectionRunCreate,
   DemoDetectionRunResult,
   DetectionProposal,
@@ -166,6 +167,8 @@ export const apiClient = {
     }),
   getDatasetCoverageSummary: () =>
     request<DatasetCoverageSummary>("/api/dataset-coverage/summary"),
+  getDatasetQualitySummary: () =>
+    request<DatasetQualitySummary>("/api/dataset-quality/summary"),
   getAnalyticsSummary: () => request<AnalyticsSummary>("/api/analytics/summary"),
   getLocalDataStatus: () => request<LocalDataStatus>("/api/settings/local-data"),
   resetDemoData: () =>

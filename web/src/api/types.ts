@@ -450,6 +450,40 @@ export interface DatasetCoverageSummary {
   local_first_note: string;
 }
 
+export interface DatasetQualityIssue {
+  id: string;
+  severity: string;
+  issue_type: string;
+  title: string;
+  description: string;
+  target_type: string;
+  target_id: string;
+  event_id?: string | null;
+  visit_id?: string | null;
+  media_asset_id?: string | null;
+  label?: string | null;
+  suggested_action: string;
+  link_path?: string | null;
+}
+
+export interface DatasetQualitySummary {
+  issue_count: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+  freeform_label_count: number;
+  unknown_label_count: number;
+  missing_zone_count: number;
+  missing_media_count: number;
+  conflicting_correction_count: number;
+  false_positive_count: number;
+  export_ready_count: number;
+  needs_review_count: number;
+  issues: DatasetQualityIssue[];
+  generated_at: string;
+  local_first_note: string;
+}
+
 export interface AnalyticsSummary {
   event_count: number;
   visit_count: number;

@@ -1,5 +1,6 @@
-import type { AnalyticsSummary, DatasetCoverageSummary } from "../api/types";
+import type { AnalyticsSummary, DatasetCoverageSummary, DatasetQualitySummary } from "../api/types";
 import { DatasetCoveragePanel } from "../components/DatasetCoveragePanel";
+import { DatasetQualityPanel } from "../components/DatasetQualityPanel";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
@@ -9,8 +10,11 @@ import { formatLabel, sortedEntries } from "../utils";
 interface AnalyticsPageProps {
   analytics: AnalyticsSummary | null;
   datasetCoverage: DatasetCoverageSummary | null;
+  datasetQuality: DatasetQualitySummary | null;
   onOpenExports: () => void;
   onOpenReview: () => void;
+  onOpenEvent: (eventId: string) => void;
+  onOpenVisit: (visitId: string) => void;
   onOpenDetectionProposals: () => void;
   onOpenStream?: () => void;
 }
@@ -18,8 +22,11 @@ interface AnalyticsPageProps {
 export function AnalyticsPage({
   analytics,
   datasetCoverage,
+  datasetQuality,
   onOpenExports,
   onOpenReview,
+  onOpenEvent,
+  onOpenVisit,
   onOpenDetectionProposals,
   onOpenStream,
 }: AnalyticsPageProps) {
@@ -101,6 +108,13 @@ export function AnalyticsPage({
         coverage={datasetCoverage}
         onOpenExports={onOpenExports}
         onOpenReview={onOpenReview}
+      />
+      <DatasetQualityPanel
+        quality={datasetQuality}
+        onOpenEvent={onOpenEvent}
+        onOpenExports={onOpenExports}
+        onOpenReview={onOpenReview}
+        onOpenVisit={onOpenVisit}
       />
       <section className="panel">
         <div className="section-heading">

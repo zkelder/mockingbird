@@ -5,6 +5,7 @@ import type {
   CameraSource,
   DatasetCoverageSummary,
   DatasetExport,
+  DatasetQualitySummary,
   HealthStatus,
   ReviewCorrectionResult,
   ReviewQueueItem,
@@ -45,6 +46,7 @@ interface AppData {
   exports: DatasetExport[];
   analytics: AnalyticsSummary | null;
   datasetCoverage: DatasetCoverageSummary | null;
+  datasetQuality: DatasetQualitySummary | null;
 }
 
 const initialData: AppData = {
@@ -55,6 +57,7 @@ const initialData: AppData = {
   exports: [],
   analytics: null,
   datasetCoverage: null,
+  datasetQuality: null,
 };
 
 const navItems: Array<{ page: Page; label: string }> = [
@@ -85,7 +88,16 @@ export default function App() {
     }
     setError(null);
     try {
-      const [health, sources, streams, reviewQueue, exports, analytics, datasetCoverage] = await Promise.all([
+      const [
+        health,
+        sources,
+        streams,
+        reviewQueue,
+        exports,
+        analytics,
+        datasetCoverage,
+        datasetQuality,
+      ] = await Promise.all([
         apiClient.getHealth(),
         apiClient.getSources(),
         apiClient.getStreams(),
@@ -93,9 +105,19 @@ export default function App() {
         apiClient.getDatasetExports(),
         apiClient.getAnalyticsSummary(),
         apiClient.getDatasetCoverageSummary(),
+        apiClient.getDatasetQualitySummary(),
       ]);
 
-      setData({ health, sources, streams, reviewQueue, exports, analytics, datasetCoverage });
+      setData({
+        health,
+        sources,
+        streams,
+        reviewQueue,
+        exports,
+        analytics,
+        datasetCoverage,
+        datasetQuality,
+      });
       setSelectedStreamId((current) => current ?? streams[0]?.id ?? null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load MockingBird data.");
@@ -177,6 +199,7 @@ export default function App() {
           streams={data.streams}
           analytics={data.analytics}
           datasetCoverage={data.datasetCoverage}
+          datasetQuality={data.datasetQuality}
           reviewQueue={data.reviewQueue}
           exports={data.exports}
           onOpenStream={openStream}
@@ -294,8 +317,11 @@ export default function App() {
         <AnalyticsPage
           analytics={data.analytics}
           datasetCoverage={data.datasetCoverage}
+          datasetQuality={data.datasetQuality}
           onOpenExports={() => setPage("exports")}
           onOpenReview={() => setPage("review")}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenStream={selectedStream ? () => openStream(selectedStream.id) : undefined}
         />
@@ -307,7 +333,10 @@ export default function App() {
         <ExportsPage
           exports={data.exports}
           datasetCoverage={data.datasetCoverage}
+          datasetQuality={data.datasetQuality}
           onOpenReview={() => setPage("review")}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onExportsChanged={() => loadAppData({ showLoading: false })}
         />
