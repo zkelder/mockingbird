@@ -130,6 +130,14 @@ Likely future phases:
 
 No API, persistence, event creation, media capture, stream sampling, or worker implementation is added in this phase.
 
+## Phase 8D Status
+
+Phase 8D implements the MotionEvidence schema, repository, and narrow API foundation.
+
+Motion Evidence can now be explicitly created as `pending`, listed, viewed by id, and marked `ignored`. Creation and ignore actions do not create Events, Visits, ReviewLabels, DatasetExports, DatasetCoverage, analytics truth, species labels, media files, stream samples, or detector output.
+
+Promotion remains future work.
+
 ## Test Plan For Future Implementation
 
 Future implementation tests should prove:

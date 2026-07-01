@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SourceKind(str, Enum):
@@ -87,6 +87,12 @@ class ModelAdapterStatus(str, Enum):
     not_configured = "not_configured"
     unavailable = "unavailable"
     disabled = "disabled"
+
+
+class MotionEvidenceStatus(str, Enum):
+    pending = "pending"
+    promoted = "promoted"
+    ignored = "ignored"
 
 
 class LabelCategory(str, Enum):
@@ -409,6 +415,74 @@ class MotionExtractCandidatesResponse(BaseModel):
     candidates: list[MotionCandidateResponse]
 
 
+class MotionEvidenceCreateRequest(BaseModel):
+    source_id: str | None = None
+    stream_id: str | None = None
+    zone_id: str
+    start_frame_index: int | None = None
+    end_frame_index: int | None = None
+    best_frame_index: int | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    best_frame_time: str | None = None
+    peak_changed_ratio: float = Field(ge=0, le=1)
+    triggered_frame_count: int = Field(ge=1)
+    scoring_config: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    snapshot_media_asset_id: str | None = None
+    notes: str | None = None
+
+    @model_validator(mode="after")
+    def validate_frame_window(self) -> "MotionEvidenceCreateRequest":
+        if (
+            self.start_frame_index is not None
+            and self.end_frame_index is not None
+            and self.end_frame_index < self.start_frame_index
+        ):
+            raise ValueError("end_frame_index must be greater than or equal to start_frame_index")
+
+        if (
+            self.best_frame_index is not None
+            and self.start_frame_index is not None
+            and self.best_frame_index < self.start_frame_index
+        ):
+            raise ValueError("best_frame_index must be within the frame range")
+
+        if (
+            self.best_frame_index is not None
+            and self.end_frame_index is not None
+            and self.best_frame_index > self.end_frame_index
+        ):
+            raise ValueError("best_frame_index must be within the frame range")
+
+        return self
+
+
+class MotionEvidenceResponse(BaseModel):
+    id: str
+    source_id: str | None
+    stream_id: str | None
+    zone_id: str
+    start_frame_index: int | None
+    end_frame_index: int | None
+    best_frame_index: int | None
+    start_time: str | None
+    end_time: str | None
+    best_frame_time: str | None
+    peak_changed_ratio: float
+    triggered_frame_count: int
+    scoring_config: dict[str, str | int | float | bool]
+    snapshot_media_asset_id: str | None
+    status: MotionEvidenceStatus
+    promoted_event_id: str | None
+    promoted_visit_id: str | None
+    created_at: datetime
+    notes: str | None
+
+
+class MotionEvidenceListResponse(BaseModel):
+    motion_evidence: list[MotionEvidenceResponse]
+
+
 class DetectionProposal(BaseModel):
     id: str
     run_id: str
@@ -657,6 +731,7 @@ class LocalDataStatus(BaseModel):
     media_asset_count: int = Field(ge=0)
     detection_run_count: int = Field(ge=0)
     detection_proposal_count: int = Field(ge=0)
+    motion_evidence_count: int = Field(ge=0)
     review_label_count: int = Field(ge=0)
     dataset_export_count: int = Field(ge=0)
     needs_review_count: int = Field(ge=0)

@@ -30,6 +30,12 @@ Phase 8C defines Motion Evidence as the planned product bridge between debounced
 
 Motion Evidence is not implemented yet. It remains a design checkpoint for local evidence status, promotion rules, noise handling, optional best-frame/media references, and the truth boundary. See [motion-evidence-design.md](motion-evidence-design.md).
 
+## Phase 8D Status
+
+Phase 8D adds the MotionEvidence schema/repository/API foundation.
+
+MotionEvidence can now be explicitly created from candidate output and ignored as noise. Stream sampling, media capture, and promotion to Event/Visit evidence remain deferred.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

@@ -190,12 +190,14 @@ Current work:
 - Phase 8A: deterministic zone-aware motion scoring foundation for supplied grayscale frame planes.
 - Phase 8B: explicit motion evaluation API contract for synthetic/manual frame-plane inputs.
 - Phase 8C: Motion Evidence product design for bridging candidate motion to later Event/Visit evidence.
-- Next likely phase: Phase 8D — MotionEvidence schema/repository foundation.
+- Phase 8D: MotionEvidence schema/repository/API foundation.
+- Next likely phase: Phase 8E — motion-to-event promotion design/API or frame sampler contract.
 
 Validation:
 
 - Motion scoring stays pure and deterministic.
 - Motion evaluation API does not persist data or create product truth.
 - Motion Evidence design preserves pending/promoted/ignored evidence as separate from truth.
+- MotionEvidence creation and ignore actions do not create Event, Visit, ReviewLabel, export, or analytics truth.
 - Stream sampling, media decoding, event/visit creation, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.

@@ -41,6 +41,10 @@ from mockingbird.api.schemas import (
     ModelAdapterRunRequest,
     ModelAdapterRunResult,
     MotionCandidateResponse,
+    MotionEvidenceCreateRequest,
+    MotionEvidenceListResponse,
+    MotionEvidenceResponse,
+    MotionEvidenceStatus,
     MotionEvaluateFrameRequest,
     MotionExtractCandidatesRequest,
     MotionExtractCandidatesResponse,
@@ -365,6 +369,39 @@ def _motion_evaluation_error(error: ValueError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(error))
 
 
+def _motion_evidence_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "missing_source":
+        return _not_found("Source", "motion evidence source")
+    if reason == "missing_stream":
+        return _not_found("Stream", "motion evidence stream")
+    if reason == "missing_zone":
+        return _not_found("Zone", "motion evidence zone")
+    if reason == "missing_media_asset":
+        return _not_found("Media asset", "motion evidence snapshot")
+    if reason == "zone_stream_mismatch":
+        return HTTPException(
+            status_code=400,
+            detail="Motion evidence zone does not belong to the selected stream.",
+        )
+    if reason == "stream_source_mismatch":
+        return HTTPException(
+            status_code=400,
+            detail="Motion evidence stream does not belong to the selected source.",
+        )
+    if reason == "media_stream_mismatch":
+        return HTTPException(
+            status_code=400,
+            detail="Motion evidence snapshot media must belong to the selected stream.",
+        )
+    if reason == "motion_evidence_not_pending":
+        return HTTPException(
+            status_code=400,
+            detail="Only pending Motion Evidence can be ignored.",
+        )
+    return HTTPException(status_code=400, detail="Motion Evidence could not be processed.")
+
+
 def _motion_zone_from_payload(zone: MotionZoneInput) -> MotionZone:
     return MotionZone(
         zone_id=zone.zone_id,
@@ -491,6 +528,50 @@ async def extract_motion_candidate_windows(
     return MotionExtractCandidatesResponse(
         candidates=[_motion_candidate_response(candidate) for candidate in candidates],
     )
+
+
+@app.post("/api/motion/evidence", response_model=MotionEvidenceResponse, status_code=201)
+async def create_motion_evidence(
+    payload: MotionEvidenceCreateRequest,
+) -> MotionEvidenceResponse:
+    # Motion Evidence is local product evidence, not review/export truth.
+    # Creation does not promote events, visits, labels, or species IDs.
+    try:
+        return get_repository().create_motion_evidence(payload)
+    except ValueError as error:
+        raise _motion_evidence_error(error) from error
+
+
+@app.get("/api/motion/evidence", response_model=MotionEvidenceListResponse)
+async def list_motion_evidence(
+    status: MotionEvidenceStatus | None = None,
+    zone_id: str | None = None,
+) -> MotionEvidenceListResponse:
+    return MotionEvidenceListResponse(
+        motion_evidence=get_repository().list_motion_evidence(
+            status=status,
+            zone_id=zone_id,
+        )
+    )
+
+
+@app.get("/api/motion/evidence/{evidence_id}", response_model=MotionEvidenceResponse)
+async def get_motion_evidence(evidence_id: str) -> MotionEvidenceResponse:
+    evidence = get_repository().get_motion_evidence(evidence_id)
+    if evidence is None:
+        raise _not_found("Motion Evidence", evidence_id)
+    return evidence
+
+
+@app.post("/api/motion/evidence/{evidence_id}/ignore", response_model=MotionEvidenceResponse)
+async def ignore_motion_evidence(evidence_id: str) -> MotionEvidenceResponse:
+    try:
+        evidence = get_repository().ignore_motion_evidence(evidence_id)
+    except ValueError as error:
+        raise _motion_evidence_error(error) from error
+    if evidence is None:
+        raise _not_found("Motion Evidence", evidence_id)
+    return evidence
 
 
 @app.get("/api/taxonomy/labels", response_model=list[TaxonomyLabel])

@@ -9,8 +9,9 @@ import json
 from pathlib import Path
 import re
 
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy import Engine, delete, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from mockingbird.api import demo_data
 from mockingbird.detectors.local_image_detector import (
@@ -89,6 +90,9 @@ from mockingbird.api.schemas import (
     ModelAdapterRunRequest,
     ModelAdapterRunResult,
     ModelAdapterStatus,
+    MotionEvidenceCreateRequest,
+    MotionEvidenceResponse,
+    MotionEvidenceStatus,
     Point,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -114,6 +118,7 @@ from mockingbird.storage.database import (
     resolve_database_url,
 )
 from mockingbird.storage.models import (
+    Base,
     CameraSourceModel,
     DatasetExportModel,
     DetectionModel,
@@ -180,6 +185,33 @@ class _CoverageAccumulator:
     last_seen_at: datetime | None = None
 
 
+class MotionEvidenceModel(Base):
+    __tablename__ = "motion_evidence"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey("camera_sources.id"), nullable=True)
+    stream_id: Mapped[str | None] = mapped_column(ForeignKey("streams.id"), nullable=True)
+    zone_id: Mapped[str] = mapped_column(ForeignKey("zones.id"), nullable=False)
+    start_frame_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_frame_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    best_frame_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_time: Mapped[str | None] = mapped_column(String, nullable=True)
+    end_time: Mapped[str | None] = mapped_column(String, nullable=True)
+    best_frame_time: Mapped[str | None] = mapped_column(String, nullable=True)
+    peak_changed_ratio: Mapped[float] = mapped_column(Float, nullable=False)
+    triggered_frame_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    scoring_config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot_media_asset_id: Mapped[str | None] = mapped_column(
+        ForeignKey("media_assets.id"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    promoted_event_id: Mapped[str | None] = mapped_column(ForeignKey("events.id"), nullable=True)
+    promoted_visit_id: Mapped[str | None] = mapped_column(ForeignKey("visits.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class ProductRepository:
     """Persist product-level stream, zone, event, review, and export state.
 
@@ -215,6 +247,7 @@ class ProductRepository:
         with self.session_factory() as session:
             with session.begin():
                 for model in (
+                    MotionEvidenceModel,
                     DetectionProposalModel,
                     DetectionRunModel,
                     MediaAssetModel,
@@ -400,6 +433,7 @@ class ProductRepository:
             media_asset_count=self._count(session, MediaAssetModel),
             detection_run_count=self._count(session, DetectionRunModel),
             detection_proposal_count=self._count(session, DetectionProposalModel),
+            motion_evidence_count=self._count(session, MotionEvidenceModel),
             review_label_count=self._count(session, ReviewLabelModel),
             dataset_export_count=self._count(session, DatasetExportModel),
             needs_review_count=analytics.needs_review_count,
@@ -606,6 +640,100 @@ class ProductRepository:
         if asset is None:
             return None
         return Path(asset.local_path)
+
+    def create_motion_evidence(
+        self,
+        payload: MotionEvidenceCreateRequest,
+    ) -> MotionEvidenceResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                zone_model = session.get(ZoneModel, payload.zone_id)
+                if zone_model is None:
+                    raise ValueError("missing_zone")
+
+                stream_id = payload.stream_id or zone_model.stream_id
+                stream_model = session.get(StreamModel, stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+                if zone_model.stream_id != stream_model.id:
+                    raise ValueError("zone_stream_mismatch")
+
+                source_id = payload.source_id or stream_model.source_id
+                if source_id is not None:
+                    source_model = session.get(CameraSourceModel, source_id)
+                    if source_model is None:
+                        raise ValueError("missing_source")
+                    if stream_model.source_id != source_id:
+                        raise ValueError("stream_source_mismatch")
+
+                if payload.snapshot_media_asset_id is not None:
+                    asset_model = session.get(MediaAssetModel, payload.snapshot_media_asset_id)
+                    if asset_model is None:
+                        raise ValueError("missing_media_asset")
+                    if asset_model.stream_id != stream_model.id:
+                        raise ValueError("media_stream_mismatch")
+
+                evidence_model = MotionEvidenceModel(
+                    id=self._next_id(session, MotionEvidenceModel, "motion-evidence"),
+                    source_id=source_id,
+                    stream_id=stream_model.id,
+                    zone_id=zone_model.id,
+                    start_frame_index=payload.start_frame_index,
+                    end_frame_index=payload.end_frame_index,
+                    best_frame_index=payload.best_frame_index,
+                    start_time=payload.start_time.strip() if payload.start_time else None,
+                    end_time=payload.end_time.strip() if payload.end_time else None,
+                    best_frame_time=(
+                        payload.best_frame_time.strip() if payload.best_frame_time else None
+                    ),
+                    peak_changed_ratio=payload.peak_changed_ratio,
+                    triggered_frame_count=payload.triggered_frame_count,
+                    scoring_config_json=json.dumps(payload.scoring_config, sort_keys=True),
+                    snapshot_media_asset_id=payload.snapshot_media_asset_id,
+                    status=MotionEvidenceStatus.pending.value,
+                    promoted_event_id=None,
+                    promoted_visit_id=None,
+                    created_at=datetime.now(UTC),
+                    notes=payload.notes.strip() if payload.notes and payload.notes.strip() else None,
+                )
+                session.add(evidence_model)
+                session.flush()
+                return _motion_evidence_from_model(evidence_model)
+
+    def list_motion_evidence(
+        self,
+        *,
+        status: MotionEvidenceStatus | None = None,
+        zone_id: str | None = None,
+    ) -> list[MotionEvidenceResponse]:
+        with self.session_factory() as session:
+            query = select(MotionEvidenceModel)
+            if status is not None:
+                query = query.where(MotionEvidenceModel.status == status.value)
+            if zone_id is not None:
+                query = query.where(MotionEvidenceModel.zone_id == zone_id)
+            evidence_models = session.scalars(
+                query.order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
+            ).all()
+            return [_motion_evidence_from_model(evidence) for evidence in evidence_models]
+
+    def get_motion_evidence(self, evidence_id: str) -> MotionEvidenceResponse | None:
+        with self.session_factory() as session:
+            evidence_model = session.get(MotionEvidenceModel, evidence_id)
+            return _motion_evidence_from_model(evidence_model) if evidence_model else None
+
+    def ignore_motion_evidence(self, evidence_id: str) -> MotionEvidenceResponse | None:
+        with self.session_factory() as session:
+            with session.begin():
+                evidence_model = session.get(MotionEvidenceModel, evidence_id)
+                if evidence_model is None:
+                    return None
+                if evidence_model.status != MotionEvidenceStatus.pending.value:
+                    raise ValueError("motion_evidence_not_pending")
+
+                evidence_model.status = MotionEvidenceStatus.ignored.value
+                session.flush()
+                return _motion_evidence_from_model(evidence_model)
 
     def list_model_adapters(self) -> list[ModelAdapter]:
         return [adapter.model_copy(deep=True) for adapter in _model_adapters()]
@@ -3404,6 +3532,30 @@ def _media_asset_from_model(asset: MediaAssetModel) -> MediaAsset:
         file_size_bytes=asset.file_size_bytes,
         created_at=_as_utc(asset.created_at),
         notes=asset.notes,
+    )
+
+
+def _motion_evidence_from_model(evidence: MotionEvidenceModel) -> MotionEvidenceResponse:
+    return MotionEvidenceResponse(
+        id=evidence.id,
+        source_id=evidence.source_id,
+        stream_id=evidence.stream_id,
+        zone_id=evidence.zone_id,
+        start_frame_index=evidence.start_frame_index,
+        end_frame_index=evidence.end_frame_index,
+        best_frame_index=evidence.best_frame_index,
+        start_time=evidence.start_time,
+        end_time=evidence.end_time,
+        best_frame_time=evidence.best_frame_time,
+        peak_changed_ratio=evidence.peak_changed_ratio,
+        triggered_frame_count=evidence.triggered_frame_count,
+        scoring_config=dict(json.loads(evidence.scoring_config_json)),
+        snapshot_media_asset_id=evidence.snapshot_media_asset_id,
+        status=MotionEvidenceStatus(evidence.status),
+        promoted_event_id=evidence.promoted_event_id,
+        promoted_visit_id=evidence.promoted_visit_id,
+        created_at=_as_utc(evidence.created_at),
+        notes=evidence.notes,
     )
 
 

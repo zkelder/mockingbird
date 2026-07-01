@@ -32,6 +32,7 @@ Source adapters feed media into the platform, but the product is not organized a
 
 - Motion/activity detection
 - Motion Evidence between scoring/evaluation and Event/Visit creation
+- Motion Evidence persistence and ignore lifecycle
 - Animal detection
 - Species classification
 - Event grouping

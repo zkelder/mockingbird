@@ -89,7 +89,7 @@ The PyTorch-Wildlife/MegaDetector runtime path is archived as experimental pendi
 
 The current active implementation path is stream/zones/motion-trigger/snapshot evidence/species-suggestion/review truth. See [docs/stream-motion-trigger-plan.md](docs/stream-motion-trigger-plan.md).
 
-Motion Evidence is the planned bridge from motion candidates to later reviewable visits/events; see [docs/motion-evidence-design.md](docs/motion-evidence-design.md).
+Motion Evidence is the bridge from motion candidates to later reviewable visits/events; see [docs/motion-evidence-design.md](docs/motion-evidence-design.md).
 
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md), and the [local setup checklist](docs/megadetector-local-setup.md).
 
