@@ -1,8 +1,11 @@
-import type { AnalyticsSummary } from "../api/types";
+import { useEffect, useState } from "react";
+import { apiClient } from "../api/client";
+import type { AnalyticsSummary, TaxonomyLabel } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
+import { SpeciesCoverageCard } from "../components/SpeciesCoverageCard";
 import { formatLabel, sortedEntries } from "../utils";
 
 interface AnalyticsPageProps {
@@ -20,12 +23,44 @@ export function AnalyticsPage({
   onOpenDetectionProposals,
   onOpenStream,
 }: AnalyticsPageProps) {
+  const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTaxonomy() {
+      try {
+        const labels = await apiClient.getTaxonomyLabels();
+        if (isMounted) {
+          setTaxonomyLabels(labels);
+        }
+      } catch {
+        if (isMounted) {
+          setTaxonomyLabels([]);
+        }
+      }
+    }
+
+    void loadTaxonomy();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   if (!analytics) {
     return <div className="panel">Analytics are unavailable.</div>;
   }
 
   const speciesEntries = sortedEntries(analytics.species_counts);
   const zoneEntries = sortedEntries(analytics.zone_activity_counts);
+  const reviewedSpeciesTotal = speciesEntries.reduce(
+    (total, [label, count]) => (analytics.species_label_ids.includes(label) ? total + count : total),
+    0,
+  );
+  const unknownBirdCount = analytics.species_counts.unknown_bird ?? 0;
+  const unknownAnimalCount = analytics.species_counts.unknown_animal ?? 0;
+  const falsePositiveCount = analytics.species_counts.false_positive ?? 0;
   const categoryCounts = speciesEntries.reduce<Record<string, number>>((counts, [label, count]) => {
     const category = analytics.label_categories[label] ?? "custom";
     counts[category] = (counts[category] ?? 0) + count;
@@ -68,14 +103,30 @@ export function AnalyticsPage({
           detail="activity contexts"
         />
       </section>
+      <section className="metric-grid">
+        <MetricCard
+          label="Reviewed species"
+          value={reviewedSpeciesTotal}
+          detail="corrected bird truth"
+        />
+        <MetricCard label="Unknown birds" value={unknownBirdCount} detail="needs species resolution" />
+        <MetricCard label="Unknown animals" value={unknownAnimalCount} detail="needs label review" />
+        <MetricCard label="False positives" value={falsePositiveCount} detail="reviewed out" />
+      </section>
       <section className="notice-panel">
         <strong>Reviewed imports count here</strong>
         <span>
           Manual media imports become events and visits, then corrected labels roll into these local
-          summaries and dataset manifests. Detection proposals only count here after they become
-          reviewable visits or events and receive corrected labels.
+          summaries and dataset manifests. Corrected species is local dataset truth; detection
+          proposals only count here after they become reviewable visits or events and receive corrected
+          labels.
         </span>
       </section>
+      <SpeciesCoverageCard
+        analytics={analytics}
+        taxonomyLabels={taxonomyLabels}
+        onOpenReview={onOpenReview}
+      />
       <section className="panel">
         <div className="section-heading">
           <h2>Label categories</h2>
@@ -96,7 +147,7 @@ export function AnalyticsPage({
       <section className="split-grid">
         <div className="panel">
           <div className="section-heading">
-            <h2>Species and labels</h2>
+            <h2>Reviewed species and labels</h2>
           </div>
           <div className="bar-list">
             {speciesEntries.length > 0 ? (
@@ -107,7 +158,7 @@ export function AnalyticsPage({
                     {analytics.label_categories[label] ? (
                       <EvidenceBadge
                         label={`${formatLabel(analytics.label_categories[label])}${
-                          analytics.species_label_ids.includes(label) ? " species" : ""
+                          analytics.species_label_ids.includes(label) ? " reviewed species" : ""
                         }`}
                         tone="quiet"
                       />

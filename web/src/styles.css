@@ -448,6 +448,49 @@ button {
   font-weight: 800;
 }
 
+.species-review-panel,
+.species-coverage-card {
+  display: grid;
+  gap: 14px;
+}
+
+.species-state-grid,
+.species-export-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.species-export-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.species-state-grid div,
+.species-export-summary div,
+.species-coverage-summary {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.species-visit-list,
+.species-coverage-list {
+  display: grid;
+  gap: 8px;
+}
+
+.species-coverage-summary {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.species-coverage-summary strong {
+  font-size: 1.5rem;
+}
+
 .confidence-meter {
   display: grid;
   gap: 6px;
@@ -1109,13 +1152,15 @@ button {
   align-content: start;
 }
 
-.proposal-status-tabs {
+.proposal-status-tabs,
+.review-filter-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.proposal-status-tabs button {
+.proposal-status-tabs button,
+.review-filter-tabs button {
   display: inline-flex;
   min-height: 38px;
   align-items: center;
@@ -1128,12 +1173,14 @@ button {
   font-weight: 800;
 }
 
-.proposal-status-tabs button.selected {
+.proposal-status-tabs button.selected,
+.review-filter-tabs button.selected {
   border-color: #50735d;
   background: #e7efe5;
 }
 
-.proposal-status-tabs span {
+.proposal-status-tabs span,
+.review-filter-tabs span {
   min-width: 24px;
   border-radius: 999px;
   padding: 2px 7px;
@@ -1470,6 +1517,8 @@ button {
   .metric-grid,
   .case-summary-grid,
   .manifest-summary,
+  .species-export-summary,
+  .species-state-grid,
   .detection-proposal-meta,
   .split-grid,
   .folder-import-layout,
@@ -1519,6 +1568,8 @@ button {
   .metric-grid,
   .case-summary-grid,
   .manifest-summary,
+  .species-export-summary,
+  .species-state-grid,
   .detection-proposal-meta,
   .record-meta-grid,
   .split-grid,

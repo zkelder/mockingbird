@@ -6,7 +6,8 @@ import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEv
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
-import { displayTaxonomyLabel } from "../components/taxonomy";
+import { TaxonomyBadge } from "../components/TaxonomyBadge";
+import { displayTaxonomyLabel, findTaxonomyLabel, isBirdReviewLabel } from "../components/taxonomy";
 import { formatDateTime, formatLabel } from "../utils";
 
 interface EventDetailPageProps {
@@ -92,6 +93,16 @@ export function EventDetailPage({
   }
 
   const runById = new Map(detail.detection_runs.map((run) => [run.id, run]));
+  const speciesVisits = detail.visits.filter(
+    (visit) =>
+      isBirdReviewLabel(visit.reviewed_label, taxonomyLabels) ||
+      isBirdReviewLabel(visit.species_guess, taxonomyLabels) ||
+      isBirdReviewLabel(visit.subject_label, taxonomyLabels),
+  );
+  const visitsNeedingSpeciesReview = speciesVisits.filter(
+    (visit) => visit.review_status === "needs_review" || !visit.reviewed_label,
+  );
+  const reviewedSpeciesVisits = speciesVisits.filter((visit) => visit.reviewed_label);
 
   return (
     <div className="page-stack">
@@ -144,6 +155,58 @@ export function EventDetailPage({
             <span className="meta-text">Local import reference</span>
           </div>
         ) : null}
+      </section>
+
+      <section className="panel species-review-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Species review context</h2>
+            <span className="meta-text">
+              Bird visits stay reviewable until a corrected species or label becomes local dataset truth.
+            </span>
+          </div>
+          <EvidenceBadge
+            label={`${visitsNeedingSpeciesReview.length} needing species review`}
+            tone={visitsNeedingSpeciesReview.length > 0 ? "review" : "truth"}
+          />
+        </div>
+        <div className="species-state-grid">
+          <div>
+            <span className="meta-text">Bird/species visits</span>
+            <strong>{speciesVisits.length}</strong>
+          </div>
+          <div>
+            <span className="meta-text">Reviewed species</span>
+            <strong>{reviewedSpeciesVisits.length}</strong>
+          </div>
+          <div>
+            <span className="meta-text">Dataset export</span>
+            <strong>
+              {detail.dataset_ready ? "Ready for species dataset export" : "Resolve species first"}
+            </strong>
+          </div>
+        </div>
+        {speciesVisits.length > 0 ? (
+          <div className="species-visit-list">
+            {speciesVisits.map((visit) => {
+              const visitLabel = visit.reviewed_label ?? visit.species_guess ?? visit.subject_label;
+              return (
+                <button
+                  className="detail-link-card"
+                  key={visit.id}
+                  onClick={() => onOpenVisit(visit.id)}
+                  type="button"
+                >
+                  <span>{displayTaxonomyLabel(visitLabel, taxonomyLabels)}</span>
+                  <TaxonomyBadge label={findTaxonomyLabel(visitLabel, taxonomyLabels)} value={visitLabel} />
+                  <strong>{visit.reviewed_label ? "Reviewed species" : "Resolve species"}</strong>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <span className="meta-text">No bird species visits are attached to this event.</span>
+        )}
       </section>
 
       {detail.media_asset ? (

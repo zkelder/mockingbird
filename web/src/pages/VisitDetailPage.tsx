@@ -7,7 +7,8 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
 import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
-import { displayTaxonomyLabel } from "../components/taxonomy";
+import { TaxonomyBadge } from "../components/TaxonomyBadge";
+import { displayTaxonomyLabel, findTaxonomyLabel, isBirdReviewLabel } from "../components/taxonomy";
 import { formatDateTime, formatLabel } from "../utils";
 
 interface VisitDetailPageProps {
@@ -133,6 +134,13 @@ export function VisitDetailPage({
 
   const visitLabel = detail.visit.reviewed_label ?? detail.visit.species_guess ?? detail.visit.subject_label;
   const runById = new Map(detail.detection_runs.map((run) => [run.id, run]));
+  const subjectTaxonomy = findTaxonomyLabel(detail.visit.subject_label, taxonomyLabels);
+  const speciesGuessTaxonomy = findTaxonomyLabel(detail.visit.species_guess, taxonomyLabels);
+  const reviewedTaxonomy = findTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels);
+  const isSpeciesVisit =
+    isBirdReviewLabel(detail.visit.reviewed_label, taxonomyLabels) ||
+    isBirdReviewLabel(detail.visit.species_guess, taxonomyLabels) ||
+    isBirdReviewLabel(detail.visit.subject_label, taxonomyLabels);
 
   return (
     <div className="page-stack">
@@ -147,7 +155,15 @@ export function VisitDetailPage({
           <p>{detail.review_summary}</p>
         </div>
         <StatusPill
-          label={detail.dataset_ready ? "Ready for local dataset export" : "Needs review before export"}
+          label={
+            detail.dataset_ready && isSpeciesVisit
+              ? "Ready for species dataset export"
+              : detail.dataset_ready
+                ? "Ready for local dataset export"
+                : isSpeciesVisit
+                  ? "Resolve species before export"
+                  : "Needs review before export"
+          }
           tone={detail.dataset_ready ? "good" : "review"}
         />
       </div>
@@ -158,6 +174,7 @@ export function VisitDetailPage({
         <div className="panel case-summary-card">
           <span className="meta-text">Subject</span>
           <strong>{displayTaxonomyLabel(detail.visit.subject_label, taxonomyLabels)}</strong>
+          <TaxonomyBadge label={subjectTaxonomy} value={detail.visit.subject_label} />
           {detail.visit.confidence ? (
             <span className="meta-text">{Math.round(detail.visit.confidence * 100)}% confidence</span>
           ) : null}
@@ -197,6 +214,56 @@ export function VisitDetailPage({
             <span className="meta-text">Local import reference</span>
           </div>
         ) : null}
+      </section>
+
+      <section className="panel species-review-panel">
+        <div className="section-heading">
+          <div>
+            <h2>{isSpeciesVisit ? "Species review" : "Review correction"}</h2>
+            <span className="meta-text">
+              Detection evidence is only a suggestion. Corrected species is local dataset truth.
+            </span>
+          </div>
+          <EvidenceBadge
+            label={detail.dataset_ready && isSpeciesVisit ? "Ready for species dataset export" : "Resolve species"}
+            tone={detail.dataset_ready ? "truth" : "review"}
+          />
+        </div>
+        <div className="species-state-grid">
+          <div>
+            <span className="meta-text">{isSpeciesVisit ? "Reviewed species" : "Reviewed label"}</span>
+            <strong>
+              {detail.visit.reviewed_label
+                ? displayTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels)
+                : "Not reviewed"}
+            </strong>
+            <TaxonomyBadge label={reviewedTaxonomy} value={detail.visit.reviewed_label} />
+          </div>
+          <div>
+            <span className="meta-text">Species guess</span>
+            <strong>
+              {detail.visit.species_guess
+                ? displayTaxonomyLabel(detail.visit.species_guess, taxonomyLabels)
+                : "No species suggestion"}
+            </strong>
+            <TaxonomyBadge label={speciesGuessTaxonomy} value={detail.visit.species_guess ?? "unknown_bird"} />
+          </div>
+          <div>
+            <span className="meta-text">Dataset export</span>
+            <strong>
+              {detail.dataset_ready
+                ? isSpeciesVisit
+                  ? "Ready for species dataset export"
+                  : "Ready for local dataset export"
+                : isSpeciesVisit
+                  ? "Resolve species"
+                  : "Needs review"}
+            </strong>
+            <span className="meta-text">
+              {detail.dataset_ready ? "Corrected truth is available." : "Save a correction before export."}
+            </span>
+          </div>
+        </div>
       </section>
 
       {detail.media_asset ? (
@@ -295,11 +362,24 @@ export function VisitDetailPage({
       {detail.visit.review_status === "needs_review" ? (
         <section className="panel">
           <div className="section-heading">
-            <h2>Correct visit label</h2>
+            <h2>{isSpeciesVisit ? "Resolve species" : "Correct visit label"}</h2>
             <EvidenceBadge label="Dataset truth" tone="truth" />
           </div>
+          <p className="evidence-panel-copy">
+            {isSpeciesVisit
+              ? "Use reviewed species, Unknown bird, or False positive. This value becomes dataset truth for analytics and exports."
+              : "Use the reviewed label that should become dataset truth for analytics and exports."}
+          </p>
           <form className="correction-form" onSubmit={saveCorrection}>
-            <TaxonomyLabelInput labels={taxonomyLabels} value={label} onChange={setLabel} />
+            <TaxonomyLabelInput
+              label={isSpeciesVisit ? "Species correction" : "Corrected label"}
+              labels={taxonomyLabels}
+              value={label}
+              onChange={setLabel}
+              placeholder={
+                isSpeciesVisit ? "reviewed species, unknown_bird, or false_positive" : "confirmed label"
+              }
+            />
             <label>
               Notes
               <textarea
@@ -309,7 +389,7 @@ export function VisitDetailPage({
               />
             </label>
             <button className="primary-action" disabled={isSaving} type="submit">
-              {isSaving ? "Saving..." : "Save correction"}
+              {isSaving ? "Saving..." : isSpeciesVisit ? "Resolve species" : "Save correction"}
             </button>
           </form>
           <button className="secondary-action" onClick={onOpenExports}>

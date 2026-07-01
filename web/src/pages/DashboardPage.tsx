@@ -8,6 +8,7 @@ import type {
 import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { StatusPill } from "../components/StatusPill";
+import { taxonomyKey } from "../components/taxonomy";
 import { formatLabel, sortedEntries } from "../utils";
 
 interface DashboardPageProps {
@@ -43,6 +44,18 @@ export function DashboardPage({
     (total, datasetExport) => total + datasetExport.record_count,
     0,
   );
+  const reviewedSpeciesCount = analytics
+    ? Object.entries(analytics.species_counts).reduce(
+        (total, [label, count]) => (analytics.species_label_ids.includes(label) ? total + count : total),
+        0,
+      )
+    : 0;
+  const unknownBirdCount = analytics?.species_counts.unknown_bird ?? 0;
+  const unknownAnimalCount = analytics?.species_counts.unknown_animal ?? 0;
+  const birdSpeciesReviewCount = reviewQueue.filter((item) => {
+    const label = taxonomyKey(item.suggested_label ?? "");
+    return label === "bird" || label === "unknown_bird" || Boolean(analytics?.species_label_ids.includes(label));
+  }).length;
 
   return (
     <div className="page-stack">
@@ -99,6 +112,33 @@ export function DashboardPage({
           value={`${analytics?.event_count ?? 0}/${analytics?.visit_count ?? 0}`}
           detail="activity cases / animal visits"
         />
+      </section>
+
+      <section className="metric-grid">
+        <MetricCard
+          label="Bird/species review"
+          value={birdSpeciesReviewCount}
+          detail="items to resolve"
+        />
+        <MetricCard label="Reviewed species" value={reviewedSpeciesCount} detail="local truth" />
+        <MetricCard label="Unknown birds" value={unknownBirdCount} detail="needs species detail" />
+        <MetricCard label="Unknown animals" value={unknownAnimalCount} detail="needs label review" />
+      </section>
+
+      <section className="notice-panel">
+        <strong>Resolve species before export</strong>
+        <span>
+          Unknown bird visits stay in review until corrected species or labels become dataset truth
+          for analytics and exports.
+        </span>
+        <div className="detail-actions">
+          <button className="secondary-action" onClick={onOpenReview}>
+            Open Review Queue
+          </button>
+          <button className="secondary-action" onClick={onOpenExports}>
+            Open Dataset Exports
+          </button>
+        </div>
       </section>
 
       <section className="split-grid">

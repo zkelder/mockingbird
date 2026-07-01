@@ -19,7 +19,8 @@ import { PageHeader } from "../components/PageHeader";
 import { ProposalStatusBadge } from "../components/ProposalStatusBadge";
 import { StatusPill } from "../components/StatusPill";
 import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
-import { displayTaxonomyLabel } from "../components/taxonomy";
+import { TaxonomyBadge } from "../components/TaxonomyBadge";
+import { displayTaxonomyLabel, findTaxonomyLabel } from "../components/taxonomy";
 import { formatDateTime, formatLabel } from "../utils";
 
 type ProposalFilter = "all" | DetectionProposalStatus;
@@ -93,6 +94,15 @@ export function DetectionProposalsPage({
   const selectedStream = selectedMedia ? streamById.get(selectedMedia.stream_id) ?? null : null;
   const selectedSourceName = selectedStream ? sourceNames.get(selectedStream.source_id) : null;
   const selectedZones = selectedMedia ? zonesByStream[selectedMedia.stream_id] ?? [] : [];
+  const speciesSuggestionLabels = useMemo(() => {
+    const labels = taxonomyLabels.filter(
+      (taxonomyLabel) =>
+        taxonomyLabel.category === "bird" ||
+        taxonomyLabel.label === "unknown_bird" ||
+        taxonomyLabel.label === "false_positive",
+    );
+    return labels.length > 0 ? labels : taxonomyLabels;
+  }, [taxonomyLabels]);
 
   async function loadPageData(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
@@ -426,12 +436,15 @@ export function DetectionProposalsPage({
           />
           <TaxonomyLabelInput
             intent="evidence"
-            label="Suggested species"
-            labels={taxonomyLabels}
+            label="Suggested species (evidence only)"
+            labels={speciesSuggestionLabels}
             onChange={setSuggestedSpecies}
             placeholder="optional species guess"
             value={suggestedSpecies}
           />
+          <span className="field-helper">
+            Species guess is optional evidence; reviewed species is set later in the visit review.
+          </span>
           <label>
             Notes
             <textarea
@@ -508,13 +521,20 @@ export function DetectionProposalsPage({
                       <strong>{formatLabel(proposal.suggested_event_type)}</strong>
                     </div>
                     <div className="data-row">
-                      <span>Suggested subject/species</span>
+                      <span>Suggested species (evidence)</span>
                       <strong>
                         {displayTaxonomyLabel(
                           proposal.suggested_species ?? proposal.suggested_subject_label,
                           taxonomyLabels,
                         )}
                       </strong>
+                      <TaxonomyBadge
+                        label={findTaxonomyLabel(
+                          proposal.suggested_species ?? proposal.suggested_subject_label,
+                          taxonomyLabels,
+                        )}
+                        value={proposal.suggested_species ?? proposal.suggested_subject_label}
+                      />
                     </div>
                   </div>
                   {proposal.notes ? <p>{proposal.notes}</p> : null}

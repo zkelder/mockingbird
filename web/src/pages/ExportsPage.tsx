@@ -37,6 +37,10 @@ export function ExportsPage({
   const [isLoadingManifest, setIsLoadingManifest] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const speciesRecordCount = manifest?.records.filter((record) => record.is_species).length ?? 0;
+  const unknownBirdRecordCount =
+    manifest?.records.filter((record) => record.label === "unknown_bird").length ?? 0;
+  const skippedNeedsReviewCount = manifest?.skipped_reasons.needs_review ?? 0;
 
   useEffect(() => {
     setLocalExports(exports);
@@ -113,7 +117,7 @@ export function ExportsPage({
       <PageHeader
         eyebrow="Local dataset output"
         title="Dataset Exports"
-        description="Generate local reviewed datasets from corrected events and visits. Detections stay attached as evidence, not final truth."
+        description="Generate local reviewed datasets from corrected events and visits. Corrected taxonomy labels export as truth; detections stay attached as evidence."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenReview}>
@@ -236,6 +240,25 @@ export function ExportsPage({
               </div>
             </div>
 
+            <div className="species-export-summary">
+              <div>
+                <span className="meta-text">Reviewed species labels</span>
+                <strong>{speciesRecordCount}</strong>
+              </div>
+              <div>
+                <span className="meta-text">Unknown bird records</span>
+                <strong>{unknownBirdRecordCount}</strong>
+              </div>
+              <div>
+                <span className="meta-text">Skipped needs review</span>
+                <strong>{skippedNeedsReviewCount}</strong>
+              </div>
+              <div>
+                <span className="meta-text">Dataset truth</span>
+                <strong>Corrected taxonomy labels</strong>
+              </div>
+            </div>
+
             {manifest.skipped_count > 0 ? (
               <div className="notice-panel">
                 <strong>Skipped because it still needs review</strong>
@@ -267,6 +290,12 @@ export function ExportsPage({
                     </div>
                     <div className="record-status-stack">
                       <EvidenceBadge label="Corrected label is truth" tone="truth" />
+                      {record.is_species ? (
+                        <EvidenceBadge label="Reviewed species truth" tone="truth" />
+                      ) : null}
+                      {record.label === "unknown_bird" ? (
+                        <EvidenceBadge label="Unknown bird record" tone="review" />
+                      ) : null}
                       {record.label_category ? (
                         <EvidenceBadge
                           label={`${formatLabel(record.label_category)}${
