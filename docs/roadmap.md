@@ -165,7 +165,9 @@ Current guardrail work:
 - Phase 7E: MegaDetector-family detector decision record.
 - Phase 7F: MegaDetector adapter wrapper and unavailable-safe runtime path.
 - Phase 7G: MegaDetector runtime selection and dependency plan.
-- Next likely phase: Phase 7H — optional MegaDetector dependency/runtime integration spike.
+- Phase 7H: optional MegaDetector dependency/runtime integration boundary.
+- Phase 7I: MegaDetector local runtime setup checklist.
+- Next likely phase: Phase 7J — local MegaDetector runtime smoke test.
 
 Validation:
 
@@ -173,3 +175,4 @@ Validation:
 - User corrections remain dataset truth.
 - Adapter evaluation and rollback stay local, reviewable, and safe.
 - Real MegaDetector runtime work follows [megadetector-runtime-plan.md](megadetector-runtime-plan.md) before dependencies or inference behavior are added.
+- Local MegaDetector setup follows [megadetector-local-setup.md](megadetector-local-setup.md) before any smoke test.

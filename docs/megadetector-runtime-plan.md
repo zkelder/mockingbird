@@ -10,6 +10,8 @@ ONNX is not the first implementation path unless MockingBird already has a local
 
 Phase 7H adds the optional dependency boundary and lazy execution seam. It still does not add production inference, model files, or automatic downloads.
 
+Before any local runtime smoke test, follow [megadetector-local-setup.md](megadetector-local-setup.md) to keep model files ignored and outputs evidence-only.
+
 ## Why This Runtime Path
 
 MegaDetector-family detection is product-aligned because it can produce animal, person, and vehicle evidence for outdoor activity review.

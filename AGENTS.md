@@ -72,6 +72,9 @@ Every future implementation task must restate:
 - Real MegaDetector runtime work must follow
   [docs/megadetector-runtime-plan.md](docs/megadetector-runtime-plan.md) and stay
   optional, lazy-loaded, local, and evidence-only.
+- Local MegaDetector setup must follow
+  [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
+  artifacts must never be committed.
 - Keep local-first storage/export assumptions in mind.
 - Respect privacy and ignore zones as first-class product concepts when those features are implemented.
 - Avoid adapter-specific models leaking into core product models.
