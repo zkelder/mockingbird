@@ -14,6 +14,7 @@ from mockingbird.api.schemas import (
     DatasetExportManifest,
     Event,
     EventDetail,
+    LocalDataStatus,
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -368,3 +369,15 @@ async def get_dataset_export_manifest(export_id: str) -> DatasetExportManifest:
 @app.get("/api/analytics/summary", response_model=AnalyticsSummary)
 async def get_analytics_summary() -> AnalyticsSummary:
     return get_repository().analytics_summary()
+
+
+@app.get("/api/settings/local-data", response_model=LocalDataStatus)
+async def get_local_data_status() -> LocalDataStatus:
+    return get_repository().local_data_status()
+
+
+@app.post("/api/settings/reset-demo-data", response_model=LocalDataStatus)
+async def reset_demo_data() -> LocalDataStatus:
+    # Local demo reset clears product metadata only; real media storage is not
+    # part of this phase and no files outside the configured DB are touched.
+    return get_repository().reset_demo_data()

@@ -8,6 +8,7 @@ import type {
   Event,
   EventDetail,
   HealthStatus,
+  LocalDataStatus,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
   ReviewQueueItem,
@@ -89,6 +90,11 @@ export const apiClient = {
       body: JSON.stringify(payload),
     }),
   getAnalyticsSummary: () => request<AnalyticsSummary>("/api/analytics/summary"),
+  getLocalDataStatus: () => request<LocalDataStatus>("/api/settings/local-data"),
+  resetDemoData: () =>
+    request<LocalDataStatus>("/api/settings/reset-demo-data", {
+      method: "POST",
+    }),
   createReviewLabel: (payload: ReviewCorrectionCreate) =>
     request<ReviewCorrectionResult>("/api/review-labels", {
       method: "POST",

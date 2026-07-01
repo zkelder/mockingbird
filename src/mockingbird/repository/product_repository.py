@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import UTC, datetime
 import json
 
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from mockingbird.api import demo_data
@@ -22,6 +22,7 @@ from mockingbird.api.schemas import (
     Detection,
     Event,
     ExportStatus,
+    LocalDataStatus,
     Point,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -38,9 +39,11 @@ from mockingbird.api.schemas import (
     ZoneUpdate,
 )
 from mockingbird.storage.database import (
+    DEFAULT_DB_URL,
     create_database_engine,
     create_session_factory,
     initialize_database,
+    resolve_database_url,
 )
 from mockingbird.storage.models import (
     CameraSourceModel,
@@ -62,7 +65,8 @@ class ProductRepository:
     """
 
     def __init__(self, db_url: str | None = None, engine: Engine | None = None) -> None:
-        self.engine = engine or create_database_engine(db_url)
+        self.db_url = resolve_database_url(db_url)
+        self.engine = engine or create_database_engine(self.db_url)
         initialize_database(self.engine)
         self.session_factory = create_session_factory(self.engine)
         self.seed_if_empty()
@@ -73,126 +77,177 @@ class ProductRepository:
                 source_count = session.scalar(select(func.count(CameraSourceModel.id))) or 0
                 if source_count > 0:
                     return
+                self._seed_session(session)
 
-                (
-                    sources,
-                    streams,
-                    zones,
-                    events,
-                    visits,
-                    review_labels,
-                    dataset_exports,
-                ) = demo_data.seed_product_data()
+    def reset_demo_data(self) -> LocalDataStatus:
+        # This clears local product metadata and reseeds demo state. It does not
+        # delete media files or touch anything outside the configured database.
+        with self.session_factory() as session:
+            with session.begin():
+                for model in (
+                    DetectionModel,
+                    VisitModel,
+                    ReviewLabelModel,
+                    DatasetExportModel,
+                    EventModel,
+                    ZoneModel,
+                    StreamModel,
+                    CameraSourceModel,
+                ):
+                    session.execute(delete(model))
+                self._seed_session(session)
+            return self._local_data_status(session)
 
-                session.add_all(
-                    [
-                        CameraSourceModel(
-                            id=source.id,
-                            name=source.name,
-                            kind=source.kind.value,
-                            status=source.status.value,
-                            description=source.description,
-                        )
-                        for source in sources
-                    ]
+    def local_data_status(self) -> LocalDataStatus:
+        with self.session_factory() as session:
+            return self._local_data_status(session)
+
+    def _seed_session(self, session: Session) -> None:
+        (
+            sources,
+            streams,
+            zones,
+            events,
+            visits,
+            review_labels,
+            dataset_exports,
+        ) = demo_data.seed_product_data()
+
+        session.add_all(
+            [
+                CameraSourceModel(
+                    id=source.id,
+                    name=source.name,
+                    kind=source.kind.value,
+                    status=source.status.value,
+                    description=source.description,
                 )
-                session.add_all(
-                    [
-                        StreamModel(
-                            id=stream.id,
-                            source_id=stream.source_id,
-                            name=stream.name,
-                            description=stream.description,
-                            is_live=stream.is_live,
-                        )
-                        for stream in streams
-                    ]
+                for source in sources
+            ]
+        )
+        session.add_all(
+            [
+                StreamModel(
+                    id=stream.id,
+                    source_id=stream.source_id,
+                    name=stream.name,
+                    description=stream.description,
+                    is_live=stream.is_live,
                 )
-                session.add_all(
-                    [
-                        ZoneModel(
-                            id=zone.id,
-                            stream_id=zone.stream_id,
-                            name=zone.name,
-                            zone_type=zone.zone_type.value,
-                            polygon_json=_points_to_json(zone.polygon),
-                            is_active=zone.is_active,
-                        )
-                        for zone in zones
-                    ]
+                for stream in streams
+            ]
+        )
+        session.add_all(
+            [
+                ZoneModel(
+                    id=zone.id,
+                    stream_id=zone.stream_id,
+                    name=zone.name,
+                    zone_type=zone.zone_type.value,
+                    polygon_json=_points_to_json(zone.polygon),
+                    is_active=zone.is_active,
                 )
-                session.add_all(
-                    [
-                        EventModel(
-                            id=event.id,
-                            stream_id=event.stream_id,
-                            title=event.title,
-                            event_type=event.event_type,
-                            started_at=event.started_at,
-                            ended_at=event.ended_at,
-                            primary_zone_id=event.primary_zone_id,
-                            review_status=event.review_status.value,
-                        )
-                        for event in events
-                    ]
+                for zone in zones
+            ]
+        )
+        session.add_all(
+            [
+                EventModel(
+                    id=event.id,
+                    stream_id=event.stream_id,
+                    title=event.title,
+                    event_type=event.event_type,
+                    started_at=event.started_at,
+                    ended_at=event.ended_at,
+                    primary_zone_id=event.primary_zone_id,
+                    review_status=event.review_status.value,
                 )
-                session.add_all(
-                    [
-                        DetectionModel(
-                            id=detection.id,
-                            event_id=event.id,
-                            label=detection.label,
-                            confidence=detection.confidence,
-                            zone_id=detection.zone_id,
-                            bbox_json=_bbox_to_json(detection.bbox),
-                        )
-                        for event in events
-                        for detection in event.detections
-                    ]
+                for event in events
+            ]
+        )
+        session.add_all(
+            [
+                DetectionModel(
+                    id=detection.id,
+                    event_id=event.id,
+                    label=detection.label,
+                    confidence=detection.confidence,
+                    zone_id=detection.zone_id,
+                    bbox_json=_bbox_to_json(detection.bbox),
                 )
-                session.add_all(
-                    [
-                        VisitModel(
-                            id=visit.id,
-                            event_id=visit.event_id,
-                            subject_label=visit.subject_label,
-                            species_guess=visit.species_guess,
-                            confidence=visit.confidence,
-                            reviewed_label=visit.reviewed_label,
-                            review_status=visit.review_status.value,
-                            representative_media_path=visit.representative_media_path,
-                        )
-                        for visit in visits
-                    ]
+                for event in events
+                for detection in event.detections
+            ]
+        )
+        session.add_all(
+            [
+                VisitModel(
+                    id=visit.id,
+                    event_id=visit.event_id,
+                    subject_label=visit.subject_label,
+                    species_guess=visit.species_guess,
+                    confidence=visit.confidence,
+                    reviewed_label=visit.reviewed_label,
+                    review_status=visit.review_status.value,
+                    representative_media_path=visit.representative_media_path,
                 )
-                session.add_all(
-                    [
-                        ReviewLabelModel(
-                            id=label.id,
-                            target_type=label.target_type,
-                            target_id=label.target_id,
-                            label=label.label,
-                            notes=label.notes,
-                            created_at=label.created_at,
-                        )
-                        for label in review_labels
-                    ]
+                for visit in visits
+            ]
+        )
+        session.add_all(
+            [
+                ReviewLabelModel(
+                    id=label.id,
+                    target_type=label.target_type,
+                    target_id=label.target_id,
+                    label=label.label,
+                    notes=label.notes,
+                    created_at=label.created_at,
                 )
-                session.add_all(
-                    [
-                        DatasetExportModel(
-                            id=dataset_export.id,
-                            name=dataset_export.name,
-                            status=dataset_export.status.value,
-                            reviewed_only=dataset_export.reviewed_only,
-                            include_detections=dataset_export.include_detections,
-                            include_zone_context=dataset_export.include_zone_context,
-                            record_count=dataset_export.record_count,
-                            created_at=dataset_export.created_at,
-                        )
-                        for dataset_export in dataset_exports
-                    ]
+                for label in review_labels
+            ]
+        )
+        session.add_all(
+            [
+                DatasetExportModel(
+                    id=dataset_export.id,
+                    name=dataset_export.name,
+                    status=dataset_export.status.value,
+                    reviewed_only=dataset_export.reviewed_only,
+                    include_detections=dataset_export.include_detections,
+                    include_zone_context=dataset_export.include_zone_context,
+                    record_count=dataset_export.record_count,
+                    created_at=dataset_export.created_at,
                 )
+                for dataset_export in dataset_exports
+            ]
+        )
+
+    def _local_data_status(self, session: Session) -> LocalDataStatus:
+        analytics = self._analytics_summary(session)
+        return LocalDataStatus(
+            database_url=self.db_url,
+            database_path=_database_path_from_url(self.db_url),
+            using_default_database=self.db_url == DEFAULT_DB_URL,
+            source_count=self._count(session, CameraSourceModel),
+            stream_count=self._count(session, StreamModel),
+            zone_count=self._count(session, ZoneModel),
+            event_count=analytics.event_count,
+            visit_count=analytics.visit_count,
+            review_label_count=self._count(session, ReviewLabelModel),
+            dataset_export_count=self._count(session, DatasetExportModel),
+            needs_review_count=analytics.needs_review_count,
+            database_ready=True,
+            seed_data_present=session.get(CameraSourceModel, demo_data.SOURCE_ID) is not None,
+            local_first_note=(
+                "MockingBird stores local product metadata, zones, corrections, "
+                "review state, analytics inputs, and dataset export manifests here. "
+                "Real media storage is not implemented yet."
+            ),
+        )
+
+    def _count(self, session: Session, model: type) -> int:
+        return session.scalar(select(func.count(model.id))) or 0
 
     def list_sources(self) -> list[CameraSource]:
         with self.session_factory() as session:
@@ -929,6 +984,16 @@ def _bbox_to_json(bbox: BoundingBox | None) -> str | None:
     if bbox is None:
         return None
     return json.dumps(bbox.model_dump())
+
+
+def _database_path_from_url(db_url: str) -> str | None:
+    if not db_url.startswith("sqlite:///"):
+        return None
+
+    path = db_url.removeprefix("sqlite:///")
+    if path in {"", ":memory:"}:
+        return None
+    return path
 
 
 def _as_utc(value: datetime) -> datetime:

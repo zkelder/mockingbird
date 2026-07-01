@@ -817,6 +817,40 @@ button {
   margin-top: 0;
 }
 
+.local-data-card {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.local-data-card p {
+  margin: 0;
+  color: #5c6a61;
+}
+
+.data-row {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid #e0e7dd;
+  padding-top: 10px;
+}
+
+.data-row span {
+  color: #627168;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.data-row strong {
+  overflow-wrap: anywhere;
+}
+
+.local-data-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .export-form,
 .export-list,
 .manifest-layout,

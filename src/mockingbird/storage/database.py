@@ -18,6 +18,10 @@ def database_url_from_env() -> str:
     return os.getenv(DB_URL_ENV_VAR, DEFAULT_DB_URL)
 
 
+def resolve_database_url(db_url: str | None = None) -> str:
+    return db_url or database_url_from_env()
+
+
 def _ensure_sqlite_parent(db_url: str) -> None:
     if not db_url.startswith("sqlite:///"):
         return
@@ -30,7 +34,7 @@ def _ensure_sqlite_parent(db_url: str) -> None:
 
 
 def create_database_engine(db_url: str | None = None) -> Engine:
-    resolved_url = db_url or database_url_from_env()
+    resolved_url = resolve_database_url(db_url)
     _ensure_sqlite_parent(resolved_url)
     connect_args = {"check_same_thread": False} if resolved_url.startswith("sqlite") else {}
     return create_engine(resolved_url, connect_args=connect_args)
@@ -42,4 +46,3 @@ def create_session_factory(engine: Engine) -> sessionmaker:
 
 def initialize_database(engine: Engine) -> None:
     Base.metadata.create_all(bind=engine)
-

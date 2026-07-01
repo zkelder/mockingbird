@@ -13,6 +13,7 @@ import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EventDetailPage } from "./pages/EventDetailPage";
 import { ExportsPage } from "./pages/ExportsPage";
+import { LocalDataPage } from "./pages/LocalDataPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
@@ -26,7 +27,8 @@ type Page =
   | "visit-detail"
   | "review"
   | "analytics"
-  | "exports";
+  | "exports"
+  | "settings";
 
 interface AppData {
   health: HealthStatus | null;
@@ -52,6 +54,7 @@ const navItems: Array<{ page: Page; label: string }> = [
   { page: "review", label: "Review" },
   { page: "analytics", label: "Analytics" },
   { page: "exports", label: "Exports" },
+  { page: "settings", label: "Local Data" },
 ];
 
 export default function App() {
@@ -128,6 +131,12 @@ export default function App() {
     });
     await loadAppData({ showLoading: false });
     return result;
+  }
+
+  async function refreshAfterLocalReset() {
+    setSelectedEventId(null);
+    setSelectedVisitId(null);
+    await loadAppData({ showLoading: false });
   }
 
   function renderPage() {
@@ -227,11 +236,23 @@ export default function App() {
       );
     }
 
+    if (page === "exports") {
+      return (
+        <ExportsPage
+          exports={data.exports}
+          onOpenReview={() => setPage("review")}
+          onExportsChanged={() => loadAppData({ showLoading: false })}
+        />
+      );
+    }
+
     return (
-      <ExportsPage
-        exports={data.exports}
+      <LocalDataPage
+        onOpenDashboard={() => setPage("dashboard")}
+        onOpenStreams={() => setPage("streams")}
         onOpenReview={() => setPage("review")}
-        onExportsChanged={() => loadAppData({ showLoading: false })}
+        onOpenExports={() => setPage("exports")}
+        onResetComplete={refreshAfterLocalReset}
       />
     );
   }

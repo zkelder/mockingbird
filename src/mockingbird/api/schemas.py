@@ -232,6 +232,23 @@ class AnalyticsSummary(BaseModel):
     zone_activity_counts: dict[str, int]
 
 
+class LocalDataStatus(BaseModel):
+    database_url: str
+    database_path: str | None = None
+    using_default_database: bool
+    source_count: int = Field(ge=0)
+    stream_count: int = Field(ge=0)
+    zone_count: int = Field(ge=0)
+    event_count: int = Field(ge=0)
+    visit_count: int = Field(ge=0)
+    review_label_count: int = Field(ge=0)
+    dataset_export_count: int = Field(ge=0)
+    needs_review_count: int = Field(ge=0)
+    database_ready: bool
+    seed_data_present: bool
+    local_first_note: str
+
+
 class ReviewCorrectionResult(BaseModel):
     review_label: ReviewLabel
     visit: Visit | None = None

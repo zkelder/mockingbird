@@ -691,6 +691,89 @@ def test_analytics_summary_includes_product_counts() -> None:
     assert summary["zone_activity_counts"][FEEDER_ZONE_ID] >= 1
 
 
+def test_local_data_status_reports_persisted_product_counts() -> None:
+    response = client.get("/api/settings/local-data")
+
+    assert response.status_code == 200
+    status = response.json()
+    assert status["database_ready"] is True
+    assert status["seed_data_present"] is True
+    assert status["using_default_database"] is False
+    assert status["database_url"].startswith("sqlite:///")
+    assert status["database_path"].endswith("mockingbird.sqlite3")
+    assert status["source_count"] == 1
+    assert status["stream_count"] == 1
+    assert status["zone_count"] == 3
+    assert status["event_count"] == 2
+    assert status["visit_count"] == 2
+    assert status["review_label_count"] == 1
+    assert status["dataset_export_count"] == 1
+    assert status["needs_review_count"] >= 1
+    assert "local product metadata" in status["local_first_note"]
+
+
+def test_reset_demo_data_restores_seed_state_after_mutations() -> None:
+    created_zone = client.post(
+        "/api/zones",
+        json={
+            "stream_id": STREAM_ID,
+            "name": "Temporary yard zone",
+            "zone_type": "yard",
+            "polygon": [
+                {"x": 0.12, "y": 0.12},
+                {"x": 0.24, "y": 0.12},
+                {"x": 0.24, "y": 0.24},
+            ],
+        },
+    ).json()["zone"]
+    client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "carolina_wren",
+        },
+    )
+    client.post("/api/dataset-exports", json={"name": "Temporary reviewed dataset"})
+
+    mutated_status = client.get("/api/settings/local-data").json()
+    assert mutated_status["zone_count"] == 4
+    assert mutated_status["review_label_count"] == 2
+    assert mutated_status["dataset_export_count"] == 2
+
+    response = client.post("/api/settings/reset-demo-data")
+
+    assert response.status_code == 200
+    status = response.json()
+    assert status["database_ready"] is True
+    assert status["seed_data_present"] is True
+    assert status["zone_count"] == 3
+    assert status["review_label_count"] == 1
+    assert status["dataset_export_count"] == 1
+    assert status["needs_review_count"] >= 1
+
+    zones = client.get(f"/api/streams/{STREAM_ID}/zones").json()
+    assert all(zone["id"] != created_zone["id"] for zone in zones)
+    assert client.get(f"/api/visits/{BIRD_VISIT_ID}").json()["review_status"] == "needs_review"
+    assert [item["id"] for item in client.get("/api/dataset-exports").json()] == [SEED_EXPORT_ID]
+
+
+def test_reset_demo_data_does_not_duplicate_seed_rows() -> None:
+    first_response = client.post("/api/settings/reset-demo-data")
+    second_response = client.post("/api/settings/reset-demo-data")
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    status = second_response.json()
+    assert status["source_count"] == 1
+    assert status["stream_count"] == 1
+    assert status["zone_count"] == 3
+    assert status["event_count"] == 2
+    assert status["visit_count"] == 2
+    assert status["review_label_count"] == 1
+    assert status["dataset_export_count"] == 1
+
+
 def test_unknown_event_visit_and_zone_ids_return_404() -> None:
     unknown_paths = [
         "/api/events/event-missing",

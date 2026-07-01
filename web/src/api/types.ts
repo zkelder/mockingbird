@@ -235,3 +235,20 @@ export interface AnalyticsSummary {
   species_counts: Record<string, number>;
   zone_activity_counts: Record<string, number>;
 }
+
+export interface LocalDataStatus {
+  database_url: string;
+  database_path?: string | null;
+  using_default_database: boolean;
+  source_count: number;
+  stream_count: number;
+  zone_count: number;
+  event_count: number;
+  visit_count: number;
+  review_label_count: number;
+  dataset_export_count: number;
+  needs_review_count: number;
+  database_ready: boolean;
+  seed_data_present: boolean;
+  local_first_note: string;
+}
