@@ -10,6 +10,7 @@ import { formatDateTime, formatLabel, sortedEntries } from "../utils";
 interface ExportsPageProps {
   exports: DatasetExport[];
   onOpenReview: () => void;
+  onOpenDetectionProposals: () => void;
   onExportsChanged: () => Promise<void>;
 }
 
@@ -19,7 +20,12 @@ function mediaReferenceName(mediaPath: string): string {
   return pathParts[pathParts.length - 1] ?? mediaPath;
 }
 
-export function ExportsPage({ exports, onOpenReview, onExportsChanged }: ExportsPageProps) {
+export function ExportsPage({
+  exports,
+  onOpenReview,
+  onOpenDetectionProposals,
+  onExportsChanged,
+}: ExportsPageProps) {
   const [localExports, setLocalExports] = useState<DatasetExport[]>(exports);
   const [selectedExportId, setSelectedExportId] = useState<string | null>(exports[0]?.id ?? null);
   const [manifest, setManifest] = useState<DatasetExportManifest | null>(null);
@@ -109,9 +115,14 @@ export function ExportsPage({ exports, onOpenReview, onExportsChanged }: Exports
         title="Dataset Exports"
         description="Generate local reviewed datasets from corrected events and visits. Detections stay attached as evidence, not final truth."
         actions={
-          <button className="secondary-action" onClick={onOpenReview}>
-            Open Review Queue
-          </button>
+          <>
+            <button className="secondary-action" onClick={onOpenReview}>
+              Open Review Queue
+            </button>
+            <button className="secondary-action" onClick={onOpenDetectionProposals}>
+              Detection Proposals
+            </button>
+          </>
         }
       />
 
@@ -235,6 +246,9 @@ export function ExportsPage({ exports, onOpenReview, onExportsChanged }: Exports
                 ))}
                 <button className="secondary-action" onClick={onOpenReview}>
                   Review skipped activity
+                </button>
+                <button className="secondary-action" onClick={onOpenDetectionProposals}>
+                  Open proposal evidence
                 </button>
               </div>
             ) : null}

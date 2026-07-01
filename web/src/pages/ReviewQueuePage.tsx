@@ -79,6 +79,8 @@ export function ReviewQueuePage({
       ) : null}
       <div className="queue-list">
         {items.map((item) => {
+          const fromDetectionEvidence =
+            item.event_id?.startsWith("event-detection") || item.visit_id?.startsWith("visit-detection");
           const draft = drafts[item.id] ?? {
             label: item.suggested_label ?? "",
             notes: "",
@@ -107,7 +109,9 @@ export function ReviewQueuePage({
                 {item.reason} Detections are evidence; your correction becomes local dataset truth.
               </p>
               <div className="queue-meta">
-                <EvidenceBadge label={item.media_asset ? "Evidence attached" : "Review evidence"} />
+                <EvidenceBadge
+                  label={fromDetectionEvidence ? "Converted proposal evidence" : "Review evidence"}
+                />
                 <span>Suggested: {formatLabel(item.suggested_label ?? "unknown")}</span>
                 <span>Event: {item.event_id ?? "n/a"}</span>
                 <span>Visit: {item.visit_id ?? "n/a"}</span>

@@ -14,6 +14,7 @@ interface ManualImportPageProps {
   onOpenVisit: (visitId: string) => void;
   onOpenStream: (streamId: string) => void;
   onOpenFolderImport: () => void;
+  onOpenDetectionProposals: () => void;
   onImportComplete: () => Promise<void>;
 }
 
@@ -24,6 +25,7 @@ export function ManualImportPage({
   onOpenVisit,
   onOpenStream,
   onOpenFolderImport,
+  onOpenDetectionProposals,
   onImportComplete,
 }: ManualImportPageProps) {
   const [selectedStreamId, setSelectedStreamId] = useState(streams[0]?.id ?? "");
@@ -174,6 +176,9 @@ export function ManualImportPage({
             <button className="secondary-action" onClick={onOpenFolderImport}>
               Import Folder
             </button>
+            <button className="secondary-action" onClick={onOpenDetectionProposals}>
+              Detection Proposals
+            </button>
             {selectedStream ? (
               <button className="secondary-action" onClick={() => onOpenStream(selectedStream.id)}>
                 Open stream context
@@ -204,6 +209,9 @@ export function ManualImportPage({
                 Visit detail
               </button>
             ) : null}
+            <button className="secondary-action" onClick={onOpenDetectionProposals}>
+              Generate demo proposal
+            </button>
             <StatusPill label={`${result.review_queue_count} needs review`} tone="review" />
           </div>
           <MediaAssetPreview asset={result.media_asset} compact />

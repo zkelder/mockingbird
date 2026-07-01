@@ -196,6 +196,7 @@ export default function App() {
           onOpenVisit={openVisit}
           onOpenStream={openStream}
           onOpenFolderImport={() => setPage("folder-import")}
+          onOpenDetectionProposals={() => setPage("detection-proposals")}
           onImportComplete={() => loadAppData({ showLoading: false })}
         />
       );
@@ -211,6 +212,7 @@ export default function App() {
           onOpenStream={openStream}
           onOpenReview={() => setPage("review")}
           onOpenExports={() => setPage("exports")}
+          onOpenDetectionProposals={() => setPage("detection-proposals")}
           onImportComplete={() => loadAppData({ showLoading: false })}
         />
       );
@@ -252,6 +254,7 @@ export default function App() {
           onOpenVisit={openVisit}
           onOpenExports={() => setPage("exports")}
           onOpenReview={() => setPage("review")}
+          onOpenDetectionProposals={() => setPage("detection-proposals")}
         />
       );
     }
@@ -263,6 +266,7 @@ export default function App() {
           onOpenStream={openStream}
           onOpenEvent={openEvent}
           onOpenExports={() => setPage("exports")}
+          onOpenDetectionProposals={() => setPage("detection-proposals")}
           onCorrectionSaved={() => loadAppData({ showLoading: false })}
         />
       );
@@ -297,6 +301,7 @@ export default function App() {
         <ExportsPage
           exports={data.exports}
           onOpenReview={() => setPage("review")}
+          onOpenDetectionProposals={() => setPage("detection-proposals")}
           onExportsChanged={() => loadAppData({ showLoading: false })}
         />
       );
@@ -309,9 +314,10 @@ export default function App() {
         onOpenStreams={() => setPage("streams")}
         onOpenReview={() => setPage("review")}
         onOpenExports={() => setPage("exports")}
+        onOpenDetectionProposals={() => setPage("detection-proposals")}
         onResetComplete={refreshAfterLocalReset}
       />
-    );
+      );
   }
 
   return (

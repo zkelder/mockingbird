@@ -252,6 +252,22 @@ def _detection_interface_error(error: ValueError) -> HTTPException:
     return HTTPException(status_code=400, detail="Detection proposal could not be processed.")
 
 
+def _detection_runs_for_proposals(
+    repository: ProductRepository,
+    proposals: list[DetectionProposal],
+) -> list[DetectionRun]:
+    runs: list[DetectionRun] = []
+    seen_run_ids: set[str] = set()
+    for proposal in proposals:
+        if proposal.run_id in seen_run_ids:
+            continue
+        seen_run_ids.add(proposal.run_id)
+        run = repository.get_detection_run(proposal.run_id)
+        if run is not None:
+            runs.append(run)
+    return runs
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -397,6 +413,7 @@ async def get_event_detail(event_id: str) -> EventDetail:
         None,
     )
     dataset_ready = repository.event_is_dataset_ready(event)
+    detection_proposals = repository.detection_proposals_for_event(event.id)
     return EventDetail(
         event=event,
         stream=stream,
@@ -407,6 +424,8 @@ async def get_event_detail(event_id: str) -> EventDetail:
         ),
         visits=visits,
         media_asset=media_asset,
+        detection_proposals=detection_proposals,
+        detection_runs=_detection_runs_for_proposals(repository, detection_proposals),
         review_labels=repository.review_labels_for_event_tree(event.id),
         dataset_ready=dataset_ready,
         review_summary=repository.review_summary_for_dataset_state(dataset_ready),
@@ -451,6 +470,7 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         raise _not_found("Stream", event.stream_id)
 
     dataset_ready = repository.visit_is_dataset_ready(visit)
+    detection_proposals = repository.detection_proposals_for_visit(visit.id)
     return VisitDetail(
         visit=visit,
         event=event,
@@ -462,6 +482,8 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         ),
         detections=event.detections,
         media_asset=repository.media_asset_for_path(visit.representative_media_path),
+        detection_proposals=detection_proposals,
+        detection_runs=_detection_runs_for_proposals(repository, detection_proposals),
         review_labels=(
             repository.review_labels_for_event(event.id)
             + repository.review_labels_for_visit(visit.id)

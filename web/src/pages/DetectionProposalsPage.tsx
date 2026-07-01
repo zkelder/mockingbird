@@ -5,6 +5,7 @@ import type {
   DetectionProposal,
   DetectionProposalDecision,
   DetectionProposalDecisionResult,
+  DetectionProposalStatus,
   MediaAsset,
   Stream,
   Zone,
@@ -17,6 +18,16 @@ import { PageHeader } from "../components/PageHeader";
 import { ProposalStatusBadge } from "../components/ProposalStatusBadge";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
+
+type ProposalFilter = "all" | DetectionProposalStatus;
+
+const proposalFilters: Array<{ value: ProposalFilter; label: string }> = [
+  { value: "proposed", label: "Proposed" },
+  { value: "converted", label: "Converted" },
+  { value: "rejected", label: "Rejected" },
+  { value: "accepted", label: "Accepted" },
+  { value: "all", label: "All" },
+];
 
 interface DetectionProposalsPageProps {
   streams: Stream[];
@@ -51,6 +62,7 @@ export function DetectionProposalsPage({
   const [notes, setNotes] = useState("");
   const [generatedProposal, setGeneratedProposal] = useState<DetectionProposal | null>(null);
   const [result, setResult] = useState<DetectionProposalDecisionResult | null>(null);
+  const [proposalFilter, setProposalFilter] = useState<ProposalFilter>("proposed");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
@@ -153,6 +165,7 @@ export function DetectionProposalsPage({
       });
       const proposal = demoResult.proposals[0] ?? null;
       setGeneratedProposal(proposal);
+      setProposalFilter("proposed");
       setMessage(
         proposal
           ? `Generated demo proposal ${proposal.id}. Review it before it becomes a product event.`
@@ -191,6 +204,7 @@ export function DetectionProposalsPage({
             : "Converted proposal into a reviewable event and visit.",
       });
       setResult(nextResult);
+      setProposalFilter(nextResult.proposal.status);
       setMessage(
         decision === "reject"
           ? "Proposal rejected. No event or visit was created."
@@ -206,6 +220,23 @@ export function DetectionProposalsPage({
   }
 
   const sortedProposals = [...proposals].reverse();
+  const proposalCounts = useMemo(() => {
+    const counts: Record<ProposalFilter, number> = {
+      all: proposals.length,
+      proposed: 0,
+      converted: 0,
+      rejected: 0,
+      accepted: 0,
+    };
+    proposals.forEach((proposal) => {
+      counts[proposal.status] += 1;
+    });
+    return counts;
+  }, [proposals]);
+  const filteredProposals =
+    proposalFilter === "all"
+      ? sortedProposals
+      : sortedProposals.filter((proposal) => proposal.status === proposalFilter);
 
   return (
     <div className="page-stack">
@@ -266,7 +297,7 @@ export function DetectionProposalsPage({
             />
             <h2>{formatLabel(result.proposal.status)} proposal</h2>
             <p>
-              {result.proposal.status === "rejected"
+            {result.proposal.status === "rejected"
                 ? "The proposal was dismissed as evidence. No event or visit was created."
                 : "A reviewable event and visit now carry this proposal as detection evidence. Human correction still becomes dataset truth."}
             </p>
@@ -420,9 +451,22 @@ export function DetectionProposalsPage({
               Refresh
             </button>
           </div>
+          <div className="proposal-status-tabs" aria-label="Proposal status filters">
+            {proposalFilters.map((filter) => (
+              <button
+                className={proposalFilter === filter.value ? "selected" : ""}
+                key={filter.value}
+                onClick={() => setProposalFilter(filter.value)}
+                type="button"
+              >
+                {filter.label}
+                <span>{proposalCounts[filter.value]}</span>
+              </button>
+            ))}
+          </div>
           {isLoading ? <span className="meta-text">Loading detection proposals...</span> : null}
           <div className="media-list detection-proposal-list">
-            {sortedProposals.map((proposal) => {
+            {filteredProposals.map((proposal) => {
               const asset = mediaById.get(proposal.media_asset_id);
               const stream = streamById.get(proposal.stream_id);
               const zone = proposal.zone_id ? zoneById.get(proposal.zone_id) : null;
@@ -513,12 +557,18 @@ export function DetectionProposalsPage({
             {!isLoading && proposals.length === 0 ? (
               <EmptyState
                 title="No detection proposals yet"
-                description="Create a proposal from imported local media, then convert it into review when it represents outdoor activity."
+                description="Import media, generate demo proposal evidence, then convert it into review when it represents outdoor activity."
                 action={
                   <button className="secondary-action" onClick={onOpenImport}>
                     Import media
                   </button>
                 }
+              />
+            ) : null}
+            {!isLoading && proposals.length > 0 && filteredProposals.length === 0 ? (
+              <EmptyState
+                title={`No ${formatLabel(proposalFilter)} proposals`}
+                description="Switch proposal status filters to inspect evidence that is still proposed, converted into review, or rejected."
               />
             ) : null}
           </div>

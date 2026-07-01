@@ -1091,8 +1091,59 @@ button {
   align-content: start;
 }
 
+.proposal-status-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.proposal-status-tabs button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #34473b;
+  font-weight: 800;
+}
+
+.proposal-status-tabs button.selected {
+  border-color: #50735d;
+  background: #e7efe5;
+}
+
+.proposal-status-tabs span {
+  min-width: 24px;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: #f7faf3;
+  color: #536258;
+  text-align: center;
+}
+
 .detection-proposal-card {
   align-content: start;
+}
+
+.proposal-evidence-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.proposal-evidence-card.compact {
+  gap: 10px;
+}
+
+.proposal-evidence-card p {
+  margin: 0;
+  color: #5c6a61;
 }
 
 .detection-proposal-meta {

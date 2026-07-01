@@ -559,6 +559,24 @@ class ProductRepository:
             proposal = session.get(DetectionProposalModel, proposal_id)
             return _detection_proposal_from_model(proposal) if proposal else None
 
+    def detection_proposals_for_event(self, event_id: str) -> list[DetectionProposal]:
+        with self.session_factory() as session:
+            proposals = session.scalars(
+                select(DetectionProposalModel)
+                .where(DetectionProposalModel.event_id == event_id)
+                .order_by(DetectionProposalModel.created_at, DetectionProposalModel.id)
+            ).all()
+            return [_detection_proposal_from_model(proposal) for proposal in proposals]
+
+    def detection_proposals_for_visit(self, visit_id: str) -> list[DetectionProposal]:
+        with self.session_factory() as session:
+            proposals = session.scalars(
+                select(DetectionProposalModel)
+                .where(DetectionProposalModel.visit_id == visit_id)
+                .order_by(DetectionProposalModel.created_at, DetectionProposalModel.id)
+            ).all()
+            return [_detection_proposal_from_model(proposal) for proposal in proposals]
+
     def detection_proposals_for_run(self, run_id: str) -> list[DetectionProposal] | None:
         with self.session_factory() as session:
             if session.get(DetectionRunModel, run_id) is None:

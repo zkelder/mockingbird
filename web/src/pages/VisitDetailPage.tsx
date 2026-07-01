@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type { VisitDetail } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
+import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEvidenceCard";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
@@ -12,6 +13,7 @@ interface VisitDetailPageProps {
   onOpenStream: (streamId: string) => void;
   onOpenEvent: (eventId: string) => void;
   onOpenExports: () => void;
+  onOpenDetectionProposals: () => void;
   onCorrectionSaved: () => Promise<void>;
 }
 
@@ -20,6 +22,7 @@ export function VisitDetailPage({
   onOpenStream,
   onOpenEvent,
   onOpenExports,
+  onOpenDetectionProposals,
   onCorrectionSaved,
 }: VisitDetailPageProps) {
   const [detail, setDetail] = useState<VisitDetail | null>(null);
@@ -98,6 +101,7 @@ export function VisitDetailPage({
   }
 
   const visitLabel = detail.visit.reviewed_label ?? detail.visit.species_guess ?? detail.visit.subject_label;
+  const runById = new Map(detail.detection_runs.map((run) => [run.id, run]));
 
   return (
     <div className="page-stack">
@@ -168,6 +172,36 @@ export function VisitDetailPage({
             <span className="meta-text">Local evidence for this visit review</span>
           </div>
           <MediaAssetPreview asset={detail.media_asset} />
+        </section>
+      ) : null}
+
+      {detail.detection_proposals.length > 0 ? (
+        <section className="panel">
+          <div className="section-heading">
+            <h2>Proposal provenance</h2>
+            <EvidenceBadge label="Evidence source" />
+          </div>
+          <p className="evidence-panel-copy">
+            This visit started as proposal evidence. Use the correction form to set dataset truth;
+            the proposal remains supporting evidence.
+          </p>
+          <div className="evidence-list">
+            {detail.detection_proposals.map((proposal) => (
+              <DetectionProposalEvidenceCard
+                key={proposal.id}
+                proposal={proposal}
+                run={runById.get(proposal.run_id)}
+                zoneLabel={
+                  detail.primary_zone && proposal.zone_id === detail.primary_zone.id
+                    ? detail.primary_zone.name
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+          <button className="secondary-action" onClick={onOpenDetectionProposals}>
+            Detection Proposals
+          </button>
         </section>
       ) : null}
 
@@ -253,6 +287,11 @@ export function VisitDetailPage({
           <button className="secondary-action" onClick={onOpenExports}>
             Open Dataset Exports
           </button>
+          {detail.detection_proposals.length > 0 ? (
+            <button className="secondary-action" onClick={onOpenDetectionProposals}>
+              Detection Proposals
+            </button>
+          ) : null}
         </section>
       ) : (
         <section className="panel case-readiness-panel">
@@ -263,6 +302,11 @@ export function VisitDetailPage({
           <button className="secondary-action" onClick={onOpenExports}>
             Open Dataset Exports
           </button>
+          {detail.detection_proposals.length > 0 ? (
+            <button className="secondary-action" onClick={onOpenDetectionProposals}>
+              Detection Proposals
+            </button>
+          ) : null}
         </section>
       )}
     </div>

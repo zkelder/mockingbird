@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
 import type { EventDetail } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
+import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEvidenceCard";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
@@ -13,6 +14,7 @@ interface EventDetailPageProps {
   onOpenVisit: (visitId: string) => void;
   onOpenExports: () => void;
   onOpenReview: () => void;
+  onOpenDetectionProposals: () => void;
 }
 
 export function EventDetailPage({
@@ -21,6 +23,7 @@ export function EventDetailPage({
   onOpenVisit,
   onOpenExports,
   onOpenReview,
+  onOpenDetectionProposals,
 }: EventDetailPageProps) {
   const [detail, setDetail] = useState<EventDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +65,8 @@ export function EventDetailPage({
   if (error || !detail) {
     return <div className="error-panel">{error ?? "Event detail is unavailable."}</div>;
   }
+
+  const runById = new Map(detail.detection_runs.map((run) => [run.id, run]));
 
   return (
     <div className="page-stack">
@@ -205,11 +210,43 @@ export function EventDetailPage({
               Open Review Queue
             </button>
           ) : null}
+          {detail.detection_proposals.length > 0 ? (
+            <button className="secondary-action" onClick={onOpenDetectionProposals}>
+              Detection Proposals
+            </button>
+          ) : null}
           <button className="secondary-action" onClick={onOpenExports}>
             Open Dataset Exports
           </button>
         </div>
       </section>
+
+      {detail.detection_proposals.length > 0 ? (
+        <section className="panel">
+          <div className="section-heading">
+            <h2>Proposal provenance</h2>
+            <EvidenceBadge label="Evidence source" />
+          </div>
+          <p className="evidence-panel-copy">
+            This event came from proposal evidence. Its proposal label and confidence explain the
+            source, while reviewed corrections decide dataset truth.
+          </p>
+          <div className="evidence-list">
+            {detail.detection_proposals.map((proposal) => (
+              <DetectionProposalEvidenceCard
+                key={proposal.id}
+                proposal={proposal}
+                run={runById.get(proposal.run_id)}
+                zoneLabel={
+                  detail.primary_zone && proposal.zone_id === detail.primary_zone.id
+                    ? detail.primary_zone.name
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

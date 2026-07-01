@@ -339,6 +339,33 @@ async def test_detection_proposal_converts_to_reviewable_visit_and_detection_evi
     assert queue_item["media_asset"]["id"] == media_asset["id"]
 
 
+async def test_converted_proposal_appears_as_detail_provenance(
+    client: httpx.AsyncClient,
+) -> None:
+    media_asset = (await import_image(client)).json()["media_asset"]
+    proposal = (await create_demo_run(client, media_asset["id"])).json()["proposals"][0]
+    decision = (
+        await client.post(
+            f"/api/detection-proposals/{proposal['id']}/decision",
+            json={"decision": "convert_to_event"},
+        )
+    ).json()
+    event = decision["event"]
+    visit = decision["visit"]
+
+    event_detail = (await client.get(f"/api/events/{event['id']}/detail")).json()
+    visit_detail = (await client.get(f"/api/visits/{visit['id']}/detail")).json()
+
+    assert [item["id"] for item in event_detail["detection_proposals"]] == [proposal["id"]]
+    assert [item["id"] for item in visit_detail["detection_proposals"]] == [proposal["id"]]
+    assert [item["source"] for item in event_detail["detection_runs"]] == ["demo_rule"]
+    assert [item["source"] for item in visit_detail["detection_runs"]] == ["demo_rule"]
+    assert event_detail["detection_proposals"][0]["status"] == "converted"
+    assert event_detail["detection_proposals"][0]["label"] == "bird"
+    assert visit_detail["detection_proposals"][0]["confidence"] == 0.72
+    assert visit_detail["review_summary"].startswith("Needs review")
+
+
 async def test_converted_proposal_uses_correction_as_dataset_truth(
     client: httpx.AsyncClient,
 ) -> None:

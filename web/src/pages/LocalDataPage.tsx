@@ -12,6 +12,7 @@ interface LocalDataPageProps {
   onOpenStreams: () => void;
   onOpenReview: () => void;
   onOpenExports: () => void;
+  onOpenDetectionProposals: () => void;
   onResetComplete: () => Promise<void>;
 }
 
@@ -21,6 +22,7 @@ export function LocalDataPage({
   onOpenStreams,
   onOpenReview,
   onOpenExports,
+  onOpenDetectionProposals,
   onResetComplete,
 }: LocalDataPageProps) {
   const [status, setStatus] = useState<LocalDataStatus | null>(null);
@@ -123,6 +125,11 @@ export function LocalDataPage({
               detail="dataset-grade labels"
             />
             <MetricCard
+              label="Proposals"
+              value={status.detection_proposal_count}
+              detail={`${status.detection_run_count} detection runs`}
+            />
+            <MetricCard
               label="Exports"
               value={status.dataset_export_count}
               detail="local dataset manifests"
@@ -175,6 +182,9 @@ export function LocalDataPage({
                 </button>
                 <button className="secondary-action" onClick={onOpenReview}>
                   Review Queue
+                </button>
+                <button className="secondary-action" onClick={onOpenDetectionProposals}>
+                  Detection Proposals
                 </button>
                 <button className="secondary-action" onClick={onOpenExports}>
                   Dataset Exports

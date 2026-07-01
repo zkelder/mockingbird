@@ -21,6 +21,7 @@ interface FolderImportPageProps {
   onOpenStream: (streamId: string) => void;
   onOpenReview: () => void;
   onOpenExports: () => void;
+  onOpenDetectionProposals: () => void;
   onImportComplete: () => Promise<void>;
 }
 
@@ -45,6 +46,7 @@ export function FolderImportPage({
   onOpenStream,
   onOpenReview,
   onOpenExports,
+  onOpenDetectionProposals,
   onImportComplete,
 }: FolderImportPageProps) {
   const [folderPath, setFolderPath] = useState("");
@@ -201,11 +203,16 @@ export function FolderImportPage({
         title="Folder Import"
         description="Import local media into reviewable outdoor events. Media stays local; review and correct imported observations before export."
         actions={
-          selectedStream ? (
-            <button className="secondary-action" onClick={() => onOpenStream(selectedStream.id)}>
-              Open stream context
+          <>
+            <button className="secondary-action" onClick={onOpenDetectionProposals}>
+              Detection Proposals
             </button>
-          ) : null
+            {selectedStream ? (
+              <button className="secondary-action" onClick={() => onOpenStream(selectedStream.id)}>
+                Open stream context
+              </button>
+            ) : null}
+          </>
         }
       />
 
@@ -381,6 +388,9 @@ export function FolderImportPage({
               </button>
               <button className="secondary-action" onClick={onOpenExports}>
                 Dataset Exports
+              </button>
+              <button className="secondary-action" onClick={onOpenDetectionProposals}>
+                Generate demo proposal
               </button>
             </div>
           </div>

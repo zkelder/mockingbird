@@ -443,6 +443,8 @@ class EventDetail(BaseModel):
     primary_zone: Zone | None = None
     visits: list[Visit]
     media_asset: MediaAsset | None = None
+    detection_proposals: list[DetectionProposal] = Field(default_factory=list)
+    detection_runs: list[DetectionRun] = Field(default_factory=list)
     review_labels: list[ReviewLabel]
     dataset_ready: bool
     review_summary: str
@@ -455,6 +457,8 @@ class VisitDetail(BaseModel):
     primary_zone: Zone | None = None
     detections: list[Detection]
     media_asset: MediaAsset | None = None
+    detection_proposals: list[DetectionProposal] = Field(default_factory=list)
+    detection_runs: list[DetectionRun] = Field(default_factory=list)
     review_labels: list[ReviewLabel]
     dataset_ready: bool
     review_summary: str

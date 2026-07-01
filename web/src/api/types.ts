@@ -318,6 +318,8 @@ export interface EventDetail {
   primary_zone?: Zone | null;
   visits: Visit[];
   media_asset?: MediaAsset | null;
+  detection_proposals: DetectionProposal[];
+  detection_runs: DetectionRun[];
   review_labels: ReviewLabel[];
   dataset_ready: boolean;
   review_summary: string;
@@ -330,6 +332,8 @@ export interface VisitDetail {
   primary_zone?: Zone | null;
   detections: Detection[];
   media_asset?: MediaAsset | null;
+  detection_proposals: DetectionProposal[];
+  detection_runs: DetectionRun[];
   review_labels: ReviewLabel[];
   dataset_ready: boolean;
   review_summary: string;
