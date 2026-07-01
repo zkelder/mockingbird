@@ -6,6 +6,8 @@ The first real local detector candidate should prove that MockingBird can turn c
 
 It is a product safety spike, not a production accuracy claim.
 
+Phase 7E selects a MegaDetector-family local image detector as the first target direction. See [detector-decision-megadetector.md](detector-decision-megadetector.md).
+
 ## Acceptable First Detector Type
 
 The first candidate must be:
@@ -29,7 +31,7 @@ A candidate model should:
 - fail clearly when output shape is unsupported
 - be removable without changing reviewed product data
 
-Do not treat any specific model as chosen until a later task records that decision.
+The selected direction is MegaDetector-family animal/person/vehicle detection. The exact runtime package, model file, version, and loading path remain pending for an explicit implementation phase.
 
 ## Dependency Rules
 
@@ -41,7 +43,7 @@ Allowed only with explicit justification:
 - Pillow for image loading
 - numpy for lightweight tensor preparation
 
-Avoid heavy or model-specific runtime stacks in the first candidate unless a later explicit decision changes this. Do not add PyTorch, TensorFlow, OpenCV, Ultralytics, YOLO packages, MegaDetector package stacks, or BirdNET runtime for the first spike.
+Avoid heavy or model-specific runtime stacks unless an explicit implementation phase justifies them. PyTorch-Wildlife / MegaDetector integration is the product-aligned candidate path, but no PyTorch, TensorFlow, OpenCV, Ultralytics, YOLO package, MegaDetector package stack, or BirdNET runtime should be added by selection docs alone.
 
 ## Model File Rules
 

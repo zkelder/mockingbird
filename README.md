@@ -83,7 +83,7 @@ export MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH=/path/to/labels.txt # optional
 
 Detector outputs create detection proposals only. Users still convert, review, and correct proposals before exports or analytics treat labels as truth.
 
-Before choosing or wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md) and [docs/model-selection.md](docs/model-selection.md).
+Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), and the [MegaDetector decision record](docs/detector-decision-megadetector.md).
 
 ## Not the product center
 

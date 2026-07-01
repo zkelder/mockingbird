@@ -67,6 +67,8 @@ Every future implementation task must restate:
   [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md) and
   [docs/model-selection.md](docs/model-selection.md). Model outputs must remain
   `DetectionProposal` evidence until user review/correction.
+- MegaDetector-family integrations must remain evidence-only adapters and must
+  not bypass Review Queue or Visit Detail correction.
 - Keep local-first storage/export assumptions in mind.
 - Respect privacy and ignore zones as first-class product concepts when those features are implemented.
 - Avoid adapter-specific models leaking into core product models.

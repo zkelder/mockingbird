@@ -162,7 +162,8 @@ Goal: prepare the first real local detector without weakening the review and tru
 Current guardrail work:
 
 - Phase 7D: model selection and runtime guardrails.
-- Next: first explicitly chosen local detector candidate.
+- Phase 7E: MegaDetector-family detector decision record.
+- Next: Phase 7F — MegaDetector adapter implementation spike.
 
 Validation:
 
