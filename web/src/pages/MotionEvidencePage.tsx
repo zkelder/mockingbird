@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import type {
   CameraSource,
   MotionEvidence,
+  MotionEvidenceCreateRequest,
   MotionEvidencePromoteResponse,
   MotionEvidenceStatus,
   Stream,
@@ -43,11 +44,25 @@ export function MotionEvidencePage({
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<MotionEvidenceFilter>("pending");
   const [zoneFilter, setZoneFilter] = useState("");
+  const [manualZoneId, setManualZoneId] = useState("zone-feeder");
+  const [manualSourceId, setManualSourceId] = useState("");
+  const [manualStreamId, setManualStreamId] = useState("");
+  const [manualPeakChangedRatio, setManualPeakChangedRatio] = useState("42%");
+  const [manualTriggeredFrameCount, setManualTriggeredFrameCount] = useState("2");
+  const [manualStartFrameIndex, setManualStartFrameIndex] = useState("10");
+  const [manualEndFrameIndex, setManualEndFrameIndex] = useState("12");
+  const [manualBestFrameIndex, setManualBestFrameIndex] = useState("11");
+  const [manualSnapshotMediaAssetId, setManualSnapshotMediaAssetId] = useState("");
+  const [manualNotes, setManualNotes] = useState("Manual evidence candidate before stream sampling.");
+  const [manualScoringConfig, setManualScoringConfig] = useState(
+    '{\n  "source": "manual-ui",\n  "phase": "8H"\n}',
+  );
   const [eventTitle, setEventTitle] = useState("");
   const [visitLabelHint, setVisitLabelHint] = useState("unknown_animal");
   const [promotionNotes, setPromotionNotes] = useState("");
   const [lastPromotion, setLastPromotion] = useState<MotionEvidencePromoteResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +103,9 @@ export function MotionEvidencePage({
     return counts;
   }, [zoneFilteredEvidence]);
 
-  async function loadEvidence(options: { showLoading?: boolean } = {}) {
+  async function loadEvidence(
+    options: { showLoading?: boolean; selectEvidenceId?: string } = {},
+  ) {
     const showLoading = options.showLoading ?? true;
     if (showLoading) {
       setIsLoading(true);
@@ -98,9 +115,12 @@ export function MotionEvidencePage({
       const response = await apiClient.listMotionEvidence({ status: "all" });
       setEvidence(response.motion_evidence);
       setSelectedEvidenceId((current) =>
-        current && response.motion_evidence.some((item) => item.id === current)
-          ? current
-          : response.motion_evidence[0]?.id ?? null,
+        options.selectEvidenceId &&
+        response.motion_evidence.some((item) => item.id === options.selectEvidenceId)
+          ? options.selectEvidenceId
+          : current && response.motion_evidence.some((item) => item.id === current)
+            ? current
+            : response.motion_evidence[0]?.id ?? null,
       );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load Motion Evidence.");
@@ -129,6 +149,70 @@ export function MotionEvidencePage({
   async function applyZoneFilter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await loadEvidence({ showLoading: false });
+  }
+
+  async function createManualEvidence(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+
+    const zoneId = manualZoneId.trim();
+    if (!zoneId) {
+      setError("Add a zone_id before creating Motion Evidence.");
+      return;
+    }
+
+    let peakChangedRatio: number;
+    let triggeredFrameCount: number;
+    let startFrameIndex: number | null;
+    let endFrameIndex: number | null;
+    let bestFrameIndex: number | null;
+    let scoringConfig: Record<string, string | number | boolean>;
+    try {
+      peakChangedRatio = parsePeakChangedRatio(manualPeakChangedRatio);
+      triggeredFrameCount = parsePositiveInteger(
+        manualTriggeredFrameCount,
+        "Triggered frame count",
+      );
+      startFrameIndex = parseOptionalFrameIndex(manualStartFrameIndex, "Start frame index");
+      endFrameIndex = parseOptionalFrameIndex(manualEndFrameIndex, "End frame index");
+      bestFrameIndex = parseOptionalFrameIndex(manualBestFrameIndex, "Best frame index");
+      scoringConfig = parseScoringConfig(manualScoringConfig);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Manual evidence fields are invalid.");
+      return;
+    }
+
+    const payload: MotionEvidenceCreateRequest = {
+      zone_id: zoneId,
+      source_id: manualSourceId || undefined,
+      stream_id: manualStreamId || undefined,
+      start_frame_index: startFrameIndex,
+      end_frame_index: endFrameIndex,
+      best_frame_index: bestFrameIndex,
+      peak_changed_ratio: peakChangedRatio,
+      triggered_frame_count: triggeredFrameCount,
+      scoring_config: scoringConfig,
+      snapshot_media_asset_id: manualSnapshotMediaAssetId.trim() || undefined,
+      notes: manualNotes.trim() || undefined,
+    };
+
+    setIsCreating(true);
+    try {
+      const created = await apiClient.createMotionEvidence(payload);
+      setStatusFilter("pending");
+      setZoneFilter(created.zone_id);
+      setSelectedEvidenceId(created.id);
+      setMessage(
+        `${created.id} created as pending Motion Evidence. Review it before promotion.`,
+      );
+      await loadEvidence({ showLoading: false, selectEvidenceId: created.id });
+      await onEvidenceChanged();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Manual Motion Evidence could not be created.");
+    } finally {
+      setIsCreating(false);
+    }
   }
 
   async function ignoreEvidence(item: MotionEvidence) {
@@ -205,6 +289,138 @@ export function MotionEvidencePage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
+
+      <section className="panel motion-create-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Create manual motion evidence</h2>
+            <span className="meta-text">
+              Manual evidence creation is for local testing before stream sampling is wired in.
+              It creates pending MotionEvidence only; it does not create labels, reviewed
+              observations, or export-ready truth.
+            </span>
+          </div>
+          <EvidenceBadge label="Pending evidence only" tone="review" />
+        </div>
+        <form className="motion-create-form" onSubmit={createManualEvidence}>
+          <div className="motion-create-grid">
+            <label>
+              Zone ID
+              <input
+                required
+                value={manualZoneId}
+                onChange={(event) => setManualZoneId(event.target.value)}
+                placeholder="zone-feeder"
+              />
+            </label>
+            <label>
+              Source
+              <select
+                value={manualSourceId}
+                onChange={(event) => setManualSourceId(event.target.value)}
+              >
+                <option value="">Infer from zone</option>
+                {sources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Stream
+              <select
+                value={manualStreamId}
+                onChange={(event) => setManualStreamId(event.target.value)}
+              >
+                <option value="">Infer from zone</option>
+                {streams.map((stream) => (
+                  <option key={stream.id} value={stream.id}>
+                    {stream.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Peak change
+              <input
+                required
+                value={manualPeakChangedRatio}
+                onChange={(event) => setManualPeakChangedRatio(event.target.value)}
+                placeholder="42% or 0.42"
+              />
+            </label>
+            <label>
+              Triggered frames
+              <input
+                required
+                inputMode="numeric"
+                value={manualTriggeredFrameCount}
+                onChange={(event) => setManualTriggeredFrameCount(event.target.value)}
+                placeholder="2"
+              />
+            </label>
+            <label>
+              Snapshot media asset ID
+              <input
+                value={manualSnapshotMediaAssetId}
+                onChange={(event) => setManualSnapshotMediaAssetId(event.target.value)}
+                placeholder="optional"
+              />
+            </label>
+            <label>
+              Start frame
+              <input
+                inputMode="numeric"
+                value={manualStartFrameIndex}
+                onChange={(event) => setManualStartFrameIndex(event.target.value)}
+                placeholder="optional"
+              />
+            </label>
+            <label>
+              End frame
+              <input
+                inputMode="numeric"
+                value={manualEndFrameIndex}
+                onChange={(event) => setManualEndFrameIndex(event.target.value)}
+                placeholder="optional"
+              />
+            </label>
+            <label>
+              Best frame
+              <input
+                inputMode="numeric"
+                value={manualBestFrameIndex}
+                onChange={(event) => setManualBestFrameIndex(event.target.value)}
+                placeholder="optional"
+              />
+            </label>
+            <label className="motion-wide-field">
+              Scoring config JSON
+              <textarea
+                value={manualScoringConfig}
+                onChange={(event) => setManualScoringConfig(event.target.value)}
+              />
+            </label>
+            <label className="motion-wide-field">
+              Notes
+              <textarea
+                value={manualNotes}
+                onChange={(event) => setManualNotes(event.target.value)}
+                placeholder="Manual evidence note"
+              />
+            </label>
+          </div>
+          <div className="motion-create-actions">
+            <button className="primary-action" disabled={isCreating} type="submit">
+              {isCreating ? "Creating..." : "Create pending evidence"}
+            </button>
+            <span className="field-helper">
+              Leave source and stream blank to let the backend use the selected zone.
+            </span>
+          </div>
+        </form>
+      </section>
 
       <section className="panel motion-evidence-filters">
         <div className="section-heading">
@@ -481,10 +697,78 @@ function formatRange(evidence: MotionEvidence): string {
   if (evidence.start_time || evidence.end_time) {
     return `${evidence.start_time ?? "unknown"} to ${evidence.end_time ?? "unknown"}`;
   }
-  if (evidence.start_frame_index !== null || evidence.end_frame_index !== null) {
+  if (
+    evidence.start_frame_index !== null &&
+    evidence.start_frame_index !== undefined ||
+    evidence.end_frame_index !== null &&
+    evidence.end_frame_index !== undefined
+  ) {
     return `frames ${evidence.start_frame_index ?? "?"}-${evidence.end_frame_index ?? "?"}`;
   }
   return "range unknown";
+}
+
+function parsePeakChangedRatio(value: string): number {
+  const trimmed = value.trim();
+  const numeric = trimmed.endsWith("%") ? Number(trimmed.slice(0, -1)) / 100 : Number(trimmed);
+  const ratio = !trimmed.endsWith("%") && numeric > 1 ? numeric / 100 : numeric;
+  if (!Number.isFinite(ratio) || ratio < 0 || ratio > 1) {
+    throw new Error("Peak change must be a percentage from 0% to 100% or a decimal from 0 to 1.");
+  }
+  return ratio;
+}
+
+function parsePositiveInteger(value: string, label: string): number {
+  const parsed = Number(value.trim());
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`${label} must be a whole number of at least 1.`);
+  }
+  return parsed;
+}
+
+function parseOptionalFrameIndex(value: string, label: string): number | null {
+  if (!value.trim()) {
+    return null;
+  }
+  const parsed = Number(value.trim());
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a whole number of at least 0.`);
+  }
+  return parsed;
+}
+
+function parseScoringConfig(rawValue: string): Record<string, string | number | boolean> {
+  if (!rawValue.trim()) {
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawValue);
+  } catch {
+    throw new Error("Scoring config must be valid JSON.");
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Scoring config must be a JSON object.");
+  }
+
+  const config: Record<string, string | number | boolean> = {};
+  Object.entries(parsed).forEach(([key, value]) => {
+    if (
+      typeof value !== "string" &&
+      typeof value !== "number" &&
+      typeof value !== "boolean"
+    ) {
+      throw new Error("Scoring config values must be strings, numbers, or booleans.");
+    }
+    if (typeof value === "number" && !Number.isFinite(value)) {
+      throw new Error("Scoring config number values must be finite.");
+    }
+    config[key] = value;
+  });
+
+  return config;
 }
 
 function formatBestMoment(evidence: MotionEvidence): string {

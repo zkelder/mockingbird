@@ -157,6 +157,12 @@ Phase 8G adds a Motion Evidence review surface in the app.
 
 Users can now see pending, promoted, and ignored Motion Evidence, inspect scoring context, ignore noise, and promote useful evidence into unreviewed Event/Visit context. The review surface does not create reviewed labels, species truth, exports, dataset coverage truth, stream samples, media files, or detector output.
 
+## Phase 8H Status
+
+Phase 8H adds a manual Motion Evidence creation surface inside the review page.
+
+Manual creation is for exercising the local evidence loop before stream sampling is wired in. It creates pending Motion Evidence only, then the normal review surface can ignore or promote it. Manual creation does not create ReviewLabels, reviewed observations, exports, dataset coverage truth, stream samples, media files, detector output, or species truth.
+
 ## Test Plan
 
 Implementation tests should prove:

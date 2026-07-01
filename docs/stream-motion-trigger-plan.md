@@ -50,6 +50,12 @@ Phase 8G adds the Motion Evidence review surface before stream sampling automati
 
 Users can review explicitly created MotionEvidence, ignore noise, or promote valid evidence into unreviewed Event/Visit context. Stream sampling, media capture, and media decoding remain later work.
 
+## Phase 8H Status
+
+Phase 8H adds manual MotionEvidence creation in the app before automated frame sampling.
+
+The manual surface lets users create pending MotionEvidence from product fields such as zone, frame range, peak change, triggered frame count, scoring context, and notes. It exists to exercise the evidence review loop; stream sampling, media capture, and media decoding remain later work.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

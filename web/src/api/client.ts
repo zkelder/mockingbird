@@ -31,6 +31,7 @@ import type {
   ModelAdapterRunRequest,
   ModelAdapterRunResult,
   MotionEvidence,
+  MotionEvidenceCreateRequest,
   MotionEvidenceListResponse,
   MotionEvidencePromoteRequest,
   MotionEvidencePromoteResponse,
@@ -186,6 +187,11 @@ export const apiClient = {
   },
   getMotionEvidence: (id: string) =>
     request<MotionEvidence>(`/api/motion/evidence/${encodeURIComponent(id)}`),
+  createMotionEvidence: (payload: MotionEvidenceCreateRequest) =>
+    request<MotionEvidence>("/api/motion/evidence", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   ignoreMotionEvidence: (id: string) =>
     request<MotionEvidence>(`/api/motion/evidence/${encodeURIComponent(id)}/ignore`, {
       method: "POST",

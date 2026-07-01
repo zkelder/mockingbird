@@ -1453,6 +1453,8 @@ button {
 
 .motion-evidence-filters,
 .motion-evidence-detail,
+.motion-create-panel,
+.motion-create-form,
 .motion-action-panel,
 .motion-promote-form,
 .motion-evidence-subsection,
@@ -1469,6 +1471,7 @@ button {
 }
 
 .motion-zone-filter label,
+.motion-create-form label,
 .motion-promote-form label {
   display: grid;
   gap: 6px;
@@ -1478,6 +1481,9 @@ button {
 }
 
 .motion-zone-filter input,
+.motion-create-form input,
+.motion-create-form select,
+.motion-create-form textarea,
 .motion-promote-form input,
 .motion-promote-form textarea {
   min-height: 42px;
@@ -1488,9 +1494,27 @@ button {
   color: #18231d;
 }
 
+.motion-create-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.motion-wide-field {
+  grid-column: 1 / -1;
+}
+
+.motion-create-form textarea,
 .motion-promote-form textarea {
   min-height: 92px;
   resize: vertical;
+}
+
+.motion-create-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
 }
 
 .motion-evidence-layout {
@@ -1912,12 +1936,14 @@ button {
   .adapter-evaluation-grid,
   .adapter-config-grid,
   .model-readiness-grid,
-  .adapter-result-grid,
-  .detection-proposal-meta,
-  .split-grid,
-  .folder-import-layout,
-  .manual-import-layout,
-  .zone-editor-grid {
+    .adapter-result-grid,
+    .detection-proposal-meta,
+    .split-grid,
+    .folder-import-layout,
+    .manual-import-layout,
+    .motion-create-grid,
+    .motion-evidence-layout,
+    .zone-editor-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1975,10 +2001,14 @@ button {
   .record-meta-grid,
   .split-grid,
   .folder-import-layout,
-  .manual-import-layout,
-  .media-preview-meta,
-  .proposal-decision-panel,
-  .zone-editor-grid {
+    .manual-import-layout,
+    .media-preview-meta,
+    .motion-create-grid,
+    .motion-evidence-detail-grid,
+    .motion-evidence-layout,
+    .motion-zone-filter,
+    .proposal-decision-panel,
+    .zone-editor-grid {
     grid-template-columns: 1fr;
   }
 
