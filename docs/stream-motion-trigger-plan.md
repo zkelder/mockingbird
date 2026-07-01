@@ -8,6 +8,14 @@ stream visible in app -> sample frames locally -> evaluate user-drawn zones -> s
 
 This is not a permanent replacement for MegaDetector. It is the first lightweight event trigger that protects the product loop while heavier detectors remain optional enrichment.
 
+## Phase 8A Status
+
+Phase 8A implements the pure deterministic scoring foundation for caller-provided grayscale frame planes.
+
+The foundation scores user-drawn normalized zones, reports changed pixels/ratios, picks the strongest zone for a frame, and debounces triggered frame scores into candidate windows with a best frame index. It does not sample streams, decode media, save evidence, create events or visits, classify species, or write review truth.
+
+Later phases can connect this scoring core to stream sampling, media references, reviewable candidate creation, and species suggestions.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

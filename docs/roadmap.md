@@ -180,3 +180,18 @@ Validation:
 - Local MegaDetector setup follows [megadetector-local-setup.md](megadetector-local-setup.md) before any smoke test.
 - PyTorch-Wildlife/MegaDetector remains an experimental archived runtime option pending dependency, license, and download-behavior review.
 - The active next path is [stream-motion-trigger-plan.md](stream-motion-trigger-plan.md): stream -> zones -> motion trigger -> snapshot evidence -> later species suggestion -> user correction truth.
+
+## Phase 8 — Zone-aware motion trigger foundation
+
+Goal: build the lightweight stream-first event trigger path around user-drawn zones while preserving review and correction as truth.
+
+Current work:
+
+- Phase 8A: deterministic zone-aware motion scoring foundation for supplied grayscale frame planes.
+- Next likely phase: Phase 8B — explicit motion evaluation API or frame-sampler contract.
+
+Validation:
+
+- Motion scoring stays pure and deterministic.
+- Stream sampling, media decoding, event/visit creation, and species suggestion remain later phases.
+- Motion output remains candidate evidence only; user correction remains dataset truth.
