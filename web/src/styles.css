@@ -491,6 +491,58 @@ button {
   font-size: 1.5rem;
 }
 
+.dataset-coverage-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.dataset-coverage-panel.compact {
+  align-content: start;
+}
+
+.coverage-metric-grid,
+.coverage-columns {
+  display: grid;
+  gap: 12px;
+}
+
+.coverage-metric-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.coverage-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.coverage-metric-grid div,
+.coverage-columns > div {
+  display: grid;
+  gap: 8px;
+}
+
+.coverage-metric-grid div {
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.coverage-metric-grid strong {
+  font-size: 1.55rem;
+}
+
+.coverage-list {
+  display: grid;
+  gap: 8px;
+}
+
+.coverage-list .summary-row span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
 .confidence-meter {
   display: grid;
   gap: 6px;
@@ -1519,6 +1571,8 @@ button {
   .manifest-summary,
   .species-export-summary,
   .species-state-grid,
+  .coverage-metric-grid,
+  .coverage-columns,
   .detection-proposal-meta,
   .split-grid,
   .folder-import-layout,
@@ -1570,6 +1624,8 @@ button {
   .manifest-summary,
   .species-export-summary,
   .species-state-grid,
+  .coverage-metric-grid,
+  .coverage-columns,
   .detection-proposal-meta,
   .record-meta-grid,
   .split-grid,

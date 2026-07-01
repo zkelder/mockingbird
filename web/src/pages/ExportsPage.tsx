@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
-import type { DatasetExport, DatasetExportManifest } from "../api/types";
+import type { DatasetCoverageSummary, DatasetExport, DatasetExportManifest } from "../api/types";
+import { DatasetCoveragePanel } from "../components/DatasetCoveragePanel";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { PageHeader } from "../components/PageHeader";
@@ -9,6 +10,7 @@ import { formatDateTime, formatLabel, sortedEntries } from "../utils";
 
 interface ExportsPageProps {
   exports: DatasetExport[];
+  datasetCoverage: DatasetCoverageSummary | null;
   onOpenReview: () => void;
   onOpenDetectionProposals: () => void;
   onExportsChanged: () => Promise<void>;
@@ -22,6 +24,7 @@ function mediaReferenceName(mediaPath: string): string {
 
 export function ExportsPage({
   exports,
+  datasetCoverage,
   onOpenReview,
   onOpenDetectionProposals,
   onExportsChanged,
@@ -132,6 +135,12 @@ export function ExportsPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
+
+      <DatasetCoveragePanel
+        coverage={datasetCoverage}
+        onOpenReview={onOpenReview}
+        variant="compact"
+      />
 
       <section className="split-grid">
         <form className="panel export-form" onSubmit={createExport}>

@@ -12,6 +12,7 @@ from starlette.responses import FileResponse, Response
 from mockingbird.api.schemas import (
     AnalyticsSummary,
     CameraSource,
+    DatasetCoverageSummary,
     DatasetExport,
     DatasetExportCreate,
     DatasetExportDetail,
@@ -735,6 +736,11 @@ async def get_dataset_export_manifest(export_id: str) -> DatasetExportManifest:
     if manifest is None:
         raise _not_found("Dataset export", export_id)
     return manifest
+
+
+@app.get("/api/dataset-coverage/summary", response_model=DatasetCoverageSummary)
+async def get_dataset_coverage_summary() -> DatasetCoverageSummary:
+    return get_repository().dataset_coverage_summary()
 
 
 @app.get("/api/analytics/summary", response_model=AnalyticsSummary)

@@ -1,6 +1,7 @@
 import type {
   AnalyticsSummary,
   CameraSource,
+  DatasetCoverageSummary,
   DatasetExport,
   DatasetExportCreate,
   DatasetExportDetail,
@@ -163,6 +164,8 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  getDatasetCoverageSummary: () =>
+    request<DatasetCoverageSummary>("/api/dataset-coverage/summary"),
   getAnalyticsSummary: () => request<AnalyticsSummary>("/api/analytics/summary"),
   getLocalDataStatus: () => request<LocalDataStatus>("/api/settings/local-data"),
   resetDemoData: () =>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from pathlib import Path
@@ -16,6 +17,9 @@ from mockingbird.api.schemas import (
     AnalyticsSummary,
     BoundingBox,
     CameraSource,
+    DatasetCoverageGap,
+    DatasetCoverageSpecies,
+    DatasetCoverageSummary,
     DatasetExport,
     DatasetExportCreate,
     DatasetExportDetail,
@@ -100,6 +104,21 @@ SUPPORTED_MEDIA_EXTENSIONS = {
     ".mp4": ("video/mp4", "video"),
     ".mov": ("video/quicktime", "video"),
 }
+
+
+@dataclass
+class _CoverageAccumulator:
+    label: str
+    display_name: str
+    category: str
+    is_species: bool
+    reviewed_record_count: int = 0
+    export_ready_count: int = 0
+    needs_review_count: int = 0
+    unknown_count: int = 0
+    media_asset_count: int = 0
+    first_seen_at: datetime | None = None
+    last_seen_at: datetime | None = None
 
 
 class ProductRepository:
@@ -1067,6 +1086,10 @@ class ProductRepository:
     def build_analytics_summary(self) -> AnalyticsSummary:
         return self.analytics_summary()
 
+    def dataset_coverage_summary(self) -> DatasetCoverageSummary:
+        with self.session_factory() as session:
+            return self._dataset_coverage_summary(session)
+
     def visit_is_dataset_ready(self, visit: Visit) -> bool:
         with self.session_factory() as session:
             return self._visit_is_dataset_ready(session, visit)
@@ -1705,6 +1728,230 @@ class ProductRepository:
 
         return queue
 
+    def _dataset_coverage_summary(self, session: Session) -> DatasetCoverageSummary:
+        coverage: dict[str, _CoverageAccumulator] = {}
+        target_species_models = session.scalars(
+            select(TaxonomyLabelModel)
+            .where(
+                TaxonomyLabelModel.category == LabelCategory.bird.value,
+                TaxonomyLabelModel.is_species.is_(True),
+            )
+            .order_by(TaxonomyLabelModel.sort_order, TaxonomyLabelModel.display_name)
+        ).all()
+        target_species_labels = [label.label for label in target_species_models]
+        target_sort_order = {
+            label.label: label.sort_order if label.sort_order is not None else 999_999
+            for label in target_species_models
+        }
+
+        def ensure_coverage(input_label: str) -> _CoverageAccumulator:
+            normalized_label = self._normalize_label_from_session(session, input_label)
+            if normalized_label in coverage:
+                return coverage[normalized_label]
+
+            taxonomy_label = self._taxonomy_label_model_for_input(session, normalized_label)
+            if taxonomy_label is not None:
+                taxonomy = _taxonomy_label_from_model(taxonomy_label)
+                accumulator = _CoverageAccumulator(
+                    label=taxonomy.label,
+                    display_name=taxonomy.display_name,
+                    category=taxonomy.category.value,
+                    is_species=taxonomy.is_species,
+                )
+            else:
+                accumulator = _CoverageAccumulator(
+                    label=normalized_label,
+                    display_name=_display_name_from_label(normalized_label),
+                    category="custom",
+                    is_species=False,
+                )
+            coverage[accumulator.label] = accumulator
+            return accumulator
+
+        for target in target_species_models:
+            ensure_coverage(target.label)
+
+        reviewed_record_count = 0
+        export_ready_count = 0
+        needs_review_count = 0
+        unknown_bird_count = 0
+        unknown_animal_count = 0
+        false_positive_count = 0
+
+        def add_coverage_record(
+            *,
+            label: str,
+            dataset_ready: bool,
+            media_path: str | None,
+            seen_at: datetime,
+        ) -> None:
+            nonlocal reviewed_record_count
+            nonlocal export_ready_count
+            nonlocal needs_review_count
+            nonlocal unknown_bird_count
+            nonlocal unknown_animal_count
+            nonlocal false_positive_count
+
+            item = ensure_coverage(label)
+            if dataset_ready:
+                item.reviewed_record_count += 1
+                item.export_ready_count += 1
+                reviewed_record_count += 1
+                export_ready_count += 1
+            else:
+                item.needs_review_count += 1
+                needs_review_count += 1
+
+            if item.label in {"unknown_bird", "unknown_animal"}:
+                item.unknown_count += 1
+            if item.label == "unknown_bird":
+                unknown_bird_count += 1
+            elif item.label == "unknown_animal":
+                unknown_animal_count += 1
+            elif item.label == "false_positive":
+                false_positive_count += 1
+
+            if media_path and self._media_asset_for_path_from_session(session, media_path) is not None:
+                item.media_asset_count += 1
+
+            seen_at = _as_utc(seen_at)
+            item.first_seen_at = (
+                seen_at
+                if item.first_seen_at is None or seen_at < item.first_seen_at
+                else item.first_seen_at
+            )
+            item.last_seen_at = (
+                seen_at
+                if item.last_seen_at is None or seen_at > item.last_seen_at
+                else item.last_seen_at
+            )
+
+        visits = self._visits_for_eventless_query(session)
+        event_ids_with_visits = {visit.event_id for visit in visits}
+
+        for visit in visits:
+            event_model = session.get(EventModel, visit.event_id)
+            if event_model is None or session.get(StreamModel, event_model.stream_id) is None:
+                continue
+
+            event = self._event_from_model(session, event_model)
+            label = (
+                visit.reviewed_label
+                or self._latest_label(self._review_labels_for_visit(session, visit.id))
+                or self._latest_label(self._review_labels_for_event(session, event.id))
+                or visit.species_guess
+                or visit.subject_label
+            )
+            add_coverage_record(
+                label=label,
+                dataset_ready=self._visit_is_dataset_ready(session, visit),
+                media_path=visit.representative_media_path,
+                seen_at=event.started_at,
+            )
+
+        event_models = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
+        for event_model in event_models:
+            if event_model.id in event_ids_with_visits:
+                continue
+            if session.get(StreamModel, event_model.stream_id) is None:
+                continue
+
+            event = self._event_from_model(session, event_model)
+            label = self._latest_label(self._review_labels_for_event(session, event.id)) or (
+                event.detections[0].label if event.detections else event.event_type
+            )
+            add_coverage_record(
+                label=label,
+                dataset_ready=self._event_is_dataset_ready(session, event),
+                media_path=None,
+                seen_at=event.started_at,
+            )
+
+        covered_target_species = [
+            label
+            for label in target_species_labels
+            if coverage[label].reviewed_record_count > 0
+        ]
+        missing_target_species = [
+            label
+            for label in target_species_labels
+            if coverage[label].reviewed_record_count == 0
+        ]
+        gaps = [
+            DatasetCoverageGap(
+                label=label,
+                display_name=coverage[label].display_name,
+                reason="missing_reviewed_examples",
+                target_category=LabelCategory.bird.value,
+            )
+            for label in missing_target_species
+        ]
+        if unknown_bird_count > 0:
+            gaps.append(
+                DatasetCoverageGap(
+                    label="unknown_bird",
+                    display_name=ensure_coverage("unknown_bird").display_name,
+                    reason="unknown_birds_need_review",
+                    target_category=LabelCategory.bird.value,
+                )
+            )
+        if unknown_animal_count > 0:
+            gaps.append(
+                DatasetCoverageGap(
+                    label="unknown_animal",
+                    display_name=ensure_coverage("unknown_animal").display_name,
+                    reason="unknown_animals_need_review",
+                    target_category=LabelCategory.unknown.value,
+                )
+            )
+
+        species = [
+            DatasetCoverageSpecies(
+                label=item.label,
+                display_name=item.display_name,
+                category=item.category,
+                is_species=item.is_species,
+                reviewed_record_count=item.reviewed_record_count,
+                export_ready_count=item.export_ready_count,
+                needs_review_count=item.needs_review_count,
+                unknown_count=item.unknown_count,
+                media_asset_count=item.media_asset_count,
+                first_seen_at=item.first_seen_at,
+                last_seen_at=item.last_seen_at,
+            )
+            for item in sorted(
+                coverage.values(),
+                key=lambda item: (
+                    0 if item.label in target_sort_order else 1,
+                    target_sort_order.get(item.label, 999_999),
+                    item.display_name,
+                ),
+            )
+        ]
+
+        return DatasetCoverageSummary(
+            reviewed_record_count=reviewed_record_count,
+            export_ready_count=export_ready_count,
+            needs_review_count=needs_review_count,
+            unknown_bird_count=unknown_bird_count,
+            unknown_animal_count=unknown_animal_count,
+            false_positive_count=false_positive_count,
+            reviewed_species_count=sum(
+                item.reviewed_record_count for item in coverage.values() if item.is_species
+            ),
+            target_species_count=len(target_species_labels),
+            covered_target_species_count=len(covered_target_species),
+            missing_target_species_count=len(missing_target_species),
+            species=species,
+            gaps=gaps,
+            generated_at=datetime.now(UTC),
+            local_first_note=(
+                "Dataset coverage uses corrected labels as local dataset truth. "
+                "Detection and proposal labels remain evidence until review; coverage is "
+                "a signal for future model work and does not run training or classification."
+            ),
+        )
+
     def _analytics_summary(self, session: Session) -> AnalyticsSummary:
         events = [
             self._event_from_model(session, event)
@@ -1943,6 +2190,10 @@ def _taxonomy_key(value: str) -> str:
 
 def _freeform_label(value: str) -> str:
     return _taxonomy_key(value) or "unknown_animal"
+
+
+def _display_name_from_label(value: str) -> str:
+    return " ".join(part.capitalize() for part in value.replace("-", "_").split("_") if part)
 
 
 def _database_path_from_url(db_url: str) -> str | None:

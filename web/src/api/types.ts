@@ -412,6 +412,44 @@ export interface DatasetExportDetail {
   manifest: DatasetExportManifest;
 }
 
+export interface DatasetCoverageSpecies {
+  label: string;
+  display_name: string;
+  category: string;
+  is_species: boolean;
+  reviewed_record_count: number;
+  export_ready_count: number;
+  needs_review_count: number;
+  unknown_count: number;
+  media_asset_count: number;
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
+}
+
+export interface DatasetCoverageGap {
+  label: string;
+  display_name: string;
+  reason: string;
+  target_category?: string | null;
+}
+
+export interface DatasetCoverageSummary {
+  reviewed_record_count: number;
+  export_ready_count: number;
+  needs_review_count: number;
+  unknown_bird_count: number;
+  unknown_animal_count: number;
+  false_positive_count: number;
+  reviewed_species_count: number;
+  target_species_count: number;
+  covered_target_species_count: number;
+  missing_target_species_count: number;
+  species: DatasetCoverageSpecies[];
+  gaps: DatasetCoverageGap[];
+  generated_at: string;
+  local_first_note: string;
+}
+
 export interface AnalyticsSummary {
   event_count: number;
   visit_count: number;

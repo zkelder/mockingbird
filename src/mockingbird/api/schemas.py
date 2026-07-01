@@ -366,6 +366,44 @@ class DatasetExportDetail(BaseModel):
     manifest: DatasetExportManifest
 
 
+class DatasetCoverageSpecies(BaseModel):
+    label: str
+    display_name: str
+    category: str
+    is_species: bool
+    reviewed_record_count: int = Field(ge=0)
+    export_ready_count: int = Field(ge=0)
+    needs_review_count: int = Field(ge=0)
+    unknown_count: int = Field(ge=0)
+    media_asset_count: int = Field(ge=0)
+    first_seen_at: datetime | None = None
+    last_seen_at: datetime | None = None
+
+
+class DatasetCoverageGap(BaseModel):
+    label: str
+    display_name: str
+    reason: str
+    target_category: str | None = None
+
+
+class DatasetCoverageSummary(BaseModel):
+    reviewed_record_count: int = Field(ge=0)
+    export_ready_count: int = Field(ge=0)
+    needs_review_count: int = Field(ge=0)
+    unknown_bird_count: int = Field(ge=0)
+    unknown_animal_count: int = Field(ge=0)
+    false_positive_count: int = Field(ge=0)
+    reviewed_species_count: int = Field(ge=0)
+    target_species_count: int = Field(ge=0)
+    covered_target_species_count: int = Field(ge=0)
+    missing_target_species_count: int = Field(ge=0)
+    species: list[DatasetCoverageSpecies]
+    gaps: list[DatasetCoverageGap]
+    generated_at: datetime
+    local_first_note: str
+
+
 class AnalyticsSummary(BaseModel):
     event_count: int = Field(ge=0)
     visit_count: int = Field(ge=0)

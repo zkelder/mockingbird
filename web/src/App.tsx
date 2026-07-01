@@ -3,6 +3,7 @@ import { apiClient } from "./api/client";
 import type {
   AnalyticsSummary,
   CameraSource,
+  DatasetCoverageSummary,
   DatasetExport,
   HealthStatus,
   ReviewCorrectionResult,
@@ -43,6 +44,7 @@ interface AppData {
   reviewQueue: ReviewQueueItem[];
   exports: DatasetExport[];
   analytics: AnalyticsSummary | null;
+  datasetCoverage: DatasetCoverageSummary | null;
 }
 
 const initialData: AppData = {
@@ -52,6 +54,7 @@ const initialData: AppData = {
   reviewQueue: [],
   exports: [],
   analytics: null,
+  datasetCoverage: null,
 };
 
 const navItems: Array<{ page: Page; label: string }> = [
@@ -82,16 +85,17 @@ export default function App() {
     }
     setError(null);
     try {
-      const [health, sources, streams, reviewQueue, exports, analytics] = await Promise.all([
+      const [health, sources, streams, reviewQueue, exports, analytics, datasetCoverage] = await Promise.all([
         apiClient.getHealth(),
         apiClient.getSources(),
         apiClient.getStreams(),
         apiClient.getReviewQueue(),
         apiClient.getDatasetExports(),
         apiClient.getAnalyticsSummary(),
+        apiClient.getDatasetCoverageSummary(),
       ]);
 
-      setData({ health, sources, streams, reviewQueue, exports, analytics });
+      setData({ health, sources, streams, reviewQueue, exports, analytics, datasetCoverage });
       setSelectedStreamId((current) => current ?? streams[0]?.id ?? null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load MockingBird data.");
@@ -172,6 +176,7 @@ export default function App() {
           health={data.health}
           streams={data.streams}
           analytics={data.analytics}
+          datasetCoverage={data.datasetCoverage}
           reviewQueue={data.reviewQueue}
           exports={data.exports}
           onOpenStream={openStream}
@@ -288,6 +293,7 @@ export default function App() {
       return (
         <AnalyticsPage
           analytics={data.analytics}
+          datasetCoverage={data.datasetCoverage}
           onOpenExports={() => setPage("exports")}
           onOpenReview={() => setPage("review")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
@@ -300,6 +306,7 @@ export default function App() {
       return (
         <ExportsPage
           exports={data.exports}
+          datasetCoverage={data.datasetCoverage}
           onOpenReview={() => setPage("review")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onExportsChanged={() => loadAppData({ showLoading: false })}

@@ -1,15 +1,14 @@
-import { useEffect, useState } from "react";
-import { apiClient } from "../api/client";
-import type { AnalyticsSummary, TaxonomyLabel } from "../api/types";
+import type { AnalyticsSummary, DatasetCoverageSummary } from "../api/types";
+import { DatasetCoveragePanel } from "../components/DatasetCoveragePanel";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
-import { SpeciesCoverageCard } from "../components/SpeciesCoverageCard";
 import { formatLabel, sortedEntries } from "../utils";
 
 interface AnalyticsPageProps {
   analytics: AnalyticsSummary | null;
+  datasetCoverage: DatasetCoverageSummary | null;
   onOpenExports: () => void;
   onOpenReview: () => void;
   onOpenDetectionProposals: () => void;
@@ -18,36 +17,12 @@ interface AnalyticsPageProps {
 
 export function AnalyticsPage({
   analytics,
+  datasetCoverage,
   onOpenExports,
   onOpenReview,
   onOpenDetectionProposals,
   onOpenStream,
 }: AnalyticsPageProps) {
-  const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadTaxonomy() {
-      try {
-        const labels = await apiClient.getTaxonomyLabels();
-        if (isMounted) {
-          setTaxonomyLabels(labels);
-        }
-      } catch {
-        if (isMounted) {
-          setTaxonomyLabels([]);
-        }
-      }
-    }
-
-    void loadTaxonomy();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
   if (!analytics) {
     return <div className="panel">Analytics are unavailable.</div>;
   }
@@ -122,9 +97,9 @@ export function AnalyticsPage({
           labels.
         </span>
       </section>
-      <SpeciesCoverageCard
-        analytics={analytics}
-        taxonomyLabels={taxonomyLabels}
+      <DatasetCoveragePanel
+        coverage={datasetCoverage}
+        onOpenExports={onOpenExports}
         onOpenReview={onOpenReview}
       />
       <section className="panel">
