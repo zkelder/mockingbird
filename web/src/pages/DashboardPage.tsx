@@ -1,4 +1,11 @@
-import type { AnalyticsSummary, HealthStatus, ReviewQueueItem, Stream } from "../api/types";
+import type {
+  AnalyticsSummary,
+  DatasetExport,
+  HealthStatus,
+  ReviewQueueItem,
+  Stream,
+} from "../api/types";
+import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { StatusPill } from "../components/StatusPill";
 import { formatLabel, sortedEntries } from "../utils";
@@ -8,7 +15,10 @@ interface DashboardPageProps {
   streams: Stream[];
   analytics: AnalyticsSummary | null;
   reviewQueue: ReviewQueueItem[];
+  exports: DatasetExport[];
   onOpenStream: (streamId: string) => void;
+  onOpenReview: () => void;
+  onOpenExports: () => void;
 }
 
 export function DashboardPage({
@@ -16,11 +26,19 @@ export function DashboardPage({
   streams,
   analytics,
   reviewQueue,
+  exports,
   onOpenStream,
+  onOpenReview,
+  onOpenExports,
 }: DashboardPageProps) {
   const mainStream = streams[0];
+  const latestExport = exports[exports.length - 1];
   const topSpecies = analytics ? sortedEntries(analytics.species_counts).slice(0, 4) : [];
   const topZones = analytics ? sortedEntries(analytics.zone_activity_counts).slice(0, 4) : [];
+  const datasetRecordCount = exports.reduce(
+    (total, datasetExport) => total + datasetExport.record_count,
+    0,
+  );
 
   return (
     <div className="page-stack">
@@ -30,23 +48,46 @@ export function DashboardPage({
             label={health?.status === "ok" ? "API connected" : "API unavailable"}
             tone={health?.status === "ok" ? "good" : "review"}
           />
-          <h1>Backyard streams, reviewable outdoor activity, local knowledge.</h1>
+          <h1>Outdoor streams become reviewable events, corrections, analytics, and local datasets.</h1>
+          <p>
+            Start with the stream, draw context zones, confirm what happened, then export reviewed
+            labels as local dataset truth.
+          </p>
         </div>
-        {mainStream ? (
-          <button className="primary-action" onClick={() => onOpenStream(mainStream.id)}>
-            Open main stream
-          </button>
-        ) : null}
+        <div className="hero-actions">
+          {mainStream ? (
+            <button className="primary-action" onClick={() => onOpenStream(mainStream.id)}>
+              Open main stream
+            </button>
+          ) : null}
+          {reviewQueue.length > 0 ? (
+            <button className="secondary-action" onClick={onOpenReview}>
+              Review {reviewQueue.length} item{reviewQueue.length === 1 ? "" : "s"}
+            </button>
+          ) : (
+            <button className="secondary-action" onClick={onOpenExports}>
+              Open exports
+            </button>
+          )}
+        </div>
       </section>
 
       <section className="metric-grid">
-        <MetricCard label="Streams" value={streams.length} detail="outdoor views" />
-        <MetricCard label="Events" value={analytics?.event_count ?? 0} detail="detected activity" />
-        <MetricCard label="Visits" value={analytics?.visit_count ?? 0} detail="animal-centered" />
+        <MetricCard label="Streams" value={streams.length} detail="video-centered outdoor views" />
         <MetricCard
           label="Needs review"
           value={analytics?.needs_review_count ?? reviewQueue.length}
-          detail="labels to confirm"
+          detail="labels to confirm as truth"
+        />
+        <MetricCard
+          label="Dataset records"
+          value={datasetRecordCount}
+          detail={latestExport ? `latest: ${latestExport.name}` : "reviewed local exports"}
+        />
+        <MetricCard
+          label="Events and visits"
+          value={`${analytics?.event_count ?? 0}/${analytics?.visit_count ?? 0}`}
+          detail="activity cases / animal visits"
         />
       </section>
 
@@ -56,12 +97,24 @@ export function DashboardPage({
             <h2>Top labels</h2>
           </div>
           <div className="list-stack">
-            {topSpecies.map(([label, count]) => (
-              <div className="summary-row" key={label}>
-                <span>{formatLabel(label)}</span>
-                <strong>{count}</strong>
-              </div>
-            ))}
+            {topSpecies.length > 0 ? (
+              topSpecies.map(([label, count]) => (
+                <div className="summary-row" key={label}>
+                  <span>{formatLabel(label)}</span>
+                  <strong>{count}</strong>
+                </div>
+              ))
+            ) : (
+              <EmptyState
+                title="No reviewed labels yet"
+                description="Review visits and events to build local label counts."
+                action={
+                  <button className="secondary-action" onClick={onOpenReview}>
+                    Open Review Queue
+                  </button>
+                }
+              />
+            )}
           </div>
         </div>
         <div className="panel">
@@ -69,12 +122,26 @@ export function DashboardPage({
             <h2>Zone activity</h2>
           </div>
           <div className="list-stack">
-            {topZones.map(([zoneId, count]) => (
-              <div className="summary-row" key={zoneId}>
-                <span>{formatLabel(zoneId.replace("zone-", ""))}</span>
-                <strong>{count}</strong>
-              </div>
-            ))}
+            {topZones.length > 0 ? (
+              topZones.map(([zoneId, count]) => (
+                <div className="summary-row" key={zoneId}>
+                  <span>{formatLabel(zoneId.replace("zone-", ""))}</span>
+                  <strong>{count}</strong>
+                </div>
+              ))
+            ) : (
+              <EmptyState
+                title="No zone activity yet"
+                description="Zones give outdoor events the context that makes analytics useful."
+                action={
+                  mainStream ? (
+                    <button className="secondary-action" onClick={() => onOpenStream(mainStream.id)}>
+                      Open Stream Detail
+                    </button>
+                  ) : null
+                }
+              />
+            )}
           </div>
         </div>
       </section>

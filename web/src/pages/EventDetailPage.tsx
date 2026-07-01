@@ -76,6 +76,7 @@ export function EventDetailPage({
     <div className="page-stack">
       <div className="stream-detail-heading">
         <div>
+          <span className="page-eyebrow">Event case file</span>
           <StatusPill
             label={formatLabel(detail.event.review_status)}
             tone={detail.event.review_status === "needs_review" ? "review" : "good"}

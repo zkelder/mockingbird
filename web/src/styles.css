@@ -78,6 +78,17 @@ button {
   gap: 8px;
 }
 
+.nav-section-label {
+  margin-top: 8px;
+  color: #b8cdbb;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.nav-section-label:first-child {
+  margin-top: 0;
+}
+
 .nav-item {
   width: 100%;
   border: 1px solid transparent;
@@ -111,6 +122,67 @@ button {
   max-width: 1180px;
 }
 
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.page-header p,
+.dashboard-hero p,
+.stream-detail-heading p,
+.stream-list-item p,
+.queue-card p {
+  max-width: 780px;
+  color: #4f5f55;
+}
+
+.page-header p,
+.dashboard-hero p {
+  margin: 10px 0 0;
+}
+
+.page-header-actions,
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.page-eyebrow {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #e7eef0;
+  color: #335460;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.empty-state {
+  display: grid;
+  gap: 8px;
+  min-height: 132px;
+  align-content: center;
+  border: 1px dashed #b8c7b3;
+  border-radius: 8px;
+  padding: 18px;
+  background: #f7faf3;
+  color: #24382d;
+}
+
+.empty-state span {
+  color: #5c6a61;
+}
+
+.empty-state div {
+  margin-top: 4px;
+}
+
 .dashboard-hero,
 .panel,
 .metric-card,
@@ -141,6 +213,7 @@ button {
 }
 
 .dashboard-hero h1,
+.page-header h1,
 .stream-detail-heading h1,
 .section-heading h1 {
   max-width: 760px;
@@ -154,13 +227,6 @@ button {
   align-items: flex-end;
   justify-content: space-between;
   gap: 18px;
-}
-
-.stream-detail-heading p,
-.stream-list-item p,
-.queue-card p {
-  max-width: 780px;
-  color: #4f5f55;
 }
 
 .primary-action,
@@ -266,9 +332,14 @@ button {
 
 .section-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.section-heading .meta-text {
+  flex: 1 1 auto;
 }
 
 .section-heading h2,
@@ -930,6 +1001,10 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .nav-section-label {
+    grid-column: 1 / -1;
+  }
+
   .metric-grid,
   .case-summary-grid,
   .manifest-summary,
@@ -951,6 +1026,7 @@ button {
   }
 
   .dashboard-hero,
+  .page-header,
   .stream-list-item,
   .stream-detail-heading,
   .case-readiness-panel,
@@ -958,6 +1034,17 @@ button {
   .table-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .page-header-actions,
+  .hero-actions,
+  .detail-actions {
+    justify-content: flex-start;
+  }
+
+  .page-header-actions button,
+  .hero-actions button {
+    width: 100%;
   }
 
   .metric-grid,

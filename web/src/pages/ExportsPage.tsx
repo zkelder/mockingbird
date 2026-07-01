@@ -1,15 +1,17 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type { DatasetExport, DatasetExportManifest } from "../api/types";
+import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel, sortedEntries } from "../utils";
 
 interface ExportsPageProps {
   exports: DatasetExport[];
+  onOpenReview: () => void;
   onExportsChanged: () => Promise<void>;
 }
 
-export function ExportsPage({ exports, onExportsChanged }: ExportsPageProps) {
+export function ExportsPage({ exports, onOpenReview, onExportsChanged }: ExportsPageProps) {
   const [localExports, setLocalExports] = useState<DatasetExport[]>(exports);
   const [selectedExportId, setSelectedExportId] = useState<string | null>(exports[0]?.id ?? null);
   const [manifest, setManifest] = useState<DatasetExportManifest | null>(null);
@@ -94,14 +96,16 @@ export function ExportsPage({ exports, onExportsChanged }: ExportsPageProps) {
 
   return (
     <div className="page-stack">
-      <div className="section-heading">
-        <div>
-          <h1>Dataset Exports</h1>
-          <p className="meta-text">
-            Exports are local reviewed data generated from corrected events and visits.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Local dataset output"
+        title="Dataset Exports"
+        description="Generate local reviewed datasets from corrected events and visits. Detections stay attached as evidence, not final truth."
+        actions={
+          <button className="secondary-action" onClick={onOpenReview}>
+            Open Review Queue
+          </button>
+        }
+      />
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
@@ -221,6 +225,9 @@ export function ExportsPage({ exports, onExportsChanged }: ExportsPageProps) {
                     {formatLabel(reason)}: {count}
                   </span>
                 ))}
+                <button className="secondary-action" onClick={onOpenReview}>
+                  Review skipped activity
+                </button>
               </div>
             ) : null}
 

@@ -1,5 +1,7 @@
 import { useState } from "react";
 import type { ReviewCorrectionResult, ReviewQueueItem } from "../api/types";
+import { EmptyState } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { formatLabel } from "../utils";
 
@@ -11,6 +13,7 @@ interface ReviewQueuePageProps {
     notes: string,
   ) => Promise<ReviewCorrectionResult>;
   onOpenEvent: (eventId: string) => void;
+  onOpenExports: () => void;
   onOpenVisit: (visitId: string) => void;
 }
 
@@ -18,6 +21,7 @@ export function ReviewQueuePage({
   items,
   onCreateCorrection,
   onOpenEvent,
+  onOpenExports,
   onOpenVisit,
 }: ReviewQueuePageProps) {
   const [drafts, setDrafts] = useState<Record<string, { label: string; notes: string }>>({});
@@ -49,15 +53,27 @@ export function ReviewQueuePage({
 
   return (
     <div className="page-stack">
-      <div className="section-heading">
-        <h1>Review Queue</h1>
-      </div>
+      <PageHeader
+        eyebrow="Dataset-grade truth"
+        title="Review Queue"
+        description="Confirm or correct outdoor activity before it becomes analytics and local export data."
+        actions={
+          <button className="secondary-action" onClick={onOpenExports}>
+            Open Dataset Exports
+          </button>
+        }
+      />
       {message ? <div className="notice-panel">{message}</div> : null}
       {items.length === 0 ? (
-        <div className="all-reviewed-panel">
-          <strong>All demo visits and events are reviewed.</strong>
-          <span>Corrections are now available as local dataset-grade labels for exports and analytics.</span>
-        </div>
+        <EmptyState
+          title="All demo visits and events are reviewed."
+          description="Corrections are available as local dataset-grade labels for exports and analytics."
+          action={
+            <button className="primary-action" onClick={onOpenExports}>
+              Generate dataset export
+            </button>
+          }
+        />
       ) : null}
       <div className="queue-list">
         {items.map((item) => {
@@ -85,7 +101,9 @@ export function ReviewQueuePage({
                   <StatusPill label={formatLabel(item.review_status)} tone="review" />
                 </div>
               </div>
-              <p>{item.reason}</p>
+              <p>
+                {item.reason} Detections are evidence; your correction becomes local dataset truth.
+              </p>
               <div className="queue-meta">
                 <span>Suggested: {formatLabel(item.suggested_label ?? "unknown")}</span>
                 <span>Event: {item.event_id ?? "n/a"}</span>
@@ -102,7 +120,7 @@ export function ReviewQueuePage({
                         [item.id]: { ...draft, label: event.target.value },
                       }))
                     }
-                    placeholder="confirmed label"
+                    placeholder="confirmed species or event label"
                   />
                 </label>
                 <label>

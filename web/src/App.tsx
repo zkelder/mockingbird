@@ -49,9 +49,9 @@ const initialData: AppData = {
 const navItems: Array<{ page: Page; label: string }> = [
   { page: "dashboard", label: "Dashboard" },
   { page: "streams", label: "Streams" },
-  { page: "review", label: "Review Queue" },
+  { page: "review", label: "Review" },
   { page: "analytics", label: "Analytics" },
-  { page: "exports", label: "Dataset Exports" },
+  { page: "exports", label: "Exports" },
 ];
 
 export default function App() {
@@ -155,7 +155,10 @@ export default function App() {
           streams={data.streams}
           analytics={data.analytics}
           reviewQueue={data.reviewQueue}
+          exports={data.exports}
           onOpenStream={openStream}
+          onOpenReview={() => setPage("review")}
+          onOpenExports={() => setPage("exports")}
         />
       );
     }
@@ -171,6 +174,7 @@ export default function App() {
           reviewQueue={data.reviewQueue}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
+          onOpenExports={() => setPage("exports")}
           onOpenReview={() => setPage("review")}
         />
       );
@@ -206,18 +210,27 @@ export default function App() {
           items={data.reviewQueue}
           onCreateCorrection={createCorrection}
           onOpenEvent={openEvent}
+          onOpenExports={() => setPage("exports")}
           onOpenVisit={openVisit}
         />
       );
     }
 
     if (page === "analytics") {
-      return <AnalyticsPage analytics={data.analytics} />;
+      return (
+        <AnalyticsPage
+          analytics={data.analytics}
+          onOpenExports={() => setPage("exports")}
+          onOpenReview={() => setPage("review")}
+          onOpenStream={selectedStream ? () => openStream(selectedStream.id) : undefined}
+        />
+      );
     }
 
     return (
       <ExportsPage
         exports={data.exports}
+        onOpenReview={() => setPage("review")}
         onExportsChanged={() => loadAppData({ showLoading: false })}
       />
     );
@@ -234,6 +247,7 @@ export default function App() {
           </div>
         </div>
         <nav className="nav-list" aria-label="Product navigation">
+          <span className="nav-section-label">Product loop</span>
           {navItems.map((item) => (
             <button
               className={page === item.page ? "nav-item active" : "nav-item"}
@@ -243,6 +257,9 @@ export default function App() {
               {item.label}
             </button>
           ))}
+          {selectedStream || selectedEventId || selectedVisitId ? (
+            <span className="nav-section-label">Current context</span>
+          ) : null}
           {selectedStream ? (
             <button
               className={page === "stream-detail" ? "nav-item active" : "nav-item"}
@@ -269,7 +286,7 @@ export default function App() {
           ) : null}
         </nav>
         <div className="sidebar-footer">
-          <span>API</span>
+          <span>Local API</span>
           <strong>{apiClient.baseUrl}</strong>
         </div>
       </aside>

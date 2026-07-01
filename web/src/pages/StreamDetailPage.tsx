@@ -10,6 +10,7 @@ interface StreamDetailPageProps {
   reviewQueue: ReviewQueueItem[];
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
+  onOpenExports: () => void;
   onOpenReview: () => void;
 }
 
@@ -57,6 +58,7 @@ export function StreamDetailPage({
   reviewQueue,
   onOpenEvent,
   onOpenVisit,
+  onOpenExports,
   onOpenReview,
 }: StreamDetailPageProps) {
   const [detail, setDetail] = useState<StreamDetailState | null>(null);
@@ -287,11 +289,26 @@ export function StreamDetailPage({
         <div>
           <StatusPill label={detail.stream.is_live ? "Demo live" : "Offline"} tone="good" />
           <h1>{detail.stream.name}</h1>
-          <p>{detail.stream.description}</p>
+          <p>
+            {detail.stream.description} Draw zones, inspect events, and turn corrections into local
+            dataset records.
+          </p>
         </div>
-        {streamReviewItems.length > 0 ? (
-          <StatusPill label={`${streamReviewItems.length} needs review`} tone="review" />
-        ) : null}
+        <div className="detail-actions">
+          {streamReviewItems.length > 0 ? (
+            <button className="secondary-action" onClick={onOpenReview}>
+              Review {streamReviewItems.length}
+            </button>
+          ) : null}
+          <button className="secondary-action" onClick={onOpenExports}>
+            Dataset Exports
+          </button>
+          {streamReviewItems.length > 0 ? (
+            <StatusPill label={`${streamReviewItems.length} needs review`} tone="review" />
+          ) : (
+            <StatusPill label="Review clear" tone="good" />
+          )}
+        </div>
       </div>
 
       <StreamPanel
@@ -311,6 +328,7 @@ export function StreamDetailPage({
         <div className="panel">
           <div className="section-heading">
             <h2>Zones</h2>
+            <span className="meta-text">User-authored context for outdoor activity</span>
             <button className="secondary-action" onClick={drawMode ? cancelDrawMode : startDrawMode}>
               {drawMode ? "Cancel draw" : "Draw new zone"}
             </button>
@@ -460,7 +478,12 @@ export function StreamDetailPage({
                 </button>
               </>
             ) : (
-              <span className="meta-text">No stream items need review.</span>
+              <>
+                <span className="meta-text">No stream items need review.</span>
+                <button className="secondary-action" onClick={onOpenExports}>
+                  Open Dataset Exports
+                </button>
+              </>
             )}
           </div>
         </div>

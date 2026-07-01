@@ -112,6 +112,7 @@ export function VisitDetailPage({
     <div className="page-stack">
       <div className="stream-detail-heading">
         <div>
+          <span className="page-eyebrow">Visit case file</span>
           <StatusPill
             label={formatLabel(detail.visit.review_status)}
             tone={detail.visit.review_status === "needs_review" ? "review" : "good"}
