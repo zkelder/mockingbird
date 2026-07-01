@@ -176,6 +176,7 @@ export default function App() {
           exports={data.exports}
           onOpenStream={openStream}
           onOpenImport={() => setPage("import")}
+          onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenReview={() => setPage("review")}
           onOpenExports={() => setPage("exports")}
         />
@@ -285,6 +286,7 @@ export default function App() {
           analytics={data.analytics}
           onOpenExports={() => setPage("exports")}
           onOpenReview={() => setPage("review")}
+          onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenStream={selectedStream ? () => openStream(selectedStream.id) : undefined}
         />
       );

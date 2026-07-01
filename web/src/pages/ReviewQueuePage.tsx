@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ReviewCorrectionResult, ReviewQueueItem } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
+import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
@@ -106,6 +107,7 @@ export function ReviewQueuePage({
                 {item.reason} Detections are evidence; your correction becomes local dataset truth.
               </p>
               <div className="queue-meta">
+                <EvidenceBadge label={item.media_asset ? "Evidence attached" : "Review evidence"} />
                 <span>Suggested: {formatLabel(item.suggested_label ?? "unknown")}</span>
                 <span>Event: {item.event_id ?? "n/a"}</span>
                 <span>Visit: {item.visit_id ?? "n/a"}</span>

@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
-import type { Detection, VisitDetail } from "../api/types";
+import type { VisitDetail } from "../api/types";
+import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
+import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
@@ -11,18 +13,6 @@ interface VisitDetailPageProps {
   onOpenEvent: (eventId: string) => void;
   onOpenExports: () => void;
   onCorrectionSaved: () => Promise<void>;
-}
-
-function bboxSummary(detection: Detection): string {
-  if (!detection.bbox) {
-    return "No box";
-  }
-
-  return `Box ${Math.round(detection.bbox.x * 100)}%, ${Math.round(
-    detection.bbox.y * 100,
-  )}% / ${Math.round(detection.bbox.width * 100)}% x ${Math.round(
-    detection.bbox.height * 100,
-  )}%`;
 }
 
 export function VisitDetailPage({
@@ -185,23 +175,25 @@ export function VisitDetailPage({
         <div className="panel">
           <div className="section-heading">
             <h2>Detections as evidence</h2>
+            <EvidenceBadge label="Correction wins" tone="truth" />
           </div>
+          <p className="evidence-panel-copy">
+            Treat these labels as supporting evidence. The corrected visit label below becomes the
+            dataset-grade value used by exports and analytics.
+          </p>
           <div className="evidence-list">
             {detail.detections.length > 0 ? (
               detail.detections.map((detection) => (
-                <div className="evidence-card" key={detection.id}>
-                  <div className="item-title-row">
-                    <strong>{formatLabel(detection.label)}</strong>
-                    <span>{Math.round(detection.confidence * 100)}%</span>
-                  </div>
-                  <span className="meta-text">
-                    Zone:{" "}
-                    {detail.primary_zone && detection.zone_id === detail.primary_zone.id
+                <DetectionEvidenceCard
+                  detection={detection}
+                  key={detection.id}
+                  statusLabel={detail.dataset_ready ? "Corrected truth available" : "Needs review"}
+                  zoneLabel={
+                    detail.primary_zone && detection.zone_id === detail.primary_zone.id
                       ? detail.primary_zone.name
-                      : detection.zone_id ?? "Unzoned"}
-                  </span>
-                  <span className="meta-text">{bboxSummary(detection)}</span>
-                </div>
+                      : undefined
+                  }
+                />
               ))
             ) : (
               <span className="meta-text">No detections are attached to this manual media visit.</span>
@@ -235,6 +227,7 @@ export function VisitDetailPage({
         <section className="panel">
           <div className="section-heading">
             <h2>Correct visit label</h2>
+            <EvidenceBadge label="Dataset truth" tone="truth" />
           </div>
           <form className="correction-form" onSubmit={saveCorrection}>
             <label>

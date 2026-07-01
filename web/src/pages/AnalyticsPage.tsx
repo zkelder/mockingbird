@@ -8,6 +8,7 @@ interface AnalyticsPageProps {
   analytics: AnalyticsSummary | null;
   onOpenExports: () => void;
   onOpenReview: () => void;
+  onOpenDetectionProposals: () => void;
   onOpenStream?: () => void;
 }
 
@@ -15,6 +16,7 @@ export function AnalyticsPage({
   analytics,
   onOpenExports,
   onOpenReview,
+  onOpenDetectionProposals,
   onOpenStream,
 }: AnalyticsPageProps) {
   if (!analytics) {
@@ -40,6 +42,9 @@ export function AnalyticsPage({
             <button className="secondary-action" onClick={onOpenExports}>
               Open Dataset Exports
             </button>
+            <button className="secondary-action" onClick={onOpenDetectionProposals}>
+              Detection Proposals
+            </button>
           </>
         }
       />
@@ -61,7 +66,8 @@ export function AnalyticsPage({
         <strong>Reviewed imports count here</strong>
         <span>
           Manual media imports become events and visits, then corrected labels roll into these local
-          summaries and dataset manifests.
+          summaries and dataset manifests. Detection proposals only count here after they become
+          reviewable visits or events and receive corrected labels.
         </span>
       </section>
       <section className="split-grid">

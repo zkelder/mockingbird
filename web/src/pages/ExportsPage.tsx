@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type { DatasetExport, DatasetExportManifest } from "../api/types";
+import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
+import { EvidenceBadge } from "../components/EvidenceBadge";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel, sortedEntries } from "../utils";
@@ -249,10 +251,13 @@ export function ExportsPage({ exports, onOpenReview, onExportsChanged }: Exports
                       </span>
                       <h3>{formatLabel(record.label)}</h3>
                     </div>
-                    <StatusPill
-                      label={record.dataset_ready ? "Ready for local dataset export" : "Needs review"}
-                      tone={record.dataset_ready ? "good" : "review"}
-                    />
+                    <div className="record-status-stack">
+                      <EvidenceBadge label="Corrected label is truth" tone="truth" />
+                      <StatusPill
+                        label={record.dataset_ready ? "Ready for local dataset export" : "Needs review"}
+                        tone={record.dataset_ready ? "good" : "review"}
+                      />
+                    </div>
                   </div>
                   <div className="record-meta-grid">
                     <span>Stream: {record.stream_id}</span>
@@ -273,6 +278,19 @@ export function ExportsPage({ exports, onOpenReview, onExportsChanged }: Exports
                       {record.detections.length === 1 ? "" : "s"}
                     </span>
                   </div>
+                  {manifest.export.include_detections && record.detections.length > 0 ? (
+                    <div className="export-evidence-list">
+                      {record.detections.map((detection) => (
+                        <DetectionEvidenceCard
+                          compact
+                          detection={detection}
+                          key={detection.id}
+                          statusLabel="Export evidence"
+                          zoneLabel={record.zone_name ?? undefined}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
                 </article>
               ))}
               {manifest.records.length === 0 ? (

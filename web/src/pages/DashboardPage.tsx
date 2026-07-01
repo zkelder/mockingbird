@@ -20,6 +20,7 @@ interface DashboardPageProps {
   onOpenReview: () => void;
   onOpenExports: () => void;
   onOpenImport: () => void;
+  onOpenDetectionProposals: () => void;
 }
 
 export function DashboardPage({
@@ -32,6 +33,7 @@ export function DashboardPage({
   onOpenReview,
   onOpenExports,
   onOpenImport,
+  onOpenDetectionProposals,
 }: DashboardPageProps) {
   const mainStream = streams[0];
   const latestExport = exports[exports.length - 1];
@@ -59,6 +61,9 @@ export function DashboardPage({
         <div className="hero-actions">
           <button className="primary-action" onClick={onOpenImport}>
             Import media
+          </button>
+          <button className="secondary-action" onClick={onOpenDetectionProposals}>
+            Detection proposals
           </button>
           {mainStream ? (
             <button className="secondary-action" onClick={() => onOpenStream(mainStream.id)}>
@@ -149,6 +154,16 @@ export function DashboardPage({
             )}
           </div>
         </div>
+      </section>
+      <section className="notice-panel">
+        <strong>Detection proposals are evidence first</strong>
+        <span>
+          Accept proposal evidence into reviewable events and visits, then correct labels before
+          analytics or exports treat them as truth.
+        </span>
+        <button className="secondary-action" onClick={onOpenDetectionProposals}>
+          Open Detection Proposals
+        </button>
       </section>
     </div>
   );

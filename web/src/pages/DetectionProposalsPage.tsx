@@ -9,9 +9,12 @@ import type {
   Stream,
   Zone,
 } from "../api/types";
+import { ConfidenceBar } from "../components/ConfidenceBar";
 import { EmptyState } from "../components/EmptyState";
+import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
+import { ProposalStatusBadge } from "../components/ProposalStatusBadge";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
 
@@ -24,16 +27,6 @@ interface DetectionProposalsPageProps {
   onOpenReview: () => void;
   onOpenExports: () => void;
   onProposalChanged: () => Promise<void>;
-}
-
-function statusTone(status: DetectionProposal["status"]): "good" | "review" | "quiet" {
-  if (status === "proposed") {
-    return "review";
-  }
-  if (status === "accepted" || status === "converted") {
-    return "good";
-  }
-  return "quiet";
 }
 
 export function DetectionProposalsPage({
@@ -81,6 +74,8 @@ export function DetectionProposalsPage({
   }, [zonesByStream]);
 
   const selectedMedia = mediaById.get(selectedMediaId) ?? null;
+  const selectedStream = selectedMedia ? streamById.get(selectedMedia.stream_id) ?? null : null;
+  const selectedSourceName = selectedStream ? sourceNames.get(selectedStream.source_id) : null;
   const selectedZones = selectedMedia ? zonesByStream[selectedMedia.stream_id] ?? [] : [];
 
   async function loadPageData(options: { showLoading?: boolean } = {}) {
@@ -211,7 +206,7 @@ export function DetectionProposalsPage({
       <PageHeader
         eyebrow="Detection pipeline interface"
         title="Detection Proposals"
-        description="Turn proposed outdoor activity from local media into reviewable events and visits. Corrections remain the dataset truth for exports and analytics."
+        description="Review demo or manual proposals as evidence, then accept them into reviewable events and visits or reject them before they affect analytics and exports."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenImport}>
@@ -228,14 +223,17 @@ export function DetectionProposalsPage({
       {error ? <div className="error-panel">{error}</div> : null}
 
       {result ? (
-        <section className="panel import-result-panel">
+        <section className="panel proposal-decision-panel">
           <div>
-            <span className="meta-text">Review and correct converted proposals before export.</span>
+            <EvidenceBadge
+              label={result.proposal.status === "rejected" ? "Evidence dismissed" : "Review case created"}
+              tone={result.proposal.status === "rejected" ? "quiet" : "review"}
+            />
             <h2>{formatLabel(result.proposal.status)} proposal</h2>
             <p>
               {result.proposal.status === "rejected"
-                ? "No product event was created."
-                : "A needs-review event and visit now carry the proposal as detection evidence."}
+                ? "The proposal was dismissed as evidence. No event or visit was created."
+                : "A reviewable event and visit now carry this proposal as detection evidence. Human correction still becomes dataset truth."}
             </p>
           </div>
           <div className="detail-actions">
@@ -249,6 +247,11 @@ export function DetectionProposalsPage({
                 Visit detail
               </button>
             ) : null}
+            {result.visit || result.event ? (
+              <button className="secondary-action" onClick={onOpenReview}>
+                Review Queue
+              </button>
+            ) : null}
             <button className="secondary-action" onClick={onOpenExports}>
               Dataset exports
             </button>
@@ -260,8 +263,8 @@ export function DetectionProposalsPage({
       <section className="manual-import-layout detection-proposal-layout">
         <form className="panel manual-import-form" onSubmit={submitProposal}>
           <div className="section-heading">
-            <h2>Create proposal</h2>
-            <StatusPill label="Evidence only" tone="quiet" />
+            <h2>Create demo/manual proposal</h2>
+            <EvidenceBadge label="Evidence only" />
           </div>
           <div className="import-flow-strip">
             <span>Media asset</span>
@@ -287,7 +290,18 @@ export function DetectionProposalsPage({
                 );
               })}
             </select>
+            <span className="field-helper">Choose local media that future detection evidence would reference.</span>
           </label>
+          {selectedMedia ? (
+            <div className="proposal-selected-media">
+              <MediaAssetPreview asset={selectedMedia} compact />
+              <div className="proposal-context-strip">
+                <span>Stream: {selectedStream?.name ?? selectedMedia.stream_id}</span>
+                <span>Source: {selectedSourceName ?? selectedStream?.source_id ?? "local media"}</span>
+                <span>Media stays local</span>
+              </div>
+            </div>
+          ) : null}
           <label>
             Zone
             <select
@@ -302,13 +316,15 @@ export function DetectionProposalsPage({
                 </option>
               ))}
             </select>
+            <span className="field-helper">Zones give proposal evidence outdoor context before review.</span>
           </label>
           <label>
-            Proposal label
+            Suggested evidence label
             <input value={label} onChange={(event) => setLabel(event.target.value)} />
+            <span className="field-helper">This is not truth until a user reviews and corrects the visit.</span>
           </label>
           <label>
-            Confidence
+            Evidence confidence
             <input
               max="1"
               min="0"
@@ -317,6 +333,7 @@ export function DetectionProposalsPage({
               type="number"
               value={confidence}
             />
+            <span className="field-helper">Use 0 to 1 for demo confidence; it stays evidence only.</span>
           </label>
           <label>
             Suggested event type
@@ -324,6 +341,7 @@ export function DetectionProposalsPage({
               value={suggestedEventType}
               onChange={(event) => setSuggestedEventType(event.target.value)}
             />
+            <span className="field-helper">Conversion creates a reviewable event with this event type.</span>
           </label>
           <label>
             Suggested subject label
@@ -331,6 +349,7 @@ export function DetectionProposalsPage({
               value={suggestedSubjectLabel}
               onChange={(event) => setSuggestedSubjectLabel(event.target.value)}
             />
+            <span className="field-helper">Subject and species suggestions help start review; corrections win.</span>
           </label>
           <label>
             Suggested species
@@ -339,6 +358,7 @@ export function DetectionProposalsPage({
               onChange={(event) => setSuggestedSpecies(event.target.value)}
               placeholder="optional"
             />
+            <span className="field-helper">Optional species guess before human confirmation.</span>
           </label>
           <label>
             Notes
@@ -381,9 +401,14 @@ export function DetectionProposalsPage({
                       <span className="meta-text">{formatDateTime(proposal.created_at)}</span>
                       <h3>{formatLabel(proposal.label)}</h3>
                     </div>
-                    <StatusPill label={formatLabel(proposal.status)} tone={statusTone(proposal.status)} />
+                    <ProposalStatusBadge status={proposal.status} />
+                  </div>
+                  <div className="proposal-truth-strip">
+                    <EvidenceBadge label="Detection evidence" />
+                    <span>Human correction becomes dataset truth after review.</span>
                   </div>
                   {asset ? <MediaAssetPreview asset={asset} compact /> : null}
+                  <ConfidenceBar value={proposal.confidence} />
                   <div className="detection-proposal-meta">
                     <div className="data-row">
                       <span>Stream</span>
@@ -394,17 +419,26 @@ export function DetectionProposalsPage({
                       <strong>{zone?.name ?? proposal.zone_id ?? "Unzoned"}</strong>
                     </div>
                     <div className="data-row">
-                      <span>Confidence</span>
-                      <strong>{Math.round(proposal.confidence * 100)}%</strong>
+                      <span>Suggested event</span>
+                      <strong>{formatLabel(proposal.suggested_event_type)}</strong>
                     </div>
                     <div className="data-row">
-                      <span>Suggested truth</span>
+                      <span>Suggested subject/species</span>
                       <strong>
                         {formatLabel(proposal.suggested_species ?? proposal.suggested_subject_label)}
                       </strong>
                     </div>
                   </div>
                   {proposal.notes ? <p>{proposal.notes}</p> : null}
+                  {proposal.status === "rejected" ? (
+                    <div className="proposal-state-note">
+                      Proposal dismissed as evidence. No event or visit was created.
+                    </div>
+                  ) : proposal.event_id || proposal.visit_id ? (
+                    <div className="proposal-state-note">
+                      Review case created. Correct the visit before using it as dataset truth.
+                    </div>
+                  ) : null}
                   <div className="detail-actions">
                     {canDecide ? (
                       <>
@@ -413,7 +447,7 @@ export function DetectionProposalsPage({
                           disabled={actionId === `${proposal.id}:convert_to_event`}
                           onClick={() => void decideProposal(proposal, "convert_to_event")}
                         >
-                          Convert to review
+                          Accept and convert to review
                         </button>
                         <button
                           className="secondary-action"
@@ -432,6 +466,11 @@ export function DetectionProposalsPage({
                     {proposal.visit_id ? (
                       <button className="secondary-action" onClick={() => onOpenVisit(proposal.visit_id!)}>
                         Visit detail
+                      </button>
+                    ) : null}
+                    {proposal.event_id || proposal.visit_id ? (
+                      <button className="secondary-action" onClick={onOpenReview}>
+                        Review Queue
                       </button>
                     ) : null}
                   </div>

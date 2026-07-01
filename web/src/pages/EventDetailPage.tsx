@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
-import type { Detection, EventDetail } from "../api/types";
+import type { EventDetail } from "../api/types";
+import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
+import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
@@ -11,18 +13,6 @@ interface EventDetailPageProps {
   onOpenVisit: (visitId: string) => void;
   onOpenExports: () => void;
   onOpenReview: () => void;
-}
-
-function bboxSummary(detection: Detection): string {
-  if (!detection.bbox) {
-    return "No box";
-  }
-
-  return `Box ${Math.round(detection.bbox.x * 100)}%, ${Math.round(
-    detection.bbox.y * 100,
-  )}% / ${Math.round(detection.bbox.width * 100)}% x ${Math.round(
-    detection.bbox.height * 100,
-  )}%`;
 }
 
 export function EventDetailPage({
@@ -140,23 +130,25 @@ export function EventDetailPage({
         <div className="panel">
           <div className="section-heading">
             <h2>Detections as evidence</h2>
+            <EvidenceBadge label="Not dataset truth" />
           </div>
+          <p className="evidence-panel-copy">
+            Proposal and detection labels help explain why this case exists. Review labels and
+            corrections decide what exports and analytics count as truth.
+          </p>
           <div className="evidence-list">
             {detail.event.detections.length > 0 ? (
               detail.event.detections.map((detection) => (
-                <div className="evidence-card" key={detection.id}>
-                  <div className="item-title-row">
-                    <strong>{formatLabel(detection.label)}</strong>
-                    <span>{Math.round(detection.confidence * 100)}%</span>
-                  </div>
-                  <span className="meta-text">
-                    Zone:{" "}
-                    {detail.primary_zone && detection.zone_id === detail.primary_zone.id
+                <DetectionEvidenceCard
+                  detection={detection}
+                  key={detection.id}
+                  statusLabel={detail.dataset_ready ? "Corrected truth available" : "Needs review"}
+                  zoneLabel={
+                    detail.primary_zone && detection.zone_id === detail.primary_zone.id
                       ? detail.primary_zone.name
-                      : detection.zone_id ?? "Unzoned"}
-                  </span>
-                  <span className="meta-text">{bboxSummary(detection)}</span>
-                </div>
+                      : undefined
+                  }
+                />
               ))
             ) : (
               <span className="meta-text">No detections are attached to this manual media event.</span>
