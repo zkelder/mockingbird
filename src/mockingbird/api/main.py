@@ -15,6 +15,10 @@ from mockingbird.api.schemas import (
     DatasetExportManifest,
     Event,
     EventDetail,
+    FolderImportCreate,
+    FolderImportPreview,
+    FolderImportPreviewRequest,
+    FolderImportResult,
     LocalDataStatus,
     MediaAsset,
     MediaImportResult,
@@ -115,6 +119,17 @@ def _media_import_error(error: ValueError) -> HTTPException:
             detail="Choose a stream for this media import.",
         )
     return HTTPException(status_code=400, detail="Media import could not be created.")
+
+
+def _folder_import_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "folder_required":
+        return HTTPException(status_code=400, detail="Choose a local folder path.")
+    if reason == "folder_missing":
+        return HTTPException(status_code=404, detail="Folder was not found.")
+    if reason == "folder_not_directory":
+        return HTTPException(status_code=400, detail="Folder path must be a directory.")
+    return _media_import_error(error)
 
 
 @app.get("/health")
@@ -366,6 +381,22 @@ async def import_media(
         )
     except ValueError as error:
         raise _media_import_error(error) from error
+
+
+@app.post("/api/media/folder-preview", response_model=FolderImportPreview)
+async def preview_folder_import(payload: FolderImportPreviewRequest) -> FolderImportPreview:
+    try:
+        return get_repository().preview_folder_import(payload.folder_path)
+    except ValueError as error:
+        raise _folder_import_error(error) from error
+
+
+@app.post("/api/media/folder-import", response_model=FolderImportResult, status_code=201)
+async def import_folder_media(payload: FolderImportCreate) -> FolderImportResult:
+    try:
+        return get_repository().import_folder_media(payload)
+    except ValueError as error:
+        raise _folder_import_error(error) from error
 
 
 @app.get("/api/media/{media_id}", response_model=MediaAsset)

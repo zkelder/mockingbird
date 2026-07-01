@@ -282,6 +282,52 @@ class MediaImportResult(BaseModel):
     review_queue_count: int = Field(ge=0)
 
 
+class FolderImportPreviewRequest(BaseModel):
+    folder_path: str
+
+
+class FolderImportCandidate(BaseModel):
+    filename: str
+    path: str
+    content_type: str
+    media_type: str
+    file_size_bytes: int = Field(ge=0)
+
+
+class FolderImportSkippedFile(BaseModel):
+    filename: str
+    reason: str
+
+
+class FolderImportPreview(BaseModel):
+    folder_path: str
+    supported_files: list[FolderImportCandidate]
+    skipped_files: list[FolderImportSkippedFile]
+    supported_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+
+
+class FolderImportCreate(BaseModel):
+    folder_path: str
+    stream_id: str | None = None
+    zone_id: str | None = None
+    subject_label: str = "unknown_animal"
+    species_guess: str | None = None
+    notes: str | None = None
+    limit: int | None = Field(default=None, ge=1)
+
+
+class FolderImportResult(BaseModel):
+    folder_path: str
+    imported_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    media_assets: list[MediaAsset]
+    events: list[Event]
+    visits: list[Visit]
+    skipped_files: list[FolderImportSkippedFile]
+    review_queue_count: int = Field(ge=0)
+
+
 class EventDetail(BaseModel):
     event: Event
     stream: Stream

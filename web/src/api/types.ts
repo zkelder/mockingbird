@@ -136,6 +136,52 @@ export interface MediaImportResult {
   review_queue_count: number;
 }
 
+export interface FolderImportPreviewRequest {
+  folder_path: string;
+}
+
+export interface FolderImportCandidate {
+  filename: string;
+  path: string;
+  content_type: string;
+  media_type: string;
+  file_size_bytes: number;
+}
+
+export interface FolderImportSkippedFile {
+  filename: string;
+  reason: string;
+}
+
+export interface FolderImportPreview {
+  folder_path: string;
+  supported_files: FolderImportCandidate[];
+  skipped_files: FolderImportSkippedFile[];
+  supported_count: number;
+  skipped_count: number;
+}
+
+export interface FolderImportCreate {
+  folder_path: string;
+  stream_id?: string | null;
+  zone_id?: string | null;
+  subject_label?: string;
+  species_guess?: string | null;
+  notes?: string | null;
+  limit?: number | null;
+}
+
+export interface FolderImportResult {
+  folder_path: string;
+  imported_count: number;
+  skipped_count: number;
+  media_assets: MediaAsset[];
+  events: Event[];
+  visits: Visit[];
+  skipped_files: FolderImportSkippedFile[];
+  review_queue_count: number;
+}
+
 export interface ReviewQueueItem {
   id: string;
   item_type: string;

@@ -13,6 +13,7 @@ import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EventDetailPage } from "./pages/EventDetailPage";
 import { ExportsPage } from "./pages/ExportsPage";
+import { FolderImportPage } from "./pages/FolderImportPage";
 import { LocalDataPage } from "./pages/LocalDataPage";
 import { ManualImportPage } from "./pages/ManualImportPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
@@ -24,6 +25,7 @@ type Page =
   | "dashboard"
   | "streams"
   | "import"
+  | "folder-import"
   | "stream-detail"
   | "event-detail"
   | "visit-detail"
@@ -54,6 +56,7 @@ const navItems: Array<{ page: Page; label: string }> = [
   { page: "dashboard", label: "Dashboard" },
   { page: "streams", label: "Streams" },
   { page: "import", label: "Import Media" },
+  { page: "folder-import", label: "Folder Import" },
   { page: "review", label: "Review" },
   { page: "analytics", label: "Analytics" },
   { page: "exports", label: "Exports" },
@@ -188,6 +191,22 @@ export default function App() {
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
           onOpenStream={openStream}
+          onOpenFolderImport={() => setPage("folder-import")}
+          onImportComplete={() => loadAppData({ showLoading: false })}
+        />
+      );
+    }
+
+    if (page === "folder-import") {
+      return (
+        <FolderImportPage
+          streams={data.streams}
+          sources={data.sources}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
+          onOpenStream={openStream}
+          onOpenReview={() => setPage("review")}
+          onOpenExports={() => setPage("exports")}
           onImportComplete={() => loadAppData({ showLoading: false })}
         />
       );

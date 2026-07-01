@@ -858,6 +858,13 @@ button {
   align-items: start;
 }
 
+.folder-import-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
 .manual-import-form,
 .media-list,
 .media-list-item,
@@ -1004,6 +1011,39 @@ button {
 .media-evidence-panel {
   display: grid;
   gap: 14px;
+}
+
+.folder-file-list,
+.folder-import-results {
+  display: grid;
+  gap: 10px;
+}
+
+.folder-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.folder-file-row div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.folder-file-row strong,
+.folder-file-row span {
+  overflow-wrap: anywhere;
+}
+
+.folder-file-row span {
+  color: #627168;
+  font-size: 0.9rem;
 }
 
 .export-form,
@@ -1198,6 +1238,7 @@ button {
   .case-summary-grid,
   .manifest-summary,
   .split-grid,
+  .folder-import-layout,
   .manual-import-layout,
   .zone-editor-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1221,6 +1262,7 @@ button {
   .stream-detail-heading,
   .case-readiness-panel,
   .import-result-panel,
+  .folder-file-row,
   .summary-row,
   .table-row {
     align-items: stretch;
@@ -1243,6 +1285,7 @@ button {
   .manifest-summary,
   .record-meta-grid,
   .split-grid,
+  .folder-import-layout,
   .manual-import-layout,
   .media-preview-meta,
   .zone-editor-grid {

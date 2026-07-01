@@ -24,6 +24,11 @@ from mockingbird.api.schemas import (
     Detection,
     Event,
     ExportStatus,
+    FolderImportCandidate,
+    FolderImportCreate,
+    FolderImportPreview,
+    FolderImportResult,
+    FolderImportSkippedFile,
     LocalDataStatus,
     MediaAsset,
     MediaImportResult,
@@ -68,6 +73,15 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
     "image/webp": "image",
     "video/mp4": "video",
     "video/quicktime": "video",
+}
+
+SUPPORTED_MEDIA_EXTENSIONS = {
+    ".jpg": ("image/jpeg", "image"),
+    ".jpeg": ("image/jpeg", "image"),
+    ".png": ("image/png", "image"),
+    ".webp": ("image/webp", "image"),
+    ".mp4": ("video/mp4", "video"),
+    ".mov": ("video/quicktime", "video"),
 }
 
 
@@ -431,58 +445,102 @@ class ProductRepository:
             with session.begin():
                 stream_model = self._resolve_import_stream(session, stream_id)
                 zone_model = self._resolve_import_zone(session, zone_id, stream_model.id)
-                media_id = self._next_id(session, MediaAssetModel, "media-asset")
-                event_id = self._next_id(session, EventModel, "event-media")
-                visit_id = self._next_id(session, VisitModel, "visit-media")
-                filename = f"{media_id}-{_safe_filename(original_filename)}"
-                filename, local_path = self._write_media_file(filename, content)
-                created_at = datetime.now(UTC)
-
-                asset_model = MediaAssetModel(
-                    id=media_id,
-                    source_id=stream_model.source_id,
-                    stream_id=stream_model.id,
-                    filename=filename,
+                media_asset, event, visit = self._create_media_product_records(
+                    session,
+                    stream_model=stream_model,
+                    zone_model=zone_model,
+                    content=content,
+                    original_filename=original_filename,
                     content_type=content_type,
                     media_type=media_type,
-                    local_path=str(local_path),
-                    original_filename=original_filename or filename,
-                    file_size_bytes=len(content),
-                    created_at=created_at,
+                    title=title,
+                    event_type="manual_media_import",
+                    default_title="Imported media observation",
+                    subject_label=subject_label,
+                    species_guess=species_guess,
                     notes=notes,
                 )
-                event_model = EventModel(
-                    id=event_id,
-                    stream_id=stream_model.id,
-                    title=title.strip() if title and title.strip() else "Imported media observation",
-                    event_type="manual_media_import",
-                    started_at=created_at,
-                    ended_at=created_at,
-                    primary_zone_id=zone_model.id if zone_model else None,
-                    review_status=ReviewStatus.needs_review.value,
-                )
-                visit_model = VisitModel(
-                    id=visit_id,
-                    event_id=event_id,
-                    subject_label=subject_label.strip() or "unknown_animal",
-                    species_guess=(
-                        species_guess.strip()
-                        if species_guess and species_guess.strip()
-                        else None
-                    ),
-                    confidence=None,
-                    reviewed_label=None,
-                    review_status=ReviewStatus.needs_review.value,
-                    representative_media_path=str(local_path),
-                )
-                session.add_all([asset_model, event_model, visit_model])
-                session.flush()
 
                 return MediaImportResult(
-                    media_asset=_media_asset_from_model(asset_model),
-                    event=self._event_from_model(session, event_model),
-                    visit=_visit_from_model(visit_model),
+                    media_asset=media_asset,
+                    event=event,
+                    visit=visit,
                     stream=_stream_from_model(stream_model),
+                    review_queue_count=len(self._review_queue_items(session)),
+                )
+
+    def preview_folder_import(self, folder_path: str) -> FolderImportPreview:
+        if not folder_path.strip():
+            raise ValueError("folder_required")
+        folder = _folder_path(folder_path)
+        return self._preview_folder_import_for_path(folder)
+
+    def import_folder_media(self, payload: FolderImportCreate) -> FolderImportResult:
+        if not payload.folder_path.strip():
+            raise ValueError("folder_required")
+        folder = _folder_path(payload.folder_path)
+        preview = self._preview_folder_import_for_path(folder)
+        candidates = preview.supported_files[: payload.limit] if payload.limit else preview.supported_files
+        skipped_files = list(preview.skipped_files)
+
+        media_assets: list[MediaAsset] = []
+        events: list[Event] = []
+        visits: list[Visit] = []
+
+        with self.session_factory() as session:
+            with session.begin():
+                stream_model = self._resolve_import_stream(session, payload.stream_id)
+                zone_model = self._resolve_import_zone(session, payload.zone_id, stream_model.id)
+
+                for candidate in candidates:
+                    source_path = Path(candidate.path)
+                    try:
+                        content = source_path.read_bytes()
+                    except OSError:
+                        skipped_files.append(
+                            FolderImportSkippedFile(
+                                filename=candidate.filename,
+                                reason="read_error",
+                            )
+                        )
+                        continue
+
+                    if not content:
+                        skipped_files.append(
+                            FolderImportSkippedFile(
+                                filename=candidate.filename,
+                                reason="empty_file",
+                            )
+                        )
+                        continue
+
+                    media_asset, event, visit = self._create_media_product_records(
+                        session,
+                        stream_model=stream_model,
+                        zone_model=zone_model,
+                        content=content,
+                        original_filename=candidate.filename,
+                        content_type=candidate.content_type,
+                        media_type=candidate.media_type,
+                        title=f"Imported folder media: {candidate.filename}",
+                        event_type="folder_media_import",
+                        default_title="Imported folder media",
+                        subject_label=payload.subject_label,
+                        species_guess=payload.species_guess,
+                        notes=payload.notes,
+                    )
+                    media_assets.append(media_asset)
+                    events.append(event)
+                    visits.append(visit)
+
+                return FolderImportResult(
+                    folder_path=str(folder),
+                    imported_count=len(media_assets),
+                    skipped_count=len(skipped_files),
+                    media_assets=media_assets,
+                    events=events,
+                    visits=visits,
+                    skipped_files=skipped_files,
                     review_queue_count=len(self._review_queue_items(session)),
                 )
 
@@ -707,6 +765,129 @@ class ProductRepository:
                 counter += 1
         path.write_bytes(content)
         return path.name, path
+
+    def _preview_folder_import_for_path(self, folder: Path) -> FolderImportPreview:
+        if not folder.exists():
+            raise ValueError("folder_missing")
+        if not folder.is_dir():
+            raise ValueError("folder_not_directory")
+
+        supported_files: list[FolderImportCandidate] = []
+        skipped_files: list[FolderImportSkippedFile] = []
+
+        # Folder import is an explicit, non-recursive local source path.
+        for path in sorted(folder.iterdir(), key=lambda item: item.name.lower()):
+            if not path.is_file():
+                skipped_files.append(
+                    FolderImportSkippedFile(filename=path.name, reason="not_file")
+                )
+                continue
+
+            media_type_info = _media_type_for_path(path)
+            if media_type_info is None:
+                skipped_files.append(
+                    FolderImportSkippedFile(
+                        filename=path.name,
+                        reason="unsupported_content_type",
+                    )
+                )
+                continue
+
+            file_size = path.stat().st_size
+            if file_size <= 0:
+                skipped_files.append(
+                    FolderImportSkippedFile(filename=path.name, reason="empty_file")
+                )
+                continue
+
+            content_type, media_type = media_type_info
+            supported_files.append(
+                FolderImportCandidate(
+                    filename=path.name,
+                    path=str(path),
+                    content_type=content_type,
+                    media_type=media_type,
+                    file_size_bytes=file_size,
+                )
+            )
+
+        return FolderImportPreview(
+            folder_path=str(folder),
+            supported_files=supported_files,
+            skipped_files=skipped_files,
+            supported_count=len(supported_files),
+            skipped_count=len(skipped_files),
+        )
+
+    def _create_media_product_records(
+        self,
+        session: Session,
+        *,
+        stream_model: StreamModel,
+        zone_model: ZoneModel | None,
+        content: bytes,
+        original_filename: str,
+        content_type: str,
+        media_type: str,
+        title: str | None,
+        event_type: str,
+        default_title: str,
+        subject_label: str,
+        species_guess: str | None,
+        notes: str | None,
+    ) -> tuple[MediaAsset, Event, Visit]:
+        media_id = self._next_id(session, MediaAssetModel, "media-asset")
+        event_id = self._next_id(session, EventModel, "event-media")
+        visit_id = self._next_id(session, VisitModel, "visit-media")
+        filename = f"{media_id}-{_safe_filename(original_filename)}"
+        filename, local_path = self._write_media_file(filename, content)
+        created_at = datetime.now(UTC)
+
+        asset_model = MediaAssetModel(
+            id=media_id,
+            source_id=stream_model.source_id,
+            stream_id=stream_model.id,
+            filename=filename,
+            content_type=content_type,
+            media_type=media_type,
+            local_path=str(local_path),
+            original_filename=original_filename or filename,
+            file_size_bytes=len(content),
+            created_at=created_at,
+            notes=notes,
+        )
+        event_model = EventModel(
+            id=event_id,
+            stream_id=stream_model.id,
+            title=title.strip() if title and title.strip() else default_title,
+            event_type=event_type,
+            started_at=created_at,
+            ended_at=created_at,
+            primary_zone_id=zone_model.id if zone_model else None,
+            review_status=ReviewStatus.needs_review.value,
+        )
+        visit_model = VisitModel(
+            id=visit_id,
+            event_id=event_id,
+            subject_label=subject_label.strip() or "unknown_animal",
+            species_guess=(
+                species_guess.strip()
+                if species_guess and species_guess.strip()
+                else None
+            ),
+            confidence=None,
+            reviewed_label=None,
+            review_status=ReviewStatus.needs_review.value,
+            representative_media_path=str(local_path),
+        )
+        session.add_all([asset_model, event_model, visit_model])
+        session.flush()
+
+        return (
+            _media_asset_from_model(asset_model),
+            self._event_from_model(session, event_model),
+            _visit_from_model(visit_model),
+        )
 
     def _media_asset_for_path_from_session(
         self,
@@ -1207,6 +1388,14 @@ def _safe_filename(original_filename: str) -> str:
     filename = Path(original_filename or "imported-media").name or "imported-media"
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip(".-")
     return safe or "imported-media"
+
+
+def _folder_path(folder_path: str) -> Path:
+    return Path(folder_path.strip()).expanduser() if folder_path.strip() else Path("")
+
+
+def _media_type_for_path(path: Path) -> tuple[str, str] | None:
+    return SUPPORTED_MEDIA_EXTENSIONS.get(path.suffix.lower())
 
 
 def _as_utc(value: datetime) -> datetime:

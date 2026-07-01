@@ -13,6 +13,7 @@ interface ManualImportPageProps {
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
   onOpenStream: (streamId: string) => void;
+  onOpenFolderImport: () => void;
   onImportComplete: () => Promise<void>;
 }
 
@@ -22,6 +23,7 @@ export function ManualImportPage({
   onOpenEvent,
   onOpenVisit,
   onOpenStream,
+  onOpenFolderImport,
   onImportComplete,
 }: ManualImportPageProps) {
   const [selectedStreamId, setSelectedStreamId] = useState(streams[0]?.id ?? "");
@@ -168,11 +170,16 @@ export function ManualImportPage({
         title="Import Media"
         description="Create a reviewable outdoor event from local media. Media stays local; review and correct imported observations before export."
         actions={
-          selectedStream ? (
-            <button className="secondary-action" onClick={() => onOpenStream(selectedStream.id)}>
-              Open stream context
+          <>
+            <button className="secondary-action" onClick={onOpenFolderImport}>
+              Import Folder
             </button>
-          ) : null
+            {selectedStream ? (
+              <button className="secondary-action" onClick={() => onOpenStream(selectedStream.id)}>
+                Open stream context
+              </button>
+            ) : null}
+          </>
         }
       />
 

@@ -7,6 +7,10 @@ import type {
   DatasetExportManifest,
   Event,
   EventDetail,
+  FolderImportCreate,
+  FolderImportPreview,
+  FolderImportPreviewRequest,
+  FolderImportResult,
   HealthStatus,
   LocalDataStatus,
   MediaAsset,
@@ -79,6 +83,16 @@ export const apiClient = {
     request<MediaImportResult>("/api/media/import", {
       method: "POST",
       body: payload,
+    }),
+  previewFolderImport: (payload: FolderImportPreviewRequest) =>
+    request<FolderImportPreview>("/api/media/folder-preview", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  importFolderMedia: (payload: FolderImportCreate) =>
+    request<FolderImportResult>("/api/media/folder-import", {
+      method: "POST",
+      body: JSON.stringify(payload),
     }),
   mediaFileUrl: (mediaId: string) => `${API_BASE_URL}/api/media/${encodeURIComponent(mediaId)}/file`,
   createZone: (payload: ZoneCreate) =>
