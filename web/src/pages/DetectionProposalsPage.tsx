@@ -284,7 +284,8 @@ export function DetectionProposalsPage({
         <strong>Model adapters feed this evidence queue</strong>
         <span>
           Future detector hooks create proposal evidence here. They do not write review truth or
-          bypass correction.
+          bypass correction. Converted and corrected proposals contribute to adapter evidence
+          readiness on the Model Adapters page.
         </span>
         <button className="secondary-action" onClick={onOpenModelAdapters}>
           Open Model Adapters

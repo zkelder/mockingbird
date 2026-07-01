@@ -11,6 +11,7 @@ from starlette.responses import FileResponse, Response
 
 from mockingbird.api.schemas import (
     AnalyticsSummary,
+    AdapterEvaluationSummary,
     CameraSource,
     DatasetCoverageSummary,
     DatasetExport,
@@ -618,6 +619,16 @@ async def get_media_file(media_id: str):
 @app.get("/api/model-adapters", response_model=list[ModelAdapter])
 async def list_model_adapters() -> list[ModelAdapter]:
     return get_repository().list_model_adapters()
+
+
+@app.get("/api/model-adapters/evaluation", response_model=AdapterEvaluationSummary)
+async def get_model_adapter_evaluation(
+    adapter_id: str | None = None,
+) -> AdapterEvaluationSummary:
+    try:
+        return get_repository().model_adapter_evaluation_summary(adapter_id)
+    except ValueError as error:
+        raise _model_adapter_error(error) from error
 
 
 @app.get("/api/model-adapters/{adapter_id}", response_model=ModelAdapter)

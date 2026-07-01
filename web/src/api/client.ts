@@ -1,4 +1,5 @@
 import type {
+  AdapterEvaluationSummary,
   AnalyticsSummary,
   CameraSource,
   DatasetCoverageSummary,
@@ -150,6 +151,16 @@ export const apiClient = {
   getModelAdapters: () => request<ModelAdapter[]>("/api/model-adapters"),
   getModelAdapter: (adapterId: string) =>
     request<ModelAdapter>(`/api/model-adapters/${encodeURIComponent(adapterId)}`),
+  getModelAdapterEvaluation: (params: { adapterId?: string } = {}) => {
+    const searchParams = new URLSearchParams();
+    if (params.adapterId) {
+      searchParams.set("adapter_id", params.adapterId);
+    }
+    const query = searchParams.toString();
+    return request<AdapterEvaluationSummary>(
+      `/api/model-adapters/evaluation${query ? `?${query}` : ""}`,
+    );
+  },
   runModelAdapter: (adapterId: string, payload: ModelAdapterRunRequest) =>
     request<ModelAdapterRunResult>(`/api/model-adapters/${encodeURIComponent(adapterId)}/runs`, {
       method: "POST",

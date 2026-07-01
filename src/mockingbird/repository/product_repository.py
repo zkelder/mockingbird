@@ -14,6 +14,9 @@ from sqlalchemy.orm import Session
 
 from mockingbird.api import demo_data
 from mockingbird.api.schemas import (
+    AdapterEvaluationItem,
+    AdapterEvaluationOutcome,
+    AdapterEvaluationSummary,
     AnalyticsSummary,
     BoundingBox,
     CameraSource,
@@ -581,6 +584,81 @@ class ProductRepository:
         adapter = _model_adapter_by_id(adapter_id)
         return adapter.model_copy(deep=True) if adapter else None
 
+    def model_adapter_evaluation_summary(
+        self,
+        adapter_id: str | None = None,
+    ) -> AdapterEvaluationSummary:
+        adapter_filter = _model_adapter_by_id(adapter_id) if adapter_id else None
+        if adapter_id is not None and adapter_filter is None:
+            raise ValueError("missing_adapter")
+
+        with self.session_factory() as session:
+            proposal_models = session.scalars(
+                select(DetectionProposalModel).order_by(
+                    DetectionProposalModel.created_at,
+                    DetectionProposalModel.id,
+                )
+            ).all()
+            items: list[AdapterEvaluationItem] = []
+            converted_count = 0
+
+            for proposal_model in proposal_models:
+                run_model = session.get(DetectionRunModel, proposal_model.run_id)
+                adapter = _model_adapter_for_detection_run(run_model)
+                if adapter_filter is not None and (
+                    adapter is None or adapter.id != adapter_filter.id
+                ):
+                    continue
+
+                if proposal_model.event_id is not None or proposal_model.visit_id is not None:
+                    converted_count += 1
+
+                items.append(
+                    self._adapter_evaluation_item(
+                        session,
+                        proposal_model=proposal_model,
+                        adapter=adapter,
+                    )
+                )
+
+            outcome_counts = Counter(item.outcome for item in items)
+            matched_count = outcome_counts[AdapterEvaluationOutcome.matched_reviewed_truth]
+            mismatched_count = outcome_counts[AdapterEvaluationOutcome.mismatched_reviewed_truth]
+            unknown_reviewed_count = outcome_counts[
+                AdapterEvaluationOutcome.unknown_reviewed_label
+            ]
+            reviewed_count = matched_count + mismatched_count + unknown_reviewed_count
+            unreviewed_count = (
+                outcome_counts[AdapterEvaluationOutcome.awaiting_review]
+                + outcome_counts[AdapterEvaluationOutcome.converted_needs_review]
+            )
+            match_denominator = matched_count + mismatched_count
+
+            return AdapterEvaluationSummary(
+                adapter_id=adapter_filter.id if adapter_filter else None,
+                adapter_name=adapter_filter.name if adapter_filter else None,
+                proposal_count=len(items),
+                reviewed_count=reviewed_count,
+                unreviewed_count=unreviewed_count,
+                matched_count=matched_count,
+                mismatched_count=mismatched_count,
+                rejected_count=outcome_counts[AdapterEvaluationOutcome.rejected_evidence],
+                converted_count=converted_count,
+                unknown_reviewed_count=unknown_reviewed_count,
+                match_rate=(
+                    matched_count / match_denominator
+                    if match_denominator > 0
+                    else None
+                ),
+                items=items,
+                generated_at=datetime.now(UTC),
+                local_first_note=(
+                    "Adapter evaluation is a local readiness signal. Proposal labels "
+                    "are evidence; reviewed corrections are truth. Match rate only uses "
+                    "reviewed non-unknown labels and is not a deployment score."
+                ),
+            )
+
     def run_model_adapter(
         self,
         adapter_id: str,
@@ -631,7 +709,7 @@ class ProductRepository:
                     media_asset_id=asset_model.id,
                     source=DetectionSource.demo_rule.value,
                     summary=(
-                        f"Model adapter contract run for {adapter.name}; "
+                        f"Model adapter contract run for {adapter.name} ({adapter.id}); "
                         "proposal evidence only, no media analysis."
                     ),
                     status=DetectionRunStatus.completed.value,
@@ -1676,6 +1754,100 @@ class ProductRepository:
             return None
         return max(labels, key=lambda label: label.created_at).label
 
+    def _adapter_evaluation_item(
+        self,
+        session: Session,
+        *,
+        proposal_model: DetectionProposalModel,
+        adapter: ModelAdapter | None,
+    ) -> AdapterEvaluationItem:
+        proposal_label = self._normalize_label_from_session(session, proposal_model.label)
+        reviewed_label, review_status = self._proposal_review_truth(session, proposal_model)
+
+        if proposal_model.status == DetectionProposalStatus.rejected.value:
+            outcome = AdapterEvaluationOutcome.rejected_evidence
+            review_status = ReviewStatus.rejected
+        elif reviewed_label is None:
+            outcome = (
+                AdapterEvaluationOutcome.converted_needs_review
+                if proposal_model.event_id is not None or proposal_model.visit_id is not None
+                else AdapterEvaluationOutcome.awaiting_review
+            )
+        elif reviewed_label in {"unknown_bird", "unknown_animal"}:
+            outcome = AdapterEvaluationOutcome.unknown_reviewed_label
+        elif reviewed_label == proposal_label:
+            outcome = AdapterEvaluationOutcome.matched_reviewed_truth
+        else:
+            outcome = AdapterEvaluationOutcome.mismatched_reviewed_truth
+
+        return AdapterEvaluationItem(
+            proposal_id=proposal_model.id,
+            detection_run_id=proposal_model.run_id,
+            adapter_id=adapter.id if adapter else None,
+            media_asset_id=proposal_model.media_asset_id,
+            event_id=proposal_model.event_id,
+            visit_id=proposal_model.visit_id,
+            proposal_label=proposal_label,
+            proposal_display_name=self._display_name_for_label(session, proposal_label),
+            proposal_confidence=proposal_model.confidence,
+            reviewed_label=reviewed_label,
+            reviewed_display_name=(
+                self._display_name_for_label(session, reviewed_label)
+                if reviewed_label is not None
+                else None
+            ),
+            review_status=review_status,
+            outcome=outcome,
+            notes=_adapter_evaluation_note(outcome),
+        )
+
+    def _proposal_review_truth(
+        self,
+        session: Session,
+        proposal_model: DetectionProposalModel,
+    ) -> tuple[str | None, ReviewStatus]:
+        if proposal_model.visit_id is not None:
+            visit_model = session.get(VisitModel, proposal_model.visit_id)
+            if visit_model is not None:
+                visit_status = ReviewStatus(visit_model.review_status)
+                visit_label = visit_model.reviewed_label or self._latest_label(
+                    self._review_labels_for_visit(session, visit_model.id)
+                )
+                if visit_status == ReviewStatus.reviewed and visit_label is not None:
+                    return self._normalize_label_from_session(session, visit_label), visit_status
+
+                event_model = session.get(EventModel, visit_model.event_id)
+                if event_model is not None:
+                    event_status = ReviewStatus(event_model.review_status)
+                    event_label = self._latest_label(
+                        self._review_labels_for_event(session, event_model.id)
+                    )
+                    if event_status == ReviewStatus.reviewed and event_label is not None:
+                        return (
+                            self._normalize_label_from_session(session, event_label),
+                            event_status,
+                        )
+                return None, visit_status
+
+        if proposal_model.event_id is not None:
+            event_model = session.get(EventModel, proposal_model.event_id)
+            if event_model is not None:
+                event_status = ReviewStatus(event_model.review_status)
+                event_label = self._latest_label(
+                    self._review_labels_for_event(session, event_model.id)
+                )
+                if event_status == ReviewStatus.reviewed and event_label is not None:
+                    return self._normalize_label_from_session(session, event_label), event_status
+                return None, event_status
+
+        return None, ReviewStatus.needs_review
+
+    def _display_name_for_label(self, session: Session, label: str) -> str:
+        taxonomy_label = self._taxonomy_label_model_for_input(session, label)
+        if taxonomy_label is not None:
+            return _taxonomy_label_from_model(taxonomy_label).display_name
+        return _display_name_from_label(label)
+
     def _zone_context(
         self,
         session: Session,
@@ -2490,6 +2662,35 @@ def _source_from_model(source: CameraSourceModel) -> CameraSource:
 
 def _model_adapter_by_id(adapter_id: str) -> ModelAdapter | None:
     return next((adapter for adapter in MODEL_ADAPTERS if adapter.id == adapter_id), None)
+
+
+def _model_adapter_for_detection_run(run: DetectionRunModel | None) -> ModelAdapter | None:
+    if run is None or run.summary is None or run.source != DetectionSource.demo_rule.value:
+        return None
+
+    summary_key = run.summary.lower()
+    return next(
+        (
+            adapter
+            for adapter in MODEL_ADAPTERS
+            if adapter.id.lower() in summary_key or adapter.name.lower() in summary_key
+        ),
+        None,
+    )
+
+
+def _adapter_evaluation_note(outcome: AdapterEvaluationOutcome) -> str:
+    if outcome == AdapterEvaluationOutcome.matched_reviewed_truth:
+        return "Proposal evidence agrees with reviewed correction."
+    if outcome == AdapterEvaluationOutcome.mismatched_reviewed_truth:
+        return "User correction differs from proposal evidence."
+    if outcome == AdapterEvaluationOutcome.unknown_reviewed_label:
+        return "Reviewed truth is unknown and tracked separately from matches."
+    if outcome == AdapterEvaluationOutcome.rejected_evidence:
+        return "Proposal was rejected as evidence and does not define truth."
+    if outcome == AdapterEvaluationOutcome.converted_needs_review:
+        return "Proposal has a review case but still needs corrected truth."
+    return "Proposal evidence is awaiting conversion and review."
 
 
 def _taxonomy_label_from_model(label: TaxonomyLabelModel) -> TaxonomyLabel:

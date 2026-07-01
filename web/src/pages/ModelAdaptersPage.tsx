@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
-import type { MediaAsset, ModelAdapter, ModelAdapterRunResult } from "../api/types";
+import type {
+  AdapterEvaluationItem,
+  AdapterEvaluationSummary,
+  MediaAsset,
+  ModelAdapter,
+  ModelAdapterRunResult,
+} from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
@@ -11,17 +17,22 @@ import { formatDateTime, formatLabel } from "../utils";
 
 interface ModelAdaptersPageProps {
   onOpenDetectionProposals: () => void;
+  onOpenEvent: (eventId: string) => void;
   onOpenImport: () => void;
+  onOpenVisit: (visitId: string) => void;
   onProposalChanged: () => Promise<void>;
 }
 
 export function ModelAdaptersPage({
   onOpenDetectionProposals,
+  onOpenEvent,
   onOpenImport,
+  onOpenVisit,
   onProposalChanged,
 }: ModelAdaptersPageProps) {
   const [adapters, setAdapters] = useState<ModelAdapter[]>([]);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  const [evaluation, setEvaluation] = useState<AdapterEvaluationSummary | null>(null);
   const [selectedAdapterId, setSelectedAdapterId] = useState("");
   const [selectedMediaId, setSelectedMediaId] = useState("");
   const [requestedLabels, setRequestedLabels] = useState("unknown_bird");
@@ -50,12 +61,14 @@ export function ModelAdaptersPage({
     }
     setError(null);
     try {
-      const [nextAdapters, nextMediaAssets] = await Promise.all([
+      const [nextAdapters, nextMediaAssets, nextEvaluation] = await Promise.all([
         apiClient.getModelAdapters(),
         apiClient.getMediaAssets(),
+        apiClient.getModelAdapterEvaluation(),
       ]);
       setAdapters(nextAdapters);
       setMediaAssets(nextMediaAssets);
+      setEvaluation(nextEvaluation);
       setSelectedAdapterId((current) =>
         current && nextAdapters.some((adapter) => adapter.id === current)
           ? current
@@ -149,6 +162,67 @@ export function ModelAdaptersPage({
           below the product loop until a user converts, reviews, and corrects them.
         </span>
       </section>
+
+      {evaluation ? (
+        <section className="panel adapter-evaluation-panel">
+          <div className="section-heading">
+            <div>
+              <h2>Adapter evidence readiness</h2>
+              <span className="meta-text">
+                {evaluation.local_first_note} Generated {formatDateTime(evaluation.generated_at)}.
+              </span>
+            </div>
+            <EvidenceBadge label="Readiness signal" tone="truth" />
+          </div>
+          <div className="adapter-evaluation-grid">
+            <div>
+              <span className="meta-text">Proposals</span>
+              <strong>{evaluation.proposal_count}</strong>
+            </div>
+            <div>
+              <span className="meta-text">Reviewed truth</span>
+              <strong>{evaluation.reviewed_count}</strong>
+            </div>
+            <div>
+              <span className="meta-text">Unreviewed</span>
+              <strong>{evaluation.unreviewed_count}</strong>
+            </div>
+            <div>
+              <span className="meta-text">Matched / mismatched</span>
+              <strong>
+                {evaluation.matched_count} / {evaluation.mismatched_count}
+              </strong>
+            </div>
+            <div>
+              <span className="meta-text">Rejected / converted</span>
+              <strong>
+                {evaluation.rejected_count} / {evaluation.converted_count}
+              </strong>
+            </div>
+            <div>
+              <span className="meta-text">Evidence agreement</span>
+              <strong>{formatMatchRate(evaluation.match_rate)}</strong>
+            </div>
+          </div>
+          <div className="adapter-evaluation-list">
+            {evaluation.items.map((item) => (
+              <EvaluationItemCard
+                item={item}
+                key={item.proposal_id}
+                onOpenDetectionProposals={onOpenDetectionProposals}
+                onOpenEvent={onOpenEvent}
+                onOpenVisit={onOpenVisit}
+              />
+            ))}
+            {evaluation.items.length === 0 ? (
+              <EmptyState
+                title="No adapter evidence to evaluate"
+                description="Adapter proposals will appear here after they are created, converted, rejected, and corrected through the normal review loop."
+              />
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="split-grid">
         <div className="panel adapter-list-panel">
@@ -304,4 +378,66 @@ export function ModelAdaptersPage({
       ) : null}
     </div>
   );
+}
+
+function EvaluationItemCard({
+  item,
+  onOpenDetectionProposals,
+  onOpenEvent,
+  onOpenVisit,
+}: {
+  item: AdapterEvaluationItem;
+  onOpenDetectionProposals: () => void;
+  onOpenEvent: (eventId: string) => void;
+  onOpenVisit: (visitId: string) => void;
+}) {
+  return (
+    <article className="quality-issue-card adapter-evaluation-item">
+      <div>
+        <div className="quality-issue-title">
+          <strong>{item.proposal_display_name ?? formatLabel(item.proposal_label)}</strong>
+          <EvidenceBadge label={formatLabel(item.outcome)} tone={evaluationTone(item)} />
+          <StatusPill label={formatLabel(item.review_status)} tone={item.review_status === "reviewed" ? "good" : "review"} />
+        </div>
+        <p>
+          Proposal: {item.proposal_display_name ?? formatLabel(item.proposal_label)} · Reviewed:{" "}
+          {item.reviewed_display_name ?? (item.reviewed_label ? formatLabel(item.reviewed_label) : "Not reviewed")} ·
+          Confidence: {Math.round(item.proposal_confidence * 100)}%
+        </p>
+        {item.notes ? <span className="meta-text">{item.notes}</span> : null}
+      </div>
+      <div className="detail-actions">
+        {item.event_id ? (
+          <button className="secondary-action" onClick={() => onOpenEvent(item.event_id!)}>
+            Event detail
+          </button>
+        ) : null}
+        {item.visit_id ? (
+          <button className="secondary-action" onClick={() => onOpenVisit(item.visit_id!)}>
+            Visit detail
+          </button>
+        ) : null}
+        <button className="secondary-action" onClick={onOpenDetectionProposals}>
+          Detection Proposals
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function formatMatchRate(rate?: number | null): string {
+  if (rate === null || rate === undefined) {
+    return "Needs reviewed labels";
+  }
+  return `${Math.round(rate * 100)}%`;
+}
+
+function evaluationTone(item: AdapterEvaluationItem): "quiet" | "review" | "truth" {
+  if (item.outcome === "matched_reviewed_truth") {
+    return "truth";
+  }
+  if (item.outcome === "rejected_evidence" || item.outcome === "awaiting_review") {
+    return "quiet";
+  }
+  return "review";
 }

@@ -271,6 +271,8 @@ export default function App() {
         <ModelAdaptersPage
           onOpenImport={() => setPage("import")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
           onProposalChanged={() => loadAppData({ showLoading: false })}
         />
       );

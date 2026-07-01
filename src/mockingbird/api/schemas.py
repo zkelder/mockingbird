@@ -267,6 +267,50 @@ class ModelAdapterRunRequest(BaseModel):
     notes: str | None = None
 
 
+class AdapterEvaluationOutcome(str, Enum):
+    matched_reviewed_truth = "matched_reviewed_truth"
+    mismatched_reviewed_truth = "mismatched_reviewed_truth"
+    awaiting_review = "awaiting_review"
+    rejected_evidence = "rejected_evidence"
+    converted_needs_review = "converted_needs_review"
+    unknown_reviewed_label = "unknown_reviewed_label"
+
+
+class AdapterEvaluationItem(BaseModel):
+    # Adapter evaluation compares evidence against reviewed truth without mutating product state.
+    proposal_id: str
+    detection_run_id: str
+    adapter_id: str | None = None
+    media_asset_id: str
+    event_id: str | None = None
+    visit_id: str | None = None
+    proposal_label: str
+    proposal_display_name: str | None = None
+    proposal_confidence: float = Field(ge=0, le=1)
+    reviewed_label: str | None = None
+    reviewed_display_name: str | None = None
+    review_status: ReviewStatus
+    outcome: AdapterEvaluationOutcome
+    notes: str | None = None
+
+
+class AdapterEvaluationSummary(BaseModel):
+    adapter_id: str | None = None
+    adapter_name: str | None = None
+    proposal_count: int = Field(ge=0)
+    reviewed_count: int = Field(ge=0)
+    unreviewed_count: int = Field(ge=0)
+    matched_count: int = Field(ge=0)
+    mismatched_count: int = Field(ge=0)
+    rejected_count: int = Field(ge=0)
+    converted_count: int = Field(ge=0)
+    unknown_reviewed_count: int = Field(ge=0)
+    match_rate: float | None = Field(default=None, ge=0, le=1)
+    items: list[AdapterEvaluationItem]
+    generated_at: datetime
+    local_first_note: str
+
+
 class DetectionProposal(BaseModel):
     id: str
     run_id: str

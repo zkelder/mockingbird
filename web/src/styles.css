@@ -600,8 +600,10 @@ button {
 .adapter-list-panel,
 .adapter-run-form,
 .adapter-result-panel,
+.adapter-evaluation-panel,
 .adapter-list,
-.adapter-proposal-list {
+.adapter-proposal-list,
+.adapter-evaluation-list {
   display: grid;
   gap: 12px;
 }
@@ -664,13 +666,28 @@ button {
   gap: 12px;
 }
 
-.adapter-result-grid div {
+.adapter-evaluation-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.adapter-result-grid div,
+.adapter-evaluation-grid div {
   display: grid;
   gap: 4px;
   border: 1px solid #dce3d8;
   border-radius: 8px;
   padding: 12px;
   background: #ffffff;
+}
+
+.adapter-evaluation-grid strong {
+  font-size: 1.25rem;
+}
+
+.adapter-evaluation-item .detail-actions {
+  justify-content: flex-end;
 }
 
 .confidence-meter {
@@ -1705,6 +1722,7 @@ button {
   .coverage-columns,
   .quality-metric-grid,
   .quality-secondary-grid,
+  .adapter-evaluation-grid,
   .adapter-result-grid,
   .detection-proposal-meta,
   .split-grid,
@@ -1761,6 +1779,7 @@ button {
   .coverage-columns,
   .quality-metric-grid,
   .quality-secondary-grid,
+  .adapter-evaluation-grid,
   .adapter-result-grid,
   .detection-proposal-meta,
   .record-meta-grid,

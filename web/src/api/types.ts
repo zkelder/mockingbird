@@ -25,6 +25,13 @@ export type DetectionSource = "manual" | "demo_rule" | "future_model" | "integra
 export type DetectionRunStatus = "pending" | "completed" | "failed";
 export type DetectionProposalStatus = "proposed" | "accepted" | "rejected" | "converted";
 export type DetectionProposalDecision = "accept" | "reject" | "convert_to_event";
+export type AdapterEvaluationOutcome =
+  | "matched_reviewed_truth"
+  | "mismatched_reviewed_truth"
+  | "awaiting_review"
+  | "rejected_evidence"
+  | "converted_needs_review"
+  | "unknown_reviewed_label";
 export type ModelAdapterKind =
   | "object_detector"
   | "species_classifier"
@@ -215,6 +222,40 @@ export interface ModelAdapterRunRequest {
   zone_ids?: string[] | null;
   requested_labels?: string[] | null;
   notes?: string | null;
+}
+
+export interface AdapterEvaluationItem {
+  proposal_id: string;
+  detection_run_id: string;
+  adapter_id?: string | null;
+  media_asset_id: string;
+  event_id?: string | null;
+  visit_id?: string | null;
+  proposal_label: string;
+  proposal_display_name?: string | null;
+  proposal_confidence: number;
+  reviewed_label?: string | null;
+  reviewed_display_name?: string | null;
+  review_status: ReviewStatus;
+  outcome: AdapterEvaluationOutcome;
+  notes?: string | null;
+}
+
+export interface AdapterEvaluationSummary {
+  adapter_id?: string | null;
+  adapter_name?: string | null;
+  proposal_count: number;
+  reviewed_count: number;
+  unreviewed_count: number;
+  matched_count: number;
+  mismatched_count: number;
+  rejected_count: number;
+  converted_count: number;
+  unknown_reviewed_count: number;
+  match_rate?: number | null;
+  items: AdapterEvaluationItem[];
+  generated_at: string;
+  local_first_note: string;
 }
 
 export interface DetectionProposal {
