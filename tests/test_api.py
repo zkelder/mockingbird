@@ -1,8 +1,10 @@
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
-from mockingbird.api import demo_data
-from mockingbird.api.main import app
+from mockingbird.api.main import app, configure_repository
+from mockingbird.repository.product_repository import ProductRepository
 
 
 client = TestClient(app)
@@ -17,10 +19,11 @@ SEED_EXPORT_ID = "dataset-export-reviewed-yard-001"
 
 
 @pytest.fixture(autouse=True)
-def reset_demo_state() -> None:
-    demo_data.reset_demo_data()
+def isolated_repository(tmp_path: Path) -> None:
+    repository = ProductRepository(db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}")
+    configure_repository(repository)
     yield
-    demo_data.reset_demo_data()
+    configure_repository(None)
 
 
 def test_health_endpoint_works() -> None:

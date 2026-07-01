@@ -52,6 +52,8 @@ Then open http://127.0.0.1:8000/docs.
 
 The API contract includes list routes, detail routes, nested source/stream/event routes, a review queue, dataset exports, and an analytics summary.
 
+Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. The `data/` directory is ignored and stores product state only; real media file storage is not part of this phase.
+
 ## Local frontend development
 
 Run the backend API:

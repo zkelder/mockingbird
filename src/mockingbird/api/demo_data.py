@@ -1,4 +1,4 @@
-"""In-memory demo data for the first MockingBird API contract."""
+"""Seed data for the first MockingBird product loop."""
 
 from __future__ import annotations
 
@@ -196,6 +196,27 @@ _INITIAL_EVENTS = deepcopy(EVENTS)
 _INITIAL_VISITS = deepcopy(VISITS)
 _INITIAL_REVIEW_LABELS = deepcopy(REVIEW_LABELS)
 _INITIAL_DATASET_EXPORTS = deepcopy(DATASET_EXPORTS)
+
+
+def seed_product_data() -> tuple[
+    list[CameraSource],
+    list[Stream],
+    list[Zone],
+    list[Event],
+    list[Visit],
+    list[ReviewLabel],
+    list[DatasetExport],
+]:
+    # These records prove the product loop before real camera adapters exist.
+    return (
+        deepcopy(_INITIAL_SOURCES),
+        deepcopy(_INITIAL_STREAMS),
+        deepcopy(_INITIAL_ZONES),
+        deepcopy(_INITIAL_EVENTS),
+        deepcopy(_INITIAL_VISITS),
+        deepcopy(_INITIAL_REVIEW_LABELS),
+        deepcopy(_INITIAL_DATASET_EXPORTS),
+    )
 
 
 def reset_demo_data() -> None:
