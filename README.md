@@ -52,6 +52,24 @@ Then open http://127.0.0.1:8000/docs.
 
 The API contract includes list routes, detail routes, nested source/stream/event routes, a review queue, dataset exports, and an analytics summary.
 
+## Local frontend development
+
+Run the backend API:
+
+```sh
+python -m uvicorn mockingbird.api.main:app --reload
+```
+
+Run the stream-first frontend:
+
+```sh
+cd web
+npm install
+npm run dev
+```
+
+The frontend defaults to http://127.0.0.1:8000 for the API. Set `VITE_API_BASE_URL` to point at a different local API.
+
 ## Not the product center
 
 MockingBird is not centered on Windows USB camera scripts, PowerShell, CLI tools, interval analysis, snapshot loops, ROI language, or debug internals.

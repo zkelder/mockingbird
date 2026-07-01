@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from mockingbird.api import demo_data
 from mockingbird.api.schemas import (
@@ -27,6 +28,15 @@ app = FastAPI(
         "Local-first outdoor video intelligence centered on streams, zones, "
         "events, visits, review, corrections, exports, and analytics."
     ),
+)
+
+# Local Vite origins let the stream-first frontend use the API during development.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
