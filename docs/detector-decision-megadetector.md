@@ -6,6 +6,8 @@ MockingBird's first real detector target is a MegaDetector-family local image de
 
 This decision records the detector direction only. It does not add a model runtime, dependency, model file, download path, or implementation.
 
+Phase 7F adds an unavailable-safe adapter wrapper/status path only. Real MegaDetector runtime integration remains pending.
+
 ## Why MegaDetector
 
 MegaDetector-family models are a strong fit for wildlife, camera-trap, and outdoor imagery. They are useful for finding reviewable outdoor activity in imported images because they focus on broad detection categories such as animals, people, and vehicles.

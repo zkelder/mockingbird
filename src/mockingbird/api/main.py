@@ -284,10 +284,27 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
                 "path and optional detector dependencies."
             ),
         )
+    if reason == "megadetector_not_configured":
+        return HTTPException(
+            status_code=400,
+            detail=(
+                "MegaDetector model path is not configured. Set "
+                "MOCKINGBIRD_MEGADETECTOR_MODEL_PATH to a local MegaDetector-family model file "
+                "before running it."
+            ),
+        )
+    if reason == "megadetector_runtime_unavailable":
+        return HTTPException(
+            status_code=400,
+            detail=(
+                "MegaDetector runtime is unavailable in this wrapper phase. No model runtime, "
+                "model file, or reviewed truth was created."
+            ),
+        )
     if reason == "missing_media_file":
         return HTTPException(
             status_code=404,
-            detail="Local detector input media file was not found.",
+            detail="Detector input media file was not found.",
         )
     if reason == "local_detector_unsupported_media_type":
         return HTTPException(
@@ -297,10 +314,18 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
                 "image/jpeg, image/png, image/webp."
             ),
         )
+    if reason == "megadetector_unsupported_media_type":
+        return HTTPException(
+            status_code=400,
+            detail=(
+                "MegaDetector adapter supports imported image media only: "
+                "image/jpeg, image/png, image/webp."
+            ),
+        )
     if reason == "unsupported_detector_output":
         return HTTPException(
             status_code=400,
-            detail="Local image detector output format is not supported by this spike.",
+            detail="Detector output format is not supported by this adapter path.",
         )
     if reason == "local_detector_failed":
         return HTTPException(status_code=500, detail="Local image detector failed unexpectedly.")

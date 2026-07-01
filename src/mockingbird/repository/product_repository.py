@@ -25,6 +25,20 @@ from mockingbird.detectors.local_image_detector import (
     get_local_detector_status,
     run_local_image_detector,
 )
+from mockingbird.detectors.megadetector_adapter import (
+    MEGADETECTOR_ADAPTER_ID,
+    MEGADETECTOR_SETUP_HINT,
+    MEGADETECTOR_SUPPORTED_LABELS,
+    SUPPORTED_MEGADETECTOR_IMAGE_CONTENT_TYPES,
+    MegaDetectorConfigurationError,
+    MegaDetectorOutputError,
+    MegaDetectorRuntimeUnavailableError,
+    MegaDetectorStatus,
+    MegaDetectorUnsupportedMediaError,
+    get_megadetector_status,
+    normalize_megadetector_label,
+    run_megadetector_on_image,
+)
 from mockingbird.api.schemas import (
     AdapterEvaluationItem,
     AdapterEvaluationOutcome,
@@ -64,10 +78,10 @@ from mockingbird.api.schemas import (
     FolderImportSkippedFile,
     LabelCategory,
     LocalDataStatus,
-    LocalDetectorConfigurationStatus,
     MediaAsset,
     MediaImportResult,
     ModelAdapter,
+    ModelAdapterConfigurationStatus,
     ModelAdapterKind,
     ModelReadinessChecklistItem,
     ModelReadinessSummary,
@@ -737,6 +751,8 @@ class ProductRepository:
             raise ValueError("adapter_mismatch")
         if adapter_id == LOCAL_IMAGE_DETECTOR_ID:
             return self._run_local_image_detector_adapter(adapter, payload)
+        if adapter_id == MEGADETECTOR_ADAPTER_ID:
+            return self._run_megadetector_adapter(adapter, payload)
         if adapter.status != ModelAdapterStatus.available:
             raise ValueError("adapter_unavailable")
 
@@ -934,7 +950,7 @@ class ProductRepository:
                         visit_id=None,
                         label=normalized_label,
                         confidence=detector_proposal.confidence,
-                        bbox_json=_local_detector_bbox_to_json(detector_proposal.bbox),
+                        bbox_json=_detector_bbox_to_json(detector_proposal.bbox),
                         suggested_event_type="animal_visit",
                         suggested_subject_label=suggested_subject_label,
                         suggested_species=suggested_species,
@@ -970,6 +986,132 @@ class ProductRepository:
                     if proposal_models
                     else (
                         "Local image detector completed with no proposal evidence. "
+                        "No events, visits, review labels, or dataset truth were created."
+                    ),
+                )
+
+    def _run_megadetector_adapter(
+        self,
+        adapter: ModelAdapter,
+        payload: ModelAdapterRunRequest,
+    ) -> ModelAdapterRunResult:
+        with self.session_factory() as session:
+            with session.begin():
+                asset_model = session.get(MediaAssetModel, payload.media_asset_id)
+                if asset_model is None:
+                    raise ValueError("missing_media_asset")
+                if (
+                    asset_model.media_type != "image"
+                    or asset_model.content_type not in SUPPORTED_MEGADETECTOR_IMAGE_CONTENT_TYPES
+                ):
+                    raise ValueError("megadetector_unsupported_media_type")
+
+                stream_model = session.get(StreamModel, asset_model.stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+
+                if not Path(asset_model.local_path).exists():
+                    raise ValueError("missing_media_file")
+
+                zone_model: ZoneModel | None = None
+                if payload.zone_ids:
+                    zone_model = self._resolve_import_zone(
+                        session,
+                        payload.zone_ids[0],
+                        stream_model.id,
+                    )
+                else:
+                    zone_model = self._default_demo_zone(session, stream_model.id)
+
+                try:
+                    detector_proposals = run_megadetector_on_image(
+                        local_path=asset_model.local_path,
+                        content_type=asset_model.content_type,
+                    )
+                except MegaDetectorConfigurationError as error:
+                    raise ValueError("megadetector_not_configured") from error
+                except MegaDetectorRuntimeUnavailableError as error:
+                    raise ValueError("megadetector_runtime_unavailable") from error
+                except MegaDetectorUnsupportedMediaError as error:
+                    if str(error) == "missing_media_file":
+                        raise ValueError("missing_media_file") from error
+                    raise ValueError("megadetector_unsupported_media_type") from error
+                except MegaDetectorOutputError as error:
+                    raise ValueError(str(error) or "unsupported_detector_output") from error
+
+                created_at = datetime.now(UTC)
+                run_model = DetectionRunModel(
+                    id=self._next_id(session, DetectionRunModel, "detection-run"),
+                    media_asset_id=asset_model.id,
+                    source=DetectionSource.future_model.value,
+                    summary=(
+                        f"Model adapter contract run for {adapter.name} ({adapter.id}); "
+                        "MegaDetector-family proposal evidence only."
+                    ),
+                    status=DetectionRunStatus.completed.value,
+                    created_at=created_at,
+                    completed_at=created_at,
+                )
+                session.add(run_model)
+                session.flush()
+
+                proposal_models: list[DetectionProposalModel] = []
+                for detector_proposal in detector_proposals:
+                    mapped_label = normalize_megadetector_label(detector_proposal.label)
+                    normalized_label = self._normalize_label_from_session(session, mapped_label)
+                    suggested_subject_label, suggested_species = (
+                        self._adapter_subject_and_species(session, normalized_label)
+                    )
+                    proposal_model = DetectionProposalModel(
+                        id=self._next_id(
+                            session,
+                            DetectionProposalModel,
+                            "detection-proposal",
+                        ),
+                        run_id=run_model.id,
+                        media_asset_id=asset_model.id,
+                        stream_id=stream_model.id,
+                        zone_id=zone_model.id if zone_model else None,
+                        event_id=None,
+                        visit_id=None,
+                        label=normalized_label,
+                        confidence=detector_proposal.confidence,
+                        bbox_json=_detector_bbox_to_json(detector_proposal.bbox),
+                        suggested_event_type="animal_visit",
+                        suggested_subject_label=suggested_subject_label,
+                        suggested_species=suggested_species,
+                        status=DetectionProposalStatus.proposed.value,
+                        notes=(
+                            payload.notes.strip()
+                            if payload.notes and payload.notes.strip()
+                            else (
+                                "MegaDetector-family adapter generated proposal evidence; "
+                                "review and correction remain required."
+                            )
+                        ),
+                        created_at=created_at,
+                        decided_at=None,
+                    )
+                    session.add(proposal_model)
+                    session.flush()
+                    proposal_models.append(proposal_model)
+
+                return ModelAdapterRunResult(
+                    adapter=adapter.model_copy(deep=True),
+                    detection_run=_detection_run_from_model(run_model),
+                    proposals=[
+                        _detection_proposal_from_model(proposal)
+                        for proposal in proposal_models
+                    ],
+                    review_queue_count=len(self._review_queue_items(session)),
+                    local_first_note=(
+                        "MegaDetector-family outputs are animal/person/vehicle proposal "
+                        "evidence only. Convert, review, and correct proposals before "
+                        "exports, coverage, QA, or analytics treat labels as dataset truth."
+                    )
+                    if proposal_models
+                    else (
+                        "MegaDetector-family adapter completed with no proposal evidence. "
                         "No events, visits, review labels, or dataset truth were created."
                     ),
                 )
@@ -2857,7 +2999,11 @@ def _source_from_model(source: CameraSourceModel) -> CameraSource:
 
 
 def _model_adapters() -> tuple[ModelAdapter, ...]:
-    return (*BASE_MODEL_ADAPTERS, _local_image_detector_adapter())
+    return (
+        *BASE_MODEL_ADAPTERS,
+        _local_image_detector_adapter(),
+        _megadetector_adapter(),
+    )
 
 
 def _local_image_detector_adapter() -> ModelAdapter:
@@ -2877,26 +3023,61 @@ def _local_image_detector_adapter() -> ModelAdapter:
         creates_review_truth=False,
         local_only=True,
         notes=status.detail,
-        configuration_status=_local_detector_configuration_status(status),
+        configuration_status=_model_adapter_configuration_status(
+            adapter_id=LOCAL_IMAGE_DETECTOR_ID,
+            status=status,
+            supported_media_types=sorted(SUPPORTED_IMAGE_CONTENT_TYPES),
+            setup_hint=LOCAL_DETECTOR_SETUP_HINT,
+        ),
     )
 
 
-def _local_detector_configuration_status(
-    status: LocalDetectorStatus,
-) -> LocalDetectorConfigurationStatus:
-    return LocalDetectorConfigurationStatus(
-        adapter_id=LOCAL_IMAGE_DETECTOR_ID,
+def _megadetector_adapter() -> ModelAdapter:
+    status = get_megadetector_status()
+    return ModelAdapter(
+        id=MEGADETECTOR_ADAPTER_ID,
+        name="MegaDetector",
+        kind=ModelAdapterKind.object_detector,
+        status=ModelAdapterStatus(status.status),
+        version="wrapper-1",
+        description=(
+            "MegaDetector-family local image detector for animal/person/vehicle "
+            "proposal evidence. It does not identify species or write reviewed truth."
+        ),
+        supported_media_types=sorted(SUPPORTED_MEGADETECTOR_IMAGE_CONTENT_TYPES),
+        supported_labels=MEGADETECTOR_SUPPORTED_LABELS,
+        creates_review_truth=False,
+        local_only=True,
+        notes=status.detail,
+        configuration_status=_model_adapter_configuration_status(
+            adapter_id=MEGADETECTOR_ADAPTER_ID,
+            status=status,
+            supported_media_types=sorted(SUPPORTED_MEGADETECTOR_IMAGE_CONTENT_TYPES),
+            setup_hint=MEGADETECTOR_SETUP_HINT,
+        ),
+    )
+
+
+def _model_adapter_configuration_status(
+    *,
+    adapter_id: str,
+    status: LocalDetectorStatus | MegaDetectorStatus,
+    supported_media_types: list[str],
+    setup_hint: str,
+) -> ModelAdapterConfigurationStatus:
+    return ModelAdapterConfigurationStatus(
+        adapter_id=adapter_id,
         model_path_configured=status.configured,
         labels_path_configured=status.labels_path is not None,
         runtime_available=status.runtime_available,
-        supported_media_types=sorted(SUPPORTED_IMAGE_CONTENT_TYPES),
+        supported_media_types=supported_media_types,
         can_run=(
             status.status == ModelAdapterStatus.available.value
             and status.configured
             and status.runtime_available
         ),
         status_reason=status.detail,
-        setup_hint=LOCAL_DETECTOR_SETUP_HINT,
+        setup_hint=setup_hint,
         creates_review_truth=False,
         local_only=True,
     )
@@ -3291,7 +3472,7 @@ def _bbox_to_json(bbox: BoundingBox | None) -> str | None:
     return json.dumps(bbox.model_dump())
 
 
-def _local_detector_bbox_to_json(bbox) -> str | None:
+def _detector_bbox_to_json(bbox) -> str | None:
     if bbox is None:
         return None
     return json.dumps(

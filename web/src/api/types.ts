@@ -202,7 +202,7 @@ export interface DemoDetectionRunCreate {
   notes?: string | null;
 }
 
-export interface LocalDetectorConfigurationStatus {
+export interface ModelAdapterConfigurationStatus {
   adapter_id: string;
   model_path_configured: boolean;
   labels_path_configured: boolean;
@@ -227,7 +227,7 @@ export interface ModelAdapter {
   creates_review_truth: boolean;
   local_only: boolean;
   notes?: string | null;
-  configuration_status?: LocalDetectorConfigurationStatus | null;
+  configuration_status?: ModelAdapterConfigurationStatus | null;
 }
 
 export interface ModelAdapterRunRequest {

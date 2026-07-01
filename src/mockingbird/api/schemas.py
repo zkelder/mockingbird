@@ -245,7 +245,7 @@ class DemoDetectionRunCreate(BaseModel):
     notes: str | None = None
 
 
-class LocalDetectorConfigurationStatus(BaseModel):
+class ModelAdapterConfigurationStatus(BaseModel):
     adapter_id: str
     model_path_configured: bool
     labels_path_configured: bool
@@ -271,7 +271,7 @@ class ModelAdapter(BaseModel):
     creates_review_truth: bool = False
     local_only: bool = True
     notes: str | None = None
-    configuration_status: LocalDetectorConfigurationStatus | None = None
+    configuration_status: ModelAdapterConfigurationStatus | None = None
 
 
 class ModelAdapterRunRequest(BaseModel):

@@ -3,8 +3,8 @@ import { apiClient } from "../api/client";
 import type {
   AdapterEvaluationItem,
   AdapterEvaluationSummary,
-  LocalDetectorConfigurationStatus,
   MediaAsset,
+  ModelAdapterConfigurationStatus,
   ModelAdapter,
   ModelReadinessChecklistItem,
   ModelReadinessSummary,
@@ -179,9 +179,9 @@ export function ModelAdaptersPage({
       <section className="notice-panel">
         <strong>Model adapters create evidence, not truth</strong>
         <span>
-          The demo adapter simulates evidence, and the local image detector runs only when configured
-          with a local model file. Adapter proposals stay below the product loop until a user converts,
-          reviews, and corrects them.
+          The demo adapter simulates evidence, while local detector wrappers run only when configured
+          with local model files. MegaDetector-family outputs remain animal/person/vehicle evidence;
+          species truth stays in review and correction.
         </span>
       </section>
 
@@ -345,7 +345,7 @@ export function ModelAdaptersPage({
                     label={adapter.creates_review_truth ? "Writes truth" : "Evidence only"}
                     tone={adapter.creates_review_truth ? "review" : "truth"}
                   />
-                  {adapter.local_only ? <EvidenceBadge label="Local-only demo adapter" tone="quiet" /> : null}
+                  {adapter.local_only ? <EvidenceBadge label="Local-only adapter" tone="quiet" /> : null}
                 </div>
                 <small>
                   Media: {adapter.supported_media_types.map(formatLabel).join(", ")} · Labels:{" "}
@@ -565,7 +565,7 @@ function AdapterConfigurationStatus({
   status,
 }: {
   compact?: boolean;
-  status: LocalDetectorConfigurationStatus;
+  status: ModelAdapterConfigurationStatus;
 }) {
   return (
     <div className={`adapter-config-status${compact ? " compact" : ""}`}>
