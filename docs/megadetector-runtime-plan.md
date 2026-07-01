@@ -2,7 +2,7 @@
 
 ## Decision
 
-The first implementation path is PyTorch-Wildlife / MegaDetector-family integration, isolated behind an optional adapter dependency.
+Phase 7G selected PyTorch-Wildlife / MegaDetector-family integration as the first runtime candidate, isolated behind an optional adapter dependency.
 
 The fallback path is the existing unavailable-safe MegaDetector wrapper. If the dependency is not installed or the model path is not configured, MockingBird must keep starting normally and report the adapter as unavailable or not configured.
 
@@ -12,19 +12,25 @@ Phase 7H adds the optional dependency boundary and lazy execution seam. It still
 
 Before any local runtime smoke test, follow [megadetector-local-setup.md](megadetector-local-setup.md) to keep model files ignored and outputs evidence-only.
 
+Phase 7K archives PyTorch-Wildlife as an experimental MegaDetector runtime option after dependency, license, and download-behavior risks were found. Do not deepen PyTorch-Wildlife integration until the checkpoint in [megadetector-runtime-findings.md](megadetector-runtime-findings.md) is complete.
+
+The active next implementation path is [stream-motion-trigger-plan.md](stream-motion-trigger-plan.md): stream -> zones -> lightweight motion trigger -> snapshot evidence -> later species suggestion -> user correction truth.
+
 ## Why This Runtime Path
 
-MegaDetector-family detection is product-aligned because it can produce animal, person, and vehicle evidence for outdoor activity review.
+MegaDetector-family detection remains product-aligned because it can produce animal, person, and vehicle evidence for outdoor activity review.
 
-PyTorch-Wildlife / MegaDetector is the most direct route for that detector family. The risk is dependency weight, so the integration must be optional, lazy, and isolated from the core app. The core API and frontend must start without the runtime installed.
+During Phase 7G, PyTorch-Wildlife / MegaDetector appeared to be the most direct route for that detector family. Phase 7K findings make it an archived experimental path until the dependency, license, and download risks are resolved. If reopened, integration must be optional, lazy, and isolated from the core app. The core API and frontend must start without the runtime installed.
 
 ## Dependency Plan
 
-Future MegaDetector runtime dependencies must be optional, such as a `detector-megadetector` extra or similarly scoped install target.
+Future MegaDetector runtime dependencies must be optional, such as a `detector-megadetector` extra or similarly scoped install target, but that extra should not be advertised until dependency/license/download behavior is reviewed.
 
 The core MockingBird install must not require MegaDetector, PyTorch-Wildlife, or their heavy runtime stack. No model runtime dependency should be imported at app startup. Runtime imports should happen lazily inside the adapter execution path.
 
 If a dependency is missing, adapter status and run errors must explain the unavailable runtime clearly. Missing dependency must not crash app startup, local data status, exports, analytics, or normal review flows.
+
+ONNX/local-weight-only remains a serious fallback candidate for a product-grade detector runtime if it can run from explicit local model files with stable output mapping.
 
 ## Model File Plan
 

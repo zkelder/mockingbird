@@ -8,6 +8,8 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 .venv/
+.venv*/
+.venv-*/
 venv/
 .env
 .env.*
@@ -20,10 +22,17 @@ build/
 
 # Local data
 data/
+data/models/
 media/
 exports/
 *.sqlite
 *.sqlite3
+*.pt
+*.pth
+*.onnx
+*.weights
+*.engine
+*.ckpt
 
 # Logs
 *.log

@@ -167,7 +167,9 @@ Current guardrail work:
 - Phase 7G: MegaDetector runtime selection and dependency plan.
 - Phase 7H: optional MegaDetector dependency/runtime integration boundary.
 - Phase 7I: MegaDetector local runtime setup checklist.
-- Next likely phase: Phase 7J — local MegaDetector runtime smoke test.
+- Phase 7J: MegaDetector/PyTorch-Wildlife runtime smoke findings.
+- Phase 7K: detector runtime pivot and motion trigger plan.
+- Next likely phase: Phase 8A or 7L — zone-aware motion trigger backend design/implementation.
 
 Validation:
 
@@ -176,3 +178,5 @@ Validation:
 - Adapter evaluation and rollback stay local, reviewable, and safe.
 - Real MegaDetector runtime work follows [megadetector-runtime-plan.md](megadetector-runtime-plan.md) before dependencies or inference behavior are added.
 - Local MegaDetector setup follows [megadetector-local-setup.md](megadetector-local-setup.md) before any smoke test.
+- PyTorch-Wildlife/MegaDetector remains an experimental archived runtime option pending dependency, license, and download-behavior review.
+- The active next path is [stream-motion-trigger-plan.md](stream-motion-trigger-plan.md): stream -> zones -> motion trigger -> snapshot evidence -> later species suggestion -> user correction truth.

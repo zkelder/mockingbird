@@ -149,16 +149,26 @@ def mock_megadetector_output(
     monkeypatch.setattr(megadetector_adapter, "_execute_megadetector_runtime", execute_runtime)
 
 
-def test_pyproject_declares_optional_megadetector_extra_without_core_dependency() -> None:
+def test_pyproject_does_not_advertise_experimental_megadetector_runtime() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text())
 
     core_dependencies = "\n".join(pyproject["project"].get("dependencies", [])).lower()
-    optional_dependencies = pyproject["project"]["optional-dependencies"]
-    detector_extra = optional_dependencies["detector-megadetector"]
+    optional_dependencies = pyproject["project"].get("optional-dependencies", {})
+    optional_dependency_text = "\n".join(
+        dependency.lower()
+        for dependencies in optional_dependencies.values()
+        for dependency in dependencies
+    )
 
-    assert any(dependency.startswith("PytorchWildlife>=") for dependency in detector_extra)
+    assert "detector-megadetector" not in optional_dependencies
     assert "pytorchwildlife" not in core_dependencies
     assert "torch" not in core_dependencies
+    assert "pytorchwildlife" not in optional_dependency_text
+    assert "torch" not in optional_dependency_text
+    assert "ultralytics" not in optional_dependency_text
+    assert "yolov5" not in optional_dependency_text
+    assert "soundfile" not in optional_dependency_text
+    assert "librosa" not in optional_dependency_text
 
 
 def test_api_app_imports_without_optional_megadetector_runtime() -> None:

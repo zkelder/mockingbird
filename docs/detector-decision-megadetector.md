@@ -8,7 +8,9 @@ This decision records the detector direction only. It does not add a model runti
 
 Phase 7F adds an unavailable-safe adapter wrapper/status path only. Real MegaDetector runtime integration remains pending.
 
-Phase 7G selects PyTorch-Wildlife / MegaDetector-family integration as the first runtime implementation path, behind an optional dependency with lazy imports and no automatic model downloads. See [megadetector-runtime-plan.md](megadetector-runtime-plan.md).
+Phase 7G selected PyTorch-Wildlife / MegaDetector-family integration as a first runtime candidate, behind an optional dependency with lazy imports and no automatic model downloads.
+
+Phase 7K archives PyTorch-Wildlife as experimental after dependency, license, and download-behavior findings. MegaDetector remains a useful future detector/proposal family, but the active next event-trigger path is [stream-motion-trigger-plan.md](stream-motion-trigger-plan.md). See [megadetector-runtime-findings.md](megadetector-runtime-findings.md) and [megadetector-runtime-plan.md](megadetector-runtime-plan.md).
 
 ## Why MegaDetector
 
@@ -40,11 +42,11 @@ The first implementation must stay constrained:
 
 ## Dependency Decision
 
-The first runtime implementation path is PyTorch-Wildlife / MegaDetector-family integration behind an optional dependency. The dependency must be isolated from core app startup and imported only inside the adapter execution path.
+PyTorch-Wildlife / MegaDetector-family integration is archived as experimental until dependency, license, and download behavior are reviewed. Any future runtime dependency must be isolated from core app startup and imported only inside the adapter execution path.
 
-ONNX/local-image-detector remains a possible later optimization path if a compatible local artifact and output mapping are available.
+ONNX/local-weight-only remains a serious product-grade detector candidate if a compatible local artifact and output mapping are available.
 
-No heavy dependency should be added without an explicit implementation phase. Phase 7G is a plan only and adds no dependency.
+No heavy dependency should be added without an explicit implementation phase. Phase 7K makes zone-aware motion trigger the active next path and adds no dependency.
 
 ## Output Mapping
 
@@ -58,6 +60,8 @@ Expected mapping for the first MegaDetector-family adapter:
 - zone context -> selected/requested stream zone when available
 
 Species remains `unknown_bird` or `unknown_animal` until user review, unless a later classifier suggests species as evidence only.
+
+SpeciesNet or another species classifier is a separate future suggestion adapter from detection. It should receive review-candidate evidence such as a best frame or zone crop, and its output still remains below user correction truth.
 
 ## Evaluation Plan
 

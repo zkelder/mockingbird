@@ -75,6 +75,13 @@ Every future implementation task must restate:
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.
+- PyTorch-Wildlife/MegaDetector runtime work is experimental unless a future task
+  explicitly reopens it after
+  [docs/megadetector-runtime-findings.md](docs/megadetector-runtime-findings.md).
+  Do not add heavy detector runtimes, model files, or download behavior without
+  that checkpoint.
+- The current active event trigger direction is zone-aware motion trigger; see
+  [docs/stream-motion-trigger-plan.md](docs/stream-motion-trigger-plan.md).
 - Keep local-first storage/export assumptions in mind.
 - Respect privacy and ignore zones as first-class product concepts when those features are implemented.
 - Avoid adapter-specific models leaking into core product models.

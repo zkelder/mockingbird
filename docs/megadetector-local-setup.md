@@ -6,6 +6,10 @@ This checklist prepares a local optional MegaDetector runtime test without chang
 
 Use it before any real local MegaDetector install, model-path configuration, or manual smoke test. The goal is to keep the core app usable, keep model files out of source control, and preserve the truth boundary: detector output is evidence until a user reviews and corrects it.
 
+Phase 7K archives this setup as experimental. The active next implementation path is the zone-aware motion trigger plan, not PyTorch-Wildlife/MegaDetector runtime work.
+
+See [megadetector-runtime-findings.md](megadetector-runtime-findings.md) before reopening this path.
+
 ## Safety Rules
 
 - No model files are committed.
@@ -20,13 +24,24 @@ Use it before any real local MegaDetector install, model-path configuration, or 
 
 ## Local Install Boundary
 
-The future optional runtime should use the MegaDetector extra:
+The earlier optional runtime boundary used this candidate install shape:
 
 ```sh
 pip install -e ".[detector-megadetector]"
 ```
 
-This docs phase does not run or require that install. The core install must continue to work without the optional runtime.
+This setup is not currently advertised as an active install path. Do not run or require that install unless a future task explicitly reopens PyTorch-Wildlife after dependency/license/download review. The core install must continue to work without the optional runtime.
+
+Observed supplemental import requirements during the scratch probe:
+
+- `soundfile`
+- `librosa`
+
+After those were installed, `PytorchWildlife` 1.3.0 imported.
+
+The import created an Ultralytics settings file outside the repo. Keep scratch environments outside the repo and check `git status --short --untracked-files=all` before committing.
+
+Do not instantiate MegaDetector model constructors until download behavior is reviewed. The probed constructors referenced remote Zenodo URLs.
 
 ## Model File Location
 

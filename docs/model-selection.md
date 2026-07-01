@@ -6,7 +6,9 @@ The first real local detector candidate should prove that MockingBird can turn c
 
 It is a product safety spike, not a production accuracy claim.
 
-Phase 7E selects a MegaDetector-family local image detector as the first target direction. Phase 7G selects the optional PyTorch-Wildlife / MegaDetector-family runtime path while keeping implementation pending. See [detector-decision-megadetector.md](detector-decision-megadetector.md) and [megadetector-runtime-plan.md](megadetector-runtime-plan.md).
+Phase 7E selects a MegaDetector-family local image detector as a useful detector/proposal family. Phase 7K archives the PyTorch-Wildlife runtime path as experimental after dependency, license, and download-behavior findings. See [detector-decision-megadetector.md](detector-decision-megadetector.md), [megadetector-runtime-plan.md](megadetector-runtime-plan.md), and [megadetector-runtime-findings.md](megadetector-runtime-findings.md).
+
+The active next event-trigger path is [stream-motion-trigger-plan.md](stream-motion-trigger-plan.md): stream -> zones -> lightweight motion trigger -> snapshot evidence -> later species suggestion -> user correction truth.
 
 ## Acceptable First Detector Type
 
@@ -18,7 +20,7 @@ The first candidate must be:
 - `DetectionProposal` evidence only
 - explicitly triggered through the existing model adapter run flow
 
-Species classification, live input, and automatic background processing are out of scope for the first candidate.
+Species classification, live input, and automatic background processing are out of scope for the first candidate. SpeciesNet or another species classifier is a separate future suggestion adapter, not the motion trigger itself.
 
 ## Model Candidate Requirements
 
@@ -31,18 +33,22 @@ A candidate model should:
 - fail clearly when output shape is unsupported
 - be removable without changing reviewed product data
 
-The selected direction is MegaDetector-family animal/person/vehicle detection. The first runtime path is PyTorch-Wildlife / MegaDetector-family integration behind an optional dependency. The exact package/version wiring, model file, and loading code remain pending for an explicit implementation phase.
+MegaDetector-family animal/person/vehicle detection remains useful future proposal enrichment. It is no longer the active first implementation path. The next implementation path is zone-aware motion triggering, with species suggestion handled by a separate future adapter.
 
 ## Dependency Rules
 
-Prefer the existing optional detector shell first. Real MegaDetector runtime work must stay behind an optional extra such as `detector-megadetector` and use lazy imports inside the adapter execution path.
+Prefer the existing unavailable-safe detector shell and the motion-trigger path first.
 
-Possible later optimization path:
+PyTorch-Wildlife / MegaDetector is archived as experimental until dependency, license, and download behavior are reviewed. Do not advertise or deepen that optional runtime by default.
+
+Serious future detector runtime candidates:
 
 - ONNX Runtime for local model execution, only after a compatible local MegaDetector artifact and output mapping are available
+- local-weight-only MegaDetector-family runtime with explicit model paths and no downloads
+- PyTorch-Wildlife only if a future checkpoint resolves dependency/license/download risk
 - Pillow or numpy only when the explicit implementation phase proves they are needed
 
-Avoid heavy or model-specific runtime stacks unless an explicit implementation phase justifies them. PyTorch-Wildlife / MegaDetector integration is the selected product-aligned candidate path, but no PyTorch, TensorFlow, OpenCV, Ultralytics, YOLO package, MegaDetector package stack, or BirdNET runtime should be added by selection docs alone.
+Avoid heavy or model-specific runtime stacks unless an explicit implementation phase justifies them. No PyTorch, TensorFlow, OpenCV, Ultralytics, YOLO package, MegaDetector package stack, BirdNET runtime, SpeciesNet runtime, or model dependency should be added by selection docs alone.
 
 ## Model File Rules
 
