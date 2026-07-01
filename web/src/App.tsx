@@ -11,6 +11,7 @@ import type {
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { DetectionProposalsPage } from "./pages/DetectionProposalsPage";
 import { EventDetailPage } from "./pages/EventDetailPage";
 import { ExportsPage } from "./pages/ExportsPage";
 import { FolderImportPage } from "./pages/FolderImportPage";
@@ -26,6 +27,7 @@ type Page =
   | "streams"
   | "import"
   | "folder-import"
+  | "detection-proposals"
   | "stream-detail"
   | "event-detail"
   | "visit-detail"
@@ -57,6 +59,7 @@ const navItems: Array<{ page: Page; label: string }> = [
   { page: "streams", label: "Streams" },
   { page: "import", label: "Import Media" },
   { page: "folder-import", label: "Folder Import" },
+  { page: "detection-proposals", label: "Detection Proposals" },
   { page: "review", label: "Review" },
   { page: "analytics", label: "Analytics" },
   { page: "exports", label: "Exports" },
@@ -208,6 +211,21 @@ export default function App() {
           onOpenReview={() => setPage("review")}
           onOpenExports={() => setPage("exports")}
           onImportComplete={() => loadAppData({ showLoading: false })}
+        />
+      );
+    }
+
+    if (page === "detection-proposals") {
+      return (
+        <DetectionProposalsPage
+          streams={data.streams}
+          sources={data.sources}
+          onOpenImport={() => setPage("import")}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
+          onOpenReview={() => setPage("review")}
+          onOpenExports={() => setPage("exports")}
+          onProposalChanged={() => loadAppData({ showLoading: false })}
         />
       );
     }

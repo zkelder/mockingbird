@@ -22,6 +22,16 @@ from mockingbird.api.schemas import (
     DatasetExportManifest,
     DatasetExportRecord,
     Detection,
+    DetectionProposal,
+    DetectionProposalCreate,
+    DetectionProposalDecision,
+    DetectionProposalDecisionCreate,
+    DetectionProposalDecisionResult,
+    DetectionProposalStatus,
+    DetectionRun,
+    DetectionRunCreate,
+    DetectionRunStatus,
+    DetectionSource,
     Event,
     ExportStatus,
     FolderImportCandidate,
@@ -59,6 +69,8 @@ from mockingbird.storage.models import (
     CameraSourceModel,
     DatasetExportModel,
     DetectionModel,
+    DetectionProposalModel,
+    DetectionRunModel,
     EventModel,
     MediaAssetModel,
     ReviewLabelModel,
@@ -119,6 +131,8 @@ class ProductRepository:
         with self.session_factory() as session:
             with session.begin():
                 for model in (
+                    DetectionProposalModel,
+                    DetectionRunModel,
                     MediaAssetModel,
                     DetectionModel,
                     VisitModel,
@@ -270,6 +284,8 @@ class ProductRepository:
             event_count=analytics.event_count,
             visit_count=analytics.visit_count,
             media_asset_count=self._count(session, MediaAssetModel),
+            detection_run_count=self._count(session, DetectionRunModel),
+            detection_proposal_count=self._count(session, DetectionProposalModel),
             review_label_count=self._count(session, ReviewLabelModel),
             dataset_export_count=self._count(session, DatasetExportModel),
             needs_review_count=analytics.needs_review_count,
@@ -420,6 +436,182 @@ class ProductRepository:
         if asset is None:
             return None
         return Path(asset.local_path)
+
+    def list_detection_runs(self) -> list[DetectionRun]:
+        with self.session_factory() as session:
+            runs = session.scalars(
+                select(DetectionRunModel).order_by(
+                    DetectionRunModel.created_at,
+                    DetectionRunModel.id,
+                )
+            ).all()
+            return [_detection_run_from_model(run) for run in runs]
+
+    def get_detection_run(self, run_id: str) -> DetectionRun | None:
+        with self.session_factory() as session:
+            run = session.get(DetectionRunModel, run_id)
+            return _detection_run_from_model(run) if run else None
+
+    def create_detection_run(self, payload: DetectionRunCreate) -> DetectionRun:
+        with self.session_factory() as session:
+            with session.begin():
+                if session.get(MediaAssetModel, payload.media_asset_id) is None:
+                    raise ValueError("missing_media_asset")
+
+                created_at = datetime.now(UTC)
+                run_model = DetectionRunModel(
+                    id=self._next_id(session, DetectionRunModel, "detection-run"),
+                    media_asset_id=payload.media_asset_id,
+                    source=payload.source.value,
+                    summary=(
+                        payload.summary.strip()
+                        if payload.summary and payload.summary.strip()
+                        else None
+                    ),
+                    status=DetectionRunStatus.completed.value,
+                    created_at=created_at,
+                    completed_at=created_at,
+                )
+                session.add(run_model)
+                session.flush()
+                return _detection_run_from_model(run_model)
+
+    def list_detection_proposals(self) -> list[DetectionProposal]:
+        with self.session_factory() as session:
+            proposals = session.scalars(
+                select(DetectionProposalModel).order_by(
+                    DetectionProposalModel.created_at,
+                    DetectionProposalModel.id,
+                )
+            ).all()
+            return [_detection_proposal_from_model(proposal) for proposal in proposals]
+
+    def get_detection_proposal(self, proposal_id: str) -> DetectionProposal | None:
+        with self.session_factory() as session:
+            proposal = session.get(DetectionProposalModel, proposal_id)
+            return _detection_proposal_from_model(proposal) if proposal else None
+
+    def detection_proposals_for_run(self, run_id: str) -> list[DetectionProposal] | None:
+        with self.session_factory() as session:
+            if session.get(DetectionRunModel, run_id) is None:
+                return None
+
+            proposals = session.scalars(
+                select(DetectionProposalModel)
+                .where(DetectionProposalModel.run_id == run_id)
+                .order_by(DetectionProposalModel.created_at, DetectionProposalModel.id)
+            ).all()
+            return [_detection_proposal_from_model(proposal) for proposal in proposals]
+
+    def create_detection_proposal(
+        self,
+        payload: DetectionProposalCreate,
+    ) -> DetectionProposal:
+        with self.session_factory() as session:
+            with session.begin():
+                asset_model = session.get(MediaAssetModel, payload.media_asset_id)
+                if asset_model is None:
+                    raise ValueError("missing_media_asset")
+
+                stream_id = payload.stream_id or asset_model.stream_id
+                stream_model = session.get(StreamModel, stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+                if asset_model.stream_id != stream_id:
+                    raise ValueError("media_stream_mismatch")
+
+                zone_model = self._resolve_import_zone(session, payload.zone_id, stream_id)
+                created_at = datetime.now(UTC)
+                run_model = DetectionRunModel(
+                    id=self._next_id(session, DetectionRunModel, "detection-run"),
+                    media_asset_id=asset_model.id,
+                    source=DetectionSource.manual.value,
+                    summary="Manual detection proposal from local media input.",
+                    status=DetectionRunStatus.completed.value,
+                    created_at=created_at,
+                    completed_at=created_at,
+                )
+                proposal_model = DetectionProposalModel(
+                    id=self._next_id(session, DetectionProposalModel, "detection-proposal"),
+                    run_id=run_model.id,
+                    media_asset_id=asset_model.id,
+                    stream_id=stream_model.id,
+                    zone_id=zone_model.id if zone_model else None,
+                    event_id=None,
+                    visit_id=None,
+                    label=payload.label.strip() or "unknown_animal",
+                    confidence=payload.confidence,
+                    bbox_json=_bbox_to_json(payload.bbox),
+                    suggested_event_type=payload.suggested_event_type.strip() or "animal_visit",
+                    suggested_subject_label=(
+                        payload.suggested_subject_label.strip() or "unknown_animal"
+                    ),
+                    suggested_species=(
+                        payload.suggested_species.strip()
+                        if payload.suggested_species and payload.suggested_species.strip()
+                        else None
+                    ),
+                    status=DetectionProposalStatus.proposed.value,
+                    notes=payload.notes.strip() if payload.notes and payload.notes.strip() else None,
+                    created_at=created_at,
+                    decided_at=None,
+                )
+                session.add_all([run_model, proposal_model])
+                session.flush()
+                return _detection_proposal_from_model(proposal_model)
+
+    def decide_detection_proposal(
+        self,
+        proposal_id: str,
+        payload: DetectionProposalDecisionCreate,
+    ) -> DetectionProposalDecisionResult | None:
+        with self.session_factory() as session:
+            with session.begin():
+                proposal_model = session.get(DetectionProposalModel, proposal_id)
+                if proposal_model is None:
+                    return None
+                if proposal_model.status != DetectionProposalStatus.proposed.value:
+                    raise ValueError("proposal_already_decided")
+
+                event: Event | None = None
+                visit: Visit | None = None
+                decided_at = datetime.now(UTC)
+
+                if payload.notes and payload.notes.strip():
+                    proposal_model.notes = _merge_notes(proposal_model.notes, payload.notes.strip())
+
+                if payload.decision == DetectionProposalDecision.reject:
+                    proposal_model.status = DetectionProposalStatus.rejected.value
+                    proposal_model.decided_at = decided_at
+                elif payload.decision in {
+                    DetectionProposalDecision.accept,
+                    DetectionProposalDecision.convert_to_event,
+                }:
+                    event, visit = self._create_detection_proposal_review_records(
+                        session,
+                        proposal_model=proposal_model,
+                        payload=payload,
+                        created_at=decided_at,
+                    )
+                    proposal_model.status = (
+                        DetectionProposalStatus.accepted.value
+                        if payload.decision == DetectionProposalDecision.accept
+                        else DetectionProposalStatus.converted.value
+                    )
+                    proposal_model.event_id = event.id
+                    proposal_model.visit_id = visit.id
+                    proposal_model.decided_at = decided_at
+                else:
+                    raise ValueError("unsupported_decision")
+
+                session.flush()
+                return DetectionProposalDecisionResult(
+                    proposal=_detection_proposal_from_model(proposal_model),
+                    event=event,
+                    visit=visit,
+                    review_queue_count=len(self._review_queue_items(session)),
+                    analytics=self._analytics_summary(session),
+                )
 
     def create_media_import(
         self,
@@ -818,6 +1010,78 @@ class ProductRepository:
             supported_count=len(supported_files),
             skipped_count=len(skipped_files),
         )
+
+    def _create_detection_proposal_review_records(
+        self,
+        session: Session,
+        *,
+        proposal_model: DetectionProposalModel,
+        payload: DetectionProposalDecisionCreate,
+        created_at: datetime,
+    ) -> tuple[Event, Visit]:
+        asset_model = session.get(MediaAssetModel, proposal_model.media_asset_id)
+        if asset_model is None:
+            raise ValueError("missing_media_asset")
+
+        stream_model = session.get(StreamModel, proposal_model.stream_id)
+        if stream_model is None:
+            raise ValueError("missing_stream")
+
+        zone_model = self._resolve_import_zone(
+            session,
+            proposal_model.zone_id,
+            proposal_model.stream_id,
+        )
+        event_id = self._next_id(session, EventModel, "event-detection")
+        visit_id = self._next_id(session, VisitModel, "visit-detection")
+        detection_id = self._next_id(session, DetectionModel, "detection-proposal")
+        event_title = (
+            payload.event_title.strip()
+            if payload.event_title and payload.event_title.strip()
+            else f"Detection proposal: {proposal_model.label}"
+        )
+        subject_label = (
+            payload.subject_label.strip()
+            if payload.subject_label and payload.subject_label.strip()
+            else proposal_model.suggested_subject_label
+        )
+        species_guess = (
+            payload.species_guess.strip()
+            if payload.species_guess and payload.species_guess.strip()
+            else proposal_model.suggested_species
+        )
+
+        event_model = EventModel(
+            id=event_id,
+            stream_id=stream_model.id,
+            title=event_title,
+            event_type=proposal_model.suggested_event_type,
+            started_at=created_at,
+            ended_at=created_at,
+            primary_zone_id=zone_model.id if zone_model else None,
+            review_status=ReviewStatus.needs_review.value,
+        )
+        visit_model = VisitModel(
+            id=visit_id,
+            event_id=event_id,
+            subject_label=subject_label,
+            species_guess=species_guess,
+            confidence=proposal_model.confidence,
+            reviewed_label=None,
+            review_status=ReviewStatus.needs_review.value,
+            representative_media_path=asset_model.local_path,
+        )
+        detection_model = DetectionModel(
+            id=detection_id,
+            event_id=event_id,
+            label=proposal_model.label,
+            confidence=proposal_model.confidence,
+            zone_id=zone_model.id if zone_model else None,
+            bbox_json=proposal_model.bbox_json,
+        )
+        session.add_all([event_model, visit_model, detection_model])
+        session.flush()
+        return self._event_from_model(session, event_model), _visit_from_model(visit_model)
 
     def _create_media_product_records(
         self,
@@ -1340,6 +1604,41 @@ def _media_asset_from_model(asset: MediaAssetModel) -> MediaAsset:
     )
 
 
+def _detection_run_from_model(run: DetectionRunModel) -> DetectionRun:
+    return DetectionRun(
+        id=run.id,
+        media_asset_id=run.media_asset_id,
+        source=DetectionSource(run.source),
+        summary=run.summary,
+        status=DetectionRunStatus(run.status),
+        created_at=_as_utc(run.created_at),
+        completed_at=_as_utc(run.completed_at) if run.completed_at else None,
+    )
+
+
+def _detection_proposal_from_model(proposal: DetectionProposalModel) -> DetectionProposal:
+    bbox = BoundingBox(**json.loads(proposal.bbox_json)) if proposal.bbox_json else None
+    return DetectionProposal(
+        id=proposal.id,
+        run_id=proposal.run_id,
+        media_asset_id=proposal.media_asset_id,
+        stream_id=proposal.stream_id,
+        zone_id=proposal.zone_id,
+        event_id=proposal.event_id,
+        visit_id=proposal.visit_id,
+        label=proposal.label,
+        confidence=proposal.confidence,
+        bbox=bbox,
+        suggested_event_type=proposal.suggested_event_type,
+        suggested_subject_label=proposal.suggested_subject_label,
+        suggested_species=proposal.suggested_species,
+        status=DetectionProposalStatus(proposal.status),
+        notes=proposal.notes,
+        created_at=_as_utc(proposal.created_at),
+        decided_at=_as_utc(proposal.decided_at) if proposal.decided_at else None,
+    )
+
+
 def _review_label_from_model(label: ReviewLabelModel) -> ReviewLabel:
     return ReviewLabel(
         id=label.id,
@@ -1396,6 +1695,12 @@ def _folder_path(folder_path: str) -> Path:
 
 def _media_type_for_path(path: Path) -> tuple[str, str] | None:
     return SUPPORTED_MEDIA_EXTENSIONS.get(path.suffix.lower())
+
+
+def _merge_notes(existing_notes: str | None, new_notes: str) -> str:
+    if not existing_notes:
+        return new_notes
+    return f"{existing_notes}\n{new_notes}"
 
 
 def _as_utc(value: datetime) -> datetime:

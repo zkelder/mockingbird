@@ -96,6 +96,40 @@ class MediaAssetModel(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class DetectionRunModel(Base):
+    __tablename__ = "detection_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    media_asset_id: Mapped[str] = mapped_column(ForeignKey("media_assets.id"), nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DetectionProposalModel(Base):
+    __tablename__ = "detection_proposals"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("detection_runs.id"), nullable=False)
+    media_asset_id: Mapped[str] = mapped_column(ForeignKey("media_assets.id"), nullable=False)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
+    zone_id: Mapped[str | None] = mapped_column(ForeignKey("zones.id"), nullable=True)
+    event_id: Mapped[str | None] = mapped_column(ForeignKey("events.id"), nullable=True)
+    visit_id: Mapped[str | None] = mapped_column(ForeignKey("visits.id"), nullable=True)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    bbox_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suggested_event_type: Mapped[str] = mapped_column(String, nullable=False)
+    suggested_subject_label: Mapped[str] = mapped_column(String, nullable=False)
+    suggested_species: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ReviewLabelModel(Base):
     __tablename__ = "review_labels"
 

@@ -1,0 +1,235 @@
+from pathlib import Path
+
+import httpx
+import pytest
+
+from mockingbird.api.main import app, configure_repository
+from mockingbird.repository.product_repository import ProductRepository
+
+pytestmark = pytest.mark.anyio
+
+STREAM_ID = "stream-backyard-feeder"
+FEEDER_ZONE_ID = "zone-feeder"
+
+
+@pytest.fixture(autouse=True)
+def isolated_repository(tmp_path: Path) -> None:
+    repository = ProductRepository(
+        db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
+        media_root=tmp_path / "media",
+    )
+    configure_repository(repository)
+    yield
+    configure_repository(None)
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
+async def client():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+        yield api_client
+
+
+async def import_image(client: httpx.AsyncClient):
+    return await client.post(
+        "/api/media/import",
+        data={
+            "stream_id": STREAM_ID,
+            "zone_id": FEEDER_ZONE_ID,
+            "title": "Imported feeder observation",
+            "subject_label": "unknown_bird",
+            "species_guess": "unknown_bird",
+            "notes": "Local media for detection proposal.",
+        },
+        files={"file": ("feeder-bird.png", b"proposal image bytes", "image/png")},
+    )
+
+
+async def create_proposal(
+    client: httpx.AsyncClient,
+    media_asset_id: str,
+    data: dict[str, object] | None = None,
+):
+    return await client.post(
+        "/api/detection-proposals",
+        json={
+            "media_asset_id": media_asset_id,
+            "stream_id": STREAM_ID,
+            "zone_id": FEEDER_ZONE_ID,
+            "label": "animal_candidate",
+            "confidence": 0.82,
+            "bbox": {"x": 0.2, "y": 0.3, "width": 0.25, "height": 0.2},
+            "suggested_event_type": "animal_visit",
+            "suggested_subject_label": "unknown_bird",
+            "suggested_species": "unknown_bird",
+            "notes": "Detector-shaped proposal for review.",
+            **(data or {}),
+        },
+    )
+
+
+async def test_detection_proposal_can_be_created_and_listed_for_media(
+    client: httpx.AsyncClient,
+) -> None:
+    media_asset = (await import_image(client)).json()["media_asset"]
+
+    response = await create_proposal(client, media_asset["id"])
+
+    assert response.status_code == 201
+    proposal = response.json()
+    assert proposal["media_asset_id"] == media_asset["id"]
+    assert proposal["stream_id"] == STREAM_ID
+    assert proposal["zone_id"] == FEEDER_ZONE_ID
+    assert proposal["label"] == "animal_candidate"
+    assert proposal["confidence"] == 0.82
+    assert proposal["bbox"]["width"] == 0.25
+    assert proposal["status"] == "proposed"
+    assert proposal["event_id"] is None
+    assert proposal["visit_id"] is None
+
+    assert (await client.get(f"/api/detection-runs/{proposal['run_id']}")).status_code == 200
+    run_proposals = await client.get(f"/api/detection-runs/{proposal['run_id']}/proposals")
+    all_proposals = await client.get("/api/detection-proposals")
+    local_status = await client.get("/api/settings/local-data")
+
+    assert run_proposals.status_code == 200
+    assert [item["id"] for item in run_proposals.json()] == [proposal["id"]]
+    assert any(item["id"] == proposal["id"] for item in all_proposals.json())
+    assert local_status.json()["detection_run_count"] == 1
+    assert local_status.json()["detection_proposal_count"] == 1
+
+
+async def test_detection_proposal_requires_existing_media_asset(client: httpx.AsyncClient) -> None:
+    response = await create_proposal(client, "media-asset-missing")
+
+    assert response.status_code == 404
+    assert "Media asset" in response.json()["detail"]
+
+
+async def test_detection_proposal_requires_existing_zone_when_zone_is_supplied(
+    client: httpx.AsyncClient,
+) -> None:
+    media_asset = (await import_image(client)).json()["media_asset"]
+
+    response = await create_proposal(client, media_asset["id"], {"zone_id": "zone-missing"})
+
+    assert response.status_code == 404
+    assert "Zone" in response.json()["detail"]
+
+
+async def test_detection_proposal_rejects_invalid_confidence(
+    client: httpx.AsyncClient,
+) -> None:
+    media_asset = (await import_image(client)).json()["media_asset"]
+
+    response = await create_proposal(client, media_asset["id"], {"confidence": 1.2})
+
+    assert response.status_code == 422
+
+
+async def test_detection_proposal_can_be_rejected_without_creating_review_records(
+    client: httpx.AsyncClient,
+) -> None:
+    media_asset = (await import_image(client)).json()["media_asset"]
+    proposal = (await create_proposal(client, media_asset["id"])).json()
+
+    response = await client.post(
+        f"/api/detection-proposals/{proposal['id']}/decision",
+        json={"decision": "reject", "notes": "Not outdoor activity."},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["proposal"]["status"] == "rejected"
+    assert result["proposal"]["event_id"] is None
+    assert result["proposal"]["visit_id"] is None
+    assert result["event"] is None
+    assert result["visit"] is None
+
+
+async def test_detection_proposal_converts_to_reviewable_visit_and_detection_evidence(
+    client: httpx.AsyncClient,
+) -> None:
+    media_asset = (await import_image(client)).json()["media_asset"]
+    proposal = (await create_proposal(client, media_asset["id"])).json()
+
+    response = await client.post(
+        f"/api/detection-proposals/{proposal['id']}/decision",
+        json={
+            "decision": "convert_to_event",
+            "event_title": "Review proposed feeder visitor",
+            "subject_label": "unknown_bird",
+            "species_guess": "unknown_bird",
+            "notes": "Needs user correction before export.",
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    event = result["event"]
+    visit = result["visit"]
+    assert result["proposal"]["status"] == "converted"
+    assert result["proposal"]["event_id"] == event["id"]
+    assert result["proposal"]["visit_id"] == visit["id"]
+    assert event["review_status"] == "needs_review"
+    assert event["primary_zone_id"] == FEEDER_ZONE_ID
+    assert event["detections"][0]["label"] == "animal_candidate"
+    assert event["detections"][0]["bbox"]["height"] == 0.2
+    assert visit["review_status"] == "needs_review"
+    assert visit["representative_media_path"] == media_asset["local_path"]
+
+    queue = (await client.get("/api/review-queue")).json()
+    queue_item = next(item for item in queue if item["visit_id"] == visit["id"])
+    assert queue_item["media_asset"]["id"] == media_asset["id"]
+
+
+async def test_converted_proposal_uses_correction_as_dataset_truth(
+    client: httpx.AsyncClient,
+) -> None:
+    media_asset = (await import_image(client)).json()["media_asset"]
+    proposal = (await create_proposal(client, media_asset["id"])).json()
+    decision = (await client.post(
+        f"/api/detection-proposals/{proposal['id']}/decision",
+        json={"decision": "convert_to_event"},
+    )).json()
+    visit = decision["visit"]
+
+    pre_correction_export = await client.post(
+        "/api/dataset-exports",
+        json={"name": "Proposal before correction"},
+    )
+    correction_response = await client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": visit["id"],
+            "label": "blue_jay",
+            "notes": "User-corrected proposal truth.",
+        },
+    )
+    export_response = await client.post(
+        "/api/dataset-exports",
+        json={"name": "Proposal after correction"},
+    )
+
+    assert pre_correction_export.status_code == 201
+    assert all(
+        record["visit_id"] != visit["id"]
+        for record in pre_correction_export.json()["manifest"]["records"]
+    )
+    assert correction_response.status_code == 201
+    assert correction_response.json()["visit"]["reviewed_label"] == "blue_jay"
+    assert export_response.status_code == 201
+    record = next(
+        record
+        for record in export_response.json()["manifest"]["records"]
+        if record["visit_id"] == visit["id"]
+    )
+    assert record["label"] == "blue_jay"
+    assert record["label"] != "animal_candidate"
+    assert record["detections"][0]["label"] == "animal_candidate"

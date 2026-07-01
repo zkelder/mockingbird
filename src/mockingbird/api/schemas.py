@@ -47,6 +47,32 @@ class ExportStatus(str, Enum):
     failed = "failed"
 
 
+class DetectionSource(str, Enum):
+    manual = "manual"
+    demo_rule = "demo_rule"
+    future_model = "future_model"
+    integration = "integration"
+
+
+class DetectionRunStatus(str, Enum):
+    pending = "pending"
+    completed = "completed"
+    failed = "failed"
+
+
+class DetectionProposalStatus(str, Enum):
+    proposed = "proposed"
+    accepted = "accepted"
+    rejected = "rejected"
+    converted = "converted"
+
+
+class DetectionProposalDecision(str, Enum):
+    accept = "accept"
+    reject = "reject"
+    convert_to_event = "convert_to_event"
+
+
 class CameraSource(BaseModel):
     # Source adapters normalize into product streams and events later.
     id: str
@@ -153,6 +179,63 @@ class MediaAsset(BaseModel):
     notes: str | None = None
 
 
+class DetectionRun(BaseModel):
+    id: str
+    media_asset_id: str
+    source: DetectionSource
+    summary: str | None = None
+    status: DetectionRunStatus
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class DetectionRunCreate(BaseModel):
+    media_asset_id: str
+    source: DetectionSource = DetectionSource.demo_rule
+    summary: str | None = None
+
+
+class DetectionProposal(BaseModel):
+    id: str
+    run_id: str
+    media_asset_id: str
+    stream_id: str
+    zone_id: str | None = None
+    event_id: str | None = None
+    visit_id: str | None = None
+    label: str
+    confidence: float = Field(ge=0, le=1)
+    bbox: BoundingBox | None = None
+    suggested_event_type: str
+    suggested_subject_label: str
+    suggested_species: str | None = None
+    status: DetectionProposalStatus
+    notes: str | None = None
+    created_at: datetime
+    decided_at: datetime | None = None
+
+
+class DetectionProposalCreate(BaseModel):
+    media_asset_id: str
+    stream_id: str | None = None
+    zone_id: str | None = None
+    label: str
+    confidence: float = Field(ge=0, le=1)
+    bbox: BoundingBox | None = None
+    suggested_event_type: str = "animal_visit"
+    suggested_subject_label: str = "unknown_animal"
+    suggested_species: str | None = None
+    notes: str | None = None
+
+
+class DetectionProposalDecisionCreate(BaseModel):
+    decision: DetectionProposalDecision
+    event_title: str | None = None
+    subject_label: str | None = None
+    species_guess: str | None = None
+    notes: str | None = None
+
+
 class ReviewQueueItem(BaseModel):
     id: str
     item_type: str
@@ -248,6 +331,14 @@ class AnalyticsSummary(BaseModel):
     zone_activity_counts: dict[str, int]
 
 
+class DetectionProposalDecisionResult(BaseModel):
+    proposal: DetectionProposal
+    event: Event | None = None
+    visit: Visit | None = None
+    review_queue_count: int = Field(ge=0)
+    analytics: AnalyticsSummary
+
+
 class LocalDataStatus(BaseModel):
     database_url: str
     database_path: str | None = None
@@ -258,6 +349,8 @@ class LocalDataStatus(BaseModel):
     event_count: int = Field(ge=0)
     visit_count: int = Field(ge=0)
     media_asset_count: int = Field(ge=0)
+    detection_run_count: int = Field(ge=0)
+    detection_proposal_count: int = Field(ge=0)
     review_label_count: int = Field(ge=0)
     dataset_export_count: int = Field(ge=0)
     needs_review_count: int = Field(ge=0)

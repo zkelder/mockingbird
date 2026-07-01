@@ -5,6 +5,12 @@ import type {
   DatasetExportCreate,
   DatasetExportDetail,
   DatasetExportManifest,
+  DetectionProposal,
+  DetectionProposalCreate,
+  DetectionProposalDecisionCreate,
+  DetectionProposalDecisionResult,
+  DetectionRun,
+  DetectionRunCreate,
   Event,
   EventDetail,
   FolderImportCreate,
@@ -79,6 +85,25 @@ export const apiClient = {
   getVisitDetail: (visitId: string) => request<VisitDetail>(`/api/visits/${visitId}/detail`),
   getMediaAssets: () => request<MediaAsset[]>("/api/media"),
   getMediaAsset: (mediaId: string) => request<MediaAsset>(`/api/media/${mediaId}`),
+  getDetectionRuns: () => request<DetectionRun[]>("/api/detection-runs"),
+  createDetectionRun: (payload: DetectionRunCreate) =>
+    request<DetectionRun>("/api/detection-runs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getDetectionRunProposals: (runId: string) =>
+    request<DetectionProposal[]>(`/api/detection-runs/${runId}/proposals`),
+  getDetectionProposals: () => request<DetectionProposal[]>("/api/detection-proposals"),
+  createDetectionProposal: (payload: DetectionProposalCreate) =>
+    request<DetectionProposal>("/api/detection-proposals", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  decideDetectionProposal: (proposalId: string, payload: DetectionProposalDecisionCreate) =>
+    request<DetectionProposalDecisionResult>(`/api/detection-proposals/${proposalId}/decision`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   importMedia: (payload: FormData) =>
     request<MediaImportResult>("/api/media/import", {
       method: "POST",

@@ -21,6 +21,10 @@ export type ZoneType =
 
 export type ReviewStatus = "needs_review" | "reviewed" | "rejected";
 export type ExportStatus = "ready" | "building" | "failed";
+export type DetectionSource = "manual" | "demo_rule" | "future_model" | "integration";
+export type DetectionRunStatus = "pending" | "completed" | "failed";
+export type DetectionProposalStatus = "proposed" | "accepted" | "rejected" | "converted";
+export type DetectionProposalDecision = "accept" | "reject" | "convert_to_event";
 
 export interface HealthStatus {
   status: string;
@@ -134,6 +138,71 @@ export interface MediaImportResult {
   visit?: Visit | null;
   stream: Stream;
   review_queue_count: number;
+}
+
+export interface DetectionRun {
+  id: string;
+  media_asset_id: string;
+  source: DetectionSource;
+  summary?: string | null;
+  status: DetectionRunStatus;
+  created_at: string;
+  completed_at?: string | null;
+}
+
+export interface DetectionRunCreate {
+  media_asset_id: string;
+  source?: DetectionSource;
+  summary?: string | null;
+}
+
+export interface DetectionProposal {
+  id: string;
+  run_id: string;
+  media_asset_id: string;
+  stream_id: string;
+  zone_id?: string | null;
+  event_id?: string | null;
+  visit_id?: string | null;
+  label: string;
+  confidence: number;
+  bbox?: BoundingBox | null;
+  suggested_event_type: string;
+  suggested_subject_label: string;
+  suggested_species?: string | null;
+  status: DetectionProposalStatus;
+  notes?: string | null;
+  created_at: string;
+  decided_at?: string | null;
+}
+
+export interface DetectionProposalCreate {
+  media_asset_id: string;
+  stream_id?: string | null;
+  zone_id?: string | null;
+  label: string;
+  confidence: number;
+  bbox?: BoundingBox | null;
+  suggested_event_type?: string;
+  suggested_subject_label?: string;
+  suggested_species?: string | null;
+  notes?: string | null;
+}
+
+export interface DetectionProposalDecisionCreate {
+  decision: DetectionProposalDecision;
+  event_title?: string | null;
+  subject_label?: string | null;
+  species_guess?: string | null;
+  notes?: string | null;
+}
+
+export interface DetectionProposalDecisionResult {
+  proposal: DetectionProposal;
+  event?: Event | null;
+  visit?: Visit | null;
+  review_queue_count: number;
+  analytics: AnalyticsSummary;
 }
 
 export interface FolderImportPreviewRequest {
@@ -317,6 +386,8 @@ export interface LocalDataStatus {
   event_count: number;
   visit_count: number;
   media_asset_count: number;
+  detection_run_count: number;
+  detection_proposal_count: number;
   review_label_count: number;
   dataset_export_count: number;
   needs_review_count: number;
