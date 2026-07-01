@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -6,6 +7,7 @@ import pytest
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import MotionEvidenceCreateRequest
 from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.storage.models import MediaAssetModel
 
 pytestmark = pytest.mark.anyio
 
@@ -13,13 +15,14 @@ SOURCE_ID = "source-backyard-demo"
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
 GROUND_ZONE_ID = "zone-ground"
+IGNORE_ZONE_ID = "zone-ignore-driveway-edge"
 
 
 @pytest.fixture(autouse=True)
-def isolated_repository(tmp_path: Path) -> None:
+def isolated_repository(tmp_path: Path) -> ProductRepository:
     repository = ProductRepository(db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}")
     configure_repository(repository)
-    yield
+    yield repository
     configure_repository(None)
 
 
@@ -62,6 +65,25 @@ async def create_motion_evidence(client: httpx.AsyncClient, **overrides):
     )
 
 
+async def create_privacy_zone(client: httpx.AsyncClient) -> str:
+    response = await client.post(
+        "/api/zones",
+        json={
+            "stream_id": STREAM_ID,
+            "name": "Test privacy zone",
+            "zone_type": "privacy",
+            "polygon": [
+                {"x": 0.1, "y": 0.1},
+                {"x": 0.2, "y": 0.1},
+                {"x": 0.2, "y": 0.2},
+            ],
+            "is_active": True,
+        },
+    )
+    assert response.status_code == 201
+    return response.json()["zone"]["id"]
+
+
 async def product_counts(client: httpx.AsyncClient) -> dict[str, int]:
     events = await client.get("/api/events")
     visits = await client.get("/api/visits")
@@ -79,6 +101,32 @@ async def product_counts(client: httpx.AsyncClient) -> dict[str, int]:
         "review_labels": len(review_labels.json()),
         "exports": len(exports.json()),
     }
+
+
+async def dataset_coverage(client: httpx.AsyncClient) -> dict:
+    response = await client.get("/api/dataset-coverage/summary")
+    assert response.status_code == 200
+    return response.json()
+
+
+def add_test_media_asset(repository: ProductRepository) -> MediaAssetModel:
+    asset = MediaAssetModel(
+        id="media-asset-motion-evidence-test",
+        source_id=SOURCE_ID,
+        stream_id=STREAM_ID,
+        filename="motion-evidence-test.jpg",
+        content_type="image/jpeg",
+        media_type="image",
+        local_path="demo://motion-evidence/test.jpg",
+        original_filename="motion-evidence-test.jpg",
+        file_size_bytes=128,
+        created_at=datetime.now(UTC),
+        notes="Test-only local media reference.",
+    )
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(asset)
+    return asset
 
 
 async def test_create_motion_evidence_returns_pending_evidence(
@@ -204,12 +252,219 @@ async def test_ignore_motion_evidence_does_not_create_or_delete_product_truth(
     assert await product_counts(client) == before_counts
 
 
-async def test_no_motion_evidence_promote_endpoint_exists(client: httpx.AsyncClient) -> None:
+async def test_promote_pending_motion_evidence_creates_unreviewed_event_visit(
+    client: httpx.AsyncClient,
+) -> None:
     created = (await create_motion_evidence(client)).json()
+    before_counts = await product_counts(client)
+    before_coverage = await dataset_coverage(client)
+
+    response = await client.post(
+        f"/api/motion/evidence/{created['id']}/promote",
+        json={
+            "event_title": "Motion evidence at feeder",
+            "visit_label_hint": "unknown_bird",
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    evidence = result["evidence"]
+    assert evidence["id"] == created["id"]
+    assert evidence["status"] == "promoted"
+    assert result["event_id"] == evidence["promoted_event_id"]
+    assert result["visit_id"] == evidence["promoted_visit_id"]
+
+    after_counts = await product_counts(client)
+    assert after_counts["events"] == before_counts["events"] + 1
+    assert after_counts["visits"] == before_counts["visits"] + 1
+    assert after_counts["review_labels"] == before_counts["review_labels"]
+    assert after_counts["exports"] == before_counts["exports"]
+
+    event_response = await client.get(f"/api/events/{result['event_id']}")
+    visit_response = await client.get(f"/api/visits/{result['visit_id']}")
+    evidence_response = await client.get(f"/api/motion/evidence/{created['id']}")
+    event_detail_response = await client.get(f"/api/events/{result['event_id']}/detail")
+    visit_detail_response = await client.get(f"/api/visits/{result['visit_id']}/detail")
+
+    assert event_response.status_code == 200
+    assert visit_response.status_code == 200
+    assert evidence_response.status_code == 200
+    assert event_detail_response.status_code == 200
+    assert visit_detail_response.status_code == 200
+
+    event = event_response.json()
+    visit = visit_response.json()
+    assert event["title"] == "Motion evidence at feeder"
+    assert event["event_type"] == "motion_evidence"
+    assert event["primary_zone_id"] == FEEDER_ZONE_ID
+    assert event["review_status"] == "needs_review"
+    assert event["detections"] == []
+    assert visit["event_id"] == event["id"]
+    assert visit["subject_label"] == "unknown_bird"
+    assert visit["species_guess"] is None
+    assert visit["confidence"] is None
+    assert visit["reviewed_label"] is None
+    assert visit["review_status"] == "needs_review"
+    assert visit["representative_media_path"] is None
+    assert event_detail_response.json()["dataset_ready"] is False
+    assert visit_detail_response.json()["dataset_ready"] is False
+    assert evidence_response.json()["status"] == "promoted"
+
+    after_coverage = await dataset_coverage(client)
+    assert after_coverage["export_ready_count"] == before_coverage["export_ready_count"]
+    assert after_coverage["reviewed_record_count"] == before_coverage["reviewed_record_count"]
+
+
+async def test_promote_motion_evidence_can_create_event_without_visit(
+    client: httpx.AsyncClient,
+) -> None:
+    created = (await create_motion_evidence(client)).json()
+    before_counts = await product_counts(client)
+
+    response = await client.post(
+        f"/api/motion/evidence/{created['id']}/promote",
+        json={"create_visit": False},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["event_id"] is not None
+    assert result["visit_id"] is None
+    assert result["evidence"]["promoted_event_id"] == result["event_id"]
+    assert result["evidence"]["promoted_visit_id"] is None
+
+    after_counts = await product_counts(client)
+    assert after_counts["events"] == before_counts["events"] + 1
+    assert after_counts["visits"] == before_counts["visits"]
+    assert after_counts["review_labels"] == before_counts["review_labels"]
+    assert after_counts["exports"] == before_counts["exports"]
+
+
+async def test_repeated_motion_evidence_promotion_is_rejected_without_duplicates(
+    client: httpx.AsyncClient,
+) -> None:
+    created = (await create_motion_evidence(client)).json()
+    first_response = await client.post(f"/api/motion/evidence/{created['id']}/promote")
+    assert first_response.status_code == 200
+    counts_after_first_promotion = await product_counts(client)
 
     response = await client.post(f"/api/motion/evidence/{created['id']}/promote")
 
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Motion Evidence has already been promoted."
+    assert await product_counts(client) == counts_after_first_promotion
+
+
+async def test_ignored_motion_evidence_promotion_is_rejected(
+    client: httpx.AsyncClient,
+) -> None:
+    created = (await create_motion_evidence(client)).json()
+    await client.post(f"/api/motion/evidence/{created['id']}/ignore")
+    before_counts = await product_counts(client)
+
+    response = await client.post(f"/api/motion/evidence/{created['id']}/promote")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Ignored Motion Evidence cannot be promoted."
+    assert await product_counts(client) == before_counts
+
+
+async def test_missing_motion_evidence_promotion_returns_404(client: httpx.AsyncClient) -> None:
+    response = await client.post("/api/motion/evidence/motion-evidence-missing/promote")
+
     assert response.status_code == 404
+    assert "Motion Evidence" in response.json()["detail"]
+
+
+async def test_empty_motion_evidence_promotion_request_returns_400(
+    client: httpx.AsyncClient,
+) -> None:
+    created = (await create_motion_evidence(client)).json()
+    before_counts = await product_counts(client)
+
+    response = await client.post(
+        f"/api/motion/evidence/{created['id']}/promote",
+        json={"create_event": False, "create_visit": False},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Promotion must create an Event or Visit."
+    assert await product_counts(client) == before_counts
+
+
+async def test_motion_evidence_promotion_rejects_visit_without_event(
+    client: httpx.AsyncClient,
+) -> None:
+    created = (await create_motion_evidence(client)).json()
+
+    response = await client.post(
+        f"/api/motion/evidence/{created['id']}/promote",
+        json={"create_event": False, "create_visit": True},
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "Motion Evidence promotion cannot create a Visit without an Event."
+    )
+
+
+async def test_ignore_zone_motion_evidence_promotion_is_rejected(
+    client: httpx.AsyncClient,
+) -> None:
+    created = (await create_motion_evidence(client, zone_id=IGNORE_ZONE_ID)).json()
+    before_counts = await product_counts(client)
+
+    response = await client.post(f"/api/motion/evidence/{created['id']}/promote")
+
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "Motion Evidence in privacy or ignore zones cannot be promoted."
+    )
+    assert await product_counts(client) == before_counts
+    evidence_response = await client.get(f"/api/motion/evidence/{created['id']}")
+    assert evidence_response.json()["status"] == "pending"
+
+
+async def test_privacy_zone_motion_evidence_promotion_is_rejected(
+    client: httpx.AsyncClient,
+) -> None:
+    privacy_zone_id = await create_privacy_zone(client)
+    created = (await create_motion_evidence(client, zone_id=privacy_zone_id)).json()
+    before_counts = await product_counts(client)
+
+    response = await client.post(f"/api/motion/evidence/{created['id']}/promote")
+
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "Motion Evidence in privacy or ignore zones cannot be promoted."
+    )
+    assert await product_counts(client) == before_counts
+
+
+async def test_motion_evidence_promotion_preserves_snapshot_media_reference(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(isolated_repository)
+    created = (
+        await create_motion_evidence(
+            client,
+            snapshot_media_asset_id=asset.id,
+        )
+    ).json()
+
+    response = await client.post(f"/api/motion/evidence/{created['id']}/promote")
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["evidence"]["snapshot_media_asset_id"] == asset.id
+    visit_response = await client.get(f"/api/visits/{result['visit_id']}")
+    assert visit_response.status_code == 200
+    assert visit_response.json()["representative_media_path"] == asset.local_path
 
 
 async def test_invalid_peak_changed_ratio_returns_422(client: httpx.AsyncClient) -> None:

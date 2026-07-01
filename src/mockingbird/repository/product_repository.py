@@ -91,6 +91,8 @@ from mockingbird.api.schemas import (
     ModelAdapterRunResult,
     ModelAdapterStatus,
     MotionEvidenceCreateRequest,
+    MotionEvidencePromoteRequest,
+    MotionEvidencePromoteResponse,
     MotionEvidenceResponse,
     MotionEvidenceStatus,
     Point,
@@ -734,6 +736,115 @@ class ProductRepository:
                 evidence_model.status = MotionEvidenceStatus.ignored.value
                 session.flush()
                 return _motion_evidence_from_model(evidence_model)
+
+    def promote_motion_evidence(
+        self,
+        evidence_id: str,
+        payload: MotionEvidencePromoteRequest,
+    ) -> MotionEvidencePromoteResponse | None:
+        with self.session_factory() as session:
+            with session.begin():
+                evidence_model = session.get(MotionEvidenceModel, evidence_id)
+                if evidence_model is None:
+                    return None
+                if evidence_model.status == MotionEvidenceStatus.ignored.value:
+                    raise ValueError("motion_evidence_ignored")
+                if evidence_model.status == MotionEvidenceStatus.promoted.value:
+                    raise ValueError("motion_evidence_already_promoted")
+                if evidence_model.status != MotionEvidenceStatus.pending.value:
+                    raise ValueError("motion_evidence_promote_not_pending")
+                if not payload.create_event and not payload.create_visit:
+                    raise ValueError("motion_evidence_promote_empty")
+                if payload.create_visit and not payload.create_event:
+                    raise ValueError("motion_evidence_visit_requires_event")
+
+                zone_model = session.get(ZoneModel, evidence_model.zone_id)
+                if zone_model is None:
+                    raise ValueError("missing_zone")
+                if zone_model.zone_type in {
+                    ZoneType.privacy.value,
+                    ZoneType.ignore.value,
+                }:
+                    raise ValueError("motion_evidence_zone_blocked")
+
+                stream_model = session.get(StreamModel, evidence_model.stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+
+                snapshot_media_asset_id = (
+                    payload.attach_snapshot_media_asset_id
+                    or evidence_model.snapshot_media_asset_id
+                )
+                asset_model: MediaAssetModel | None = None
+                if snapshot_media_asset_id is not None:
+                    asset_model = session.get(MediaAssetModel, snapshot_media_asset_id)
+                    if asset_model is None:
+                        raise ValueError("missing_media_asset")
+                    if asset_model.stream_id != stream_model.id:
+                        raise ValueError("media_stream_mismatch")
+                    evidence_model.snapshot_media_asset_id = snapshot_media_asset_id
+
+                created_at = datetime.now(UTC)
+                event_id: str | None = None
+                visit_id: str | None = None
+
+                if payload.create_event:
+                    event_id = self._next_id(session, EventModel, "event-motion")
+                    event_title = (
+                        payload.event_title.strip()
+                        if payload.event_title and payload.event_title.strip()
+                        else f"Motion evidence in {zone_model.name}"
+                    )
+                    event_model = EventModel(
+                        id=event_id,
+                        stream_id=stream_model.id,
+                        title=event_title,
+                        event_type="motion_evidence",
+                        started_at=created_at,
+                        ended_at=created_at,
+                        primary_zone_id=zone_model.id,
+                        review_status=ReviewStatus.needs_review.value,
+                    )
+                    session.add(event_model)
+
+                if payload.create_visit:
+                    visit_id = self._next_id(session, VisitModel, "visit-motion")
+                    visit_label = (
+                        payload.visit_label_hint.strip()
+                        if payload.visit_label_hint and payload.visit_label_hint.strip()
+                        else "unknown_animal"
+                    )
+                    visit_model = VisitModel(
+                        id=visit_id,
+                        event_id=event_id,
+                        subject_label=visit_label,
+                        species_guess=None,
+                        confidence=None,
+                        reviewed_label=None,
+                        review_status=ReviewStatus.needs_review.value,
+                        representative_media_path=(
+                            asset_model.local_path if asset_model is not None else None
+                        ),
+                    )
+                    session.add(visit_model)
+
+                if payload.notes and payload.notes.strip():
+                    promotion_note = payload.notes.strip()
+                    evidence_model.notes = (
+                        f"{evidence_model.notes}\nPromotion note: {promotion_note}"
+                        if evidence_model.notes
+                        else promotion_note
+                    )
+                evidence_model.status = MotionEvidenceStatus.promoted.value
+                evidence_model.promoted_event_id = event_id
+                evidence_model.promoted_visit_id = visit_id
+                session.flush()
+
+                return MotionEvidencePromoteResponse(
+                    evidence=_motion_evidence_from_model(evidence_model),
+                    event_id=event_id,
+                    visit_id=visit_id,
+                )
 
     def list_model_adapters(self) -> list[ModelAdapter]:
         return [adapter.model_copy(deep=True) for adapter in _model_adapters()]

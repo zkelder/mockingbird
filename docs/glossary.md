@@ -54,7 +54,7 @@ Local evidence that a motion candidate occurred in a stream zone; it is not revi
 
 ## Motion Evidence Promotion
 
-An explicit future action that turns pending Motion Evidence into unreviewed Event/Visit evidence; it does not create reviewed truth.
+An explicit action that turns pending Motion Evidence into unreviewed Event/Visit evidence; it does not create reviewed truth.
 
 ## Review
 

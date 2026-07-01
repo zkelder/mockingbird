@@ -14,7 +14,7 @@ stream/frame sample -> zone-aware motion score -> debounced motion candidate -> 
 
 The Motion Evidence step protects the product loop by keeping motion as evidence until explicit promotion and user correction happen.
 
-Phase 8E defines promotion separately in [motion-evidence-promotion-design.md](motion-evidence-promotion-design.md). It is a design-only bridge from pending Motion Evidence to unreviewed Event/Visit evidence.
+Phase 8E defines promotion separately in [motion-evidence-promotion-design.md](motion-evidence-promotion-design.md). Phase 8F implements the API/repository foundation for promoting pending Motion Evidence into unreviewed Event/Visit evidence.
 
 ## Motion Evidence Definition
 
@@ -128,7 +128,7 @@ Likely future phases:
 
 - Phase 8D introduces MotionEvidence schemas and repository behavior, either in-memory first or persistent depending on the task packet.
 - Phase 8E defines Motion Evidence promotion without adding an endpoint or repository method.
-- Phase 8F likely wires Motion Evidence promotion into Event/Visit creation while preserving review/correction truth.
+- Phase 8F wires Motion Evidence promotion into Event/Visit creation while preserving review/correction truth.
 - Stream sampler and media capture work comes later.
 
 No promotion API, event creation, media capture, stream sampling, or worker implementation is added in Phase 8E.
@@ -145,9 +145,15 @@ Promotion remains future work.
 
 Phase 8E documents what promotion means before implementation. Promotion should convert pending Motion Evidence into unreviewed Event/Visit evidence, mark the evidence promoted, link created records, and preserve the truth boundary. See [motion-evidence-promotion-design.md](motion-evidence-promotion-design.md).
 
-## Test Plan For Future Implementation
+## Phase 8F Status
 
-Future implementation tests should prove:
+Phase 8F implements `POST /api/motion/evidence/{evidence_id}/promote`.
+
+Pending Motion Evidence can now be promoted into unreviewed Event/Visit evidence. The original Motion Evidence remains queryable, is marked `promoted`, and links to created product records. Promotion rejects ignored, already promoted, privacy-zone, and ignore-zone evidence. It still does not create ReviewLabels, reviewed status, species truth, exports, dataset coverage truth, model output, media files, stream samples, or detector output.
+
+## Test Plan
+
+Implementation tests should prove:
 
 - pending Motion Evidence can be created from a candidate
 - creation writes no Event, Visit, ReviewLabel, DatasetExport, DatasetCoverage, or analytics truth

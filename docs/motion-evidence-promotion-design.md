@@ -2,7 +2,7 @@
 
 ## Purpose
 
-MotionEvidence captures that something moved in a stream zone. Promotion is the future explicit step that turns that evidence into reviewable Event/Visit context without making user truth.
+MotionEvidence captures that something moved in a stream zone. Promotion is the explicit step that turns that evidence into reviewable Event/Visit context without making user truth.
 
 ## Product Flow
 
@@ -26,9 +26,22 @@ Promotion is not:
 - ML detection
 - automatic user correction
 
-## Suggested Future Promote Request
+## Phase 8F Status
 
-Likely future fields:
+Phase 8F implements the promotion API/repository foundation:
+
+- `POST /api/motion/evidence/{evidence_id}/promote`
+- pending MotionEvidence can become unreviewed Event/Visit evidence
+- promoted MotionEvidence links to created product records
+- ignored or already promoted evidence is rejected
+- privacy and ignore zone evidence is rejected
+- promotion writes no ReviewLabel, export, dataset coverage truth, species truth, model output, media files, or stream samples
+
+The current Visit model requires an Event, so Phase 8F rejects `create_visit=true` with `create_event=false`.
+
+## Promote Request
+
+Current fields:
 
 - `evidence_id` path parameter
 - `event_title` optional
@@ -40,7 +53,7 @@ Likely future fields:
 - `reviewed` always false and not client-settable
 - species label not client-settable as truth
 
-## Suggested Future Created Records
+## Created Records
 
 Event:
 
@@ -99,26 +112,28 @@ Promotion does not:
 
 User review/correction remains the only dataset/export truth source.
 
-## API Plan For Implementation Phase
+## API
 
-Recommended future Phase 8F endpoint:
+Phase 8F endpoint:
 
 ```text
 POST /api/motion/evidence/{evidence_id}/promote
 ```
 
-Expected responses:
+Responses:
 
-- 200 or 201 with promoted evidence and created event/visit references
+- 200 with promoted evidence and created event/visit references
 - 404 for missing evidence
 - 400 for ignored evidence
 - 400 for already promoted evidence
-- 400 for privacy or ignore zone evidence when zone policy can be evaluated
+- 400 for a request that creates neither Event nor Visit
+- 400 for a Visit request without an Event, while the current Visit model requires an Event
+- 400 for privacy or ignore zone evidence
 - no truth writes
 
-## Test Plan For Future Implementation
+## Test Coverage
 
-Future tests should prove:
+Phase 8F tests prove:
 
 - promoting pending evidence creates Event/Visit evidence
 - promotion marks evidence promoted
@@ -129,7 +144,7 @@ Future tests should prove:
 - repeated promotion is rejected
 - ignored evidence promotion is rejected
 - missing evidence returns 404
-- privacy or ignore zone promotion is rejected if zone type can be resolved
+- privacy or ignore zone promotion is rejected
 - evidence without snapshot can promote
 - evidence with snapshot keeps the media reference
 

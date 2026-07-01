@@ -40,6 +40,10 @@ MotionEvidence can now be explicitly created from candidate output and ignored a
 
 Phase 8E defines the planned promotion bridge from pending MotionEvidence to unreviewed Event/Visit evidence. It is design only: stream sampling, media capture, media decoding, and promotion implementation remain deferred. See [motion-evidence-promotion-design.md](motion-evidence-promotion-design.md).
 
+## Phase 8F Status
+
+Phase 8F implements MotionEvidence promotion as a backend API/repository foundation. Pending evidence can be explicitly promoted into unreviewed Event/Visit evidence, while ReviewLabel, export, dataset coverage truth, stream sampling, media capture, and media decoding remain deferred.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

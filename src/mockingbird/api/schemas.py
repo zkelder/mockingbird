@@ -483,6 +483,21 @@ class MotionEvidenceListResponse(BaseModel):
     motion_evidence: list[MotionEvidenceResponse]
 
 
+class MotionEvidencePromoteRequest(BaseModel):
+    event_title: str | None = None
+    visit_label_hint: str | None = None
+    notes: str | None = None
+    create_event: bool = True
+    create_visit: bool = True
+    attach_snapshot_media_asset_id: str | None = None
+
+
+class MotionEvidencePromoteResponse(BaseModel):
+    evidence: MotionEvidenceResponse
+    event_id: str | None
+    visit_id: str | None
+
+
 class DetectionProposal(BaseModel):
     id: str
     run_id: str

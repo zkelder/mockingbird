@@ -43,6 +43,8 @@ from mockingbird.api.schemas import (
     MotionCandidateResponse,
     MotionEvidenceCreateRequest,
     MotionEvidenceListResponse,
+    MotionEvidencePromoteRequest,
+    MotionEvidencePromoteResponse,
     MotionEvidenceResponse,
     MotionEvidenceStatus,
     MotionEvaluateFrameRequest,
@@ -399,6 +401,36 @@ def _motion_evidence_error(error: ValueError) -> HTTPException:
             status_code=400,
             detail="Only pending Motion Evidence can be ignored.",
         )
+    if reason == "motion_evidence_ignored":
+        return HTTPException(
+            status_code=400,
+            detail="Ignored Motion Evidence cannot be promoted.",
+        )
+    if reason == "motion_evidence_already_promoted":
+        return HTTPException(
+            status_code=400,
+            detail="Motion Evidence has already been promoted.",
+        )
+    if reason == "motion_evidence_promote_not_pending":
+        return HTTPException(
+            status_code=400,
+            detail="Only pending Motion Evidence can be promoted.",
+        )
+    if reason == "motion_evidence_promote_empty":
+        return HTTPException(
+            status_code=400,
+            detail="Promotion must create an Event or Visit.",
+        )
+    if reason == "motion_evidence_visit_requires_event":
+        return HTTPException(
+            status_code=400,
+            detail="Motion Evidence promotion cannot create a Visit without an Event.",
+        )
+    if reason == "motion_evidence_zone_blocked":
+        return HTTPException(
+            status_code=400,
+            detail="Motion Evidence in privacy or ignore zones cannot be promoted.",
+        )
     return HTTPException(status_code=400, detail="Motion Evidence could not be processed.")
 
 
@@ -561,6 +593,26 @@ async def get_motion_evidence(evidence_id: str) -> MotionEvidenceResponse:
     if evidence is None:
         raise _not_found("Motion Evidence", evidence_id)
     return evidence
+
+
+@app.post(
+    "/api/motion/evidence/{evidence_id}/promote",
+    response_model=MotionEvidencePromoteResponse,
+)
+async def promote_motion_evidence(
+    evidence_id: str,
+    payload: MotionEvidencePromoteRequest | None = None,
+) -> MotionEvidencePromoteResponse:
+    try:
+        promoted = get_repository().promote_motion_evidence(
+            evidence_id,
+            payload or MotionEvidencePromoteRequest(),
+        )
+    except ValueError as error:
+        raise _motion_evidence_error(error) from error
+    if promoted is None:
+        raise _not_found("Motion Evidence", evidence_id)
+    return promoted
 
 
 @app.post("/api/motion/evidence/{evidence_id}/ignore", response_model=MotionEvidenceResponse)
