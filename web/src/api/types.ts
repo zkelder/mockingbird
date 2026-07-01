@@ -145,6 +145,7 @@ export interface ReviewQueueItem {
   visit_id?: string | null;
   primary_zone_id?: string | null;
   suggested_label?: string | null;
+  media_asset?: MediaAsset | null;
   review_status: ReviewStatus;
   reason: string;
 }

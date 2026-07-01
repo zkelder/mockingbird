@@ -399,10 +399,7 @@ class ProductRepository:
             return None
 
         with self.session_factory() as session:
-            asset = session.scalar(
-                select(MediaAssetModel).where(MediaAssetModel.local_path == media_path)
-            )
-            return _media_asset_from_model(asset) if asset else None
+            return self._media_asset_for_path_from_session(session, media_path)
 
     def media_file_path(self, media_id: str) -> Path | None:
         asset = self.get_media_asset(media_id)
@@ -711,6 +708,19 @@ class ProductRepository:
         path.write_bytes(content)
         return path.name, path
 
+    def _media_asset_for_path_from_session(
+        self,
+        session: Session,
+        media_path: str | None,
+    ) -> MediaAsset | None:
+        if media_path is None:
+            return None
+
+        asset = session.scalar(
+            select(MediaAssetModel).where(MediaAssetModel.local_path == media_path)
+        )
+        return _media_asset_from_model(asset) if asset else None
+
     def _zones_for_stream(self, session: Session, stream_id: str) -> list[Zone]:
         zones = session.scalars(
             select(ZoneModel).where(ZoneModel.stream_id == stream_id).order_by(ZoneModel.id)
@@ -988,6 +998,10 @@ class ProductRepository:
                     visit_id=visit.id,
                     primary_zone_id=event.primary_zone_id,
                     suggested_label=visit.species_guess or visit.subject_label,
+                    media_asset=self._media_asset_for_path_from_session(
+                        session,
+                        visit.representative_media_path,
+                    ),
                     review_status=visit.review_status,
                     reason="Confirm or correct the suggested species label.",
                 )

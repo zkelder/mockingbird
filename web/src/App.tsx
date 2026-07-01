@@ -169,6 +169,7 @@ export default function App() {
           reviewQueue={data.reviewQueue}
           exports={data.exports}
           onOpenStream={openStream}
+          onOpenImport={() => setPage("import")}
           onOpenReview={() => setPage("review")}
           onOpenExports={() => setPage("exports")}
         />
@@ -265,6 +266,7 @@ export default function App() {
     return (
       <LocalDataPage
         onOpenDashboard={() => setPage("dashboard")}
+        onOpenImport={() => setPage("import")}
         onOpenStreams={() => setPage("streams")}
         onOpenReview={() => setPage("review")}
         onOpenExports={() => setPage("exports")}

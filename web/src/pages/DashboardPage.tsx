@@ -19,6 +19,7 @@ interface DashboardPageProps {
   onOpenStream: (streamId: string) => void;
   onOpenReview: () => void;
   onOpenExports: () => void;
+  onOpenImport: () => void;
 }
 
 export function DashboardPage({
@@ -30,6 +31,7 @@ export function DashboardPage({
   onOpenStream,
   onOpenReview,
   onOpenExports,
+  onOpenImport,
 }: DashboardPageProps) {
   const mainStream = streams[0];
   const latestExport = exports[exports.length - 1];
@@ -55,8 +57,11 @@ export function DashboardPage({
           </p>
         </div>
         <div className="hero-actions">
+          <button className="primary-action" onClick={onOpenImport}>
+            Import media
+          </button>
           {mainStream ? (
-            <button className="primary-action" onClick={() => onOpenStream(mainStream.id)}>
+            <button className="secondary-action" onClick={() => onOpenStream(mainStream.id)}>
               Open main stream
             </button>
           ) : null}

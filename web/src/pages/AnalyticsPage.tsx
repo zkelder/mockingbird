@@ -57,6 +57,13 @@ export function AnalyticsPage({
           detail="activity contexts"
         />
       </section>
+      <section className="notice-panel">
+        <strong>Reviewed imports count here</strong>
+        <span>
+          Manual media imports become events and visits, then corrected labels roll into these local
+          summaries and dataset manifests.
+        </span>
+      </section>
       <section className="split-grid">
         <div className="panel">
           <div className="section-heading">

@@ -82,7 +82,21 @@ def test_imported_event_appears_in_review_queue() -> None:
 
     assert response.status_code == 200
     queue = response.json()
-    assert any(item["visit_id"] == result["visit"]["id"] for item in queue)
+    imported_item = next(item for item in queue if item["visit_id"] == result["visit"]["id"])
+    assert imported_item["media_asset"]["id"] == result["media_asset"]["id"]
+    assert imported_item["media_asset"]["local_path"] == result["media_asset"]["local_path"]
+
+
+def test_imported_media_is_visible_from_event_and_visit_detail() -> None:
+    result = import_image().json()
+
+    event_response = client.get(f"/api/events/{result['event']['id']}/detail")
+    visit_response = client.get(f"/api/visits/{result['visit']['id']}/detail")
+
+    assert event_response.status_code == 200
+    assert visit_response.status_code == 200
+    assert event_response.json()["media_asset"]["id"] == result["media_asset"]["id"]
+    assert visit_response.json()["media_asset"]["id"] == result["media_asset"]["id"]
 
 
 def test_imported_visit_can_be_corrected_and_exported() -> None:

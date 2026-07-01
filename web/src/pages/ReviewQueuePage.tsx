@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ReviewCorrectionResult, ReviewQueueItem } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
+import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { formatLabel } from "../utils";
@@ -108,10 +109,16 @@ export function ReviewQueuePage({
                 <span>Suggested: {formatLabel(item.suggested_label ?? "unknown")}</span>
                 <span>Event: {item.event_id ?? "n/a"}</span>
                 <span>Visit: {item.visit_id ?? "n/a"}</span>
+                {item.media_asset ? <span>Imported media attached</span> : null}
               </div>
+              {item.media_asset ? (
+                <div className="queue-media-block">
+                  <MediaAssetPreview asset={item.media_asset} compact />
+                </div>
+              ) : null}
               <div className="correction-form">
                 <label>
-                  Label
+                  Corrected label
                   <input
                     value={draft.label}
                     onChange={(event) =>

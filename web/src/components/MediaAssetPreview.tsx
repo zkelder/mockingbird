@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
 import type { MediaAsset } from "../api/types";
 import { formatDateTime } from "../utils";
@@ -21,17 +22,32 @@ function formatBytes(bytes: number): string {
 }
 
 export function MediaAssetPreview({ asset, compact = false }: MediaAssetPreviewProps) {
+  const [previewFailed, setPreviewFailed] = useState(false);
   const fileUrl = apiClient.mediaFileUrl(asset.id);
+  const canPreview = !previewFailed && (asset.media_type === "image" || asset.media_type === "video");
+
+  useEffect(() => {
+    setPreviewFailed(false);
+  }, [asset.id]);
 
   return (
     <div className={compact ? "media-preview media-preview-compact" : "media-preview"}>
       <div className="media-preview-surface">
-        {asset.media_type === "image" ? (
-          <img alt={asset.original_filename} src={fileUrl} />
-        ) : asset.media_type === "video" ? (
-          <video controls preload="metadata" src={fileUrl} />
+        {canPreview && asset.media_type === "image" ? (
+          <img alt={asset.original_filename} onError={() => setPreviewFailed(true)} src={fileUrl} />
+        ) : canPreview && asset.media_type === "video" ? (
+          <video
+            controls
+            onError={() => setPreviewFailed(true)}
+            preload="metadata"
+            src={fileUrl}
+          />
         ) : (
-          <span className="meta-text">{asset.local_path}</span>
+          <div className="media-preview-fallback">
+            <strong>{asset.original_filename}</strong>
+            <span>{asset.content_type}</span>
+            <span>{asset.local_path}</span>
+          </div>
         )}
       </div>
       <div className="media-preview-meta">

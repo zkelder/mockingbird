@@ -162,6 +162,7 @@ class ReviewQueueItem(BaseModel):
     visit_id: str | None = None
     primary_zone_id: str | None = None
     suggested_label: str | None = None
+    media_asset: MediaAsset | None = None
     review_status: ReviewStatus
     reason: str
 

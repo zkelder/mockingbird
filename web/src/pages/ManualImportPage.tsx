@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type { CameraSource, MediaAsset, MediaImportResult, Stream, Zone } from "../api/types";
+import { EmptyState } from "../components/EmptyState";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
@@ -183,6 +184,9 @@ export function ManualImportPage({
           <div>
             <span className="meta-text">Review and correct imported observations before export.</span>
             <h2>{result.event.title}</h2>
+            <p>
+              {result.media_asset.original_filename} is now local evidence for a needs-review visit.
+            </p>
           </div>
           <div className="detail-actions">
             <button className="primary-action" onClick={() => onOpenEvent(result.event.id)}>
@@ -195,6 +199,7 @@ export function ManualImportPage({
             ) : null}
             <StatusPill label={`${result.review_queue_count} needs review`} tone="review" />
           </div>
+          <MediaAssetPreview asset={result.media_asset} compact />
         </section>
       ) : null}
 
@@ -203,6 +208,12 @@ export function ManualImportPage({
           <div className="section-heading">
             <h2>Create review event</h2>
             <StatusPill label="Media stays local" tone="quiet" />
+          </div>
+          <div className="import-flow-strip">
+            <span>Local media</span>
+            <span>Stream context</span>
+            <span>Needs review</span>
+            <span>Export-ready after correction</span>
           </div>
           <label>
             Image or video file
@@ -213,6 +224,12 @@ export function ManualImportPage({
               type="file"
             />
           </label>
+          {file ? (
+            <div className="selected-file-row">
+              <span>Selected file</span>
+              <strong>{file.name}</strong>
+            </div>
+          ) : null}
           <label>
             Stream
             <select
@@ -247,7 +264,7 @@ export function ManualImportPage({
             <input value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
           <label>
-            Subject label
+            Initial subject label
             <input value={subjectLabel} onChange={(event) => setSubjectLabel(event.target.value)} />
           </label>
           <label>
@@ -269,6 +286,9 @@ export function ManualImportPage({
           <button className="primary-action" disabled={isSubmitting || !file || !selectedStreamId} type="submit">
             {isSubmitting ? "Importing..." : "Create reviewable event"}
           </button>
+          {streams.length === 0 ? (
+            <span className="meta-text">A stream is required before local media can enter review.</span>
+          ) : null}
         </form>
 
         <div className="panel">
@@ -291,7 +311,10 @@ export function ManualImportPage({
               </article>
             ))}
             {!isLoadingMedia && mediaAssets.length === 0 ? (
-              <span className="meta-text">No imported media yet.</span>
+              <EmptyState
+                title="No imported media yet"
+                description="Choose a local image or video to create the first reviewable imported observation."
+              />
             ) : null}
           </div>
         </div>

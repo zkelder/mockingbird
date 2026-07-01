@@ -8,6 +8,7 @@ import { StatusPill } from "../components/StatusPill";
 
 interface LocalDataPageProps {
   onOpenDashboard: () => void;
+  onOpenImport: () => void;
   onOpenStreams: () => void;
   onOpenReview: () => void;
   onOpenExports: () => void;
@@ -16,6 +17,7 @@ interface LocalDataPageProps {
 
 export function LocalDataPage({
   onOpenDashboard,
+  onOpenImport,
   onOpenStreams,
   onOpenReview,
   onOpenExports,
@@ -76,7 +78,7 @@ export function LocalDataPage({
       <PageHeader
         eyebrow="Local-first storage"
         title="Local Data"
-        description="MockingBird keeps product metadata, drawn zones, review corrections, analytics inputs, and dataset export manifests in a local database."
+        description="MockingBird keeps product metadata, imported media references, drawn zones, review corrections, analytics inputs, and dataset export manifests locally."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenDashboard}>
@@ -165,6 +167,9 @@ export function LocalDataPage({
                 visits, review corrections, analytics, and local dataset exports.
               </p>
               <div className="local-data-actions">
+                <button className="secondary-action" onClick={onOpenImport}>
+                  Import Media
+                </button>
                 <button className="secondary-action" onClick={onOpenStreams}>
                   Streams
                 </button>

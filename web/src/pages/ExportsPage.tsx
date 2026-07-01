@@ -11,6 +11,12 @@ interface ExportsPageProps {
   onExportsChanged: () => Promise<void>;
 }
 
+function mediaReferenceName(mediaPath: string): string {
+  const normalizedPath = mediaPath.replace(/\\/g, "/");
+  const pathParts = normalizedPath.split("/").filter(Boolean);
+  return pathParts[pathParts.length - 1] ?? mediaPath;
+}
+
 export function ExportsPage({ exports, onOpenReview, onExportsChanged }: ExportsPageProps) {
   const [localExports, setLocalExports] = useState<DatasetExport[]>(exports);
   const [selectedExportId, setSelectedExportId] = useState<string | null>(exports[0]?.id ?? null);
@@ -236,7 +242,11 @@ export function ExportsPage({ exports, onOpenReview, onExportsChanged }: Exports
                 <article className="record-card" key={record.record_id}>
                   <div className="item-title-row">
                     <div>
-                      <span className="meta-text">Corrected label will be used as local truth</span>
+                      <span className="meta-text">
+                        {record.media_path
+                          ? "Imported media record with corrected local truth"
+                          : "Corrected label will be used as local truth"}
+                      </span>
                       <h3>{formatLabel(record.label)}</h3>
                     </div>
                     <StatusPill
@@ -252,7 +262,12 @@ export function ExportsPage({ exports, onOpenReview, onExportsChanged }: Exports
                         ? `${record.zone_name} (${formatLabel(record.zone_type ?? "unknown")})`
                         : "Unzoned"}
                     </span>
-                    <span>Media: {record.media_path ?? "Reference pending"}</span>
+                    <span>
+                      Media:{" "}
+                      {record.media_path
+                        ? `${mediaReferenceName(record.media_path)} (local reference)`
+                        : "Reference pending"}
+                    </span>
                     <span>
                       Detections: {record.detections.length} evidence item
                       {record.detections.length === 1 ? "" : "s"}

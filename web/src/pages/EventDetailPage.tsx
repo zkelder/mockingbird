@@ -117,6 +117,13 @@ export function EventDetailPage({
             Ended: {detail.event.ended_at ? formatDateTime(detail.event.ended_at) : "Open"}
           </span>
         </div>
+        {detail.media_asset ? (
+          <div className="panel case-summary-card">
+            <span className="meta-text">Media</span>
+            <strong>{detail.media_asset.original_filename}</strong>
+            <span className="meta-text">Local import reference</span>
+          </div>
+        ) : null}
       </section>
 
       {detail.media_asset ? (
