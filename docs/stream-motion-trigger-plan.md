@@ -36,6 +36,10 @@ Phase 8D adds the MotionEvidence schema/repository/API foundation.
 
 MotionEvidence can now be explicitly created from candidate output and ignored as noise. Stream sampling, media capture, and promotion to Event/Visit evidence remain deferred.
 
+## Phase 8E Status
+
+Phase 8E defines the planned promotion bridge from pending MotionEvidence to unreviewed Event/Visit evidence. It is design only: stream sampling, media capture, media decoding, and promotion implementation remain deferred. See [motion-evidence-promotion-design.md](motion-evidence-promotion-design.md).
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.
@@ -47,7 +51,7 @@ Motion trigger flow:
 3. MockingBird samples local frames from the stream.
 4. Motion is scored inside relevant zones.
 5. A debounced trigger creates candidate snapshot evidence.
-6. MockingBird creates a reviewable visit/event candidate.
+6. MotionEvidence is explicitly promoted into reviewable visit/event evidence.
 7. A later species suggestion adapter can inspect the best frame or zone crop.
 8. User correction becomes dataset/export truth.
 

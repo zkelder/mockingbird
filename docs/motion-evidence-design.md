@@ -14,6 +14,8 @@ stream/frame sample -> zone-aware motion score -> debounced motion candidate -> 
 
 The Motion Evidence step protects the product loop by keeping motion as evidence until explicit promotion and user correction happen.
 
+Phase 8E defines promotion separately in [motion-evidence-promotion-design.md](motion-evidence-promotion-design.md). It is a design-only bridge from pending Motion Evidence to unreviewed Event/Visit evidence.
+
 ## Motion Evidence Definition
 
 Motion Evidence is local product evidence that motion was detected in a stream zone over a candidate frame window.
@@ -120,15 +122,16 @@ Feeder, birdbath, ground, perch, yard, or driveway zones may be eligible for pro
 
 ## API And Persistence Plan
 
-Phase 8C is design only.
+Phase 8C was design only.
 
 Likely future phases:
 
 - Phase 8D introduces MotionEvidence schemas and repository behavior, either in-memory first or persistent depending on the task packet.
-- Phase 8E wires Motion Evidence promotion into Event/Visit creation while preserving review/correction truth.
+- Phase 8E defines Motion Evidence promotion without adding an endpoint or repository method.
+- Phase 8F likely wires Motion Evidence promotion into Event/Visit creation while preserving review/correction truth.
 - Stream sampler and media capture work comes later.
 
-No API, persistence, event creation, media capture, stream sampling, or worker implementation is added in this phase.
+No promotion API, event creation, media capture, stream sampling, or worker implementation is added in Phase 8E.
 
 ## Phase 8D Status
 
@@ -137,6 +140,10 @@ Phase 8D implements the MotionEvidence schema, repository, and narrow API founda
 Motion Evidence can now be explicitly created as `pending`, listed, viewed by id, and marked `ignored`. Creation and ignore actions do not create Events, Visits, ReviewLabels, DatasetExports, DatasetCoverage, analytics truth, species labels, media files, stream samples, or detector output.
 
 Promotion remains future work.
+
+## Phase 8E Status
+
+Phase 8E documents what promotion means before implementation. Promotion should convert pending Motion Evidence into unreviewed Event/Visit evidence, mark the evidence promoted, link created records, and preserve the truth boundary. See [motion-evidence-promotion-design.md](motion-evidence-promotion-design.md).
 
 ## Test Plan For Future Implementation
 

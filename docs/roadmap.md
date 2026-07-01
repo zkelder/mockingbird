@@ -191,7 +191,8 @@ Current work:
 - Phase 8B: explicit motion evaluation API contract for synthetic/manual frame-plane inputs.
 - Phase 8C: Motion Evidence product design for bridging candidate motion to later Event/Visit evidence.
 - Phase 8D: MotionEvidence schema/repository/API foundation.
-- Next likely phase: Phase 8E — motion-to-event promotion design/API or frame sampler contract.
+- Phase 8E: MotionEvidence promotion design.
+- Next likely phase: Phase 8F — MotionEvidence promotion API/repository implementation.
 
 Validation:
 
@@ -199,5 +200,6 @@ Validation:
 - Motion evaluation API does not persist data or create product truth.
 - Motion Evidence design preserves pending/promoted/ignored evidence as separate from truth.
 - MotionEvidence creation and ignore actions do not create Event, Visit, ReviewLabel, export, or analytics truth.
+- MotionEvidence promotion design keeps Event/Visit creation unreviewed and evidence-only until user correction.
 - Stream sampling, media decoding, event/visit creation, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.

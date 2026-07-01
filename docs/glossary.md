@@ -52,6 +52,10 @@ A debounced motion signal from scored frame differences in a stream zone.
 
 Local evidence that a motion candidate occurred in a stream zone; it is not reviewed truth.
 
+## Motion Evidence Promotion
+
+An explicit future action that turns pending Motion Evidence into unreviewed Event/Visit evidence; it does not create reviewed truth.
+
 ## Review
 
 The user process of confirming, correcting, merging, hiding, or rejecting events.
