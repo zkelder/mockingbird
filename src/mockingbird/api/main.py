@@ -297,8 +297,17 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
         return HTTPException(
             status_code=400,
             detail=(
-                "MegaDetector runtime is unavailable in this wrapper phase. No model runtime, "
-                "model file, or reviewed truth was created."
+                "MegaDetector runtime is unavailable. Install the optional "
+                "detector-megadetector extra only when ready; no model files are "
+                "bundled or downloaded automatically, and no reviewed truth was created."
+            ),
+        )
+    if reason == "megadetector_model_file_missing":
+        return HTTPException(
+            status_code=404,
+            detail=(
+                "Configured MegaDetector model file was not found. Set "
+                "MOCKINGBIRD_MEGADETECTOR_MODEL_PATH to an existing local file."
             ),
         )
     if reason == "missing_media_file":

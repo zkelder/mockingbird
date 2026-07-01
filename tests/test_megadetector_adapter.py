@@ -1,16 +1,21 @@
+import importlib
 from pathlib import Path
+import tomllib
 
 import httpx
 import pytest
 
 from mockingbird.api.main import app, configure_repository
+from mockingbird.detectors import megadetector_adapter
 from mockingbird.detectors.megadetector_adapter import (
     MEGADETECTOR_ADAPTER_ID,
+    MEGADETECTOR_LABELS_PATH_ENV,
+    MEGADETECTOR_MODEL_PATH_ENV,
+    MEGADETECTOR_RUNTIME_EXTRA,
     MegaDetectorBox,
     MegaDetectorProposal,
-    MegaDetectorStatus,
+    MegaDetectorRuntimeStatus,
 )
-from mockingbird.repository import product_repository
 from mockingbird.repository.product_repository import ProductRepository
 
 pytestmark = pytest.mark.anyio
@@ -112,28 +117,54 @@ async def correct_visit(client: httpx.AsyncClient, visit_id: str, label: str):
 
 def mark_megadetector_available(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     *,
     labels_path: str | None = None,
-) -> None:
+) -> Path:
+    model_path = tmp_path / "mock-megadetector.pt"
+    model_path.write_bytes(b"local model placeholder")
+    monkeypatch.setenv(MEGADETECTOR_MODEL_PATH_ENV, str(model_path))
+    if labels_path is not None:
+        monkeypatch.setenv(MEGADETECTOR_LABELS_PATH_ENV, labels_path)
     monkeypatch.setattr(
-        product_repository,
-        "get_megadetector_status",
-        lambda: MegaDetectorStatus(
-            status="available",
-            configured=True,
-            runtime_available=True,
-            model_path="/tmp/mock-megadetector.pt",
-            labels_path=labels_path,
-            detail="Mock MegaDetector available for test.",
+        megadetector_adapter,
+        "get_megadetector_runtime_status",
+        lambda: MegaDetectorRuntimeStatus(
+            available=True,
+            detail="Mock MegaDetector runtime dependency is importable.",
         ),
     )
+    return model_path
 
 
 def mock_megadetector_output(
     monkeypatch: pytest.MonkeyPatch,
     proposals: list[MegaDetectorProposal],
 ) -> None:
-    monkeypatch.setattr(product_repository, "run_megadetector_on_image", lambda **_: proposals)
+    def execute_runtime(**kwargs) -> list[MegaDetectorProposal]:
+        assert Path(kwargs["media_local_path"]).is_file()
+        assert Path(kwargs["model_path"]).is_file()
+        return proposals
+
+    monkeypatch.setattr(megadetector_adapter, "_execute_megadetector_runtime", execute_runtime)
+
+
+def test_pyproject_declares_optional_megadetector_extra_without_core_dependency() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+
+    core_dependencies = "\n".join(pyproject["project"].get("dependencies", [])).lower()
+    optional_dependencies = pyproject["project"]["optional-dependencies"]
+    detector_extra = optional_dependencies["detector-megadetector"]
+
+    assert any(dependency.startswith("PytorchWildlife>=") for dependency in detector_extra)
+    assert "pytorchwildlife" not in core_dependencies
+    assert "torch" not in core_dependencies
+
+
+def test_api_app_imports_without_optional_megadetector_runtime() -> None:
+    module = importlib.import_module("mockingbird.api.main")
+
+    assert module.app.title == "MockingBird API"
 
 
 async def test_megadetector_adapter_appears_not_configured_without_model(
@@ -170,6 +201,85 @@ async def test_megadetector_adapter_appears_not_configured_without_model(
     assert "MOCKINGBIRD_MEGADETECTOR_MODEL_PATH" in configuration_status["setup_hint"]
 
 
+async def test_megadetector_status_reports_dependency_missing_with_model_file(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "megadetector.pt"
+    model_path.write_bytes(b"local model placeholder")
+    monkeypatch.setenv(MEGADETECTOR_MODEL_PATH_ENV, str(model_path))
+    monkeypatch.setattr(
+        megadetector_adapter,
+        "get_megadetector_runtime_status",
+        lambda: MegaDetectorRuntimeStatus(
+            available=False,
+            detail=(
+                "Optional MegaDetector runtime dependency is not installed. "
+                f"Install the {MEGADETECTOR_RUNTIME_EXTRA} extra only when ready."
+            ),
+        ),
+    )
+
+    response = await client.get(f"/api/model-adapters/{MEGADETECTOR_ADAPTER_ID}")
+
+    assert response.status_code == 200
+    adapter = response.json()
+    configuration_status = adapter["configuration_status"]
+    assert adapter["status"] == "unavailable"
+    assert adapter["creates_review_truth"] is False
+    assert configuration_status["model_path_configured"] is True
+    assert configuration_status["runtime_available"] is False
+    assert configuration_status["can_run"] is False
+    assert MEGADETECTOR_RUNTIME_EXTRA in configuration_status["status_reason"]
+
+
+async def test_megadetector_status_reports_missing_model_file_before_runtime(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv(MEGADETECTOR_MODEL_PATH_ENV, str(tmp_path / "missing-model.pt"))
+    monkeypatch.setattr(
+        megadetector_adapter,
+        "get_megadetector_runtime_status",
+        lambda: MegaDetectorRuntimeStatus(
+            available=True,
+            detail="Runtime should not be inspected after missing model file.",
+        ),
+    )
+
+    response = await client.get(f"/api/model-adapters/{MEGADETECTOR_ADAPTER_ID}")
+
+    assert response.status_code == 200
+    adapter = response.json()
+    configuration_status = adapter["configuration_status"]
+    assert adapter["status"] == "unavailable"
+    assert configuration_status["model_path_configured"] is True
+    assert configuration_status["runtime_available"] is False
+    assert configuration_status["can_run"] is False
+    assert "model file was not found" in configuration_status["status_reason"]
+
+
+async def test_megadetector_status_reports_available_with_runtime_and_model_file(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    mark_megadetector_available(monkeypatch, tmp_path)
+
+    response = await client.get(f"/api/model-adapters/{MEGADETECTOR_ADAPTER_ID}")
+
+    assert response.status_code == 200
+    adapter = response.json()
+    configuration_status = adapter["configuration_status"]
+    assert adapter["status"] == "available"
+    assert configuration_status["model_path_configured"] is True
+    assert configuration_status["runtime_available"] is True
+    assert configuration_status["can_run"] is True
+    assert adapter["creates_review_truth"] is False
+
+
 async def test_running_megadetector_without_model_config_returns_clear_error(
     client: httpx.AsyncClient,
 ) -> None:
@@ -179,6 +289,47 @@ async def test_running_megadetector_without_model_config_returns_clear_error(
 
     assert response.status_code == 400
     assert "MOCKINGBIRD_MEGADETECTOR_MODEL_PATH" in response.json()["detail"]
+
+
+async def test_running_megadetector_without_runtime_returns_optional_dependency_error(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "megadetector.pt"
+    model_path.write_bytes(b"local model placeholder")
+    monkeypatch.setenv(MEGADETECTOR_MODEL_PATH_ENV, str(model_path))
+    monkeypatch.setattr(
+        megadetector_adapter,
+        "get_megadetector_runtime_status",
+        lambda: MegaDetectorRuntimeStatus(
+            available=False,
+            detail=(
+                "Optional MegaDetector runtime dependency is not installed. "
+                f"Install the {MEGADETECTOR_RUNTIME_EXTRA} extra only when ready."
+            ),
+        ),
+    )
+    media_asset = (await import_image(client)).json()["media_asset"]
+
+    response = await run_megadetector(client, media_asset["id"])
+
+    assert response.status_code == 400
+    assert MEGADETECTOR_RUNTIME_EXTRA in response.json()["detail"]
+
+
+async def test_running_megadetector_with_missing_model_file_returns_clear_error(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv(MEGADETECTOR_MODEL_PATH_ENV, str(tmp_path / "missing-model.pt"))
+    media_asset = (await import_image(client)).json()["media_asset"]
+
+    response = await run_megadetector(client, media_asset["id"])
+
+    assert response.status_code == 404
+    assert "model file was not found" in response.json()["detail"]
 
 
 async def test_megadetector_errors_prefer_media_validation_before_config(
@@ -200,8 +351,9 @@ async def test_megadetector_errors_prefer_media_validation_before_config(
 async def test_mocked_megadetector_proposals_are_evidence_only_until_conversion(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    mark_megadetector_available(monkeypatch)
+    mark_megadetector_available(monkeypatch, tmp_path)
     mock_megadetector_output(
         monkeypatch,
         [
@@ -259,8 +411,9 @@ async def test_mocked_megadetector_proposals_are_evidence_only_until_conversion(
 async def test_mocked_megadetector_conversion_exports_corrected_truth(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    mark_megadetector_available(monkeypatch)
+    mark_megadetector_available(monkeypatch, tmp_path)
     mock_megadetector_output(
         monkeypatch,
         [

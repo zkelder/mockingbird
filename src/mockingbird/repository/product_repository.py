@@ -31,6 +31,7 @@ from mockingbird.detectors.megadetector_adapter import (
     MEGADETECTOR_SUPPORTED_LABELS,
     SUPPORTED_MEGADETECTOR_IMAGE_CONTENT_TYPES,
     MegaDetectorConfigurationError,
+    MegaDetectorModelFileError,
     MegaDetectorOutputError,
     MegaDetectorRuntimeUnavailableError,
     MegaDetectorStatus,
@@ -1027,7 +1028,10 @@ class ProductRepository:
                     detector_proposals = run_megadetector_on_image(
                         local_path=asset_model.local_path,
                         content_type=asset_model.content_type,
+                        zone_context=zone_model.id if zone_model else None,
                     )
+                except MegaDetectorModelFileError as error:
+                    raise ValueError("megadetector_model_file_missing") from error
                 except MegaDetectorConfigurationError as error:
                     raise ValueError("megadetector_not_configured") from error
                 except MegaDetectorRuntimeUnavailableError as error:

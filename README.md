@@ -85,6 +85,8 @@ Detector outputs create detection proposals only. Users still convert, review, a
 
 MegaDetector is the first selected detector direction. The current wrapper is unavailable-safe, bundles no model files, downloads nothing, and expects a future local `MOCKINGBIRD_MEGADETECTOR_MODEL_PATH` configuration before real runs.
 
+The core install does not include the MegaDetector runtime. The optional runtime boundary is reserved for the `detector-megadetector` extra, configured with `MOCKINGBIRD_MEGADETECTOR_MODEL_PATH`; outputs remain `DetectionProposal` evidence only.
+
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), and the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md).
 
 ## Not the product center

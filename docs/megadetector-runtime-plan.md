@@ -8,6 +8,8 @@ The fallback path is the existing unavailable-safe MegaDetector wrapper. If the 
 
 ONNX is not the first implementation path unless MockingBird already has a local compatible MegaDetector ONNX artifact and a proven output mapping. For now, ONNX remains a possible later optimization path, not the primary route.
 
+Phase 7H adds the optional dependency boundary and lazy execution seam. It still does not add production inference, model files, or automatic downloads.
+
 ## Why This Runtime Path
 
 MegaDetector-family detection is product-aligned because it can produce animal, person, and vehicle evidence for outdoor activity review.
