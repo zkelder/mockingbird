@@ -17,6 +17,7 @@ from mockingbird.api.schemas import (
     Detection,
     Event,
     ExportStatus,
+    LabelCategory,
     Point,
     ReviewLabel,
     ReviewQueueItem,
@@ -24,6 +25,7 @@ from mockingbird.api.schemas import (
     SourceKind,
     SourceStatus,
     Stream,
+    TaxonomyLabel,
     Visit,
     Zone,
     ZoneCreate,
@@ -189,6 +191,240 @@ DATASET_EXPORTS: list[DatasetExport] = [
 ]
 
 
+TAXONOMY_LABELS: list[TaxonomyLabel] = [
+    TaxonomyLabel(
+        id="unknown_bird",
+        label="unknown_bird",
+        display_name="Unknown Bird",
+        category=LabelCategory.unknown,
+        aliases=["unknown bird", "unidentified bird"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=10,
+    ),
+    TaxonomyLabel(
+        id="unknown_animal",
+        label="unknown_animal",
+        display_name="Unknown Animal",
+        category=LabelCategory.unknown,
+        aliases=["unknown animal", "unidentified animal"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=20,
+    ),
+    TaxonomyLabel(
+        id="bird",
+        label="bird",
+        display_name="Bird",
+        category=LabelCategory.bird,
+        aliases=["avian"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=30,
+    ),
+    TaxonomyLabel(
+        id="squirrel",
+        label="squirrel",
+        display_name="Squirrel",
+        category=LabelCategory.mammal,
+        aliases=[],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=40,
+    ),
+    TaxonomyLabel(
+        id="cat",
+        label="cat",
+        display_name="Cat",
+        category=LabelCategory.pet,
+        aliases=["domestic cat"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=50,
+    ),
+    TaxonomyLabel(
+        id="dog",
+        label="dog",
+        display_name="Dog",
+        category=LabelCategory.pet,
+        aliases=["domestic dog"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=60,
+    ),
+    TaxonomyLabel(
+        id="person",
+        label="person",
+        display_name="Person",
+        category=LabelCategory.person,
+        aliases=["human"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=70,
+    ),
+    TaxonomyLabel(
+        id="vehicle",
+        label="vehicle",
+        display_name="Vehicle",
+        category=LabelCategory.vehicle,
+        aliases=["car", "truck"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=80,
+    ),
+    TaxonomyLabel(
+        id="false_positive",
+        label="false_positive",
+        display_name="False Positive",
+        category=LabelCategory.false_positive,
+        aliases=["false alarm", "not activity"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=90,
+    ),
+    TaxonomyLabel(
+        id="northern_mockingbird",
+        label="northern_mockingbird",
+        display_name="Northern Mockingbird",
+        category=LabelCategory.bird,
+        aliases=["mockingbird"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=100,
+    ),
+    TaxonomyLabel(
+        id="carolina_wren",
+        label="carolina_wren",
+        display_name="Carolina Wren",
+        category=LabelCategory.bird,
+        aliases=[],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=110,
+    ),
+    TaxonomyLabel(
+        id="mourning_dove",
+        label="mourning_dove",
+        display_name="Mourning Dove",
+        category=LabelCategory.bird,
+        aliases=["dove"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=120,
+    ),
+    TaxonomyLabel(
+        id="american_robin",
+        label="american_robin",
+        display_name="American Robin",
+        category=LabelCategory.bird,
+        aliases=["robin"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=130,
+    ),
+    TaxonomyLabel(
+        id="northern_cardinal",
+        label="northern_cardinal",
+        display_name="Northern Cardinal",
+        category=LabelCategory.bird,
+        aliases=["cardinal", "red bird"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=140,
+    ),
+    TaxonomyLabel(
+        id="blue_jay",
+        label="blue_jay",
+        display_name="Blue Jay",
+        category=LabelCategory.bird,
+        aliases=["jay"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=150,
+    ),
+    TaxonomyLabel(
+        id="tufted_titmouse",
+        label="tufted_titmouse",
+        display_name="Tufted Titmouse",
+        category=LabelCategory.bird,
+        aliases=["titmouse"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=160,
+    ),
+    TaxonomyLabel(
+        id="carolina_chickadee",
+        label="carolina_chickadee",
+        display_name="Carolina Chickadee",
+        category=LabelCategory.bird,
+        aliases=["chickadee"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=170,
+    ),
+    TaxonomyLabel(
+        id="house_finch",
+        label="house_finch",
+        display_name="House Finch",
+        category=LabelCategory.bird,
+        aliases=["finch"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=180,
+    ),
+    TaxonomyLabel(
+        id="eastern_bluebird",
+        label="eastern_bluebird",
+        display_name="Eastern Bluebird",
+        category=LabelCategory.bird,
+        aliases=["bluebird"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=190,
+    ),
+    TaxonomyLabel(
+        id="red_bellied_woodpecker",
+        label="red_bellied_woodpecker",
+        display_name="Red-bellied Woodpecker",
+        category=LabelCategory.bird,
+        aliases=["red bellied woodpecker"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=200,
+    ),
+    TaxonomyLabel(
+        id="downy_woodpecker",
+        label="downy_woodpecker",
+        display_name="Downy Woodpecker",
+        category=LabelCategory.bird,
+        aliases=[],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=210,
+    ),
+    TaxonomyLabel(
+        id="brown_thrasher",
+        label="brown_thrasher",
+        display_name="Brown Thrasher",
+        category=LabelCategory.bird,
+        aliases=["thrasher"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=220,
+    ),
+    TaxonomyLabel(
+        id="gray_catbird",
+        label="gray_catbird",
+        display_name="Gray Catbird",
+        category=LabelCategory.bird,
+        aliases=["catbird"],
+        is_species=True,
+        is_reviewable=True,
+        sort_order=230,
+    ),
+]
+
+
 _INITIAL_SOURCES = deepcopy(SOURCES)
 _INITIAL_STREAMS = deepcopy(STREAMS)
 _INITIAL_ZONES = deepcopy(ZONES)
@@ -196,6 +432,7 @@ _INITIAL_EVENTS = deepcopy(EVENTS)
 _INITIAL_VISITS = deepcopy(VISITS)
 _INITIAL_REVIEW_LABELS = deepcopy(REVIEW_LABELS)
 _INITIAL_DATASET_EXPORTS = deepcopy(DATASET_EXPORTS)
+_INITIAL_TAXONOMY_LABELS = deepcopy(TAXONOMY_LABELS)
 
 
 def seed_product_data() -> tuple[
@@ -219,8 +456,12 @@ def seed_product_data() -> tuple[
     )
 
 
+def seed_taxonomy_labels() -> list[TaxonomyLabel]:
+    return deepcopy(_INITIAL_TAXONOMY_LABELS)
+
+
 def reset_demo_data() -> None:
-    global SOURCES, STREAMS, ZONES, EVENTS, VISITS, REVIEW_LABELS, DATASET_EXPORTS
+    global SOURCES, STREAMS, ZONES, EVENTS, VISITS, REVIEW_LABELS, DATASET_EXPORTS, TAXONOMY_LABELS
 
     SOURCES = deepcopy(_INITIAL_SOURCES)
     STREAMS = deepcopy(_INITIAL_STREAMS)
@@ -229,6 +470,7 @@ def reset_demo_data() -> None:
     VISITS = deepcopy(_INITIAL_VISITS)
     REVIEW_LABELS = deepcopy(_INITIAL_REVIEW_LABELS)
     DATASET_EXPORTS = deepcopy(_INITIAL_DATASET_EXPORTS)
+    TAXONOMY_LABELS = deepcopy(_INITIAL_TAXONOMY_LABELS)
 
 
 def get_source(source_id: str) -> CameraSource | None:

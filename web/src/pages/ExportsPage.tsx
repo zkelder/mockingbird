@@ -263,10 +263,18 @@ export function ExportsPage({
                           ? "Imported media record with corrected local truth"
                           : "Corrected label will be used as local truth"}
                       </span>
-                      <h3>{formatLabel(record.label)}</h3>
+                      <h3>{record.label_display_name ?? formatLabel(record.label)}</h3>
                     </div>
                     <div className="record-status-stack">
                       <EvidenceBadge label="Corrected label is truth" tone="truth" />
+                      {record.label_category ? (
+                        <EvidenceBadge
+                          label={`${formatLabel(record.label_category)}${
+                            record.is_species ? " species" : ""
+                          }`}
+                          tone="quiet"
+                        />
+                      ) : null}
                       <StatusPill
                         label={record.dataset_ready ? "Ready for local dataset export" : "Needs review"}
                         tone={record.dataset_ready ? "good" : "review"}
@@ -291,6 +299,7 @@ export function ExportsPage({
                       Detections: {record.detections.length} evidence item
                       {record.detections.length === 1 ? "" : "s"}
                     </span>
+                    <span>Export label id: {record.label}</span>
                   </div>
                   {manifest.export.include_detections && record.detections.length > 0 ? (
                     <div className="export-evidence-list">

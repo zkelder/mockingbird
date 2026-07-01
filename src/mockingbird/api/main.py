@@ -38,6 +38,7 @@ from mockingbird.api.schemas import (
     ReviewCorrectionResult,
     ReviewQueueItem,
     Stream,
+    TaxonomyLabel,
     Visit,
     VisitDetail,
     Zone,
@@ -271,6 +272,27 @@ def _detection_runs_for_proposals(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/taxonomy/labels", response_model=list[TaxonomyLabel])
+async def list_taxonomy_labels() -> list[TaxonomyLabel]:
+    return get_repository().list_taxonomy_labels()
+
+
+@app.get("/api/taxonomy/suggestions", response_model=list[TaxonomyLabel])
+async def taxonomy_suggestions(
+    query: str | None = None,
+    category: str | None = None,
+) -> list[TaxonomyLabel]:
+    return get_repository().label_suggestions(query=query, category=category)
+
+
+@app.get("/api/taxonomy/labels/{label}", response_model=TaxonomyLabel)
+async def get_taxonomy_label(label: str) -> TaxonomyLabel:
+    taxonomy_label = get_repository().get_taxonomy_label(label)
+    if taxonomy_label is None:
+        raise _not_found("Taxonomy label", label)
+    return taxonomy_label
 
 
 @app.get("/api/sources", response_model=list[CameraSource])

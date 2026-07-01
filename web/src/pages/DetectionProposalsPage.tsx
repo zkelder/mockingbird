@@ -8,6 +8,7 @@ import type {
   DetectionProposalStatus,
   MediaAsset,
   Stream,
+  TaxonomyLabel,
   Zone,
 } from "../api/types";
 import { ConfidenceBar } from "../components/ConfidenceBar";
@@ -17,6 +18,8 @@ import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { ProposalStatusBadge } from "../components/ProposalStatusBadge";
 import { StatusPill } from "../components/StatusPill";
+import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
+import { displayTaxonomyLabel } from "../components/taxonomy";
 import { formatDateTime, formatLabel } from "../utils";
 
 type ProposalFilter = "all" | DetectionProposalStatus;
@@ -52,6 +55,7 @@ export function DetectionProposalsPage({
 }: DetectionProposalsPageProps) {
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [proposals, setProposals] = useState<DetectionProposal[]>([]);
+  const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [zonesByStream, setZonesByStream] = useState<Record<string, Zone[]>>({});
   const [selectedMediaId, setSelectedMediaId] = useState("");
   const [selectedZoneId, setSelectedZoneId] = useState("");
@@ -101,6 +105,7 @@ export function DetectionProposalsPage({
         apiClient.getMediaAssets(),
         apiClient.getDetectionProposals(),
       ]);
+      const nextTaxonomyLabels = await apiClient.getTaxonomyLabels();
       const nextZonesByStream: Record<string, Zone[]> = {};
       await Promise.all(
         streams.map(async (stream) => {
@@ -110,6 +115,7 @@ export function DetectionProposalsPage({
 
       setMediaAssets(nextMediaAssets);
       setProposals(nextProposals);
+      setTaxonomyLabels(nextTaxonomyLabels);
       setZonesByStream(nextZonesByStream);
       setSelectedMediaId((current) =>
         current && nextMediaAssets.some((asset) => asset.id === current)
@@ -263,7 +269,7 @@ export function DetectionProposalsPage({
         <section className="panel proposal-decision-panel">
           <div>
             <EvidenceBadge label="Demo evidence generated" tone="review" />
-            <h2>{formatLabel(generatedProposal.label)} proposal ready</h2>
+            <h2>{displayTaxonomyLabel(generatedProposal.label, taxonomyLabels)} proposal ready</h2>
             <p>
               This simulated detector proposal did not run a real model or inspect media pixels. Convert it only when
               it should become a reviewable event and visit.
@@ -390,11 +396,14 @@ export function DetectionProposalsPage({
               Leave blank to attach a sensible demo zone from the media stream when available.
             </span>
           </label>
-          <label>
-            Suggested evidence label
-            <input value={label} onChange={(event) => setLabel(event.target.value)} />
-            <span className="field-helper">This is not truth until a user reviews and corrects the visit.</span>
-          </label>
+          <TaxonomyLabelInput
+            intent="evidence"
+            label="Suggested evidence label"
+            labels={taxonomyLabels}
+            onChange={setLabel}
+            placeholder="proposal label"
+            value={label}
+          />
           <label>
             Evidence confidence
             <input
@@ -407,23 +416,22 @@ export function DetectionProposalsPage({
             />
             <span className="field-helper">Use 0 to 1 for demo confidence; it stays evidence only.</span>
           </label>
-          <label>
-            Suggested subject label
-            <input
-              value={suggestedSubjectLabel}
-              onChange={(event) => setSuggestedSubjectLabel(event.target.value)}
-            />
-            <span className="field-helper">Subject and species suggestions help start review; corrections win.</span>
-          </label>
-          <label>
-            Suggested species
-            <input
-              value={suggestedSpecies}
-              onChange={(event) => setSuggestedSpecies(event.target.value)}
-              placeholder="optional"
-            />
-            <span className="field-helper">Optional species guess before human confirmation.</span>
-          </label>
+          <TaxonomyLabelInput
+            intent="evidence"
+            label="Suggested subject label"
+            labels={taxonomyLabels}
+            onChange={setSuggestedSubjectLabel}
+            placeholder="subject suggestion"
+            value={suggestedSubjectLabel}
+          />
+          <TaxonomyLabelInput
+            intent="evidence"
+            label="Suggested species"
+            labels={taxonomyLabels}
+            onChange={setSuggestedSpecies}
+            placeholder="optional species guess"
+            value={suggestedSpecies}
+          />
           <label>
             Notes
             <textarea
@@ -476,7 +484,7 @@ export function DetectionProposalsPage({
                   <div className="item-title-row">
                     <div>
                       <span className="meta-text">{formatDateTime(proposal.created_at)}</span>
-                      <h3>{formatLabel(proposal.label)}</h3>
+                      <h3>{displayTaxonomyLabel(proposal.label, taxonomyLabels)}</h3>
                     </div>
                     <ProposalStatusBadge status={proposal.status} />
                   </div>
@@ -502,7 +510,10 @@ export function DetectionProposalsPage({
                     <div className="data-row">
                       <span>Suggested subject/species</span>
                       <strong>
-                        {formatLabel(proposal.suggested_species ?? proposal.suggested_subject_label)}
+                        {displayTaxonomyLabel(
+                          proposal.suggested_species ?? proposal.suggested_subject_label,
+                          taxonomyLabels,
+                        )}
                       </strong>
                     </div>
                   </div>

@@ -1,10 +1,13 @@
-import { useState } from "react";
-import type { ReviewCorrectionResult, ReviewQueueItem } from "../api/types";
+import { useEffect, useState } from "react";
+import { apiClient } from "../api/client";
+import type { ReviewCorrectionResult, ReviewQueueItem, TaxonomyLabel } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
+import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
+import { displayTaxonomyLabel } from "../components/taxonomy";
 import { formatLabel } from "../utils";
 
 interface ReviewQueuePageProps {
@@ -27,8 +30,32 @@ export function ReviewQueuePage({
   onOpenVisit,
 }: ReviewQueuePageProps) {
   const [drafts, setDrafts] = useState<Record<string, { label: string; notes: string }>>({});
+  const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTaxonomy() {
+      try {
+        const labels = await apiClient.getTaxonomyLabels();
+        if (isMounted) {
+          setTaxonomyLabels(labels);
+        }
+      } catch (caught) {
+        if (isMounted) {
+          setMessage(caught instanceof Error ? caught.message : "Could not load taxonomy labels.");
+        }
+      }
+    }
+
+    void loadTaxonomy();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   async function saveCorrection(item: ReviewQueueItem) {
     const draft = drafts[item.id] ?? { label: item.suggested_label ?? "", notes: "" };
@@ -112,7 +139,9 @@ export function ReviewQueuePage({
                 <EvidenceBadge
                   label={fromDetectionEvidence ? "Converted proposal evidence" : "Review evidence"}
                 />
-                <span>Suggested: {formatLabel(item.suggested_label ?? "unknown")}</span>
+                <span>
+                  Suggested: {displayTaxonomyLabel(item.suggested_label ?? "unknown", taxonomyLabels)}
+                </span>
                 <span>Event: {item.event_id ?? "n/a"}</span>
                 <span>Visit: {item.visit_id ?? "n/a"}</span>
                 {item.media_asset ? <span>Imported media attached</span> : null}
@@ -123,19 +152,16 @@ export function ReviewQueuePage({
                 </div>
               ) : null}
               <div className="correction-form">
-                <label>
-                  Corrected label
-                  <input
-                    value={draft.label}
-                    onChange={(event) =>
-                      setDrafts((current) => ({
-                        ...current,
-                        [item.id]: { ...draft, label: event.target.value },
-                      }))
-                    }
-                    placeholder="confirmed species or event label"
-                  />
-                </label>
+                <TaxonomyLabelInput
+                  labels={taxonomyLabels}
+                  value={draft.label}
+                  onChange={(nextLabel) =>
+                    setDrafts((current) => ({
+                      ...current,
+                      [item.id]: { ...draft, label: nextLabel },
+                    }))
+                  }
+                />
                 <label>
                   Notes
                   <textarea

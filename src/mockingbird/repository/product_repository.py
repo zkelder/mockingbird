@@ -41,6 +41,7 @@ from mockingbird.api.schemas import (
     FolderImportPreview,
     FolderImportResult,
     FolderImportSkippedFile,
+    LabelCategory,
     LocalDataStatus,
     MediaAsset,
     MediaImportResult,
@@ -53,6 +54,7 @@ from mockingbird.api.schemas import (
     SourceKind,
     SourceStatus,
     Stream,
+    TaxonomyLabel,
     Visit,
     Zone,
     ZoneCreate,
@@ -77,6 +79,7 @@ from mockingbird.storage.models import (
     MediaAssetModel,
     ReviewLabelModel,
     StreamModel,
+    TaxonomyLabelModel,
     VisitModel,
     ZoneModel,
 )
@@ -122,6 +125,7 @@ class ProductRepository:
     def seed_if_empty(self) -> None:
         with self.session_factory() as session:
             with session.begin():
+                self._seed_taxonomy_labels(session)
                 source_count = session.scalar(select(func.count(CameraSourceModel.id))) or 0
                 if source_count > 0:
                     return
@@ -146,6 +150,7 @@ class ProductRepository:
                     CameraSourceModel,
                 ):
                     session.execute(delete(model))
+                self._seed_taxonomy_labels(session)
                 self._seed_session(session)
             return self._local_data_status(session)
 
@@ -274,6 +279,35 @@ class ProductRepository:
             ]
         )
 
+    def _seed_taxonomy_labels(self, session: Session) -> None:
+        # Taxonomy prepares future classifiers while keeping user corrections as truth.
+        for label in demo_data.seed_taxonomy_labels():
+            existing = session.get(TaxonomyLabelModel, label.id)
+            if existing is None:
+                session.add(
+                    TaxonomyLabelModel(
+                        id=label.id,
+                        label=label.label,
+                        display_name=label.display_name,
+                        category=label.category.value,
+                        scientific_name=label.scientific_name,
+                        aliases_json=json.dumps(label.aliases),
+                        is_species=label.is_species,
+                        is_reviewable=label.is_reviewable,
+                        sort_order=label.sort_order,
+                    )
+                )
+                continue
+
+            existing.label = label.label
+            existing.display_name = label.display_name
+            existing.category = label.category.value
+            existing.scientific_name = label.scientific_name
+            existing.aliases_json = json.dumps(label.aliases)
+            existing.is_species = label.is_species
+            existing.is_reviewable = label.is_reviewable
+            existing.sort_order = label.sort_order
+
     def _local_data_status(self, session: Session) -> LocalDataStatus:
         analytics = self._analytics_summary(session)
         return LocalDataStatus(
@@ -303,6 +337,62 @@ class ProductRepository:
 
     def _count(self, session: Session, model: type) -> int:
         return session.scalar(select(func.count(model.id))) or 0
+
+    def list_taxonomy_labels(self) -> list[TaxonomyLabel]:
+        with self.session_factory() as session:
+            labels = session.scalars(
+                select(TaxonomyLabelModel).order_by(
+                    TaxonomyLabelModel.sort_order,
+                    TaxonomyLabelModel.id,
+                )
+            ).all()
+            return [_taxonomy_label_from_model(label) for label in labels]
+
+    def get_taxonomy_label(self, label: str) -> TaxonomyLabel | None:
+        with self.session_factory() as session:
+            model = self._taxonomy_label_model_for_input(session, label)
+            return _taxonomy_label_from_model(model) if model else None
+
+    def normalize_label(self, input_label: str) -> str:
+        with self.session_factory() as session:
+            return self._normalize_label_from_session(session, input_label)
+
+    def label_suggestions(
+        self,
+        query: str | None = None,
+        category: str | None = None,
+    ) -> list[TaxonomyLabel]:
+        with self.session_factory() as session:
+            labels = session.scalars(
+                select(TaxonomyLabelModel).order_by(
+                    TaxonomyLabelModel.sort_order,
+                    TaxonomyLabelModel.id,
+                )
+            ).all()
+            query_key = _taxonomy_key(query or "")
+            normalized_category = (category or "").strip().lower()
+            suggestions: list[TaxonomyLabel] = []
+            for label in labels:
+                taxonomy_label = _taxonomy_label_from_model(label)
+                if normalized_category:
+                    if normalized_category == "species":
+                        if not taxonomy_label.is_species:
+                            continue
+                    elif taxonomy_label.category.value != normalized_category:
+                        continue
+
+                if query_key:
+                    search_values = [
+                        taxonomy_label.id,
+                        taxonomy_label.label,
+                        taxonomy_label.display_name,
+                        *taxonomy_label.aliases,
+                    ]
+                    if not any(query_key in _taxonomy_key(value) for value in search_values):
+                        continue
+
+                suggestions.append(taxonomy_label)
+            return suggestions
 
     def list_sources(self) -> list[CameraSource]:
         with self.session_factory() as session:
@@ -857,11 +947,12 @@ class ProductRepository:
     ) -> ReviewCorrectionResult:
         with self.session_factory() as session:
             with session.begin():
+                normalized_label = self._normalize_label_from_session(session, payload.label)
                 label_model = ReviewLabelModel(
                     id=self._next_id(session, ReviewLabelModel, "review-label"),
                     target_type=payload.target_type,
                     target_id=payload.target_id,
-                    label=payload.label,
+                    label=normalized_label,
                     notes=payload.notes,
                     created_at=created_at or datetime.now(UTC),
                 )
@@ -875,7 +966,7 @@ class ProductRepository:
                         raise ValueError("missing_visit")
 
                     session.add(label_model)
-                    visit_model.reviewed_label = payload.label
+                    visit_model.reviewed_label = normalized_label
                     visit_model.review_status = ReviewStatus.reviewed.value
 
                     event_model = session.get(EventModel, visit_model.event_id)
@@ -1028,6 +1119,34 @@ class ProductRepository:
         if zone_model.stream_id != stream_id:
             raise ValueError("zone_stream_mismatch")
         return zone_model
+
+    def _taxonomy_label_model_for_input(
+        self,
+        session: Session,
+        input_label: str,
+    ) -> TaxonomyLabelModel | None:
+        lookup_key = _taxonomy_key(input_label)
+        if not lookup_key:
+            return None
+
+        labels = session.scalars(select(TaxonomyLabelModel).order_by(TaxonomyLabelModel.id)).all()
+        for label in labels:
+            taxonomy_label = _taxonomy_label_from_model(label)
+            candidates = [
+                taxonomy_label.id,
+                taxonomy_label.label,
+                taxonomy_label.display_name,
+                *taxonomy_label.aliases,
+            ]
+            if lookup_key in {_taxonomy_key(candidate) for candidate in candidates}:
+                return label
+        return None
+
+    def _normalize_label_from_session(self, session: Session, input_label: str) -> str:
+        label_model = self._taxonomy_label_model_for_input(session, input_label)
+        if label_model is not None:
+            return label_model.label
+        return _freeform_label(input_label)
 
     def _default_demo_zone(self, session: Session, stream_id: str) -> ZoneModel | None:
         zones = list(
@@ -1400,6 +1519,8 @@ class ProductRepository:
             or visit.species_guess
             or visit.subject_label
         )
+        taxonomy_label = self._taxonomy_label_model_for_input(session, label)
+        taxonomy = _taxonomy_label_from_model(taxonomy_label) if taxonomy_label else None
 
         return DatasetExportRecord(
             record_id=f"record-{visit.id}",
@@ -1408,6 +1529,9 @@ class ProductRepository:
             stream_id=event.stream_id,
             source_id=stream.source_id,
             label=label,
+            label_display_name=taxonomy.display_name if taxonomy else None,
+            label_category=taxonomy.category if taxonomy else None,
+            is_species=taxonomy.is_species if taxonomy else None,
             subject_label=visit.subject_label,
             zone_id=zone_id,
             zone_name=zone_name,
@@ -1434,6 +1558,8 @@ class ProductRepository:
         label = self._latest_label(self._review_labels_for_event(session, event.id)) or (
             event.detections[0].label if event.detections else event.event_type
         )
+        taxonomy_label = self._taxonomy_label_model_for_input(session, label)
+        taxonomy = _taxonomy_label_from_model(taxonomy_label) if taxonomy_label else None
 
         return DatasetExportRecord(
             record_id=f"record-{event.id}",
@@ -1442,6 +1568,9 @@ class ProductRepository:
             stream_id=event.stream_id,
             source_id=stream.source_id,
             label=label,
+            label_display_name=taxonomy.display_name if taxonomy else None,
+            label_category=taxonomy.category if taxonomy else None,
+            is_species=taxonomy.is_species if taxonomy else None,
             subject_label=event.event_type,
             zone_id=zone_id,
             zone_name=zone_name,
@@ -1590,7 +1719,8 @@ class ProductRepository:
 
         species_counts: Counter[str] = Counter()
         for visit in visits:
-            species_counts[visit.reviewed_label or visit.species_guess or visit.subject_label] += 1
+            label = visit.reviewed_label or visit.species_guess or visit.subject_label
+            species_counts[self._normalize_label_from_session(session, label)] += 1
 
         visit_event_ids = {visit.event_id for visit in visits}
         for label in review_labels:
@@ -1598,7 +1728,20 @@ class ProductRepository:
                 continue
             if label.target_type == "event" and label.target_id in visit_event_ids:
                 continue
-            species_counts[label.label] += 1
+            species_counts[self._normalize_label_from_session(session, label.label)] += 1
+
+        label_display_names: dict[str, str] = {}
+        label_categories: dict[str, LabelCategory] = {}
+        species_label_ids: list[str] = []
+        for label in species_counts:
+            taxonomy_label = self._taxonomy_label_model_for_input(session, label)
+            if taxonomy_label is None:
+                continue
+            taxonomy = _taxonomy_label_from_model(taxonomy_label)
+            label_display_names[label] = taxonomy.display_name
+            label_categories[label] = taxonomy.category
+            if taxonomy.is_species:
+                species_label_ids.append(label)
 
         zone_activity_counts: Counter[str] = Counter()
         for event in events:
@@ -1610,6 +1753,9 @@ class ProductRepository:
             visit_count=len(visits),
             needs_review_count=needs_review_count,
             species_counts=dict(species_counts),
+            label_display_names=label_display_names,
+            label_categories=label_categories,
+            species_label_ids=species_label_ids,
             zone_activity_counts=dict(zone_activity_counts),
         )
 
@@ -1640,6 +1786,20 @@ def _source_from_model(source: CameraSourceModel) -> CameraSource:
         kind=SourceKind(source.kind),
         status=SourceStatus(source.status),
         description=source.description,
+    )
+
+
+def _taxonomy_label_from_model(label: TaxonomyLabelModel) -> TaxonomyLabel:
+    return TaxonomyLabel(
+        id=label.id,
+        label=label.label,
+        display_name=label.display_name,
+        category=LabelCategory(label.category),
+        scientific_name=label.scientific_name,
+        aliases=list(json.loads(label.aliases_json)),
+        is_species=label.is_species,
+        is_reviewable=label.is_reviewable,
+        sort_order=label.sort_order,
     )
 
 
@@ -1771,6 +1931,18 @@ def _bbox_to_json(bbox: BoundingBox | None) -> str | None:
     if bbox is None:
         return None
     return json.dumps(bbox.model_dump())
+
+
+def _taxonomy_key(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_")
+    normalized = re.sub(r"\s+", "_", normalized)
+    normalized = re.sub(r"[^a-z0-9_]+", "", normalized)
+    normalized = re.sub(r"_+", "_", normalized)
+    return normalized.strip("_")
+
+
+def _freeform_label(value: str) -> str:
+    return _taxonomy_key(value) or "unknown_animal"
 
 
 def _database_path_from_url(db_url: str) -> str | None:

@@ -27,6 +27,7 @@ import type {
   ReviewCorrectionResult,
   ReviewQueueItem,
   Stream,
+  TaxonomyLabel,
   Visit,
   VisitDetail,
   Zone,
@@ -77,6 +78,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const apiClient = {
   baseUrl: API_BASE_URL,
   getHealth: () => request<HealthStatus>("/health"),
+  getTaxonomyLabels: () => request<TaxonomyLabel[]>("/api/taxonomy/labels"),
+  getTaxonomyLabel: (label: string) =>
+    request<TaxonomyLabel>(`/api/taxonomy/labels/${encodeURIComponent(label)}`),
+  getTaxonomySuggestions: (params: { query?: string; category?: string } = {}) => {
+    const searchParams = new URLSearchParams();
+    if (params.query) {
+      searchParams.set("query", params.query);
+    }
+    if (params.category) {
+      searchParams.set("category", params.category);
+    }
+    const query = searchParams.toString();
+    return request<TaxonomyLabel[]>(`/api/taxonomy/suggestions${query ? `?${query}` : ""}`);
+  },
   getSources: () => request<CameraSource[]>("/api/sources"),
   getStreams: () => request<Stream[]>("/api/streams"),
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),

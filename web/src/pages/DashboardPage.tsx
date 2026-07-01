@@ -110,7 +110,7 @@ export function DashboardPage({
             {topSpecies.length > 0 ? (
               topSpecies.map(([label, count]) => (
                 <div className="summary-row" key={label}>
-                  <span>{formatLabel(label)}</span>
+                  <span>{analytics?.label_display_names[label] ?? formatLabel(label)}</span>
                   <strong>{count}</strong>
                 </div>
               ))

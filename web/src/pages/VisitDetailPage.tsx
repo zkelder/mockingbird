@@ -1,11 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
-import type { VisitDetail } from "../api/types";
+import type { TaxonomyLabel, VisitDetail } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
 import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEvidenceCard";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
+import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
+import { displayTaxonomyLabel } from "../components/taxonomy";
 import { formatDateTime, formatLabel } from "../utils";
 
 interface VisitDetailPageProps {
@@ -30,6 +32,7 @@ export function VisitDetailPage({
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [label, setLabel] = useState("");
   const [notes, setNotes] = useState("");
 
@@ -64,6 +67,29 @@ export function VisitDetailPage({
     void loadDetail();
   }, [visitId]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTaxonomy() {
+      try {
+        const labels = await apiClient.getTaxonomyLabels();
+        if (isMounted) {
+          setTaxonomyLabels(labels);
+        }
+      } catch (caught) {
+        if (isMounted) {
+          setMessage(caught instanceof Error ? caught.message : "Could not load taxonomy labels.");
+        }
+      }
+    }
+
+    void loadTaxonomy();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   async function saveCorrection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedLabel = label.trim();
@@ -76,13 +102,18 @@ export function VisitDetailPage({
     setMessage(null);
     setError(null);
     try {
-      await apiClient.createReviewLabel({
+      const result = await apiClient.createReviewLabel({
         target_type: "visit",
         target_id: visitId,
         label: trimmedLabel,
         notes: notes.trim() || undefined,
       });
-      setMessage("Corrected label will be used as local dataset truth.");
+      setMessage(
+        `${displayTaxonomyLabel(
+          result.review_label.label,
+          taxonomyLabels,
+        )} will be used as local dataset truth.`,
+      );
       await loadDetail({ showLoading: false });
       await onCorrectionSaved();
     } catch (caught) {
@@ -112,7 +143,7 @@ export function VisitDetailPage({
             label={formatLabel(detail.visit.review_status)}
             tone={detail.visit.review_status === "needs_review" ? "review" : "good"}
           />
-          <h1>{formatLabel(visitLabel)} visit</h1>
+          <h1>{displayTaxonomyLabel(visitLabel, taxonomyLabels)} visit</h1>
           <p>{detail.review_summary}</p>
         </div>
         <StatusPill
@@ -126,16 +157,19 @@ export function VisitDetailPage({
       <section className="case-summary-grid">
         <div className="panel case-summary-card">
           <span className="meta-text">Subject</span>
-          <strong>{formatLabel(detail.visit.subject_label)}</strong>
+          <strong>{displayTaxonomyLabel(detail.visit.subject_label, taxonomyLabels)}</strong>
           {detail.visit.confidence ? (
             <span className="meta-text">{Math.round(detail.visit.confidence * 100)}% confidence</span>
           ) : null}
         </div>
         <div className="panel case-summary-card">
           <span className="meta-text">Species guess</span>
-          <strong>{formatLabel(detail.visit.species_guess ?? "unknown")}</strong>
+          <strong>{displayTaxonomyLabel(detail.visit.species_guess ?? "unknown", taxonomyLabels)}</strong>
           <span className="meta-text">
-            Reviewed: {formatLabel(detail.visit.reviewed_label ?? "not reviewed")}
+            Reviewed:{" "}
+            {detail.visit.reviewed_label
+              ? displayTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels)
+              : "not reviewed"}
           </span>
         </div>
         <div className="panel case-summary-card">
@@ -191,6 +225,7 @@ export function VisitDetailPage({
                 key={proposal.id}
                 proposal={proposal}
                 run={runById.get(proposal.run_id)}
+                taxonomyLabels={taxonomyLabels}
                 zoneLabel={
                   detail.primary_zone && proposal.zone_id === detail.primary_zone.id
                     ? detail.primary_zone.name
@@ -242,7 +277,7 @@ export function VisitDetailPage({
           <div className="history-list">
             {detail.review_labels.map((reviewLabel) => (
               <div className="history-item" key={reviewLabel.id}>
-                <strong>{formatLabel(reviewLabel.label)}</strong>
+                <strong>{displayTaxonomyLabel(reviewLabel.label, taxonomyLabels)}</strong>
                 <span>
                   {formatLabel(reviewLabel.target_type)} correction -{" "}
                   {formatDateTime(reviewLabel.created_at)}
@@ -264,14 +299,7 @@ export function VisitDetailPage({
             <EvidenceBadge label="Dataset truth" tone="truth" />
           </div>
           <form className="correction-form" onSubmit={saveCorrection}>
-            <label>
-              Label
-              <input
-                value={label}
-                onChange={(event) => setLabel(event.target.value)}
-                placeholder="confirmed label"
-              />
-            </label>
+            <TaxonomyLabelInput labels={taxonomyLabels} value={label} onChange={setLabel} />
             <label>
               Notes
               <textarea

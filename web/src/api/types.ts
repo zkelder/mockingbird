@@ -25,9 +25,30 @@ export type DetectionSource = "manual" | "demo_rule" | "future_model" | "integra
 export type DetectionRunStatus = "pending" | "completed" | "failed";
 export type DetectionProposalStatus = "proposed" | "accepted" | "rejected" | "converted";
 export type DetectionProposalDecision = "accept" | "reject" | "convert_to_event";
+export type LabelCategory =
+  | "bird"
+  | "mammal"
+  | "pet"
+  | "person"
+  | "vehicle"
+  | "object"
+  | "false_positive"
+  | "unknown";
 
 export interface HealthStatus {
   status: string;
+}
+
+export interface TaxonomyLabel {
+  id: string;
+  label: string;
+  display_name: string;
+  category: LabelCategory;
+  scientific_name?: string | null;
+  aliases: string[];
+  is_species: boolean;
+  is_reviewable: boolean;
+  sort_order?: number | null;
 }
 
 export interface CameraSource {
@@ -364,6 +385,9 @@ export interface DatasetExportRecord {
   stream_id: string;
   source_id: string;
   label: string;
+  label_display_name?: string | null;
+  label_category?: LabelCategory | null;
+  is_species?: boolean | null;
   subject_label: string;
   zone_id?: string | null;
   zone_name?: string | null;
@@ -393,6 +417,9 @@ export interface AnalyticsSummary {
   visit_count: number;
   needs_review_count: number;
   species_counts: Record<string, number>;
+  label_display_names: Record<string, string>;
+  label_categories: Partial<Record<string, LabelCategory>>;
+  species_label_ids: string[];
   zone_activity_counts: Record<string, number>;
 }
 

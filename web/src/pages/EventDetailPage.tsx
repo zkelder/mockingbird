@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
-import type { EventDetail } from "../api/types";
+import type { EventDetail, TaxonomyLabel } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
 import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEvidenceCard";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
+import { displayTaxonomyLabel } from "../components/taxonomy";
 import { formatDateTime, formatLabel } from "../utils";
 
 interface EventDetailPageProps {
@@ -26,6 +27,7 @@ export function EventDetailPage({
   onOpenDetectionProposals,
 }: EventDetailPageProps) {
   const [detail, setDetail] = useState<EventDetail | null>(null);
+  const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -57,6 +59,29 @@ export function EventDetailPage({
       isMounted = false;
     };
   }, [eventId]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTaxonomy() {
+      try {
+        const labels = await apiClient.getTaxonomyLabels();
+        if (isMounted) {
+          setTaxonomyLabels(labels);
+        }
+      } catch {
+        if (isMounted) {
+          setTaxonomyLabels([]);
+        }
+      }
+    }
+
+    void loadTaxonomy();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   if (isLoading) {
     return <div className="panel">Loading event detail...</div>;
@@ -168,7 +193,12 @@ export function EventDetailPage({
           <div className="list-stack">
             {detail.visits.map((visit) => (
               <button className="detail-link-card" key={visit.id} onClick={() => onOpenVisit(visit.id)}>
-                <span>{formatLabel(visit.reviewed_label ?? visit.species_guess ?? visit.subject_label)}</span>
+                <span>
+                  {displayTaxonomyLabel(
+                    visit.reviewed_label ?? visit.species_guess ?? visit.subject_label,
+                    taxonomyLabels,
+                  )}
+                </span>
                 <strong>{formatLabel(visit.review_status)}</strong>
               </button>
             ))}
@@ -187,7 +217,7 @@ export function EventDetailPage({
           <div className="history-list">
             {detail.review_labels.map((label) => (
               <div className="history-item" key={label.id}>
-                <strong>{formatLabel(label.label)}</strong>
+                <strong>{displayTaxonomyLabel(label.label, taxonomyLabels)}</strong>
                 <span>
                   {formatLabel(label.target_type)} correction - {formatDateTime(label.created_at)}
                 </span>
@@ -237,6 +267,7 @@ export function EventDetailPage({
                 key={proposal.id}
                 proposal={proposal}
                 run={runById.get(proposal.run_id)}
+                taxonomyLabels={taxonomyLabels}
                 zoneLabel={
                   detail.primary_zone && proposal.zone_id === detail.primary_zone.id
                     ? detail.primary_zone.name

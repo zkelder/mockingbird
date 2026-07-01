@@ -1,12 +1,14 @@
-import type { DetectionProposal, DetectionRun } from "../api/types";
+import type { DetectionProposal, DetectionRun, TaxonomyLabel } from "../api/types";
 import { formatDateTime, formatLabel } from "../utils";
 import { ConfidenceBar } from "./ConfidenceBar";
 import { EvidenceBadge } from "./EvidenceBadge";
 import { ProposalStatusBadge } from "./ProposalStatusBadge";
+import { displayTaxonomyLabel } from "./taxonomy";
 
 interface DetectionProposalEvidenceCardProps {
   proposal: DetectionProposal;
   run?: DetectionRun;
+  taxonomyLabels?: TaxonomyLabel[];
   zoneLabel?: string;
   compact?: boolean;
 }
@@ -14,6 +16,7 @@ interface DetectionProposalEvidenceCardProps {
 export function DetectionProposalEvidenceCard({
   proposal,
   run,
+  taxonomyLabels = [],
   zoneLabel,
   compact = false,
 }: DetectionProposalEvidenceCardProps) {
@@ -25,7 +28,7 @@ export function DetectionProposalEvidenceCard({
             {run ? `${formatLabel(run.source)} source` : "Proposal evidence"} -{" "}
             {formatDateTime(proposal.created_at)}
           </span>
-          <h3>{formatLabel(proposal.label)}</h3>
+          <h3>{displayTaxonomyLabel(proposal.label, taxonomyLabels)}</h3>
         </div>
         <ProposalStatusBadge status={proposal.status} />
       </div>
@@ -41,7 +44,12 @@ export function DetectionProposalEvidenceCard({
         </div>
         <div className="data-row">
           <span>Suggested subject/species</span>
-          <strong>{formatLabel(proposal.suggested_species ?? proposal.suggested_subject_label)}</strong>
+          <strong>
+            {displayTaxonomyLabel(
+              proposal.suggested_species ?? proposal.suggested_subject_label,
+              taxonomyLabels,
+            )}
+          </strong>
         </div>
         <div className="data-row">
           <span>Run</span>

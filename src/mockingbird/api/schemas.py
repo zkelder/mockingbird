@@ -73,6 +73,30 @@ class DetectionProposalDecision(str, Enum):
     convert_to_event = "convert_to_event"
 
 
+class LabelCategory(str, Enum):
+    bird = "bird"
+    mammal = "mammal"
+    pet = "pet"
+    person = "person"
+    vehicle = "vehicle"
+    object = "object"
+    false_positive = "false_positive"
+    unknown = "unknown"
+
+
+class TaxonomyLabel(BaseModel):
+    # Taxonomy labels are normalized review targets; detections remain evidence.
+    id: str
+    label: str
+    display_name: str
+    category: LabelCategory
+    scientific_name: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    is_species: bool
+    is_reviewable: bool
+    sort_order: int | None = None
+
+
 class CameraSource(BaseModel):
     # Source adapters normalize into product streams and events later.
     id: str
@@ -315,6 +339,9 @@ class DatasetExportRecord(BaseModel):
     stream_id: str
     source_id: str
     label: str
+    label_display_name: str | None = None
+    label_category: LabelCategory | None = None
+    is_species: bool | None = None
     subject_label: str
     zone_id: str | None = None
     zone_name: str | None = None
@@ -344,6 +371,9 @@ class AnalyticsSummary(BaseModel):
     visit_count: int = Field(ge=0)
     needs_review_count: int = Field(ge=0)
     species_counts: dict[str, int]
+    label_display_names: dict[str, str] = Field(default_factory=dict)
+    label_categories: dict[str, LabelCategory] = Field(default_factory=dict)
+    species_label_ids: list[str] = Field(default_factory=list)
     zone_activity_counts: dict[str, int]
 
 

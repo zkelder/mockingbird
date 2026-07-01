@@ -130,6 +130,20 @@ class DetectionProposalModel(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class TaxonomyLabelModel(Base):
+    __tablename__ = "taxonomy_labels"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    scientific_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    aliases_json: Mapped[str] = mapped_column(Text, nullable=False)
+    is_species: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    is_reviewable: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class ReviewLabelModel(Base):
     __tablename__ = "review_labels"
 

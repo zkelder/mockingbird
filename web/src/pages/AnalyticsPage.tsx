@@ -1,5 +1,6 @@
 import type { AnalyticsSummary } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
+import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { formatLabel, sortedEntries } from "../utils";
@@ -25,6 +26,11 @@ export function AnalyticsPage({
 
   const speciesEntries = sortedEntries(analytics.species_counts);
   const zoneEntries = sortedEntries(analytics.zone_activity_counts);
+  const categoryCounts = speciesEntries.reduce<Record<string, number>>((counts, [label, count]) => {
+    const category = analytics.label_categories[label] ?? "custom";
+    counts[category] = (counts[category] ?? 0) + count;
+    return counts;
+  }, {});
 
   return (
     <div className="page-stack">
@@ -70,6 +76,23 @@ export function AnalyticsPage({
           reviewable visits or events and receive corrected labels.
         </span>
       </section>
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Label categories</h2>
+          <span className="meta-text">Corrected taxonomy labels grouped for scanning</span>
+        </div>
+        <div className="taxonomy-category-list">
+          {sortedEntries(categoryCounts).map(([category, count]) => (
+            <div className="summary-row" key={category}>
+              <span>{formatLabel(category)}</span>
+              <strong>{count}</strong>
+            </div>
+          ))}
+          {Object.keys(categoryCounts).length === 0 ? (
+            <span className="meta-text">Review corrections will create taxonomy category counts.</span>
+          ) : null}
+        </div>
+      </section>
       <section className="split-grid">
         <div className="panel">
           <div className="section-heading">
@@ -79,7 +102,17 @@ export function AnalyticsPage({
             {speciesEntries.length > 0 ? (
               speciesEntries.map(([label, count]) => (
                 <div className="bar-row" key={label}>
-                  <span>{formatLabel(label)}</span>
+                  <span>
+                    {analytics.label_display_names[label] ?? formatLabel(label)}
+                    {analytics.label_categories[label] ? (
+                      <EvidenceBadge
+                        label={`${formatLabel(analytics.label_categories[label])}${
+                          analytics.species_label_ids.includes(label) ? " species" : ""
+                        }`}
+                        tone="quiet"
+                      />
+                    ) : null}
+                  </span>
                   <div>
                     <i style={{ width: `${Math.max(10, count * 35)}px` }} />
                     <strong>{count}</strong>
