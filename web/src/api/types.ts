@@ -63,6 +63,26 @@ export interface Zone {
   is_active: boolean;
 }
 
+export interface ZoneCreate {
+  stream_id: string;
+  name: string;
+  zone_type: ZoneType;
+  polygon: Point[];
+  is_active?: boolean;
+}
+
+export interface ZoneUpdate {
+  name?: string;
+  zone_type?: ZoneType;
+  polygon?: Point[];
+  is_active?: boolean;
+}
+
+export interface ZoneMutationResult {
+  zone: Zone;
+  zones: Zone[];
+}
+
 export interface Detection {
   id: string;
   label: string;

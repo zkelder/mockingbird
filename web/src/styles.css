@@ -19,7 +19,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -187,6 +188,11 @@ button {
   color: #24382d;
 }
 
+.secondary-action:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -326,6 +332,10 @@ button {
   background: #9ebeb2;
 }
 
+.stream-scene.draw-mode {
+  cursor: crosshair;
+}
+
 .stream-sky {
   position: absolute;
   inset: 0;
@@ -380,8 +390,14 @@ button {
 }
 
 .zone-shape {
+  cursor: pointer;
   stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
+}
+
+.stream-scene.draw-mode .zone-shape,
+.zone-draft {
+  cursor: crosshair;
 }
 
 .zone-feeder {
@@ -389,18 +405,62 @@ button {
   stroke: #f0c85f;
 }
 
+.zone-birdbath {
+  fill: rgb(80 151 180 / 0.24);
+  stroke: #5ab4d4;
+}
+
 .zone-ground {
   fill: rgb(126 168 106 / 0.26);
   stroke: #a6d37e;
 }
 
+.zone-perch {
+  fill: rgb(161 122 84 / 0.25);
+  stroke: #c79a69;
+}
+
+.zone-yard {
+  fill: rgb(94 128 91 / 0.22);
+  stroke: #7da978;
+}
+
+.zone-driveway {
+  fill: rgb(113 128 140 / 0.24);
+  stroke: #94a4af;
+}
+
+.zone-privacy {
+  fill: rgb(87 81 134 / 0.3);
+  stroke: #867bc6;
+  stroke-dasharray: 4 3;
+}
+
 .zone-ignore {
   fill: rgb(192 93 80 / 0.24);
   stroke: #de7c6e;
+  stroke-dasharray: 6 3;
+}
+
+.zone-selected {
+  filter: drop-shadow(0 0 5px rgb(255 255 255 / 0.88));
+  stroke-width: 2.2;
+}
+
+.zone-inactive {
+  opacity: 0.42;
+}
+
+.zone-draft {
+  fill: rgb(255 255 255 / 0.2);
+  pointer-events: none;
+  stroke: #ffffff;
+  stroke-dasharray: 3 2;
 }
 
 .zone-label {
   position: absolute;
+  z-index: 1;
   translate: -50% -50%;
   border-radius: 999px;
   padding: 5px 9px;
@@ -409,6 +469,16 @@ button {
   font-size: 0.82rem;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.zone-label-selected {
+  outline: 2px solid #ffffff;
+  background: #203126;
+  color: #ffffff;
+}
+
+.zone-label-inactive {
+  opacity: 0.65;
 }
 
 .stream-panel-footer {
@@ -464,6 +534,116 @@ button {
 
 .queue-mini span {
   color: #5c6a61;
+}
+
+.zone-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(240px, 1.1fr);
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.zone-list,
+.zone-workspace,
+.zone-edit-form,
+.draw-zone-panel,
+.zone-meaning {
+  display: grid;
+  gap: 10px;
+}
+
+.zone-list-button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  border: 1px solid #d8e1d4;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #24382d;
+  text-align: left;
+}
+
+.zone-list-button strong {
+  color: #607066;
+  font-size: 0.86rem;
+}
+
+.zone-list-button.selected {
+  border-color: #2e6f5e;
+  background: #eef7ee;
+}
+
+.zone-list-button.inactive {
+  opacity: 0.62;
+}
+
+.zone-edit-form,
+.draw-zone-panel {
+  border-top: 1px solid #e0e7dd;
+  padding-top: 12px;
+}
+
+.zone-edit-form label,
+.draw-zone-panel label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.zone-edit-form input,
+.zone-edit-form select,
+.draw-zone-panel input,
+.draw-zone-panel select {
+  min-height: 40px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.checkbox-row {
+  display: flex !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.checkbox-row input {
+  min-height: auto;
+}
+
+.zone-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.zone-meaning {
+  border-top: 1px solid #e0e7dd;
+  padding-top: 12px;
+  color: #58665d;
+  font-size: 0.9rem;
+}
+
+.zone-message,
+.zone-error {
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.zone-message {
+  background: #e3f3dc;
+  color: #245436;
+}
+
+.zone-error {
+  background: #fae5df;
+  color: #7c2d1e;
 }
 
 .correction-form {
@@ -554,7 +734,8 @@ button {
   }
 
   .metric-grid,
-  .split-grid {
+  .split-grid,
+  .zone-editor-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -580,7 +761,8 @@ button {
   }
 
   .metric-grid,
-  .split-grid {
+  .split-grid,
+  .zone-editor-grid {
     grid-template-columns: 1fr;
   }
 

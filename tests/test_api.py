@@ -113,6 +113,140 @@ def test_stream_zones_include_feeder_ground_and_ignore_zones() -> None:
     assert all(zone["stream_id"] == STREAM_ID for zone in zones)
 
 
+def test_post_zones_creates_zone_for_existing_stream() -> None:
+    response = client.post(
+        "/api/zones",
+        json={
+            "stream_id": STREAM_ID,
+            "name": "Birdbath corner",
+            "zone_type": "birdbath",
+            "polygon": [
+                {"x": 0.68, "y": 0.18},
+                {"x": 0.88, "y": 0.18},
+                {"x": 0.88, "y": 0.42},
+                {"x": 0.68, "y": 0.42},
+            ],
+            "is_active": True,
+        },
+    )
+
+    assert response.status_code == 201
+    result = response.json()
+    assert result["zone"]["stream_id"] == STREAM_ID
+    assert result["zone"]["name"] == "Birdbath corner"
+    assert result["zone"]["zone_type"] == "birdbath"
+    assert result["zone"]["is_active"] is True
+    assert result["zone"] in result["zones"]
+
+
+def test_created_zone_appears_in_stream_zones() -> None:
+    create_response = client.post(
+        "/api/zones",
+        json={
+            "stream_id": STREAM_ID,
+            "name": "Perch rail",
+            "zone_type": "perch",
+            "polygon": [
+                {"x": 0.24, "y": 0.32},
+                {"x": 0.36, "y": 0.32},
+                {"x": 0.36, "y": 0.46},
+                {"x": 0.24, "y": 0.46},
+            ],
+        },
+    )
+    created_zone_id = create_response.json()["zone"]["id"]
+
+    response = client.get(f"/api/streams/{STREAM_ID}/zones")
+
+    assert response.status_code == 200
+    assert any(zone["id"] == created_zone_id for zone in response.json())
+
+
+def test_zone_mutations_do_not_leak_between_tests() -> None:
+    response = client.get(f"/api/streams/{STREAM_ID}/zones")
+
+    assert response.status_code == 200
+    assert len(response.json()) == 3
+
+
+def test_post_zones_returns_404_for_unknown_stream() -> None:
+    response = client.post(
+        "/api/zones",
+        json={
+            "stream_id": "stream-missing",
+            "name": "Missing stream zone",
+            "zone_type": "yard",
+            "polygon": [
+                {"x": 0.1, "y": 0.1},
+                {"x": 0.2, "y": 0.1},
+                {"x": 0.2, "y": 0.2},
+            ],
+        },
+    )
+
+    assert response.status_code == 404
+    assert "Stream 'stream-missing' was not found." == response.json()["detail"]
+
+
+def test_post_zones_returns_400_for_invalid_polygon() -> None:
+    response = client.post(
+        "/api/zones",
+        json={
+            "stream_id": STREAM_ID,
+            "name": "Invalid zone",
+            "zone_type": "yard",
+            "polygon": [
+                {"x": 0.1, "y": 0.1},
+                {"x": 0.2, "y": 0.2},
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Zone polygon must contain at least 3 points."
+
+
+def test_patch_zones_updates_name_type_and_active_state() -> None:
+    response = client.patch(
+        f"/api/zones/{FEEDER_ZONE_ID}",
+        json={
+            "name": "Feeder perch",
+            "zone_type": "perch",
+            "is_active": False,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["zone"]["id"] == FEEDER_ZONE_ID
+    assert result["zone"]["name"] == "Feeder perch"
+    assert result["zone"]["zone_type"] == "perch"
+    assert result["zone"]["is_active"] is False
+    assert any(zone["id"] == FEEDER_ZONE_ID for zone in result["zones"])
+
+
+def test_patch_zones_returns_404_for_unknown_zone() -> None:
+    response = client.patch("/api/zones/zone-missing", json={"name": "Missing zone"})
+
+    assert response.status_code == 404
+    assert "Zone 'zone-missing' was not found." == response.json()["detail"]
+
+
+def test_patch_zones_returns_400_for_invalid_polygon() -> None:
+    response = client.patch(
+        f"/api/zones/{FEEDER_ZONE_ID}",
+        json={
+            "polygon": [
+                {"x": 0.1, "y": 0.1},
+                {"x": 0.2, "y": 0.2},
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Zone polygon must contain at least 3 points."
+
+
 def test_stream_events_returns_stream_events() -> None:
     response = client.get(f"/api/streams/{STREAM_ID}/events")
 

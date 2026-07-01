@@ -21,6 +21,9 @@ from mockingbird.api.schemas import (
     Stream,
     Visit,
     Zone,
+    ZoneCreate,
+    ZoneMutationResult,
+    ZoneUpdate,
 )
 
 app = FastAPI(
@@ -56,6 +59,13 @@ def _unsupported_target(target_type: str) -> HTTPException:
             f"Unsupported review target_type '{target_type}'. "
             "Supported target types are 'visit' and 'event'."
         ),
+    )
+
+
+def _invalid_zone_polygon() -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail="Zone polygon must contain at least 3 points.",
     )
 
 
@@ -126,6 +136,41 @@ async def get_zone(zone_id: str) -> Zone:
     if zone is None:
         raise _not_found("Zone", zone_id)
     return zone
+
+
+@app.post("/api/zones", response_model=ZoneMutationResult, status_code=201)
+async def create_zone(payload: ZoneCreate) -> ZoneMutationResult:
+    stream = demo_data.get_stream(payload.stream_id)
+    if stream is None:
+        raise _not_found("Stream", payload.stream_id)
+    if len(payload.polygon) < 3:
+        raise _invalid_zone_polygon()
+
+    # Zones are user-authored stream context; later detections and events should
+    # respect privacy and ignore zones without making adapters the product center.
+    zone = demo_data.create_zone(payload)
+    return ZoneMutationResult(
+        zone=zone,
+        zones=demo_data.zones_for_stream(zone.stream_id),
+    )
+
+
+@app.patch("/api/zones/{zone_id}", response_model=ZoneMutationResult)
+async def update_zone(zone_id: str, payload: ZoneUpdate) -> ZoneMutationResult:
+    existing_zone = demo_data.get_zone(zone_id)
+    if existing_zone is None:
+        raise _not_found("Zone", zone_id)
+    if payload.polygon is not None and len(payload.polygon) < 3:
+        raise _invalid_zone_polygon()
+
+    zone = demo_data.update_zone(zone_id, payload)
+    if zone is None:
+        raise _not_found("Zone", zone_id)
+
+    return ZoneMutationResult(
+        zone=zone,
+        zones=demo_data.zones_for_stream(zone.stream_id),
+    )
 
 
 @app.get("/api/events", response_model=list[Event])

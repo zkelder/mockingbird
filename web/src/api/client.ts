@@ -10,6 +10,9 @@ import type {
   Stream,
   Visit,
   Zone,
+  ZoneCreate,
+  ZoneMutationResult,
+  ZoneUpdate,
 } from "./types";
 
 const API_BASE_URL =
@@ -57,6 +60,16 @@ export const apiClient = {
   getStreamZones: (streamId: string) => request<Zone[]>(`/api/streams/${streamId}/zones`),
   getStreamEvents: (streamId: string) => request<Event[]>(`/api/streams/${streamId}/events`),
   getEventVisits: (eventId: string) => request<Visit[]>(`/api/events/${eventId}/visits`),
+  createZone: (payload: ZoneCreate) =>
+    request<ZoneMutationResult>("/api/zones", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateZone: (zoneId: string, payload: ZoneUpdate) =>
+    request<ZoneMutationResult>(`/api/zones/${zoneId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   getReviewQueue: () => request<ReviewQueueItem[]>("/api/review-queue"),
   getDatasetExports: () => request<DatasetExport[]>("/api/dataset-exports"),
   getAnalyticsSummary: () => request<AnalyticsSummary>("/api/analytics/summary"),

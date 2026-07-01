@@ -86,6 +86,26 @@ class Zone(BaseModel):
     is_active: bool
 
 
+class ZoneCreate(BaseModel):
+    stream_id: str
+    name: str
+    zone_type: ZoneType
+    polygon: list[Point]
+    is_active: bool = True
+
+
+class ZoneUpdate(BaseModel):
+    name: str | None = None
+    zone_type: ZoneType | None = None
+    polygon: list[Point] | None = None
+    is_active: bool | None = None
+
+
+class ZoneMutationResult(BaseModel):
+    zone: Zone
+    zones: list[Zone]
+
+
 class Detection(BaseModel):
     # Detection is model or rule evidence. It is not user-confirmed truth.
     id: str

@@ -23,6 +23,8 @@ from mockingbird.api.schemas import (
     Stream,
     Visit,
     Zone,
+    ZoneCreate,
+    ZoneUpdate,
     ZoneType,
 )
 
@@ -221,6 +223,30 @@ def get_event(event_id: str) -> Event | None:
 
 def get_visit(visit_id: str) -> Visit | None:
     return next((visit for visit in VISITS if visit.id == visit_id), None)
+
+
+def create_zone(payload: ZoneCreate) -> Zone:
+    zone = Zone(
+        id=f"zone-{len(ZONES) + 1:03d}",
+        stream_id=payload.stream_id,
+        name=payload.name,
+        zone_type=payload.zone_type,
+        polygon=payload.polygon,
+        is_active=payload.is_active,
+    )
+    ZONES.append(zone)
+    return zone
+
+
+def update_zone(zone_id: str, payload: ZoneUpdate) -> Zone | None:
+    zone = get_zone(zone_id)
+    if zone is None:
+        return None
+
+    for field, value in payload.model_dump(exclude_none=True, exclude_unset=True).items():
+        setattr(zone, field, value)
+
+    return zone
 
 
 def streams_for_source(source_id: str) -> list[Stream]:
