@@ -24,6 +24,12 @@ The API accepts caller-provided previous/current frame planes plus normalized zo
 
 Future phases can connect sampled frames from visible streams to this contract and then design motion-to-evidence creation without changing the truth boundary.
 
+## Phase 8C Status
+
+Phase 8C defines Motion Evidence as the planned product bridge between debounced motion candidates and later Event/Visit evidence.
+
+Motion Evidence is not implemented yet. It remains a design checkpoint for local evidence status, promotion rules, noise handling, optional best-frame/media references, and the truth boundary. See [motion-evidence-design.md](motion-evidence-design.md).
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

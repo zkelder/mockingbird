@@ -31,6 +31,7 @@ Source adapters feed media into the platform, but the product is not organized a
 ## Local intelligence
 
 - Motion/activity detection
+- Motion Evidence between scoring/evaluation and Event/Visit creation
 - Animal detection
 - Species classification
 - Event grouping

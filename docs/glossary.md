@@ -44,6 +44,14 @@ A reviewable animal-centered event, especially around feeders, birdbaths, perche
 
 A machine-generated observation that may be right or wrong.
 
+## Motion Candidate
+
+A debounced motion signal from scored frame differences in a stream zone.
+
+## Motion Evidence
+
+Local evidence that a motion candidate occurred in a stream zone; it is not reviewed truth.
+
 ## Review
 
 The user process of confirming, correcting, merging, hiding, or rejecting events.
