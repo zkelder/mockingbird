@@ -245,6 +245,19 @@ class DemoDetectionRunCreate(BaseModel):
     notes: str | None = None
 
 
+class LocalDetectorConfigurationStatus(BaseModel):
+    adapter_id: str
+    model_path_configured: bool
+    labels_path_configured: bool
+    runtime_available: bool
+    supported_media_types: list[str]
+    can_run: bool
+    status_reason: str
+    setup_hint: str
+    creates_review_truth: bool
+    local_only: bool
+
+
 class ModelAdapter(BaseModel):
     # Model adapters produce proposal evidence only; review labels remain truth.
     id: str
@@ -258,6 +271,7 @@ class ModelAdapter(BaseModel):
     creates_review_truth: bool = False
     local_only: bool = True
     notes: str | None = None
+    configuration_status: LocalDetectorConfigurationStatus | None = None
 
 
 class ModelAdapterRunRequest(BaseModel):

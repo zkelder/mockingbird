@@ -285,7 +285,18 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
             ),
         )
     if reason == "missing_media_file":
-        return _not_found("Media file", "local detector input")
+        return HTTPException(
+            status_code=404,
+            detail="Local detector input media file was not found.",
+        )
+    if reason == "local_detector_unsupported_media_type":
+        return HTTPException(
+            status_code=400,
+            detail=(
+                "Local image detector supports imported image media only: "
+                "image/jpeg, image/png, image/webp."
+            ),
+        )
     if reason == "unsupported_detector_output":
         return HTTPException(
             status_code=400,

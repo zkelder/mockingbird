@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import type {
   AdapterEvaluationItem,
   AdapterEvaluationSummary,
+  LocalDetectorConfigurationStatus,
   MediaAsset,
   ModelAdapter,
   ModelReadinessChecklistItem,
@@ -61,6 +62,7 @@ export function ModelAdaptersPage({
   );
   const selectedAdapter = adapterById.get(selectedAdapterId) ?? null;
   const selectedMedia = mediaById.get(selectedMediaId) ?? null;
+  const selectedAdapterConfiguration = selectedAdapter?.configuration_status ?? null;
   const selectedAdapterAvailable = selectedAdapter?.status === "available";
   const selectedAdapterSupportsMedia =
     selectedAdapter && selectedMedia ? adapterSupportsMedia(selectedAdapter, selectedMedia) : false;
@@ -329,7 +331,11 @@ export function ModelAdaptersPage({
                 <span className="meta-text">{formatLabel(adapter.kind)}</span>
                 <strong>{adapter.name}</strong>
                 <span>{adapter.description}</span>
-                {adapter.notes ? <span>{adapter.notes}</span> : null}
+                {adapter.configuration_status ? (
+                  <AdapterConfigurationStatus compact status={adapter.configuration_status} />
+                ) : adapter.notes ? (
+                  <span>{adapter.notes}</span>
+                ) : null}
                 <div className="adapter-badge-row">
                   <StatusPill
                     label={formatLabel(adapter.status)}
@@ -390,7 +396,9 @@ export function ModelAdaptersPage({
             </select>
           </label>
           {selectedMedia ? <MediaAssetPreview asset={selectedMedia} compact /> : null}
-          {selectedAdapter?.notes ? (
+          {selectedAdapterConfiguration ? (
+            <AdapterConfigurationStatus status={selectedAdapterConfiguration} />
+          ) : selectedAdapter?.notes ? (
             <span className="field-helper">{selectedAdapter.notes}</span>
           ) : null}
           <label>
@@ -552,11 +560,53 @@ function formatMatchRate(rate?: number | null): string {
   return `${Math.round(rate * 100)}%`;
 }
 
+function AdapterConfigurationStatus({
+  compact = false,
+  status,
+}: {
+  compact?: boolean;
+  status: LocalDetectorConfigurationStatus;
+}) {
+  return (
+    <div className={`adapter-config-status${compact ? " compact" : ""}`}>
+      <div className="adapter-config-grid">
+        <div>
+          <span>Model path</span>
+          <strong>{yesNo(status.model_path_configured)}</strong>
+        </div>
+        <div>
+          <span>Labels</span>
+          <strong>{yesNo(status.labels_path_configured)}</strong>
+        </div>
+        <div>
+          <span>Runtime</span>
+          <strong>{yesNo(status.runtime_available)}</strong>
+        </div>
+        <div>
+          <span>Safe to run</span>
+          <strong>{yesNo(status.can_run)}</strong>
+        </div>
+      </div>
+      <span className="meta-text">{status.status_reason}</span>
+      {!compact ? (
+        <>
+          <span className="field-helper">Supported media: {status.supported_media_types.join(", ")}</span>
+          <span className="field-helper">{status.setup_hint}</span>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function adapterSupportsMedia(adapter: ModelAdapter, media: MediaAsset): boolean {
   return (
     adapter.supported_media_types.includes(media.media_type) ||
     adapter.supported_media_types.includes(media.content_type)
   );
+}
+
+function yesNo(value: boolean): string {
+  return value ? "Yes" : "No";
 }
 
 function evaluationTone(item: AdapterEvaluationItem): "quiet" | "review" | "truth" {

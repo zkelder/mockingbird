@@ -15,11 +15,13 @@ from sqlalchemy.orm import Session
 from mockingbird.api import demo_data
 from mockingbird.detectors.local_image_detector import (
     LOCAL_IMAGE_DETECTOR_ID,
+    LOCAL_DETECTOR_SETUP_HINT,
     SUPPORTED_IMAGE_CONTENT_TYPES,
     LocalDetectorConfigurationError,
     LocalDetectorOutputError,
     LocalDetectorRuntimeUnavailableError,
     LocalDetectorUnsupportedMediaError,
+    LocalDetectorStatus,
     get_local_detector_status,
     run_local_image_detector,
 )
@@ -62,6 +64,7 @@ from mockingbird.api.schemas import (
     FolderImportSkippedFile,
     LabelCategory,
     LocalDataStatus,
+    LocalDetectorConfigurationStatus,
     MediaAsset,
     MediaImportResult,
     ModelAdapter,
@@ -857,7 +860,7 @@ class ProductRepository:
                     asset_model.media_type != "image"
                     or asset_model.content_type not in SUPPORTED_IMAGE_CONTENT_TYPES
                 ):
-                    raise ValueError("unsupported_media_type")
+                    raise ValueError("local_detector_unsupported_media_type")
 
                 stream_model = session.get(StreamModel, asset_model.stream_id)
                 if stream_model is None:
@@ -888,7 +891,7 @@ class ProductRepository:
                 except LocalDetectorUnsupportedMediaError as error:
                     if str(error) == "missing_media_file":
                         raise ValueError("missing_media_file") from error
-                    raise ValueError("unsupported_media_type") from error
+                    raise ValueError("local_detector_unsupported_media_type") from error
                 except LocalDetectorOutputError as error:
                     raise ValueError(str(error) or "unsupported_detector_output") from error
 
@@ -2874,6 +2877,28 @@ def _local_image_detector_adapter() -> ModelAdapter:
         creates_review_truth=False,
         local_only=True,
         notes=status.detail,
+        configuration_status=_local_detector_configuration_status(status),
+    )
+
+
+def _local_detector_configuration_status(
+    status: LocalDetectorStatus,
+) -> LocalDetectorConfigurationStatus:
+    return LocalDetectorConfigurationStatus(
+        adapter_id=LOCAL_IMAGE_DETECTOR_ID,
+        model_path_configured=status.configured,
+        labels_path_configured=status.labels_path is not None,
+        runtime_available=status.runtime_available,
+        supported_media_types=sorted(SUPPORTED_IMAGE_CONTENT_TYPES),
+        can_run=(
+            status.status == ModelAdapterStatus.available.value
+            and status.configured
+            and status.runtime_available
+        ),
+        status_reason=status.detail,
+        setup_hint=LOCAL_DETECTOR_SETUP_HINT,
+        creates_review_truth=False,
+        local_only=True,
     )
 
 

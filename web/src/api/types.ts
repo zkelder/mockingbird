@@ -202,6 +202,19 @@ export interface DemoDetectionRunCreate {
   notes?: string | null;
 }
 
+export interface LocalDetectorConfigurationStatus {
+  adapter_id: string;
+  model_path_configured: boolean;
+  labels_path_configured: boolean;
+  runtime_available: boolean;
+  supported_media_types: string[];
+  can_run: boolean;
+  status_reason: string;
+  setup_hint: string;
+  creates_review_truth: boolean;
+  local_only: boolean;
+}
+
 export interface ModelAdapter {
   id: string;
   name: string;
@@ -214,6 +227,7 @@ export interface ModelAdapter {
   creates_review_truth: boolean;
   local_only: boolean;
   notes?: string | null;
+  configuration_status?: LocalDetectorConfigurationStatus | null;
 }
 
 export interface ModelAdapterRunRequest {

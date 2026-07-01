@@ -85,7 +85,11 @@ async def run_local_detector(client: httpx.AsyncClient, media_asset_id: str):
     )
 
 
-def mark_local_detector_available(monkeypatch: pytest.MonkeyPatch) -> None:
+def mark_local_detector_available(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    labels_path: str | None = None,
+) -> None:
     monkeypatch.setattr(
         product_repository,
         "get_local_detector_status",
@@ -94,7 +98,7 @@ def mark_local_detector_available(monkeypatch: pytest.MonkeyPatch) -> None:
             configured=True,
             runtime_available=True,
             model_path="/tmp/mock-local-detector.onnx",
-            labels_path=None,
+            labels_path=labels_path,
             detail="Mock local detector available for test.",
         ),
     )
@@ -103,10 +107,13 @@ def mark_local_detector_available(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_local_detector_adapter_appears_not_configured_without_model(
     client: httpx.AsyncClient,
 ) -> None:
+    health_response = await client.get("/health")
     response = await client.get("/api/model-adapters")
 
+    assert health_response.status_code == 200
     assert response.status_code == 200
     adapter = next(item for item in response.json() if item["id"] == LOCAL_IMAGE_DETECTOR_ID)
+    configuration_status = adapter["configuration_status"]
     assert adapter["name"] == "Local Image Detector"
     assert adapter["kind"] == "object_detector"
     assert adapter["status"] == "not_configured"
@@ -114,6 +121,37 @@ async def test_local_detector_adapter_appears_not_configured_without_model(
     assert adapter["local_only"] is True
     assert {"image/jpeg", "image/png", "image/webp"}.issubset(adapter["supported_media_types"])
     assert "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH" in adapter["notes"]
+    assert configuration_status["adapter_id"] == LOCAL_IMAGE_DETECTOR_ID
+    assert configuration_status["model_path_configured"] is False
+    assert configuration_status["labels_path_configured"] is False
+    assert configuration_status["runtime_available"] is False
+    assert configuration_status["can_run"] is False
+    assert configuration_status["creates_review_truth"] is False
+    assert configuration_status["local_only"] is True
+    assert {"image/jpeg", "image/png", "image/webp"}.issubset(
+        configuration_status["supported_media_types"]
+    )
+    assert "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH" in configuration_status["status_reason"]
+    assert "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH" in configuration_status["setup_hint"]
+
+
+async def test_local_detector_adapter_status_reports_configured_runtime_when_mocked(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mark_local_detector_available(monkeypatch, labels_path="/tmp/mock-labels.txt")
+
+    response = await client.get(f"/api/model-adapters/{LOCAL_IMAGE_DETECTOR_ID}")
+
+    assert response.status_code == 200
+    adapter = response.json()
+    configuration_status = adapter["configuration_status"]
+    assert adapter["status"] == "available"
+    assert configuration_status["model_path_configured"] is True
+    assert configuration_status["labels_path_configured"] is True
+    assert configuration_status["runtime_available"] is True
+    assert configuration_status["can_run"] is True
+    assert configuration_status["creates_review_truth"] is False
 
 
 async def test_running_local_detector_without_model_config_returns_clear_error(
@@ -138,7 +176,9 @@ async def test_local_detector_errors_prefer_media_validation_before_config(
     assert missing_response.status_code == 404
     assert "Media asset" in missing_response.json()["detail"]
     assert unsupported_response.status_code == 400
-    assert "media type" in unsupported_response.json()["detail"]
+    assert "image/jpeg" in unsupported_response.json()["detail"]
+    assert "image/png" in unsupported_response.json()["detail"]
+    assert "image/webp" in unsupported_response.json()["detail"]
 
 
 async def test_local_detector_proposals_are_evidence_only_until_conversion(

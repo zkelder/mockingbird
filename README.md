@@ -74,14 +74,14 @@ The frontend defaults to http://127.0.0.1:8000 for the API. Set `VITE_API_BASE_U
 
 ## Local detector spike
 
-The Local Image Detector adapter is evidence-only and disabled until configured with a local model file:
+The Local Image Detector adapter is optional, evidence-only, and disabled until configured with a local model file. No model files are committed or downloaded automatically.
 
 ```sh
 export MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH=/path/to/local-detector.onnx
 export MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH=/path/to/labels.txt # optional
 ```
 
-Detector outputs create detection proposals only. Users still convert, review, and correct proposals before exports or analytics treat labels as truth. MockingBird does not download model files automatically.
+Detector outputs create detection proposals only. Users still convert, review, and correct proposals before exports or analytics treat labels as truth.
 
 ## Not the product center
 

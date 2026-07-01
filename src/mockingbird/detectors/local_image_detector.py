@@ -17,6 +17,11 @@ LOCAL_IMAGE_DETECTOR_ID = "local_image_detector"
 MODEL_PATH_ENV = "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH"
 LABELS_PATH_ENV = "MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH"
 CONFIDENCE_THRESHOLD_ENV = "MOCKINGBIRD_LOCAL_DETECTOR_CONFIDENCE_THRESHOLD"
+LOCAL_DETECTOR_SETUP_HINT = (
+    f"Set {MODEL_PATH_ENV} to a local ONNX image detector file. "
+    f"Optionally set {LABELS_PATH_ENV} to a newline-delimited labels file. "
+    "Detector outputs stay as proposal evidence until user review."
+)
 
 SUPPORTED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
@@ -77,8 +82,8 @@ def get_local_detector_status() -> LocalDetectorStatus:
             model_path=None,
             labels_path=str(labels_path) if labels_path else None,
             detail=(
-                f"Set {MODEL_PATH_ENV} to a local image detector model file before running "
-                "the local detector adapter."
+                f"Set {MODEL_PATH_ENV} to a local image detector model file before "
+                "running the local detector adapter."
             ),
         )
 
@@ -89,7 +94,7 @@ def get_local_detector_status() -> LocalDetectorStatus:
             runtime_available=False,
             model_path=str(model_path),
             labels_path=str(labels_path) if labels_path else None,
-            detail=f"Configured local detector model file was not found: {model_path}",
+            detail="Configured local detector model file was not found.",
         )
 
     missing = _missing_runtime_modules()
@@ -308,4 +313,3 @@ def _env_path(name: str) -> Path | None:
     if value is None or not value.strip():
         return None
     return Path(value).expanduser()
-
