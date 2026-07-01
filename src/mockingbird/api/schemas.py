@@ -180,8 +180,48 @@ class DatasetExport(BaseModel):
     name: str
     status: ExportStatus
     reviewed_only: bool
+    include_detections: bool = True
+    include_zone_context: bool = True
     record_count: int = Field(ge=0)
     created_at: datetime
+
+
+class DatasetExportCreate(BaseModel):
+    name: str
+    reviewed_only: bool = True
+    include_detections: bool = True
+    include_zone_context: bool = True
+
+
+class DatasetExportRecord(BaseModel):
+    record_id: str
+    event_id: str
+    visit_id: str | None = None
+    stream_id: str
+    source_id: str
+    label: str
+    subject_label: str
+    zone_id: str | None = None
+    zone_name: str | None = None
+    zone_type: ZoneType | None = None
+    reviewed: bool
+    dataset_ready: bool
+    media_path: str | None = None
+    started_at: datetime
+    detections: list[Detection] = Field(default_factory=list)
+
+
+class DatasetExportManifest(BaseModel):
+    export: DatasetExport
+    records: list[DatasetExportRecord]
+    skipped_count: int = Field(ge=0)
+    skipped_reasons: dict[str, int]
+    generated_at: datetime
+
+
+class DatasetExportDetail(BaseModel):
+    export: DatasetExport
+    manifest: DatasetExportManifest
 
 
 class AnalyticsSummary(BaseModel):

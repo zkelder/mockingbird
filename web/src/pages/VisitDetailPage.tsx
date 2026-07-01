@@ -8,6 +8,7 @@ interface VisitDetailPageProps {
   visitId: string;
   onOpenStream: (streamId: string) => void;
   onOpenEvent: (eventId: string) => void;
+  onOpenExports: () => void;
   onCorrectionSaved: () => Promise<void>;
 }
 
@@ -27,6 +28,7 @@ export function VisitDetailPage({
   visitId,
   onOpenStream,
   onOpenEvent,
+  onOpenExports,
   onCorrectionSaved,
 }: VisitDetailPageProps) {
   const [detail, setDetail] = useState<VisitDetail | null>(null);
@@ -232,6 +234,9 @@ export function VisitDetailPage({
               {isSaving ? "Saving..." : "Save correction"}
             </button>
           </form>
+          <button className="secondary-action" onClick={onOpenExports}>
+            Open Dataset Exports
+          </button>
         </section>
       ) : (
         <section className="panel case-readiness-panel">
@@ -239,6 +244,9 @@ export function VisitDetailPage({
             <h2>Dataset readiness</h2>
             <p>{detail.review_summary}</p>
           </div>
+          <button className="secondary-action" onClick={onOpenExports}>
+            Open Dataset Exports
+          </button>
         </section>
       )}
     </div>

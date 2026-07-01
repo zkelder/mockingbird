@@ -13,6 +13,7 @@ FEEDER_ZONE_ID = "zone-feeder"
 BIRD_EVENT_ID = "event-bird-feeder-001"
 BIRD_VISIT_ID = "visit-bird-feeder-001"
 SQUIRREL_VISIT_ID = "visit-squirrel-ground-001"
+SEED_EXPORT_ID = "dataset-export-reviewed-yard-001"
 
 
 @pytest.fixture(autouse=True)
@@ -533,6 +534,147 @@ def test_dataset_exports_endpoint_returns_export() -> None:
     assert exports[0]["status"] == "ready"
     assert exports[0]["reviewed_only"] is True
     assert exports[0]["record_count"] >= 1
+
+
+def test_post_dataset_exports_creates_export() -> None:
+    response = client.post(
+        "/api/dataset-exports",
+        json={
+            "name": "Reviewed local dataset",
+            "reviewed_only": True,
+            "include_detections": True,
+            "include_zone_context": True,
+        },
+    )
+
+    assert response.status_code == 201
+    detail = response.json()
+    assert detail["export"]["name"] == "Reviewed local dataset"
+    assert detail["export"]["status"] == "ready"
+    assert detail["export"]["reviewed_only"] is True
+    assert detail["export"]["record_count"] == len(detail["manifest"]["records"])
+    assert detail["manifest"]["skipped_reasons"]["needs_review"] == 1
+
+
+def test_dataset_export_manifest_includes_reviewed_squirrel_record() -> None:
+    response = client.get(f"/api/dataset-exports/{SEED_EXPORT_ID}/manifest")
+
+    assert response.status_code == 200
+    manifest = response.json()
+    squirrel_record = next(
+        record for record in manifest["records"] if record["visit_id"] == SQUIRREL_VISIT_ID
+    )
+    assert squirrel_record["label"] == "squirrel"
+    assert squirrel_record["subject_label"] == "squirrel"
+    assert squirrel_record["reviewed"] is True
+    assert squirrel_record["dataset_ready"] is True
+    assert squirrel_record["media_path"] == "demo://backyard-feeder/squirrel-ground-001.jpg"
+
+
+def test_dataset_export_detail_returns_manifest() -> None:
+    response = client.get(f"/api/dataset-exports/{SEED_EXPORT_ID}")
+
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["export"]["id"] == SEED_EXPORT_ID
+    assert detail["manifest"]["export"]["id"] == SEED_EXPORT_ID
+    assert detail["manifest"]["records"]
+
+
+def test_dataset_export_manifest_skips_visit_still_needing_review() -> None:
+    response = client.get(f"/api/dataset-exports/{SEED_EXPORT_ID}/manifest")
+
+    assert response.status_code == 200
+    manifest = response.json()
+    assert all(record["visit_id"] != BIRD_VISIT_ID for record in manifest["records"])
+    assert manifest["skipped_count"] == 1
+    assert manifest["skipped_reasons"]["needs_review"] == 1
+
+
+def test_corrected_visit_appears_in_new_dataset_export_manifest() -> None:
+    client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "northern_cardinal",
+            "notes": "Confirmed for export.",
+        },
+    )
+
+    response = client.post(
+        "/api/dataset-exports",
+        json={"name": "Reviewed birds and yard"},
+    )
+
+    assert response.status_code == 201
+    manifest = response.json()["manifest"]
+    assert manifest["skipped_count"] == 0
+    assert any(
+        record["visit_id"] == BIRD_VISIT_ID
+        and record["label"] == "northern_cardinal"
+        and record["dataset_ready"] is True
+        for record in manifest["records"]
+    )
+
+
+def test_dataset_export_manifest_includes_zone_context() -> None:
+    response = client.get(f"/api/dataset-exports/{SEED_EXPORT_ID}/manifest")
+
+    assert response.status_code == 200
+    manifest = response.json()
+    squirrel_record = next(
+        record for record in manifest["records"] if record["visit_id"] == SQUIRREL_VISIT_ID
+    )
+    assert squirrel_record["zone_id"] == "zone-ground"
+    assert squirrel_record["zone_name"] == "Ground below feeder"
+    assert squirrel_record["zone_type"] == "ground"
+
+
+def test_dataset_export_manifest_includes_detections_when_requested() -> None:
+    response = client.get(f"/api/dataset-exports/{SEED_EXPORT_ID}/manifest")
+
+    assert response.status_code == 200
+    manifest = response.json()
+    squirrel_record = next(
+        record for record in manifest["records"] if record["visit_id"] == SQUIRREL_VISIT_ID
+    )
+    assert squirrel_record["detections"][0]["label"] == "squirrel"
+    assert squirrel_record["detections"][0]["confidence"] == 0.91
+
+
+def test_dataset_export_manifest_omits_detections_when_disabled() -> None:
+    response = client.post(
+        "/api/dataset-exports",
+        json={
+            "name": "Reviewed labels only",
+            "include_detections": False,
+        },
+    )
+
+    assert response.status_code == 201
+    manifest = response.json()["manifest"]
+    assert manifest["records"]
+    assert all(record["detections"] == [] for record in manifest["records"])
+
+
+def test_unknown_dataset_export_detail_and_manifest_return_404() -> None:
+    unknown_export_paths = [
+        "/api/dataset-exports/dataset-export-missing",
+        "/api/dataset-exports/dataset-export-missing/manifest",
+    ]
+
+    for path in unknown_export_paths:
+        response = client.get(path)
+        assert response.status_code == 404
+        assert "Dataset export 'dataset-export-missing' was not found." == response.json()["detail"]
+
+
+def test_dataset_export_mutations_do_not_leak_between_tests() -> None:
+    response = client.get("/api/dataset-exports")
+
+    assert response.status_code == 200
+    assert [dataset_export["id"] for dataset_export in response.json()] == [SEED_EXPORT_ID]
 
 
 def test_analytics_summary_includes_product_counts() -> None:

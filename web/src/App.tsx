@@ -182,6 +182,7 @@ export default function App() {
           eventId={selectedEventId}
           onOpenStream={openStream}
           onOpenVisit={openVisit}
+          onOpenExports={() => setPage("exports")}
           onOpenReview={() => setPage("review")}
         />
       );
@@ -193,6 +194,7 @@ export default function App() {
           visitId={selectedVisitId}
           onOpenStream={openStream}
           onOpenEvent={openEvent}
+          onOpenExports={() => setPage("exports")}
           onCorrectionSaved={() => loadAppData({ showLoading: false })}
         />
       );
@@ -213,7 +215,12 @@ export default function App() {
       return <AnalyticsPage analytics={data.analytics} />;
     }
 
-    return <ExportsPage exports={data.exports} />;
+    return (
+      <ExportsPage
+        exports={data.exports}
+        onExportsChanged={() => loadAppData({ showLoading: false })}
+      />
+    );
   }
 
   return (

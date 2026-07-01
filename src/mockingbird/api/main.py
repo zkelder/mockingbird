@@ -12,6 +12,9 @@ from mockingbird.api.schemas import (
     AnalyticsSummary,
     CameraSource,
     DatasetExport,
+    DatasetExportCreate,
+    DatasetExportDetail,
+    DatasetExportManifest,
     Event,
     EventDetail,
     ReviewLabel,
@@ -343,6 +346,36 @@ async def create_review_label(payload: ReviewCorrectionCreate) -> ReviewCorrecti
 @app.get("/api/dataset-exports", response_model=list[DatasetExport])
 async def list_dataset_exports() -> list[DatasetExport]:
     return demo_data.DATASET_EXPORTS
+
+
+@app.post("/api/dataset-exports", response_model=DatasetExportDetail, status_code=201)
+async def create_dataset_export(payload: DatasetExportCreate) -> DatasetExportDetail:
+    dataset_export = demo_data.create_dataset_export(payload)
+    manifest = demo_data.build_dataset_manifest(dataset_export.id)
+    if manifest is None:
+        raise _not_found("Dataset export", dataset_export.id)
+    return DatasetExportDetail(export=dataset_export, manifest=manifest)
+
+
+@app.get("/api/dataset-exports/{export_id}", response_model=DatasetExportDetail)
+async def get_dataset_export(export_id: str) -> DatasetExportDetail:
+    dataset_export = demo_data.get_dataset_export(export_id)
+    if dataset_export is None:
+        raise _not_found("Dataset export", export_id)
+
+    manifest = demo_data.build_dataset_manifest(export_id)
+    if manifest is None:
+        raise _not_found("Dataset export", export_id)
+
+    return DatasetExportDetail(export=dataset_export, manifest=manifest)
+
+
+@app.get("/api/dataset-exports/{export_id}/manifest", response_model=DatasetExportManifest)
+async def get_dataset_export_manifest(export_id: str) -> DatasetExportManifest:
+    manifest = demo_data.build_dataset_manifest(export_id)
+    if manifest is None:
+        raise _not_found("Dataset export", export_id)
+    return manifest
 
 
 @app.get("/api/analytics/summary", response_model=AnalyticsSummary)

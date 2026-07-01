@@ -746,6 +746,103 @@ button {
   margin-top: 0;
 }
 
+.export-form,
+.export-list,
+.manifest-layout,
+.record-list {
+  display: grid;
+  gap: 12px;
+}
+
+.export-form label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.export-form input {
+  min-height: 40px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.export-list-item,
+.record-card {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+  color: #24382d;
+  text-align: left;
+}
+
+.export-list-item.selected {
+  border-color: #2e6f5e;
+  background: #eef7ee;
+}
+
+.export-list-item small {
+  color: #627168;
+}
+
+.manifest-summary,
+.record-meta-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.manifest-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.manifest-summary div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.record-card h3 {
+  margin: 4px 0 0;
+}
+
+.record-meta-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  color: #5c6a61;
+  font-size: 0.9rem;
+}
+
+.manifest-json {
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.manifest-json summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.manifest-json pre {
+  overflow: auto;
+  max-height: 360px;
+  margin: 12px 0 0;
+  color: #203126;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+}
+
 .correction-form {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) minmax(220px, 2fr) auto;
@@ -835,6 +932,7 @@ button {
 
   .metric-grid,
   .case-summary-grid,
+  .manifest-summary,
   .split-grid,
   .zone-editor-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -864,6 +962,8 @@ button {
 
   .metric-grid,
   .case-summary-grid,
+  .manifest-summary,
+  .record-meta-grid,
   .split-grid,
   .zone-editor-grid {
     grid-template-columns: 1fr;

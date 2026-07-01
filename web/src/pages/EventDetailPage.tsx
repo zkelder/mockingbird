@@ -8,6 +8,7 @@ interface EventDetailPageProps {
   eventId: string;
   onOpenStream: (streamId: string) => void;
   onOpenVisit: (visitId: string) => void;
+  onOpenExports: () => void;
   onOpenReview: () => void;
 }
 
@@ -27,6 +28,7 @@ export function EventDetailPage({
   eventId,
   onOpenStream,
   onOpenVisit,
+  onOpenExports,
   onOpenReview,
 }: EventDetailPageProps) {
   const [detail, setDetail] = useState<EventDetail | null>(null);
@@ -188,6 +190,9 @@ export function EventDetailPage({
               Open Review Queue
             </button>
           ) : null}
+          <button className="secondary-action" onClick={onOpenExports}>
+            Open Dataset Exports
+          </button>
         </div>
       </section>
     </div>

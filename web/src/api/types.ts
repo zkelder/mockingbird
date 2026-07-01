@@ -184,8 +184,48 @@ export interface DatasetExport {
   name: string;
   status: ExportStatus;
   reviewed_only: boolean;
+  include_detections: boolean;
+  include_zone_context: boolean;
   record_count: number;
   created_at: string;
+}
+
+export interface DatasetExportCreate {
+  name: string;
+  reviewed_only?: boolean;
+  include_detections?: boolean;
+  include_zone_context?: boolean;
+}
+
+export interface DatasetExportRecord {
+  record_id: string;
+  event_id: string;
+  visit_id?: string | null;
+  stream_id: string;
+  source_id: string;
+  label: string;
+  subject_label: string;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  zone_type?: ZoneType | null;
+  reviewed: boolean;
+  dataset_ready: boolean;
+  media_path?: string | null;
+  started_at: string;
+  detections: Detection[];
+}
+
+export interface DatasetExportManifest {
+  export: DatasetExport;
+  records: DatasetExportRecord[];
+  skipped_count: number;
+  skipped_reasons: Record<string, number>;
+  generated_at: string;
+}
+
+export interface DatasetExportDetail {
+  export: DatasetExport;
+  manifest: DatasetExportManifest;
 }
 
 export interface AnalyticsSummary {

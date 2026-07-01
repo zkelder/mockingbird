@@ -11,6 +11,9 @@ from mockingbird.api.schemas import (
     BoundingBox,
     CameraSource,
     DatasetExport,
+    DatasetExportCreate,
+    DatasetExportManifest,
+    DatasetExportRecord,
     Detection,
     Event,
     ExportStatus,
@@ -178,6 +181,8 @@ DATASET_EXPORTS: list[DatasetExport] = [
         name="Reviewed backyard activity",
         status=ExportStatus.ready,
         reviewed_only=True,
+        include_detections=True,
+        include_zone_context=True,
         record_count=1,
         created_at=datetime(2026, 1, 15, 15, 0, tzinfo=UTC),
     )
@@ -223,6 +228,10 @@ def get_event(event_id: str) -> Event | None:
 
 def get_visit(visit_id: str) -> Visit | None:
     return next((visit for visit in VISITS if visit.id == visit_id), None)
+
+
+def get_dataset_export(export_id: str) -> DatasetExport | None:
+    return next((dataset_export for dataset_export in DATASET_EXPORTS if dataset_export.id == export_id), None)
 
 
 def create_zone(payload: ZoneCreate) -> Zone:
@@ -312,6 +321,172 @@ def review_summary_for_dataset_state(dataset_ready: bool) -> str:
         return "Ready for local dataset export. Corrected label will be used as local dataset truth."
 
     return "Needs review before export. Detections are evidence, not final truth."
+
+
+def _latest_label(labels: list[ReviewLabel]) -> str | None:
+    if not labels:
+        return None
+    return max(labels, key=lambda label: label.created_at).label
+
+
+def _skipped(skipped_reasons: Counter[str], reason: str) -> None:
+    skipped_reasons[reason] += 1
+
+
+def _zone_context(zone_id: str | None) -> tuple[str | None, str | None, ZoneType | None]:
+    if zone_id is None:
+        return None, None, None
+
+    zone = get_zone(zone_id)
+    if zone is None:
+        return zone_id, None, None
+
+    return zone.id, zone.name, zone.zone_type
+
+
+def _visit_export_record(
+    visit: Visit,
+    event: Event,
+    stream: Stream,
+    export: DatasetExport,
+) -> DatasetExportRecord:
+    zone_id, zone_name, zone_type = (
+        _zone_context(event.primary_zone_id)
+        if export.include_zone_context
+        else (None, None, None)
+    )
+    label = (
+        visit.reviewed_label
+        or _latest_label(review_labels_for_visit(visit.id))
+        or _latest_label(review_labels_for_event(event.id))
+        or visit.species_guess
+        or visit.subject_label
+    )
+
+    return DatasetExportRecord(
+        record_id=f"record-{visit.id}",
+        event_id=event.id,
+        visit_id=visit.id,
+        stream_id=event.stream_id,
+        source_id=stream.source_id,
+        label=label,
+        subject_label=visit.subject_label,
+        zone_id=zone_id,
+        zone_name=zone_name,
+        zone_type=zone_type,
+        reviewed=visit.review_status == ReviewStatus.reviewed,
+        dataset_ready=visit_is_dataset_ready(visit),
+        media_path=visit.representative_media_path,
+        started_at=event.started_at,
+        detections=event.detections if export.include_detections else [],
+    )
+
+
+def _event_export_record(event: Event, stream: Stream, export: DatasetExport) -> DatasetExportRecord:
+    zone_id, zone_name, zone_type = (
+        _zone_context(event.primary_zone_id)
+        if export.include_zone_context
+        else (None, None, None)
+    )
+    label = _latest_label(review_labels_for_event(event.id)) or (
+        event.detections[0].label if event.detections else event.event_type
+    )
+
+    return DatasetExportRecord(
+        record_id=f"record-{event.id}",
+        event_id=event.id,
+        visit_id=None,
+        stream_id=event.stream_id,
+        source_id=stream.source_id,
+        label=label,
+        subject_label=event.event_type,
+        zone_id=zone_id,
+        zone_name=zone_name,
+        zone_type=zone_type,
+        reviewed=event.review_status == ReviewStatus.reviewed,
+        dataset_ready=event_is_dataset_ready(event),
+        media_path=None,
+        started_at=event.started_at,
+        detections=event.detections if export.include_detections else [],
+    )
+
+
+def export_records_for_current_reviews(
+    export: DatasetExport,
+) -> tuple[list[DatasetExportRecord], Counter[str]]:
+    records: list[DatasetExportRecord] = []
+    skipped_reasons: Counter[str] = Counter()
+    event_ids_with_visits = {visit.event_id for visit in VISITS}
+
+    for visit in VISITS:
+        event = get_event(visit.event_id)
+        if event is None:
+            _skipped(skipped_reasons, "missing_event")
+            continue
+
+        stream = get_stream(event.stream_id)
+        if stream is None:
+            _skipped(skipped_reasons, "missing_stream")
+            continue
+
+        dataset_ready = visit_is_dataset_ready(visit)
+        if export.reviewed_only and not dataset_ready:
+            _skipped(skipped_reasons, "needs_review")
+            continue
+
+        records.append(_visit_export_record(visit, event, stream, export))
+
+    for event in EVENTS:
+        if event.id in event_ids_with_visits:
+            continue
+
+        stream = get_stream(event.stream_id)
+        if stream is None:
+            _skipped(skipped_reasons, "missing_stream")
+            continue
+
+        dataset_ready = event_is_dataset_ready(event)
+        if export.reviewed_only and not dataset_ready:
+            _skipped(skipped_reasons, "needs_review")
+            continue
+
+        records.append(_event_export_record(event, stream, export))
+
+    return records, skipped_reasons
+
+
+def build_dataset_manifest(export_id: str) -> DatasetExportManifest | None:
+    dataset_export = get_dataset_export(export_id)
+    if dataset_export is None:
+        return None
+
+    # The manifest is the local-first dataset contract: corrections are truth,
+    # detections are evidence, and media paths are references until storage exists.
+    records, skipped_reasons = export_records_for_current_reviews(dataset_export)
+    return DatasetExportManifest(
+        export=dataset_export,
+        records=records,
+        skipped_count=sum(skipped_reasons.values()),
+        skipped_reasons=dict(skipped_reasons),
+        generated_at=datetime.now(UTC),
+    )
+
+
+def create_dataset_export(payload: DatasetExportCreate) -> DatasetExport:
+    dataset_export = DatasetExport(
+        id=f"dataset-export-{len(DATASET_EXPORTS) + 1:03d}",
+        name=payload.name,
+        status=ExportStatus.ready,
+        reviewed_only=payload.reviewed_only,
+        include_detections=payload.include_detections,
+        include_zone_context=payload.include_zone_context,
+        record_count=0,
+        created_at=datetime.now(UTC),
+    )
+    records, _ = export_records_for_current_reviews(dataset_export)
+    dataset_export.record_count = len(records)
+    DATASET_EXPORTS.append(dataset_export)
+    return dataset_export
 
 
 def review_queue_items() -> list[ReviewQueueItem]:

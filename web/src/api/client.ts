@@ -2,6 +2,9 @@ import type {
   AnalyticsSummary,
   CameraSource,
   DatasetExport,
+  DatasetExportCreate,
+  DatasetExportDetail,
+  DatasetExportManifest,
   Event,
   EventDetail,
   HealthStatus,
@@ -76,6 +79,15 @@ export const apiClient = {
     }),
   getReviewQueue: () => request<ReviewQueueItem[]>("/api/review-queue"),
   getDatasetExports: () => request<DatasetExport[]>("/api/dataset-exports"),
+  getDatasetExport: (exportId: string) =>
+    request<DatasetExportDetail>(`/api/dataset-exports/${exportId}`),
+  getDatasetExportManifest: (exportId: string) =>
+    request<DatasetExportManifest>(`/api/dataset-exports/${exportId}/manifest`),
+  createDatasetExport: (payload: DatasetExportCreate) =>
+    request<DatasetExportDetail>("/api/dataset-exports", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   getAnalyticsSummary: () => request<AnalyticsSummary>("/api/analytics/summary"),
   createReviewLabel: (payload: ReviewCorrectionCreate) =>
     request<ReviewCorrectionResult>("/api/review-labels", {
