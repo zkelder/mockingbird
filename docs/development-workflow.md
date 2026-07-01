@@ -1,0 +1,39 @@
+# Development Workflow
+
+MockingBird work should stay scoped, product-led, and easy to review.
+
+## Roles
+
+- ChatGPT acts as product architect, task writer, and review partner.
+- Codex edits files and runs validation.
+- The user reviews the diff and test output before commit.
+- Commit only after scope and validation are clean.
+
+## Standard Task Packet
+
+Each implementation task should include:
+
+- roadmap phase
+- product flow improved
+- why this is next
+- files allowed
+- non-goals
+- validation tier
+- implementation requirements
+- validation commands/report
+
+## Intended Build Order
+
+- Phase 0: product doctrine and repo framing
+- Phase 0B: Codex guardrails and development workflow
+- Phase 1A: core product API skeleton
+- Phase 1B: product contract tests and demo data
+- Phase 2: stream-first frontend shell
+- Phase 3: local/demo media adapters
+- Phase 4: detection pipeline
+- Phase 5: bird feeder species review vertical
+- Phase 6: broader outdoor intelligence
+
+Camera/source adapters come after the core product model and UI loop. They should normalize into Sources, Streams, Zones, Events, Visits, Detections, Review/corrections, Dataset exports, and Analytics rather than defining the product shape.
+
+Keep docs practical and concise. Link to [README.md](../README.md), [docs/product-doctrine.md](product-doctrine.md), [docs/roadmap.md](roadmap.md), [docs/glossary.md](glossary.md), and [docs/architecture.md](architecture.md) instead of duplicating the full doctrine in every file.

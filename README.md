@@ -26,6 +26,10 @@ The first vertical is backyard bird feeder monitoring and species review. The br
 - Source adapters are underneath the product, not the product center.
 - Bird feeder species review is the first vertical, not the final product boundary.
 
+## Development workflow
+
+Codex and contributor guidance lives in [AGENTS.md](AGENTS.md). The scoped task workflow lives in [docs/development-workflow.md](docs/development-workflow.md).
+
 ## Not the product center
 
 MockingBird is not centered on Windows USB camera scripts, PowerShell, CLI tools, interval analysis, snapshot loops, ROI language, or debug internals.
