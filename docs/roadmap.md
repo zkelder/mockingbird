@@ -154,3 +154,18 @@ Validation:
 - MockingBird can describe meaningful yard activity over time.
 - Events remain reviewable and correctable.
 - Exports and analytics remain local-first.
+
+## Phase 7 — Local model adapter readiness
+
+Goal: prepare the first real local detector without weakening the review and truth boundary.
+
+Current guardrail work:
+
+- Phase 7D: model selection and runtime guardrails.
+- Next: first explicitly chosen local detector candidate.
+
+Validation:
+
+- Model adapters produce proposal evidence only.
+- User corrections remain dataset truth.
+- Adapter evaluation and rollback stay local, reviewable, and safe.

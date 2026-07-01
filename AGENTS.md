@@ -63,6 +63,10 @@ Every future implementation task must restate:
 - Build stream-first UX assumptions into the API/frontend.
 - Treat detections as evidence, not final truth.
 - Treat user corrections as dataset-grade labels.
+- Before adding real model dependencies or detector behavior, read
+  [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md) and
+  [docs/model-selection.md](docs/model-selection.md). Model outputs must remain
+  `DetectionProposal` evidence until user review/correction.
 - Keep local-first storage/export assumptions in mind.
 - Respect privacy and ignore zones as first-class product concepts when those features are implemented.
 - Avoid adapter-specific models leaking into core product models.

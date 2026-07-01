@@ -83,6 +83,8 @@ export MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH=/path/to/labels.txt # optional
 
 Detector outputs create detection proposals only. Users still convert, review, and correct proposals before exports or analytics treat labels as truth.
 
+Before choosing or wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md) and [docs/model-selection.md](docs/model-selection.md).
+
 ## Not the product center
 
 MockingBird is not centered on Windows USB camera scripts, PowerShell, CLI tools, interval analysis, snapshot loops, ROI language, or debug internals.

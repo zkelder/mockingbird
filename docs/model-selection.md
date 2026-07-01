@@ -1,0 +1,143 @@
+# Model Selection
+
+## Goal Of First Detector Spike
+
+The first real local detector candidate should prove that MockingBird can turn configured local model output into useful proposal evidence while preserving user review and correction as truth.
+
+It is a product safety spike, not a production accuracy claim.
+
+## Acceptable First Detector Type
+
+The first candidate must be:
+
+- imported image media only
+- local-only execution
+- object or animal proposal generation only
+- `DetectionProposal` evidence only
+- explicitly triggered through the existing model adapter run flow
+
+Species classification, live input, and automatic background processing are out of scope for the first candidate.
+
+## Model Candidate Requirements
+
+A candidate model should:
+
+- run from a local file configured by the user
+- produce labels, confidence scores, and optional bounding boxes
+- support a small, understandable target label set such as bird, squirrel, cat, person, vehicle, or unknown animal
+- tolerate missing or incomplete label files by falling back to safe generic labels
+- fail clearly when output shape is unsupported
+- be removable without changing reviewed product data
+
+Do not treat any specific model as chosen until a later task records that decision.
+
+## Dependency Rules
+
+Prefer the existing optional detector shell first.
+
+Allowed only with explicit justification:
+
+- ONNX Runtime for local model execution
+- Pillow for image loading
+- numpy for lightweight tensor preparation
+
+Avoid heavy or model-specific runtime stacks in the first candidate unless a later explicit decision changes this. Do not add PyTorch, TensorFlow, OpenCV, Ultralytics, YOLO packages, MegaDetector package stacks, or BirdNET runtime for the first spike.
+
+## Model File Rules
+
+Model files are local configuration and must stay out of git.
+
+MockingBird must not:
+
+- commit model weights
+- generate model artifacts into the repo
+- download models automatically
+- require a model file for app startup
+- hide the configured/unconfigured state from the user
+
+Use environment variables such as `MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH` and optional labels configuration such as `MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH`.
+
+## Supported Media Scope
+
+The first candidate is limited to imported image media:
+
+- `image/jpeg`
+- `image/png`
+- `image/webp`
+
+Video, live stream input, camera input, and frame extraction are not part of this candidate.
+
+## Output Mapping Requirements
+
+Detector output must map into:
+
+- `DetectionRun` for the adapter execution
+- `DetectionProposal` for each evidence item
+
+The adapter must set proposal fields conservatively:
+
+- normalized label
+- confidence
+- optional bounding box
+- stream and zone context from the media/request
+- suggested event type such as `animal_visit`
+- suggested subject/species only when safe
+
+No raw model output should become reviewed labels, export records, or analytics truth without user correction.
+
+## Confidence Threshold Rules
+
+Use a conservative default threshold. Make threshold configuration explicit and local.
+
+Low-confidence outputs should be dropped or left as low-confidence proposal evidence. They must not become review truth.
+
+Confidence is evidence metadata. It is not a replacement for correction.
+
+## Performance Expectations
+
+The first candidate should be boring and bounded:
+
+- run only when requested
+- process one imported image at a time
+- avoid startup work
+- avoid long-running background work
+- fail without corrupting product state
+
+If runtime cost is unclear, prefer disabled or unavailable status over automatic execution.
+
+## Evaluation Plan
+
+Evaluate with product data, not model hype:
+
+- create proposal evidence
+- convert useful proposals into reviewable events/visits
+- correct labels through the normal review flow
+- export reviewed truth
+- compare proposal labels to reviewed corrections through adapter evaluation
+- watch dataset coverage and dataset QA for regressions
+
+Unknown reviewed labels should be surfaced separately from match-rate denominator.
+
+## Rollback Plan
+
+Rollback must be safe:
+
+- unset the local model path or mark the adapter unavailable
+- keep already-created proposals as evidence
+- preserve user corrections and exports as truth
+- use adapter evaluation to identify noisy labels
+- do not delete product data to undo a bad model candidate
+
+## Explicit Non-Goals
+
+The first real detector candidate must not add:
+
+- species classification
+- video frame extraction
+- camera or live stream input
+- background workers
+- cloud services
+- automatic model downloads
+- committed model weights
+- production accuracy claims
+- adapter-specific product flows
