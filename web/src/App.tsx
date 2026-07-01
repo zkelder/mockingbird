@@ -21,6 +21,7 @@ import { FolderImportPage } from "./pages/FolderImportPage";
 import { LocalDataPage } from "./pages/LocalDataPage";
 import { ManualImportPage } from "./pages/ManualImportPage";
 import { ModelAdaptersPage } from "./pages/ModelAdaptersPage";
+import { MotionEvidencePage } from "./pages/MotionEvidencePage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
@@ -33,6 +34,7 @@ type Page =
   | "folder-import"
   | "model-adapters"
   | "detection-proposals"
+  | "motion-evidence"
   | "stream-detail"
   | "event-detail"
   | "visit-detail"
@@ -72,6 +74,7 @@ const navItems: Array<{ page: Page; label: string }> = [
   { page: "folder-import", label: "Folder Import" },
   { page: "model-adapters", label: "Model Adapters" },
   { page: "detection-proposals", label: "Detection Proposals" },
+  { page: "motion-evidence", label: "Motion Evidence" },
   { page: "review", label: "Review" },
   { page: "analytics", label: "Analytics" },
   { page: "exports", label: "Exports" },
@@ -284,6 +287,19 @@ export default function App() {
           onOpenExports={() => setPage("exports")}
           onProposalChanged={() => loadAppData({ showLoading: false })}
           modelReadiness={data.modelReadiness}
+        />
+      );
+    }
+
+    if (page === "motion-evidence") {
+      return (
+        <MotionEvidencePage
+          streams={data.streams}
+          sources={data.sources}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
+          onOpenReview={() => setPage("review")}
+          onEvidenceChanged={() => loadAppData({ showLoading: false })}
         />
       );
     }

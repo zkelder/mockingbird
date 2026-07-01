@@ -25,6 +25,7 @@ export type DetectionSource = "manual" | "demo_rule" | "future_model" | "integra
 export type DetectionRunStatus = "pending" | "completed" | "failed";
 export type DetectionProposalStatus = "proposed" | "accepted" | "rejected" | "converted";
 export type DetectionProposalDecision = "accept" | "reject" | "convert_to_event";
+export type MotionEvidenceStatus = "pending" | "promoted" | "ignored";
 export type AdapterEvaluationOutcome =
   | "matched_reviewed_truth"
   | "mismatched_reviewed_truth"
@@ -362,6 +363,64 @@ export interface ModelAdapterRunResult {
   proposals: DetectionProposal[];
   review_queue_count: number;
   local_first_note: string;
+}
+
+export interface MotionEvidence {
+  id: string;
+  source_id?: string | null;
+  stream_id?: string | null;
+  zone_id: string;
+  start_frame_index?: number | null;
+  end_frame_index?: number | null;
+  best_frame_index?: number | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  best_frame_time?: string | null;
+  peak_changed_ratio: number;
+  triggered_frame_count: number;
+  scoring_config: Record<string, string | number | boolean>;
+  snapshot_media_asset_id?: string | null;
+  status: MotionEvidenceStatus;
+  promoted_event_id?: string | null;
+  promoted_visit_id?: string | null;
+  created_at: string;
+  notes?: string | null;
+}
+
+export interface MotionEvidenceListResponse {
+  motion_evidence: MotionEvidence[];
+}
+
+export interface MotionEvidenceCreateRequest {
+  source_id?: string | null;
+  stream_id?: string | null;
+  zone_id: string;
+  start_frame_index?: number | null;
+  end_frame_index?: number | null;
+  best_frame_index?: number | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  best_frame_time?: string | null;
+  peak_changed_ratio: number;
+  triggered_frame_count: number;
+  scoring_config?: Record<string, string | number | boolean>;
+  snapshot_media_asset_id?: string | null;
+  notes?: string | null;
+}
+
+export interface MotionEvidencePromoteRequest {
+  event_title?: string | null;
+  visit_label_hint?: string | null;
+  notes?: string | null;
+  create_event?: boolean;
+  create_visit?: boolean;
+  attach_snapshot_media_asset_id?: string | null;
+}
+
+export interface MotionEvidencePromoteResponse {
+  evidence: MotionEvidence;
+  event_id?: string | null;
+  visit_id?: string | null;
 }
 
 export interface FolderImportPreviewRequest {

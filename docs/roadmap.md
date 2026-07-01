@@ -193,7 +193,8 @@ Current work:
 - Phase 8D: MotionEvidence schema/repository/API foundation.
 - Phase 8E: MotionEvidence promotion design.
 - Phase 8F: MotionEvidence promotion API/repository implementation.
-- Next likely phase: Phase 8G — frame sampler contract or MotionEvidence frontend review surface.
+- Phase 8G: MotionEvidence review surface.
+- Next likely phase: Phase 8H — frame sampler contract or MotionEvidence creation from sampled frame pairs.
 
 Validation:
 
@@ -203,5 +204,6 @@ Validation:
 - MotionEvidence creation and ignore actions do not create Event, Visit, ReviewLabel, export, or analytics truth.
 - MotionEvidence promotion design keeps Event/Visit creation unreviewed and evidence-only until user correction.
 - MotionEvidence promotion creates only unreviewed Event/Visit evidence and leaves correction/export truth untouched.
+- MotionEvidence review surface lets users inspect, ignore, and promote evidence without creating truth.
 - Stream sampling, media decoding, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.

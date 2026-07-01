@@ -39,6 +39,12 @@ Phase 8F implements the promotion API/repository foundation:
 
 The current Visit model requires an Event, so Phase 8F rejects `create_visit=true` with `create_event=false`.
 
+## Phase 8G Status
+
+Phase 8G exposes promotion from the Motion Evidence review surface.
+
+The UI lets users inspect pending evidence, optionally provide an event title, label hint, and notes, then promote evidence into unreviewed Event/Visit records. The UI does not expose reviewed/species truth fields; correction remains in Review Queue and detail pages.
+
 ## Promote Request
 
 Current fields:

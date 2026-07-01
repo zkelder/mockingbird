@@ -30,6 +30,11 @@ import type {
   ModelReadinessSummary,
   ModelAdapterRunRequest,
   ModelAdapterRunResult,
+  MotionEvidence,
+  MotionEvidenceListResponse,
+  MotionEvidencePromoteRequest,
+  MotionEvidencePromoteResponse,
+  MotionEvidenceStatus,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
   ReviewQueueItem,
@@ -168,6 +173,31 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  listMotionEvidence: (params: { status?: MotionEvidenceStatus | "all"; zone_id?: string } = {}) => {
+    const searchParams = new URLSearchParams();
+    if (params.status && params.status !== "all") {
+      searchParams.set("status", params.status);
+    }
+    if (params.zone_id) {
+      searchParams.set("zone_id", params.zone_id);
+    }
+    const query = searchParams.toString();
+    return request<MotionEvidenceListResponse>(`/api/motion/evidence${query ? `?${query}` : ""}`);
+  },
+  getMotionEvidence: (id: string) =>
+    request<MotionEvidence>(`/api/motion/evidence/${encodeURIComponent(id)}`),
+  ignoreMotionEvidence: (id: string) =>
+    request<MotionEvidence>(`/api/motion/evidence/${encodeURIComponent(id)}/ignore`, {
+      method: "POST",
+    }),
+  promoteMotionEvidence: (id: string, payload: MotionEvidencePromoteRequest = {}) =>
+    request<MotionEvidencePromoteResponse>(
+      `/api/motion/evidence/${encodeURIComponent(id)}/promote`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
   createZone: (payload: ZoneCreate) =>
     request<ZoneMutationResult>("/api/zones", {
       method: "POST",

@@ -151,6 +151,12 @@ Phase 8F implements `POST /api/motion/evidence/{evidence_id}/promote`.
 
 Pending Motion Evidence can now be promoted into unreviewed Event/Visit evidence. The original Motion Evidence remains queryable, is marked `promoted`, and links to created product records. Promotion rejects ignored, already promoted, privacy-zone, and ignore-zone evidence. It still does not create ReviewLabels, reviewed status, species truth, exports, dataset coverage truth, model output, media files, stream samples, or detector output.
 
+## Phase 8G Status
+
+Phase 8G adds a Motion Evidence review surface in the app.
+
+Users can now see pending, promoted, and ignored Motion Evidence, inspect scoring context, ignore noise, and promote useful evidence into unreviewed Event/Visit context. The review surface does not create reviewed labels, species truth, exports, dataset coverage truth, stream samples, media files, or detector output.
+
 ## Test Plan
 
 Implementation tests should prove:

@@ -1451,6 +1451,130 @@ button {
   text-align: center;
 }
 
+.motion-evidence-filters,
+.motion-evidence-detail,
+.motion-action-panel,
+.motion-promote-form,
+.motion-evidence-subsection,
+.motion-evidence-list {
+  display: grid;
+  gap: 12px;
+}
+
+.motion-zone-filter {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.motion-zone-filter label,
+.motion-promote-form label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.motion-zone-filter input,
+.motion-promote-form input,
+.motion-promote-form textarea {
+  min-height: 42px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.motion-promote-form textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.motion-evidence-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.95fr) minmax(340px, 1.05fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.motion-evidence-row {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+  color: #24382d;
+  text-align: left;
+}
+
+.motion-evidence-row.selected {
+  border-color: #2e6f5e;
+  background: #eef7ee;
+}
+
+.motion-evidence-row p {
+  margin: 0;
+  color: #5c6a61;
+}
+
+.motion-evidence-meta,
+.motion-evidence-links,
+.motion-config-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.motion-evidence-meta span,
+.motion-evidence-links span,
+.motion-config-list span {
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #edf2e9;
+  color: #34473b;
+  font-size: 0.85rem;
+  font-weight: 750;
+}
+
+.motion-evidence-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.motion-evidence-detail-grid div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.motion-evidence-detail-grid span {
+  color: #627168;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.motion-evidence-detail-grid strong {
+  overflow-wrap: anywhere;
+}
+
+.motion-evidence-subsection {
+  border-top: 1px solid #e0e7dd;
+  padding-top: 12px;
+}
+
+.motion-evidence-subsection h3 {
+  margin: 0;
+}
+
 .detection-proposal-card {
   align-content: start;
 }
