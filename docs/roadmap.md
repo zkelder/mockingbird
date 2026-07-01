@@ -195,7 +195,8 @@ Current work:
 - Phase 8F: MotionEvidence promotion API/repository implementation.
 - Phase 8G: MotionEvidence review surface.
 - Phase 8H: manual MotionEvidence creation UI/dev surface.
-- Next likely phase: Phase 8I — frame sampler contract or MotionEvidence creation from sampled frame pairs.
+- Phase 8I: frame sequence motion-to-evidence backend contract for already-sampled frame planes.
+- Next likely phase: Phase 8J — frame sampler design or sampled-frame ingestion boundary.
 
 Validation:
 
@@ -207,5 +208,6 @@ Validation:
 - MotionEvidence promotion creates only unreviewed Event/Visit evidence and leaves correction/export truth untouched.
 - MotionEvidence review surface lets users inspect, ignore, and promote evidence without creating truth.
 - Manual MotionEvidence creation lets the browser exercise the evidence loop before stream sampling without creating truth.
+- Frame sequence evaluation can create pending MotionEvidence from caller-provided frame planes without creating truth.
 - Stream sampling, media decoding, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.

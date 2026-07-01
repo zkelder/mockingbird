@@ -93,6 +93,8 @@ Motion Evidence is the bridge from motion candidates to later reviewable visits/
 
 Motion Evidence has manual creation, review, and promotion surfaces for exercising unreviewed Event/Visit evidence; see [docs/motion-evidence-design.md](docs/motion-evidence-design.md) and [docs/motion-evidence-promotion-design.md](docs/motion-evidence-promotion-design.md).
 
+The motion API can also evaluate caller-provided frame sequences and optionally create pending Motion Evidence without creating review truth.
+
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md), and the [local setup checklist](docs/megadetector-local-setup.md).
 
 ## Not the product center

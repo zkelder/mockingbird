@@ -56,6 +56,14 @@ Phase 8H adds manual MotionEvidence creation in the app before automated frame s
 
 The manual surface lets users create pending MotionEvidence from product fields such as zone, frame range, peak change, triggered frame count, scoring context, and notes. It exists to exercise the evidence review loop; stream sampling, media capture, and media decoding remain later work.
 
+## Phase 8I Status
+
+Phase 8I adds a backend frame sequence evaluation contract for already-sampled grayscale frame planes.
+
+The API scores consecutive frame pairs, debounces zone-local motion candidates, and can optionally create pending MotionEvidence records from those candidates. It does not decode media, connect to streams, sample frames, run workers, call model runtimes, create Event/Visit records, or write review/export truth.
+
+Real stream sampling and media capture remain deferred to a later boundary.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

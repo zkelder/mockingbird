@@ -48,6 +48,8 @@ from mockingbird.api.schemas import (
     MotionEvidenceResponse,
     MotionEvidenceStatus,
     MotionEvaluateFrameRequest,
+    MotionEvaluateSequenceRequest,
+    MotionEvaluateSequenceResponse,
     MotionExtractCandidatesRequest,
     MotionExtractCandidatesResponse,
     MotionFrameScoreResponse,
@@ -559,6 +561,68 @@ async def extract_motion_candidate_windows(
 
     return MotionExtractCandidatesResponse(
         candidates=[_motion_candidate_response(candidate) for candidate in candidates],
+    )
+
+
+@app.post("/api/motion/evaluate-sequence", response_model=MotionEvaluateSequenceResponse)
+async def evaluate_motion_sequence(
+    payload: MotionEvaluateSequenceRequest,
+) -> MotionEvaluateSequenceResponse:
+    # This contract receives already-sampled grayscale frame planes. It does no
+    # media IO and creates only pending Motion Evidence when explicitly asked.
+    try:
+        zones = [_motion_zone_from_payload(zone) for zone in payload.zones]
+        frame_scores = [
+            score_frame_motion(
+                payload.frames[pair_index],
+                payload.frames[pair_index + 1],
+                zones,
+                frame_index=payload.frame_index_start + pair_index + 1,
+                pixel_delta_threshold=payload.pixel_delta_threshold,
+                min_changed_ratio=payload.min_changed_ratio,
+            )
+            for pair_index in range(len(payload.frames) - 1)
+        ]
+        candidates = extract_motion_candidates(
+            frame_scores,
+            min_triggered_frames=payload.min_triggered_frames,
+            max_gap_frames=payload.max_gap_frames,
+        )
+    except ValueError as error:
+        raise _motion_evaluation_error(error) from error
+
+    created_evidence: list[MotionEvidenceResponse] = []
+    if payload.create_motion_evidence:
+        repository = get_repository()
+        for candidate in candidates:
+            evidence_payload = MotionEvidenceCreateRequest(
+                source_id=payload.source_id,
+                stream_id=payload.stream_id,
+                zone_id=candidate.zone_id,
+                start_frame_index=candidate.start_frame_index,
+                end_frame_index=candidate.end_frame_index,
+                best_frame_index=candidate.best_frame_index,
+                peak_changed_ratio=candidate.peak_changed_ratio,
+                triggered_frame_count=candidate.triggered_frame_count,
+                scoring_config={
+                    "source": "frame_sequence_evaluation",
+                    "pixel_delta_threshold": payload.pixel_delta_threshold,
+                    "min_changed_ratio": payload.min_changed_ratio,
+                    "min_triggered_frames": payload.min_triggered_frames,
+                    "max_gap_frames": payload.max_gap_frames,
+                    "frame_index_start": payload.frame_index_start,
+                },
+                notes=payload.notes,
+            )
+            try:
+                created_evidence.append(repository.create_motion_evidence(evidence_payload))
+            except ValueError as error:
+                raise _motion_evidence_error(error) from error
+
+    return MotionEvaluateSequenceResponse(
+        frame_scores=[_motion_frame_score_response(frame_score) for frame_score in frame_scores],
+        candidates=[_motion_candidate_response(candidate) for candidate in candidates],
+        created_evidence=created_evidence,
     )
 
 

@@ -415,6 +415,20 @@ class MotionExtractCandidatesResponse(BaseModel):
     candidates: list[MotionCandidateResponse]
 
 
+class MotionEvaluateSequenceRequest(BaseModel):
+    frames: list[list[list[float]]] = Field(min_length=2)
+    zones: list[MotionZoneInput] = Field(min_length=1)
+    source_id: str | None = None
+    stream_id: str | None = None
+    frame_index_start: int = Field(default=0, ge=0)
+    pixel_delta_threshold: float = Field(default=25.0, ge=0)
+    min_changed_ratio: float = Field(default=0.02, ge=0, le=1)
+    min_triggered_frames: int = Field(default=2, ge=1)
+    max_gap_frames: int = Field(default=1, ge=0)
+    create_motion_evidence: bool = False
+    notes: str | None = None
+
+
 class MotionEvidenceCreateRequest(BaseModel):
     source_id: str | None = None
     stream_id: str | None = None
@@ -477,6 +491,12 @@ class MotionEvidenceResponse(BaseModel):
     promoted_visit_id: str | None
     created_at: datetime
     notes: str | None
+
+
+class MotionEvaluateSequenceResponse(BaseModel):
+    frame_scores: list[MotionFrameScoreResponse]
+    candidates: list[MotionCandidateResponse]
+    created_evidence: list[MotionEvidenceResponse]
 
 
 class MotionEvidenceListResponse(BaseModel):

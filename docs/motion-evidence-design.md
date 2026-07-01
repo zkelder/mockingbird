@@ -163,6 +163,12 @@ Phase 8H adds a manual Motion Evidence creation surface inside the review page.
 
 Manual creation is for exercising the local evidence loop before stream sampling is wired in. It creates pending Motion Evidence only, then the normal review surface can ignore or promote it. Manual creation does not create ReviewLabels, reviewed observations, exports, dataset coverage truth, stream samples, media files, detector output, or species truth.
 
+## Phase 8I Status
+
+Phase 8I adds frame sequence evaluation as another way to create pending MotionEvidence.
+
+The backend accepts already-sampled grayscale frame planes, scores consecutive pairs, extracts debounced candidates, and can optionally save those candidates as pending MotionEvidence. This remains evidence only: it does not create Events, Visits, ReviewLabels, exports, dataset coverage truth, media files, stream samples, detector output, or species truth.
+
 ## Test Plan
 
 Implementation tests should prove:
