@@ -73,6 +73,21 @@ class DetectionProposalDecision(str, Enum):
     convert_to_event = "convert_to_event"
 
 
+class ModelAdapterKind(str, Enum):
+    object_detector = "object_detector"
+    species_classifier = "species_classifier"
+    audio_classifier = "audio_classifier"
+    motion_filter = "motion_filter"
+    integration = "integration"
+    demo = "demo"
+
+
+class ModelAdapterStatus(str, Enum):
+    available = "available"
+    unavailable = "unavailable"
+    disabled = "disabled"
+
+
 class LabelCategory(str, Enum):
     bird = "bird"
     mammal = "mammal"
@@ -226,6 +241,29 @@ class DemoDetectionRunCreate(BaseModel):
     confidence: float = Field(default=0.72, ge=0, le=1)
     suggested_subject_label: str = "unknown_bird"
     suggested_species: str | None = None
+    notes: str | None = None
+
+
+class ModelAdapter(BaseModel):
+    # Model adapters produce proposal evidence only; review labels remain truth.
+    id: str
+    name: str
+    kind: ModelAdapterKind
+    status: ModelAdapterStatus
+    version: str | None = None
+    description: str
+    supported_media_types: list[str]
+    supported_labels: list[str]
+    creates_review_truth: bool = False
+    local_only: bool = True
+    notes: str | None = None
+
+
+class ModelAdapterRunRequest(BaseModel):
+    adapter_id: str
+    media_asset_id: str
+    zone_ids: list[str] | None = None
+    requested_labels: list[str] | None = None
     notes: str | None = None
 
 
@@ -455,6 +493,14 @@ class DetectionProposalDecisionResult(BaseModel):
     visit: Visit | None = None
     review_queue_count: int = Field(ge=0)
     analytics: AnalyticsSummary
+
+
+class ModelAdapterRunResult(BaseModel):
+    adapter: ModelAdapter
+    detection_run: DetectionRun
+    proposals: list[DetectionProposal]
+    review_queue_count: int = Field(ge=0)
+    local_first_note: str
 
 
 class LocalDataStatus(BaseModel):

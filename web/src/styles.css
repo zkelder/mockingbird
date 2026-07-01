@@ -597,6 +597,82 @@ button {
   gap: 8px;
 }
 
+.adapter-list-panel,
+.adapter-run-form,
+.adapter-result-panel,
+.adapter-list,
+.adapter-proposal-list {
+  display: grid;
+  gap: 12px;
+}
+
+.adapter-card {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+  color: #24382d;
+  text-align: left;
+}
+
+.adapter-card.selected {
+  border-color: #2e6f5e;
+  background: #eef7ee;
+}
+
+.adapter-card span,
+.adapter-card small {
+  color: #5c6a61;
+}
+
+.adapter-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.adapter-run-form label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.adapter-run-form input,
+.adapter-run-form select,
+.adapter-run-form textarea {
+  min-height: 42px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.adapter-run-form textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.adapter-result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.adapter-result-grid div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
 .confidence-meter {
   display: grid;
   gap: 6px;
@@ -1629,6 +1705,7 @@ button {
   .coverage-columns,
   .quality-metric-grid,
   .quality-secondary-grid,
+  .adapter-result-grid,
   .detection-proposal-meta,
   .split-grid,
   .folder-import-layout,
@@ -1684,6 +1761,7 @@ button {
   .coverage-columns,
   .quality-metric-grid,
   .quality-secondary-grid,
+  .adapter-result-grid,
   .detection-proposal-meta,
   .record-meta-grid,
   .split-grid,

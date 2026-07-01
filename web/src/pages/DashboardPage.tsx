@@ -28,6 +28,7 @@ interface DashboardPageProps {
   onOpenExports: () => void;
   onOpenImport: () => void;
   onOpenDetectionProposals: () => void;
+  onOpenModelAdapters: () => void;
 }
 
 export function DashboardPage({
@@ -43,6 +44,7 @@ export function DashboardPage({
   onOpenExports,
   onOpenImport,
   onOpenDetectionProposals,
+  onOpenModelAdapters,
 }: DashboardPageProps) {
   const mainStream = streams[0];
   const latestExport = exports[exports.length - 1];
@@ -88,6 +90,9 @@ export function DashboardPage({
           </button>
           <button className="secondary-action" onClick={onOpenDetectionProposals}>
             Detection proposals
+          </button>
+          <button className="secondary-action" onClick={onOpenModelAdapters}>
+            Model adapters
           </button>
           {mainStream ? (
             <button className="secondary-action" onClick={() => onOpenStream(mainStream.id)}>
@@ -207,12 +212,18 @@ export function DashboardPage({
       <section className="notice-panel">
         <strong>Detection proposals are evidence first</strong>
         <span>
-          Accept proposal evidence into reviewable events and visits, then correct labels before
-          analytics or exports treat them as truth.
+          Future detector hooks create proposal evidence under the product loop. Accept proposal
+          evidence into reviewable events and visits, then correct labels before analytics or exports
+          treat them as truth.
         </span>
-        <button className="secondary-action" onClick={onOpenDetectionProposals}>
-          Open Detection Proposals
-        </button>
+        <div className="detail-actions">
+          <button className="secondary-action" onClick={onOpenModelAdapters}>
+            Open Model Adapters
+          </button>
+          <button className="secondary-action" onClick={onOpenDetectionProposals}>
+            Open Detection Proposals
+          </button>
+        </div>
       </section>
     </div>
   );

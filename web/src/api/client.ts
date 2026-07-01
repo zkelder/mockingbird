@@ -25,6 +25,9 @@ import type {
   LocalDataStatus,
   MediaAsset,
   MediaImportResult,
+  ModelAdapter,
+  ModelAdapterRunRequest,
+  ModelAdapterRunResult,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
   ReviewQueueItem,
@@ -144,6 +147,14 @@ export const apiClient = {
       body: JSON.stringify(payload),
     }),
   mediaFileUrl: (mediaId: string) => `${API_BASE_URL}/api/media/${encodeURIComponent(mediaId)}/file`,
+  getModelAdapters: () => request<ModelAdapter[]>("/api/model-adapters"),
+  getModelAdapter: (adapterId: string) =>
+    request<ModelAdapter>(`/api/model-adapters/${encodeURIComponent(adapterId)}`),
+  runModelAdapter: (adapterId: string, payload: ModelAdapterRunRequest) =>
+    request<ModelAdapterRunResult>(`/api/model-adapters/${encodeURIComponent(adapterId)}/runs`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   createZone: (payload: ZoneCreate) =>
     request<ZoneMutationResult>("/api/zones", {
       method: "POST",

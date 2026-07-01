@@ -19,6 +19,7 @@ import { ExportsPage } from "./pages/ExportsPage";
 import { FolderImportPage } from "./pages/FolderImportPage";
 import { LocalDataPage } from "./pages/LocalDataPage";
 import { ManualImportPage } from "./pages/ManualImportPage";
+import { ModelAdaptersPage } from "./pages/ModelAdaptersPage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
@@ -29,6 +30,7 @@ type Page =
   | "streams"
   | "import"
   | "folder-import"
+  | "model-adapters"
   | "detection-proposals"
   | "stream-detail"
   | "event-detail"
@@ -65,6 +67,7 @@ const navItems: Array<{ page: Page; label: string }> = [
   { page: "streams", label: "Streams" },
   { page: "import", label: "Import Media" },
   { page: "folder-import", label: "Folder Import" },
+  { page: "model-adapters", label: "Model Adapters" },
   { page: "detection-proposals", label: "Detection Proposals" },
   { page: "review", label: "Review" },
   { page: "analytics", label: "Analytics" },
@@ -204,6 +207,7 @@ export default function App() {
           exports={data.exports}
           onOpenStream={openStream}
           onOpenImport={() => setPage("import")}
+          onOpenModelAdapters={() => setPage("model-adapters")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenReview={() => setPage("review")}
           onOpenExports={() => setPage("exports")}
@@ -252,10 +256,21 @@ export default function App() {
           streams={data.streams}
           sources={data.sources}
           onOpenImport={() => setPage("import")}
+          onOpenModelAdapters={() => setPage("model-adapters")}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
           onOpenReview={() => setPage("review")}
           onOpenExports={() => setPage("exports")}
+          onProposalChanged={() => loadAppData({ showLoading: false })}
+        />
+      );
+    }
+
+    if (page === "model-adapters") {
+      return (
+        <ModelAdaptersPage
+          onOpenImport={() => setPage("import")}
+          onOpenDetectionProposals={() => setPage("detection-proposals")}
           onProposalChanged={() => loadAppData({ showLoading: false })}
         />
       );

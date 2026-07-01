@@ -25,6 +25,14 @@ export type DetectionSource = "manual" | "demo_rule" | "future_model" | "integra
 export type DetectionRunStatus = "pending" | "completed" | "failed";
 export type DetectionProposalStatus = "proposed" | "accepted" | "rejected" | "converted";
 export type DetectionProposalDecision = "accept" | "reject" | "convert_to_event";
+export type ModelAdapterKind =
+  | "object_detector"
+  | "species_classifier"
+  | "audio_classifier"
+  | "motion_filter"
+  | "integration"
+  | "demo";
+export type ModelAdapterStatus = "available" | "unavailable" | "disabled";
 export type LabelCategory =
   | "bird"
   | "mammal"
@@ -187,6 +195,28 @@ export interface DemoDetectionRunCreate {
   notes?: string | null;
 }
 
+export interface ModelAdapter {
+  id: string;
+  name: string;
+  kind: ModelAdapterKind;
+  status: ModelAdapterStatus;
+  version?: string | null;
+  description: string;
+  supported_media_types: string[];
+  supported_labels: string[];
+  creates_review_truth: boolean;
+  local_only: boolean;
+  notes?: string | null;
+}
+
+export interface ModelAdapterRunRequest {
+  adapter_id: string;
+  media_asset_id: string;
+  zone_ids?: string[] | null;
+  requested_labels?: string[] | null;
+  notes?: string | null;
+}
+
 export interface DetectionProposal {
   id: string;
   run_id: string;
@@ -240,6 +270,14 @@ export interface DemoDetectionRunResult {
   detection_run: DetectionRun;
   proposals: DetectionProposal[];
   review_queue_count: number;
+}
+
+export interface ModelAdapterRunResult {
+  adapter: ModelAdapter;
+  detection_run: DetectionRun;
+  proposals: DetectionProposal[];
+  review_queue_count: number;
+  local_first_note: string;
 }
 
 export interface FolderImportPreviewRequest {

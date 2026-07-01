@@ -37,6 +37,7 @@ interface DetectionProposalsPageProps {
   streams: Stream[];
   sources: CameraSource[];
   onOpenImport: () => void;
+  onOpenModelAdapters: () => void;
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
   onOpenReview: () => void;
@@ -48,6 +49,7 @@ export function DetectionProposalsPage({
   streams,
   sources,
   onOpenImport,
+  onOpenModelAdapters,
   onOpenEvent,
   onOpenVisit,
   onOpenReview,
@@ -265,6 +267,9 @@ export function DetectionProposalsPage({
             <button className="secondary-action" onClick={onOpenImport}>
               Import Media
             </button>
+            <button className="secondary-action" onClick={onOpenModelAdapters}>
+              Model Adapters
+            </button>
             <button className="secondary-action" onClick={onOpenReview}>
               Review Queue
             </button>
@@ -274,6 +279,17 @@ export function DetectionProposalsPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
+
+      <section className="notice-panel">
+        <strong>Model adapters feed this evidence queue</strong>
+        <span>
+          Future detector hooks create proposal evidence here. They do not write review truth or
+          bypass correction.
+        </span>
+        <button className="secondary-action" onClick={onOpenModelAdapters}>
+          Open Model Adapters
+        </button>
+      </section>
 
       {generatedProposal ? (
         <section className="panel proposal-decision-panel">

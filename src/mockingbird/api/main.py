@@ -35,6 +35,9 @@ from mockingbird.api.schemas import (
     LocalDataStatus,
     MediaAsset,
     MediaImportResult,
+    ModelAdapter,
+    ModelAdapterRunRequest,
+    ModelAdapterRunResult,
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -253,6 +256,22 @@ def _detection_interface_error(error: ValueError) -> HTTPException:
     if reason == "unsupported_decision":
         return HTTPException(status_code=400, detail="Unsupported detection proposal decision.")
     return HTTPException(status_code=400, detail="Detection proposal could not be processed.")
+
+
+def _model_adapter_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "missing_adapter":
+        return _not_found("Model adapter", "adapter")
+    if reason == "adapter_mismatch":
+        return HTTPException(status_code=400, detail="Adapter id in path and payload must match.")
+    if reason == "adapter_unavailable":
+        return HTTPException(status_code=400, detail="Model adapter is not available.")
+    if reason == "unsupported_media_type":
+        return HTTPException(
+            status_code=400,
+            detail="Model adapter does not support this media type.",
+        )
+    return _detection_interface_error(error)
 
 
 def _detection_runs_for_proposals(
@@ -594,6 +613,34 @@ async def get_media_file(media_id: str):
         media_type=asset.content_type,
         filename=asset.original_filename,
     )
+
+
+@app.get("/api/model-adapters", response_model=list[ModelAdapter])
+async def list_model_adapters() -> list[ModelAdapter]:
+    return get_repository().list_model_adapters()
+
+
+@app.get("/api/model-adapters/{adapter_id}", response_model=ModelAdapter)
+async def get_model_adapter(adapter_id: str) -> ModelAdapter:
+    adapter = get_repository().get_model_adapter(adapter_id)
+    if adapter is None:
+        raise _not_found("Model adapter", adapter_id)
+    return adapter
+
+
+@app.post("/api/model-adapters/{adapter_id}/runs", response_model=ModelAdapterRunResult)
+async def run_model_adapter(
+    adapter_id: str,
+    payload: ModelAdapterRunRequest,
+) -> ModelAdapterRunResult:
+    repository = get_repository()
+    if repository.get_model_adapter(adapter_id) is None:
+        raise _not_found("Model adapter", adapter_id)
+
+    try:
+        return repository.run_model_adapter(adapter_id, payload)
+    except ValueError as error:
+        raise _model_adapter_error(error) from error
 
 
 @app.get("/api/detection-runs", response_model=list[DetectionRun])

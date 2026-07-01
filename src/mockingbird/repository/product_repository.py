@@ -51,6 +51,11 @@ from mockingbird.api.schemas import (
     LocalDataStatus,
     MediaAsset,
     MediaImportResult,
+    ModelAdapter,
+    ModelAdapterKind,
+    ModelAdapterRunRequest,
+    ModelAdapterRunResult,
+    ModelAdapterStatus,
     Point,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -106,6 +111,25 @@ SUPPORTED_MEDIA_EXTENSIONS = {
     ".mp4": ("video/mp4", "video"),
     ".mov": ("video/quicktime", "video"),
 }
+
+MODEL_ADAPTERS: tuple[ModelAdapter, ...] = (
+    ModelAdapter(
+        id="demo_rule_detector",
+        name="Demo Rule Detector",
+        kind=ModelAdapterKind.demo,
+        status=ModelAdapterStatus.available,
+        version="contract-1",
+        description=(
+            "Local-only demo adapter contract that creates proposal evidence "
+            "without running media analysis."
+        ),
+        supported_media_types=["image", "video"],
+        supported_labels=["unknown_bird", "bird", "squirrel", "cat", "unknown_animal"],
+        creates_review_truth=False,
+        local_only=True,
+        notes="Future detector hook; review and correction remain required.",
+    ),
+)
 
 
 @dataclass
@@ -549,6 +573,132 @@ class ProductRepository:
         if asset is None:
             return None
         return Path(asset.local_path)
+
+    def list_model_adapters(self) -> list[ModelAdapter]:
+        return [adapter.model_copy(deep=True) for adapter in MODEL_ADAPTERS]
+
+    def get_model_adapter(self, adapter_id: str) -> ModelAdapter | None:
+        adapter = _model_adapter_by_id(adapter_id)
+        return adapter.model_copy(deep=True) if adapter else None
+
+    def run_model_adapter(
+        self,
+        adapter_id: str,
+        payload: ModelAdapterRunRequest,
+    ) -> ModelAdapterRunResult:
+        adapter = _model_adapter_by_id(adapter_id)
+        if adapter is None:
+            raise ValueError("missing_adapter")
+        if payload.adapter_id != adapter_id:
+            raise ValueError("adapter_mismatch")
+        if adapter.status != ModelAdapterStatus.available:
+            raise ValueError("adapter_unavailable")
+
+        with self.session_factory() as session:
+            with session.begin():
+                asset_model = session.get(MediaAssetModel, payload.media_asset_id)
+                if asset_model is None:
+                    raise ValueError("missing_media_asset")
+                if asset_model.media_type not in adapter.supported_media_types:
+                    raise ValueError("unsupported_media_type")
+
+                stream_model = session.get(StreamModel, asset_model.stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+
+                zone_models: list[ZoneModel | None]
+                if payload.zone_ids:
+                    zone_models = []
+                    seen_zone_ids: set[str] = set()
+                    for zone_id in payload.zone_ids:
+                        if zone_id in seen_zone_ids:
+                            continue
+                        seen_zone_ids.add(zone_id)
+                        zone_models.append(
+                            self._resolve_import_zone(session, zone_id, stream_model.id)
+                        )
+                else:
+                    zone_models = [self._default_demo_zone(session, stream_model.id)]
+
+                requested_labels = [
+                    label.strip()
+                    for label in payload.requested_labels or []
+                    if label.strip()
+                ] or ["unknown_bird"]
+                created_at = datetime.now(UTC)
+                run_model = DetectionRunModel(
+                    id=self._next_id(session, DetectionRunModel, "detection-run"),
+                    media_asset_id=asset_model.id,
+                    source=DetectionSource.demo_rule.value,
+                    summary=(
+                        f"Model adapter contract run for {adapter.name}; "
+                        "proposal evidence only, no media analysis."
+                    ),
+                    status=DetectionRunStatus.completed.value,
+                    created_at=created_at,
+                    completed_at=created_at,
+                )
+                session.add(run_model)
+
+                proposal_models: list[DetectionProposalModel] = []
+                for zone_model in zone_models:
+                    for requested_label in requested_labels:
+                        normalized_label = self._normalize_label_from_session(
+                            session,
+                            requested_label,
+                        )
+                        suggested_subject_label, suggested_species = (
+                            self._adapter_subject_and_species(session, normalized_label)
+                        )
+                        proposal_model = DetectionProposalModel(
+                            id=self._next_id(
+                                session,
+                                DetectionProposalModel,
+                                "detection-proposal",
+                            ),
+                            run_id=run_model.id,
+                            media_asset_id=asset_model.id,
+                            stream_id=stream_model.id,
+                            zone_id=zone_model.id if zone_model else None,
+                            event_id=None,
+                            visit_id=None,
+                            label=normalized_label,
+                            confidence=0.62,
+                            bbox_json=None,
+                            suggested_event_type="animal_visit",
+                            suggested_subject_label=suggested_subject_label,
+                            suggested_species=suggested_species,
+                            status=DetectionProposalStatus.proposed.value,
+                            notes=(
+                                payload.notes.strip()
+                                if payload.notes and payload.notes.strip()
+                                else (
+                                    "Model adapter contract generated proposal evidence; "
+                                    "review and correction remain required."
+                                )
+                            ),
+                            created_at=created_at,
+                            decided_at=None,
+                        )
+                        session.add(proposal_model)
+                        session.flush()
+                        proposal_models.append(proposal_model)
+
+                session.flush()
+                return ModelAdapterRunResult(
+                    adapter=adapter.model_copy(deep=True),
+                    detection_run=_detection_run_from_model(run_model),
+                    proposals=[
+                        _detection_proposal_from_model(proposal)
+                        for proposal in proposal_models
+                    ],
+                    review_queue_count=len(self._review_queue_items(session)),
+                    local_first_note=(
+                        "Model adapters create proposal evidence, not review truth. "
+                        "Users must convert, review, and correct proposals before exports, "
+                        "coverage, or QA treat labels as dataset truth."
+                    ),
+                )
 
     def list_detection_runs(self) -> list[DetectionRun]:
         with self.session_factory() as session:
@@ -1176,6 +1326,19 @@ class ProductRepository:
         if label_model is not None:
             return label_model.label
         return _freeform_label(input_label)
+
+    def _adapter_subject_and_species(
+        self,
+        session: Session,
+        normalized_label: str,
+    ) -> tuple[str, str | None]:
+        taxonomy_label = self._taxonomy_label_model_for_input(session, normalized_label)
+        taxonomy = _taxonomy_label_from_model(taxonomy_label) if taxonomy_label else None
+        if taxonomy is not None and taxonomy.category == LabelCategory.bird and taxonomy.is_species:
+            return "bird", taxonomy.label
+        if normalized_label == "unknown_bird":
+            return "unknown_bird", "unknown_bird"
+        return normalized_label, None
 
     def _default_demo_zone(self, session: Session, stream_id: str) -> ZoneModel | None:
         zones = list(
@@ -2323,6 +2486,10 @@ def _source_from_model(source: CameraSourceModel) -> CameraSource:
         status=SourceStatus(source.status),
         description=source.description,
     )
+
+
+def _model_adapter_by_id(adapter_id: str) -> ModelAdapter | None:
+    return next((adapter for adapter in MODEL_ADAPTERS if adapter.id == adapter_id), None)
 
 
 def _taxonomy_label_from_model(label: TaxonomyLabelModel) -> TaxonomyLabel:
