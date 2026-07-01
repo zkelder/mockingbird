@@ -5,6 +5,8 @@ import type {
   DatasetExportCreate,
   DatasetExportDetail,
   DatasetExportManifest,
+  DemoDetectionRunCreate,
+  DemoDetectionRunResult,
   DetectionProposal,
   DetectionProposalCreate,
   DetectionProposalDecisionCreate,
@@ -88,6 +90,11 @@ export const apiClient = {
   getDetectionRuns: () => request<DetectionRun[]>("/api/detection-runs"),
   createDetectionRun: (payload: DetectionRunCreate) =>
     request<DetectionRun>("/api/detection-runs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  createDemoDetectionRun: (payload: DemoDetectionRunCreate) =>
+    request<DemoDetectionRunResult>("/api/detection-runs/demo", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

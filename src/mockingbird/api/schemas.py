@@ -195,6 +195,16 @@ class DetectionRunCreate(BaseModel):
     summary: str | None = None
 
 
+class DemoDetectionRunCreate(BaseModel):
+    media_asset_id: str
+    zone_id: str | None = None
+    label: str = "bird"
+    confidence: float = Field(default=0.72, ge=0, le=1)
+    suggested_subject_label: str = "unknown_bird"
+    suggested_species: str | None = None
+    notes: str | None = None
+
+
 class DetectionProposal(BaseModel):
     id: str
     run_id: str
@@ -234,6 +244,12 @@ class DetectionProposalDecisionCreate(BaseModel):
     subject_label: str | None = None
     species_guess: str | None = None
     notes: str | None = None
+
+
+class DemoDetectionRunResult(BaseModel):
+    detection_run: DetectionRun
+    proposals: list[DetectionProposal]
+    review_queue_count: int
 
 
 class ReviewQueueItem(BaseModel):

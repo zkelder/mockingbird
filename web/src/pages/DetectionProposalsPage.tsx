@@ -44,12 +44,12 @@ export function DetectionProposalsPage({
   const [zonesByStream, setZonesByStream] = useState<Record<string, Zone[]>>({});
   const [selectedMediaId, setSelectedMediaId] = useState("");
   const [selectedZoneId, setSelectedZoneId] = useState("");
-  const [label, setLabel] = useState("animal_candidate");
-  const [confidence, setConfidence] = useState("0.75");
-  const [suggestedEventType, setSuggestedEventType] = useState("animal_visit");
-  const [suggestedSubjectLabel, setSuggestedSubjectLabel] = useState("unknown_animal");
+  const [label, setLabel] = useState("bird");
+  const [confidence, setConfidence] = useState("0.72");
+  const [suggestedSubjectLabel, setSuggestedSubjectLabel] = useState("unknown_bird");
   const [suggestedSpecies, setSuggestedSpecies] = useState("");
   const [notes, setNotes] = useState("");
+  const [generatedProposal, setGeneratedProposal] = useState<DetectionProposal | null>(null);
   const [result, setResult] = useState<DetectionProposalDecisionResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -123,10 +123,10 @@ export function DetectionProposalsPage({
     );
   }, [selectedMediaId, selectedZones]);
 
-  async function submitProposal(event: FormEvent<HTMLFormElement>) {
+  async function submitDemoProposal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedMedia) {
-      setError("Import local media before creating a detection proposal.");
+      setError("Import local media before generating a demo proposal.");
       return;
     }
 
@@ -140,23 +140,28 @@ export function DetectionProposalsPage({
     setError(null);
     setMessage(null);
     setResult(null);
+    setGeneratedProposal(null);
     try {
-      const proposal = await apiClient.createDetectionProposal({
+      const demoResult = await apiClient.createDemoDetectionRun({
         media_asset_id: selectedMedia.id,
-        stream_id: selectedMedia.stream_id,
         zone_id: selectedZoneId || undefined,
-        label: label.trim() || "animal_candidate",
+        label: label.trim() || "bird",
         confidence: parsedConfidence,
-        suggested_event_type: suggestedEventType.trim() || "animal_visit",
-        suggested_subject_label: suggestedSubjectLabel.trim() || "unknown_animal",
+        suggested_subject_label: suggestedSubjectLabel.trim() || "unknown_bird",
         suggested_species: suggestedSpecies.trim() || undefined,
         notes: notes.trim() || undefined,
       });
-      setMessage(`Created proposal ${proposal.id}. Review it before it becomes a product event.`);
+      const proposal = demoResult.proposals[0] ?? null;
+      setGeneratedProposal(proposal);
+      setMessage(
+        proposal
+          ? `Generated demo proposal ${proposal.id}. Review it before it becomes a product event.`
+          : "Demo run completed without creating proposal evidence.",
+      );
       setNotes("");
       await loadPageData({ showLoading: false });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Detection proposal could not be created.");
+      setError(caught instanceof Error ? caught.message : "Demo proposal could not be generated.");
     } finally {
       setIsSubmitting(false);
     }
@@ -170,6 +175,7 @@ export function DetectionProposalsPage({
     setError(null);
     setMessage(null);
     setResult(null);
+    setGeneratedProposal(null);
     try {
       const nextResult = await apiClient.decideDetectionProposal(proposal.id, {
         decision,
@@ -206,7 +212,7 @@ export function DetectionProposalsPage({
       <PageHeader
         eyebrow="Detection pipeline interface"
         title="Detection Proposals"
-        description="Review demo or manual proposals as evidence, then accept them into reviewable events and visits or reject them before they affect analytics and exports."
+        description="Generate demo detector proposals from imported media, review them as evidence, then convert or reject them before they affect analytics and exports."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenImport}>
@@ -221,6 +227,35 @@ export function DetectionProposalsPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
+
+      {generatedProposal ? (
+        <section className="panel proposal-decision-panel">
+          <div>
+            <EvidenceBadge label="Demo evidence generated" tone="review" />
+            <h2>{formatLabel(generatedProposal.label)} proposal ready</h2>
+            <p>
+              This simulated detector proposal did not run a real model or inspect media pixels. Convert it only when
+              it should become a reviewable event and visit.
+            </p>
+          </div>
+          <div className="detail-actions">
+            <button
+              className="primary-action"
+              disabled={actionId === `${generatedProposal.id}:convert_to_event`}
+              onClick={() => void decideProposal(generatedProposal, "convert_to_event")}
+            >
+              Accept and convert to review
+            </button>
+            <button
+              className="secondary-action"
+              disabled={actionId === `${generatedProposal.id}:reject`}
+              onClick={() => void decideProposal(generatedProposal, "reject")}
+            >
+              Reject
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {result ? (
         <section className="panel proposal-decision-panel">
@@ -261,14 +296,18 @@ export function DetectionProposalsPage({
       ) : null}
 
       <section className="manual-import-layout detection-proposal-layout">
-        <form className="panel manual-import-form" onSubmit={submitProposal}>
+        <form className="panel manual-import-form" onSubmit={submitDemoProposal}>
           <div className="section-heading">
-            <h2>Create demo/manual proposal</h2>
+            <h2>Generate demo proposal</h2>
             <EvidenceBadge label="Evidence only" />
           </div>
+          <p className="meta-text">
+            This simulates detector proposal generation for the product flow. It does not run a real model or inspect
+            media pixels.
+          </p>
           <div className="import-flow-strip">
             <span>Media asset</span>
-            <span>Detection proposal</span>
+            <span>Demo proposal</span>
             <span>Review event/visit</span>
             <span>Correction/export truth</span>
           </div>
@@ -309,14 +348,16 @@ export function DetectionProposalsPage({
               value={selectedZoneId}
               onChange={(event) => setSelectedZoneId(event.target.value)}
             >
-              <option value="">Unzoned</option>
+              <option value="">Use stream demo zone</option>
               {selectedZones.map((zone) => (
                 <option key={zone.id} value={zone.id}>
                   {zone.name} - {formatLabel(zone.zone_type)}
                 </option>
               ))}
             </select>
-            <span className="field-helper">Zones give proposal evidence outdoor context before review.</span>
+            <span className="field-helper">
+              Leave blank to attach a sensible demo zone from the media stream when available.
+            </span>
           </label>
           <label>
             Suggested evidence label
@@ -334,14 +375,6 @@ export function DetectionProposalsPage({
               value={confidence}
             />
             <span className="field-helper">Use 0 to 1 for demo confidence; it stays evidence only.</span>
-          </label>
-          <label>
-            Suggested event type
-            <input
-              value={suggestedEventType}
-              onChange={(event) => setSuggestedEventType(event.target.value)}
-            />
-            <span className="field-helper">Conversion creates a reviewable event with this event type.</span>
           </label>
           <label>
             Suggested subject label
@@ -373,7 +406,7 @@ export function DetectionProposalsPage({
             disabled={isSubmitting || !selectedMedia}
             type="submit"
           >
-            {isSubmitting ? "Creating..." : "Create proposal"}
+            {isSubmitting ? "Generating..." : "Generate demo proposal"}
           </button>
           {!selectedMedia && !isLoading ? (
             <span className="meta-text">Local imported media is required before proposals.</span>

@@ -21,6 +21,8 @@ from mockingbird.api.schemas import (
     DatasetExportDetail,
     DatasetExportManifest,
     DatasetExportRecord,
+    DemoDetectionRunCreate,
+    DemoDetectionRunResult,
     Detection,
     DetectionProposal,
     DetectionProposalCreate,
@@ -475,6 +477,72 @@ class ProductRepository:
                 session.add(run_model)
                 session.flush()
                 return _detection_run_from_model(run_model)
+
+    def create_demo_detection_run(
+        self,
+        payload: DemoDetectionRunCreate,
+    ) -> DemoDetectionRunResult:
+        with self.session_factory() as session:
+            with session.begin():
+                asset_model = session.get(MediaAssetModel, payload.media_asset_id)
+                if asset_model is None:
+                    raise ValueError("missing_media_asset")
+
+                stream_model = session.get(StreamModel, asset_model.stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+
+                zone_model = (
+                    self._resolve_import_zone(session, payload.zone_id, stream_model.id)
+                    if payload.zone_id
+                    else self._default_demo_zone(session, stream_model.id)
+                )
+                created_at = datetime.now(UTC)
+                run_model = DetectionRunModel(
+                    id=self._next_id(session, DetectionRunModel, "detection-run"),
+                    media_asset_id=asset_model.id,
+                    source=DetectionSource.demo_rule.value,
+                    summary="Demo detector proposal generation without media analysis.",
+                    status=DetectionRunStatus.completed.value,
+                    created_at=created_at,
+                    completed_at=created_at,
+                )
+                proposal_model = DetectionProposalModel(
+                    id=self._next_id(session, DetectionProposalModel, "detection-proposal"),
+                    run_id=run_model.id,
+                    media_asset_id=asset_model.id,
+                    stream_id=stream_model.id,
+                    zone_id=zone_model.id if zone_model else None,
+                    event_id=None,
+                    visit_id=None,
+                    label=payload.label.strip() or "bird",
+                    confidence=payload.confidence,
+                    bbox_json=None,
+                    suggested_event_type="animal_visit",
+                    suggested_subject_label=(
+                        payload.suggested_subject_label.strip() or "unknown_bird"
+                    ),
+                    suggested_species=(
+                        payload.suggested_species.strip()
+                        if payload.suggested_species and payload.suggested_species.strip()
+                        else None
+                    ),
+                    status=DetectionProposalStatus.proposed.value,
+                    notes=(
+                        payload.notes.strip()
+                        if payload.notes and payload.notes.strip()
+                        else "Demo proposal generated without running a model."
+                    ),
+                    created_at=created_at,
+                    decided_at=None,
+                )
+                session.add_all([run_model, proposal_model])
+                session.flush()
+                return DemoDetectionRunResult(
+                    detection_run=_detection_run_from_model(run_model),
+                    proposals=[_detection_proposal_from_model(proposal_model)],
+                    review_queue_count=len(self._review_queue_items(session)),
+                )
 
     def list_detection_proposals(self) -> list[DetectionProposal]:
         with self.session_factory() as session:
@@ -942,6 +1010,20 @@ class ProductRepository:
         if zone_model.stream_id != stream_id:
             raise ValueError("zone_stream_mismatch")
         return zone_model
+
+    def _default_demo_zone(self, session: Session, stream_id: str) -> ZoneModel | None:
+        zones = list(
+            session.scalars(
+                select(ZoneModel).where(ZoneModel.stream_id == stream_id).order_by(ZoneModel.id)
+            ).all()
+        )
+        for zone in zones:
+            if zone.is_active and zone.zone_type not in {
+                ZoneType.ignore.value,
+                ZoneType.privacy.value,
+            }:
+                return zone
+        return zones[0] if zones else None
 
     def _write_media_file(self, filename: str, content: bytes) -> tuple[str, Path]:
         self.media_root.mkdir(parents=True, exist_ok=True)

@@ -16,6 +16,8 @@ from mockingbird.api.schemas import (
     DatasetExportCreate,
     DatasetExportDetail,
     DatasetExportManifest,
+    DemoDetectionRunCreate,
+    DemoDetectionRunResult,
     DetectionProposal,
     DetectionProposalCreate,
     DetectionProposalDecisionCreate,
@@ -557,6 +559,14 @@ async def list_detection_runs() -> list[DetectionRun]:
 async def create_detection_run(payload: DetectionRunCreate) -> DetectionRun:
     try:
         return get_repository().create_detection_run(payload)
+    except ValueError as error:
+        raise _detection_interface_error(error) from error
+
+
+@app.post("/api/detection-runs/demo", response_model=DemoDetectionRunResult, status_code=201)
+async def create_demo_detection_run(payload: DemoDetectionRunCreate) -> DemoDetectionRunResult:
+    try:
+        return get_repository().create_demo_detection_run(payload)
     except ValueError as error:
         raise _detection_interface_error(error) from error
 

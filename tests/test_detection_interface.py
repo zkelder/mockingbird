@@ -73,6 +73,157 @@ async def create_proposal(
     )
 
 
+async def create_demo_run(
+    client: httpx.AsyncClient,
+    media_asset_id: str,
+    data: dict[str, object] | None = None,
+):
+    return await client.post(
+        "/api/detection-runs/demo",
+        json={
+            "media_asset_id": media_asset_id,
+            "label": "bird",
+            "confidence": 0.72,
+            "suggested_subject_label": "unknown_bird",
+            "suggested_species": "unknown_bird",
+            "notes": "Demo detector proposal generation for review.",
+            **(data or {}),
+        },
+    )
+
+
+async def test_demo_detection_run_creates_completed_run_and_proposed_evidence(
+    client: httpx.AsyncClient,
+) -> None:
+    media_asset = (await import_image(client)).json()["media_asset"]
+    initial_events = (await client.get("/api/events")).json()
+    initial_visits = (await client.get("/api/visits")).json()
+
+    response = await create_demo_run(client, media_asset["id"], {"zone_id": None})
+
+    assert response.status_code == 201
+    result = response.json()
+    run = result["detection_run"]
+    proposal = result["proposals"][0]
+    assert run["media_asset_id"] == media_asset["id"]
+    assert run["source"] == "demo_rule"
+    assert run["status"] == "completed"
+    assert "without media analysis" in run["summary"]
+    assert proposal["run_id"] == run["id"]
+    assert proposal["media_asset_id"] == media_asset["id"]
+    assert proposal["stream_id"] == STREAM_ID
+    assert proposal["zone_id"] == FEEDER_ZONE_ID
+    assert proposal["event_id"] is None
+    assert proposal["visit_id"] is None
+    assert proposal["label"] == "bird"
+    assert proposal["confidence"] == 0.72
+    assert proposal["suggested_subject_label"] == "unknown_bird"
+    assert proposal["suggested_species"] == "unknown_bird"
+    assert proposal["status"] == "proposed"
+    assert proposal["bbox"] is None
+    assert len((await client.get("/api/events")).json()) == len(initial_events)
+    assert len((await client.get("/api/visits")).json()) == len(initial_visits)
+
+
+async def test_demo_detection_run_requires_existing_media_asset(client: httpx.AsyncClient) -> None:
+    response = await create_demo_run(client, "media-asset-missing")
+
+    assert response.status_code == 404
+    assert "Media asset" in response.json()["detail"]
+
+
+async def test_demo_detection_run_requires_existing_zone_when_zone_is_supplied(
+    client: httpx.AsyncClient,
+) -> None:
+    media_asset = (await import_image(client)).json()["media_asset"]
+
+    response = await create_demo_run(client, media_asset["id"], {"zone_id": "zone-missing"})
+
+    assert response.status_code == 404
+    assert "Zone" in response.json()["detail"]
+
+
+async def test_demo_detection_run_rejects_invalid_confidence(client: httpx.AsyncClient) -> None:
+    media_asset = (await import_image(client)).json()["media_asset"]
+
+    response = await create_demo_run(client, media_asset["id"], {"confidence": 1.2})
+
+    assert response.status_code == 422
+
+
+async def test_demo_detection_run_can_convert_and_export_corrected_truth(
+    client: httpx.AsyncClient,
+) -> None:
+    media_asset = (await import_image(client)).json()["media_asset"]
+    demo_result = (
+        await create_demo_run(
+            client,
+            media_asset["id"],
+            {
+                "label": "bird",
+                "confidence": 0.72,
+                "suggested_subject_label": "unknown_bird",
+                "suggested_species": "northern_cardinal",
+            },
+        )
+    ).json()
+    proposal = demo_result["proposals"][0]
+
+    decision_response = await client.post(
+        f"/api/detection-proposals/{proposal['id']}/decision",
+        json={"decision": "convert_to_event"},
+    )
+
+    assert decision_response.status_code == 200
+    decision = decision_response.json()
+    event = decision["event"]
+    visit = decision["visit"]
+    assert decision["proposal"]["status"] == "converted"
+    assert decision["proposal"]["event_id"] == event["id"]
+    assert decision["proposal"]["visit_id"] == visit["id"]
+    assert event["detections"][0]["label"] == "bird"
+    assert visit["review_status"] == "needs_review"
+
+    queue = (await client.get("/api/review-queue")).json()
+    queue_item = next(item for item in queue if item["visit_id"] == visit["id"])
+    assert queue_item["media_asset"]["id"] == media_asset["id"]
+
+    pre_correction_export = await client.post(
+        "/api/dataset-exports",
+        json={"name": "Demo proposal before correction"},
+    )
+    correction_response = await client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": visit["id"],
+            "label": "blue_jay",
+            "notes": "User-corrected demo proposal truth.",
+        },
+    )
+    export_response = await client.post(
+        "/api/dataset-exports",
+        json={"name": "Demo proposal after correction"},
+    )
+
+    assert pre_correction_export.status_code == 201
+    assert all(
+        record["visit_id"] != visit["id"]
+        for record in pre_correction_export.json()["manifest"]["records"]
+    )
+    assert correction_response.status_code == 201
+    assert correction_response.json()["visit"]["reviewed_label"] == "blue_jay"
+    assert export_response.status_code == 201
+    record = next(
+        record
+        for record in export_response.json()["manifest"]["records"]
+        if record["visit_id"] == visit["id"]
+    )
+    assert record["label"] == "blue_jay"
+    assert record["label"] != "bird"
+    assert record["detections"][0]["label"] == "bird"
+
+
 async def test_detection_proposal_can_be_created_and_listed_for_media(
     client: httpx.AsyncClient,
 ) -> None:

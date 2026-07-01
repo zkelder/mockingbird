@@ -156,6 +156,16 @@ export interface DetectionRunCreate {
   summary?: string | null;
 }
 
+export interface DemoDetectionRunCreate {
+  media_asset_id: string;
+  zone_id?: string | null;
+  label?: string;
+  confidence?: number;
+  suggested_subject_label?: string;
+  suggested_species?: string | null;
+  notes?: string | null;
+}
+
 export interface DetectionProposal {
   id: string;
   run_id: string;
@@ -203,6 +213,12 @@ export interface DetectionProposalDecisionResult {
   visit?: Visit | null;
   review_queue_count: number;
   analytics: AnalyticsSummary;
+}
+
+export interface DemoDetectionRunResult {
+  detection_run: DetectionRun;
+  proposals: DetectionProposal[];
+  review_queue_count: number;
 }
 
 export interface FolderImportPreviewRequest {
