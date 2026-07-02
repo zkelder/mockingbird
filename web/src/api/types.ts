@@ -8,6 +8,13 @@ export type SourceKind =
   | "integration";
 
 export type SourceStatus = "connected" | "disconnected" | "needs_setup";
+export type StreamPlaybackStatusValue =
+  | "demo"
+  | "not_configured"
+  | "unavailable"
+  | "offline"
+  | "unsupported";
+export type StreamPlaybackKind = "placeholder" | "demo_panel" | "external_url" | "media_preview";
 
 export type ZoneType =
   | "feeder"
@@ -82,6 +89,22 @@ export interface Stream {
   name: string;
   description: string;
   is_live: boolean;
+}
+
+export interface StreamPlaybackStatus {
+  stream_id: string;
+  source_id: string;
+  status: StreamPlaybackStatusValue;
+  playback_kind: StreamPlaybackKind;
+  display_title: string;
+  message: string;
+  setup_hint?: string | null;
+  supports_zone_editing: boolean;
+  supports_live_playback: boolean;
+  adapter_key?: string | null;
+  last_checked_at?: string | null;
+  preview_media_asset_id?: string | null;
+  preview_url?: string | null;
 }
 
 export interface Point {

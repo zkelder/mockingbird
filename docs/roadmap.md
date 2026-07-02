@@ -266,8 +266,7 @@ Current work:
 - Phase 9X: media-copy export dry-run implementation.
 - Phase 9Y: external training workspace checklist.
 - Phase 9Z: external training workspace template docs.
-- Next likely phase: Phase 10A — return to stream/source playback contract,
-  unless intentionally continuing classifier export implementation.
+- Follow-on phase: Phase 10A — stream/source playback contract.
 
 Validation:
 
@@ -302,3 +301,27 @@ Validation:
 - SpeciesNet remains under investigation as an optional future suggestion adapter; no runtime, model files, or dependency changes happen before source/license/runtime review.
 - SpeciesNet source review recommends boundary planning next, while runtime dependencies, model files, and downloads remain deferred.
 - Custom classifier training depends on reviewed local exports; raw suggestions, MotionEvidence, DetectionProposal, and unreviewed Visits are not training truth.
+
+## Phase 10 — Stream/source playback foundation
+
+Goal: make the stream-centered product honest about what can be shown before real
+source adapters exist.
+
+Current work:
+
+- Phase 10A: stream/source playback contract for Stream Detail.
+- Next likely phase: Phase 10B — source adapter configuration design for feeding
+  playback status without implementing capture or media decoding.
+
+Validation:
+
+- Known streams return product-level playback status.
+- Unknown streams return 404.
+- Demo and placeholder streams do not claim real live playback.
+- Zone editing remains central even when playback is not configured.
+- Playback status does not create MotionEvidence, Events, Visits, ReviewLabels,
+  SpeciesSuggestions, exports, analytics truth, media files, model artifacts, or
+  adapter runtime calls.
+- Future source adapters feed the playback contract instead of redefining the
+  Source, Stream, Zone, Event, Visit, review/correction, export, and analytics
+  loop.

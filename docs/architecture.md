@@ -21,6 +21,7 @@ Source adapters feed media into the platform, but the product is not organized a
 
 - Sources
 - Streams
+- Stream playback status contract
 - Zones
 - Events
 - Visits
@@ -64,6 +65,11 @@ Examples for later phases:
 - Webhook
 
 Adapters should normalize into the same source, stream, media, event, and visit model.
+
+Stream playback status is the product boundary between visible streams and future
+adapter playback. Adapters may feed status, preview references, or local playback
+URLs later, but the contract must not create evidence, review truth, exports, or
+analytics truth by itself.
 
 ## Local-first storage
 

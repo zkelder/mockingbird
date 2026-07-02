@@ -970,6 +970,40 @@ button {
   font-size: 0.86rem;
 }
 
+.playback-status-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.playback-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.playback-status-grid div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.playback-status-grid span,
+.playback-setup-hint {
+  color: #5c6a61;
+  font-size: 0.9rem;
+}
+
+.playback-status-grid strong {
+  color: #24382d;
+}
+
+.playback-setup-hint {
+  margin: 0;
+}
+
 .queue-card,
 .event-card {
   display: grid;
@@ -2644,6 +2678,10 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .playback-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .manifest-example-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2699,6 +2737,7 @@ button {
   .model-readiness-grid,
   .adapter-result-grid,
   .detection-proposal-meta,
+  .playback-status-grid,
   .record-meta-grid,
   .split-grid,
   .folder-import-layout,

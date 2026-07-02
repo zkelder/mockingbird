@@ -12,6 +12,12 @@ An adapter-backed input that can provide video, images, clips, or stream data.
 
 The central video experience shown in the app.
 
+## Stream Playback Status
+
+A read-only product contract describing whether a stream can show a demo panel,
+placeholder, preview, or future playback surface. It is not evidence or reviewed
+truth.
+
 ## Zone
 
 A user-drawn area on a stream that gives outdoor activity context.

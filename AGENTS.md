@@ -105,6 +105,11 @@ Every future implementation task must restate:
   require explicit scope and ignored local paths.
 - Workspace templates/docs must not create real folders, generated datasets,
   model artifacts, dependencies, or training scripts without explicit scope.
+- Stream/source playback work must follow
+  [docs/stream-source-playback-contract.md](docs/stream-source-playback-contract.md).
+  Playback status is product-level, read-only, and must not create evidence,
+  reviewed truth, exports, analytics truth, capture behavior, or adapter runtime
+  work unless explicitly scoped.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.

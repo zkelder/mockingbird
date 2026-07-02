@@ -53,6 +53,7 @@ import type {
   SpeciesSuggestionStatus,
   SpeciesSuggestionStatusUpdateRequest,
   Stream,
+  StreamPlaybackStatus,
   TaxonomyLabel,
   Visit,
   VisitDetail,
@@ -121,6 +122,8 @@ export const apiClient = {
   getSources: () => request<CameraSource[]>("/api/sources"),
   getStreams: () => request<Stream[]>("/api/streams"),
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),
+  getStreamPlaybackStatus: (streamId: string) =>
+    request<StreamPlaybackStatus>(`/api/streams/${streamId}/playback`),
   getStreamZones: (streamId: string) => request<Zone[]>(`/api/streams/${streamId}/zones`),
   getStreamEvents: (streamId: string) => request<Event[]>(`/api/streams/${streamId}/events`),
   getEventVisits: (eventId: string) => request<Visit[]>(`/api/events/${eventId}/visits`),

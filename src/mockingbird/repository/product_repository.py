@@ -126,6 +126,9 @@ from mockingbird.api.schemas import (
     SourceKind,
     SourceStatus,
     Stream,
+    StreamPlaybackKind,
+    StreamPlaybackStatus,
+    StreamPlaybackStatusValue,
     TaxonomyLabel,
     Visit,
     Zone,
@@ -597,6 +600,76 @@ class ProductRepository:
         with self.session_factory() as session:
             stream = session.get(StreamModel, stream_id)
             return _stream_from_model(stream) if stream else None
+
+    def get_stream_playback_status(self, stream_id: str) -> StreamPlaybackStatus | None:
+        with self.session_factory() as session:
+            stream = session.get(StreamModel, stream_id)
+            if stream is None:
+                return None
+
+            source = session.get(CameraSourceModel, stream.source_id)
+            if source is None:
+                return StreamPlaybackStatus(
+                    stream_id=stream.id,
+                    source_id=stream.source_id,
+                    status=StreamPlaybackStatusValue.unavailable,
+                    playback_kind=StreamPlaybackKind.placeholder,
+                    display_title=stream.name,
+                    message="The stream source is missing, so playback cannot be shown.",
+                    setup_hint="Restore the source before connecting future playback adapters.",
+                    supports_zone_editing=True,
+                    supports_live_playback=False,
+                )
+
+            adapter_key = source.kind
+            if source.kind == SourceKind.demo.value:
+                return StreamPlaybackStatus(
+                    stream_id=stream.id,
+                    source_id=stream.source_id,
+                    status=StreamPlaybackStatusValue.demo,
+                    playback_kind=StreamPlaybackKind.demo_panel,
+                    display_title=stream.name,
+                    message=(
+                        "This stream uses the local demo panel; no real video playback "
+                        "is connected yet."
+                    ),
+                    setup_hint=(
+                        "Future source adapters will feed this contract while zone editing "
+                        "continues to work here."
+                    ),
+                    supports_zone_editing=True,
+                    supports_live_playback=False,
+                    adapter_key=adapter_key,
+                )
+
+            if source.status == SourceStatus.disconnected.value:
+                status = StreamPlaybackStatusValue.offline
+                message = "The source is disconnected, so MockingBird can show only a placeholder."
+                setup_hint = "Reconnect or configure a future source adapter to enable playback."
+            elif source.status == SourceStatus.needs_setup.value:
+                status = StreamPlaybackStatusValue.not_configured
+                message = "This stream needs source setup before playback can be shown."
+                setup_hint = "Complete source setup later; zones can still be prepared now."
+            else:
+                status = StreamPlaybackStatusValue.not_configured
+                message = "This stream has product metadata but no playback adapter configured yet."
+                setup_hint = (
+                    "A future source adapter can feed playback here without changing review "
+                    "or zone workflows."
+                )
+
+            return StreamPlaybackStatus(
+                stream_id=stream.id,
+                source_id=stream.source_id,
+                status=status,
+                playback_kind=StreamPlaybackKind.placeholder,
+                display_title=stream.name,
+                message=message,
+                setup_hint=setup_hint,
+                supports_zone_editing=True,
+                supports_live_playback=False,
+                adapter_key=adapter_key,
+            )
 
     def streams_for_source(self, source_id: str) -> list[Stream]:
         with self.session_factory() as session:

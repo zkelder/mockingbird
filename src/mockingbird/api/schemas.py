@@ -26,6 +26,21 @@ class SourceStatus(str, Enum):
     needs_setup = "needs_setup"
 
 
+class StreamPlaybackStatusValue(str, Enum):
+    demo = "demo"
+    not_configured = "not_configured"
+    unavailable = "unavailable"
+    offline = "offline"
+    unsupported = "unsupported"
+
+
+class StreamPlaybackKind(str, Enum):
+    placeholder = "placeholder"
+    demo_panel = "demo_panel"
+    external_url = "external_url"
+    media_preview = "media_preview"
+
+
 class ZoneType(str, Enum):
     feeder = "feeder"
     birdbath = "birdbath"
@@ -143,6 +158,27 @@ class Stream(BaseModel):
     name: str
     description: str
     is_live: bool
+
+
+class StreamPlaybackStatus(BaseModel):
+    # Playback status is product-level readiness; adapters feed it later.
+    stream_id: str
+    source_id: str
+    status: StreamPlaybackStatusValue
+    playback_kind: StreamPlaybackKind
+    display_title: str
+    message: str
+    setup_hint: str | None = None
+    supports_zone_editing: bool
+    supports_live_playback: bool
+    adapter_key: str | None = None
+    last_checked_at: datetime | None = None
+    preview_media_asset_id: str | None = None
+    preview_url: str | None = None
+
+
+class StreamPlaybackStatusResponse(StreamPlaybackStatus):
+    pass
 
 
 class Point(BaseModel):

@@ -71,6 +71,8 @@ from mockingbird.api.schemas import (
     SpeciesSuggestionStatus,
     SpeciesSuggestionStatusUpdateRequest,
     Stream,
+    StreamPlaybackStatus,
+    StreamPlaybackStatusResponse,
     TaxonomyLabel,
     Visit,
     VisitDetail,
@@ -933,6 +935,14 @@ async def get_stream(stream_id: str) -> Stream:
     if stream is None:
         raise _not_found("Stream", stream_id)
     return stream
+
+
+@app.get("/api/streams/{stream_id}/playback", response_model=StreamPlaybackStatusResponse)
+async def get_stream_playback_status(stream_id: str) -> StreamPlaybackStatus:
+    status = get_repository().get_stream_playback_status(stream_id)
+    if status is None:
+        raise _not_found("Stream", stream_id)
+    return status
 
 
 @app.get("/api/streams/{stream_id}/zones", response_model=list[Zone])

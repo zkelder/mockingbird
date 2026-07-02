@@ -1,6 +1,15 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
-import type { Event, Point, ReviewQueueItem, Stream, Visit, Zone, ZoneType } from "../api/types";
+import type {
+  Event,
+  Point,
+  ReviewQueueItem,
+  Stream,
+  StreamPlaybackStatus,
+  Visit,
+  Zone,
+  ZoneType,
+} from "../api/types";
 import { StatusPill } from "../components/StatusPill";
 import { StreamPanel } from "../components/StreamPanel";
 import { formatDateTime, formatLabel } from "../utils";
@@ -16,6 +25,7 @@ interface StreamDetailPageProps {
 
 interface StreamDetailState {
   stream: Stream;
+  playback: StreamPlaybackStatus;
   zones: Zone[];
   events: Event[];
   visitsByEvent: Record<string, Visit[]>;
@@ -36,6 +46,16 @@ interface ZoneDraft {
   name: string;
   zone_type: ZoneType;
   is_active: boolean;
+}
+
+function playbackTone(status: StreamPlaybackStatus["status"]): "good" | "review" | "quiet" {
+  if (status === "demo") {
+    return "good";
+  }
+  if (status === "not_configured" || status === "unavailable") {
+    return "review";
+  }
+  return "quiet";
 }
 
 function rectanglePolygon(start: Point, end: Point): Point[] {
@@ -89,8 +109,9 @@ export function StreamDetailPage({
       setDraftPolygon(null);
       setDrawStart(null);
       try {
-        const [stream, zones, events] = await Promise.all([
+        const [stream, playback, zones, events] = await Promise.all([
           apiClient.getStream(streamId),
+          apiClient.getStreamPlaybackStatus(streamId),
           apiClient.getStreamZones(streamId),
           apiClient.getStreamEvents(streamId),
         ]);
@@ -100,6 +121,7 @@ export function StreamDetailPage({
         if (isMounted) {
           setDetail({
             stream,
+            playback,
             zones,
             events,
             visitsByEvent: Object.fromEntries(visitPairs),
@@ -287,7 +309,10 @@ export function StreamDetailPage({
     <div className="page-stack">
       <div className="stream-detail-heading">
         <div>
-          <StatusPill label={detail.stream.is_live ? "Demo live" : "Offline"} tone="good" />
+          <StatusPill
+            label={formatLabel(detail.playback.status)}
+            tone={playbackTone(detail.playback.status)}
+          />
           <h1>{detail.stream.name}</h1>
           <p>
             {detail.stream.description} Draw zones, inspect events, and turn corrections into local
@@ -323,6 +348,40 @@ export function StreamDetailPage({
         onDrawMove={handleDrawMove}
         onDrawEnd={handleDrawEnd}
       />
+
+      <section className="panel playback-status-panel">
+        <div className="section-heading">
+          <div>
+            <h2>{detail.playback.display_title}</h2>
+            <span className="meta-text">{detail.playback.message}</span>
+          </div>
+          <StatusPill
+            label={formatLabel(detail.playback.playback_kind)}
+            tone={playbackTone(detail.playback.status)}
+          />
+        </div>
+        <div className="playback-status-grid">
+          <div>
+            <span>Status</span>
+            <strong>{formatLabel(detail.playback.status)}</strong>
+          </div>
+          <div>
+            <span>Live playback</span>
+            <strong>{detail.playback.supports_live_playback ? "Supported" : "Not available"}</strong>
+          </div>
+          <div>
+            <span>Zone editing</span>
+            <strong>{detail.playback.supports_zone_editing ? "Available" : "Unavailable"}</strong>
+          </div>
+          <div>
+            <span>Source adapter</span>
+            <strong>{detail.playback.adapter_key ? formatLabel(detail.playback.adapter_key) : "None"}</strong>
+          </div>
+        </div>
+        {detail.playback.setup_hint ? (
+          <p className="playback-setup-hint">{detail.playback.setup_hint}</p>
+        ) : null}
+      </section>
 
       <section className="split-grid">
         <div className="panel">
