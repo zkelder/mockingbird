@@ -136,6 +136,10 @@ Every future implementation task must restate:
   or classifier truth. Saved-preview-origin MotionEvidence is pending evidence
   only and must not create Events, Visits, or truth without explicit promotion
   and review/correction.
+- Cleanup/delete work for saved preview media must follow
+  [docs/external-url-saved-media-retention-design.md](docs/external-url-saved-media-retention-design.md),
+  require explicit scope, prefer dry-run/reporting first, separate file deletion
+  from record deletion, and protect reviewed truth/export context by default.
 - Source setup review/status work must remain read-only and must not connect to
   sources, capture/decode media, run adapters/models, or create evidence/truth.
 - Local MegaDetector setup must follow

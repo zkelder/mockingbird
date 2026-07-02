@@ -52,6 +52,18 @@ An explicit action that turns a saved preview MediaAsset into pending
 MotionEvidence. The Motion Evidence UI can show its attached saved media and
 safe provenance, but it does not create Events, Visits, ReviewLabels, or truth.
 
+## Saved Preview Retention
+
+The future policy/reporting layer for deciding how saved preview MediaAssets are
+kept, archived, or cleaned up without silently deleting reviewed truth or
+breaking MotionEvidence/Event/Visit provenance.
+
+## Retention Risk Level
+
+A cleanup classification for saved media, such as low, medium, high, or
+protected, based on whether the MediaAsset is unlinked, attached to evidence,
+promoted into Event/Visit context, or linked to reviewed correction truth.
+
 ## Source Setup Review
 
 A read-only product summary of provider configuration, Source connection

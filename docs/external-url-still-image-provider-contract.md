@@ -151,6 +151,8 @@ Defaults:
 
 Preview-to-MediaAsset behavior must follow
 [external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
+Saved media retention and cleanup are separate from preview fetch and save; see
+[external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
 
 ## Dependency Policy
 
@@ -253,6 +255,7 @@ Recommended next phases:
   preview/fetch/save/handoff/promotion/correction boundaries.
 - Phase 12B: source/stream smoke-test dev checklist for manual preview, save,
   evidence, promotion, and correction validation.
+- Phase 12C: external_url saved media cleanup/retention design.
 - Later: MJPEG, RTSP, USB/local camera, ESP32-CAM, and browser camera designs
   separately.
 
@@ -285,3 +288,10 @@ Phase 12B adds the manual developer checklist for validating the same
 external_url chain in the running browser/API without adding provider behavior,
 automatic fetch behavior, live playback, media decoding, dependencies, or truth
 writes before correction.
+
+## Phase 12C Status
+
+Phase 12C designs retention and cleanup policy for saved external_url preview
+MediaAssets. Preview fetch remains transient; cleanup is a separate future
+workflow with dry-run first, user control, safe provenance, and protected
+reviewed truth.

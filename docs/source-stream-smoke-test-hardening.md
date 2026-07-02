@@ -13,6 +13,8 @@ behavior.
 Phase 12B mirrors this automated coverage as a manual developer/browser
 checklist in
 [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
+Phase 12C designs saved preview media retention and cleanup policy in
+[external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
 
 ## Product Flow Covered
 
@@ -83,7 +85,9 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - No media decoding or frame extraction.
 - No model, detector, or classifier runtime.
 - No frontend behavior beyond existing API contracts.
-- No retention or cleanup policy.
+- No cleanup or retention implementation. Retention policy is designed
+  separately in
+  [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
 
 ## Future Smoke-Test Expansions
 
@@ -91,5 +95,6 @@ Visit/Event review state, dataset coverage, and analytics truth change.
   path. See
   [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
 - Phase 12C: external_url saved-media retention and cleanup design.
+- Phase 12D: saved media retention report/dry-run API, no deletion.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.

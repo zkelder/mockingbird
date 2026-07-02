@@ -430,8 +430,9 @@ Current work:
   preview -> MediaAsset -> MotionEvidence -> promotion -> correction path.
 - Phase 12B: Source/Stream smoke-test dev checklist for manual browser/API
   validation of the same explicit path.
-- Next likely phase: Phase 12C — external_url saved-media retention/cleanup
-  design.
+- Phase 12C: external_url saved media cleanup/retention design.
+- Next likely phase: Phase 12D — saved media retention report/dry-run API, no
+  deletion.
 
 Validation:
 
@@ -456,3 +457,10 @@ Validation:
   fetch creates no records, save creates MediaAsset only, media-to-evidence
   creates MotionEvidence only, promote creates Event/Visit only, and correction
   creates ReviewLabel truth.
+- Phase 12C designs retention policy only; it adds no delete implementation,
+  retention job, API endpoint, UI, backend code, frontend code, tests,
+  dependencies, generated media, or truth mutation.
+- Saved preview cleanup must separate file deletion from MediaAsset record
+  deletion, classify risk by linkage/review state, dry-run before destructive
+  work, and protect reviewed truth/export/classifier-readiness context by
+  default.

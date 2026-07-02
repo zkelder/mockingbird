@@ -213,6 +213,11 @@ evidence records. Future bulk cleanup must not delete reviewed evidence/media
 without explicit confirmation. Generated media remains under ignored local data
 paths.
 
+Retention risk policy for saved preview media is documented in
+[external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
+Media linked to pending, promoted, or reviewed evidence needs warnings before
+cleanup, and reviewed truth-linked media is protected by default.
+
 ## Testing Expectations For Future Implementation
 
 Future tests should prove:
@@ -244,7 +249,7 @@ Future tests should prove:
   MotionEvidence -> promotion -> correction boundaries.
 - Phase 12B: source/stream smoke-test dev checklist for manual evidence handoff
   validation.
-- Later: saved preview cleanup/retention design.
+- Phase 12C: external_url saved media cleanup/retention design.
 - Later: automated external_url sampling/motion design, if ever.
 
 ## Explicit Non-Goals
@@ -274,3 +279,10 @@ only after the existing correction route.
 Phase 12B documents manual validation for saved preview MediaAsset ->
 MotionEvidence -> promotion -> correction. It keeps evidence creation explicit
 and verifies truth appears only after the existing correction route.
+
+## Phase 12C Status
+
+Phase 12C defines cleanup risk states for saved preview media linked to
+MotionEvidence, promoted Event/Visit context, and reviewed corrections. Cleanup
+must warn before weakening evidence context and must not delete reviewed truth
+or export/classifier readiness context by default.

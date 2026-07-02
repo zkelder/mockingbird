@@ -79,6 +79,9 @@ MotionEvidence promotion, while correction remains the truth boundary.
 Phase 12B adds a manual checklist for validating that this behavior stays
 explicit and below Source/Stream contracts in the running app:
 [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
+Phase 12C defines retention policy for saved preview MediaAssets before any
+cleanup behavior is implemented:
+[external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
 
 ## Explicit Non-Recommended First Adapters
 
@@ -165,6 +168,8 @@ continue with a placeholder or preview.
 - Local storage must not be unbounded.
 - Preview artifacts, if any later, must live under ignored local data paths.
 - Cleanup and retention must be explicit before background capture exists.
+- Adapter-created MediaAssets need retention and cleanup policy before delete
+  behavior; reviewed truth and provenance must be protected by default.
 
 ## Dependency Boundary
 
@@ -216,6 +221,7 @@ Future implementation must test:
   correction path.
 - Phase 12B: source/stream smoke-test dev checklist for manual browser/API
   validation of the same explicit path.
+- Phase 12C: external_url saved media cleanup/retention design.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 
@@ -246,3 +252,10 @@ Phase 12B documents the manual browser/API checklist for the same path. The
 checklist verifies adapter behavior remains explicit and underneath
 Source/Stream contracts; it adds no adapter implementation, worker, live
 playback, media decoding, generated media, or truth creation.
+
+## Phase 12C Status
+
+Phase 12C designs cleanup and retention policy for saved preview MediaAssets
+created under the adapter boundary. It keeps cleanup user-controlled, separates
+file deletion from record deletion, recommends dry-run first, and protects
+reviewed truth/provenance by default.

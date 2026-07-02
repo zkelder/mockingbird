@@ -72,6 +72,11 @@ It must not record raw credentials or raw auth secrets.
 - Repeated saves must not become unbounded without cleanup policy.
 - Cleanup and retention must be explicit before implementation.
 
+Saved preview media retention and cleanup risk policy is documented in
+[external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
+Saved previews can accumulate; cleanup remains a separate future phase and must
+not silently remove reviewed truth or provenance.
+
 ## Supported Content Policy
 
 - Initially support only `image/jpeg`, `image/png`, and `image/webp`.
@@ -220,6 +225,7 @@ promotion/review flow.
 - Phase 12A: source/stream smoke-test hardening for explicit save as
   MediaAsset only.
 - Phase 12B: source/stream smoke-test dev checklist for manual save validation.
+- Phase 12C: external_url saved media cleanup/retention design.
 - Later: other source-provider handoff designs separately.
 
 ## Explicit Non-Goals
@@ -249,3 +255,10 @@ DatasetExports, analytics truth, or dataset truth.
 Phase 12B documents the browser/API checklist for confirming the explicit save
 path manually: no auto-save, one MediaAsset on success, no evidence, no
 Event/Visit, no ReviewLabel, and no truth until later explicit actions.
+
+## Phase 12C Status
+
+Phase 12C defines saved preview media retention before cleanup implementation.
+It separates file deletion from MediaAsset record deletion, classifies linked
+media by risk, protects reviewed truth by default, and recommends dry-run
+reporting before delete behavior.

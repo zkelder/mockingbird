@@ -115,6 +115,9 @@ truth write.
 Phase 12B documents the manual checklist for validating that same promotion and
 correction boundary in the browser/API:
 [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
+Phase 12C classifies promoted saved-preview media as high risk for cleanup
+because deleting it can weaken Event/Visit review provenance. See
+[external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 
@@ -191,6 +194,10 @@ Phase 12A tests add full source/stream smoke coverage for:
 
 Phase 12B adds the companion manual checklist for browser/API validation of
 those same steps.
+
+Phase 12C adds cleanup/retention design for promoted saved-preview media:
+promoted Event/Visit context is high risk, and reviewed correction context is
+protected by default.
 
 ## Explicit Non-Goals
 

@@ -267,6 +267,14 @@ Phase 12B adds a manual developer/browser checklist for validating the same
 saved-preview-origin MotionEvidence path in the running app. See
 [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
 
+## Phase 12C Status
+
+Phase 12C designs retention rules for saved preview media attached to
+MotionEvidence. Attached media can be useful review context, so cleanup must
+warn for pending/promoted evidence, protect reviewed truth by default, and avoid
+silently weakening provenance. See
+[external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
+
 ## Phase 8S Status
 
 Phase 8S lets pending MotionEvidence be created with optional `snapshot_media_asset_id`.

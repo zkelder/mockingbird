@@ -66,6 +66,11 @@ not create truth by being attached.
 After explicit promotion, saved preview media can remain visible as review
 context on Event/Visit detail. It still does not confirm labels, reviewed status,
 export readiness, or dataset truth.
+Attached or representative media has cleanup implications: pending evidence
+media needs warnings, promoted Event/Visit media is high risk, and reviewed
+truth-linked media should be protected by default. See
+[external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md)
+for the saved external_url media policy.
 
 When supported, promotion should carry or link the media context to created Event/Visit evidence while keeping those records unreviewed.
 
@@ -96,6 +101,9 @@ Classifier output must remain suggestion/evidence only until the user reviews or
 Privacy zones should suppress media attachment by default.
 
 Ignore zones should suppress evidence creation or promotion according to existing policy. Implementation must avoid saving unnecessary frames from privacy areas. User-controlled zones remain central to whether media can be retained.
+
+Cleanup or retention UI must warn before removing attached media that supports
+review provenance, and must not delete reviewed truth by default.
 
 ## Failure And Noise Cases
 

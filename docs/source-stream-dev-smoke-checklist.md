@@ -187,6 +187,10 @@ curl -s -X POST http://127.0.0.1:8000/api/review-labels \
 - [ ] No copied training media is created.
 - [ ] No media appears outside `data/` from smoke validation.
 - [ ] Clean up local test media when it is no longer useful.
+- [ ] Treat saved preview media as governed by
+      [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md):
+      unlinked media is lowest risk, linked/reviewed media needs warnings, and
+      cleanup/delete behavior is not implemented in this checklist.
 
 ## Troubleshooting
 

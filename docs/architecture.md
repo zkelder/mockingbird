@@ -102,6 +102,11 @@ playback, automation, media decoding, or truth writes before correction.
 Phase 12B adds a manual developer/browser checklist for validating the same
 explicit flow in the running app; see
 [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
+Phase 12C designs saved preview media retention before any cleanup
+implementation. Saved MediaAssets can accumulate, but cleanup must be
+user-controlled, dry-run first, and careful not to delete reviewed truth or
+break review provenance. See
+[external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
@@ -139,3 +144,7 @@ analytics truth by itself.
 MockingBird should prefer local storage for media, labels, corrections, metadata, exports, and analytics.
 
 Cloud services may be optional later, but they should not be required for the core product loop.
+
+Saved media retention is a storage boundary. Future cleanup work must separate
+file deletion from record deletion, protect reviewed truth by default, and report
+stale or missing media safely without decoding media.

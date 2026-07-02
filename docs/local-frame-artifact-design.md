@@ -46,6 +46,9 @@ path into MotionEvidence through the explicit Phase 11G handoff.
 Phase 11I keeps that distinction visible after promotion: saved external URL
 preview media can appear as Event/Visit review context, but it is still not a
 sampled-frame artifact and does not create truth.
+Phase 12C designs cleanup policy for saved external_url media separately from
+future local frame artifact cleanup:
+[external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
 
 ## Relationship To MediaAsset
 
@@ -117,6 +120,10 @@ Classifier output remains suggestion/evidence only. User correction remains trut
 Privacy zones should suppress artifact creation by default.
 
 Users should be able to understand where local artifacts are stored. Future cleanup, reset, and export behavior must handle artifacts intentionally. Local-first means no cloud upload by default.
+
+Saved external_url media retention is a separate policy from future local frame
+artifact cleanup. Both should protect reviewed truth and avoid silent provenance
+loss.
 
 ## Failure And Noise Cases
 
