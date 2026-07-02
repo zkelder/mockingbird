@@ -26,8 +26,9 @@ The best frame is evidence context only. It is not a species label, not a review
 - Phase 8O confirms MotionEvidence create/list/detail/ignore/promote responses preserve `snapshot_media_asset_id`.
 - Promotion can attach or preserve `snapshot_media_asset_id`; when a Visit is created, the current Visit model exposes the media through `representative_media_path`, and Event/Visit detail responses can expose the linked MediaAsset.
 - Phase 8Q adds the ability to attach, replace, or clear an existing MediaAsset reference on pending MotionEvidence.
+- Phase 8R makes attached media easier to review in the Motion Evidence UI by showing the reference, existing media-file access, and preview when the current MediaAsset preview path supports it.
 - Event-only promotion does not have a direct Event media field yet, so the media reference remains on MotionEvidence until a future propagation phase.
-- No media capture, media attachment, image parsing, video parsing, or decoding is implemented yet.
+- No media capture, image parsing, video parsing, decoding, or thumbnail generation is implemented yet.
 
 ## Future Best-Frame Selection Policy
 
@@ -104,8 +105,8 @@ Recommended future phases:
 - Phase 8O: best-frame attachment schema/API compatibility review.
 - Phase 8P: local frame artifact design.
 - Phase 8Q: attach existing MediaAsset to pending MotionEvidence.
-- Phase 8R: Motion Evidence media preview polish or local frame artifact creation from imported media.
-- Phase 8S: artifact propagation to Visit detail if any gaps remain.
+- Phase 8R: Motion Evidence media preview polish for existing MediaAsset references.
+- Phase 8S: local frame artifact creation from existing imported media or media-reference propagation polish.
 - Phase 8T: controlled local frame capture from already-configured streams/imported media.
 
 ## Phase 8O Status
@@ -140,6 +141,12 @@ This is design-only. No artifact creation, media capture, decoding, thumbnailing
 Phase 8Q implements attachment of existing MediaAsset references to pending MotionEvidence.
 
 This proves the reference path without creating media: no capture, decoding, thumbnailing, stream sampling, source adapter, model call, or truth write is added. Promotion keeps the reference as evidence context.
+
+## Phase 8R Status
+
+Phase 8R polishes the review surface for attached existing media.
+
+Motion Evidence now exposes attached MediaAsset context more clearly in the UI, including the current ID, existing file link, and reusable media preview where available. The attachment remains evidence only and still does not create labels, reviewed status, export readiness, dataset coverage truth, model output, or species truth.
 
 ## Test Plan For Future Implementation
 

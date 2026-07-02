@@ -112,6 +112,12 @@ Phase 8Q implements attachment of existing MediaAsset records to pending MotionE
 
 This gives reviewers optional visual evidence context from already-local media while automated artifact creation remains deferred. Attachment does not capture frames, decode media, generate thumbnails, sample streams, call models, create reviewed labels, or create export-ready truth.
 
+## Phase 8R Status
+
+Phase 8R polishes Motion Evidence media visibility.
+
+Attached existing MediaAsset references are easier to see and open from the Motion Evidence review surface, with preview when the current MediaAsset preview path supports it. Automated capture, media decoding, thumbnail generation, source adapters, stream workers, model calls, and truth writes remain deferred.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

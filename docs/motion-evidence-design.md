@@ -213,6 +213,12 @@ Phase 8Q lets pending MotionEvidence attach, replace, or clear an existing Media
 
 The attachment is evidence context only. It does not create Event, Visit, ReviewLabel, export, dataset coverage truth, reviewed status, media files, thumbnails, model output, or species truth. Ignored and promoted evidence reject media attachment changes.
 
+## Phase 8R Status
+
+Phase 8R improves the Motion Evidence review surface for attached media context.
+
+When `snapshot_media_asset_id` is present, the UI shows the attached visual evidence context, the MediaAsset ID, existing media-file access, and inline preview when the existing MediaAsset preview path supports it. Evidence without media remains reviewable, ignorable, and promotable. Media context does not create species labels, reviewed observations, exports, dataset coverage truth, or any other dataset truth.
+
 ## Test Plan
 
 Implementation tests should prove:

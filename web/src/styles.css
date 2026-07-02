@@ -1657,6 +1657,42 @@ button {
   padding-top: 12px;
 }
 
+.attached-media-section,
+.attached-media-context {
+  display: grid;
+  gap: 12px;
+}
+
+.attached-media-id-row {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.attached-media-id-row span {
+  color: #627168;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.attached-media-id-row strong {
+  overflow-wrap: anywhere;
+}
+
+.media-empty-note,
+.media-readonly-note {
+  margin: 0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f7faf3;
+  color: #536258;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
 .motion-attachment-form {
   border-bottom: 1px solid #e0e7dd;
   padding-bottom: 12px;

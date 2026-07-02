@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
+  MediaAsset,
   MotionEvidence,
   MotionEvidenceCreateRequest,
   MotionEvidencePromoteResponse,
@@ -12,6 +13,7 @@ import type {
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
+import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
@@ -79,6 +81,7 @@ export function MotionEvidencePage({
   onEvidenceChanged,
 }: MotionEvidencePageProps) {
   const [evidence, setEvidence] = useState<MotionEvidence[]>([]);
+  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<MotionEvidenceFilter>("pending");
   const [zoneFilter, setZoneFilter] = useState("");
@@ -127,6 +130,10 @@ export function MotionEvidencePage({
 
   const sourceById = useMemo(() => new Map(sources.map((source) => [source.id, source])), [sources]);
   const streamById = useMemo(() => new Map(streams.map((stream) => [stream.id, stream])), [streams]);
+  const mediaById = useMemo(
+    () => new Map(mediaAssets.map((asset) => [asset.id, asset])),
+    [mediaAssets],
+  );
   const zoneFilteredEvidence = useMemo(
     () =>
       evidence.filter((item) =>
@@ -148,6 +155,9 @@ export function MotionEvidencePage({
   }, [statusFilter, zoneFilteredEvidence]);
   const selectedEvidence =
     sortedEvidence.find((item) => item.id === selectedEvidenceId) ?? sortedEvidence[0] ?? null;
+  const selectedMediaAsset = selectedEvidence?.snapshot_media_asset_id
+    ? mediaById.get(selectedEvidence.snapshot_media_asset_id) ?? null
+    : null;
   const evidenceCounts = useMemo(() => {
     const counts: Record<MotionEvidenceFilter, number> = {
       all: zoneFilteredEvidence.length,
@@ -170,8 +180,12 @@ export function MotionEvidencePage({
     }
     setError(null);
     try {
-      const response = await apiClient.listMotionEvidence({ status: "all" });
+      const [response, nextMediaAssets] = await Promise.all([
+        apiClient.listMotionEvidence({ status: "all" }),
+        apiClient.getMediaAssets(),
+      ]);
       setEvidence(response.motion_evidence);
+      setMediaAssets(nextMediaAssets);
       setSelectedEvidenceId((current) =>
         options.selectEvidenceId &&
         response.motion_evidence.some((item) => item.id === options.selectEvidenceId)
@@ -948,7 +962,12 @@ export function MotionEvidencePage({
                     <span className="meta-text">{item.zone_id}</span>
                     <h2>{item.id}</h2>
                   </div>
-                  <MotionEvidenceStatusPill status={item.status} />
+                  <div className="record-status-stack">
+                    {item.snapshot_media_asset_id ? (
+                      <EvidenceBadge label="Media attached" tone="evidence" />
+                    ) : null}
+                    <MotionEvidenceStatusPill status={item.status} />
+                  </div>
                 </div>
                 <div className="motion-evidence-meta">
                   <span>{formatPercent(item.peak_changed_ratio)} peak change</span>
@@ -1007,7 +1026,7 @@ export function MotionEvidencePage({
                 <section className="motion-evidence-subsection">
                   <h3>Evidence links</h3>
                   <div className="motion-evidence-links">
-                    <span>Snapshot media: {selectedEvidence.snapshot_media_asset_id ?? "none"}</span>
+                    <span>Attached media: {selectedEvidence.snapshot_media_asset_id ?? "none"}</span>
                     <span>Promoted Event: {selectedEvidence.promoted_event_id ?? "none"}</span>
                     <span>Promoted Visit: {selectedEvidence.promoted_visit_id ?? "none"}</span>
                   </div>
@@ -1041,6 +1060,68 @@ export function MotionEvidencePage({
                   </div>
                 </section>
 
+                <section className="motion-evidence-subsection attached-media-section">
+                  <div className="section-heading">
+                    <div>
+                      <h3>Attached visual evidence</h3>
+                      <span className="meta-text">
+                        Media is evidence context only. It does not create a species label,
+                        reviewed observation, or export-ready truth.
+                      </span>
+                    </div>
+                    {selectedEvidence.snapshot_media_asset_id ? (
+                      <EvidenceBadge label="Evidence context" tone="evidence" />
+                    ) : (
+                      <EvidenceBadge label="No media" tone="quiet" />
+                    )}
+                  </div>
+                  {selectedEvidence.snapshot_media_asset_id ? (
+                    <div className="attached-media-context">
+                      <div className="attached-media-id-row">
+                        <span>MediaAsset ID</span>
+                        <strong>{selectedEvidence.snapshot_media_asset_id}</strong>
+                      </div>
+                      {selectedMediaAsset ? (
+                        <MediaAssetPreview asset={selectedMediaAsset} compact />
+                      ) : (
+                        <div className="notice-panel">
+                          <strong>Media details not loaded</strong>
+                          <span>
+                            The evidence stores this MediaAsset reference. Use the existing media
+                            file route to open it.
+                          </span>
+                        </div>
+                      )}
+                      <div className="detail-actions">
+                        <a
+                          className="secondary-action"
+                          href={apiClient.mediaFileUrl(selectedEvidence.snapshot_media_asset_id)}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          Open media file
+                        </a>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="media-empty-note">
+                      No media is attached yet. MotionEvidence can still be reviewed, ignored, or
+                      promoted without media.
+                    </p>
+                  )}
+                  {selectedEvidence.status === "promoted" ? (
+                    <p className="media-readonly-note">
+                      Media attachment is locked after promotion so Event/Visit review context stays
+                      stable. Correct labels on the promoted review records before export.
+                    </p>
+                  ) : null}
+                  {selectedEvidence.status === "ignored" ? (
+                    <p className="media-readonly-note">
+                      Media attachment is read-only because this evidence was ignored as noise.
+                    </p>
+                  ) : null}
+                </section>
+
                 <section className="notice-panel">
                   <strong>Truth boundary</strong>
                   <span>
@@ -1055,17 +1136,29 @@ export function MotionEvidencePage({
                       <div>
                         <strong>Attach existing media</strong>
                         <p>
-                          Attach an existing local media asset as visual evidence. This does not
-                          create labels, reviewed observations, or export-ready truth.
+                          The ID must refer to an existing imported/local media asset for the same
+                          stream. This does not create labels, reviewed observations, or export-ready
+                          truth.
                         </p>
+                        <span className="field-helper">
+                          Current attached ID: {selectedEvidence.snapshot_media_asset_id ?? "none"}
+                        </span>
                       </div>
                       <label>
                         MediaAsset ID
                         <input
+                          list="motion-media-assets"
                           value={attachMediaAssetId}
                           onChange={(event) => setAttachMediaAssetId(event.target.value)}
                           placeholder="media_best_frame_001"
                         />
+                        <datalist id="motion-media-assets">
+                          {mediaAssets.map((asset) => (
+                            <option key={asset.id} value={asset.id}>
+                              {asset.original_filename}
+                            </option>
+                          ))}
+                        </datalist>
                       </label>
                       <div className="detail-actions">
                         <button
@@ -1143,6 +1236,9 @@ export function MotionEvidencePage({
                     <span>
                       This Motion Evidence is now unreviewed Event/Visit evidence. Open the detail
                       records and correct labels before export.
+                      {selectedEvidence.snapshot_media_asset_id
+                        ? ` Attached media ${selectedEvidence.snapshot_media_asset_id} remains evidence context.`
+                        : ""}
                     </span>
                   </div>
                 ) : null}
