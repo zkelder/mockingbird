@@ -53,6 +53,9 @@ import type {
   SpeciesSuggestionStatus,
   SpeciesSuggestionStatusUpdateRequest,
   SourceConnectionStatus,
+  SourceProviderConfiguration,
+  SourceProviderConfigurationUpdate,
+  SourceProviderDefinition,
   Stream,
   StreamPlaybackStatus,
   TaxonomyLabel,
@@ -121,8 +124,20 @@ export const apiClient = {
     return request<TaxonomyLabel[]>(`/api/taxonomy/suggestions${query ? `?${query}` : ""}`);
   },
   getSources: () => request<CameraSource[]>("/api/sources"),
+  getSourceProviderDefinitions: () =>
+    request<SourceProviderDefinition[]>("/api/source-provider-definitions"),
   getSourceConnectionStatus: (sourceId: string) =>
     request<SourceConnectionStatus>(`/api/sources/${sourceId}/connection`),
+  getSourceProviderConfiguration: (sourceId: string) =>
+    request<SourceProviderConfiguration>(`/api/sources/${sourceId}/provider-configuration`),
+  updateSourceProviderConfiguration: (
+    sourceId: string,
+    payload: SourceProviderConfigurationUpdate,
+  ) =>
+    request<SourceProviderConfiguration>(`/api/sources/${sourceId}/provider-configuration`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   getStreams: () => request<Stream[]>("/api/streams"),
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),
   getStreamPlaybackStatus: (streamId: string) =>

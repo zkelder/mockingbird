@@ -49,6 +49,13 @@ editing -> future provider implementation.
 - `manual_media`: manual upload or folder-style media source boundary.
 - `external_url`: future local or user-provided playback URL boundary.
 
+## Provider Configuration Relationship
+
+Source provider configuration is the metadata layer underneath connection
+status. Connection status reports the selected provider key, configured fields,
+and missing fields, but it still does not connect to a Source or claim live
+playback.
+
 ## Relationship To Stream Playback Contract
 
 Source connection status explains upstream provider readiness. Stream playback

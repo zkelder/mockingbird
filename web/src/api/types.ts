@@ -113,6 +113,42 @@ export interface SourceConnectionStatus {
   last_checked_at?: string | null;
 }
 
+export interface SourceProviderField {
+  key: string;
+  label: string;
+  required: boolean;
+  secret: boolean;
+  description?: string | null;
+  placeholder?: string | null;
+}
+
+export interface SourceProviderDefinition {
+  provider_key: string;
+  display_name: string;
+  description: string;
+  status: "available_contract_only" | "future_adapter" | "demo";
+  supports_live_playback: boolean;
+  supports_zone_editing: boolean;
+  fields: SourceProviderField[];
+}
+
+export interface SourceProviderConfiguration {
+  source_id: string;
+  provider_key: string;
+  configured_fields: string[];
+  missing_fields: string[];
+  safe_config_preview: Record<string, string>;
+  supports_live_playback: boolean;
+  supports_zone_editing: boolean;
+  message: string;
+  setup_hint?: string | null;
+}
+
+export interface SourceProviderConfigurationUpdate {
+  provider_key: string;
+  config: Record<string, string | null>;
+}
+
 export interface Stream {
   id: string;
   source_id: string;

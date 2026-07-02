@@ -20,6 +20,7 @@ Source adapters feed media into the platform, but the product is not organized a
 ## Product API
 
 - Sources
+- Source provider configuration contract
 - Source connection/provider status contract
 - Streams
 - Stream playback status contract
@@ -66,6 +67,11 @@ Examples for later phases:
 - Webhook
 
 Adapters should normalize into the same source, stream, media, event, and visit model.
+
+Source provider configuration is the metadata boundary for intended provider
+setup. It may store safe setup fields and configured/not-configured markers, but
+it must not store raw secrets, connect to sources, decode media, create evidence,
+or write review truth.
 
 Source connection status is the product boundary between source metadata and
 future provider readiness. Providers may feed safe status, field readiness, and

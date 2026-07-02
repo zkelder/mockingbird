@@ -43,6 +43,12 @@ class SourceProviderKind(str, Enum):
     external_url = "external_url"
 
 
+class SourceProviderDefinitionStatus(str, Enum):
+    available_contract_only = "available_contract_only"
+    future_adapter = "future_adapter"
+    demo = "demo"
+
+
 class StreamPlaybackStatusValue(str, Enum):
     demo = "demo"
     not_configured = "not_configured"
@@ -189,6 +195,42 @@ class SourceConnectionStatus(BaseModel):
 
 class SourceConnectionStatusResponse(SourceConnectionStatus):
     pass
+
+
+class SourceProviderField(BaseModel):
+    key: str
+    label: str
+    required: bool
+    secret: bool
+    description: str | None = None
+    placeholder: str | None = None
+
+
+class SourceProviderDefinition(BaseModel):
+    provider_key: str
+    display_name: str
+    description: str
+    status: SourceProviderDefinitionStatus
+    supports_live_playback: bool
+    supports_zone_editing: bool
+    fields: list[SourceProviderField] = Field(default_factory=list)
+
+
+class SourceProviderConfiguration(BaseModel):
+    source_id: str
+    provider_key: str
+    configured_fields: list[str] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    safe_config_preview: dict[str, str] = Field(default_factory=dict)
+    supports_live_playback: bool
+    supports_zone_editing: bool
+    message: str
+    setup_hint: str | None = None
+
+
+class SourceProviderConfigurationUpdate(BaseModel):
+    provider_key: str
+    config: dict[str, str | None] = Field(default_factory=dict)
 
 
 class Stream(BaseModel):

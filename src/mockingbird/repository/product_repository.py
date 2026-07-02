@@ -121,6 +121,11 @@ from mockingbird.api.schemas import (
     ReviewStatus,
     SourceConnectionStatus,
     SourceConnectionStatusValue,
+    SourceProviderConfiguration,
+    SourceProviderConfigurationUpdate,
+    SourceProviderDefinition,
+    SourceProviderDefinitionStatus,
+    SourceProviderField,
     SpeciesSuggestionCreateRequest,
     SpeciesSuggestionResponse,
     SpeciesSuggestionStatus,
@@ -215,6 +220,185 @@ BASE_MODEL_ADAPTERS: tuple[ModelAdapter, ...] = (
     ),
 )
 
+SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
+    SourceProviderDefinition(
+        provider_key="demo",
+        display_name="Demo source",
+        description="Seeded local demo metadata for stream, zone, and review workflows.",
+        status=SourceProviderDefinitionStatus.demo,
+        supports_live_playback=False,
+        supports_zone_editing=True,
+        fields=[
+            SourceProviderField(
+                key="demo_seed",
+                label="Demo seed",
+                required=False,
+                secret=False,
+                description="Local seeded demo context.",
+                placeholder="backyard-demo",
+            )
+        ],
+    ),
+    SourceProviderDefinition(
+        provider_key="manual_media",
+        display_name="Manual media",
+        description="Metadata for sources that begin from manually supplied local media.",
+        status=SourceProviderDefinitionStatus.available_contract_only,
+        supports_live_playback=False,
+        supports_zone_editing=True,
+        fields=[
+            SourceProviderField(
+                key="source_label",
+                label="Source label",
+                required=False,
+                secret=False,
+                description="Optional label for grouping local media under this source.",
+                placeholder="Backyard imports",
+            )
+        ],
+    ),
+    SourceProviderDefinition(
+        provider_key="external_url",
+        display_name="External URL",
+        description="Configuration metadata for a future user-provided playback URL.",
+        status=SourceProviderDefinitionStatus.available_contract_only,
+        supports_live_playback=False,
+        supports_zone_editing=True,
+        fields=[
+            SourceProviderField(
+                key="url",
+                label="URL",
+                required=True,
+                secret=False,
+                description="Stored as metadata only; MockingBird will not connect yet.",
+                placeholder="http://example.local/stream",
+            )
+        ],
+    ),
+    SourceProviderDefinition(
+        provider_key="rtsp_future",
+        display_name="RTSP future provider",
+        description="Future provider contract for network camera-style streams.",
+        status=SourceProviderDefinitionStatus.future_adapter,
+        supports_live_playback=False,
+        supports_zone_editing=True,
+        fields=[
+            SourceProviderField(
+                key="url",
+                label="URL",
+                required=True,
+                secret=False,
+                description="Stored as metadata only; no network validation is performed.",
+                placeholder="rtsp://camera.local/stream",
+            ),
+            SourceProviderField(
+                key="username",
+                label="Username",
+                required=False,
+                secret=False,
+                description="Optional provider username metadata.",
+                placeholder="viewer",
+            ),
+            SourceProviderField(
+                key="access_secret",
+                label="Access secret",
+                required=False,
+                secret=True,
+                description="Stored only as a configured/not-configured marker.",
+                placeholder="Not stored raw",
+            ),
+        ],
+    ),
+    SourceProviderDefinition(
+        provider_key="esp32_future",
+        display_name="ESP32 future provider",
+        description="Future provider contract for small outdoor camera devices.",
+        status=SourceProviderDefinitionStatus.future_adapter,
+        supports_live_playback=False,
+        supports_zone_editing=True,
+        fields=[
+            SourceProviderField(
+                key="device_url",
+                label="Device URL",
+                required=True,
+                secret=False,
+                description="Stored as metadata only; MockingBird will not connect yet.",
+                placeholder="http://device.local",
+            ),
+            SourceProviderField(
+                key="access_token",
+                label="Access token",
+                required=False,
+                secret=True,
+                description="Stored only as a configured/not-configured marker.",
+                placeholder="Not stored raw",
+            ),
+        ],
+    ),
+    SourceProviderDefinition(
+        provider_key="browser_camera_future",
+        display_name="Browser camera future provider",
+        description="Future provider contract for a browser-mediated local camera source.",
+        status=SourceProviderDefinitionStatus.future_adapter,
+        supports_live_playback=False,
+        supports_zone_editing=True,
+        fields=[
+            SourceProviderField(
+                key="device_label",
+                label="Device label",
+                required=False,
+                secret=False,
+                description="Optional user-facing device label.",
+                placeholder="Back porch camera",
+            )
+        ],
+    ),
+    SourceProviderDefinition(
+        provider_key="folder_import_future",
+        display_name="Folder import future provider",
+        description="Future provider contract for local folder-based media ingestion.",
+        status=SourceProviderDefinitionStatus.future_adapter,
+        supports_live_playback=False,
+        supports_zone_editing=True,
+        fields=[
+            SourceProviderField(
+                key="folder_label",
+                label="Folder label",
+                required=True,
+                secret=False,
+                description="Stored as metadata only; no folder is read in this phase.",
+                placeholder="Trail cam card",
+            )
+        ],
+    ),
+    SourceProviderDefinition(
+        provider_key="webhook_future",
+        display_name="Webhook future provider",
+        description="Future provider contract for external systems that send media events.",
+        status=SourceProviderDefinitionStatus.future_adapter,
+        supports_live_playback=False,
+        supports_zone_editing=True,
+        fields=[
+            SourceProviderField(
+                key="endpoint_label",
+                label="Endpoint label",
+                required=True,
+                secret=False,
+                description="Human-readable label for the future endpoint.",
+                placeholder="Garden gateway",
+            ),
+            SourceProviderField(
+                key="shared_secret",
+                label="Shared secret",
+                required=False,
+                secret=True,
+                description="Stored only as a configured/not-configured marker.",
+                placeholder="Not stored raw",
+            ),
+        ],
+    ),
+)
+
 
 @dataclass
 class _CoverageAccumulator:
@@ -285,6 +469,15 @@ class SpeciesSuggestionModel(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class SourceProviderConfigurationModel(Base):
+    __tablename__ = "source_provider_configurations"
+
+    source_id: Mapped[str] = mapped_column(ForeignKey("camera_sources.id"), primary_key=True)
+    provider_key: Mapped[str] = mapped_column(String, nullable=False)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ProductRepository:
     """Persist product-level stream, zone, event, review, and export state.
 
@@ -325,6 +518,7 @@ class ProductRepository:
             with session.begin():
                 for model in (
                     SpeciesSuggestionModel,
+                    SourceProviderConfigurationModel,
                     MotionEvidenceModel,
                     DetectionProposalModel,
                     DetectionRunModel,
@@ -594,68 +788,98 @@ class ProductRepository:
             source = session.get(CameraSourceModel, source_id)
             return _source_from_model(source) if source else None
 
+    def list_source_provider_definitions(self) -> list[SourceProviderDefinition]:
+        return list(SOURCE_PROVIDER_DEFINITIONS)
+
+    def get_source_provider_configuration(
+        self,
+        source_id: str,
+    ) -> SourceProviderConfiguration | None:
+        with self.session_factory() as session:
+            source = session.get(CameraSourceModel, source_id)
+            if source is None:
+                return None
+            model = session.get(SourceProviderConfigurationModel, source_id)
+            stream_ids = self._stream_ids_for_source(session, source_id)
+            return _source_provider_configuration_from_model(source, model, stream_ids)
+
+    def update_source_provider_configuration(
+        self,
+        source_id: str,
+        payload: SourceProviderConfigurationUpdate,
+    ) -> SourceProviderConfiguration | None:
+        definition = _source_provider_definition(payload.provider_key)
+        if definition is None:
+            raise ValueError("unknown_provider_key")
+
+        sanitized_config = _sanitize_source_provider_config(definition, payload.config)
+        with self.session_factory() as session:
+            with session.begin():
+                source = session.get(CameraSourceModel, source_id)
+                if source is None:
+                    return None
+                model = session.get(SourceProviderConfigurationModel, source_id)
+                if model is None:
+                    model = SourceProviderConfigurationModel(
+                        source_id=source_id,
+                        provider_key=payload.provider_key,
+                        config_json=json.dumps(sanitized_config, sort_keys=True),
+                        updated_at=datetime.now(UTC),
+                    )
+                    session.add(model)
+                else:
+                    model.provider_key = payload.provider_key
+                    model.config_json = json.dumps(sanitized_config, sort_keys=True)
+                    model.updated_at = datetime.now(UTC)
+                session.flush()
+                stream_ids = self._stream_ids_for_source(session, source_id)
+                return _source_provider_configuration_from_model(source, model, stream_ids)
+
     def get_source_connection_status(self, source_id: str) -> SourceConnectionStatus | None:
         with self.session_factory() as session:
             source = session.get(CameraSourceModel, source_id)
             if source is None:
                 return None
 
-            stream_ids = [
-                stream.id
-                for stream in session.scalars(
-                    select(StreamModel)
-                    .where(StreamModel.source_id == source_id)
-                    .order_by(StreamModel.id)
-                ).all()
-            ]
+            stream_ids = self._stream_ids_for_source(session, source_id)
             supports_zone_editing = len(stream_ids) > 0
-
-            if source.kind == SourceKind.demo.value:
-                return SourceConnectionStatus(
-                    source_id=source.id,
-                    status=SourceConnectionStatusValue.demo,
-                    provider_kind=SourceProviderKind.demo,
-                    display_title=source.name,
-                    message=(
-                        "This source uses local demo metadata and demo stream panels; "
-                        "no real playback provider is connected yet."
-                    ),
-                    setup_hint=(
-                        "Future source providers will feed this contract while streams "
-                        "and zones stay product-level."
-                    ),
-                    supports_streams=True,
-                    supports_live_playback=False,
-                    supports_zone_editing=supports_zone_editing,
-                    adapter_key=source.kind,
-                    configured_fields=["source_kind", "demo_seed"],
-                    missing_fields=[],
-                    stream_ids=stream_ids,
-                )
-
-            provider_kind = (
-                SourceProviderKind.manual_media
-                if source.kind in {SourceKind.manual_upload.value, SourceKind.local_folder.value}
-                else SourceProviderKind.future_adapter
-            )
-            configured_fields = ["source_kind"]
-            missing_fields = ["provider_configuration"]
+            model = session.get(SourceProviderConfigurationModel, source_id)
+            configuration = _source_provider_configuration_from_model(source, model, stream_ids)
+            definition = _source_provider_definition(configuration.provider_key)
+            provider_kind = _source_provider_kind(configuration.provider_key)
 
             if source.status == SourceStatus.disconnected.value:
                 status = SourceConnectionStatusValue.offline
                 message = "This source is offline, so streams can show only placeholders."
-                setup_hint = "Reconnect or configure a future provider before expecting playback."
-            elif source.status == SourceStatus.needs_setup.value:
-                status = SourceConnectionStatusValue.not_configured
-                message = "This source needs provider setup before playback can be shown."
-                setup_hint = "Complete provider setup later; stream zones can still be prepared now."
-            else:
-                status = SourceConnectionStatusValue.not_configured
-                message = "This source has product metadata but no provider configuration yet."
-                setup_hint = (
-                    "A future provider can feed this source without changing stream, zone, "
-                    "or review workflows."
+                setup_hint = "Save provider metadata now; playback still requires a future provider."
+            elif configuration.provider_key == "demo":
+                status = SourceConnectionStatusValue.demo
+                message = (
+                    "This source uses local demo metadata and demo stream panels; "
+                    "no real playback provider is connected yet."
                 )
+                setup_hint = (
+                    "Future source providers will feed this contract while streams "
+                    "and zones stay product-level."
+                )
+            elif configuration.missing_fields:
+                status = SourceConnectionStatusValue.not_configured
+                message = "This source still needs provider metadata before a future provider can run."
+                setup_hint = configuration.setup_hint
+            elif definition is not None and definition.status == SourceProviderDefinitionStatus.future_adapter:
+                status = SourceConnectionStatusValue.configured
+                message = (
+                    "Provider configuration metadata is saved. MockingBird will not connect "
+                    "to this Source yet."
+                )
+                setup_hint = "Live playback requires a future provider implementation."
+            else:
+                status = SourceConnectionStatusValue.configured
+                message = (
+                    "Provider configuration metadata is saved. MockingBird will not connect "
+                    "to this Source yet."
+                )
+                setup_hint = "Zone editing can continue while playback remains unavailable."
 
             return SourceConnectionStatus(
                 source_id=source.id,
@@ -667,9 +891,9 @@ class ProductRepository:
                 supports_streams=len(stream_ids) > 0,
                 supports_live_playback=False,
                 supports_zone_editing=supports_zone_editing,
-                adapter_key=source.kind,
-                configured_fields=configured_fields,
-                missing_fields=missing_fields,
+                adapter_key=configuration.provider_key,
+                configured_fields=configuration.configured_fields,
+                missing_fields=configuration.missing_fields,
                 stream_ids=stream_ids,
             )
 
@@ -761,6 +985,14 @@ class ProductRepository:
                 .order_by(StreamModel.id)
             ).all()
             return [_stream_from_model(stream) for stream in streams]
+
+    def _stream_ids_for_source(self, session: Session, source_id: str) -> list[str]:
+        return [
+            stream.id
+            for stream in session.scalars(
+                select(StreamModel).where(StreamModel.source_id == source_id).order_by(StreamModel.id)
+            ).all()
+        ]
 
     def list_zones(self) -> list[Zone]:
         with self.session_factory() as session:
@@ -4522,6 +4754,143 @@ class ProductRepository:
             if session.get(model, candidate) is None:
                 return candidate
             candidate_number += 1
+
+
+def _source_provider_definition(provider_key: str) -> SourceProviderDefinition | None:
+    return next(
+        (
+            definition
+            for definition in SOURCE_PROVIDER_DEFINITIONS
+            if definition.provider_key == provider_key
+        ),
+        None,
+    )
+
+
+def _default_source_provider_key(source: CameraSourceModel) -> str:
+    if source.kind == SourceKind.demo.value:
+        return "demo"
+    if source.kind == SourceKind.manual_upload.value:
+        return "manual_media"
+    if source.kind == SourceKind.local_folder.value:
+        return "folder_import_future"
+    if source.kind == SourceKind.rtsp.value:
+        return "rtsp_future"
+    if source.kind == SourceKind.local_camera.value:
+        return "browser_camera_future"
+    if source.kind == SourceKind.webhook.value:
+        return "webhook_future"
+    return "external_url"
+
+
+def _default_source_provider_config(provider_key: str) -> dict[str, str]:
+    if provider_key == "demo":
+        return {"demo_seed": "backyard-demo"}
+    return {}
+
+
+def _source_provider_kind(provider_key: str) -> SourceProviderKind:
+    if provider_key == "demo":
+        return SourceProviderKind.demo
+    if provider_key == "manual_media":
+        return SourceProviderKind.manual_media
+    if provider_key == "external_url":
+        return SourceProviderKind.external_url
+    return SourceProviderKind.future_adapter
+
+
+def _sanitize_source_provider_config(
+    definition: SourceProviderDefinition,
+    config: dict[str, str | None],
+) -> dict[str, str]:
+    sanitized: dict[str, str] = {}
+    fields_by_key = {field.key: field for field in definition.fields}
+    for key, value in config.items():
+        field = fields_by_key.get(key)
+        if field is None or value is None:
+            continue
+        normalized = value.strip()
+        if not normalized:
+            continue
+        sanitized[key] = "configured" if field.secret else normalized
+    return sanitized
+
+
+def _source_provider_configuration_from_model(
+    source: CameraSourceModel,
+    model: SourceProviderConfigurationModel | None,
+    stream_ids: list[str],
+) -> SourceProviderConfiguration:
+    provider_key = model.provider_key if model is not None else _default_source_provider_key(source)
+    definition = _source_provider_definition(provider_key)
+    if definition is None:
+        provider_key = _default_source_provider_key(source)
+        definition = _source_provider_definition(provider_key)
+    assert definition is not None
+
+    if model is None:
+        config = _default_source_provider_config(provider_key)
+    else:
+        config = json.loads(model.config_json)
+    return _source_provider_configuration_from_config(
+        source_id=source.id,
+        definition=definition,
+        config=config,
+        supports_zone_editing=len(stream_ids) > 0 and definition.supports_zone_editing,
+    )
+
+
+def _source_provider_configuration_from_config(
+    *,
+    source_id: str,
+    definition: SourceProviderDefinition,
+    config: dict[str, str],
+    supports_zone_editing: bool,
+) -> SourceProviderConfiguration:
+    configured_fields: list[str] = []
+    missing_fields: list[str] = []
+    safe_config_preview: dict[str, str] = {}
+
+    for field in definition.fields:
+        value = (config.get(field.key) or "").strip()
+        if value:
+            configured_fields.append(field.key)
+            safe_config_preview[field.key] = "configured" if field.secret else value
+        else:
+            safe_config_preview[field.key] = "not_configured"
+            if field.required:
+                missing_fields.append(field.key)
+
+    if missing_fields:
+        missing_labels = [
+            field.label for field in definition.fields if field.key in set(missing_fields)
+        ]
+        message = "Provider configuration metadata is incomplete."
+        setup_hint = f"Add metadata for: {', '.join(missing_labels)}."
+    elif definition.status == SourceProviderDefinitionStatus.future_adapter:
+        message = (
+            "Provider configuration metadata is saved. MockingBird will not connect "
+            "to this Source yet."
+        )
+        setup_hint = "Live playback requires a future provider implementation."
+    elif definition.provider_key == "demo":
+        message = "Demo provider metadata is available for local stream and zone planning."
+        setup_hint = "Zone editing can continue with the demo stream panel."
+    else:
+        message = "Provider configuration metadata is saved for this Source."
+        setup_hint = "Zone editing can continue while playback remains unavailable."
+
+    return SourceProviderConfiguration(
+        source_id=source_id,
+        provider_key=definition.provider_key,
+        configured_fields=configured_fields,
+        missing_fields=missing_fields,
+        safe_config_preview=safe_config_preview,
+        supports_live_playback=False,
+        supports_zone_editing=supports_zone_editing,
+        message=message,
+        setup_hint=setup_hint,
+    )
 
 
 def _source_from_model(source: CameraSourceModel) -> CameraSource:

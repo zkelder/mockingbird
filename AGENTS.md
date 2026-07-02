@@ -113,6 +113,10 @@ Every future implementation task must restate:
 - Source connection/provider work must follow
   [docs/source-connection-provider-contract.md](docs/source-connection-provider-contract.md)
   and stay product-level until real provider implementation is explicitly scoped.
+- Source provider configuration work must follow
+  [docs/source-provider-configuration-contract.md](docs/source-provider-configuration-contract.md).
+  Configuration is metadata-only and must not connect to sources, validate URLs,
+  store raw secrets, capture frames, decode media, or create product truth.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.

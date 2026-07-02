@@ -72,6 +72,9 @@ from mockingbird.api.schemas import (
     SpeciesSuggestionStatusUpdateRequest,
     SourceConnectionStatus,
     SourceConnectionStatusResponse,
+    SourceProviderConfiguration,
+    SourceProviderConfigurationUpdate,
+    SourceProviderDefinition,
     Stream,
     StreamPlaybackStatus,
     StreamPlaybackStatusResponse,
@@ -908,6 +911,11 @@ async def list_sources() -> list[CameraSource]:
     return get_repository().list_sources()
 
 
+@app.get("/api/source-provider-definitions", response_model=list[SourceProviderDefinition])
+async def list_source_provider_definitions() -> list[SourceProviderDefinition]:
+    return get_repository().list_source_provider_definitions()
+
+
 # Detail and nested routes support frontend product navigation, not adapter plumbing.
 @app.get("/api/sources/{source_id}", response_model=CameraSource)
 async def get_source(source_id: str) -> CameraSource:
@@ -915,6 +923,36 @@ async def get_source(source_id: str) -> CameraSource:
     if source is None:
         raise _not_found("Source", source_id)
     return source
+
+
+@app.get(
+    "/api/sources/{source_id}/provider-configuration",
+    response_model=SourceProviderConfiguration,
+)
+async def get_source_provider_configuration(source_id: str) -> SourceProviderConfiguration:
+    configuration = get_repository().get_source_provider_configuration(source_id)
+    if configuration is None:
+        raise _not_found("Source", source_id)
+    return configuration
+
+
+@app.patch(
+    "/api/sources/{source_id}/provider-configuration",
+    response_model=SourceProviderConfiguration,
+)
+async def update_source_provider_configuration(
+    source_id: str,
+    payload: SourceProviderConfigurationUpdate,
+) -> SourceProviderConfiguration:
+    try:
+        configuration = get_repository().update_source_provider_configuration(source_id, payload)
+    except ValueError as error:
+        if str(error) == "unknown_provider_key":
+            raise HTTPException(status_code=400, detail="Unknown source provider key.") from error
+        raise
+    if configuration is None:
+        raise _not_found("Source", source_id)
+    return configuration
 
 
 @app.get("/api/sources/{source_id}/connection", response_model=SourceConnectionStatusResponse)

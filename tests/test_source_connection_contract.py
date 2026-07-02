@@ -75,7 +75,7 @@ async def test_known_demo_source_returns_connection_contract(client: httpx.Async
     assert connection["supports_live_playback"] is False
     assert connection["supports_zone_editing"] is True
     assert connection["adapter_key"] == "demo"
-    assert connection["configured_fields"] == ["source_kind", "demo_seed"]
+    assert connection["configured_fields"] == ["demo_seed"]
     assert connection["missing_fields"] == []
     assert connection["stream_ids"] == [STREAM_ID]
     assert connection["last_checked_at"] is None
@@ -129,12 +129,12 @@ async def test_not_configured_source_returns_safe_field_lists(
     assert response.status_code == 200
     connection = response.json()
     assert connection["status"] == "not_configured"
-    assert connection["provider_kind"] == "future_adapter"
+    assert connection["provider_kind"] == "external_url"
     assert connection["supports_streams"] is True
     assert connection["supports_live_playback"] is False
     assert connection["supports_zone_editing"] is True
-    assert connection["configured_fields"] == ["source_kind"]
-    assert connection["missing_fields"] == ["provider_configuration"]
+    assert connection["configured_fields"] == []
+    assert connection["missing_fields"] == ["url"]
     assert connection["stream_ids"] == ["stream-future-provider"]
     unsafe_terms = ("frame", "poll", "capture", "heartbeat", "secret", "password")
     field_text = " ".join(connection["configured_fields"] + connection["missing_fields"]).lower()

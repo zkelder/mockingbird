@@ -311,26 +311,37 @@ Current work:
 
 - Phase 10A: stream/source playback contract for Stream Detail.
 - Phase 10B: source connection/provider status contract.
-- Next likely phase: Phase 10C — source provider configuration UI/contract
-  planning without capture, media decoding, workers, or provider implementation.
+- Phase 10C: source provider configuration contract/UI.
+- Next likely phase: Phase 10D — source setup persistence polish or provider
+  configuration review flow, still without capture, media decoding, workers, or
+  provider implementation.
 
 Validation:
 
 - Known streams return product-level playback status.
 - Known sources return product-level connection/provider status.
+- Provider definitions return product-level setup contracts.
+- Provider configuration stores safe metadata only.
 - Unknown streams return 404.
 - Unknown sources return 404.
+- Unknown provider keys are rejected.
 - Demo and placeholder streams do not claim real live playback.
 - Demo and not-configured sources do not claim real live playback.
+- Configured future providers still do not claim real live playback.
 - Zone editing remains central even when playback is not configured.
 - Source connection status includes related Stream ids and safe field readiness
   lists without exposing provider internals.
+- Source provider configuration redacts secret fields to configured/not-configured
+  markers.
 - Playback status does not create MotionEvidence, Events, Visits, ReviewLabels,
   SpeciesSuggestions, exports, analytics truth, media files, model artifacts, or
   adapter runtime calls.
 - Source connection status does not create MotionEvidence, Events, Visits,
   ReviewLabels, SpeciesSuggestions, exports, analytics truth, media files, model
   artifacts, or provider runtime calls.
+- Source provider configuration does not create MotionEvidence, Events, Visits,
+  ReviewLabels, SpeciesSuggestions, exports, analytics truth, media files, model
+  artifacts, network calls, or provider runtime calls.
 - Future source adapters feed the playback contract instead of redefining the
   Source, Stream, Zone, Event, Visit, review/correction, export, and analytics
   loop.

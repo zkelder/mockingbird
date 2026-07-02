@@ -410,6 +410,83 @@ button {
   font-weight: 700;
 }
 
+.source-setup-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.source-setup-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.2fr);
+  gap: 16px;
+}
+
+.source-setup-summary,
+.source-setup-form,
+.source-setup-copy,
+.source-field-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.source-setup-summary label,
+.source-setup-form label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.source-setup-summary select,
+.source-setup-form input,
+.source-setup-form select {
+  min-height: 40px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.source-setup-copy p {
+  margin: 0;
+  color: #5c6a61;
+  font-size: 0.9rem;
+}
+
+.source-field-summary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.source-field-tags,
+.source-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.source-field-tags span {
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #edf2e9;
+  color: #34473b;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.provider-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.field-meta {
+  color: #627168;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
 .status-pill {
   display: inline-flex;
   width: fit-content;
@@ -2694,6 +2771,9 @@ button {
   .model-readiness-grid,
     .adapter-result-grid,
     .detection-proposal-meta,
+    .provider-field-grid,
+    .source-field-summary,
+    .source-setup-layout,
     .split-grid,
     .folder-import-layout,
     .manual-import-layout,
@@ -2776,8 +2856,11 @@ button {
   .adapter-result-grid,
   .detection-proposal-meta,
   .playback-status-grid,
+  .provider-field-grid,
   .record-meta-grid,
+  .source-field-summary,
   .source-connection-grid,
+  .source-setup-layout,
   .split-grid,
   .folder-import-layout,
     .manual-import-layout,

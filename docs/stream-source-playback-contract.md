@@ -42,6 +42,13 @@ Stream playback status is the stream-specific contract for what Stream Detail ca
 show. A Source may be demo or not configured while its Streams still support zone
 editing through demo or placeholder panels.
 
+## Provider Configuration Relationship
+
+Provider configuration metadata can make Source connection status more specific,
+but it does not change Stream playback into live video. Streams should remain
+honest about demo or placeholder playback until a real provider implementation is
+explicitly added.
+
 ## What This Phase Does
 
 - Adds a read-only playback status route for streams.

@@ -8,6 +8,11 @@ A user-facing outdoor camera concept.
 
 An adapter-backed input that can provide video, images, clips, or stream data.
 
+## Source Provider Configuration
+
+Safe metadata describing the intended provider contract for a Source. It is not a
+provider implementation, connection attempt, evidence, or reviewed truth.
+
 ## Source Connection Status
 
 A read-only product contract describing Source provider readiness and related
