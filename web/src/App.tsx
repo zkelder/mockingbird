@@ -14,6 +14,7 @@ import type {
   Stream,
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { ClassifierManifestPage } from "./pages/ClassifierManifestPage";
 import { ClassifierReadinessPage } from "./pages/ClassifierReadinessPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DetectionProposalsPage } from "./pages/DetectionProposalsPage";
@@ -40,6 +41,7 @@ type Page =
   | "motion-evidence"
   | "species-suggestions"
   | "classifier-readiness"
+  | "classifier-manifest"
   | "stream-detail"
   | "event-detail"
   | "visit-detail"
@@ -90,6 +92,7 @@ const navItems: Array<{ page: Page; label: string }> = [
   { page: "motion-evidence", label: "Motion Evidence" },
   { page: "species-suggestions", label: "Species Suggestions" },
   { page: "classifier-readiness", label: "Classifier Readiness" },
+  { page: "classifier-manifest", label: "Classifier Manifest" },
   { page: "review", label: "Review" },
   { page: "analytics", label: "Analytics" },
   { page: "exports", label: "Exports" },
@@ -359,6 +362,17 @@ export default function App() {
           onOpenExports={() => setPage("exports")}
           onOpenReview={() => setPage("review")}
           onOpenSpeciesSuggestions={() => setPage("species-suggestions")}
+          onOpenClassifierManifest={() => setPage("classifier-manifest")}
+        />
+      );
+    }
+
+    if (page === "classifier-manifest") {
+      return (
+        <ClassifierManifestPage
+          onOpenClassifierReadiness={() => setPage("classifier-readiness")}
+          onOpenExports={() => setPage("exports")}
+          onOpenReview={() => setPage("review")}
         />
       );
     }

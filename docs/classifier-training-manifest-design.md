@@ -39,6 +39,9 @@ manifest export decisions without generating export files.
 Phase 9Q adds a read-only manifest response for reviewed media-backed examples,
 skipped records, taxonomy metadata, split assignment, provenance, and summary
 warnings. It writes no manifest files and creates no truth.
+Phase 9R adds a frontend manifest preview with summary, examples, skipped
+records, taxonomy, warnings, and browser-side JSON copy/download actions. It
+still writes no server-side manifest files and creates no truth.
 
 ## Manifest File Formats
 
@@ -60,6 +63,10 @@ Optional companion files:
 
 Phase 9Q does not create any of these files. It returns the same information as
 JSON-friendly API data so export/download behavior can be designed separately.
+Phase 9R can copy or download that already-loaded response in the browser as a
+JSON preview. That browser action is not a server-side export and does not
+create `manifest.jsonl`, `manifest.csv`, media copies, labels files, taxonomy
+files, or skipped-record files in the app.
 
 ## Required Fields
 
@@ -238,6 +245,8 @@ media-backed species examples, taxonomy coverage, skip reasons, and quality
 warnings are ready enough to proceed. The Phase 9P UI makes those signals
 visible. Phase 9Q adds the backend manifest preview foundation while still
 deferring file export, media copying, training, and runtime behavior.
+Phase 9R makes the manifest preview visible in the app and supports browser-side
+JSON copy/download for review before any generated dataset export exists.
 
 ## Relationship To Existing Dataset And Export Features
 
@@ -298,10 +307,11 @@ Tentative product-first phases:
 - Phase 9O: classifier-readiness report/API.
 - Phase 9P: classifier readiness UI surface.
 - Phase 9Q: classifier training manifest preview/API implementation foundation.
-- Phase 9R: classifier manifest UI/download preview or reviewed media-backed
-  example export file generation design.
-- Phase 9S: external training workflow docs.
-- Phase 9T: optional custom classifier adapter boundary.
+- Phase 9R: classifier manifest UI/download preview.
+- Phase 9S: classifier manifest file export design or implementation foundation
+  with an explicit no-media-copy boundary.
+- Phase 9T: external training workflow docs.
+- Phase 9U: optional custom classifier adapter boundary.
 
 These phases remain tentative. Manifest and readiness work should come before
 training, runtime, or model integration.
@@ -311,6 +321,7 @@ training, runtime, or model integration.
 - no generated dataset in this phase
 - no manifest file export in Phase 9Q
 - no media copying in Phase 9Q
+- no server-side manifest file export or media copying in Phase 9R
 - no training
 - no model dependencies
 - no model files

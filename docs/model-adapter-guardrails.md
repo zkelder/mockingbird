@@ -82,6 +82,11 @@ but it must not copy media, write manifest files, train, run classifier runtime,
 create labels, or treat `SpeciesSuggestion`, `MotionEvidence`, or
 `DetectionProposal` as truth.
 
+Classifier manifest UI/download preview is also read-only. Browser-side JSON
+copy/download may use the already-loaded preview response, but it must not call
+server-side file generation, copy media, create exports, train, or write
+classifier suggestions.
+
 ## Adapter Input Contract
 
 Adapters must accept product-level inputs, not adapter-specific workflows:

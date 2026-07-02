@@ -10,6 +10,7 @@ import { formatLabel } from "../utils";
 
 interface ClassifierReadinessPageProps {
   onOpenAnalytics: () => void;
+  onOpenClassifierManifest: () => void;
   onOpenExports: () => void;
   onOpenReview: () => void;
   onOpenSpeciesSuggestions: () => void;
@@ -17,6 +18,7 @@ interface ClassifierReadinessPageProps {
 
 export function ClassifierReadinessPage({
   onOpenAnalytics,
+  onOpenClassifierManifest,
   onOpenExports,
   onOpenReview,
   onOpenSpeciesSuggestions,
@@ -74,6 +76,9 @@ export function ClassifierReadinessPage({
         description="Classifier readiness summarizes reviewed media-backed examples that could support a future custom bird classifier. It does not generate datasets, train models, or create reviewed truth."
         actions={
           <>
+            <button className="secondary-action" onClick={onOpenClassifierManifest}>
+              View manifest preview
+            </button>
             <button className="secondary-action" onClick={onOpenReview}>
               Review Queue
             </button>
@@ -88,8 +93,8 @@ export function ClassifierReadinessPage({
         <strong>Reviewed corrections are the only training truth</strong>
         <span>
           SpeciesSuggestion status is review evidence, not training truth. MotionEvidence and
-          DetectionProposal records are evidence only. Manifest export and classifier training remain
-          future work.
+          DetectionProposal records are evidence only. The manifest preview is browser/reporting
+          only; generated dataset files and classifier training remain future work.
         </span>
       </section>
 
@@ -107,6 +112,9 @@ export function ClassifierReadinessPage({
         <div className="detail-actions">
           <button className="secondary-action" onClick={onOpenExports}>
             Dataset Exports
+          </button>
+          <button className="secondary-action" onClick={onOpenClassifierManifest}>
+            View manifest preview
           </button>
           <button className="secondary-action" onClick={() => void loadReport()}>
             Refresh

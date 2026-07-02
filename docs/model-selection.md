@@ -85,6 +85,10 @@ It returns reviewed media-backed examples, skipped records, taxonomy metadata,
 split assignment, and provenance as structured data only. It does not write
 manifest files, copy media, train, run classifier runtime, or change truth.
 
+Phase 9R adds a frontend manifest preview and browser-side JSON copy/download
+for the already-loaded response. It still does not generate server-side files,
+copy media, train, run classifier runtime, or select a classifier dependency.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context
@@ -94,10 +98,10 @@ They should follow [species-suggestion-adapter-design.md](species-suggestion-ada
 - feed `SpeciesSuggestion`, not `ReviewLabel`, directly
 - require user review/correction before dataset/export truth changes
 
-Custom classifier training remains future work until readiness reporting and
-UI review, manifest preview/export tooling, reviewed media-backed examples,
-dataset coverage/quality checks, external training workflow, and explicit export
-policy are in place.
+Custom classifier training remains future work until readiness reporting,
+manifest preview UI, explicit export tooling/policy, reviewed media-backed
+examples, dataset coverage/quality checks, and external training workflow are
+in place.
 SpeciesNet stays a separate optional external species/taxon candidate.
 
 ## Dependency Rules

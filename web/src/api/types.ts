@@ -331,6 +331,64 @@ export interface ClassifierReadinessReport {
   recommended_next_step: string;
 }
 
+export interface ClassifierManifestExample {
+  example_id: string;
+  visit_id: string;
+  event_id?: string | null;
+  media_asset_id: string;
+  source_id?: string | null;
+  stream_id?: string | null;
+  zone_id?: string | null;
+  local_media_path?: string | null;
+  label: string;
+  taxonomy_id?: string | null;
+  common_name?: string | null;
+  scientific_name?: string | null;
+  reviewed_label_id?: string | null;
+  reviewed_at?: string | null;
+  created_at?: string | null;
+  split: string;
+  quality_flags: string[];
+  provenance: Record<string, unknown>;
+}
+
+export interface ClassifierManifestSkippedRecord {
+  record_id: string;
+  record_type: string;
+  visit_id?: string | null;
+  event_id?: string | null;
+  media_asset_id?: string | null;
+  label?: string | null;
+  reason: string;
+  detail?: string | null;
+}
+
+export interface ClassifierManifestTaxonomyEntry {
+  label: string;
+  taxonomy_id?: string | null;
+  common_name?: string | null;
+  scientific_name?: string | null;
+  aliases: string[];
+}
+
+export interface ClassifierManifestSummary {
+  examples: number;
+  skipped: number;
+  labels: Record<string, number>;
+  splits: Record<string, number>;
+  warnings: string[];
+}
+
+export interface ClassifierTrainingManifestResponse {
+  manifest_version: string;
+  generated_at: string;
+  examples: ClassifierManifestExample[];
+  skipped_records: ClassifierManifestSkippedRecord[];
+  taxonomy: ClassifierManifestTaxonomyEntry[];
+  summary: ClassifierManifestSummary;
+  warnings: string[];
+}
+
 export interface DetectionProposal {
   id: string;
   run_id: string;

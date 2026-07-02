@@ -3,6 +3,7 @@ import type {
   AnalyticsSummary,
   CameraSource,
   ClassifierReadinessReport,
+  ClassifierTrainingManifestResponse,
   DatasetCoverageSummary,
   DatasetExport,
   DatasetExportCreate,
@@ -180,6 +181,8 @@ export const apiClient = {
   },
   getModelReadinessSummary: () => request<ModelReadinessSummary>("/api/model-readiness/summary"),
   getClassifierReadiness: () => request<ClassifierReadinessReport>("/api/classifier-readiness"),
+  getClassifierTrainingManifest: () =>
+    request<ClassifierTrainingManifestResponse>("/api/classifier-training-manifest"),
   runModelAdapter: (adapterId: string, payload: ModelAdapterRunRequest) =>
     request<ModelAdapterRunResult>(`/api/model-adapters/${encodeURIComponent(adapterId)}/runs`, {
       method: "POST",

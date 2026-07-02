@@ -27,6 +27,11 @@ returns structured example, skip, taxonomy, split, and provenance data in memory
 only; it does not write manifest files, copy media, generate datasets, train, or
 run classifier runtime.
 
+Phase 9R adds a frontend manifest preview. Users can inspect summary counts,
+examples, skipped records, taxonomy, warnings, and copy/download the loaded JSON
+in the browser only. It still does not create server-side export files, copy
+media, generate datasets, train, or run classifier runtime.
+
 ## Product Flow
 
 media-backed Visit -> user correction/review -> reviewed label becomes dataset
@@ -115,8 +120,9 @@ Readiness signals should include:
 
 Phase 9O implements these as a backend report only. Phase 9P makes the report
 visible in the UI. Phase 9Q adds the read-only manifest preview response.
-None of these phases copies media, writes manifest files, trains classifiers,
-or creates truth.
+Phase 9R makes that response visible and downloadable as browser-side JSON
+only. None of these phases copies media, writes server-side manifest files,
+trains classifiers, or creates truth.
 
 ## Export Format Plan
 
@@ -198,10 +204,11 @@ Tentative future phases:
 - Phase 9O: classifier-readiness report/API.
 - Phase 9P: classifier readiness UI surface.
 - Phase 9Q: classifier training manifest preview/API implementation foundation.
-- Phase 9R: classifier manifest UI/download preview or reviewed media-backed
-  example export file generation design.
-- Phase 9S: external training workflow docs.
-- Phase 9T: optional custom classifier adapter boundary.
+- Phase 9R: classifier manifest UI/download preview.
+- Phase 9S: classifier manifest file export design or implementation foundation
+  with an explicit no-media-copy boundary.
+- Phase 9T: external training workflow docs.
+- Phase 9U: optional custom classifier adapter boundary.
 
 Keep these phases product-first: reviewed local data, export clarity, and
 truth-boundary tests come before runtime or training work.
