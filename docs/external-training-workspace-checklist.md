@@ -9,6 +9,8 @@ to core MockingBird.
 It is an operator checklist for future classifier training preparation. It does
 not implement tooling, media copying, training, model runtime, or generated
 artifacts.
+See [external-training-workspace-template.md](external-training-workspace-template.md)
+for the concrete recommended workspace layout.
 
 ## Product Flow
 
@@ -89,6 +91,9 @@ The external workspace owns:
 Core MockingBird should not install these by default.
 
 ## Dataset Layout Checklist
+
+For the concrete recommended tree, see
+[external-training-workspace-template.md](external-training-workspace-template.md).
 
 Recommended future local layout:
 

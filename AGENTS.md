@@ -103,6 +103,8 @@ Every future implementation task must restate:
   [docs/external-training-workspace-checklist.md](docs/external-training-workspace-checklist.md);
   training dependencies, generated datasets, model artifacts, and checkpoints
   require explicit scope and ignored local paths.
+- Workspace templates/docs must not create real folders, generated datasets,
+  model artifacts, dependencies, or training scripts without explicit scope.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.

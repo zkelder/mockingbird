@@ -11,6 +11,8 @@ dataset-generation, training, dependency, or runtime work is implemented.
 Phase 9X implements dry-run media planning only.
 Phase 9Y adds the external workspace checklist for reviewing dry-run output
 before any actual media-copy implementation.
+Phase 9Z documents the external workspace template that future copy-media output
+should fit.
 
 ## Product Flow
 
@@ -27,6 +29,8 @@ train/evaluate workflow -> future trained classifier adapter ->
 - Copy-media dry-run output should be reviewed with
   [external-training-workspace-checklist.md](external-training-workspace-checklist.md)
   before actual copying.
+- Future copy-media output should fit
+  [external-training-workspace-template.md](external-training-workspace-template.md).
 - Copied media is for external training workspace convenience.
 - Copied media does not create truth.
 - Copied media does not train a model by itself.
@@ -211,9 +215,10 @@ Tentative product-first phases:
 
 - Phase 9X: media-copy export dry-run implementation.
 - Phase 9Y: external training workspace checklist.
-- Phase 9Z: external training workspace template docs or media-copy export
-  implementation, still no training.
-- Later: custom classifier runtime boundary.
+- Phase 9Z: external training workspace template docs.
+- Next likely phase: Phase 10A — return to stream/source playback contract.
+- Later: media-copy export implementation, still no training, or custom
+  classifier runtime boundary.
 
 These phases should keep reviewed corrections, local storage safety, and the
 truth boundary ahead of training or runtime work.

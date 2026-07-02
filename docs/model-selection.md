@@ -123,6 +123,11 @@ Custom classifier work still awaits actual media-copy export, external training
 setup, and runtime adapter boundary planning before dependency, training, or
 model artifact work.
 
+Phase 9Z adds the external training workspace template in
+[external-training-workspace-template.md](external-training-workspace-template.md).
+It is documentation only; custom classifier work still awaits actual media-copy
+export, external training setup, and runtime adapter boundary planning.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context
@@ -134,8 +139,8 @@ They should follow [species-suggestion-adapter-design.md](species-suggestion-ada
 
 Custom classifier training remains future work until reviewed media-backed
 examples, metadata export review, media-copy workflow, dataset coverage/quality
-checks, external training workspace checks, and runtime boundary planning are in
-place.
+checks, external training workspace checks/templates, and runtime boundary
+planning are in place.
 SpeciesNet stays a separate optional external species/taxon candidate.
 
 ## Dependency Rules

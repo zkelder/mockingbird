@@ -265,8 +265,9 @@ Current work:
 - Phase 9W: media-copy export design.
 - Phase 9X: media-copy export dry-run implementation.
 - Phase 9Y: external training workspace checklist.
-- Next likely phase: Phase 9Z — external training workspace template docs or
-  media-copy export implementation, still no training.
+- Phase 9Z: external training workspace template docs.
+- Next likely phase: Phase 10A — return to stream/source playback contract,
+  unless intentionally continuing classifier export implementation.
 
 Validation:
 
@@ -289,6 +290,7 @@ Validation:
 - Phase 9W defines the optional copied-media bundle boundary without copying media, generating datasets, adding dependencies, training, runtime calls, or truth writes.
 - Phase 9X implements copy-media dry-run planning without copying media, creating export directories/files for copied media, generating datasets, adding dependencies, training, runtime calls, or truth writes.
 - Phase 9Y defines the external local training workspace checklist without adding media copying, generated datasets, training dependencies, model files, runtime calls, or truth writes.
+- Phase 9Z documents the external training workspace template without creating folders, copying media, generating datasets, adding training scripts/dependencies, model files, runtime calls, or truth writes.
 - Accepted/rejected/superseded suggestion status remains evidence workflow, not dataset truth.
 - The Species Suggestions UI can create manual/mock evidence, inspect context, and update status without creating truth.
 - Applying suggestion evidence must route through explicit review/correction before dataset/export truth changes.

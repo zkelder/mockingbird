@@ -12,13 +12,16 @@ Phase 9W defines the future optional media-copy boundary in
 [media-copy-export-design.md](media-copy-export-design.md).
 Phase 9Y adds the operator checklist in
 [external-training-workspace-checklist.md](external-training-workspace-checklist.md).
+Phase 9Z adds the documentation-only workspace template in
+[external-training-workspace-template.md](external-training-workspace-template.md).
 
 ## Product Flow
 
 reviewed media-backed Visits -> classifier readiness report -> metadata
 manifest export -> copy-media dry run -> external workspace checklist -> future
-media-copy export -> train/evaluate outside core app -> future trained model
-adapter -> `SpeciesSuggestion` evidence -> user correction remains truth.
+workspace template -> future media-copy export -> train/evaluate outside core
+app -> future trained model adapter -> `SpeciesSuggestion` evidence -> user
+correction remains truth.
 
 ## Core Boundary
 
@@ -35,6 +38,7 @@ local path. It receives manifest metadata files from MockingBird and may receive
 copied media only after a separate explicit media-copy phase.
 Operators should use
 [external-training-workspace-checklist.md](external-training-workspace-checklist.md)
+and [external-training-workspace-template.md](external-training-workspace-template.md)
 before actual media copying or training setup.
 
 The external workspace owns:
@@ -143,9 +147,10 @@ Tentative product-first phases:
 - Phase 9W: media-copy export design.
 - Phase 9X: media-copy export dry-run implementation.
 - Phase 9Y: external training workspace checklist.
-- Phase 9Z: external training workspace template docs or media-copy export
-  implementation, still no training.
-- Later: custom classifier runtime boundary plan.
+- Phase 9Z: external training workspace template docs.
+- Next likely phase: Phase 10A — return to stream/source playback contract.
+- Later: media-copy export implementation, still no training, or custom
+  classifier runtime boundary plan.
 
 ## Test Plan For Future Implementation
 

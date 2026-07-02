@@ -57,6 +57,9 @@ media.
 Phase 9Y adds
 [external-training-workspace-checklist.md](external-training-workspace-checklist.md)
 before media-copy or training implementation.
+Phase 9Z adds
+[external-training-workspace-template.md](external-training-workspace-template.md)
+as documentation only; it does not implement training.
 
 ## Product Flow
 
@@ -164,6 +167,8 @@ Phase 9X implements dry-run copied-media planning without creating datasets,
 copying media, training, or adding runtime behavior.
 Phase 9Y documents external workspace readiness without creating datasets,
 copying media, training, or adding runtime behavior.
+Phase 9Z documents a recommended external workspace layout without creating
+folders, datasets, media bundles, model files, or training behavior.
 
 ## Export Format Plan
 
@@ -205,6 +210,8 @@ See [media-copy-export-design.md](media-copy-export-design.md) for the Phase 9W
 future optional copied-media bundle policy.
 See [external-training-workspace-checklist.md](external-training-workspace-checklist.md)
 for the Phase 9Y operator checklist before media-copy or training work.
+See [external-training-workspace-template.md](external-training-workspace-template.md)
+for the Phase 9Z recommended external workspace layout.
 
 ## Training/Runtime Separation
 
@@ -261,8 +268,8 @@ Tentative future phases:
 - Phase 9W: media-copy export design.
 - Phase 9X: media-copy export dry-run implementation.
 - Phase 9Y: external training workspace checklist.
-- Phase 9Z: external training workspace template docs or media-copy export
-  implementation, still no training.
+- Phase 9Z: external training workspace template docs.
+- Phase 10A: return to stream/source playback contract.
 
 Keep these phases product-first: reviewed local data, export clarity, and
 truth-boundary tests come before runtime or training work.

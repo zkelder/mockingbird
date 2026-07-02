@@ -25,6 +25,8 @@ remains future work.
 Phase 9Y documents how metadata exports and copy-media dry-run reports should
 be reviewed before external training workspace setup in
 [external-training-workspace-checklist.md](external-training-workspace-checklist.md).
+Phase 9Z documents the concrete external workspace template in
+[external-training-workspace-template.md](external-training-workspace-template.md).
 
 ## Product Flow
 
@@ -43,6 +45,8 @@ Backend export may write manifest metadata files only.
 - Metadata exports feed
   [external-training-workspace-checklist.md](external-training-workspace-checklist.md)
   before any training workspace setup.
+- Metadata exports can be placed under the external workspace template's
+  `exports/metadata` path when a user prepares an external workspace.
 - No model files are generated.
 - No image dataset folders are generated.
 - Generated files must live under ignored local data/export paths.
@@ -226,8 +230,8 @@ Implementation phases:
 - Phase 9W: media-copy export design.
 - Phase 9X: media-copy export dry-run implementation.
 - Phase 9Y: external training workspace checklist.
-- Phase 9Z: external training workspace template docs or media-copy export
-  implementation, still no training.
+- Phase 9Z: external training workspace template docs.
+- Next likely phase: Phase 10A — return to stream/source playback contract.
 
 Keep these phases product-first: reviewed corrections, local artifact safety,
 and clear export boundaries come before training or runtime work.

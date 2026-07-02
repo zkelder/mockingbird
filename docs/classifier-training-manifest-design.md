@@ -63,6 +63,9 @@ implementation.
 Phase 9Y adds the external training workspace checklist so operators can verify
 ignored paths, storage/privacy, and artifact boundaries before copying media or
 training externally.
+Phase 9Z adds the external workspace template. It is documentation only and
+does not create folders, datasets, model files, training scripts, or runtime
+behavior.
 
 ## Manifest File Formats
 
@@ -286,6 +289,7 @@ Phase 9X implements dry-run media planning only; it writes no media files and
 creates no export truth.
 Phase 9Y documents workspace preparation without adding generated datasets,
 training dependencies, model files, or runtime behavior.
+Phase 9Z documents the recommended external directory tree without creating it.
 
 ## Relationship To Existing Dataset And Export Features
 
@@ -354,8 +358,8 @@ Tentative product-first phases:
 - Phase 9W: media-copy export design.
 - Phase 9X: media-copy export dry-run implementation.
 - Phase 9Y: external training workspace checklist.
-- Phase 9Z: external training workspace template docs or media-copy export
-  implementation, still no training.
+- Phase 9Z: external training workspace template docs.
+- Next likely phase: Phase 10A — return to stream/source playback contract.
 
 These phases remain tentative. Manifest and readiness work should come before
 training, runtime, or model integration.
@@ -372,6 +376,7 @@ training, runtime, or model integration.
 - no media copying in Phase 9W
 - no actual media copying in Phase 9X
 - no training workspace tooling or media copying in Phase 9Y
+- no real workspace folder creation in Phase 9Z
 - no training
 - no model dependencies
 - no model files
