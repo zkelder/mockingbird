@@ -723,7 +723,8 @@ export function SpeciesSuggestionsPage({
                   <span>
                     This suggestion is evidence only. It does not create reviewed labels, mark a
                     Visit reviewed, update dataset coverage, or make exports ready. Submitting the
-                    correction creates reviewed truth.
+                    correction creates reviewed truth; status is marked accepted only after that
+                    correction succeeds.
                   </span>
                 </section>
 
@@ -733,8 +734,8 @@ export function SpeciesSuggestionsPage({
                   <section className="notice-panel">
                     <strong>Correction prefill available</strong>
                     <span>
-                      Use as correction opens Visit Detail with this suggested label prefilled.
-                      You can edit it before saving; accepted suggestions are still evidence only.
+                      This opens the correction form. The suggestion is marked accepted only after
+                      correction is saved.
                     </span>
                   </section>
                 ) : null}
@@ -758,7 +759,7 @@ export function SpeciesSuggestionsPage({
                     ))}
                     <span className="field-helper">
                       These actions update suggestion status only. Use as correction opens the
-                      existing correction form and still requires submit.
+                      existing correction form and marks accepted only after submit succeeds.
                     </span>
                   </section>
                 ) : (

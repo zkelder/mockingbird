@@ -122,12 +122,24 @@ export function VisitDetailPage({
         label: trimmedLabel,
         notes: notes.trim() || undefined,
       });
-      setMessage(
-        `${displayTaxonomyLabel(
-          result.review_label.label,
-          taxonomyLabels,
-        )} will be used as local dataset truth.`,
-      );
+      let correctionMessage = `${displayTaxonomyLabel(
+        result.review_label.label,
+        taxonomyLabels,
+      )} will be used as local dataset truth.`;
+
+      if (activeCorrectionPrefill) {
+        try {
+          await apiClient.updateSpeciesSuggestionStatus(
+            activeCorrectionPrefill.speciesSuggestionId,
+            "accepted",
+          );
+          correctionMessage = "Correction saved and suggestion marked accepted.";
+        } catch {
+          correctionMessage = "Correction saved. Suggestion status could not be updated.";
+        }
+      }
+
+      setMessage(correctionMessage);
       await loadDetail({ showLoading: false });
       await onCorrectionSaved();
     } catch (caught) {
@@ -192,7 +204,7 @@ export function VisitDetailPage({
           <strong>Prefilled from SpeciesSuggestion {activeCorrectionPrefill.speciesSuggestionId}</strong>
           <span>
             {detail.visit.review_status === "needs_review"
-              ? `${correctionPrefillLabel} is in the correction form. Edit or confirm it; truth is created only when you submit the correction.`
+              ? "This label was prefilled from a SpeciesSuggestion. Submitting the correction creates truth; the suggestion will be marked accepted only after the correction succeeds."
               : `${correctionPrefillLabel} was passed as suggestion evidence, but this Visit is already reviewed. No truth changed.`}
           </span>
         </section>

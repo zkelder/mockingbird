@@ -26,6 +26,10 @@ review/correction path. See
 Frontend prefill from a suggestion is allowed only as review assistance; the
 correction submit remains the truth boundary.
 
+Post-correction SpeciesSuggestion status updates are evidence workflow metadata.
+They may run only after correction submit succeeds and must not create reviewed
+truth, mark Visits reviewed, update exports, or update analytics by themselves.
+
 ## Adapter Input Contract
 
 Adapters must accept product-level inputs, not adapter-specific workflows:

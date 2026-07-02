@@ -113,7 +113,7 @@ The Motion Evidence page shows attached MediaAsset context through the existing 
 
 The current local demo loop is import media -> create media-backed Motion Evidence -> promote -> review/correct.
 
-Species suggestion now has a manual/mock evidence surface and a frontend prefill path into Visit correction: suggestions are evidence only until review/correction creates truth. See [docs/species-suggestion-adapter-design.md](docs/species-suggestion-adapter-design.md) and [docs/species-suggestion-correction-flow.md](docs/species-suggestion-correction-flow.md).
+Species suggestion now has a manual/mock evidence surface and a frontend prefill path into Visit correction: suggestions are evidence only until review/correction creates truth, and accepted status after correction is evidence metadata only. See [docs/species-suggestion-adapter-design.md](docs/species-suggestion-adapter-design.md) and [docs/species-suggestion-correction-flow.md](docs/species-suggestion-correction-flow.md).
 
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md), and the [local setup checklist](docs/megadetector-local-setup.md).
 

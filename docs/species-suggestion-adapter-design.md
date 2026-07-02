@@ -132,6 +132,10 @@ An accepted suggestion is still only evidence until explicit review/correction
 behavior writes the reviewed label. "Use as correction" must remain a separate
 user action that submits the existing correction flow.
 
+Accepted status may be set after a successful correction as evidence workflow
+metadata. That status still is not the reviewed label, export truth, dataset
+coverage truth, or analytics truth.
+
 Phase 9B status updates are evidence workflow only. Accepting, rejecting, or superseding a suggestion does not create a reviewed label, mark Event/Visit records reviewed, update exports, or change dataset coverage truth.
 
 ## UI Plan
@@ -161,8 +165,8 @@ Recommended future phases:
 - Phase 9C: species suggestion UI surface with manual or mock suggestions.
 - Phase 9D: explicit correction-flow design for applying suggestion evidence.
 - Phase 9E: frontend prefill/use-as-correction path.
-- Later: SpeciesNet runtime investigation docs.
-- Phase 9F: custom bird classifier dataset plan.
+- Phase 9F: post-correction accepted-status polish.
+- Later: SpeciesNet runtime investigation docs or custom bird classifier dataset plan.
 
 Phase 9B stores manual/mock suggestions and proves they do not create truth. No real classifier runtime exists yet.
 
@@ -198,6 +202,14 @@ can prefill the existing correction form. The user can edit before submitting,
 and no suggestion status update, `ReviewLabel`, reviewed Visit state, export
 truth, dataset coverage truth, or analytics truth is created by navigation.
 
+## Phase 9F Status
+
+Phase 9F marks pending SpeciesSuggestion evidence accepted only after the
+existing Visit correction submit succeeds. If the correction fails, status stays
+unchanged. If the correction succeeds and the status update fails, the correction
+remains the dataset/export truth and the failed status update is reported as
+non-blocking evidence workflow metadata.
+
 ## Test Plan
 
 Implementation tests should prove:
@@ -207,6 +219,7 @@ Implementation tests should prove:
 - suggestions do not mark Visit reviewed
 - accepted, rejected, and superseded status behavior is deterministic
 - applying a suggestion requires the explicit correction/review path
+- suggestion status changes after correction success do not create truth
 - dataset/export truth changes only after correction
 - unknown and out-of-taxonomy suggestions remain reviewable
 - missing media fails safely

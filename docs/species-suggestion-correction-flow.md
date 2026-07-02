@@ -19,6 +19,17 @@ No backend apply-as-correction endpoint was added. SpeciesSuggestion status is
 not changed automatically; status polish remains deferred. Submitting the
 existing correction form remains the only truth-creating action.
 
+## Phase 9F Status
+
+Phase 9F marks eligible SpeciesSuggestion evidence accepted only after the
+existing Visit correction submit succeeds. Clicking "Use as correction" and
+navigating to Visit Detail still create no truth and do not change suggestion
+status.
+
+If the correction save succeeds but the suggestion status update fails, the
+correction remains saved. The UI reports the status update failure as
+non-blocking evidence workflow metadata.
+
 ## Product Flow
 
 SpeciesSuggestion pending or accepted
@@ -26,6 +37,7 @@ SpeciesSuggestion pending or accepted
 -> existing Visit/Event review context opens or receives the suggested label
 -> user confirms or edits the correction
 -> `ReviewLabel` or user correction is created
+-> eligible suggestion status may be marked accepted as evidence metadata
 -> Visit/Event review state updates according to existing correction behavior
 -> dataset/export truth updates only from that correction
 
@@ -51,7 +63,8 @@ Accepted suggestion alone must not:
 - The user can edit the label before submitting.
 - The correction form remains the final truth action.
 - Rejected or superseded suggestions should not offer a primary apply action.
-- Accepted suggestions may still require explicit correction submission.
+- Accepted suggestions still require explicit correction submission before
+  dataset/export truth changes.
 
 ## Suggested Future API Behavior
 
@@ -59,8 +72,8 @@ Option A:
 
 - The frontend uses the existing correction endpoint with `suggested_label`
   prefilled.
-- SpeciesSuggestion status may optionally be updated to accepted after the
-  correction succeeds.
+- SpeciesSuggestion status may be updated to accepted only after the correction
+  succeeds.
 
 Option B:
 
@@ -93,8 +106,8 @@ If backend implementation is needed later:
 
 ## Status Lifecycle Interaction
 
-- A pending suggestion can be applied as correction, then may become accepted or
-  superseded depending on future policy.
+- A pending suggestion can be applied as correction, then may become accepted
+  after the correction succeeds.
 - An accepted suggestion is still not truth until correction is submitted.
 - A rejected suggestion should not be applied without reopening or an explicit
   override policy.
@@ -132,6 +145,8 @@ If backend implementation is needed later:
   if the correction form already allows it.
 - Suggestion is rejected or superseded: do not primary-apply it.
 - Correction fails: do not update suggestion status.
+- Correction succeeds but status update fails: keep the correction, report the
+  status failure, and do not roll back truth.
 - Multiple suggestions conflict: show them as competing evidence and let the
   user choose or type the correction.
 - User edits label before submitting: store the edited label as truth.
@@ -146,6 +161,7 @@ If backend implementation is needed later:
 - Rejected/superseded suggestions cannot be primary-applied.
 - Dataset coverage/export truth changes only after correction.
 - Suggestion status updates after successful correction, if implemented.
+- Failed status updates do not undo successful corrections.
 - Failures do not partially update suggestion/truth.
 - No model runtime is required.
 
