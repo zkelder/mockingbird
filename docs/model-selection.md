@@ -46,6 +46,11 @@ SpeciesNet or custom classifier runtime. It creates pending suggestion evidence
 for the review loop only and does not inspect media, run a model, or create
 reviewed truth.
 
+Phase 9I investigates SpeciesNet runtime, dependency, licensing, model-file, and
+output-mapping questions in
+[speciesnet-runtime-investigation.md](speciesnet-runtime-investigation.md).
+This does not select SpeciesNet as an implementation runtime yet.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context

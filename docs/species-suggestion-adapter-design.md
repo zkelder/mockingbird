@@ -97,6 +97,12 @@ SpeciesNet may be evaluated later as a species or taxon suggestion adapter.
 
 It is not required for core MockingBird. It must remain optional, local, explicitly configured, and below the product review loop. No SpeciesNet dependency, runtime, model file, download behavior, or classifier call is added in this phase.
 
+Phase 9I records the runtime, dependency, licensing, model-file, and output
+mapping questions in
+[speciesnet-runtime-investigation.md](speciesnet-runtime-investigation.md).
+SpeciesNet remains a future optional adapter only until that review is complete
+and a later implementation phase explicitly scopes the runtime work.
+
 Before implementation, licensing, runtime behavior, model-file handling, supported taxa, local configuration, and failure behavior must be reviewed.
 
 ## Custom Backyard Bird Classifier Path
@@ -176,7 +182,8 @@ Recommended future phases:
 - Phase 9F: post-correction accepted-status polish.
 - Phase 9G: Visit Detail species suggestion review-context surface.
 - Phase 9H: mock species suggestion adapter for demo/testing.
-- Later: SpeciesNet runtime investigation docs or custom bird classifier dataset plan.
+- Phase 9I: SpeciesNet runtime investigation docs.
+- Later: SpeciesNet source/license/runtime review or custom bird classifier dataset plan.
 
 Phase 9B stores manual/mock suggestions and proves they do not create truth. No real classifier runtime exists yet.
 
@@ -235,6 +242,13 @@ The mock adapter creates one pending SpeciesSuggestion for an existing Visit,
 infers clean product context, and stays evidence-only. It does not inspect media,
 run a classifier, create `ReviewLabel`, mark Visits reviewed, create exports, or
 change dataset coverage truth.
+
+## Phase 9I Status
+
+Phase 9I adds the SpeciesNet runtime investigation record before any runtime
+dependency, model file, classifier call, media decoding, or implementation work.
+It keeps SpeciesNet as an optional future `SpeciesSuggestion` adapter and
+preserves correction as dataset/export truth.
 
 ## Test Plan
 

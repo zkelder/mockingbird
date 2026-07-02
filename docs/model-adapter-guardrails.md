@@ -16,6 +16,11 @@ User corrections remain dataset truth. Exports use reviewed and corrected labels
 
 Species classifier outputs are `SpeciesSuggestion` evidence only. They must not create reviewed labels, dataset coverage truth, export truth, analytics truth, or reviewed Visit/Event state without explicit user correction.
 
+SpeciesNet or any other species classifier runtime must follow
+[speciesnet-runtime-investigation.md](speciesnet-runtime-investigation.md)
+before dependencies, model files, download behavior, or classifier calls are
+added. Its outputs must create `SpeciesSuggestion` evidence only.
+
 Species suggestion UI actions such as accept, reject, and supersede update
 evidence workflow state only. They must not imply model truth or write reviewed
 corrections by themselves.

@@ -76,6 +76,10 @@ Every future implementation task must restate:
   [docs/species-suggestion-adapter-design.md](docs/species-suggestion-adapter-design.md)
   and remain suggestion evidence only until explicit review/correction creates
   truth.
+- SpeciesNet or classifier runtime work must follow
+  [docs/speciesnet-runtime-investigation.md](docs/speciesnet-runtime-investigation.md)
+  and must not add dependencies, model files, automatic downloads, or classifier
+  calls without an explicit follow-up runtime plan.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.
