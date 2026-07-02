@@ -1895,6 +1895,55 @@ button {
   color: #5c6a61;
 }
 
+.species-suggestion-review-context,
+.visit-suggestion-list,
+.visit-suggestion-card {
+  display: grid;
+  gap: 12px;
+}
+
+.species-suggestion-review-context {
+  border-top: 1px solid #e0e7dd;
+  padding-top: 14px;
+}
+
+.species-suggestion-review-context h3,
+.visit-suggestion-card h4,
+.visit-suggestion-card p {
+  margin: 0;
+}
+
+.visit-suggestion-list {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.visit-suggestion-card {
+  align-content: start;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.visit-suggestion-card.selected {
+  border-color: #2e6f5e;
+  background: #eef7ee;
+}
+
+.visit-suggestion-card p {
+  color: #5c6a61;
+}
+
+.visit-suggestion-card .secondary-action {
+  width: fit-content;
+}
+
+.compact-notice,
+.compact-error {
+  padding: 12px;
+  box-shadow: none;
+}
+
 .species-status-badge {
   display: inline-flex;
   width: fit-content;

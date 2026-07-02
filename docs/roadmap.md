@@ -246,7 +246,8 @@ Current work:
 - Phase 9D: species suggestion correction-flow design.
 - Phase 9E: SpeciesSuggestion use-as-correction UI prefill.
 - Phase 9F: SpeciesSuggestion status polish after successful correction.
-- Next likely phase: Phase 9G — Visit/Review Queue species suggestion surface polish or SpeciesNet runtime investigation docs.
+- Phase 9G: Visit Detail species suggestion surface polish.
+- Next likely phase: Phase 9H — SpeciesNet runtime investigation docs or mock species suggestion adapter.
 
 Validation:
 
@@ -259,4 +260,5 @@ Validation:
 - Applying suggestion evidence must route through explicit review/correction before dataset/export truth changes.
 - Use-as-correction prefill helps users start the existing correction form without creating truth until submit.
 - Suggestion accepted status from use-as-correction is evidence metadata and happens only after correction submit succeeds.
+- Visit Detail can show Visit-linked SpeciesSuggestions near correction without creating truth.
 - Media-backed Event/Visit evidence can be the future input to suggestion adapters.

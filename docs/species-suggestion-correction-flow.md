@@ -30,6 +30,17 @@ If the correction save succeeds but the suggestion status update fails, the
 correction remains saved. The UI reports the status update failure as
 non-blocking evidence workflow metadata.
 
+## Phase 9G Status
+
+Phase 9G shows Visit-linked SpeciesSuggestion evidence directly in Visit Detail
+near the existing correction form. Reviewers can use a pending or accepted
+suggestion to prefill the correction label in place, edit it, and then submit
+the normal correction form.
+
+Rejected and superseded suggestions stay read-only in the review context. Review
+Queue and Event Detail suggestion cues remain deferred unless they can be added
+without broad data-shape changes.
+
 ## Product Flow
 
 SpeciesSuggestion pending or accepted
@@ -59,6 +70,8 @@ Accepted suggestion alone must not:
 - The Species Suggestions page shows "Use as correction" only when a
   suggestion has enough `visit_id` or `event_id` context for correction.
 - Visit Detail receives suggestion prefill near the correction form.
+- Visit Detail can show Visit-linked suggestions as review evidence before the
+  user chooses one.
 - The button pre-fills the correction label with `suggested_label`.
 - The user can edit the label before submitting.
 - The correction form remains the final truth action.

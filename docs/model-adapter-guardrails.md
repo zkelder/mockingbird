@@ -30,6 +30,10 @@ Post-correction SpeciesSuggestion status updates are evidence workflow metadata.
 They may run only after correction submit succeeds and must not create reviewed
 truth, mark Visits reviewed, update exports, or update analytics by themselves.
 
+Showing SpeciesSuggestion evidence inside Visit Detail, Review Queue, or Event
+Detail must stay display/prefill-only. Model or suggestion output enters dataset
+truth only when the user submits the existing correction flow.
+
 ## Adapter Input Contract
 
 Adapters must accept product-level inputs, not adapter-specific workflows:

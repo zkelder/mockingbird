@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
-import type { TaxonomyLabel, VisitDetail } from "../api/types";
+import type { SpeciesSuggestion, TaxonomyLabel, VisitDetail } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
 import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEvidenceCard";
 import { EvidenceBadge } from "../components/EvidenceBadge";
@@ -43,6 +43,10 @@ export function VisitDetailPage({
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [speciesSuggestions, setSpeciesSuggestions] = useState<SpeciesSuggestion[]>([]);
+  const [isLoadingSpeciesSuggestions, setIsLoadingSpeciesSuggestions] = useState(true);
+  const [speciesSuggestionError, setSpeciesSuggestionError] = useState<string | null>(null);
+  const [correctionSuggestionId, setCorrectionSuggestionId] = useState<string | null>(null);
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [label, setLabel] = useState("");
   const [notes, setNotes] = useState("");
@@ -74,12 +78,70 @@ export function VisitDetailPage({
     }
   }
 
+  async function loadSpeciesSuggestions(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
+      setIsLoadingSpeciesSuggestions(true);
+    }
+    setSpeciesSuggestionError(null);
+    try {
+      const response = await apiClient.listSpeciesSuggestions({ visit_id: visitId });
+      setSpeciesSuggestions(response.species_suggestions);
+    } catch (caught) {
+      setSpeciesSuggestionError(
+        caught instanceof Error ? caught.message : "Could not load species suggestions.",
+      );
+    } finally {
+      if (showLoading) {
+        setIsLoadingSpeciesSuggestions(false);
+      }
+    }
+  }
+
   useEffect(() => {
-    setMessage(null);
+    if (activeCorrectionPrefill?.speciesSuggestionId) {
+      setMessage(null);
+    }
     setLabel(activeCorrectionPrefill?.label ?? "");
     setNotes("");
+    setCorrectionSuggestionId(activeCorrectionPrefill?.speciesSuggestionId ?? null);
     void loadDetail({ prefillLabel: activeCorrectionPrefill?.label });
   }, [visitId, activeCorrectionPrefill?.speciesSuggestionId]);
+
+  useEffect(() => {
+    setMessage(null);
+  }, [visitId]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadSuggestions() {
+      setIsLoadingSpeciesSuggestions(true);
+      setSpeciesSuggestionError(null);
+      try {
+        const response = await apiClient.listSpeciesSuggestions({ visit_id: visitId });
+        if (isMounted) {
+          setSpeciesSuggestions(response.species_suggestions);
+        }
+      } catch (caught) {
+        if (isMounted) {
+          setSpeciesSuggestionError(
+            caught instanceof Error ? caught.message : "Could not load species suggestions.",
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingSpeciesSuggestions(false);
+        }
+      }
+    }
+
+    void loadSuggestions();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [visitId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -104,6 +166,14 @@ export function VisitDetailPage({
     };
   }, []);
 
+  function useSpeciesSuggestionAsCorrection(suggestion: SpeciesSuggestion) {
+    setLabel(suggestion.suggested_label);
+    setCorrectionSuggestionId(suggestion.id);
+    setMessage(
+      "SpeciesSuggestion prefilled the correction field. Submit the correction to create reviewed truth.",
+    );
+  }
+
   async function saveCorrection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedLabel = label.trim();
@@ -127,13 +197,30 @@ export function VisitDetailPage({
         taxonomyLabels,
       )} will be used as local dataset truth.`;
 
-      if (activeCorrectionPrefill) {
+      if (correctionSuggestionId) {
+        const sourceSuggestion = speciesSuggestions.find(
+          (suggestion) => suggestion.id === correctionSuggestionId,
+        );
         try {
-          await apiClient.updateSpeciesSuggestionStatus(
-            activeCorrectionPrefill.speciesSuggestionId,
-            "accepted",
-          );
-          correctionMessage = "Correction saved and suggestion marked accepted.";
+          if (sourceSuggestion?.status === "accepted") {
+            correctionMessage = "Correction saved and suggestion marked accepted.";
+          } else if (
+            sourceSuggestion?.status === "rejected" ||
+            sourceSuggestion?.status === "superseded"
+          ) {
+            correctionMessage = "Correction saved. Suggestion status could not be updated.";
+          } else {
+            const updatedSuggestion = await apiClient.updateSpeciesSuggestionStatus(
+              correctionSuggestionId,
+              "accepted",
+            );
+            setSpeciesSuggestions((current) =>
+              current.map((suggestion) =>
+                suggestion.id === updatedSuggestion.id ? updatedSuggestion : suggestion,
+              ),
+            );
+            correctionMessage = "Correction saved and suggestion marked accepted.";
+          }
         } catch {
           correctionMessage = "Correction saved. Suggestion status could not be updated.";
         }
@@ -141,6 +228,7 @@ export function VisitDetailPage({
 
       setMessage(correctionMessage);
       await loadDetail({ showLoading: false });
+      await loadSpeciesSuggestions({ showLoading: false });
       await onCorrectionSaved();
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Correction could not be saved.");
@@ -169,6 +257,13 @@ export function VisitDetailPage({
   const isMotionEvidenceVisit = detail.event.event_type === "motion_evidence";
   const correctionPrefillLabel = activeCorrectionPrefill
     ? displayTaxonomyLabel(activeCorrectionPrefill.label, taxonomyLabels)
+    : "";
+  const activeSuggestionLabel = correctionSuggestionId
+    ? displayTaxonomyLabel(
+        speciesSuggestions.find((suggestion) => suggestion.id === correctionSuggestionId)
+          ?.suggested_label ?? activeCorrectionPrefill?.label ?? "",
+        taxonomyLabels,
+      )
     : "";
 
   return (
@@ -420,6 +515,96 @@ export function VisitDetailPage({
               ? "Use reviewed species, Unknown bird, or False positive. This value becomes dataset truth for analytics and exports."
               : "Use the reviewed label that should become dataset truth for analytics and exports."}
           </p>
+          <section className="species-suggestion-review-context">
+            <div className="section-heading">
+              <div>
+                <h3>Species Suggestions</h3>
+                <span className="meta-text">
+                  Suggestions are evidence only. Submitting a correction creates reviewed truth.
+                </span>
+              </div>
+              <EvidenceBadge
+                label={`${speciesSuggestions.length} suggestion${
+                  speciesSuggestions.length === 1 ? "" : "s"
+                }`}
+                tone={speciesSuggestions.length > 0 ? "evidence" : "quiet"}
+              />
+            </div>
+            {correctionSuggestionId ? (
+              <div className="notice-panel compact-notice">
+                <strong>Correction prefilled from suggestion</strong>
+                <span>
+                  {activeSuggestionLabel} is in the correction field. Edit it if needed; status is
+                  marked accepted only after the correction succeeds.
+                </span>
+              </div>
+            ) : null}
+            {isLoadingSpeciesSuggestions ? (
+              <span className="meta-text">Loading suggestions for this visit...</span>
+            ) : null}
+            {speciesSuggestionError ? (
+              <div className="error-panel compact-error">{speciesSuggestionError}</div>
+            ) : null}
+            {!isLoadingSpeciesSuggestions &&
+            !speciesSuggestionError &&
+            speciesSuggestions.length === 0 ? (
+              <span className="meta-text">No SpeciesSuggestions are linked to this visit yet.</span>
+            ) : null}
+            {!isLoadingSpeciesSuggestions &&
+            !speciesSuggestionError &&
+            speciesSuggestions.length > 0 ? (
+              <div className="visit-suggestion-list">
+                {speciesSuggestions.map((suggestion) => (
+                  <article
+                    className={
+                      correctionSuggestionId === suggestion.id
+                        ? "visit-suggestion-card selected"
+                        : "visit-suggestion-card"
+                    }
+                    key={suggestion.id}
+                  >
+                    <div className="item-title-row">
+                      <div>
+                        <span className="meta-text">{suggestion.adapter_name}</span>
+                        <h4>{displayTaxonomyLabel(suggestion.suggested_label, taxonomyLabels)}</h4>
+                        <span className="meta-text">Label: {suggestion.suggested_label}</span>
+                        {suggestion.suggested_common_name ||
+                        suggestion.suggested_scientific_name ? (
+                          <span className="meta-text">
+                            {[
+                              suggestion.suggested_common_name,
+                              suggestion.suggested_scientific_name,
+                            ]
+                              .filter(Boolean)
+                              .join(" / ")}
+                          </span>
+                        ) : null}
+                      </div>
+                      <SpeciesSuggestionStatusBadge status={suggestion.status} />
+                    </div>
+                    <div className="species-suggestion-meta">
+                      <span>Rank {suggestion.rank}</span>
+                      <span>{formatConfidence(suggestion.confidence)}</span>
+                    </div>
+                    {suggestion.notes ? <p>{suggestion.notes}</p> : null}
+                    {suggestion.status === "pending" || suggestion.status === "accepted" ? (
+                      <button
+                        className="secondary-action"
+                        onClick={() => useSpeciesSuggestionAsCorrection(suggestion)}
+                        type="button"
+                      >
+                        Use as correction
+                      </button>
+                    ) : (
+                      <span className="meta-text">
+                        {formatLabel(suggestion.status)} suggestion is read-only here.
+                      </span>
+                    )}
+                  </article>
+                ))}
+              </div>
+            ) : null}
+          </section>
           <form className="correction-form" onSubmit={saveCorrection}>
             <TaxonomyLabelInput
               label={isSpeciesVisit ? "Species correction" : "Corrected label"}
@@ -469,4 +654,15 @@ export function VisitDetailPage({
       )}
     </div>
   );
+}
+
+function SpeciesSuggestionStatusBadge({ status }: { status: SpeciesSuggestion["status"] }) {
+  return <span className={`species-status-badge species-status-${status}`}>{formatLabel(status)}</span>;
+}
+
+function formatConfidence(value?: number | null): string {
+  if (typeof value !== "number") {
+    return "No confidence";
+  }
+  return `${Math.round(value * 100)}% confidence`;
 }

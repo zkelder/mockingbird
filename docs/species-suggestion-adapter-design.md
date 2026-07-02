@@ -157,6 +157,10 @@ Any suggestion UI must make it clear which text is model- or manually-suggested
 evidence and which label is user-reviewed truth. Phase 9C does not apply
 suggestions as corrections.
 
+Phase 9G starts this review-context surface on Visit Detail by showing
+Visit-linked suggestions near the existing correction form. This is still
+manual/mock evidence UI and does not require runtime or model integration.
+
 ## API/Repository Plan
 
 Recommended future phases:
@@ -166,6 +170,7 @@ Recommended future phases:
 - Phase 9D: explicit correction-flow design for applying suggestion evidence.
 - Phase 9E: frontend prefill/use-as-correction path.
 - Phase 9F: post-correction accepted-status polish.
+- Phase 9G: Visit Detail species suggestion review-context surface.
 - Later: SpeciesNet runtime investigation docs or custom bird classifier dataset plan.
 
 Phase 9B stores manual/mock suggestions and proves they do not create truth. No real classifier runtime exists yet.
@@ -210,6 +215,14 @@ unchanged. If the correction succeeds and the status update fails, the correctio
 remains the dataset/export truth and the failed status update is reported as
 non-blocking evidence workflow metadata.
 
+## Phase 9G Status
+
+Phase 9G surfaces Visit-linked SpeciesSuggestion evidence on Visit Detail. The
+reviewer can prefill the existing correction form from pending or accepted
+suggestions, while rejected and superseded suggestions remain read-only context.
+No SpeciesNet runtime, classifier dependency, media inspection, or automatic
+truth write is added.
+
 ## Test Plan
 
 Implementation tests should prove:
@@ -220,6 +233,7 @@ Implementation tests should prove:
 - accepted, rejected, and superseded status behavior is deterministic
 - applying a suggestion requires the explicit correction/review path
 - suggestion status changes after correction success do not create truth
+- showing suggestions in review context does not create truth
 - dataset/export truth changes only after correction
 - unknown and out-of-taxonomy suggestions remain reviewable
 - missing media fails safely
