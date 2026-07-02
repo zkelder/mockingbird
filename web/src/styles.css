@@ -527,6 +527,48 @@ button {
   background: #ffffff;
 }
 
+.import-context-panel,
+.import-context-copy {
+  display: grid;
+  gap: 12px;
+}
+
+.import-context-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.import-context-grid div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.import-context-grid span {
+  color: #627168;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.import-context-grid strong {
+  overflow-wrap: anywhere;
+}
+
+.import-context-copy {
+  border-left: 3px solid #6e9567;
+  padding-left: 10px;
+}
+
+.import-context-copy p {
+  margin: 0;
+  color: #4f5f55;
+}
+
 .provider-field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2818,6 +2860,7 @@ button {
   .coverage-columns,
   .quality-metric-grid,
   .quality-secondary-grid,
+  .import-context-grid,
   .adapter-evaluation-grid,
   .adapter-config-grid,
   .model-readiness-grid,
@@ -2903,6 +2946,7 @@ button {
   .coverage-columns,
   .quality-metric-grid,
   .quality-secondary-grid,
+  .import-context-grid,
   .adapter-evaluation-grid,
   .model-readiness-grid,
   .adapter-result-grid,

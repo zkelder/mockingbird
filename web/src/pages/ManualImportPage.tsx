@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
-import type { CameraSource, MediaAsset, MediaImportResult, Stream, Zone } from "../api/types";
+import type {
+  CameraSource,
+  MediaAsset,
+  MediaImportResult,
+  SourceSetupReviewResponse,
+  Stream,
+  Zone,
+} from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
@@ -13,6 +20,7 @@ interface ManualImportPageProps {
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
   onOpenStream: (streamId: string) => void;
+  onOpenStreams: () => void;
   onOpenFolderImport: () => void;
   onOpenDetectionProposals: () => void;
   onImportComplete: () => Promise<void>;
@@ -24,6 +32,7 @@ export function ManualImportPage({
   onOpenEvent,
   onOpenVisit,
   onOpenStream,
+  onOpenStreams,
   onOpenFolderImport,
   onOpenDetectionProposals,
   onImportComplete,
@@ -38,6 +47,7 @@ export function ManualImportPage({
   const [speciesGuess, setSpeciesGuess] = useState("");
   const [notes, setNotes] = useState("");
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  const [setupReviews, setSetupReviews] = useState<Record<string, SourceSetupReviewResponse>>({});
   const [result, setResult] = useState<MediaImportResult | null>(null);
   const [isLoadingMedia, setIsLoadingMedia] = useState(true);
   const [isLoadingZones, setIsLoadingZones] = useState(false);
@@ -50,12 +60,53 @@ export function ManualImportPage({
     [sources],
   );
   const selectedStream = streams.find((stream) => stream.id === selectedStreamId) ?? null;
+  const selectedSource = selectedStream
+    ? sources.find((source) => source.id === selectedStream.source_id) ?? null
+    : null;
+  const selectedZone = zones.find((zone) => zone.id === selectedZoneId) ?? null;
+  const selectedSetupReview = selectedSource ? setupReviews[selectedSource.id] ?? null : null;
+  const isManualMediaReady =
+    selectedSetupReview?.provider_key === "manual_media" &&
+    selectedSetupReview.readiness_level === "metadata_ready";
 
   useEffect(() => {
     setSelectedStreamId((current) =>
       current && streams.some((stream) => stream.id === current) ? current : streams[0]?.id ?? "",
     );
   }, [streams]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadSetupReviews() {
+      if (sources.length === 0) {
+        setSetupReviews({});
+        return;
+      }
+
+      try {
+        const entries = await Promise.all(
+          sources.map(async (source) => [
+            source.id,
+            await apiClient.getSourceSetupReview(source.id),
+          ] as const),
+        );
+        if (isMounted) {
+          setSetupReviews(Object.fromEntries(entries));
+        }
+      } catch {
+        if (isMounted) {
+          setSetupReviews({});
+        }
+      }
+    }
+
+    void loadSetupReviews();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [sources]);
 
   useEffect(() => {
     let isMounted = true;
@@ -190,6 +241,68 @@ export function ManualImportPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
+
+      {selectedStream && selectedSource ? (
+        <section className="panel import-context-panel">
+          <div className="section-heading">
+            <div>
+              <h2>Import context</h2>
+              <span className="meta-text">
+                Source and Stream context for reviewable Events/Visits
+              </span>
+            </div>
+            {selectedSetupReview ? (
+              <StatusPill label={formatLabel(selectedSetupReview.readiness_level)} tone="quiet" />
+            ) : null}
+          </div>
+          <div className="import-context-grid">
+            <div>
+              <span>Source</span>
+              <strong>{selectedSource.name}</strong>
+            </div>
+            <div>
+              <span>Stream</span>
+              <strong>{selectedStream.name}</strong>
+            </div>
+            <div>
+              <span>Zone</span>
+              <strong>{selectedZone ? selectedZone.name : "Unzoned"}</strong>
+            </div>
+            <div>
+              <span>Provider</span>
+              <strong>
+                {selectedSetupReview
+                  ? selectedSetupReview.provider_display_name
+                  : formatLabel(selectedSource.kind)}
+              </strong>
+            </div>
+          </div>
+          <div className="import-context-copy">
+            {isManualMediaReady ? (
+              <p>
+                Manual media import is available for this Source. Imported media can create
+                reviewable Events/Visits; corrections remain the source of truth.
+              </p>
+            ) : selectedSetupReview?.provider_key === "manual_media" ? (
+              <p>{selectedSetupReview.next_step}</p>
+            ) : (
+              <p>
+                Manual import can still be used as an explicit local ingest path for the selected
+                Stream. Live playback is not implied.
+              </p>
+            )}
+            <p>Imported media stays local and enters review before it becomes export truth.</p>
+          </div>
+          <div className="detail-actions">
+            <button className="secondary-action" onClick={onOpenStreams} type="button">
+              Source setup
+            </button>
+            <button className="secondary-action" onClick={() => onOpenStream(selectedStream.id)}>
+              Open stream context
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {result ? (
         <section className="panel import-result-panel">

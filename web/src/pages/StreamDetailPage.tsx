@@ -4,6 +4,7 @@ import type {
   Event,
   Point,
   ReviewQueueItem,
+  SourceSetupReviewResponse,
   Stream,
   StreamPlaybackStatus,
   Visit,
@@ -26,6 +27,7 @@ interface StreamDetailPageProps {
 interface StreamDetailState {
   stream: Stream;
   playback: StreamPlaybackStatus;
+  setupReview: SourceSetupReviewResponse | null;
   zones: Zone[];
   events: Event[];
   visitsByEvent: Record<string, Visit[]>;
@@ -109,9 +111,10 @@ export function StreamDetailPage({
       setDraftPolygon(null);
       setDrawStart(null);
       try {
-        const [stream, playback, zones, events] = await Promise.all([
-          apiClient.getStream(streamId),
+        const stream = await apiClient.getStream(streamId);
+        const [playback, setupReview, zones, events] = await Promise.all([
           apiClient.getStreamPlaybackStatus(streamId),
+          apiClient.getSourceSetupReview(stream.source_id),
           apiClient.getStreamZones(streamId),
           apiClient.getStreamEvents(streamId),
         ]);
@@ -122,6 +125,7 @@ export function StreamDetailPage({
           setDetail({
             stream,
             playback,
+            setupReview,
             zones,
             events,
             visitsByEvent: Object.fromEntries(visitPairs),
@@ -380,6 +384,11 @@ export function StreamDetailPage({
         </div>
         {detail.playback.setup_hint ? (
           <p className="playback-setup-hint">{detail.playback.setup_hint}</p>
+        ) : null}
+        {detail.setupReview?.provider_key === "manual_media" ? (
+          <p className="playback-setup-hint">
+            This Stream can be used as context for manual media imports and zone review.
+          </p>
         ) : null}
       </section>
 

@@ -79,6 +79,11 @@ configuration, source connection readiness, and related stream playback status.
 It may guide the next setup step, but it must not connect to sources, decode
 media, create evidence, write review truth, or create exports.
 
+Manual media provider integration is an explicit local import boundary. Source
+setup/status may guide the user to import media for a Source/Stream, and that
+import can create reviewable Events/Visits, but reviewed truth still comes only
+from review/correction.
+
 Source connection status is the product boundary between source metadata and
 future provider readiness. Providers may feed safe status, field readiness, and
 related Stream ids later, but the contract must not connect sources, decode media,

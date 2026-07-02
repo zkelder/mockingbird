@@ -876,6 +876,16 @@ class ProductRepository:
                     "to this Source yet."
                 )
                 setup_hint = "Live playback requires a future provider implementation."
+            elif provider_kind == SourceProviderKind.manual_media:
+                status = SourceConnectionStatusValue.configured
+                message = (
+                    "Manual media provider metadata is ready for explicit local imports; "
+                    "live playback is not expected for this provider."
+                )
+                setup_hint = (
+                    "Import media for a related Source/Stream, then review and correct "
+                    "Events/Visits before export."
+                )
             else:
                 status = SourceConnectionStatusValue.configured
                 message = (
@@ -4907,6 +4917,11 @@ def _source_provider_configuration_from_config(
     elif definition.provider_key == "demo":
         message = "Demo provider metadata is available for local stream and zone planning."
         setup_hint = "Zone editing can continue with the demo stream panel."
+    elif definition.provider_key == "manual_media":
+        message = "Manual media provider metadata is available for explicit local imports."
+        setup_hint = (
+            "Import media for a related Source/Stream; review and correction create truth."
+        )
     else:
         message = "Provider configuration metadata is saved for this Source."
         setup_hint = "Zone editing can continue while playback remains unavailable."
@@ -4973,8 +4988,11 @@ def _source_setup_review_from_contracts(
         next_step = f"Add setup metadata for: {', '.join(missing_labels)}."
     elif configuration.provider_key == "manual_media":
         readiness_level = "metadata_ready"
-        summary = "Manual media setup metadata is ready without a live playback claim."
-        next_step = "Use manual media review/import flows; live playback is not expected here."
+        summary = (
+            "Manual media import is available for this Source. Imported media can create "
+            "reviewable Events/Visits; corrections remain the source of truth."
+        )
+        next_step = "Import media for this Source/Stream, then review and correct before export."
     elif connection.provider_kind == SourceProviderKind.future_adapter or (
         definition is not None
         and definition.status == SourceProviderDefinitionStatus.future_adapter
@@ -4990,10 +5008,42 @@ def _source_setup_review_from_contracts(
     warnings: list[str] = []
     if configuration.missing_fields:
         warnings.append(f"Missing setup metadata: {', '.join(missing_labels)}.")
-    if not supports_live_playback:
+    if not supports_live_playback and configuration.provider_key != "manual_media":
         warnings.append("Live playback is not implemented for this provider yet.")
     if not supports_zone_editing:
         warnings.append("No related stream panel is available for zone editing yet.")
+
+    playback_message = (
+        "Live playback is not expected for this provider."
+        if configuration.provider_key == "manual_media"
+        else (
+            "Live playback is available."
+            if supports_live_playback
+            else "Live playback is not implemented for this provider yet."
+        )
+    )
+    workflow_step = (
+        SourceSetupReviewStep(
+            key="manual_media_import",
+            label="Manual media import",
+            status="available" if not configuration.missing_fields else "warning",
+            message=(
+                "Manual media import can create reviewable Events/Visits; "
+                "corrections remain truth."
+            ),
+        )
+        if configuration.provider_key == "manual_media"
+        else SourceSetupReviewStep(
+            key="future_provider",
+            label="Future provider work",
+            status="future" if not supports_live_playback else "complete",
+            message=(
+                "Provider metadata remains underneath the product loop."
+                if supports_live_playback
+                else "Future provider implementation required for real playback."
+            ),
+        )
+    )
 
     steps = [
         SourceSetupReviewStep(
@@ -5006,11 +5056,7 @@ def _source_setup_review_from_contracts(
             key="playback_readiness",
             label="Playback readiness",
             status="available" if supports_live_playback else "future",
-            message=(
-                "Live playback is available."
-                if supports_live_playback
-                else "Live playback is not implemented for this provider yet."
-            ),
+            message=playback_message,
         ),
         SourceSetupReviewStep(
             key="zone_editing",
@@ -5022,16 +5068,7 @@ def _source_setup_review_from_contracts(
                 else "Add a product Stream before zone editing can continue."
             ),
         ),
-        SourceSetupReviewStep(
-            key="future_provider",
-            label="Future provider work",
-            status="future" if not supports_live_playback else "complete",
-            message=(
-                "Provider metadata remains underneath the product loop."
-                if supports_live_playback
-                else "Future provider implementation required for real playback."
-            ),
-        ),
+        workflow_step,
     ]
 
     return SourceSetupReviewResponse(

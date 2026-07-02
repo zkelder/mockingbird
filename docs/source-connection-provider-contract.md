@@ -49,6 +49,10 @@ playback contract -> zone editing -> future provider implementation.
 - `manual_media`: manual upload or folder-style media source boundary.
 - `external_url`: future local or user-provided playback URL boundary.
 
+For `manual_media`, connection readiness means the Source is ready for explicit
+local import/review workflows. It is not a camera connection and does not imply
+live playback.
+
 ## Provider Configuration Relationship
 
 Source provider configuration is the metadata layer underneath connection

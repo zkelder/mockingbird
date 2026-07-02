@@ -154,8 +154,8 @@ async def test_manual_media_provider_reports_metadata_ready_without_live_claim(
     assert review["provider_key"] == "manual_media"
     assert review["readiness_level"] == "metadata_ready"
     assert review["supports_live_playback"] is False
-    assert "Manual media" in review["summary"]
-    assert "manual media review" in review["next_step"].lower()
+    assert "Manual media import" in review["summary"]
+    assert "Import media for this Source/Stream" in review["next_step"]
 
 
 async def test_setup_review_does_not_create_product_truth(client: httpx.AsyncClient) -> None:

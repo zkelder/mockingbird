@@ -13,6 +13,12 @@ An adapter-backed input that can provide video, images, clips, or stream data.
 Safe metadata describing the intended provider contract for a Source. It is not a
 provider implementation, connection attempt, evidence, or reviewed truth.
 
+## Manual Media Source
+
+A Source/provider path for explicit local media import into Stream and Zone
+context. Imports can create reviewable Events/Visits, but corrections remain the
+source of truth.
+
 ## Source Connection Status
 
 A read-only product contract describing Source provider readiness and related

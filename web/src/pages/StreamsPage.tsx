@@ -16,6 +16,7 @@ import { formatLabel } from "../utils";
 interface StreamsPageProps {
   streams: Stream[];
   sources: CameraSource[];
+  onOpenImport: () => void;
   onOpenStream: (streamId: string) => void;
 }
 
@@ -69,7 +70,7 @@ function draftFromConfiguration(
   );
 }
 
-export function StreamsPage({ streams, sources, onOpenStream }: StreamsPageProps) {
+export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: StreamsPageProps) {
   const sourceNames = new Map(sources.map((source) => [source.id, source.name]));
   const [connectionStatuses, setConnectionStatuses] = useState<
     Record<string, SourceConnectionStatus>
@@ -369,6 +370,12 @@ export function StreamsPage({ streams, sources, onOpenStream }: StreamsPageProps
                   <div className="source-review-next">
                     <strong>Next step</strong>
                     <span>{selectedSetupReview.next_step}</span>
+                    {selectedSetupReview.provider_key === "manual_media" &&
+                    selectedSetupReview.readiness_level === "metadata_ready" ? (
+                      <button className="secondary-action" onClick={onOpenImport} type="button">
+                        Import media
+                      </button>
+                    ) : null}
                   </div>
                   <div className="source-field-summary">
                     <div>

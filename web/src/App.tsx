@@ -266,7 +266,14 @@ export default function App() {
     }
 
     if (page === "streams") {
-      return <StreamsPage streams={data.streams} sources={data.sources} onOpenStream={openStream} />;
+      return (
+        <StreamsPage
+          streams={data.streams}
+          sources={data.sources}
+          onOpenImport={() => setPage("import")}
+          onOpenStream={openStream}
+        />
+      );
     }
 
     if (page === "import") {
@@ -277,6 +284,7 @@ export default function App() {
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
           onOpenStream={openStream}
+          onOpenStreams={() => setPage("streams")}
           onOpenFolderImport={() => setPage("folder-import")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onImportComplete={() => loadAppData({ showLoading: false })}

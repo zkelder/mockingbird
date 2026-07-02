@@ -55,6 +55,10 @@ but it does not change Stream playback into live video. Streams should remain
 honest about demo or placeholder playback until a real provider implementation is
 explicitly added.
 
+For `manual_media` Sources, Stream playback remains a placeholder/media-context
+surface unless a future playback provider exists. The Stream still gives manual
+imports zone and review context.
+
 ## What This Phase Does
 
 - Adds a read-only playback status route for streams.

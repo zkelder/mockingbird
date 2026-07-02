@@ -313,8 +313,9 @@ Current work:
 - Phase 10B: source connection/provider status contract.
 - Phase 10C: source provider configuration contract/UI.
 - Phase 10D: source setup review/status polish.
-- Next likely phase: Phase 10E — manual media provider integration polish, or
-  Phase 11A — first real source adapter boundary design, still without weakening
+- Phase 10E: manual media provider integration polish.
+- Next likely phase: Phase 11A — first real source adapter boundary design, or
+  Phase 10F — stream/source UX consolidation, still without weakening
   review/correction truth.
 
 Validation:
@@ -325,6 +326,8 @@ Validation:
 - Provider configuration stores safe metadata only.
 - Source setup review combines configuration, connection readiness, and stream
   playback readiness without connecting to sources.
+- Manual media provider setup points to explicit import/review workflows while
+  live playback remains out of scope.
 - Unknown streams return 404.
 - Unknown sources return 404.
 - Unknown provider keys are rejected.
@@ -339,6 +342,8 @@ Validation:
 - Source setup review reports demo-ready, metadata-ready, needs-setup,
   future-adapter-required, or unavailable readiness without creating evidence or
   truth.
+- Manual media imports can create reviewable Events/Visits through explicit
+  import actions; corrections remain dataset/export truth.
 - Playback status does not create MotionEvidence, Events, Visits, ReviewLabels,
   SpeciesSuggestions, exports, analytics truth, media files, model artifacts, or
   adapter runtime calls.

@@ -27,6 +27,10 @@ Provider definitions describe supported setup contracts:
 Future-labeled providers are placeholders/contracts only. They do not implement
 live playback or source connection behavior.
 
+`manual_media` is an available metadata path for explicit local media import. It
+can guide users toward importing media for a Source/Stream, but it does not imply
+live playback, capture, or automatic media analysis.
+
 ## Provider Configuration Fields
 
 Each provider definition can expose fields with:
@@ -61,6 +65,8 @@ Source setup review is a read-only product summary over provider configuration,
 source connection readiness, and related Stream playback readiness. It can report
 next setup steps, missing metadata, and future provider requirements, but it does
 not connect, capture, decode, inspect media, create evidence, or write truth.
+For `manual_media`, setup review should point to explicit import/review flows
+while preserving correction as the truth boundary.
 
 ## Relationship To Stream Playback Status
 
@@ -114,6 +120,7 @@ reviewable activity.
 - Secret fields are never returned or stored raw.
 - Source connection status reflects configured and missing fields.
 - Stream playback remains honest and does not claim live playback.
+- Manual media setup points to explicit import/review, not live playback.
 - Provider configuration does not create evidence, review truth, exports, media
   files, model artifacts, or runtime calls.
 
