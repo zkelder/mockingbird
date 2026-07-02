@@ -303,6 +303,34 @@ export interface ModelReadinessSummary {
   local_first_note: string;
 }
 
+export interface ClassifierReadinessSpeciesSummary {
+  label: string;
+  reviewed_examples: number;
+  media_backed_examples: number;
+  export_ready_examples: number;
+  warnings: string[];
+}
+
+export interface ClassifierReadinessSkipSummary {
+  reason: string;
+  count: number;
+}
+
+export interface ClassifierReadinessReport {
+  ready_for_manifest_export: boolean;
+  reviewed_examples: number;
+  media_backed_reviewed_examples: number;
+  export_ready_examples: number;
+  species: ClassifierReadinessSpeciesSummary[];
+  missing_target_labels: string[];
+  unknown_label_count: number;
+  false_positive_count: number;
+  out_of_taxonomy_count: number;
+  skipped: ClassifierReadinessSkipSummary[];
+  warnings: string[];
+  recommended_next_step: string;
+}
+
 export interface DetectionProposal {
   id: string;
   run_id: string;

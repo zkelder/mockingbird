@@ -2358,6 +2358,68 @@ button {
   color: #637166;
 }
 
+.classifier-readiness-status,
+.classifier-readiness-panel,
+.readiness-summary-list,
+.readiness-warning-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.classifier-readiness-status {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.classifier-readiness-status h2,
+.classifier-readiness-status p {
+  margin: 0;
+}
+
+.classifier-readiness-status p {
+  margin-top: 8px;
+  color: #4f5f55;
+}
+
+.readiness-table {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.readiness-table-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) repeat(3, minmax(90px, 0.75fr)) minmax(180px, 1.2fr);
+  gap: 12px;
+  align-items: center;
+  border-top: 1px solid #e3e9df;
+  padding: 12px;
+}
+
+.readiness-table-row:first-child {
+  border-top: 0;
+}
+
+.readiness-table-head {
+  background: #f2f7ef;
+  color: #536258;
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.readiness-warning-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.readiness-warning {
+  border-color: #d6bb7a;
+  background: #fff9e9;
+}
+
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -2400,6 +2462,10 @@ button {
     .species-suggestion-layout,
     .sampled-frame-result-list,
     .zone-editor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .readiness-table-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2479,6 +2545,11 @@ button {
   }
 
   .quality-issue-card {
+    grid-template-columns: 1fr;
+  }
+
+  .classifier-readiness-status,
+  .readiness-table-row {
     grid-template-columns: 1fr;
   }
 }

@@ -72,6 +72,10 @@ Classifier readiness and export-planning reports are read-only signals. They
 may summarize reviewed local data, but they must not run classifiers, generate
 datasets, or turn model/suggestion output into truth.
 
+Classifier readiness UI is also read-only. It may show reviewed-data readiness,
+skip reasons, and warnings, but it must not create exports, labels, datasets,
+or classifier suggestions.
+
 ## Adapter Input Contract
 
 Adapters must accept product-level inputs, not adapter-specific workflows:

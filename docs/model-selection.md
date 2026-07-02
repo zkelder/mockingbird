@@ -76,6 +76,10 @@ Phase 9O adds a read-only classifier readiness report/API before manifest
 export implementation. It summarizes reviewed media-backed examples and skip
 reasons without generating datasets or running classifier runtime.
 
+Phase 9P surfaces classifier readiness in the frontend. It makes readiness and
+skip warnings visible, but still does not generate manifests, train models, or
+select classifier runtime.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context
@@ -85,8 +89,8 @@ They should follow [species-suggestion-adapter-design.md](species-suggestion-ada
 - feed `SpeciesSuggestion`, not `ReviewLabel`, directly
 - require user review/correction before dataset/export truth changes
 
-Custom classifier training remains future work until readiness reporting,
-manifest export implementation, reviewed media-backed examples,
+Custom classifier training remains future work until readiness reporting and
+UI review, manifest export implementation, reviewed media-backed examples,
 dataset coverage/quality checks, and explicit export policy are in place.
 SpeciesNet stays a separate optional external species/taxon candidate.
 

@@ -31,6 +31,7 @@ interface DashboardPageProps {
   onOpenImport: () => void;
   onOpenDetectionProposals: () => void;
   onOpenModelAdapters: () => void;
+  onOpenClassifierReadiness: () => void;
 }
 
 export function DashboardPage({
@@ -48,6 +49,7 @@ export function DashboardPage({
   onOpenImport,
   onOpenDetectionProposals,
   onOpenModelAdapters,
+  onOpenClassifierReadiness,
 }: DashboardPageProps) {
   const mainStream = streams[0];
   const latestExport = exports[exports.length - 1];
@@ -213,6 +215,9 @@ export function DashboardPage({
             </button>
             <button className="secondary-action" onClick={onOpenModelAdapters}>
               Model Adapters
+            </button>
+            <button className="secondary-action" onClick={onOpenClassifierReadiness}>
+              Classifier Readiness
             </button>
           </div>
         </section>

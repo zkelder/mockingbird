@@ -34,6 +34,8 @@ eligible-looking record is not exportable.
 
 Phase 9O adds a read-only classifier readiness report to summarize these
 counts and warnings before any manifest export implementation is added.
+Phase 9P adds the frontend readiness surface so those signals can guide future
+manifest export decisions without generating export files.
 
 ## Manifest File Formats
 
@@ -228,6 +230,8 @@ Future exports should produce a summary report with:
 The Phase 9O readiness report should gate later manifest export work by showing
 whether reviewed media-backed species examples, taxonomy coverage, skip
 reasons, and quality warnings are ready enough to proceed.
+The Phase 9P UI makes those signals visible before any manifest implementation
+or training workflow exists.
 
 ## Relationship To Existing Dataset And Export Features
 
@@ -282,10 +286,11 @@ Manifest implementation should be easy to disable or remove:
 Tentative product-first phases:
 
 - Phase 9O: classifier-readiness report/API.
-- Phase 9P: classifier training manifest export implementation foundation.
-- Phase 9Q: reviewed media-backed example export.
-- Phase 9R: external training workflow docs.
-- Phase 9S: optional custom classifier adapter boundary.
+- Phase 9P: classifier readiness UI surface.
+- Phase 9Q: classifier training manifest export implementation foundation.
+- Phase 9R: reviewed media-backed example export.
+- Phase 9S: external training workflow docs.
+- Phase 9T: optional custom classifier adapter boundary.
 
 These phases remain tentative. Manifest and readiness work should come before
 training, runtime, or model integration.

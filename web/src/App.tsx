@@ -14,6 +14,7 @@ import type {
   Stream,
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { ClassifierReadinessPage } from "./pages/ClassifierReadinessPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DetectionProposalsPage } from "./pages/DetectionProposalsPage";
 import { EventDetailPage } from "./pages/EventDetailPage";
@@ -38,6 +39,7 @@ type Page =
   | "detection-proposals"
   | "motion-evidence"
   | "species-suggestions"
+  | "classifier-readiness"
   | "stream-detail"
   | "event-detail"
   | "visit-detail"
@@ -87,6 +89,7 @@ const navItems: Array<{ page: Page; label: string }> = [
   { page: "detection-proposals", label: "Detection Proposals" },
   { page: "motion-evidence", label: "Motion Evidence" },
   { page: "species-suggestions", label: "Species Suggestions" },
+  { page: "classifier-readiness", label: "Classifier Readiness" },
   { page: "review", label: "Review" },
   { page: "analytics", label: "Analytics" },
   { page: "exports", label: "Exports" },
@@ -251,6 +254,7 @@ export default function App() {
           onOpenStream={openStream}
           onOpenImport={() => setPage("import")}
           onOpenModelAdapters={() => setPage("model-adapters")}
+          onOpenClassifierReadiness={() => setPage("classifier-readiness")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenReview={() => setPage("review")}
           onOpenExports={() => setPage("exports")}
@@ -344,6 +348,17 @@ export default function App() {
           onOpenVisit={openVisit}
           onOpenReview={() => setPage("review")}
           onUseAsCorrection={useSpeciesSuggestionAsCorrection}
+        />
+      );
+    }
+
+    if (page === "classifier-readiness") {
+      return (
+        <ClassifierReadinessPage
+          onOpenAnalytics={() => setPage("analytics")}
+          onOpenExports={() => setPage("exports")}
+          onOpenReview={() => setPage("review")}
+          onOpenSpeciesSuggestions={() => setPage("species-suggestions")}
         />
       );
     }
