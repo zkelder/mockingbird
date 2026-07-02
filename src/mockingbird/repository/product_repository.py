@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from collections import Counter
+import csv
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 from typing import Any
+import uuid
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy import Engine, delete, func, select
@@ -51,6 +54,9 @@ from mockingbird.api.schemas import (
     BoundingBox,
     CameraSource,
     ClassifierManifestExample,
+    ClassifierManifestExportFile,
+    ClassifierManifestFileExportRequest,
+    ClassifierManifestFileExportResponse,
     ClassifierManifestSkippedRecord,
     ClassifierManifestSummary,
     ClassifierManifestTaxonomyEntry,
@@ -166,6 +172,16 @@ SUPPORTED_MEDIA_EXTENSIONS = {
     ".mov": ("video/quicktime", "video"),
 }
 
+DEFAULT_CLASSIFIER_MANIFEST_EXPORT_ROOT = Path("data/classifier_manifest_exports")
+
+CLASSIFIER_MANIFEST_EXPORT_CONTENT_TYPES = {
+    "manifest.jsonl": "application/x-ndjson",
+    "manifest.csv": "text/csv",
+    "taxonomy.json": "application/json",
+    "skipped_records.jsonl": "application/x-ndjson",
+    "summary.json": "application/json",
+}
+
 BASE_MODEL_ADAPTERS: tuple[ModelAdapter, ...] = (
     ModelAdapter(
         id="demo_rule_detector",
@@ -267,9 +283,13 @@ class ProductRepository:
         db_url: str | None = None,
         engine: Engine | None = None,
         media_root: str | Path | None = None,
+        classifier_manifest_export_root: str | Path | None = None,
     ) -> None:
         self.db_url = resolve_database_url(db_url)
         self.media_root = resolve_media_root(media_root)
+        self.classifier_manifest_export_root = Path(
+            classifier_manifest_export_root or DEFAULT_CLASSIFIER_MANIFEST_EXPORT_ROOT
+        )
         self.engine = engine or create_database_engine(self.db_url)
         initialize_database(self.engine)
         self.session_factory = create_session_factory(self.engine)
@@ -2122,6 +2142,15 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._classifier_training_manifest(session)
 
+    def create_classifier_manifest_export(
+        self,
+        payload: ClassifierManifestFileExportRequest,
+    ) -> ClassifierManifestFileExportResponse:
+        with self.session_factory() as session:
+            manifest = self._classifier_training_manifest(session)
+
+        return self._write_classifier_manifest_export(payload, manifest)
+
     def visit_is_dataset_ready(self, visit: Visit) -> bool:
         with self.session_factory() as session:
             return self._visit_is_dataset_ready(session, visit)
@@ -3938,6 +3967,217 @@ class ProductRepository:
             summary=summary,
             warnings=warnings,
         )
+
+    def _write_classifier_manifest_export(
+        self,
+        payload: ClassifierManifestFileExportRequest,
+        manifest: ClassifierTrainingManifestResponse,
+    ) -> ClassifierManifestFileExportResponse:
+        created_at = datetime.now(UTC).isoformat()
+        export_id = self._classifier_manifest_export_id(payload.output_name)
+        file_names = self._classifier_manifest_export_file_names(payload)
+
+        if payload.dry_run:
+            return ClassifierManifestFileExportResponse(
+                export_id=export_id,
+                output_directory=None,
+                files=[
+                    ClassifierManifestExportFile(
+                        name=name,
+                        relative_path=name,
+                        content_type=CLASSIFIER_MANIFEST_EXPORT_CONTENT_TYPES[name],
+                        size_bytes=None,
+                    )
+                    for name in file_names
+                ],
+                examples=len(manifest.examples),
+                skipped=len(manifest.skipped_records),
+                warnings=manifest.warnings,
+                created_at=created_at,
+                dry_run=True,
+            )
+
+        export_root = self.classifier_manifest_export_root.resolve(strict=False)
+        export_root.mkdir(parents=True, exist_ok=True)
+        output_dir = self._classifier_manifest_output_dir(export_root, export_id)
+        temporary_dir = self._classifier_manifest_output_dir(
+            export_root,
+            f".{export_id}.tmp",
+        )
+        if output_dir.exists() or temporary_dir.exists():
+            raise ValueError("classifier manifest export directory already exists")
+
+        temporary_dir.mkdir()
+        try:
+            self._write_classifier_manifest_files(
+                temporary_dir,
+                file_names,
+                payload,
+                manifest,
+                export_id,
+                created_at,
+            )
+            temporary_dir.rename(output_dir)
+        except Exception:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+            raise
+
+        return ClassifierManifestFileExportResponse(
+            export_id=export_id,
+            output_directory=str(output_dir),
+            files=[
+                ClassifierManifestExportFile(
+                    name=name,
+                    relative_path=name,
+                    content_type=CLASSIFIER_MANIFEST_EXPORT_CONTENT_TYPES[name],
+                    size_bytes=(output_dir / name).stat().st_size,
+                )
+                for name in file_names
+            ],
+            examples=len(manifest.examples),
+            skipped=len(manifest.skipped_records),
+            warnings=manifest.warnings,
+            created_at=created_at,
+            dry_run=False,
+        )
+
+    def _classifier_manifest_export_id(self, output_name: str | None) -> str:
+        base_name = output_name or "classifier-manifest"
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        return f"{base_name}-{timestamp}-{uuid.uuid4().hex[:8]}"
+
+    def _classifier_manifest_output_dir(self, export_root: Path, directory_name: str) -> Path:
+        output_dir = (export_root / directory_name).resolve(strict=False)
+        if not output_dir.is_relative_to(export_root):
+            raise ValueError("classifier manifest export path must stay under the export root")
+        return output_dir
+
+    def _classifier_manifest_export_file_names(
+        self,
+        payload: ClassifierManifestFileExportRequest,
+    ) -> list[str]:
+        file_names = [
+            "manifest.jsonl",
+            "taxonomy.json",
+            "skipped_records.jsonl",
+        ]
+        if payload.include_summary:
+            file_names.append("summary.json")
+        if payload.include_csv:
+            file_names.append("manifest.csv")
+        return file_names
+
+    def _write_classifier_manifest_files(
+        self,
+        output_dir: Path,
+        file_names: list[str],
+        payload: ClassifierManifestFileExportRequest,
+        manifest: ClassifierTrainingManifestResponse,
+        export_id: str,
+        created_at: str,
+    ) -> None:
+        if "manifest.jsonl" in file_names:
+            self._write_jsonl(
+                output_dir / "manifest.jsonl",
+                [example.model_dump(mode="json") for example in manifest.examples],
+            )
+        if "taxonomy.json" in file_names:
+            self._write_json(
+                output_dir / "taxonomy.json",
+                [entry.model_dump(mode="json") for entry in manifest.taxonomy],
+            )
+        if "skipped_records.jsonl" in file_names:
+            self._write_jsonl(
+                output_dir / "skipped_records.jsonl",
+                [record.model_dump(mode="json") for record in manifest.skipped_records],
+            )
+        if "summary.json" in file_names:
+            self._write_json(
+                output_dir / "summary.json",
+                self._classifier_manifest_export_summary(
+                    payload,
+                    manifest,
+                    export_id,
+                    created_at,
+                    file_names,
+                ),
+            )
+        if "manifest.csv" in file_names:
+            self._write_classifier_manifest_csv(output_dir / "manifest.csv", manifest)
+
+    def _classifier_manifest_export_summary(
+        self,
+        payload: ClassifierManifestFileExportRequest,
+        manifest: ClassifierTrainingManifestResponse,
+        export_id: str,
+        created_at: str,
+        file_names: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "export_id": export_id,
+            "created_at": created_at,
+            "manifest_version": manifest.manifest_version,
+            "manifest_generated_at": manifest.generated_at,
+            "media_policy": payload.media_policy,
+            "split_seed": payload.split_seed,
+            "dry_run": payload.dry_run,
+            "include_csv": payload.include_csv,
+            "include_summary": payload.include_summary,
+            "examples": len(manifest.examples),
+            "skipped": len(manifest.skipped_records),
+            "skipped_reasons": dict(
+                sorted(Counter(record.reason for record in manifest.skipped_records).items())
+            ),
+            "labels": manifest.summary.labels,
+            "splits": manifest.summary.splits,
+            "warnings": manifest.warnings,
+            "files": file_names,
+        }
+
+    def _write_jsonl(self, path: Path, records: list[dict[str, Any]]) -> None:
+        with path.open("w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record, sort_keys=True))
+                handle.write("\n")
+
+    def _write_json(self, path: Path, payload: Any) -> None:
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+
+    def _write_classifier_manifest_csv(
+        self,
+        path: Path,
+        manifest: ClassifierTrainingManifestResponse,
+    ) -> None:
+        fieldnames = [
+            "example_id",
+            "visit_id",
+            "event_id",
+            "media_asset_id",
+            "source_id",
+            "stream_id",
+            "zone_id",
+            "local_media_path",
+            "label",
+            "taxonomy_id",
+            "common_name",
+            "scientific_name",
+            "reviewed_label_id",
+            "reviewed_at",
+            "created_at",
+            "split",
+            "quality_flags",
+            "provenance",
+        ]
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for example in manifest.examples:
+                row = example.model_dump(mode="json")
+                row["quality_flags"] = json.dumps(row["quality_flags"], sort_keys=True)
+                row["provenance"] = json.dumps(row["provenance"], sort_keys=True)
+                writer.writerow({field: row.get(field) for field in fieldnames})
 
     def _analytics_summary(self, session: Session) -> AnalyticsSummary:
         events = [

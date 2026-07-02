@@ -11,8 +11,8 @@ runtime, dependency, model-file, or export implementation work.
 
 Phase 9N expands the future export manifest contract in
 [classifier-training-manifest-design.md](classifier-training-manifest-design.md).
-That document is still design-only; manifest export remains future
-implementation work.
+That document remains the manifest shape contract. Phase 9Q implements the
+read-only preview and Phase 9T implements metadata-only backend file export.
 
 Phase 9O adds a read-only classifier readiness report before manifest export
 implementation. The report summarizes reviewed media-backed examples, label
@@ -34,8 +34,11 @@ media, generate datasets, train, or run classifier runtime.
 
 Phase 9S documents the future backend manifest file export policy in
 [classifier-manifest-file-export-design.md](classifier-manifest-file-export-design.md).
-Backend file export remains future work, and media copying remains a separate
-future phase.
+Media copying remains a separate future phase.
+
+Phase 9T implements backend manifest metadata file export only. It writes local
+manifest files under an ignored export path, but it does not copy media, create
+training folders, train models, or run classifier runtime.
 
 ## Product Flow
 
@@ -130,6 +133,8 @@ only. None of these phases copies media, writes server-side manifest files,
 trains classifiers, or creates truth.
 Phase 9S defines the local file policy for a later metadata-only export without
 implementing it.
+Phase 9T implements the metadata-only file export path. Media copying,
+training folders, classifier runtime, and model artifacts remain out of scope.
 
 ## Export Format Plan
 
@@ -164,7 +169,7 @@ for the Phase 9N manifest fields, skip reasons, quality flags, taxonomy export,
 and split policy. Phase 9Q returns this shape as structured API data only; file
 exports and media-copy policies remain future work.
 See [classifier-manifest-file-export-design.md](classifier-manifest-file-export-design.md)
-for the Phase 9S server-side file export boundary.
+for the Phase 9S/9T server-side metadata file export boundary.
 
 ## Training/Runtime Separation
 

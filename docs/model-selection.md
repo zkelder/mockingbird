@@ -94,6 +94,10 @@ Phase 9S defines the future backend manifest file export boundary in
 It is design-only and keeps generated files, media copying, training, and
 classifier runtime out of scope.
 
+Phase 9T implements backend metadata file export for that manifest under an
+ignored local path. It still does not copy media, generate training folders,
+train, run SpeciesNet, run a custom classifier, or add model dependencies.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context
@@ -103,10 +107,9 @@ They should follow [species-suggestion-adapter-design.md](species-suggestion-ada
 - feed `SpeciesSuggestion`, not `ReviewLabel`, directly
 - require user review/correction before dataset/export truth changes
 
-Custom classifier training remains future work until readiness reporting,
-manifest preview UI, explicit manifest file export tooling/policy, reviewed
-media-backed examples, dataset coverage/quality checks, and external training
-workflow are in place.
+Custom classifier training remains future work until reviewed media-backed
+examples, metadata export review, dataset coverage/quality checks, and an
+external training workflow are in place.
 SpeciesNet stays a separate optional external species/taxon candidate.
 
 ## Dependency Rules

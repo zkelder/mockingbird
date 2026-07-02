@@ -45,6 +45,9 @@ still writes no server-side manifest files and creates no truth.
 Phase 9S defines the future backend file-export boundary in
 [classifier-manifest-file-export-design.md](classifier-manifest-file-export-design.md);
 it is docs-only and still creates no files.
+Phase 9T implements backend metadata file export under an ignored local path.
+It writes manifest files only and still does not copy media, train, run
+classifier runtime, or create truth.
 
 ## Manifest File Formats
 
@@ -72,7 +75,7 @@ create `manifest.jsonl`, `manifest.csv`, media copies, labels files, taxonomy
 files, or skipped-record files in the app.
 Future backend-generated files must follow
 [classifier-manifest-file-export-design.md](classifier-manifest-file-export-design.md)
-before any server-side export implementation is added.
+and remain metadata-only unless a later phase explicitly scopes media copying.
 
 ## Required Fields
 
@@ -255,6 +258,8 @@ Phase 9R makes the manifest preview visible in the app and supports browser-side
 JSON copy/download for review before any generated dataset export exists.
 Phase 9S documents the future file export policy for local metadata files only,
 with media copying, training, and model runtime still deferred.
+Phase 9T implements that backend metadata export path while keeping media
+copying, training, and model runtime deferred.
 
 ## Relationship To Existing Dataset And Export Features
 
@@ -332,6 +337,7 @@ training, runtime, or model integration.
 - no media copying in Phase 9Q
 - no server-side manifest file export or media copying in Phase 9R
 - no file generation in Phase 9S
+- no media copying in Phase 9T
 - no training
 - no model dependencies
 - no model files

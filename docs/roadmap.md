@@ -259,8 +259,9 @@ Current work:
 - Phase 9Q: classifier training manifest preview/API implementation foundation.
 - Phase 9R: classifier manifest UI/download preview.
 - Phase 9S: classifier manifest file export design.
-- Next likely phase: Phase 9T — manifest file export backend implementation,
-  metadata files only.
+- Phase 9T: manifest file export backend implementation, metadata files only.
+- Next likely phase: Phase 9U — classifier manifest export UI/status or
+  external training workflow docs.
 
 Validation:
 
@@ -277,7 +278,7 @@ Validation:
 - Phase 9Q implements the read-only manifest preview/API foundation without training, media copying, manifest files, model files, or classifier runtime.
 - Phase 9R adds the frontend manifest preview and browser-side JSON copy/download without server-side file export, media copying, training, or runtime behavior.
 - Phase 9S defines the file-export boundary before any generated manifest files or reviewed media-backed example export work.
-- Phase 9T should implement metadata-only manifest file export, if pursued, without media copying, training, model files, or truth writes.
+- Phase 9T implements metadata-only manifest file export without media copying, training, model files, runtime calls, or truth writes.
 - Accepted/rejected/superseded suggestion status remains evidence workflow, not dataset truth.
 - The Species Suggestions UI can create manual/mock evidence, inspect context, and update status without creating truth.
 - Applying suggestion evidence must route through explicit review/correction before dataset/export truth changes.

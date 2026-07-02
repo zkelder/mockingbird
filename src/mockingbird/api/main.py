@@ -14,6 +14,8 @@ from mockingbird.api.schemas import (
     AdapterEvaluationSummary,
     CameraSource,
     ClassifierReadinessReport,
+    ClassifierManifestFileExportRequest,
+    ClassifierManifestFileExportResponse,
     ClassifierTrainingManifestResponse,
     DatasetCoverageSummary,
     DatasetExport,
@@ -1400,6 +1402,20 @@ async def get_classifier_readiness() -> ClassifierReadinessReport:
 @app.get("/api/classifier-training-manifest", response_model=ClassifierTrainingManifestResponse)
 async def get_classifier_training_manifest() -> ClassifierTrainingManifestResponse:
     return get_repository().build_classifier_training_manifest()
+
+
+@app.post(
+    "/api/classifier-training-manifest/exports",
+    response_model=ClassifierManifestFileExportResponse,
+    status_code=201,
+)
+async def create_classifier_training_manifest_export(
+    payload: ClassifierManifestFileExportRequest,
+) -> ClassifierManifestFileExportResponse:
+    try:
+        return get_repository().create_classifier_manifest_export(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.get("/api/analytics/summary", response_model=AnalyticsSummary)

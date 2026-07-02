@@ -93,6 +93,9 @@ must follow
 They must live under ignored local data/export paths, must not include model
 files or copied media unless a later phase explicitly scopes that behavior, and
 must never create reviewed truth or make model output truth.
+The Phase 9T backend export writes metadata files only; export generation must
+not run classifier runtime, create training artifacts, copy media, or mutate
+ReviewLabels, Visits, DatasetExports, dataset coverage, or analytics truth.
 
 ## Adapter Input Contract
 

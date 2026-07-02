@@ -7,24 +7,25 @@ browser-side JSON preview download. Backend-generated manifest files need a
 separate design because server-side file export introduces local path choices,
 artifact cleanup, ignored-directory policy, and media-copy boundaries.
 
-This is a design contract only. It does not implement file export, create
-manifest files, copy media, train models, add dependencies, or add runtime
-behavior.
+Phase 9S created this design contract. Phase 9T implements backend metadata
+file export from the existing manifest preview. It writes manifest metadata
+files only; it does not copy media, train models, add dependencies, or add
+runtime behavior.
 
 ## Product Flow
 
-reviewed media-backed Visit -> manifest preview API -> future local manifest
-file export -> external training/evaluation workflow -> future classifier output
+reviewed media-backed Visit -> manifest preview API -> local manifest metadata
+export -> external training/evaluation workflow -> future classifier output
 returns `SpeciesSuggestion` evidence -> user correction remains truth.
 
 ## File Export Boundary
 
-Future backend export may write manifest metadata files only.
+Backend export may write manifest metadata files only.
 
 - Media copying is a separate future phase.
 - Training happens outside the core app.
 - No model files are generated.
-- No dataset folders are generated in this design phase.
+- No image dataset folders are generated.
 - Generated files must live under ignored local data/export paths.
 - Export generation must not create review truth or change product records.
 
@@ -51,8 +52,8 @@ CSV, labels, and generated notes can wait until the manifest-only path is proven
 
 ## Output Directory Policy
 
-Future generated files should default under an ignored local data/export
-directory, such as `data/exports/classifier-manifests/<export-id-or-timestamp>/`.
+Phase 9T writes generated files under the ignored local directory
+`data/classifier_manifest_exports/<export-id-or-timestamp>/`.
 
 Rules:
 
@@ -60,19 +61,16 @@ Rules:
 - Include a timestamp or export ID in each export directory.
 - Do not place model files in the export directory.
 - Do not copy media into the initial manifest-only export.
-- Cleanup and reset behavior must be explicit before implementation.
+- Cleanup and reset behavior must stay explicit.
 - Failed exports should not leave ambiguous partial directories.
 
 ## Artifact/Git Safety
 
 Generated manifest/export files must not be committed.
 
-- `.gitignore` must cover generated classifier export paths before file export
-  implementation lands.
+- `.gitignore` covers `data/`, including classifier manifest export files.
 - Tests must verify no generated files are created unless an explicit export
   endpoint is called.
-- This design phase creates no files and changes no ignore policy unless a
-  future implementation needs it.
 - Export paths should be local-first and user-visible enough for cleanup.
 
 ## Media Policy
@@ -86,9 +84,9 @@ Manifest-only export references existing `MediaAsset` IDs and local paths.
 - Export generation must not decode media, inspect real media files, or create
   derived media artifacts.
 
-## API Shape For Future Implementation
+## API Shape
 
-Design only:
+Phase 9T route:
 
 `POST /api/classifier-training-manifest/exports`
 
@@ -116,17 +114,17 @@ Potential read routes, if consistent with existing export patterns:
 - `GET /api/classifier-training-manifest/exports/{export_id}`
 - `GET /api/classifier-training-manifest/exports`
 
-The first implementation should keep `media_policy` fixed to `reference_only`.
+The first implementation keeps `media_policy` fixed to `reference_only`.
 
 ## Dry-Run Behavior
 
-`dry_run` should return what would be written while writing no files.
+`dry_run` returns what would be written while writing no files.
 
 - Dry-run output should match the current preview API as closely as possible.
 - Dry-run should report planned filenames, counts, warnings, and skipped reasons.
 - Dry-run is useful for UI validation before any local files are created.
-- Dry-run must not create export directories, files, media copies, labels, or
-  truth records.
+- Dry-run creates no export directories, files, media copies, labels, or truth
+  records.
 
 ## Truth Boundary
 
@@ -153,7 +151,7 @@ File export must use the same split logic as the preview API.
 
 ## Failure Behavior
 
-Future implementation should fail safely for:
+Implementation should fail safely for:
 
 - invalid output path
 - export directory already exists
@@ -169,7 +167,7 @@ promoting it only after all files are complete and internally consistent.
 
 ## Test Plan For Implementation Phase
 
-Future tests should prove:
+Tests should prove:
 
 - `dry_run` writes no files
 - manifest-only export writes expected files under an ignored data path
@@ -195,7 +193,7 @@ neither should treat evidence or suggestions as truth.
 
 ## Implementation Plan
 
-Tentative future phases:
+Implementation phases:
 
 - Phase 9T: manifest file export backend implementation, metadata files only.
 - Phase 9U: classifier manifest export UI/status.
@@ -207,7 +205,6 @@ and clear export boundaries come before training or runtime work.
 
 ## Explicit Non-Goals
 
-- no file generation in this phase
 - no media copying
 - no training
 - no model dependencies

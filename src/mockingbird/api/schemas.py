@@ -926,6 +926,66 @@ class ClassifierTrainingManifestResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class ClassifierManifestFileExportRequest(BaseModel):
+    include_csv: bool = False
+    include_summary: bool = True
+    split_seed: str | None = None
+    output_name: str | None = None
+    media_policy: str = "reference_only"
+    dry_run: bool = False
+
+    @field_validator("media_policy")
+    @classmethod
+    def validate_media_policy(cls, value: str) -> str:
+        if value != "reference_only":
+            raise ValueError("media_policy must be 'reference_only' in this phase")
+        return value
+
+    @field_validator("output_name")
+    @classmethod
+    def validate_output_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        name = value.strip()
+        safe_chars = set(
+            "abcdefghijklmnopqrstuvwxyz"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "0123456789"
+            "._-"
+        )
+        if (
+            not name
+            or len(name) > 80
+            or name in {".", ".."}
+            or not name[0].isalnum()
+            or any(char not in safe_chars for char in name)
+        ):
+            raise ValueError(
+                "output_name must be a safe filename using letters, numbers, '.', '_', or '-'"
+            )
+        return name
+
+
+class ClassifierManifestExportFile(BaseModel):
+    name: str
+    relative_path: str
+    content_type: str
+    size_bytes: int | None = Field(default=None, ge=0)
+
+
+class ClassifierManifestFileExportResponse(BaseModel):
+    # Metadata exports write local manifest files only; reviewed corrections remain truth.
+    export_id: str
+    output_directory: str | None = None
+    files: list[ClassifierManifestExportFile]
+    examples: int = Field(ge=0)
+    skipped: int = Field(ge=0)
+    warnings: list[str] = Field(default_factory=list)
+    created_at: str
+    dry_run: bool
+
+
 class AnalyticsSummary(BaseModel):
     event_count: int = Field(ge=0)
     visit_count: int = Field(ge=0)
