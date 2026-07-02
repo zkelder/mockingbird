@@ -54,6 +54,9 @@ remains separate from metadata export and is not implemented in this phase.
 Phase 9X adds copy-media dry-run planning only. It can report planned local
 media paths, skips, and byte estimates, but it does not create datasets or copy
 media.
+Phase 9Y adds
+[external-training-workspace-checklist.md](external-training-workspace-checklist.md)
+before media-copy or training implementation.
 
 ## Product Flow
 
@@ -159,6 +162,8 @@ Phase 9W defines the copied-media boundary without generating datasets, copying
 media, training, or adding runtime behavior.
 Phase 9X implements dry-run copied-media planning without creating datasets,
 copying media, training, or adding runtime behavior.
+Phase 9Y documents external workspace readiness without creating datasets,
+copying media, training, or adding runtime behavior.
 
 ## Export Format Plan
 
@@ -198,6 +203,8 @@ See [external-training-workflow.md](external-training-workflow.md) for the
 Phase 9V external workspace and training boundary.
 See [media-copy-export-design.md](media-copy-export-design.md) for the Phase 9W
 future optional copied-media bundle policy.
+See [external-training-workspace-checklist.md](external-training-workspace-checklist.md)
+for the Phase 9Y operator checklist before media-copy or training work.
 
 ## Training/Runtime Separation
 
@@ -253,8 +260,9 @@ Tentative future phases:
 - Phase 9V: external training workflow documentation.
 - Phase 9W: media-copy export design.
 - Phase 9X: media-copy export dry-run implementation.
-- Phase 9Y: media-copy export implementation, still no training, or external
-  training workspace checklist.
+- Phase 9Y: external training workspace checklist.
+- Phase 9Z: external training workspace template docs or media-copy export
+  implementation, still no training.
 
 Keep these phases product-first: reviewed local data, export clarity, and
 truth-boundary tests come before runtime or training work.

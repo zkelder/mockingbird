@@ -113,6 +113,10 @@ explicit scope, ignored local paths, and must not be committed or create
 Phase 9X copy-media dry-run planning is report metadata only. It must not copy
 media, create directories, generate datasets, add model artifacts, or mutate
 review truth.
+External workspace setup must follow
+[external-training-workspace-checklist.md](external-training-workspace-checklist.md).
+External training artifacts, copied datasets, and model files must stay under
+explicit ignored local paths, must not be committed, and must not create truth.
 
 ## Adapter Input Contract
 

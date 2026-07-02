@@ -9,6 +9,8 @@ can run outside the core app without depending on live MockingBird media paths.
 This design defines the boundary before any actual media copying,
 dataset-generation, training, dependency, or runtime work is implemented.
 Phase 9X implements dry-run media planning only.
+Phase 9Y adds the external workspace checklist for reviewing dry-run output
+before any actual media-copy implementation.
 
 ## Product Flow
 
@@ -22,6 +24,9 @@ train/evaluate workflow -> future trained classifier adapter ->
 - Media copying is optional future functionality.
 - Metadata-only export already exists and remains valid on its own.
 - Phase 9X `copy_media` support is dry-run only.
+- Copy-media dry-run output should be reviewed with
+  [external-training-workspace-checklist.md](external-training-workspace-checklist.md)
+  before actual copying.
 - Copied media is for external training workspace convenience.
 - Copied media does not create truth.
 - Copied media does not train a model by itself.
@@ -205,10 +210,9 @@ Future tests should prove:
 Tentative product-first phases:
 
 - Phase 9X: media-copy export dry-run implementation.
-- Phase 9Y: media-copy export implementation, still no training, or external
-  training workspace checklist.
-- Phase 9Z: external training workspace checklist/tooling docs, if not done in
-  Phase 9Y.
+- Phase 9Y: external training workspace checklist.
+- Phase 9Z: external training workspace template docs or media-copy export
+  implementation, still no training.
 - Later: custom classifier runtime boundary.
 
 These phases should keep reviewed corrections, local storage safety, and the

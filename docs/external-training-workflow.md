@@ -10,13 +10,15 @@ This document defines the external workflow boundary. It does not implement
 training tooling, media copying, model runtime, scripts, or generated datasets.
 Phase 9W defines the future optional media-copy boundary in
 [media-copy-export-design.md](media-copy-export-design.md).
+Phase 9Y adds the operator checklist in
+[external-training-workspace-checklist.md](external-training-workspace-checklist.md).
 
 ## Product Flow
 
 reviewed media-backed Visits -> classifier readiness report -> metadata
-manifest export -> optional future media-copy export -> external training
-workspace -> train/evaluate outside core app -> future trained model adapter ->
-`SpeciesSuggestion` evidence -> user correction remains truth.
+manifest export -> copy-media dry run -> external workspace checklist -> future
+media-copy export -> train/evaluate outside core app -> future trained model
+adapter -> `SpeciesSuggestion` evidence -> user correction remains truth.
 
 ## Core Boundary
 
@@ -31,6 +33,9 @@ workspace -> train/evaluate outside core app -> future trained model adapter ->
 A future external workspace should live outside the repo or under an ignored
 local path. It receives manifest metadata files from MockingBird and may receive
 copied media only after a separate explicit media-copy phase.
+Operators should use
+[external-training-workspace-checklist.md](external-training-workspace-checklist.md)
+before actual media copying or training setup.
 
 The external workspace owns:
 
@@ -56,6 +61,7 @@ Current or future inputs:
 - split assignments
 - quality flags
 - provenance
+- copy-media dry-run result
 
 ## Media Handling Boundary
 
@@ -135,10 +141,10 @@ and neither bypasses review/correction.
 Tentative product-first phases:
 
 - Phase 9W: media-copy export design.
-- Phase 9X: media-copy export dry-run implementation or external training
-  workspace checklist.
-- Phase 9Y: media-copy export implementation, still no training.
-- Phase 9Z: external training workspace checklist/tooling docs.
+- Phase 9X: media-copy export dry-run implementation.
+- Phase 9Y: external training workspace checklist.
+- Phase 9Z: external training workspace template docs or media-copy export
+  implementation, still no training.
 - Later: custom classifier runtime boundary plan.
 
 ## Test Plan For Future Implementation

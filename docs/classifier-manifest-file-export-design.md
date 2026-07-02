@@ -22,12 +22,16 @@ Phase 9W documents the future optional media-copy boundary in
 design-only and not part of the current implementation.
 Phase 9X implements `copy_media` dry-run planning only. Actual media copying
 remains future work.
+Phase 9Y documents how metadata exports and copy-media dry-run reports should
+be reviewed before external training workspace setup in
+[external-training-workspace-checklist.md](external-training-workspace-checklist.md).
 
 ## Product Flow
 
 reviewed media-backed Visit -> manifest preview API -> local manifest metadata
-export -> external training/evaluation workflow -> future classifier output
-returns `SpeciesSuggestion` evidence -> user correction remains truth.
+export -> copy-media dry run -> external training workspace checklist -> future
+external training/evaluation workflow -> future classifier output returns
+`SpeciesSuggestion` evidence -> user correction remains truth.
 
 ## File Export Boundary
 
@@ -36,6 +40,9 @@ Backend export may write manifest metadata files only.
 - Media copying is a separate future phase.
 - Training happens outside the core app.
 - Metadata export is an input to the external workflow, not training itself.
+- Metadata exports feed
+  [external-training-workspace-checklist.md](external-training-workspace-checklist.md)
+  before any training workspace setup.
 - No model files are generated.
 - No image dataset folders are generated.
 - Generated files must live under ignored local data/export paths.
@@ -218,8 +225,9 @@ Implementation phases:
 - Phase 9V: external training workflow documentation.
 - Phase 9W: media-copy export design.
 - Phase 9X: media-copy export dry-run implementation.
-- Phase 9Y: media-copy export implementation, still no training, or external
-  training workspace checklist.
+- Phase 9Y: external training workspace checklist.
+- Phase 9Z: external training workspace template docs or media-copy export
+  implementation, still no training.
 
 Keep these phases product-first: reviewed corrections, local artifact safety,
 and clear export boundaries come before training or runtime work.

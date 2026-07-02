@@ -99,7 +99,8 @@ Every future implementation task must restate:
   must remain under ignored local data/export paths, must not be committed, and
   must not create reviewed truth.
 - External classifier training work must follow
-  [docs/external-training-workflow.md](docs/external-training-workflow.md);
+  [docs/external-training-workflow.md](docs/external-training-workflow.md) and
+  [docs/external-training-workspace-checklist.md](docs/external-training-workspace-checklist.md);
   training dependencies, generated datasets, model artifacts, and checkpoints
   require explicit scope and ignored local paths.
 - Local MegaDetector setup must follow
