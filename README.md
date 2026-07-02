@@ -67,6 +67,8 @@ redacted to configured/not-configured markers. See
 The Streams page also shows a read-only Source setup review that combines setup
 metadata, connection readiness, and Stream playback readiness without connecting
 to sources or creating product truth.
+The frontend presents that Source setup, Stream playback status, Zone editing,
+and manual import path as one stream-first workflow.
 For `manual_media` Sources, that review points to the existing Import Media flow:
 explicit imports can create reviewable Events/Visits, while corrections remain
 the source of truth.

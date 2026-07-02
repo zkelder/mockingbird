@@ -71,7 +71,6 @@ function draftFromConfiguration(
 }
 
 export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: StreamsPageProps) {
-  const sourceNames = new Map(sources.map((source) => [source.id, source.name]));
   const [connectionStatuses, setConnectionStatuses] = useState<
     Record<string, SourceConnectionStatus>
   >({});
@@ -162,6 +161,12 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     ? providerConfigurations[selectedSourceId] ?? null
     : null;
   const selectedSetupReview = selectedSourceId ? setupReviews[selectedSourceId] ?? null : null;
+  const selectedSourceStreams = selectedSource
+    ? streams.filter((stream) => stream.source_id === selectedSource.id)
+    : [];
+  const selectedReviewStreams = new Map(
+    (selectedSetupReview?.streams ?? []).map((stream) => [stream.stream_id, stream]),
+  );
   const selectedProviderDefinition =
     providerDefinitions.find((definition) => definition.provider_key === providerKey) ??
     providerDefinitions.find(
@@ -263,119 +268,151 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     }
   }
 
+  const selectedProviderLabel =
+    selectedSetupReview?.provider_display_name ??
+    selectedProviderDefinition?.display_name ??
+    selectedConfiguration?.provider_key ??
+    "Loading";
+  const selectedLivePlaybackLabel = selectedSetupReview
+    ? selectedSetupReview.supports_live_playback
+      ? "Available"
+      : "Not available"
+    : "Loading";
+  const selectedZoneEditingLabel = selectedSetupReview
+    ? selectedSetupReview.supports_zone_editing
+      ? "Available"
+      : "Unavailable"
+    : "Loading";
+  const selectedReadinessLabel = selectedSetupReview
+    ? formatLabel(selectedSetupReview.readiness_level)
+    : "Loading";
+  const isManualMediaReady =
+    selectedSetupReview?.provider_key === "manual_media" &&
+    selectedSetupReview.readiness_level === "metadata_ready";
+  const selectedFirstStream = selectedSourceStreams[0] ?? null;
+  const nextActionTitle = selectedSetupReview
+    ? selectedSetupReview.readiness_level === "demo_ready"
+      ? "Next: open Stream Detail and draw Zones."
+      : isManualMediaReady
+        ? "Next: import media for this Source/Stream."
+        : selectedSetupReview.readiness_level === "needs_setup"
+          ? "Next: complete setup metadata."
+          : selectedSetupReview.readiness_level === "future_adapter_required"
+            ? "Next: future provider implementation required before live playback."
+            : "Next: review Source setup status."
+    : "Next: load Source setup status.";
+  const nextActionDetail = selectedSetupReview?.next_step ?? selectedConnection?.setup_hint;
+
   return (
     <div className="page-stack">
       <PageHeader
         eyebrow="Stream-first workspace"
         title="Streams"
-        description="Open a stream to draw zones, inspect outdoor events, and start the review loop."
+        description="Connect Sources, inspect Streams, configure setup metadata, then draw Zones and review activity."
       />
-      {sources.length > 0 ? (
-        <section className="source-connection-section">
-          <div className="section-heading">
-            <h2>Source connection</h2>
-            <span className="meta-text">Provider readiness for stream playback</span>
-          </div>
-          {connectionError ? <div className="error-panel">{connectionError}</div> : null}
-          <div className="source-connection-grid">
-            {sources.map((source) => {
-              const connection = connectionStatuses[source.id];
-              const sourceStreams = streams.filter((stream) => stream.source_id === source.id);
-              const livePlaybackLabel = connection
-                ? connection.supports_live_playback
-                  ? "Supported"
-                  : "Not available"
-                : "Loading";
-              const zoneEditingLabel = connection
-                ? connection.supports_zone_editing
-                  ? "Available"
-                  : "Unavailable"
-                : "Loading";
-              return (
-                <section className="source-connection-card" key={source.id}>
-                  <div className="item-title-row">
-                    <h3>{source.name}</h3>
-                    {connection ? (
-                      <StatusPill
-                        label={formatLabel(connection.status)}
-                        tone={connectionTone(connection.status)}
-                      />
-                    ) : (
-                      <StatusPill label="Loading" tone="quiet" />
-                    )}
-                  </div>
-                  <p>{connection?.message ?? source.description}</p>
-                  <div className="source-connection-meta">
-                    <span>{connection?.stream_ids.length ?? sourceStreams.length} streams</span>
-                    <span>Live playback: {livePlaybackLabel}</span>
-                    <span>Zone editing: {zoneEditingLabel}</span>
-                  </div>
-                  {connection?.setup_hint ? (
-                    <span className="meta-text">{connection.setup_hint}</span>
-                  ) : null}
-                </section>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
+      {connectionError ? <div className="error-panel">{connectionError}</div> : null}
       {selectedSource ? (
-        <section className="panel source-setup-panel">
+        <section className="panel source-setup-panel source-workflow-panel">
           <div className="section-heading">
             <div>
-              <h2>Source setup</h2>
-              <span className="meta-text">Configuration metadata only</span>
+              <h2>Source workflow</h2>
+              <span className="meta-text">
+                Setup metadata, playback status, Streams, Zones, and review stay in one flow
+              </span>
             </div>
-            {selectedConnection ? (
+            {selectedSetupReview ? (
+              <StatusPill
+                label={selectedReadinessLabel}
+                tone={readinessTone(selectedSetupReview.readiness_level)}
+              />
+            ) : selectedConnection ? (
               <StatusPill
                 label={formatLabel(selectedConnection.status)}
                 tone={connectionTone(selectedConnection.status)}
               />
             ) : null}
           </div>
+          <div className="source-selector-row">
+            <label>
+              Source
+              <select
+                value={selectedSource.id}
+                onChange={(event) => {
+                  setSelectedSourceId(event.target.value);
+                  setSetupError(null);
+                  setSetupMessage(null);
+                }}
+              >
+                {sources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="source-summary-line">
+              <strong>{selectedProviderLabel}</strong>
+              <span>{selectedSetupReview?.summary ?? selectedSource.description}</span>
+            </div>
+          </div>
+          <div className="source-overview-grid">
+            <div>
+              <span>Readiness</span>
+              <strong>{selectedReadinessLabel}</strong>
+            </div>
+            <div>
+              <span>Provider</span>
+              <strong>{selectedProviderLabel}</strong>
+            </div>
+            <div>
+              <span>Live playback</span>
+              <strong>{selectedLivePlaybackLabel}</strong>
+            </div>
+            <div>
+              <span>Zone editing</span>
+              <strong>{selectedZoneEditingLabel}</strong>
+            </div>
+          </div>
+          <div className="source-next-action">
+            <div>
+              <strong>{nextActionTitle}</strong>
+              {nextActionDetail ? <span>{nextActionDetail}</span> : null}
+            </div>
+            <div className="source-next-action-buttons">
+              {isManualMediaReady ? (
+                <button className="primary-action" onClick={onOpenImport} type="button">
+                  Import media
+                </button>
+              ) : selectedSetupReview?.readiness_level === "demo_ready" && selectedFirstStream ? (
+                <button
+                  className="primary-action"
+                  onClick={() => onOpenStream(selectedFirstStream.id)}
+                  type="button"
+                >
+                  Open Stream Detail
+                </button>
+              ) : null}
+              {selectedFirstStream && selectedSetupReview?.readiness_level !== "demo_ready" ? (
+                <button
+                  className="secondary-action"
+                  onClick={() => onOpenStream(selectedFirstStream.id)}
+                  type="button"
+                >
+                  Open related Stream
+                </button>
+              ) : null}
+            </div>
+          </div>
           <div className="source-setup-layout">
             <div className="source-setup-summary">
-              <label>
-                Source
-                <select
-                  value={selectedSource.id}
-                  onChange={(event) => {
-                    setSelectedSourceId(event.target.value);
-                    setSetupError(null);
-                    setSetupMessage(null);
-                  }}
-                >
-                  {sources.map((source) => (
-                    <option key={source.id} value={source.id}>
-                      {source.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="source-setup-copy">
-                <p>MockingBird will not connect to this Source yet.</p>
-                <p>Live playback requires a future provider implementation.</p>
-                <p>Zone editing can continue with placeholders/demo panels.</p>
-              </div>
               {selectedSetupReview ? (
                 <div className="source-review-panel">
                   <div className="item-title-row">
-                    <h3>Source setup review</h3>
+                    <h3>Setup status</h3>
                     <StatusPill
                       label={formatLabel(selectedSetupReview.readiness_level)}
                       tone={readinessTone(selectedSetupReview.readiness_level)}
                     />
-                  </div>
-                  <p>{selectedSetupReview.summary}</p>
-                  <div className="source-review-next">
-                    <strong>Next step</strong>
-                    <span>{selectedSetupReview.next_step}</span>
-                    {selectedSetupReview.provider_key === "manual_media" &&
-                    selectedSetupReview.readiness_level === "metadata_ready" ? (
-                      <button className="secondary-action" onClick={onOpenImport} type="button">
-                        Import media
-                      </button>
-                    ) : null}
                   </div>
                   <div className="source-field-summary">
                     <div>
@@ -403,13 +440,6 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                       </div>
                     </div>
                   </div>
-                  {selectedSetupReview.warnings.length > 0 ? (
-                    <div className="source-warning-list">
-                      {selectedSetupReview.warnings.map((warning) => (
-                        <span key={warning}>{warning}</span>
-                      ))}
-                    </div>
-                  ) : null}
                   <div className="source-review-step-list">
                     {selectedSetupReview.steps.map((step) => (
                       <div className="source-review-step" key={step.key}>
@@ -424,59 +454,25 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                       </div>
                     ))}
                   </div>
-                  <div className="source-review-stream-list">
-                    <strong>Related Streams</strong>
-                    {selectedSetupReview.streams.length > 0 ? (
-                      selectedSetupReview.streams.map((stream) => (
-                        <div className="source-review-stream" key={stream.stream_id}>
-                          <div className="item-title-row">
-                            <span>{stream.display_name}</span>
-                            <StatusPill label={formatLabel(stream.playback_status)} />
-                          </div>
-                          <p>{stream.message}</p>
-                          <span className="meta-text">
-                            Playback readiness: {formatLabel(stream.playback_kind)} · Live playback:{" "}
-                            {stream.supports_live_playback ? "Available" : "Not available"} · Zone
-                            editing: {stream.supports_zone_editing ? "Available" : "Unavailable"}
-                          </span>
-                        </div>
-                      ))
-                    ) : (
-                      <span className="meta-text">No related Streams yet.</span>
-                    )}
-                  </div>
-                </div>
-              ) : null}
-              {selectedConfiguration ? (
-                <div className="source-field-summary">
-                  <div>
-                    <strong>Configured</strong>
-                    <div className="source-field-tags">
-                      {selectedConfiguration.configured_fields.length > 0 ? (
-                        selectedConfiguration.configured_fields.map((field) => (
-                          <span key={field}>{formatLabel(field)}</span>
-                        ))
-                      ) : (
-                        <span>None</span>
-                      )}
+                  {selectedSetupReview.warnings.length > 0 ? (
+                    <div className="source-warning-list">
+                      {selectedSetupReview.warnings.map((warning) => (
+                        <span key={warning}>{warning}</span>
+                      ))}
                     </div>
-                  </div>
-                  <div>
-                    <strong>Missing</strong>
-                    <div className="source-field-tags">
-                      {selectedConfiguration.missing_fields.length > 0 ? (
-                        selectedConfiguration.missing_fields.map((field) => (
-                          <span key={field}>{formatLabel(field)}</span>
-                        ))
-                      ) : (
-                        <span>None</span>
-                      )}
-                    </div>
-                  </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
             <form className="source-setup-form" onSubmit={handleSaveProviderConfiguration}>
+              <div className="item-title-row">
+                <h3>Provider setup</h3>
+                <StatusPill label="Metadata only" tone="quiet" />
+              </div>
+              <p className="meta-text">
+                Provider setup stores safe metadata for this Source. It does not connect, capture,
+                decode, or create truth.
+              </p>
               <label>
                 Provider
                 <select
@@ -543,42 +539,89 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
               {setupError ? <div className="zone-error">{setupError}</div> : null}
             </form>
           </div>
+          <section className="source-streams-panel">
+            <div className="section-heading">
+              <div>
+                <h3>Source Streams</h3>
+                <span className="meta-text">
+                  Open Stream Detail to inspect playback status and draw Zones
+                </span>
+              </div>
+              <StatusPill label={`${selectedSourceStreams.length} streams`} tone="quiet" />
+            </div>
+            <div className="source-stream-grid">
+              {selectedSourceStreams.length > 0 ? (
+                selectedSourceStreams.map((stream) => {
+                  const reviewStream = selectedReviewStreams.get(stream.id);
+                  const playbackLabel = reviewStream
+                    ? formatLabel(reviewStream.playback_status)
+                    : stream.is_live
+                      ? "Stream"
+                      : "Placeholder";
+                  return (
+                    <section className="source-stream-card" key={stream.id}>
+                      <div className="item-title-row">
+                        <h4>{stream.name}</h4>
+                        <StatusPill
+                          label={playbackLabel}
+                          tone={reviewStream?.playback_status === "demo" ? "good" : "quiet"}
+                        />
+                      </div>
+                      <p>{reviewStream?.message ?? stream.description}</p>
+                      <div className="source-connection-meta">
+                        <span>
+                          Playback:{" "}
+                          {reviewStream ? formatLabel(reviewStream.playback_kind) : "Placeholder"}
+                        </span>
+                        <span>
+                          Live:{" "}
+                          {reviewStream?.supports_live_playback ? "Available" : "Not available"}
+                        </span>
+                        <span>
+                          Zones:{" "}
+                          {reviewStream
+                            ? reviewStream.supports_zone_editing
+                              ? "Available"
+                              : "Unavailable"
+                            : "Available"}
+                        </span>
+                      </div>
+                      <div className="detail-actions">
+                        <button
+                          className="primary-action"
+                          onClick={() => onOpenStream(stream.id)}
+                          type="button"
+                        >
+                          Open Stream Detail
+                        </button>
+                        {isManualMediaReady ? (
+                          <button
+                            className="secondary-action"
+                            onClick={onOpenImport}
+                            type="button"
+                          >
+                            Import media
+                          </button>
+                        ) : null}
+                      </div>
+                    </section>
+                  );
+                })
+              ) : (
+                <EmptyState
+                  title="No Streams for this Source"
+                  description="Streams will become the center of Zones and review once this Source has Stream metadata."
+                />
+              )}
+            </div>
+          </section>
         </section>
-      ) : null}
-      <div className="stream-list">
-        {streams.length > 0 ? (
-          streams.map((stream) => {
-            const connection = connectionStatuses[stream.source_id];
-            const streamLabel =
-              connection?.status === "demo" ? "Demo panel" : stream.is_live ? "Stream" : "Offline";
-            return (
-              <section className="stream-list-item" key={stream.id}>
-                <div>
-                  <div className="item-title-row">
-                    <h2>{stream.name}</h2>
-                    <StatusPill
-                      label={streamLabel}
-                      tone={connection?.status === "demo" || stream.is_live ? "good" : "quiet"}
-                    />
-                  </div>
-                  <p>{stream.description}</p>
-                  <span className="meta-text">
-                    Source: {sourceNames.get(stream.source_id) ?? stream.source_id}
-                  </span>
-                </div>
-                <button className="primary-action" onClick={() => onOpenStream(stream.id)}>
-                  Open stream
-                </button>
-              </section>
-            );
-          })
-        ) : (
-          <EmptyState
-            title="No streams available"
-            description="Streams will become the center of review once a source is connected."
-          />
-        )}
-      </div>
+      ) : (
+        <EmptyState
+          title="No Sources available"
+          description="Sources and Streams will become the center of setup, Zones, and review."
+        />
+      )}
     </div>
   );
 }

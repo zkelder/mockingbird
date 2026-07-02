@@ -392,6 +392,7 @@ export default function App() {
           reviewQueue={data.reviewQueue}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
+          onOpenImport={() => setPage("import")}
           onOpenExports={() => setPage("exports")}
           onOpenReview={() => setPage("review")}
         />

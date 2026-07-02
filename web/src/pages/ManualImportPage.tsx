@@ -280,7 +280,7 @@ export function ManualImportPage({
           <div className="import-context-copy">
             {isManualMediaReady ? (
               <p>
-                Manual media import is available for this Source. Imported media can create
+                Next: choose local media for this Source/Stream. Imported media can create
                 reviewable Events/Visits; corrections remain the source of truth.
               </p>
             ) : selectedSetupReview?.provider_key === "manual_media" ? (

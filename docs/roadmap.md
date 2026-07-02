@@ -314,9 +314,8 @@ Current work:
 - Phase 10C: source provider configuration contract/UI.
 - Phase 10D: source setup review/status polish.
 - Phase 10E: manual media provider integration polish.
-- Next likely phase: Phase 11A — first real source adapter boundary design, or
-  Phase 10F — stream/source UX consolidation, still without weakening
-  review/correction truth.
+- Phase 10F: stream/source UX consolidation.
+- Next likely phase: Phase 11A — first real source adapter boundary design.
 
 Validation:
 
@@ -328,6 +327,9 @@ Validation:
   playback readiness without connecting to sources.
 - Manual media provider setup points to explicit import/review workflows while
   live playback remains out of scope.
+- Source/Stream UX presents setup review, provider configuration, connection
+  readiness, playback status, zone editing, and manual import as one product
+  flow without changing review/correction truth.
 - Unknown streams return 404.
 - Unknown sources return 404.
 - Unknown provider keys are rejected.

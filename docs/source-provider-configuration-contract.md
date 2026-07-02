@@ -68,6 +68,10 @@ not connect, capture, decode, inspect media, create evidence, or write truth.
 For `manual_media`, setup review should point to explicit import/review flows
 while preserving correction as the truth boundary.
 
+In the app, provider configuration appears inside the consolidated Source setup
+flow beside setup readiness, next action, related Streams, playback honesty, and
+manual import cues.
+
 ## Relationship To Stream Playback Status
 
 Stream playback status remains stream-specific. Provider configuration can make

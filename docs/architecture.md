@@ -84,6 +84,12 @@ setup/status may guide the user to import media for a Source/Stream, and that
 import can create reviewable Events/Visits, but reviewed truth still comes only
 from review/correction.
 
+The Streams, Stream Detail, and Import Media surfaces present provider
+configuration, setup review, connection readiness, playback status, zone editing,
+and manual import as one product flow. This UI consolidation does not add live
+playback, provider runtime behavior, media decoding, evidence creation, or truth
+creation outside explicit import and review/correction paths.
+
 Source connection status is the product boundary between source metadata and
 future provider readiness. Providers may feed safe status, field readiness, and
 related Stream ids later, but the contract must not connect sources, decode media,

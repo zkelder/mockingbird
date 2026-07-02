@@ -415,6 +415,105 @@ button {
   gap: 14px;
 }
 
+.source-workflow-panel {
+  gap: 18px;
+}
+
+.source-selector-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(280px, 1.3fr);
+  gap: 14px;
+  align-items: end;
+}
+
+.source-selector-row label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.source-selector-row select {
+  min-height: 40px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.source-summary-line {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: #4f5f55;
+}
+
+.source-summary-line strong {
+  color: #203126;
+  overflow-wrap: anywhere;
+}
+
+.source-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.source-overview-grid div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 11px;
+  background: #ffffff;
+}
+
+.source-overview-grid span,
+.stream-source-context span {
+  color: #627168;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.source-overview-grid strong {
+  overflow-wrap: anywhere;
+}
+
+.source-next-action,
+.stream-source-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid #d6bb7a;
+  border-left: 4px solid #6e9567;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fffdf5;
+}
+
+.source-next-action div,
+.stream-source-context div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.source-next-action span,
+.source-summary-line span {
+  color: #4f5f55;
+}
+
+.source-next-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .source-setup-layout {
   display: grid;
   grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.2fr);
@@ -525,6 +624,32 @@ button {
   border-radius: 8px;
   padding: 10px;
   background: #ffffff;
+}
+
+.source-streams-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.source-stream-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.source-stream-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.source-stream-card h4,
+.source-stream-card p {
+  margin: 0;
 }
 
 .import-context-panel,
@@ -2864,22 +2989,24 @@ button {
   .adapter-evaluation-grid,
   .adapter-config-grid,
   .model-readiness-grid,
-    .adapter-result-grid,
-    .detection-proposal-meta,
-    .provider-field-grid,
-    .source-field-summary,
-    .source-setup-layout,
-    .split-grid,
-    .folder-import-layout,
-    .manual-import-layout,
-    .mock-suggestion-action,
-    .motion-create-grid,
-    .motion-evidence-layout,
-    .species-suggestion-form-grid,
-    .species-suggestion-filter-grid,
-    .species-suggestion-layout,
-    .sampled-frame-result-list,
-    .zone-editor-grid {
+  .adapter-result-grid,
+  .detection-proposal-meta,
+  .provider-field-grid,
+  .source-field-summary,
+  .source-overview-grid,
+  .source-setup-layout,
+  .source-stream-grid,
+  .split-grid,
+  .folder-import-layout,
+  .manual-import-layout,
+  .mock-suggestion-action,
+  .motion-create-grid,
+  .motion-evidence-layout,
+  .species-suggestion-form-grid,
+  .species-suggestion-filter-grid,
+  .species-suggestion-layout,
+  .sampled-frame-result-list,
+  .zone-editor-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2956,24 +3083,36 @@ button {
   .record-meta-grid,
   .source-field-summary,
   .source-connection-grid,
+  .source-overview-grid,
+  .source-selector-row,
   .source-setup-layout,
+  .source-stream-grid,
   .split-grid,
   .folder-import-layout,
-    .manual-import-layout,
-    .media-preview-meta,
-    .mock-suggestion-action,
-    .motion-create-grid,
-    .motion-evidence-detail-grid,
-    .motion-evidence-layout,
-    .motion-zone-filter,
-    .species-suggestion-form-grid,
-    .species-suggestion-filter-grid,
-    .species-suggestion-detail-grid,
-    .species-suggestion-layout,
-    .sampled-frame-result-list,
-    .proposal-decision-panel,
-    .zone-editor-grid {
+  .manual-import-layout,
+  .media-preview-meta,
+  .mock-suggestion-action,
+  .motion-create-grid,
+  .motion-evidence-detail-grid,
+  .motion-evidence-layout,
+  .motion-zone-filter,
+  .species-suggestion-form-grid,
+  .species-suggestion-filter-grid,
+  .species-suggestion-detail-grid,
+  .species-suggestion-layout,
+  .sampled-frame-result-list,
+  .proposal-decision-panel,
+  .zone-editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .source-next-action,
+  .stream-source-context {
+    grid-template-columns: 1fr;
+  }
+
+  .source-next-action-buttons {
+    justify-content: flex-start;
   }
 
   .stream-scene {

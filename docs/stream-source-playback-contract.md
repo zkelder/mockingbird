@@ -48,6 +48,10 @@ Source setup review can include Stream playback readiness for the Streams that
 belong to a Source. It is a summary layer only and does not change playback
 behavior, start live video, create evidence, or write review truth.
 
+Stream Detail shows playback status alongside compact Source setup context and
+zone editing so users understand what can be viewed, what can be zoned, and when
+manual media import is the honest next path.
+
 ## Provider Configuration Relationship
 
 Provider configuration metadata can make Source connection status more specific,

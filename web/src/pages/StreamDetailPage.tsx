@@ -20,6 +20,7 @@ interface StreamDetailPageProps {
   reviewQueue: ReviewQueueItem[];
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
+  onOpenImport: () => void;
   onOpenExports: () => void;
   onOpenReview: () => void;
 }
@@ -80,6 +81,7 @@ export function StreamDetailPage({
   reviewQueue,
   onOpenEvent,
   onOpenVisit,
+  onOpenImport,
   onOpenExports,
   onOpenReview,
 }: StreamDetailPageProps) {
@@ -308,6 +310,9 @@ export function StreamDetailPage({
   }
 
   const streamReviewItems = reviewQueue.filter((item) => item.stream_id === detail.stream.id);
+  const isManualMediaStream =
+    detail.setupReview?.provider_key === "manual_media" &&
+    detail.setupReview.readiness_level === "metadata_ready";
 
   return (
     <div className="page-stack">
@@ -356,7 +361,7 @@ export function StreamDetailPage({
       <section className="panel playback-status-panel">
         <div className="section-heading">
           <div>
-            <h2>{detail.playback.display_title}</h2>
+            <h2>Playback and Source context</h2>
             <span className="meta-text">{detail.playback.message}</span>
           </div>
           <StatusPill
@@ -381,14 +386,31 @@ export function StreamDetailPage({
             <span>Source adapter</span>
             <strong>{detail.playback.adapter_key ? formatLabel(detail.playback.adapter_key) : "None"}</strong>
           </div>
+          {detail.setupReview ? (
+            <div>
+              <span>Source setup</span>
+              <strong>{formatLabel(detail.setupReview.readiness_level)}</strong>
+            </div>
+          ) : null}
         </div>
-        {detail.playback.setup_hint ? (
+        {detail.setupReview ? (
+          <div className="stream-source-context">
+            <div>
+              <strong>{detail.setupReview.provider_display_name}</strong>
+              <span>
+                {isManualMediaStream
+                  ? "This Stream can be used as context for manual media imports and zone review."
+                  : detail.setupReview.next_step}
+              </span>
+            </div>
+            {isManualMediaStream ? (
+              <button className="secondary-action" onClick={onOpenImport} type="button">
+                Import media
+              </button>
+            ) : null}
+          </div>
+        ) : detail.playback.setup_hint ? (
           <p className="playback-setup-hint">{detail.playback.setup_hint}</p>
-        ) : null}
-        {detail.setupReview?.provider_key === "manual_media" ? (
-          <p className="playback-setup-hint">
-            This Stream can be used as context for manual media imports and zone review.
-          </p>
         ) : null}
       </section>
 

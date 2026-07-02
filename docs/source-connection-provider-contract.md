@@ -67,6 +67,10 @@ related Stream playback status into a read-only user-facing readiness summary. I
 does not create evidence, write truth, connect to sources, inspect media, or run
 provider/model code.
 
+The frontend surfaces connection readiness through setup review and the selected
+Source next-action area so connection status does not feel separate from Stream
+Detail, zone editing, or explicit manual import.
+
 ## Relationship To Stream Playback Contract
 
 Source connection status explains upstream provider readiness. Stream playback
