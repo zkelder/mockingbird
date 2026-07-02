@@ -107,6 +107,12 @@ Phase 9V defines the external training workflow in
 classifier work remains future until media-copy policy, external workspace
 checks, and runtime adapter boundaries are explicitly scoped.
 
+Phase 9W defines the media-copy export design in
+[media-copy-export-design.md](media-copy-export-design.md). The custom
+classifier path still awaits future media-copy/export workflow implementation,
+external training workspace checks, and a runtime adapter boundary before any
+classifier dependency or model artifact work.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context
@@ -117,8 +123,8 @@ They should follow [species-suggestion-adapter-design.md](species-suggestion-ada
 - require user review/correction before dataset/export truth changes
 
 Custom classifier training remains future work until reviewed media-backed
-examples, metadata export review, dataset coverage/quality checks, external
-training workflow, and runtime boundary planning are in place.
+examples, metadata export review, media-copy workflow, dataset coverage/quality
+checks, external training workflow, and runtime boundary planning are in place.
 SpeciesNet stays a separate optional external species/taxon candidate.
 
 ## Dependency Rules

@@ -262,8 +262,9 @@ Current work:
 - Phase 9T: manifest file export backend implementation, metadata files only.
 - Phase 9U: classifier manifest export UI/status.
 - Phase 9V: external training workflow documentation.
-- Next likely phase: Phase 9W — media-copy export design or external training
-  workspace checklist.
+- Phase 9W: media-copy export design.
+- Next likely phase: Phase 9X — media-copy export dry-run implementation or
+  external training workspace checklist.
 
 Validation:
 
@@ -283,6 +284,7 @@ Validation:
 - Phase 9T implements metadata-only manifest file export without media copying, training, model files, runtime calls, or truth writes.
 - Phase 9U adds dry-run/create UI and status for metadata export without media copying, training, model files, runtime calls, or truth writes.
 - Phase 9V defines the external training workspace boundary without adding media copying, training dependencies, model files, runtime calls, or truth writes.
+- Phase 9W defines the optional copied-media bundle boundary without copying media, generating datasets, adding dependencies, training, runtime calls, or truth writes.
 - Accepted/rejected/superseded suggestion status remains evidence workflow, not dataset truth.
 - The Species Suggestions UI can create manual/mock evidence, inspect context, and update status without creating truth.
 - Applying suggestion evidence must route through explicit review/correction before dataset/export truth changes.

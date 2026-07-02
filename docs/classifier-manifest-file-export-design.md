@@ -17,6 +17,9 @@ endpoints, copy media, train models, or create reviewed truth.
 Phase 9V documents the external training workflow boundary in
 [external-training-workflow.md](external-training-workflow.md). Metadata export
 is an input to that external workflow only; it is not training or model runtime.
+Phase 9W documents the future optional media-copy boundary in
+[media-copy-export-design.md](media-copy-export-design.md). Copy-media export is
+design-only and not part of the current implementation.
 
 ## Product Flow
 
@@ -121,7 +124,9 @@ Potential read routes, if consistent with existing export patterns:
 - `GET /api/classifier-training-manifest/exports/{export_id}`
 - `GET /api/classifier-training-manifest/exports`
 
-The first implementation keeps `media_policy` fixed to `reference_only`.
+The current implementation keeps `media_policy` fixed to `reference_only`.
+`copy_media` is a future design only; see
+[media-copy-export-design.md](media-copy-export-design.md).
 
 ## Dry-Run Behavior
 
@@ -206,7 +211,8 @@ Implementation phases:
 - Phase 9U: classifier manifest export UI/status.
 - Phase 9V: external training workflow documentation.
 - Phase 9W: media-copy export design.
-- Phase 9X: external training workspace checklist.
+- Phase 9X: media-copy export dry-run implementation or external training
+  workspace checklist.
 
 Keep these phases product-first: reviewed corrections, local artifact safety,
 and clear export boundaries come before training or runtime work.

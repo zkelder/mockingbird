@@ -8,12 +8,14 @@ the core app until an explicit future phase scopes them.
 
 This document defines the external workflow boundary. It does not implement
 training tooling, media copying, model runtime, scripts, or generated datasets.
+Phase 9W defines the future optional media-copy boundary in
+[media-copy-export-design.md](media-copy-export-design.md).
 
 ## Product Flow
 
 reviewed media-backed Visits -> classifier readiness report -> metadata
-manifest export -> external training workspace -> optional media gathering/copy
-step later -> train/evaluate outside core app -> future trained model adapter ->
+manifest export -> optional future media-copy export -> external training
+workspace -> train/evaluate outside core app -> future trained model adapter ->
 `SpeciesSuggestion` evidence -> user correction remains truth.
 
 ## Core Boundary
@@ -60,7 +62,8 @@ Current or future inputs:
 Current classifier manifest export is metadata-only.
 
 - Media copying is not implemented yet.
-- Future media-copy export needs explicit policy.
+- Future media-copy export must follow
+  [media-copy-export-design.md](media-copy-export-design.md).
 - No cloud upload by default.
 - Privacy and ignore zones must remain respected.
 - Missing or stale media references should remain skip/warning cases.
@@ -132,9 +135,11 @@ and neither bypasses review/correction.
 Tentative product-first phases:
 
 - Phase 9W: media-copy export design.
-- Phase 9X: external training workspace checklist.
-- Phase 9Y: custom classifier runtime boundary plan.
-- Phase 9Z: optional custom classifier adapter seam.
+- Phase 9X: media-copy export dry-run implementation or external training
+  workspace checklist.
+- Phase 9Y: media-copy export implementation, still no training.
+- Phase 9Z: external training workspace checklist/tooling docs.
+- Later: custom classifier runtime boundary plan.
 
 ## Test Plan For Future Implementation
 

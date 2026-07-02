@@ -48,6 +48,10 @@ Phase 9V documents the external training workflow boundary in
 [external-training-workflow.md](external-training-workflow.md). Training remains
 outside core MockingBird, and model artifacts remain ignored local files.
 
+Phase 9W documents future optional media-copy export in
+[media-copy-export-design.md](media-copy-export-design.md). Media-copy export
+remains separate from metadata export and is not implemented in this phase.
+
 ## Product Flow
 
 media-backed Visit -> user correction/review -> reviewed label becomes dataset
@@ -148,6 +152,8 @@ training/runtime boundary.
 Phase 9V defines how exported metadata can feed an external workspace while
 training, copied media datasets, and runtime adapters remain separate future
 phases.
+Phase 9W defines the copied-media boundary without generating datasets, copying
+media, training, or adding runtime behavior.
 
 ## Export Format Plan
 
@@ -185,6 +191,8 @@ See [classifier-manifest-file-export-design.md](classifier-manifest-file-export-
 for the Phase 9S/9T server-side metadata file export boundary.
 See [external-training-workflow.md](external-training-workflow.md) for the
 Phase 9V external workspace and training boundary.
+See [media-copy-export-design.md](media-copy-export-design.md) for the Phase 9W
+future optional copied-media bundle policy.
 
 ## Training/Runtime Separation
 
@@ -239,7 +247,8 @@ Tentative future phases:
 - Phase 9U: classifier manifest export UI/status.
 - Phase 9V: external training workflow documentation.
 - Phase 9W: media-copy export design.
-- Phase 9X: external training workspace checklist.
+- Phase 9X: media-copy export dry-run implementation or external training
+  workspace checklist.
 
 Keep these phases product-first: reviewed local data, export clarity, and
 truth-boundary tests come before runtime or training work.

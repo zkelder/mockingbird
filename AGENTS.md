@@ -93,6 +93,11 @@ Every future implementation task must restate:
   must follow
   [docs/classifier-manifest-file-export-design.md](docs/classifier-manifest-file-export-design.md),
   must remain under ignored local data/export paths, and must not be committed.
+- Copied classifier media bundles or generated datasets require explicit scope,
+  must follow
+  [docs/media-copy-export-design.md](docs/media-copy-export-design.md),
+  must remain under ignored local data/export paths, must not be committed, and
+  must not create reviewed truth.
 - External classifier training work must follow
   [docs/external-training-workflow.md](docs/external-training-workflow.md);
   training dependencies, generated datasets, model artifacts, and checkpoints

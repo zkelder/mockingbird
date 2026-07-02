@@ -54,6 +54,9 @@ review truth.
 Phase 9V documents the external training workflow boundary in
 [external-training-workflow.md](external-training-workflow.md), keeping training
 dependencies, model artifacts, and experiment output outside the core app.
+Phase 9W defines the future optional media-copy export boundary in
+[media-copy-export-design.md](media-copy-export-design.md). The current
+implementation still supports reference-only metadata export.
 
 ## Manifest File Formats
 
@@ -116,6 +119,7 @@ Future manifests may add:
 - `species_suggestion_ids`
 - `snapshot_media_asset_id`
 - `representative_media_path`
+- `copied_media_path` future media-copy extension
 - `bbox` or crop reference nullable
 - camera/source metadata summary
 - `notes`
@@ -127,7 +131,8 @@ Future manifests may add:
 
 Initial manifest exports should reference local media paths or `MediaAsset`
 IDs. Copying media into an export folder is a later implementation option and
-must remain local.
+must remain local and follow
+[media-copy-export-design.md](media-copy-export-design.md).
 
 No cloud upload is part of this plan.
 
@@ -269,6 +274,8 @@ copying, training, and model runtime deferred.
 Phase 9U makes dry-run and metadata export status visible in the manifest UI.
 Phase 9V defines the next boundary: exported metadata may feed an external
 workspace, but training and model artifacts stay outside core MockingBird.
+Phase 9W defines how optional copied media could later join that workflow while
+remaining local, ignored, and separate from reviewed truth.
 
 ## Relationship To Existing Dataset And Export Features
 
@@ -335,7 +342,8 @@ Tentative product-first phases:
 - Phase 9U: classifier manifest export UI/status.
 - Phase 9V: external training workflow documentation.
 - Phase 9W: media-copy export design.
-- Phase 9X: external training workspace checklist.
+- Phase 9X: media-copy export dry-run implementation or external training
+  workspace checklist.
 
 These phases remain tentative. Manifest and readiness work should come before
 training, runtime, or model integration.
@@ -349,6 +357,7 @@ training, runtime, or model integration.
 - no file generation in Phase 9S
 - no media copying in Phase 9T
 - no media copying or training in Phase 9U
+- no media copying in Phase 9W
 - no training
 - no model dependencies
 - no model files

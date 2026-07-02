@@ -105,6 +105,11 @@ External training workflow work must follow
 dependencies, generated datasets, model checkpoints, experiment logs, and model
 artifacts must not enter the core app without an explicit optional adapter
 boundary, ignored local paths, and evidence-only `SpeciesSuggestion` output.
+Copied media bundles and copied classifier datasets must follow
+[media-copy-export-design.md](media-copy-export-design.md). They require
+explicit scope, ignored local paths, and must not be committed or create
+`ReviewLabel`, Event, Visit, dataset coverage, export, analytics, or
+`SpeciesSuggestion` truth.
 
 ## Adapter Input Contract
 
