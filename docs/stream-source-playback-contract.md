@@ -68,6 +68,8 @@ Playback status must not fetch URLs, store media, imply live playback, or persis
 preview media. Phase 11E saved previews become MediaAssets only through explicit
 save action, and they do not become playback truth or evidence by default.
 Future playback use of `preview_media_asset_id` requires separate scope.
+Saved previews do not change live playback semantics; any future review/evidence
+handoff must be explicit and separate from playback status.
 
 ## What This Phase Does
 
@@ -98,6 +100,8 @@ The external URL still-image provider contract is documented in
 [external-url-still-image-provider-contract.md](external-url-still-image-provider-contract.md).
 Preview-to-MediaAsset handoff design is documented in
 [external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
+Saved preview review/evidence handoff design is documented in
+[saved-preview-review-evidence-handoff-design.md](saved-preview-review-evidence-handoff-design.md).
 
 ## Zone Editing Relationship
 

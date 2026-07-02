@@ -371,8 +371,9 @@ Current work:
 - Phase 11C: explicit external URL preview fetch implementation.
 - Phase 11D: external URL preview-to-MediaAsset handoff design.
 - Phase 11E: explicit preview-to-MediaAsset save implementation.
-- Next likely phase: Phase 11F — saved preview review/evidence handoff design,
-  or Phase 11G — explicit saved-preview-to-MotionEvidence implementation.
+- Phase 11F: saved preview review/evidence handoff design.
+- Next likely phase: Phase 11G — explicit saved-preview-to-MotionEvidence
+  creation, no Event/Visit/truth.
 
 Validation:
 
@@ -395,6 +396,9 @@ Validation:
 - Phase 11E implements explicit save-as-MediaAsset for external URL previews:
   one bounded still image, existing local media storage, Source/Stream context,
   and no automatic MotionEvidence, Events, Visits, ReviewLabels, or truth.
+- Phase 11F designs saved preview MediaAsset -> explicit pending
+  MotionEvidence handoff, preserving Source/Stream/Zone context, privacy/ignore
+  boundaries, promotion separation, and ReviewLabel correction as truth.
 - Future adapter work does not create MotionEvidence, Events, Visits,
   ReviewLabels, analytics truth, export truth, copied media, model files,
   dependencies, or generated artifacts unless explicitly scoped later.

@@ -134,6 +134,8 @@ continue with a placeholder or preview.
 
 - Adapter availability does not create MotionEvidence.
 - Adapter preview does not create Events or Visits.
+- Adapter-created MediaAssets require explicit review/evidence handoff before
+  Events, Visits, or truth.
 - Automatic evidence creation requires a future explicit phase.
 - Manual import remains explicit.
 - Model suggestions remain SpeciesSuggestion evidence only.
@@ -196,6 +198,8 @@ Future implementation must test:
 - Phase 11E: explicit preview-to-MediaAsset save implementation, no
   Events/Visits/truth.
 - Phase 11F: saved preview review/evidence handoff design.
+- Phase 11G: explicit saved-preview-to-MotionEvidence creation, no
+  Events/Visits/truth.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

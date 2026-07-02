@@ -46,6 +46,11 @@ not saved media, live playback, evidence, an Event/Visit, or reviewed truth.
 An explicitly saved still-image preview linked to Source/Stream context. It is
 local media context, not MotionEvidence, an Event/Visit, or reviewed truth.
 
+## Saved Preview Evidence Handoff
+
+A future explicit action that may turn a saved preview MediaAsset into pending
+MotionEvidence. It does not create Events, Visits, ReviewLabels, or truth.
+
 ## Source Setup Review
 
 A read-only product summary of provider configuration, Source connection

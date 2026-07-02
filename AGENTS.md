@@ -130,6 +130,10 @@ Every future implementation task must restate:
 - Saving fetched previews as MediaAssets must follow
   [docs/external-url-preview-media-asset-handoff-design.md](docs/external-url-preview-media-asset-handoff-design.md),
   use ignored local paths, require explicit scope, and create no truth by itself.
+- Saved preview MediaAssets must follow
+  [docs/saved-preview-review-evidence-handoff-design.md](docs/saved-preview-review-evidence-handoff-design.md)
+  before becoming evidence, Events, Visits, labels, analytics truth, export truth,
+  or classifier truth.
 - Source setup review/status work must remain read-only and must not connect to
   sources, capture/decode media, run adapters/models, or create evidence/truth.
 - Local MegaDetector setup must follow

@@ -84,6 +84,10 @@ no live playback, and no evidence or truth creation.
 Phase 11E adds an explicit preview save boundary:
 external_url fetch -> local MediaAsset only -> no truth. See
 [external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
+Phase 11F designs the next boundary:
+saved preview MediaAsset -> explicit MotionEvidence handoff -> no Event/Visit or
+truth until later promotion and correction. See
+[saved-preview-review-evidence-handoff-design.md](saved-preview-review-evidence-handoff-design.md).
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

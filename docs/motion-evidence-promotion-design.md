@@ -97,9 +97,13 @@ Future implementation should reject promotion for privacy or ignore zones unless
 
 ## Snapshot/Media Behavior
 
-`snapshot_media_asset_id` is optional. Early promotion can happen without a snapshot.
+`snapshot_media_asset_id` is optional. Early promotion can happen without media.
 
 Phase 8O confirms promotion preserves `snapshot_media_asset_id` on MotionEvidence. If a Visit is created and a valid MediaAsset is available, the current Visit model carries that context through `representative_media_path`, and Event/Visit detail responses can expose the linked MediaAsset.
+
+Saved-preview-origin MotionEvidence should use the same explicit promotion
+semantics later. The saved preview media reference can travel with the evidence,
+but promotion still creates unreviewed Event/Visit context only.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

@@ -164,6 +164,8 @@ Preview-to-MediaAsset behavior must follow
 - Saving a preview creates a MediaAsset only.
 - Fetching or saving a preview does not create ReviewLabels.
 - Adapter status does not mark Visits reviewed.
+- Saved preview MediaAssets may later enter review only through an explicit
+  evidence handoff such as pending MotionEvidence.
 - Future conversion to evidence requires explicit user action or a separately
   designed automation phase.
 - ReviewLabel correction remains truth.
@@ -234,6 +236,9 @@ Recommended next phases:
 
 - Phase 11D: preview-to-MediaAsset handoff design.
 - Phase 11E: explicit preview-to-MediaAsset save implementation, no
+  Events/Visits/truth.
+- Phase 11F: saved preview review/evidence handoff design.
+- Phase 11G: explicit saved-preview-to-MotionEvidence creation, no
   Events/Visits/truth.
 - Later: MJPEG, RTSP, USB/local camera, ESP32-CAM, and browser camera designs
   separately.

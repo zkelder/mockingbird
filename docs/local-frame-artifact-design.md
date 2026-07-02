@@ -39,6 +39,11 @@ Local frame artifacts are visual evidence for review. Frame planes may be discar
 
 Neither frame planes nor artifacts create labels, reviewed status, dataset coverage truth, or export-ready truth.
 
+Saved external URL preview MediaAssets are different from local frame artifacts:
+they are fetched still images saved from a Source preview, not derived artifacts
+from sampled frame indexes. They can still use the same MediaAsset attachment
+path into MotionEvidence later.
+
 ## Relationship To MediaAsset
 
 MediaAsset is the existing/future local media reference concept.

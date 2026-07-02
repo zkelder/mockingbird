@@ -186,12 +186,18 @@ explicitly chooses it.
 - SpeciesSuggestion and MotionEvidence remain evidence only.
 - ReviewLabel correction remains training truth.
 
+Future review/evidence handoff from saved preview media is designed in
+[saved-preview-review-evidence-handoff-design.md](saved-preview-review-evidence-handoff-design.md).
+The saved MediaAsset remains local context until an explicit evidence action
+creates pending MotionEvidence.
+
 ## Recommended Future Phases
 
 - Phase 11E: preview-to-MediaAsset save implementation, explicit save only, no
   Events/Visits/truth.
 - Phase 11F: saved preview review/evidence handoff design.
-- Phase 11G: explicit saved-preview-to-MotionEvidence or manual-review flow.
+- Phase 11G: explicit saved-preview-to-MotionEvidence creation, no
+  Events/Visits/truth.
 - Later: other source-provider handoff designs separately.
 
 ## Explicit Non-Goals
