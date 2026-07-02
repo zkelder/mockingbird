@@ -103,6 +103,11 @@ URL providers may consume this metadata later. They must remain underneath the
 Source, Stream, Zone, Event, Visit, review/correction, export, and analytics
 loop.
 
+Future provider implementation must follow
+[source-adapter-boundary-design.md](source-adapter-boundary-design.md).
+Provider configuration metadata feeds future adapters, but it does not implement
+them or make provider runtime claims by itself.
+
 ## Zone Editing Relationship
 
 Zone editing can continue with demo or placeholder stream panels. Provider

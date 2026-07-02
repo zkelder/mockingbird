@@ -69,6 +69,12 @@ Examples for later phases:
 
 Adapters should normalize into the same source, stream, media, event, and visit model.
 
+The source adapter boundary sits below Source provider configuration, Source
+connection status, and Stream playback status. Future adapter work must follow
+[source-adapter-boundary-design.md](source-adapter-boundary-design.md) so real
+provider code feeds product contracts without replacing the Stream, Zone,
+review, correction, export, and analytics loop.
+
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
 it must not store raw secrets, connect to sources, decode media, create evidence,

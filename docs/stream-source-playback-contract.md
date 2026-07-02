@@ -84,6 +84,10 @@ Future RTSP, USB/local camera, ESP32-CAM, browser camera, folder, webhook, or
 integration adapters should normalize their state into this contract. They remain
 underneath the product and should not change the core Stream, Zone, Event, Visit,
 review, correction, export, and analytics loop.
+The Source adapter boundary is documented in
+[source-adapter-boundary-design.md](source-adapter-boundary-design.md). Stream
+playback status is the product-facing playback surface for future adapters, not
+an evidence or truth surface.
 
 ## Zone Editing Relationship
 

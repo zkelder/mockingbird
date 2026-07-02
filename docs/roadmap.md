@@ -358,3 +358,27 @@ Validation:
 - Future source adapters feed the playback contract instead of redefining the
   Source, Stream, Zone, Event, Visit, review/correction, export, and analytics
   loop.
+
+## Phase 11 — Source adapter boundary
+
+Goal: define the first real Source adapter boundary before adding provider
+runtime behavior.
+
+Current work:
+
+- Phase 11A: first real source adapter boundary design.
+- Next likely phase: Phase 11B — external URL / HTTP still-image provider
+  boundary or implementation.
+
+Validation:
+
+- Source adapters remain underneath Sources, Streams, Zones, Events, Visits,
+  review/correction, analytics, and exports.
+- Provider configuration feeds future adapters without implementing them.
+- Source connection status is the product-facing adapter status surface.
+- Stream playback status is the product-facing playback surface.
+- Recommended first real adapter direction is explicit external URL / HTTP
+  still-image preview/status, not a worker.
+- Future adapter work does not create MotionEvidence, Events, Visits,
+  ReviewLabels, analytics truth, export truth, copied media, model files,
+  dependencies, or generated artifacts unless explicitly scoped later.

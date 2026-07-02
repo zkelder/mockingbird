@@ -98,6 +98,10 @@ Neither contract creates evidence, review truth, exports, or analytics truth.
 Future source providers should feed this contract with safe readiness fields and
 related Stream ids. They must stay underneath the Source/Stream/Zone/Event/Visit,
 review/correction, export, and analytics loop.
+The Source adapter boundary is documented in
+[source-adapter-boundary-design.md](source-adapter-boundary-design.md).
+Source connection status is the product-facing adapter status surface; adapters
+should not introduce a separate user-facing product model.
 
 ## Zone Editing Relationship
 

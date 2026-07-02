@@ -117,6 +117,10 @@ Every future implementation task must restate:
   [docs/source-provider-configuration-contract.md](docs/source-provider-configuration-contract.md).
   Configuration is metadata-only and must not connect to sources, validate URLs,
   store raw secrets, capture frames, decode media, or create product truth.
+- Real source adapter implementation must follow
+  [docs/source-adapter-boundary-design.md](docs/source-adapter-boundary-design.md)
+  and explicit task scope. Do not add capture, decoding, workers, network calls,
+  dependencies, generated media, or truth creation by accident.
 - Source setup review/status work must remain read-only and must not connect to
   sources, capture/decode media, run adapters/models, or create evidence/truth.
 - Local MegaDetector setup must follow

@@ -73,6 +73,12 @@ For `manual_media` Sources, that review points to the existing Import Media flow
 explicit imports can create reviewable Events/Visits, while corrections remain
 the source of truth.
 
+The first real Source adapter boundary is design-only and documented in
+[docs/source-adapter-boundary-design.md](docs/source-adapter-boundary-design.md).
+The recommended next direction is an explicit external URL / HTTP still-image
+preview/status path that feeds existing Source connection and Stream playback
+contracts without workers or truth creation.
+
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 
 ## Local frontend development

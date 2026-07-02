@@ -24,6 +24,12 @@ source of truth.
 A read-only product contract describing Source provider readiness and related
 Streams. It is not a provider implementation, evidence, or reviewed truth.
 
+## Source Adapter Boundary
+
+The design boundary that keeps real provider code underneath Source connection
+and Stream playback contracts. It prevents adapters from creating truth,
+skipping review, leaking secrets, or redefining the product flow.
+
 ## Source Setup Review
 
 A read-only product summary of provider configuration, Source connection
