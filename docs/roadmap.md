@@ -428,8 +428,10 @@ Current work:
 
 - Phase 12A: source/stream smoke-test hardening for the explicit external_url
   preview -> MediaAsset -> MotionEvidence -> promotion -> correction path.
-- Next likely phase: Phase 12B — Source/Stream UI validation checklist/dev
-  guide, or Phase 12C — external_url saved-media retention/cleanup design.
+- Phase 12B: Source/Stream smoke-test dev checklist for manual browser/API
+  validation of the same explicit path.
+- Next likely phase: Phase 12C — external_url saved-media retention/cleanup
+  design.
 
 Validation:
 
@@ -446,3 +448,11 @@ Validation:
 - Explicit saved-media handoff creates one pending MotionEvidence only.
 - Explicit promotion creates unreviewed Event/Visit context only.
 - ReviewLabel correction remains the first dataset-grade truth write.
+- Phase 12B documents the repeatable manual validation path without adding
+  backend code, frontend code, tests, dependencies, workers, live playback,
+  automatic evidence creation, automatic Event/Visit creation, model runtime, or
+  generated artifacts.
+- Manual validation must preserve the same truth boundary as Phase 12A: preview
+  fetch creates no records, save creates MediaAsset only, media-to-evidence
+  creates MotionEvidence only, promote creates Event/Visit only, and correction
+  creates ReviewLabel truth.

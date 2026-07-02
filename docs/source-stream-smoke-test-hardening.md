@@ -10,6 +10,10 @@ This is test and documentation hardening only. It adds no new provider runtime,
 live playback, media decoding, automation, dependencies, workers, or product API
 behavior.
 
+Phase 12B mirrors this automated coverage as a manual developer/browser
+checklist in
+[source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
+
 ## Product Flow Covered
 
 Configured Source -> setup review -> Stream playback status -> explicit
@@ -84,7 +88,8 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 ## Future Smoke-Test Expansions
 
 - Phase 12B: UI checklist/dev guide for manually validating the Source/Stream
-  path.
+  path. See
+  [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
 - Phase 12C: external_url saved-media retention and cleanup design.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.

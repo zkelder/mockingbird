@@ -76,6 +76,9 @@ labels, exports, analytics truth, or classifier truth by themselves.
 Phase 11I polishes the explicit promote/review surface for saved preview media:
 Event/Visit detail can show saved local media provenance only after
 MotionEvidence promotion, while correction remains the truth boundary.
+Phase 12B adds a manual checklist for validating that this behavior stays
+explicit and below Source/Stream contracts in the running app:
+[source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
 
 ## Explicit Non-Recommended First Adapters
 
@@ -211,6 +214,8 @@ Future implementation must test:
 - Phase 12A: source/stream smoke-test hardening for the explicit
   external_url preview -> MediaAsset -> MotionEvidence -> promotion ->
   correction path.
+- Phase 12B: source/stream smoke-test dev checklist for manual browser/API
+  validation of the same explicit path.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 
@@ -234,3 +239,10 @@ It proves adapters stay underneath product contracts: status routes do not fetch
 URLs, preview is transient, save creates MediaAsset only, saved-media handoff
 creates pending MotionEvidence only, promotion creates unreviewed Event/Visit
 context, and correction remains truth.
+
+## Phase 12B Status
+
+Phase 12B documents the manual browser/API checklist for the same path. The
+checklist verifies adapter behavior remains explicit and underneath
+Source/Stream contracts; it adds no adapter implementation, worker, live
+playback, media decoding, generated media, or truth creation.

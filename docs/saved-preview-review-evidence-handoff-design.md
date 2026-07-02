@@ -165,6 +165,9 @@ case came from promoted MotionEvidence and show saved preview media provenance
 when available. Detail pages still frame the Event/Visit as reviewable context;
 correction remains the truth action.
 
+Manual validation for this handoff is documented in
+[source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
+
 Avoid:
 
 - `auto-detect`
@@ -239,6 +242,8 @@ Future tests should prove:
   external_url media.
 - Phase 12A: source/stream smoke-test hardening for MediaAsset ->
   MotionEvidence -> promotion -> correction boundaries.
+- Phase 12B: source/stream smoke-test dev checklist for manual evidence handoff
+  validation.
 - Later: saved preview cleanup/retention design.
 - Later: automated external_url sampling/motion design, if ever.
 
@@ -263,3 +268,9 @@ Phase 12A smoke tests verify that saved preview MediaAsset handoff creates
 pending MotionEvidence only. Event/Visit records appear only after the explicit
 promote route, and reviewed labels, analytics truth, and dataset truth appear
 only after the existing correction route.
+
+## Phase 12B Status
+
+Phase 12B documents manual validation for saved preview MediaAsset ->
+MotionEvidence -> promotion -> correction. It keeps evidence creation explicit
+and verifies truth appears only after the existing correction route.

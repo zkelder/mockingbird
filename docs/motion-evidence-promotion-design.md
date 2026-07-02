@@ -112,6 +112,9 @@ saved media provenance while correction remains the truth boundary.
 Phase 12A smoke tests verify that saved-preview-origin promotion creates only
 unreviewed Event/Visit context and that correction is still the first reviewed
 truth write.
+Phase 12B documents the manual checklist for validating that same promotion and
+correction boundary in the browser/API:
+[source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 
@@ -185,6 +188,9 @@ Phase 12A tests add full source/stream smoke coverage for:
 - saved MediaAsset -> pending MotionEvidence only
 - explicit promotion to unreviewed Event/Visit context only
 - ReviewLabel correction as the first dataset/analytics truth change
+
+Phase 12B adds the companion manual checklist for browser/API validation of
+those same steps.
 
 ## Explicit Non-Goals
 

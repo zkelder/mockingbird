@@ -261,6 +261,12 @@ handoff creates evidence only, MotionEvidence reads do not fetch external URLs,
 promotion is explicit, and dataset/analytics truth changes only after
 ReviewLabel correction.
 
+## Phase 12B Status
+
+Phase 12B adds a manual developer/browser checklist for validating the same
+saved-preview-origin MotionEvidence path in the running app. See
+[source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
+
 ## Phase 8S Status
 
 Phase 8S lets pending MotionEvidence be created with optional `snapshot_media_asset_id`.

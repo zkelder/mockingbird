@@ -99,6 +99,9 @@ configured Source -> setup review -> Stream playback status -> explicit preview
 -> saved MediaAsset -> pending MotionEvidence -> explicit promotion ->
 review/correction truth. The smoke path adds no provider runtime, live
 playback, automation, media decoding, or truth writes before correction.
+Phase 12B adds a manual developer/browser checklist for validating the same
+explicit flow in the running app; see
+[source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

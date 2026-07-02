@@ -159,6 +159,9 @@ After explicit MotionEvidence promotion, Event/Visit detail can continue to show
 saved local media provenance as review context. The saved preview still does not
 confirm a label; Visit correction remains the source of truth.
 
+Manual save validation is covered by
+[source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
+
 ## Testing Expectations For Future Implementation
 
 The implementation tests:
@@ -216,6 +219,7 @@ promotion/review flow.
 - Phase 11I: external URL media review/promote flow polish.
 - Phase 12A: source/stream smoke-test hardening for explicit save as
   MediaAsset only.
+- Phase 12B: source/stream smoke-test dev checklist for manual save validation.
 - Later: other source-provider handoff designs separately.
 
 ## Explicit Non-Goals
@@ -239,3 +243,9 @@ Phase 12A smoke tests verify that explicit preview save creates exactly one
 MediaAsset under the configured local media root and creates no MotionEvidence,
 Events, Visits, ReviewLabels, SpeciesSuggestions, DetectionProposals,
 DatasetExports, analytics truth, or dataset truth.
+
+## Phase 12B Status
+
+Phase 12B documents the browser/API checklist for confirming the explicit save
+path manually: no auto-save, one MediaAsset on success, no evidence, no
+Event/Visit, no ReviewLabel, and no truth until later explicit actions.

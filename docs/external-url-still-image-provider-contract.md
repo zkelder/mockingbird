@@ -88,6 +88,9 @@ Behavior:
 The save boundary is documented in
 [external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
 The preview route remains transient and unsaved.
+Manual browser/API validation for preview, save, evidence handoff, promotion,
+and correction is documented in
+[source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
 
 ## Explicit Save Request
 
@@ -248,6 +251,8 @@ Recommended next phases:
 - Phase 11I: external URL media review/promote flow polish.
 - Phase 12A: source/stream smoke-test hardening for explicit
   preview/fetch/save/handoff/promotion/correction boundaries.
+- Phase 12B: source/stream smoke-test dev checklist for manual preview, save,
+  evidence, promotion, and correction validation.
 - Later: MJPEG, RTSP, USB/local camera, ESP32-CAM, and browser camera designs
   separately.
 
@@ -273,3 +278,10 @@ tests. Setup review, connection status, playback status, Event/Visit detail,
 and MotionEvidence reads do not fetch the URL. Preview remains transient, save
 creates MediaAsset only, handoff creates pending MotionEvidence only, promotion
 creates unreviewed Event/Visit context only, and correction remains truth.
+
+## Phase 12B Status
+
+Phase 12B adds the manual developer checklist for validating the same
+external_url chain in the running browser/API without adding provider behavior,
+automatic fetch behavior, live playback, media decoding, dependencies, or truth
+writes before correction.
