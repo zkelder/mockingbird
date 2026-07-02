@@ -93,6 +93,10 @@ Every future implementation task must restate:
   must follow
   [docs/classifier-manifest-file-export-design.md](docs/classifier-manifest-file-export-design.md),
   must remain under ignored local data/export paths, and must not be committed.
+- External classifier training work must follow
+  [docs/external-training-workflow.md](docs/external-training-workflow.md);
+  training dependencies, generated datasets, model artifacts, and checkpoints
+  require explicit scope and ignored local paths.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.
