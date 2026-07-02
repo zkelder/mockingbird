@@ -70,6 +70,12 @@ Phase 8J defines the sampled-frame ingestion boundary. Sampled frames are the pl
 
 Implementation remains deferred: no media decoding, stream worker, source adapter, model runtime, or automatic truth creation is added in this phase. See [sampled-frame-ingestion-design.md](sampled-frame-ingestion-design.md).
 
+## Phase 8K Status
+
+Phase 8K adds a browser harness for supplied tiny frame planes on the Motion Evidence page.
+
+The harness exercises `/api/motion/evaluate-sequence`, shows frame-score and candidate results, and can optionally create pending MotionEvidence. It still does not sample real streams, decode media, run models, create labels, or create reviewed/export-ready truth.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

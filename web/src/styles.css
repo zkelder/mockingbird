@@ -1458,6 +1458,8 @@ button {
 .motion-action-panel,
 .motion-promote-form,
 .motion-evidence-subsection,
+.sampled-frame-results,
+.sampled-frame-result-list,
 .motion-evidence-list {
   display: grid;
   gap: 12px;
@@ -1510,11 +1512,68 @@ button {
   resize: vertical;
 }
 
+.motion-create-form .sampled-frame-textarea {
+  min-height: 220px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.85rem;
+}
+
+.motion-checkbox-field {
+  align-content: end;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 42px;
+}
+
+.motion-create-form .motion-checkbox-field input {
+  width: 18px;
+  min-height: auto;
+  height: 18px;
+  margin: 0;
+}
+
 .motion-create-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+
+.sampled-frame-actions {
+  align-items: center;
+}
+
+.sampled-frame-result-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.sampled-frame-result-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+  color: #34473b;
+  text-align: left;
+}
+
+.sampled-frame-result-card.selectable {
+  cursor: pointer;
+}
+
+.sampled-frame-result-card.selectable:hover {
+  border-color: #2e6f5e;
+  background: #eef7ee;
+}
+
+.sampled-frame-result-card strong {
+  color: #18231d;
+  overflow-wrap: anywhere;
+}
+
+.sampled-frame-result-card span {
+  color: #5c6a61;
+  font-size: 0.88rem;
 }
 
 .motion-evidence-layout {
@@ -1943,6 +2002,7 @@ button {
     .manual-import-layout,
     .motion-create-grid,
     .motion-evidence-layout,
+    .sampled-frame-result-list,
     .zone-editor-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2007,6 +2067,7 @@ button {
     .motion-evidence-detail-grid,
     .motion-evidence-layout,
     .motion-zone-filter,
+    .sampled-frame-result-list,
     .proposal-decision-panel,
     .zone-editor-grid {
     grid-template-columns: 1fr;

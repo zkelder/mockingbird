@@ -36,6 +36,8 @@ import type {
   MotionEvidencePromoteRequest,
   MotionEvidencePromoteResponse,
   MotionEvidenceStatus,
+  MotionEvaluateSequenceRequest,
+  MotionEvaluateSequenceResponse,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
   ReviewQueueItem,
@@ -189,6 +191,11 @@ export const apiClient = {
     request<MotionEvidence>(`/api/motion/evidence/${encodeURIComponent(id)}`),
   createMotionEvidence: (payload: MotionEvidenceCreateRequest) =>
     request<MotionEvidence>("/api/motion/evidence", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  evaluateMotionSequence: (payload: MotionEvaluateSequenceRequest) =>
+    request<MotionEvaluateSequenceResponse>("/api/motion/evaluate-sequence", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

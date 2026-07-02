@@ -6,6 +6,8 @@ import type {
   MotionEvidenceCreateRequest,
   MotionEvidencePromoteResponse,
   MotionEvidenceStatus,
+  MotionEvaluateSequenceRequest,
+  MotionEvaluateSequenceResponse,
   Stream,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
@@ -22,6 +24,42 @@ const statusFilters: Array<{ value: MotionEvidenceFilter; label: string }> = [
   { value: "ignored", label: "Ignored" },
   { value: "all", label: "All" },
 ];
+
+const motionSampleFrames = `[
+  [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0]
+  ],
+  [
+    [0, 0, 0],
+    [0, 255, 0],
+    [0, 0, 0]
+  ],
+  [
+    [0, 0, 0],
+    [0, 255, 0],
+    [0, 0, 0]
+  ]
+]`;
+
+const noMotionSampleFrames = `[
+  [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0]
+  ],
+  [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0]
+  ],
+  [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0]
+  ]
+]`;
 
 interface MotionEvidencePageProps {
   streams: Stream[];
@@ -57,12 +95,31 @@ export function MotionEvidencePage({
   const [manualScoringConfig, setManualScoringConfig] = useState(
     '{\n  "source": "manual-ui",\n  "phase": "8H"\n}',
   );
+  const [sampleSourceId, setSampleSourceId] = useState("");
+  const [sampleStreamId, setSampleStreamId] = useState("");
+  const [sampleZoneId, setSampleZoneId] = useState("zone-feeder");
+  const [sampleZoneLeft, setSampleZoneLeft] = useState("0.34");
+  const [sampleZoneTop, setSampleZoneTop] = useState("0.34");
+  const [sampleZoneRight, setSampleZoneRight] = useState("0.67");
+  const [sampleZoneBottom, setSampleZoneBottom] = useState("0.67");
+  const [samplePixelDeltaThreshold, setSamplePixelDeltaThreshold] = useState("25");
+  const [sampleMinChangedRatio, setSampleMinChangedRatio] = useState("0.2");
+  const [sampleMinTriggeredFrames, setSampleMinTriggeredFrames] = useState("1");
+  const [sampleMaxGapFrames, setSampleMaxGapFrames] = useState("1");
+  const [sampleFrameIndexStart, setSampleFrameIndexStart] = useState("0");
+  const [sampleCreateMotionEvidence, setSampleCreateMotionEvidence] = useState(false);
+  const [sampleNotes, setSampleNotes] = useState(
+    "Sampled frame harness candidate before real stream sampling.",
+  );
+  const [sampleFramesJson, setSampleFramesJson] = useState(motionSampleFrames);
+  const [sampleResult, setSampleResult] = useState<MotionEvaluateSequenceResponse | null>(null);
   const [eventTitle, setEventTitle] = useState("");
   const [visitLabelHint, setVisitLabelHint] = useState("unknown_animal");
   const [promotionNotes, setPromotionNotes] = useState("");
   const [lastPromotion, setLastPromotion] = useState<MotionEvidencePromoteResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [isEvaluatingSample, setIsEvaluatingSample] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -212,6 +269,85 @@ export function MotionEvidencePage({
       setError(caught instanceof Error ? caught.message : "Manual Motion Evidence could not be created.");
     } finally {
       setIsCreating(false);
+    }
+  }
+
+  async function evaluateSampledFrames(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+
+    const zoneId = sampleZoneId.trim();
+    if (!zoneId) {
+      setError("Add a zone_id before evaluating sampled frames.");
+      return;
+    }
+
+    let payload: MotionEvaluateSequenceRequest;
+    try {
+      const left = parseNormalizedBound(sampleZoneLeft, "Zone left");
+      const top = parseNormalizedBound(sampleZoneTop, "Zone top");
+      const right = parseNormalizedBound(sampleZoneRight, "Zone right");
+      const bottom = parseNormalizedBound(sampleZoneBottom, "Zone bottom");
+      validateZoneBounds(left, top, right, bottom);
+
+      payload = {
+        frames: parseFrameSequence(sampleFramesJson),
+        zones: [
+          {
+            zone_id: zoneId,
+            left,
+            top,
+            right,
+            bottom,
+          },
+        ],
+        source_id: sampleSourceId || undefined,
+        stream_id: sampleStreamId || undefined,
+        frame_index_start: parseNonNegativeInteger(sampleFrameIndexStart, "Frame index start"),
+        pixel_delta_threshold: parseNonNegativeNumber(
+          samplePixelDeltaThreshold,
+          "Pixel delta threshold",
+        ),
+        min_changed_ratio: parseRatio(sampleMinChangedRatio, "Minimum changed ratio"),
+        min_triggered_frames: parsePositiveInteger(
+          sampleMinTriggeredFrames,
+          "Minimum triggered frames",
+        ),
+        max_gap_frames: parseNonNegativeInteger(sampleMaxGapFrames, "Maximum gap frames"),
+        create_motion_evidence: sampleCreateMotionEvidence,
+        notes: sampleNotes.trim() || undefined,
+      };
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Sampled frame fields are invalid.");
+      return;
+    }
+
+    setIsEvaluatingSample(true);
+    try {
+      const result = await apiClient.evaluateMotionSequence(payload);
+      setSampleResult(result);
+      if (result.created_evidence.length > 0) {
+        const firstCreated = result.created_evidence[0];
+        setStatusFilter("pending");
+        setZoneFilter(firstCreated.zone_id);
+        setSelectedEvidenceId(firstCreated.id);
+        setMessage(
+          `${firstCreated.id} created as pending Motion Evidence from sampled frame evaluation.`,
+        );
+        await loadEvidence({ showLoading: false, selectEvidenceId: firstCreated.id });
+        await onEvidenceChanged();
+      } else {
+        setMessage(
+          `Sampled frame evaluation returned ${result.candidates.length} candidate${
+            result.candidates.length === 1 ? "" : "s"
+          } and created no Motion Evidence.`,
+        );
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Sampled frames could not be evaluated.");
+    } finally {
+      setIsEvaluatingSample(false);
     }
   }
 
@@ -420,6 +556,274 @@ export function MotionEvidencePage({
             </span>
           </div>
         </form>
+      </section>
+
+      <section className="panel motion-create-panel sampled-frame-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Sampled Frame Evaluation</h2>
+            <span className="meta-text">
+              Use tiny sampled frame planes to exercise motion scoring before real stream sampling
+              is wired in. This can create pending MotionEvidence only; it does not create labels,
+              reviewed observations, or export-ready truth.
+            </span>
+          </div>
+          <EvidenceBadge label="Frame-plane harness" tone="evidence" />
+        </div>
+        <form className="motion-create-form" onSubmit={evaluateSampledFrames}>
+          <div className="motion-create-grid">
+            <label>
+              Source
+              <select
+                value={sampleSourceId}
+                onChange={(event) => setSampleSourceId(event.target.value)}
+              >
+                <option value="">Infer from zone</option>
+                {sources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Stream
+              <select
+                value={sampleStreamId}
+                onChange={(event) => setSampleStreamId(event.target.value)}
+              >
+                <option value="">Infer from zone</option>
+                {streams.map((stream) => (
+                  <option key={stream.id} value={stream.id}>
+                    {stream.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Zone ID
+              <input
+                required
+                value={sampleZoneId}
+                onChange={(event) => setSampleZoneId(event.target.value)}
+                placeholder="zone-feeder"
+              />
+            </label>
+            <label>
+              Left
+              <input
+                required
+                inputMode="decimal"
+                value={sampleZoneLeft}
+                onChange={(event) => setSampleZoneLeft(event.target.value)}
+                placeholder="0"
+              />
+            </label>
+            <label>
+              Top
+              <input
+                required
+                inputMode="decimal"
+                value={sampleZoneTop}
+                onChange={(event) => setSampleZoneTop(event.target.value)}
+                placeholder="0"
+              />
+            </label>
+            <label>
+              Right
+              <input
+                required
+                inputMode="decimal"
+                value={sampleZoneRight}
+                onChange={(event) => setSampleZoneRight(event.target.value)}
+                placeholder="1"
+              />
+            </label>
+            <label>
+              Bottom
+              <input
+                required
+                inputMode="decimal"
+                value={sampleZoneBottom}
+                onChange={(event) => setSampleZoneBottom(event.target.value)}
+                placeholder="1"
+              />
+            </label>
+            <label>
+              Pixel delta threshold
+              <input
+                required
+                inputMode="decimal"
+                value={samplePixelDeltaThreshold}
+                onChange={(event) => setSamplePixelDeltaThreshold(event.target.value)}
+                placeholder="25"
+              />
+            </label>
+            <label>
+              Minimum changed ratio
+              <input
+                required
+                inputMode="decimal"
+                value={sampleMinChangedRatio}
+                onChange={(event) => setSampleMinChangedRatio(event.target.value)}
+                placeholder="0.02"
+              />
+            </label>
+            <label>
+              Minimum triggered frames
+              <input
+                required
+                inputMode="numeric"
+                value={sampleMinTriggeredFrames}
+                onChange={(event) => setSampleMinTriggeredFrames(event.target.value)}
+                placeholder="1"
+              />
+            </label>
+            <label>
+              Maximum gap frames
+              <input
+                required
+                inputMode="numeric"
+                value={sampleMaxGapFrames}
+                onChange={(event) => setSampleMaxGapFrames(event.target.value)}
+                placeholder="1"
+              />
+            </label>
+            <label>
+              Frame index start
+              <input
+                required
+                inputMode="numeric"
+                value={sampleFrameIndexStart}
+                onChange={(event) => setSampleFrameIndexStart(event.target.value)}
+                placeholder="0"
+              />
+            </label>
+            <label className="motion-checkbox-field">
+              <input
+                checked={sampleCreateMotionEvidence}
+                onChange={(event) => setSampleCreateMotionEvidence(event.target.checked)}
+                type="checkbox"
+              />
+              Create pending MotionEvidence
+            </label>
+            <label className="motion-wide-field">
+              Frame planes JSON
+              <textarea
+                className="sampled-frame-textarea"
+                value={sampleFramesJson}
+                onChange={(event) => setSampleFramesJson(event.target.value)}
+              />
+            </label>
+            <label className="motion-wide-field">
+              Notes
+              <textarea
+                value={sampleNotes}
+                onChange={(event) => setSampleNotes(event.target.value)}
+                placeholder="Evidence note for created records"
+              />
+            </label>
+          </div>
+          <div className="motion-create-actions sampled-frame-actions">
+            <button
+              className="secondary-action"
+              onClick={() => setSampleFramesJson(motionSampleFrames)}
+              type="button"
+            >
+              Use motion sample
+            </button>
+            <button
+              className="secondary-action"
+              onClick={() => setSampleFramesJson(noMotionSampleFrames)}
+              type="button"
+            >
+              Use no motion sample
+            </button>
+            <button className="primary-action" disabled={isEvaluatingSample} type="submit">
+              {isEvaluatingSample ? "Evaluating..." : "Evaluate sampled frames"}
+            </button>
+            <span className="field-helper">
+              Leave source and stream blank to let the backend use the selected zone.
+            </span>
+          </div>
+        </form>
+
+        {sampleResult ? (
+          <section className="sampled-frame-results">
+            <div className="motion-evidence-detail-grid">
+              <DetailItem label="Frame scores" value={`${sampleResult.frame_scores.length}`} />
+              <DetailItem label="Candidates" value={`${sampleResult.candidates.length}`} />
+              <DetailItem
+                label="Created evidence"
+                value={`${sampleResult.created_evidence.length}`}
+              />
+              <DetailItem
+                label="Requested creation"
+                value={sampleCreateMotionEvidence ? "yes" : "no"}
+              />
+            </div>
+
+            <div className="motion-evidence-subsection">
+              <h3>Candidates</h3>
+              {sampleResult.candidates.length > 0 ? (
+                <div className="sampled-frame-result-list">
+                  {sampleResult.candidates.map((candidate) => (
+                    <div
+                      className="sampled-frame-result-card"
+                      key={`${candidate.zone_id}:${candidate.start_frame_index}:${candidate.end_frame_index}`}
+                    >
+                      <strong>{candidate.zone_id}</strong>
+                      <span>
+                        Frames {candidate.start_frame_index}-{candidate.end_frame_index}
+                      </span>
+                      <span>Best frame {candidate.best_frame_index}</span>
+                      <span>{formatPercent(candidate.peak_changed_ratio)} peak change</span>
+                      <span>{candidate.triggered_frame_count} triggered frames</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span className="meta-text">No motion candidates returned.</span>
+              )}
+            </div>
+
+            <div className="motion-evidence-subsection">
+              <h3>Created MotionEvidence</h3>
+              {sampleResult.created_evidence.length > 0 ? (
+                <div className="sampled-frame-result-list">
+                  {sampleResult.created_evidence.map((created) => (
+                    <button
+                      className="sampled-frame-result-card selectable"
+                      key={created.id}
+                      onClick={() => {
+                        setStatusFilter("pending");
+                        setZoneFilter(created.zone_id);
+                        setSelectedEvidenceId(created.id);
+                      }}
+                      type="button"
+                    >
+                      <strong>{created.id}</strong>
+                      <span>{formatLabel(created.status)}</span>
+                      <span>{created.zone_id}</span>
+                      <span>{formatPercent(created.peak_changed_ratio)} peak change</span>
+                      <span>{created.triggered_frame_count} triggered frames</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className="meta-text">No MotionEvidence records created.</span>
+              )}
+            </div>
+
+            <section className="notice-panel">
+              <strong>Truth boundary</strong>
+              <span>
+                Created evidence is pending only. Promotion creates unreviewed Event/Visit
+                evidence; correction remains truth.
+              </span>
+            </section>
+          </section>
+        ) : null}
       </section>
 
       <section className="panel motion-evidence-filters">
@@ -735,6 +1139,98 @@ function parseOptionalFrameIndex(value: string, label: string): number | null {
     throw new Error(`${label} must be a whole number of at least 0.`);
   }
   return parsed;
+}
+
+function parseNonNegativeInteger(value: string, label: string): number {
+  const parsed = Number(value.trim());
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a whole number of at least 0.`);
+  }
+  return parsed;
+}
+
+function parseNonNegativeNumber(value: string, label: string): number {
+  const parsed = Number(value.trim());
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a number of at least 0.`);
+  }
+  return parsed;
+}
+
+function parseRatio(value: string, label: string): number {
+  const parsed = Number(value.trim());
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new Error(`${label} must be a number from 0 to 1.`);
+  }
+  return parsed;
+}
+
+function parseNormalizedBound(value: string, label: string): number {
+  const parsed = Number(value.trim());
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new Error(`${label} must be a normalized number from 0 to 1.`);
+  }
+  return parsed;
+}
+
+function validateZoneBounds(left: number, top: number, right: number, bottom: number) {
+  if (right <= left) {
+    throw new Error("Zone right must be greater than zone left.");
+  }
+  if (bottom <= top) {
+    throw new Error("Zone bottom must be greater than zone top.");
+  }
+}
+
+function parseFrameSequence(rawValue: string): number[][][] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawValue);
+  } catch {
+    throw new Error("Frame planes must be valid JSON.");
+  }
+
+  if (!Array.isArray(parsed) || parsed.length < 2) {
+    throw new Error("Frame planes must be an array with at least 2 frame planes.");
+  }
+
+  let expectedWidth: number | null = null;
+  let expectedHeight: number | null = null;
+  return parsed.map((plane, planeIndex) => {
+    if (!Array.isArray(plane) || plane.length === 0) {
+      throw new Error(`Frame plane ${planeIndex + 1} must be a non-empty 2D array.`);
+    }
+
+    const height = plane.length;
+    const rows = plane.map((row, rowIndex) => {
+      if (!Array.isArray(row) || row.length === 0) {
+        throw new Error(`Frame plane ${planeIndex + 1}, row ${rowIndex + 1} must be non-empty.`);
+      }
+      return row.map((value, columnIndex) => {
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          throw new Error(
+            `Frame plane ${planeIndex + 1}, row ${rowIndex + 1}, column ${
+              columnIndex + 1
+            } must be a finite number.`,
+          );
+        }
+        return value;
+      });
+    });
+
+    const width = rows[0].length;
+    if (rows.some((row) => row.length !== width)) {
+      throw new Error(`Frame plane ${planeIndex + 1} must be rectangular.`);
+    }
+    if (expectedWidth === null) {
+      expectedWidth = width;
+      expectedHeight = height;
+    } else if (width !== expectedWidth || height !== expectedHeight) {
+      throw new Error("All frame planes must have matching dimensions.");
+    }
+
+    return rows;
+  });
 }
 
 function parseScoringConfig(rawValue: string): Record<string, string | number | boolean> {

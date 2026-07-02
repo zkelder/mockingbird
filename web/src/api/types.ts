@@ -408,6 +408,60 @@ export interface MotionEvidenceCreateRequest {
   notes?: string | null;
 }
 
+export interface MotionZoneInput {
+  zone_id: string;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export interface MotionScoreResponse {
+  zone_id: string;
+  changed_pixels: number;
+  total_pixels: number;
+  changed_ratio: number;
+  mean_delta: number;
+  triggered: boolean;
+}
+
+export interface MotionFrameScoreResponse {
+  frame_index: number;
+  scores: MotionScoreResponse[];
+  triggered_zone_ids: string[];
+  strongest_zone_id?: string | null;
+  strongest_changed_ratio: number;
+}
+
+export interface MotionCandidateResponse {
+  zone_id: string;
+  start_frame_index: number;
+  end_frame_index: number;
+  best_frame_index: number;
+  peak_changed_ratio: number;
+  triggered_frame_count: number;
+}
+
+export interface MotionEvaluateSequenceRequest {
+  frames: number[][][];
+  zones: MotionZoneInput[];
+  source_id?: string | null;
+  stream_id?: string | null;
+  frame_index_start?: number;
+  pixel_delta_threshold?: number;
+  min_changed_ratio?: number;
+  min_triggered_frames?: number;
+  max_gap_frames?: number;
+  create_motion_evidence?: boolean;
+  notes?: string | null;
+}
+
+export interface MotionEvaluateSequenceResponse {
+  frame_scores: MotionFrameScoreResponse[];
+  candidates: MotionCandidateResponse[];
+  created_evidence: MotionEvidence[];
+}
+
 export interface MotionEvidencePromoteRequest {
   event_title?: string | null;
   visit_label_hint?: string | null;

@@ -97,6 +97,8 @@ The motion API can also evaluate caller-provided frame sequences and optionally 
 
 Sampled-frame ingestion is the planned bridge from visible streams to frame-plane motion evaluation; see [docs/sampled-frame-ingestion-design.md](docs/sampled-frame-ingestion-design.md).
 
+The Motion Evidence page includes a sampled-frame evaluation harness for supplied tiny frame planes; it can create pending evidence only.
+
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md), and the [local setup checklist](docs/megadetector-local-setup.md).
 
 ## Not the product center

@@ -175,6 +175,12 @@ Phase 8J defines sampled-frame ingestion as the planned upstream source of pendi
 
 Sampled frames should bridge visible streams to frame-plane evaluation, then MotionEvidence review/promotion. The design keeps sampling, media attachment, and automation separate from reviewed labels, exports, dataset coverage truth, detector output, and species truth. See [sampled-frame-ingestion-design.md](sampled-frame-ingestion-design.md).
 
+## Phase 8K Status
+
+Phase 8K adds a browser harness that submits supplied tiny frame planes to the sequence evaluation API.
+
+When requested, the harness creates pending MotionEvidence only. Users still ignore or promote evidence from the normal Motion Evidence surface, and correction remains the only dataset/export truth path.
+
 ## Test Plan
 
 Implementation tests should prove:

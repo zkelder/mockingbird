@@ -91,11 +91,16 @@ Sampling stays local.
 
 Future implementation should not require cloud upload. Privacy and ignore zones must be respected before saving or promoting evidence, and implementation should avoid writing unnecessary frames from privacy zones. The local user remains in control of what is reviewed, promoted, corrected, and exported.
 
-## Implementation Plan
+## Phase 8K Status
+
+Phase 8K adds a browser harness on the Motion Evidence page for supplied synthetic frame planes.
+
+The harness calls `/api/motion/evaluate-sequence`, shows frame score/candidate results, and can optionally create pending MotionEvidence records. It does not sample real streams, decode media, run models, attach media, create labels, create reviewed observations, or write export-ready truth.
+
+## Future Implementation Plan
 
 Tentative future phases:
 
-- Phase 8K: frame sequence dev harness or sampled-frame ingestion API using supplied frames with source/stream/zone context, if the existing sequence route is not enough.
 - Phase 8L: lightweight local sampler abstraction, still without a camera-specific adapter.
 - Phase 8M: attach best-frame media asset from already-available stream/import frames.
 - Phase 8N: automated MotionEvidence creation from selected streams and zones.
