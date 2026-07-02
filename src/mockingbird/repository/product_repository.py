@@ -48,6 +48,9 @@ from mockingbird.api.schemas import (
     AnalyticsSummary,
     BoundingBox,
     CameraSource,
+    ClassifierReadinessReport,
+    ClassifierReadinessSkipSummary,
+    ClassifierReadinessSpeciesSummary,
     DatasetCoverageGap,
     DatasetCoverageSpecies,
     DatasetCoverageSummary,
@@ -2104,6 +2107,10 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._dataset_quality_summary(session)
 
+    def classifier_readiness_report(self) -> ClassifierReadinessReport:
+        with self.session_factory() as session:
+            return self._classifier_readiness_report(session)
+
     def visit_is_dataset_ready(self, visit: Visit) -> bool:
         with self.session_factory() as session:
             return self._visit_is_dataset_ready(session, visit)
@@ -3354,6 +3361,221 @@ class ProductRepository:
                 "Detection and proposal labels remain evidence until review; coverage is "
                 "a signal for future model work and does not run training or classification."
             ),
+        )
+
+    def _classifier_readiness_report(self, session: Session) -> ClassifierReadinessReport:
+        species_examples: dict[str, dict[str, int | list[str]]] = {}
+        skipped_reasons: Counter[str] = Counter()
+        warnings: list[str] = []
+        reviewed_examples = 0
+        media_backed_reviewed_examples = 0
+        export_ready_examples = 0
+        unknown_label_count = 0
+        false_positive_count = 0
+        out_of_taxonomy_count = 0
+        low_example_threshold = 2
+        minimum_species_threshold = 2
+
+        target_species_models = session.scalars(
+            select(TaxonomyLabelModel)
+            .where(
+                TaxonomyLabelModel.category == LabelCategory.bird.value,
+                TaxonomyLabelModel.is_species.is_(True),
+            )
+            .order_by(TaxonomyLabelModel.sort_order, TaxonomyLabelModel.display_name)
+        ).all()
+        target_species_labels = [label.label for label in target_species_models]
+        target_sort_order = {
+            label.label: label.sort_order if label.sort_order is not None else 999_999
+            for label in target_species_models
+        }
+        media_backed_target_counts: Counter[str] = Counter()
+
+        def latest_label_from_models(labels: list[ReviewLabelModel]) -> str | None:
+            return self._latest_label([_review_label_from_model(label) for label in labels])
+
+        def has_conflicting_corrections(labels: list[ReviewLabelModel]) -> bool:
+            normalized_labels = {
+                self._normalize_label_from_session(session, label.label)
+                for label in labels
+            }
+            return len(normalized_labels) > 1
+
+        def add_skip(reason: str) -> None:
+            skipped_reasons[reason] += 1
+
+        def ensure_species_summary(label: str) -> dict[str, int | list[str]]:
+            if label not in species_examples:
+                species_examples[label] = {
+                    "reviewed_examples": 0,
+                    "media_backed_examples": 0,
+                    "export_ready_examples": 0,
+                    "warnings": [],
+                }
+            return species_examples[label]
+
+        visits = self._visits_for_eventless_query(session)
+        for visit in visits:
+            event_model = session.get(EventModel, visit.event_id)
+            if event_model is None or session.get(StreamModel, event_model.stream_id) is None:
+                add_skip("insufficient_metadata")
+                continue
+
+            event = self._event_from_model(session, event_model)
+            visit_labels = self._review_label_models_for_visit(session, visit.id)
+            event_labels = self._review_label_models_for_event(session, event.id)
+            label = (
+                visit.reviewed_label
+                or latest_label_from_models(visit_labels)
+                or latest_label_from_models(event_labels)
+            )
+            dataset_ready = self._visit_is_dataset_ready(session, visit)
+
+            if not dataset_ready:
+                add_skip(
+                    "unreviewed"
+                    if visit.review_status != ReviewStatus.reviewed
+                    else "missing_review_label"
+                )
+                continue
+
+            if label is None:
+                add_skip("missing_review_label")
+                continue
+
+            normalized_label = self._normalize_label_from_session(session, label)
+            taxonomy_label = self._taxonomy_label_model_for_input(session, normalized_label)
+            taxonomy = _taxonomy_label_from_model(taxonomy_label) if taxonomy_label else None
+            media_asset = self._media_asset_for_path_from_session(
+                session,
+                visit.representative_media_path,
+            )
+            has_media_asset = media_asset is not None
+            has_conflicts = has_conflicting_corrections(visit_labels) or (
+                not visit_labels and has_conflicting_corrections(event_labels)
+            )
+
+            reviewed_examples += 1
+            if has_media_asset:
+                media_backed_reviewed_examples += 1
+            else:
+                add_skip("missing_media")
+
+            if normalized_label in {"unknown_bird", "unknown_animal"}:
+                unknown_label_count += 1
+                add_skip("unknown_label")
+            if normalized_label == "false_positive":
+                false_positive_count += 1
+                add_skip("false_positive_policy_excluded")
+            if taxonomy is None:
+                out_of_taxonomy_count += 1
+                add_skip("out_of_taxonomy")
+            if has_conflicts:
+                add_skip("conflicting_corrections")
+
+            is_known_species = (
+                taxonomy is not None
+                and taxonomy.category == LabelCategory.bird
+                and taxonomy.is_species
+            )
+            if not is_known_species:
+                continue
+
+            species_summary = ensure_species_summary(taxonomy.label)
+            species_summary["reviewed_examples"] = int(species_summary["reviewed_examples"]) + 1
+            if has_media_asset:
+                species_summary["media_backed_examples"] = (
+                    int(species_summary["media_backed_examples"]) + 1
+                )
+                media_backed_target_counts[taxonomy.label] += 1
+            if has_media_asset and not has_conflicts:
+                species_summary["export_ready_examples"] = (
+                    int(species_summary["export_ready_examples"]) + 1
+                )
+                export_ready_examples += 1
+
+        species: list[ClassifierReadinessSpeciesSummary] = []
+        for label, counts in species_examples.items():
+            species_warnings = list(counts["warnings"])
+            if int(counts["media_backed_examples"]) == 0:
+                species_warnings.append("missing_media")
+            if int(counts["export_ready_examples"]) < low_example_threshold:
+                species_warnings.append("low_example_count")
+            species.append(
+                ClassifierReadinessSpeciesSummary(
+                    label=label,
+                    reviewed_examples=int(counts["reviewed_examples"]),
+                    media_backed_examples=int(counts["media_backed_examples"]),
+                    export_ready_examples=int(counts["export_ready_examples"]),
+                    warnings=species_warnings,
+                )
+            )
+
+        species.sort(
+            key=lambda item: (
+                target_sort_order.get(item.label, 999_999),
+                _display_name_from_label(item.label),
+            )
+        )
+        missing_target_labels = [
+            label for label in target_species_labels if media_backed_target_counts[label] == 0
+        ]
+
+        covered_species_count = sum(
+            1 for item in species if item.media_backed_examples > 0
+        )
+        if media_backed_reviewed_examples == 0:
+            warnings.append(
+                "No reviewed media-backed examples are ready for classifier manifest export."
+            )
+        if covered_species_count < minimum_species_threshold:
+            warnings.append("Fewer than 2 taxonomy species have media-backed reviewed examples.")
+        if any("low_example_count" in item.warnings for item in species):
+            warnings.append("Some species have fewer than 2 media-backed reviewed examples.")
+        if unknown_label_count > 0:
+            warnings.append("Unknown labels need review before classifier export.")
+        if false_positive_count > 0:
+            warnings.append("False-positive labels are excluded from species classifier export.")
+        if out_of_taxonomy_count > 0:
+            warnings.append("Reviewed labels outside taxonomy need cleanup before classifier export.")
+        if skipped_reasons["missing_media"] > 0:
+            warnings.append("Some reviewed visits are missing MediaAsset-backed media references.")
+        if skipped_reasons["conflicting_corrections"] > 0:
+            warnings.append("Conflicting corrections should be cleaned before classifier export.")
+
+        ready_for_manifest_export = export_ready_examples > 0
+        if not ready_for_manifest_export:
+            recommended_next_step = (
+                "Review and correct media-backed visits with taxonomy species labels before "
+                "classifier manifest export."
+            )
+        elif warnings:
+            recommended_next_step = (
+                "Safe next step: keep cleaning readiness warnings while implementing the "
+                "manifest export foundation without training or model runtime."
+            )
+        else:
+            recommended_next_step = (
+                "Ready to implement classifier training manifest export foundation using "
+                "reviewed correction truth only."
+            )
+
+        return ClassifierReadinessReport(
+            ready_for_manifest_export=ready_for_manifest_export,
+            reviewed_examples=reviewed_examples,
+            media_backed_reviewed_examples=media_backed_reviewed_examples,
+            export_ready_examples=export_ready_examples,
+            species=species,
+            missing_target_labels=missing_target_labels,
+            unknown_label_count=unknown_label_count,
+            false_positive_count=false_positive_count,
+            out_of_taxonomy_count=out_of_taxonomy_count,
+            skipped=[
+                ClassifierReadinessSkipSummary(reason=reason, count=count)
+                for reason, count in sorted(skipped_reasons.items())
+            ],
+            warnings=warnings,
+            recommended_next_step=recommended_next_step,
         )
 
     def _analytics_summary(self, session: Session) -> AnalyticsSummary:

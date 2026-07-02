@@ -14,6 +14,10 @@ Phase 9N expands the future export manifest contract in
 That document is still design-only; manifest export remains future
 implementation work.
 
+Phase 9O adds a read-only classifier readiness report before manifest export
+implementation. The report summarizes reviewed media-backed examples, label
+coverage, skip reasons, and warnings; it does not generate datasets.
+
 ## Product Flow
 
 media-backed Visit -> user correction/review -> reviewed label becomes dataset
@@ -100,6 +104,9 @@ Readiness signals should include:
 - minimum examples per target class
 - dataset quality flags
 
+Phase 9O implements these as a backend report only. It does not copy media,
+write manifest files, train classifiers, or create truth.
+
 ## Export Format Plan
 
 Future classifier-training export manifests should include:
@@ -176,8 +183,8 @@ remains truth.
 Tentative future phases:
 
 - Phase 9N: dataset export manifest design for classifier training.
-- Phase 9O: classifier training manifest API/implementation foundation.
-- Phase 9P: classifier-readiness report/API.
+- Phase 9O: classifier-readiness report/API.
+- Phase 9P: classifier training manifest export implementation foundation.
 - Phase 9Q: reviewed media-backed example export.
 - Phase 9R: external training workflow docs.
 - Phase 9S: optional custom classifier adapter boundary.

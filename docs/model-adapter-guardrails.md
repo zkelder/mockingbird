@@ -68,6 +68,10 @@ training must not make model output truth. Classifier outputs must enter
 `SpeciesSuggestion` only and must not write `ReviewLabel`, export truth,
 dataset coverage truth, analytics truth, or reviewed Visit/Event state.
 
+Classifier readiness and export-planning reports are read-only signals. They
+may summarize reviewed local data, but they must not run classifiers, generate
+datasets, or turn model/suggestion output into truth.
+
 ## Adapter Input Contract
 
 Adapters must accept product-level inputs, not adapter-specific workflows:

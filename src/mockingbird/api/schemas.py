@@ -838,6 +838,35 @@ class DatasetQualitySummary(BaseModel):
     local_first_note: str
 
 
+class ClassifierReadinessSpeciesSummary(BaseModel):
+    label: str
+    reviewed_examples: int = Field(ge=0)
+    media_backed_examples: int = Field(ge=0)
+    export_ready_examples: int = Field(ge=0)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ClassifierReadinessSkipSummary(BaseModel):
+    reason: str
+    count: int = Field(ge=0)
+
+
+class ClassifierReadinessReport(BaseModel):
+    # Readiness is a pre-export signal. It does not generate datasets or run models.
+    ready_for_manifest_export: bool
+    reviewed_examples: int = Field(ge=0)
+    media_backed_reviewed_examples: int = Field(ge=0)
+    export_ready_examples: int = Field(ge=0)
+    species: list[ClassifierReadinessSpeciesSummary]
+    missing_target_labels: list[str]
+    unknown_label_count: int = Field(ge=0)
+    false_positive_count: int = Field(ge=0)
+    out_of_taxonomy_count: int = Field(ge=0)
+    skipped: list[ClassifierReadinessSkipSummary]
+    warnings: list[str] = Field(default_factory=list)
+    recommended_next_step: str
+
+
 class AnalyticsSummary(BaseModel):
     event_count: int = Field(ge=0)
     visit_count: int = Field(ge=0)

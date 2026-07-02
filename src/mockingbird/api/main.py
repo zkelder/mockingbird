@@ -13,6 +13,7 @@ from mockingbird.api.schemas import (
     AnalyticsSummary,
     AdapterEvaluationSummary,
     CameraSource,
+    ClassifierReadinessReport,
     DatasetCoverageSummary,
     DatasetExport,
     DatasetExportCreate,
@@ -1388,6 +1389,11 @@ async def get_dataset_coverage_summary() -> DatasetCoverageSummary:
 @app.get("/api/dataset-quality/summary", response_model=DatasetQualitySummary)
 async def get_dataset_quality_summary() -> DatasetQualitySummary:
     return get_repository().dataset_quality_summary()
+
+
+@app.get("/api/classifier-readiness", response_model=ClassifierReadinessReport)
+async def get_classifier_readiness() -> ClassifierReadinessReport:
+    return get_repository().classifier_readiness_report()
 
 
 @app.get("/api/analytics/summary", response_model=AnalyticsSummary)

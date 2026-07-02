@@ -32,6 +32,9 @@ The manifest must not treat these as truth:
 Exports should include skipped records with explicit skip reasons whenever an
 eligible-looking record is not exportable.
 
+Phase 9O adds a read-only classifier readiness report to summarize these
+counts and warnings before any manifest export implementation is added.
+
 ## Manifest File Formats
 
 Primary format: `manifest.jsonl`.
@@ -222,6 +225,10 @@ Future exports should produce a summary report with:
 - quality flag counts
 - readiness warnings
 
+The Phase 9O readiness report should gate later manifest export work by showing
+whether reviewed media-backed species examples, taxonomy coverage, skip
+reasons, and quality warnings are ready enough to proceed.
+
 ## Relationship To Existing Dataset And Export Features
 
 Current exports support reviewed observations, dataset coverage, product
@@ -274,8 +281,8 @@ Manifest implementation should be easy to disable or remove:
 
 Tentative product-first phases:
 
-- Phase 9O: classifier training manifest API/implementation foundation.
-- Phase 9P: classifier-readiness report/API.
+- Phase 9O: classifier-readiness report/API.
+- Phase 9P: classifier training manifest export implementation foundation.
 - Phase 9Q: reviewed media-backed example export.
 - Phase 9R: external training workflow docs.
 - Phase 9S: optional custom classifier adapter boundary.

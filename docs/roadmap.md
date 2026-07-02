@@ -254,7 +254,8 @@ Current work:
 - Phase 9L: review/species suggestion UI polish.
 - Phase 9M: custom bird classifier dataset/export plan.
 - Phase 9N: dataset export manifest design for classifier training.
-- Next likely phase: Phase 9O — classifier training manifest API/implementation foundation or classifier-readiness report/API.
+- Phase 9O: classifier readiness report/API.
+- Next likely phase: Phase 9P — classifier training manifest export implementation foundation.
 
 Validation:
 
@@ -266,7 +267,8 @@ Validation:
 - Phase 9L stays product-first by improving review clarity and suggestion usability before adding classifier runtime.
 - Phase 9M defines reviewed-data requirements before any custom classifier training or runtime work.
 - Phase 9N designs the classifier-training export manifest around reviewed media-backed examples, taxonomy, split, skip, and quality signals.
-- Phase 9O should keep the manifest/readiness path local, reviewed-truth-only, and free of model runtime or training dependencies.
+- Phase 9O keeps the readiness path read-only, local, reviewed-truth-only, and free of export generation, model runtime, or training dependencies.
+- Phase 9P should implement the manifest export foundation without training, media copying, model files, or classifier runtime.
 - Accepted/rejected/superseded suggestion status remains evidence workflow, not dataset truth.
 - The Species Suggestions UI can create manual/mock evidence, inspect context, and update status without creating truth.
 - Applying suggestion evidence must route through explicit review/correction before dataset/export truth changes.

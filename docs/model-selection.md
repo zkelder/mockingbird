@@ -72,6 +72,10 @@ It selects `manifest.jsonl` as the primary future export shape and keeps
 manifest generation, training, model files, dependencies, and runtime work out
 of the selection phase.
 
+Phase 9O adds a read-only classifier readiness report/API before manifest
+export implementation. It summarizes reviewed media-backed examples and skip
+reasons without generating datasets or running classifier runtime.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context
@@ -81,10 +85,10 @@ They should follow [species-suggestion-adapter-design.md](species-suggestion-ada
 - feed `SpeciesSuggestion`, not `ReviewLabel`, directly
 - require user review/correction before dataset/export truth changes
 
-Custom classifier training should wait for reviewed media-backed examples, the
-manifest contract, readiness reporting, dataset coverage/quality checks, and
-explicit export policy. SpeciesNet stays a separate optional external
-species/taxon candidate.
+Custom classifier training remains future work until readiness reporting,
+manifest export implementation, reviewed media-backed examples,
+dataset coverage/quality checks, and explicit export policy are in place.
+SpeciesNet stays a separate optional external species/taxon candidate.
 
 ## Dependency Rules
 
