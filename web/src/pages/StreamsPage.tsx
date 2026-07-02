@@ -4,6 +4,7 @@ import type {
   CameraSource,
   ExternalUrlPreviewResponse,
   ExternalUrlPreviewSaveResponse,
+  SavedPreviewMotionEvidenceResponse,
   SourceConnectionStatus,
   SourceProviderConfiguration,
   SourceProviderDefinition,
@@ -90,10 +91,14 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const [previewResult, setPreviewResult] = useState<ExternalUrlPreviewResponse | null>(null);
   const [previewSaveResult, setPreviewSaveResult] =
     useState<ExternalUrlPreviewSaveResponse | null>(null);
+  const [previewEvidenceResult, setPreviewEvidenceResult] =
+    useState<SavedPreviewMotionEvidenceResponse | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewSaveError, setPreviewSaveError] = useState<string | null>(null);
+  const [previewEvidenceError, setPreviewEvidenceError] = useState<string | null>(null);
   const [isFetchingPreview, setIsFetchingPreview] = useState(false);
   const [isSavingPreview, setIsSavingPreview] = useState(false);
+  const [isCreatingPreviewEvidence, setIsCreatingPreviewEvidence] = useState(false);
   const [isSavingSetup, setIsSavingSetup] = useState(false);
 
   useEffect(() => {
@@ -185,10 +190,13 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   useEffect(() => {
     setPreviewResult(null);
     setPreviewSaveResult(null);
+    setPreviewEvidenceResult(null);
     setPreviewError(null);
     setPreviewSaveError(null);
+    setPreviewEvidenceError(null);
     setIsFetchingPreview(false);
     setIsSavingPreview(false);
+    setIsCreatingPreviewEvidence(false);
   }, [selectedSourceId, selectedConfiguration?.provider_key]);
 
   useEffect(() => {
@@ -296,6 +304,8 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setPreviewResult(null);
     setPreviewSaveError(null);
     setPreviewSaveResult(null);
+    setPreviewEvidenceError(null);
+    setPreviewEvidenceResult(null);
     try {
       const result = await apiClient.fetchExternalUrlPreview(selectedSourceId, {});
       setPreviewResult(result);
@@ -316,6 +326,8 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setIsSavingPreview(true);
     setPreviewSaveError(null);
     setPreviewSaveResult(null);
+    setPreviewEvidenceError(null);
+    setPreviewEvidenceResult(null);
     try {
       const result = await apiClient.saveExternalUrlPreview(selectedSourceId, {
         stream_id: selectedFirstStream?.id ?? null,
@@ -327,6 +339,33 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
       );
     } finally {
       setIsSavingPreview(false);
+    }
+  }
+
+  async function handleCreateMotionEvidenceFromSavedPreview() {
+    if (!previewSaveResult?.media_asset_id) {
+      return;
+    }
+
+    setIsCreatingPreviewEvidence(true);
+    setPreviewEvidenceError(null);
+    setPreviewEvidenceResult(null);
+    try {
+      const result = await apiClient.createMotionEvidenceFromMedia(
+        previewSaveResult.media_asset_id,
+        {
+          stream_id: previewSaveResult.stream_id ?? selectedFirstStream?.id ?? null,
+          note: "Saved preview review handoff.",
+          reason: "User requested pending evidence from saved media.",
+        },
+      );
+      setPreviewEvidenceResult(result);
+    } catch (caught) {
+      setPreviewEvidenceError(
+        caught instanceof Error ? caught.message : "Could not create pending evidence.",
+      );
+    } finally {
+      setIsCreatingPreviewEvidence(false);
     }
   }
 
@@ -623,6 +662,48 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                             >
                               Open saved media
                             </a>
+                          ) : null}
+                          {previewSaveResult.media_asset_id ? (
+                            <div className="external-preview-evidence-actions">
+                              <button
+                                className="secondary-action"
+                                disabled={isCreatingPreviewEvidence}
+                                onClick={handleCreateMotionEvidenceFromSavedPreview}
+                                type="button"
+                              >
+                                {isCreatingPreviewEvidence
+                                  ? "Creating pending evidence..."
+                                  : "Create pending evidence from saved media"}
+                              </button>
+                              <span className="meta-text">
+                                This creates pending evidence only. It does not create Events,
+                                Visits, labels, or truth.
+                              </span>
+                            </div>
+                          ) : null}
+                          {previewEvidenceError ? (
+                            <div className="zone-error">{previewEvidenceError}</div>
+                          ) : null}
+                          {previewEvidenceResult ? (
+                            <div className="external-preview-evidence-status">
+                              <strong>{previewEvidenceResult.message}</strong>
+                              <div className="source-connection-meta">
+                                <span>
+                                  MotionEvidence: {previewEvidenceResult.motion_evidence_id}
+                                </span>
+                                {previewEvidenceResult.zone_id ? (
+                                  <span>Zone: {previewEvidenceResult.zone_id}</span>
+                                ) : null}
+                                <span>Status: {formatLabel(previewEvidenceResult.status)}</span>
+                              </div>
+                              {previewEvidenceResult.warnings.length > 0 ? (
+                                <div className="source-warning-list">
+                                  {previewEvidenceResult.warnings.map((warning) => (
+                                    <span key={warning}>{warning}</span>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
                           ) : null}
                         </div>
                       ) : null}

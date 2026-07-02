@@ -51,6 +51,8 @@ import type {
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
   ReviewQueueItem,
+  SavedPreviewMotionEvidenceRequest,
+  SavedPreviewMotionEvidenceResponse,
   SpeciesSuggestion,
   SpeciesSuggestionCreateRequest,
   SpeciesSuggestionListResponse,
@@ -166,6 +168,17 @@ export const apiClient = {
   getVisitDetail: (visitId: string) => request<VisitDetail>(`/api/visits/${visitId}/detail`),
   getMediaAssets: () => request<MediaAsset[]>("/api/media"),
   getMediaAsset: (mediaId: string) => request<MediaAsset>(`/api/media/${mediaId}`),
+  createMotionEvidenceFromMedia: (
+    mediaId: string,
+    payload: SavedPreviewMotionEvidenceRequest = {},
+  ) =>
+    request<SavedPreviewMotionEvidenceResponse>(
+      `/api/media/${encodeURIComponent(mediaId)}/create-motion-evidence`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
   getDetectionRuns: () => request<DetectionRun[]>("/api/detection-runs"),
   createDetectionRun: (payload: DetectionRunCreate) =>
     request<DetectionRun>("/api/detection-runs", {

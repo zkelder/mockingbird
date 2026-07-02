@@ -15,7 +15,7 @@ Streams, Zones, Review, Corrections, and Exports.
 external_url provider configuration -> Source setup review -> Source connection
 status -> explicit preview/status request -> transient Stream/source preview cue
 -> optional explicit save as local MediaAsset -> Zone editing context ->
-optional future explicit evidence/review flow -> Event/Visit review ->
+optional explicit pending MotionEvidence handoff -> Event/Visit review ->
 correction truth.
 
 ## Provider Definition
@@ -164,10 +164,11 @@ Preview-to-MediaAsset behavior must follow
 - Saving a preview creates a MediaAsset only.
 - Fetching or saving a preview does not create ReviewLabels.
 - Adapter status does not mark Visits reviewed.
-- Saved preview MediaAssets may later enter review only through an explicit
+- Saved preview MediaAssets may enter review only through an explicit
   evidence handoff such as pending MotionEvidence.
-- Future conversion to evidence requires explicit user action or a separately
-  designed automation phase.
+- Phase 11G adds that explicit saved-media-to-pending-MotionEvidence handoff;
+  it still creates no Events, Visits, ReviewLabels, or truth.
+- Future automated conversion to evidence requires a separately designed phase.
 - ReviewLabel correction remains truth.
 
 ## Failure/Status Behavior

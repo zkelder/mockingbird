@@ -5,29 +5,30 @@
 Phase 11E can save an `external_url` preview as one local MediaAsset. That saved
 MediaAsset is reusable local media context, not evidence or truth by itself.
 
-This design defines the future explicit path from saved preview media into
-reviewable activity while preserving Source, Stream, Zone, privacy, ignore, and
+This design defines the explicit path from saved preview media into pending
+MotionEvidence while preserving Source, Stream, Zone, privacy, ignore, and
 correction boundaries.
 
 ## Product Flow
 
 external_url Source setup -> explicit still-image preview fetch -> explicit save
-as local MediaAsset -> user reviews saved media -> optional future "create
-MotionEvidence from saved preview" -> optional MotionEvidence promotion to
-Event/Visit -> Visit/Event review -> user correction -> ReviewLabel truth ->
-analytics/exports/classifier readiness.
+as local MediaAsset -> user creates pending MotionEvidence -> optional
+MotionEvidence promotion to Event/Visit -> Visit/Event review -> user correction
+-> ReviewLabel truth -> analytics/exports/classifier readiness.
 
-## Current Behavior After Phase 11E
+## Current Behavior Through Phase 11G
 
 - Preview fetch is explicit.
 - Save preview is explicit.
 - Saved preview creates one MediaAsset.
 - Saved preview has Source/Stream provenance when supplied or inferable.
-- Saved preview creates no MotionEvidence.
-- Saved preview creates no Event.
-- Saved preview creates no Visit.
-- Saved preview creates no ReviewLabel.
-- Saved preview creates no truth.
+- Saved preview creates no MotionEvidence automatically.
+- Saved preview MediaAsset can become pending MotionEvidence only through
+  explicit user action.
+- Pending MotionEvidence creation creates no Event.
+- Pending MotionEvidence creation creates no Visit.
+- Pending MotionEvidence creation creates no ReviewLabel.
+- Pending MotionEvidence creation creates no truth.
 
 ## Recommended Handoff Path
 
@@ -56,17 +57,13 @@ becoming an Event or Visit automatically.
 - Automatic evidence creation on save: deferred until automation, privacy, and
   storage lifecycle design exists.
 
-## Future Explicit Action Design
+## Implemented Explicit Action
 
-Possible future route:
+Implemented route:
 
 `POST /api/media/{media_asset_id}/create-motion-evidence`
 
-Alternative:
-
-`POST /api/motion/evidence/from-media`
-
-The future action should:
+The action:
 
 - Require explicit user action.
 - Validate the MediaAsset exists.
@@ -80,24 +77,20 @@ The future action should:
 - Not mark anything reviewed.
 - Not create classifier/export truth.
 
-## Required Future Request Fields
+## Request Fields
 
-Possible request:
+Request:
 
-- `media_asset_id`
-- `source_id`, optional if inferable from MediaAsset
 - `stream_id`, optional if inferable from MediaAsset
 - `zone_id`, optional
-- `evidence_type` or `reason`, optional
+- `reason`, optional
 - `note`, optional
-- `confidence`, optional only as user-provided context, not model confidence
 
-No model inference happens here. Confidence must not imply classifier certainty.
-Zone id is context, not truth.
+No model inference happens here. Zone id is context, not truth.
 
-## Required Future Response Fields
+## Response Fields
 
-Possible response:
+Response:
 
 - `motion_evidence_id`
 - `media_asset_id`
@@ -228,17 +221,16 @@ Future tests should prove:
 
 - Phase 11G: implement explicit saved-preview-to-MotionEvidence creation, no
   Event/Visit/truth.
-- Phase 11H: UI polish for saved media evidence handoff.
+- Phase 11H: saved preview evidence UI/review polish.
 - Phase 11I: explicit MotionEvidence-to-Event/Visit flow polish for
   external_url media.
 - Later: automated external_url sampling/motion design, if ever.
 
 ## Explicit Non-Goals
 
-- No implementation in this phase.
-- No media writes.
-- No MediaAsset creation.
-- No MotionEvidence creation.
+- No automatic MotionEvidence creation.
+- No media writes in the handoff route.
+- No MediaAsset creation in the handoff route.
 - No Events/Visits.
 - No ReviewLabels.
 - No truth creation.

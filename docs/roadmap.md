@@ -372,8 +372,9 @@ Current work:
 - Phase 11D: external URL preview-to-MediaAsset handoff design.
 - Phase 11E: explicit preview-to-MediaAsset save implementation.
 - Phase 11F: saved preview review/evidence handoff design.
-- Next likely phase: Phase 11G — explicit saved-preview-to-MotionEvidence
-  creation, no Event/Visit/truth.
+- Phase 11G: explicit saved-preview-to-MotionEvidence creation, no
+  Event/Visit/truth.
+- Next likely phase: Phase 11H — saved preview evidence UI/review polish.
 
 Validation:
 
@@ -399,6 +400,11 @@ Validation:
 - Phase 11F designs saved preview MediaAsset -> explicit pending
   MotionEvidence handoff, preserving Source/Stream/Zone context, privacy/ignore
   boundaries, promotion separation, and ReviewLabel correction as truth.
+- Phase 11G implements the explicit saved preview MediaAsset -> pending
+  MotionEvidence handoff. It requires user action, preserves Source/Stream/Zone
+  context where available, stores `snapshot_media_asset_id`, and creates no
+  Event, Visit, ReviewLabel, SpeciesSuggestion, DetectionProposal,
+  DatasetExport, reviewed status, model output, URL fetch, or media file.
 - Future adapter work does not create MotionEvidence, Events, Visits,
   ReviewLabels, analytics truth, export truth, copied media, model files,
   dependencies, or generated artifacts unless explicitly scoped later.

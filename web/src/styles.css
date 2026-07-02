@@ -628,7 +628,8 @@ button {
 
 .external-preview-panel,
 .external-preview-result,
-.external-preview-save-status {
+.external-preview-save-status,
+.external-preview-evidence-status {
   display: grid;
   gap: 10px;
   border: 1px solid #d8e2d3;
@@ -639,11 +640,13 @@ button {
 
 .external-preview-panel p,
 .external-preview-result p,
-.external-preview-save-status p {
+.external-preview-save-status p,
+.external-preview-evidence-status p {
   margin: 0;
 }
 
-.external-preview-save-actions {
+.external-preview-save-actions,
+.external-preview-evidence-actions {
   display: grid;
   gap: 8px;
   align-items: start;
@@ -652,6 +655,11 @@ button {
 .external-preview-save-status {
   border-color: #b9d7c8;
   background: #f6fbf7;
+}
+
+.external-preview-evidence-status {
+  border-color: #c7d7e8;
+  background: #f5f9fd;
 }
 
 .external-preview-image-frame {

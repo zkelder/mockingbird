@@ -70,6 +70,9 @@ Phase 11E adds explicit save-as-MediaAsset for fetched previews only. Saving
 preview media requires the handoff design in
 [external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md)
 and still must not create truth.
+Phase 11G adds the explicit saved-MediaAsset-to-pending-MotionEvidence handoff.
+Adapters and preview/save routes still do not create Events, Visits, reviewed
+labels, exports, analytics truth, or classifier truth by themselves.
 
 ## Explicit Non-Recommended First Adapters
 

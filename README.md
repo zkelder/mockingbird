@@ -90,10 +90,11 @@ MediaAsset through an explicit user action. It creates no Events, Visits,
 MotionEvidence, ReviewLabels, or truth. The boundary is documented in
 [docs/external-url-preview-media-asset-handoff-design.md](docs/external-url-preview-media-asset-handoff-design.md);
 saving fetched previews must be explicit, local, bounded, and truth-safe.
-Future review/evidence handoff from saved previews is design-only in
+Saved previews can now enter review as pending MotionEvidence through an
+explicit user action documented in
 [docs/saved-preview-review-evidence-handoff-design.md](docs/saved-preview-review-evidence-handoff-design.md);
 saved preview media still cannot create Events, Visits, labels, or truth without
-explicit future scope.
+explicit promotion and later review/correction.
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 

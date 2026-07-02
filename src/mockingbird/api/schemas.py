@@ -362,6 +362,28 @@ class ExternalUrlPreviewSaveResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class SavedPreviewMotionEvidenceRequest(BaseModel):
+    stream_id: str | None = None
+    zone_id: str | None = None
+    note: str | None = None
+    reason: str | None = None
+
+
+class SavedPreviewMotionEvidenceResponse(BaseModel):
+    # Saved media can become pending evidence only through explicit user action.
+    motion_evidence_id: str
+    media_asset_id: str
+    source_id: str | None = None
+    stream_id: str | None = None
+    zone_id: str | None = None
+    status: MotionEvidenceStatus
+    message: str
+    creates_event: bool = False
+    creates_visit: bool = False
+    creates_truth: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
 class Point(BaseModel):
     x: float = Field(ge=0, le=1)
     y: float = Field(ge=0, le=1)

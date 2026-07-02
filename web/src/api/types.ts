@@ -281,6 +281,27 @@ export interface ExternalUrlPreviewSaveResponse {
   warnings: string[];
 }
 
+export interface SavedPreviewMotionEvidenceRequest {
+  stream_id?: string | null;
+  zone_id?: string | null;
+  note?: string | null;
+  reason?: string | null;
+}
+
+export interface SavedPreviewMotionEvidenceResponse {
+  motion_evidence_id: string;
+  media_asset_id: string;
+  source_id?: string | null;
+  stream_id?: string | null;
+  zone_id?: string | null;
+  status: MotionEvidenceStatus;
+  message: string;
+  creates_event: boolean;
+  creates_visit: boolean;
+  creates_truth: boolean;
+  warnings: string[];
+}
+
 export interface Point {
   x: number;
   y: number;

@@ -59,9 +59,9 @@ These fields should stay product-shaped and avoid leaking adapter or worker inte
 
 The existing `snapshot_media_asset_id` field remains optional evidence context. It may later point to a MediaAsset representing a local frame artifact. MotionEvidence can be created, listed, viewed, ignored, or promoted without media. Media attachment alone must not create labels, reviewed status, export truth, dataset coverage truth, or species truth.
 
-Saved external URL preview MediaAssets are another future explicit source for
-`snapshot_media_asset_id`. They must enter MotionEvidence through a user action,
-not automatically when the preview is saved.
+Saved external URL preview MediaAssets are another explicit source for
+`snapshot_media_asset_id`. Phase 11G lets them enter MotionEvidence through a
+user action, not automatically when the preview is saved.
 
 ## Status Lifecycle
 
@@ -225,9 +225,17 @@ When `snapshot_media_asset_id` is present, the UI shows the attached visual evid
 
 ## Phase 11F Relationship
 
-Phase 11F designs saved preview MediaAsset -> pending MotionEvidence handoff as
-a future explicit action. It reuses MotionEvidence pending/ignored/promoted
+Phase 11F designed saved preview MediaAsset -> pending MotionEvidence handoff as
+an explicit action. It reuses MotionEvidence pending/ignored/promoted
 lifecycle and keeps ReviewLabel correction as the truth boundary.
+
+## Phase 11G Status
+
+Phase 11G implements the saved preview MediaAsset -> pending MotionEvidence
+handoff. The action stores the saved MediaAsset as `snapshot_media_asset_id`,
+preserves Source/Stream/Zone context where available, and creates no Event,
+Visit, ReviewLabel, export, dataset coverage truth, model output, or species
+truth.
 
 ## Phase 8S Status
 

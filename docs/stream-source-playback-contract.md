@@ -68,8 +68,9 @@ Playback status must not fetch URLs, store media, imply live playback, or persis
 preview media. Phase 11E saved previews become MediaAssets only through explicit
 save action, and they do not become playback truth or evidence by default.
 Future playback use of `preview_media_asset_id` requires separate scope.
-Saved previews do not change live playback semantics; any future review/evidence
-handoff must be explicit and separate from playback status.
+Saved previews do not change live playback semantics. Phase 11G implements an
+explicit pending MotionEvidence handoff from saved media without changing
+playback status or live playback support.
 
 ## What This Phase Does
 

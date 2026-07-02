@@ -14,8 +14,8 @@ and truth-safe.
 
 external_url Source setup -> explicit still-image preview fetch -> user reviews
 transient preview -> optional "save preview as MediaAsset" -> MediaAsset linked
-to Source/Stream context -> optional future explicit evidence/import/review flow
--> Event/Visit review -> user correction -> ReviewLabel truth.
+to Source/Stream context -> optional explicit pending MotionEvidence handoff ->
+Event/Visit review -> user correction -> ReviewLabel truth.
 
 ## Current Phase 11C Behavior
 
@@ -186,7 +186,8 @@ explicitly chooses it.
 - SpeciesSuggestion and MotionEvidence remain evidence only.
 - ReviewLabel correction remains training truth.
 
-Future review/evidence handoff from saved preview media is designed in
+Review/evidence handoff from saved preview media is implemented through the
+explicit pending MotionEvidence action designed in
 [saved-preview-review-evidence-handoff-design.md](saved-preview-review-evidence-handoff-design.md).
 The saved MediaAsset remains local context until an explicit evidence action
 creates pending MotionEvidence.

@@ -30,8 +30,8 @@ The best frame is evidence context only. It is not a species label, not a review
 - Phase 8S lets pending MotionEvidence be created with an existing MediaAsset already attached.
 - Event-only promotion does not have a direct Event media field yet, so the media reference remains on MotionEvidence until a future propagation phase.
 - No media capture, image parsing, video parsing, decoding, or thumbnail generation is implemented yet.
-- Phase 11F treats saved external URL previews as another existing MediaAsset
-  source that can later attach to MotionEvidence through explicit handoff.
+- Phase 11G treats saved external URL previews as another existing MediaAsset
+  source that can attach to MotionEvidence through explicit handoff.
 
 ## Future Best-Frame Selection Policy
 
@@ -58,7 +58,8 @@ Attachment is optional. MotionEvidence can exist without media, and missing medi
 The media reference is evidence/context only. It must not create labels, reviewed status, species truth, export readiness, dataset coverage truth, or analytics truth.
 
 Saved preview MediaAssets follow the same rule: they can provide visible context
-for evidence/review later, but they do not create truth by being attached.
+for evidence/review through explicit pending MotionEvidence creation, but they do
+not create truth by being attached.
 
 When supported, promotion should carry or link the media context to created Event/Visit evidence while keeping those records unreviewed.
 

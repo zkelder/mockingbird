@@ -48,7 +48,7 @@ local media context, not MotionEvidence, an Event/Visit, or reviewed truth.
 
 ## Saved Preview Evidence Handoff
 
-A future explicit action that may turn a saved preview MediaAsset into pending
+An explicit action that turns a saved preview MediaAsset into pending
 MotionEvidence. It does not create Events, Visits, ReviewLabels, or truth.
 
 ## Source Setup Review

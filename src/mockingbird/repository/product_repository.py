@@ -119,6 +119,7 @@ from mockingbird.api.schemas import (
     ReviewLabel,
     ReviewQueueItem,
     ReviewStatus,
+    SavedPreviewMotionEvidenceRequest,
     SourceConnectionStatus,
     SourceConnectionStatusValue,
     SourceProviderConfiguration,
@@ -1254,6 +1255,119 @@ class ProductRepository:
                 session.add(asset_model)
                 session.flush()
                 return _media_asset_from_model(asset_model)
+
+    def create_motion_evidence_from_saved_media(
+        self,
+        media_asset_id: str,
+        payload: SavedPreviewMotionEvidenceRequest,
+    ) -> tuple[MotionEvidenceResponse, list[str]]:
+        media_id = media_asset_id.strip()
+        if not media_id:
+            raise ValueError("missing_media_asset")
+
+        with self.session_factory() as session:
+            with session.begin():
+                asset_model = session.get(MediaAssetModel, media_id)
+                if asset_model is None:
+                    raise ValueError("missing_media_asset")
+
+                stream_id = _clean_optional_text(payload.stream_id) or asset_model.stream_id
+                stream_model = session.get(StreamModel, stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+                if asset_model.stream_id != stream_model.id:
+                    raise ValueError("media_stream_mismatch")
+
+                source_id = asset_model.source_id or stream_model.source_id
+                source_model = session.get(CameraSourceModel, source_id)
+                if source_model is None:
+                    raise ValueError("missing_source")
+                if stream_model.source_id != source_id:
+                    raise ValueError("stream_source_mismatch")
+
+                warnings: list[str] = []
+                zone_id = _clean_optional_text(payload.zone_id)
+                if zone_id is not None:
+                    zone_model = session.get(ZoneModel, zone_id)
+                    if zone_model is None:
+                        raise ValueError("missing_zone")
+                    if zone_model.stream_id != stream_model.id:
+                        raise ValueError("zone_stream_mismatch")
+                    if zone_model.zone_type in {
+                        ZoneType.privacy.value,
+                        ZoneType.ignore.value,
+                    }:
+                        raise ValueError("motion_evidence_creation_zone_blocked")
+                else:
+                    zone_model = next(
+                        (
+                            zone
+                            for zone in session.scalars(
+                                select(ZoneModel)
+                                .where(
+                                    ZoneModel.stream_id == stream_model.id,
+                                    ZoneModel.is_active.is_(True),
+                                )
+                                .order_by(ZoneModel.id)
+                            ).all()
+                            if zone.zone_type
+                            not in {
+                                ZoneType.privacy.value,
+                                ZoneType.ignore.value,
+                            }
+                        ),
+                        None,
+                    )
+                    if zone_model is None:
+                        raise ValueError("missing_reviewable_zone")
+                    warnings.append(
+                        "No zone was supplied; MockingBird used the first active "
+                        "reviewable zone for this stream."
+                    )
+
+                note_parts = [
+                    f"Created from saved MediaAsset {media_id} by explicit user action.",
+                    "No Events, Visits, ReviewLabels, or truth were created.",
+                ]
+                reason = _clean_optional_text(payload.reason)
+                if reason is not None:
+                    note_parts.append(f"Reason: {reason}")
+                note = _clean_optional_text(payload.note)
+                if note is not None:
+                    note_parts.append(f"Note: {note}")
+
+                evidence_model = MotionEvidenceModel(
+                    id=self._next_id(session, MotionEvidenceModel, "motion-evidence"),
+                    source_id=source_id,
+                    stream_id=stream_model.id,
+                    zone_id=zone_model.id,
+                    start_frame_index=None,
+                    end_frame_index=None,
+                    best_frame_index=None,
+                    start_time=None,
+                    end_time=None,
+                    best_frame_time=None,
+                    peak_changed_ratio=0.0,
+                    triggered_frame_count=1,
+                    scoring_config_json=json.dumps(
+                        {
+                            "source": "saved_preview_media_asset",
+                            "media_asset_id": media_id,
+                            "motion_score_available": False,
+                            "requires_review": True,
+                        },
+                        sort_keys=True,
+                    ),
+                    snapshot_media_asset_id=media_id,
+                    status=MotionEvidenceStatus.pending.value,
+                    promoted_event_id=None,
+                    promoted_visit_id=None,
+                    created_at=datetime.now(UTC),
+                    notes="\n".join(note_parts),
+                )
+                session.add(evidence_model)
+                session.flush()
+                return _motion_evidence_from_model(evidence_model), warnings
 
     def create_motion_evidence(
         self,

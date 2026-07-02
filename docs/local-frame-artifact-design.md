@@ -42,7 +42,7 @@ Neither frame planes nor artifacts create labels, reviewed status, dataset cover
 Saved external URL preview MediaAssets are different from local frame artifacts:
 they are fetched still images saved from a Source preview, not derived artifacts
 from sampled frame indexes. They can still use the same MediaAsset attachment
-path into MotionEvidence later.
+path into MotionEvidence through the explicit Phase 11G handoff.
 
 ## Relationship To MediaAsset
 

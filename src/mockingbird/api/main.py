@@ -69,6 +69,8 @@ from mockingbird.api.schemas import (
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
     ReviewQueueItem,
+    SavedPreviewMotionEvidenceRequest,
+    SavedPreviewMotionEvidenceResponse,
     SpeciesSuggestionCreateRequest,
     SpeciesSuggestionListResponse,
     SpeciesSuggestionResponse,
@@ -517,7 +519,26 @@ def _motion_evidence_error(error: ValueError) -> HTTPException:
             status_code=400,
             detail="Motion Evidence in privacy or ignore zones cannot be promoted.",
         )
+    if reason == "motion_evidence_creation_zone_blocked":
+        return HTTPException(
+            status_code=400,
+            detail="Motion Evidence cannot be created for privacy or ignore zones.",
+        )
+    if reason == "missing_reviewable_zone":
+        return HTTPException(
+            status_code=400,
+            detail="Choose a reviewable zone before creating Motion Evidence from saved media.",
+        )
     return HTTPException(status_code=400, detail="Motion Evidence could not be processed.")
+
+
+def _saved_preview_motion_evidence_error(
+    error: ValueError,
+    media_asset_id: str,
+) -> HTTPException:
+    if str(error) == "missing_media_asset":
+        return _not_found("Media asset", media_asset_id)
+    return _motion_evidence_error(error)
 
 
 def _species_suggestion_error(error: ValueError) -> HTTPException:
@@ -1425,6 +1446,42 @@ async def get_media_asset(media_id: str) -> MediaAsset:
     if asset is None:
         raise _not_found("Media asset", media_id)
     return asset
+
+
+@app.post(
+    "/api/media/{media_id}/create-motion-evidence",
+    response_model=SavedPreviewMotionEvidenceResponse,
+    status_code=201,
+)
+async def create_motion_evidence_from_saved_media(
+    media_id: str,
+    payload: SavedPreviewMotionEvidenceRequest | None = None,
+) -> SavedPreviewMotionEvidenceResponse:
+    # Explicit saved-media handoff creates pending evidence only.
+    try:
+        evidence, warnings = get_repository().create_motion_evidence_from_saved_media(
+            media_id,
+            payload or SavedPreviewMotionEvidenceRequest(),
+        )
+    except ValueError as error:
+        raise _saved_preview_motion_evidence_error(error, media_id) from error
+
+    return SavedPreviewMotionEvidenceResponse(
+        motion_evidence_id=evidence.id,
+        media_asset_id=media_id,
+        source_id=evidence.source_id,
+        stream_id=evidence.stream_id,
+        zone_id=evidence.zone_id,
+        status=evidence.status,
+        message=(
+            "Created pending MotionEvidence from saved media. "
+            "No Events, Visits, labels, or truth were created."
+        ),
+        creates_event=False,
+        creates_visit=False,
+        creates_truth=False,
+        warnings=warnings,
+    )
 
 
 @app.get("/api/media/{media_id}/file")

@@ -133,7 +133,9 @@ Every future implementation task must restate:
 - Saved preview MediaAssets must follow
   [docs/saved-preview-review-evidence-handoff-design.md](docs/saved-preview-review-evidence-handoff-design.md)
   before becoming evidence, Events, Visits, labels, analytics truth, export truth,
-  or classifier truth.
+  or classifier truth. Saved-preview-origin MotionEvidence is pending evidence
+  only and must not create Events, Visits, or truth without explicit promotion
+  and review/correction.
 - Source setup review/status work must remain read-only and must not connect to
   sources, capture/decode media, run adapters/models, or create evidence/truth.
 - Local MegaDetector setup must follow
