@@ -82,6 +82,11 @@ Every future implementation task must restate:
   [docs/speciesnet-adapter-boundary-plan.md](docs/speciesnet-adapter-boundary-plan.md).
   It must not add dependencies, model files, automatic downloads, or classifier
   calls without explicit scope that preserves the optional adapter boundary.
+- Custom classifier or training work must follow
+  [docs/custom-bird-classifier-dataset-plan.md](docs/custom-bird-classifier-dataset-plan.md)
+  and must not add training dependencies, model files, generated datasets, or
+  runtime behavior without explicit scope. Reviewed corrections remain training
+  truth; suggestions remain evidence.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.

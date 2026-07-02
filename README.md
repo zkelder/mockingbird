@@ -117,6 +117,8 @@ Species suggestion now has a manual/mock evidence surface and a frontend prefill
 
 Visit review UI keeps species suggestions near correction while preserving the correction form as the reviewed truth action.
 
+Reviewed media-backed bird visits can later feed a custom classifier dataset plan, but only reviewed corrections count as training truth. See [docs/custom-bird-classifier-dataset-plan.md](docs/custom-bird-classifier-dataset-plan.md).
+
 SpeciesNet is under docs-only runtime/source review as a future optional suggestion adapter, with a boundary plan before any runtime work. See [docs/speciesnet-runtime-investigation.md](docs/speciesnet-runtime-investigation.md), [docs/speciesnet-source-review.md](docs/speciesnet-source-review.md), and [docs/speciesnet-adapter-boundary-plan.md](docs/speciesnet-adapter-boundary-plan.md).
 
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md), and the [local setup checklist](docs/megadetector-local-setup.md).

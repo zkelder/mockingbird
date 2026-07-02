@@ -123,6 +123,11 @@ MockingBird already has a target taxonomy direction for backyard, Sandhills, and
 
 Custom classifier output still remains suggestion evidence only. User correction remains truth.
 
+Phase 9M defines the reviewed-data and export-readiness plan in
+[custom-bird-classifier-dataset-plan.md](custom-bird-classifier-dataset-plan.md).
+That plan keeps custom classifier output below the same `SpeciesSuggestion`
+evidence boundary as SpeciesNet and manual/mock suggestions.
+
 ## Relationship To Taxonomy
 
 Suggestions should map to known taxonomy labels where possible.
@@ -200,7 +205,8 @@ Recommended future phases:
 - Phase 9J: SpeciesNet source/license/runtime review.
 - Phase 9K: SpeciesNet optional adapter boundary plan.
 - Phase 9L: review/species suggestion UI polish.
-- Later: custom bird classifier dataset plan or SpeciesNet adapter seam decision.
+- Phase 9M: custom bird classifier dataset/export plan.
+- Later: dataset export manifest design for classifier training or SpeciesNet adapter seam decision.
 
 Phase 9B stores manual/mock suggestions and proves they do not create truth. No real classifier runtime exists yet.
 
@@ -287,6 +293,12 @@ Phase 9L improves Visit Detail and Species Suggestions review UI clarity. It
 sorts Visit-linked suggestions by useful review state, labels statuses as
 evidence-only workflow, makes prefill state clear, and keeps suggestion use
 separate from correction submit.
+
+## Phase 9M Status
+
+Phase 9M defines how reviewed, media-backed MockingBird observations can later
+become a clean dataset for a custom bird classifier. It adds no training,
+runtime, dependencies, model files, generated datasets, or export code.
 
 ## Test Plan
 

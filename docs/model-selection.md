@@ -61,6 +61,11 @@ Phase 9K records that boundary in
 SpeciesNet is a candidate with a boundary plan; runtime is not selected,
 installed, or invoked.
 
+Phase 9M defines the custom bird classifier dataset/export path in
+[custom-bird-classifier-dataset-plan.md](custom-bird-classifier-dataset-plan.md).
+The custom classifier path starts from reviewed MockingBird exports, not raw
+suggestions, and remains a future `SpeciesSuggestion` adapter path.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context
@@ -69,6 +74,10 @@ They should follow [species-suggestion-adapter-design.md](species-suggestion-ada
 - avoid runtime dependencies until a dedicated implementation phase
 - feed `SpeciesSuggestion`, not `ReviewLabel`, directly
 - require user review/correction before dataset/export truth changes
+
+Custom classifier training should wait for reviewed media-backed examples,
+dataset coverage/quality checks, and explicit export policy. SpeciesNet stays a
+separate optional external species/taxon candidate.
 
 ## Dependency Rules
 

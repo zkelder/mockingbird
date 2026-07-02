@@ -252,7 +252,8 @@ Current work:
 - Phase 9J: SpeciesNet source/license/runtime review.
 - Phase 9K: SpeciesNet optional adapter boundary plan.
 - Phase 9L: review/species suggestion UI polish.
-- Next likely phase: Phase 9M — custom bird classifier dataset/export plan or SpeciesNet adapter seam decision.
+- Phase 9M: custom bird classifier dataset/export plan.
+- Next likely phase: Phase 9N — dataset export manifest design for classifier training.
 
 Validation:
 
@@ -262,7 +263,8 @@ Validation:
 - SpeciesNet is a candidate with a boundary plan; no runtime is selected or installed.
 - Suggestions do not create reviewed labels, reviewed Visit/Event state, export truth, dataset coverage truth, or analytics truth without explicit user correction.
 - Phase 9L stays product-first by improving review clarity and suggestion usability before adding classifier runtime.
-- Phase 9M should choose the next evidence path from reviewed dataset/export planning or an optional SpeciesNet seam, not runtime work by default.
+- Phase 9M defines reviewed-data requirements before any custom classifier training or runtime work.
+- Phase 9N should design the classifier-training export manifest around reviewed media-backed examples and local dataset quality signals.
 - Accepted/rejected/superseded suggestion status remains evidence workflow, not dataset truth.
 - The Species Suggestions UI can create manual/mock evidence, inspect context, and update status without creating truth.
 - Applying suggestion evidence must route through explicit review/correction before dataset/export truth changes.
@@ -273,3 +275,4 @@ Validation:
 - Media-backed Event/Visit evidence can be the future input to suggestion adapters.
 - SpeciesNet remains under investigation as an optional future suggestion adapter; no runtime, model files, or dependency changes happen before source/license/runtime review.
 - SpeciesNet source review recommends boundary planning next, while runtime dependencies, model files, and downloads remain deferred.
+- Custom classifier training depends on reviewed local exports; raw suggestions, MotionEvidence, DetectionProposal, and unreviewed Visits are not training truth.
