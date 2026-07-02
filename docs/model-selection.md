@@ -89,6 +89,11 @@ Phase 9R adds a frontend manifest preview and browser-side JSON copy/download
 for the already-loaded response. It still does not generate server-side files,
 copy media, train, run classifier runtime, or select a classifier dependency.
 
+Phase 9S defines the future backend manifest file export boundary in
+[classifier-manifest-file-export-design.md](classifier-manifest-file-export-design.md).
+It is design-only and keeps generated files, media copying, training, and
+classifier runtime out of scope.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context
@@ -99,9 +104,9 @@ They should follow [species-suggestion-adapter-design.md](species-suggestion-ada
 - require user review/correction before dataset/export truth changes
 
 Custom classifier training remains future work until readiness reporting,
-manifest preview UI, explicit export tooling/policy, reviewed media-backed
-examples, dataset coverage/quality checks, and external training workflow are
-in place.
+manifest preview UI, explicit manifest file export tooling/policy, reviewed
+media-backed examples, dataset coverage/quality checks, and external training
+workflow are in place.
 SpeciesNet stays a separate optional external species/taxon candidate.
 
 ## Dependency Rules

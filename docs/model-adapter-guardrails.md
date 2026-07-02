@@ -87,6 +87,13 @@ copy/download may use the already-loaded preview response, but it must not call
 server-side file generation, copy media, create exports, train, or write
 classifier suggestions.
 
+Generated classifier manifest/export files require explicit export scope and
+must follow
+[classifier-manifest-file-export-design.md](classifier-manifest-file-export-design.md).
+They must live under ignored local data/export paths, must not include model
+files or copied media unless a later phase explicitly scopes that behavior, and
+must never create reviewed truth or make model output truth.
+
 ## Adapter Input Contract
 
 Adapters must accept product-level inputs, not adapter-specific workflows:

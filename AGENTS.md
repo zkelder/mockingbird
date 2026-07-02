@@ -89,6 +89,10 @@ Every future implementation task must restate:
   and must not add training dependencies, model files, generated datasets, or
   runtime behavior without explicit scope. Reviewed corrections remain training
   truth; suggestions remain evidence.
+- Generated classifier dataset/export files require explicit export scope,
+  must follow
+  [docs/classifier-manifest-file-export-design.md](docs/classifier-manifest-file-export-design.md),
+  and must remain under ignored local data/export paths.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.

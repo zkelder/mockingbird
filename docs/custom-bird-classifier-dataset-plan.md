@@ -32,6 +32,11 @@ examples, skipped records, taxonomy, warnings, and copy/download the loaded JSON
 in the browser only. It still does not create server-side export files, copy
 media, generate datasets, train, or run classifier runtime.
 
+Phase 9S documents the future backend manifest file export policy in
+[classifier-manifest-file-export-design.md](classifier-manifest-file-export-design.md).
+Backend file export remains future work, and media copying remains a separate
+future phase.
+
 ## Product Flow
 
 media-backed Visit -> user correction/review -> reviewed label becomes dataset
@@ -123,6 +128,8 @@ visible in the UI. Phase 9Q adds the read-only manifest preview response.
 Phase 9R makes that response visible and downloadable as browser-side JSON
 only. None of these phases copies media, writes server-side manifest files,
 trains classifiers, or creates truth.
+Phase 9S defines the local file policy for a later metadata-only export without
+implementing it.
 
 ## Export Format Plan
 
@@ -156,6 +163,8 @@ See [classifier-training-manifest-design.md](classifier-training-manifest-design
 for the Phase 9N manifest fields, skip reasons, quality flags, taxonomy export,
 and split policy. Phase 9Q returns this shape as structured API data only; file
 exports and media-copy policies remain future work.
+See [classifier-manifest-file-export-design.md](classifier-manifest-file-export-design.md)
+for the Phase 9S server-side file export boundary.
 
 ## Training/Runtime Separation
 
@@ -205,10 +214,11 @@ Tentative future phases:
 - Phase 9P: classifier readiness UI surface.
 - Phase 9Q: classifier training manifest preview/API implementation foundation.
 - Phase 9R: classifier manifest UI/download preview.
-- Phase 9S: classifier manifest file export design or implementation foundation
-  with an explicit no-media-copy boundary.
-- Phase 9T: external training workflow docs.
-- Phase 9U: optional custom classifier adapter boundary.
+- Phase 9S: classifier manifest file export design.
+- Phase 9T: manifest file export backend implementation, metadata files only.
+- Phase 9U: classifier manifest export UI/status.
+- Phase 9V: optional media-copy export design.
+- Phase 9W: external training workflow docs.
 
 Keep these phases product-first: reviewed local data, export clarity, and
 truth-boundary tests come before runtime or training work.
