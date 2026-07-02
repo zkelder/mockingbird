@@ -23,6 +23,7 @@ import { ManualImportPage } from "./pages/ManualImportPage";
 import { ModelAdaptersPage } from "./pages/ModelAdaptersPage";
 import { MotionEvidencePage } from "./pages/MotionEvidencePage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
+import { SpeciesSuggestionsPage } from "./pages/SpeciesSuggestionsPage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
 import { VisitDetailPage } from "./pages/VisitDetailPage";
@@ -35,6 +36,7 @@ type Page =
   | "model-adapters"
   | "detection-proposals"
   | "motion-evidence"
+  | "species-suggestions"
   | "stream-detail"
   | "event-detail"
   | "visit-detail"
@@ -75,6 +77,7 @@ const navItems: Array<{ page: Page; label: string }> = [
   { page: "model-adapters", label: "Model Adapters" },
   { page: "detection-proposals", label: "Detection Proposals" },
   { page: "motion-evidence", label: "Motion Evidence" },
+  { page: "species-suggestions", label: "Species Suggestions" },
   { page: "review", label: "Review" },
   { page: "analytics", label: "Analytics" },
   { page: "exports", label: "Exports" },
@@ -300,6 +303,16 @@ export default function App() {
           onOpenVisit={openVisit}
           onOpenReview={() => setPage("review")}
           onEvidenceChanged={() => loadAppData({ showLoading: false })}
+        />
+      );
+    }
+
+    if (page === "species-suggestions") {
+      return (
+        <SpeciesSuggestionsPage
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
+          onOpenReview={() => setPage("review")}
         />
       );
     }

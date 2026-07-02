@@ -26,6 +26,7 @@ export type DetectionRunStatus = "pending" | "completed" | "failed";
 export type DetectionProposalStatus = "proposed" | "accepted" | "rejected" | "converted";
 export type DetectionProposalDecision = "accept" | "reject" | "convert_to_event";
 export type MotionEvidenceStatus = "pending" | "promoted" | "ignored";
+export type SpeciesSuggestionStatus = "pending" | "accepted" | "rejected" | "superseded";
 export type AdapterEvaluationOutcome =
   | "matched_reviewed_truth"
   | "mismatched_reviewed_truth"
@@ -479,6 +480,55 @@ export interface MotionEvidencePromoteResponse {
   evidence: MotionEvidence;
   event_id?: string | null;
   visit_id?: string | null;
+}
+
+export interface SpeciesSuggestion {
+  id: string;
+  source_id?: string | null;
+  stream_id?: string | null;
+  event_id?: string | null;
+  visit_id?: string | null;
+  media_asset_id?: string | null;
+  motion_evidence_id?: string | null;
+  adapter_id: string;
+  adapter_name: string;
+  suggested_label: string;
+  suggested_common_name?: string | null;
+  suggested_scientific_name?: string | null;
+  confidence?: number | null;
+  rank: number;
+  alternatives: Array<Record<string, unknown>>;
+  evidence_region?: Record<string, unknown> | null;
+  status: SpeciesSuggestionStatus;
+  created_at: string;
+  notes?: string | null;
+}
+
+export interface SpeciesSuggestionCreateRequest {
+  source_id?: string | null;
+  stream_id?: string | null;
+  event_id?: string | null;
+  visit_id?: string | null;
+  media_asset_id?: string | null;
+  motion_evidence_id?: string | null;
+  adapter_id: string;
+  adapter_name: string;
+  suggested_label: string;
+  suggested_common_name?: string | null;
+  suggested_scientific_name?: string | null;
+  confidence?: number | null;
+  rank?: number;
+  alternatives?: Array<Record<string, unknown>>;
+  evidence_region?: Record<string, unknown> | null;
+  notes?: string | null;
+}
+
+export interface SpeciesSuggestionListResponse {
+  species_suggestions: SpeciesSuggestion[];
+}
+
+export interface SpeciesSuggestionStatusUpdateRequest {
+  status: SpeciesSuggestionStatus;
 }
 
 export interface FolderImportPreviewRequest {

@@ -1744,6 +1744,187 @@ button {
   margin: 0;
 }
 
+.species-suggestion-create-panel,
+.species-suggestion-form,
+.species-suggestion-filters,
+.species-suggestion-detail,
+.species-suggestion-list,
+.species-suggestion-subsection {
+  display: grid;
+  gap: 12px;
+}
+
+.species-suggestion-form label,
+.species-suggestion-filter-grid label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.species-suggestion-form input,
+.species-suggestion-form select,
+.species-suggestion-form textarea,
+.species-suggestion-filter-grid input,
+.species-suggestion-filter-grid select {
+  min-height: 42px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.species-suggestion-form textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.species-suggestion-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.species-wide-field {
+  grid-column: 1 / -1;
+}
+
+.species-form-actions,
+.species-filter-actions,
+.species-suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.species-suggestion-media-preview {
+  border-top: 1px solid #e0e7dd;
+  padding-top: 12px;
+}
+
+.species-suggestion-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.species-suggestion-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.95fr) minmax(340px, 1.05fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.species-suggestion-row {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+  color: #24382d;
+  text-align: left;
+}
+
+.species-suggestion-row.selected {
+  border-color: #2e6f5e;
+  background: #eef7ee;
+}
+
+.species-suggestion-meta,
+.species-suggestion-links,
+.species-json-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.species-suggestion-meta span,
+.species-suggestion-links span,
+.species-json-summary span {
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #edf2e9;
+  color: #34473b;
+  font-size: 0.85rem;
+  font-weight: 750;
+}
+
+.species-suggestion-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.species-suggestion-detail-grid div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.species-suggestion-detail-grid span {
+  color: #627168;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.species-suggestion-detail-grid strong,
+.species-suggestion-row h2 {
+  overflow-wrap: anywhere;
+}
+
+.species-suggestion-subsection {
+  border-top: 1px solid #e0e7dd;
+  padding-top: 12px;
+}
+
+.species-suggestion-subsection h3,
+.species-suggestion-subsection p {
+  margin: 0;
+}
+
+.species-suggestion-subsection p {
+  color: #5c6a61;
+}
+
+.species-status-badge {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.species-status-pending {
+  background: #ffe6bb;
+  color: #7b4a12;
+}
+
+.species-status-accepted {
+  background: #e4eef2;
+  color: #254d5a;
+}
+
+.species-status-rejected {
+  background: #fae5df;
+  color: #7c2d1e;
+}
+
+.species-status-superseded {
+  background: #e8ece6;
+  color: #536258;
+}
+
 .detection-proposal-card {
   align-content: start;
 }
@@ -2088,6 +2269,9 @@ button {
     .manual-import-layout,
     .motion-create-grid,
     .motion-evidence-layout,
+    .species-suggestion-form-grid,
+    .species-suggestion-filter-grid,
+    .species-suggestion-layout,
     .sampled-frame-result-list,
     .zone-editor-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2153,6 +2337,10 @@ button {
     .motion-evidence-detail-grid,
     .motion-evidence-layout,
     .motion-zone-filter,
+    .species-suggestion-form-grid,
+    .species-suggestion-filter-grid,
+    .species-suggestion-detail-grid,
+    .species-suggestion-layout,
     .sampled-frame-result-list,
     .proposal-decision-panel,
     .zone-editor-grid {

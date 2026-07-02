@@ -132,15 +132,21 @@ Phase 9B status updates are evidence workflow only. Accepting, rejecting, or sup
 
 ## UI Plan
 
-Future UI should:
+Phase 9C adds a standalone Species Suggestions page for manual/mock suggestion
+creation, list/filter/detail review, and status updates.
+
+Future follow-on UI can also:
 
 - show suggestions on Visit Detail, Event Detail, and Review Queue
 - show confidence, rank, and provenance
-- let the user apply a suggestion as a correction input
+- show manual/mock suggestion evidence before any classifier runtime exists
 - let the user reject or ignore a suggestion
+- let the user mark suggestion evidence accepted or superseded
 - always show reviewed truth separately from suggestions
 
-The UI should make it clear which text is model-suggested evidence and which label is user-reviewed truth.
+Any suggestion UI must make it clear which text is model- or manually-suggested
+evidence and which label is user-reviewed truth. Phase 9C does not apply
+suggestions as corrections.
 
 ## API/Repository Plan
 
@@ -148,7 +154,8 @@ Recommended future phases:
 
 - Phase 9B: `SpeciesSuggestion` schema/repository/API foundation.
 - Phase 9C: species suggestion UI surface with manual or mock suggestions.
-- Phase 9D: SpeciesNet runtime investigation docs.
+- Phase 9D: explicit correction-flow design for applying suggestion evidence.
+- Later: SpeciesNet runtime investigation docs.
 - Phase 9E: optional SpeciesNet adapter boundary.
 - Phase 9F: custom bird classifier dataset plan.
 
@@ -159,6 +166,17 @@ Phase 9B stores manual/mock suggestions and proves they do not create truth. No 
 Phase 9B adds `SpeciesSuggestion` schemas, repository persistence, and API routes for creating pending suggestions, listing/filtering them, reading detail, and updating status to accepted, rejected, or superseded.
 
 This foundation is manual/mock evidence only. It adds no SpeciesNet runtime, classifier dependency, model file, media decoding, training, Event/Visit creation, ReviewLabel creation, export truth, dataset coverage truth, or reviewed species truth.
+
+## Phase 9C Status
+
+Phase 9C adds the frontend Species Suggestions surface for creating manual/mock
+suggestions, filtering/listing them, inspecting evidence context, and marking
+pending suggestions accepted, rejected, or superseded.
+
+These UI actions change suggestion evidence status only. They do not run
+SpeciesNet or a custom classifier, inspect media, create `ReviewLabel`, mark
+Event/Visit records reviewed, update dataset coverage, create exports, or write
+reviewed species truth.
 
 ## Test Plan
 

@@ -42,6 +42,11 @@ import type {
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
   ReviewQueueItem,
+  SpeciesSuggestion,
+  SpeciesSuggestionCreateRequest,
+  SpeciesSuggestionListResponse,
+  SpeciesSuggestionStatus,
+  SpeciesSuggestionStatusUpdateRequest,
   Stream,
   TaxonomyLabel,
   Visit,
@@ -217,6 +222,48 @@ export const apiClient = {
         body: JSON.stringify(payload),
       },
     ),
+  listSpeciesSuggestions: (
+    params: {
+      status?: SpeciesSuggestionStatus | "all";
+      visit_id?: string;
+      event_id?: string;
+      media_asset_id?: string;
+      suggested_label?: string;
+    } = {},
+  ) => {
+    const searchParams = new URLSearchParams();
+    if (params.status && params.status !== "all") {
+      searchParams.set("status", params.status);
+    }
+    if (params.visit_id) {
+      searchParams.set("visit_id", params.visit_id);
+    }
+    if (params.event_id) {
+      searchParams.set("event_id", params.event_id);
+    }
+    if (params.media_asset_id) {
+      searchParams.set("media_asset_id", params.media_asset_id);
+    }
+    if (params.suggested_label) {
+      searchParams.set("suggested_label", params.suggested_label);
+    }
+    const query = searchParams.toString();
+    return request<SpeciesSuggestionListResponse>(
+      `/api/species-suggestions${query ? `?${query}` : ""}`,
+    );
+  },
+  getSpeciesSuggestion: (id: string) =>
+    request<SpeciesSuggestion>(`/api/species-suggestions/${encodeURIComponent(id)}`),
+  createSpeciesSuggestion: (payload: SpeciesSuggestionCreateRequest) =>
+    request<SpeciesSuggestion>("/api/species-suggestions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateSpeciesSuggestionStatus: (id: string, status: SpeciesSuggestionStatus) =>
+    request<SpeciesSuggestion>(`/api/species-suggestions/${encodeURIComponent(id)}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status } satisfies SpeciesSuggestionStatusUpdateRequest),
+    }),
   createZone: (payload: ZoneCreate) =>
     request<ZoneMutationResult>("/api/zones", {
       method: "POST",

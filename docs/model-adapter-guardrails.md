@@ -16,6 +16,10 @@ User corrections remain dataset truth. Exports use reviewed and corrected labels
 
 Species classifier outputs are `SpeciesSuggestion` evidence only. They must not create reviewed labels, dataset coverage truth, export truth, analytics truth, or reviewed Visit/Event state without explicit user correction.
 
+Species suggestion UI actions such as accept, reject, and supersede update
+evidence workflow state only. They must not imply model truth or write reviewed
+corrections by themselves.
+
 ## Adapter Input Contract
 
 Adapters must accept product-level inputs, not adapter-specific workflows:

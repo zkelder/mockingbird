@@ -39,7 +39,7 @@ MegaDetector-family animal/person/vehicle detection remains useful future propos
 
 SpeciesNet and a custom backyard bird classifier are future species suggestion candidates, not detector adapters and not truth writers.
 
-Phase 9B adds the `SpeciesSuggestion` schema/repository/API foundation before any SpeciesNet or custom classifier runtime.
+Phase 9B adds the `SpeciesSuggestion` schema/repository/API foundation before any SpeciesNet or custom classifier runtime. Phase 9C adds a manual/mock UI surface for suggestion evidence and status workflow; it still adds no species runtime, model dependency, media inspection, or truth writing.
 
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
