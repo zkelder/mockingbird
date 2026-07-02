@@ -18,6 +18,15 @@ interface VisitDetailPageProps {
   onOpenExports: () => void;
   onOpenDetectionProposals: () => void;
   onCorrectionSaved: () => Promise<void>;
+  correctionPrefill?: VisitCorrectionPrefill | null;
+}
+
+interface VisitCorrectionPrefill {
+  visitId: string;
+  label: string;
+  speciesSuggestionId: string;
+  suggestedCommonName?: string | null;
+  suggestedScientificName?: string | null;
 }
 
 export function VisitDetailPage({
@@ -27,6 +36,7 @@ export function VisitDetailPage({
   onOpenExports,
   onOpenDetectionProposals,
   onCorrectionSaved,
+  correctionPrefill,
 }: VisitDetailPageProps) {
   const [detail, setDetail] = useState<VisitDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,8 +46,10 @@ export function VisitDetailPage({
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [label, setLabel] = useState("");
   const [notes, setNotes] = useState("");
+  const activeCorrectionPrefill =
+    correctionPrefill?.visitId === visitId ? correctionPrefill : null;
 
-  async function loadDetail(options: { showLoading?: boolean } = {}) {
+  async function loadDetail(options: { showLoading?: boolean; prefillLabel?: string | null } = {}) {
     const showLoading = options.showLoading ?? true;
     if (showLoading) {
       setIsLoading(true);
@@ -47,6 +59,7 @@ export function VisitDetailPage({
       const nextDetail = await apiClient.getVisitDetail(visitId);
       setDetail(nextDetail);
       setLabel((current) =>
+        options.prefillLabel ||
         current ||
         nextDetail.visit.reviewed_label ||
         nextDetail.visit.species_guess ||
@@ -63,10 +76,10 @@ export function VisitDetailPage({
 
   useEffect(() => {
     setMessage(null);
-    setLabel("");
+    setLabel(activeCorrectionPrefill?.label ?? "");
     setNotes("");
-    void loadDetail();
-  }, [visitId]);
+    void loadDetail({ prefillLabel: activeCorrectionPrefill?.label });
+  }, [visitId, activeCorrectionPrefill?.speciesSuggestionId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -142,6 +155,9 @@ export function VisitDetailPage({
     isBirdReviewLabel(detail.visit.species_guess, taxonomyLabels) ||
     isBirdReviewLabel(detail.visit.subject_label, taxonomyLabels);
   const isMotionEvidenceVisit = detail.event.event_type === "motion_evidence";
+  const correctionPrefillLabel = activeCorrectionPrefill
+    ? displayTaxonomyLabel(activeCorrectionPrefill.label, taxonomyLabels)
+    : "";
 
   return (
     <div className="page-stack">
@@ -170,6 +186,17 @@ export function VisitDetailPage({
       </div>
 
       {message ? <div className="notice-panel">{message}</div> : null}
+
+      {activeCorrectionPrefill ? (
+        <section className="notice-panel">
+          <strong>Prefilled from SpeciesSuggestion {activeCorrectionPrefill.speciesSuggestionId}</strong>
+          <span>
+            {detail.visit.review_status === "needs_review"
+              ? `${correctionPrefillLabel} is in the correction form. Edit or confirm it; truth is created only when you submit the correction.`
+              : `${correctionPrefillLabel} was passed as suggestion evidence, but this Visit is already reviewed. No truth changed.`}
+          </span>
+        </section>
+      ) : null}
 
       {isMotionEvidenceVisit ? (
         <section className="notice-panel">

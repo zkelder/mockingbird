@@ -9,6 +9,16 @@ source of dataset/export truth.
 This design defines how a `SpeciesSuggestion` can help a user create a normal
 correction without letting suggestion status become truth by itself.
 
+## Phase 9E Status
+
+Phase 9E implements the frontend-first prefill path. The Species Suggestions page
+can open Visit Detail with `suggested_label` prefilled in the existing correction
+form when the suggestion has `visit_id` context.
+
+No backend apply-as-correction endpoint was added. SpeciesSuggestion status is
+not changed automatically; status polish remains deferred. Submitting the
+existing correction form remains the only truth-creating action.
+
 ## Product Flow
 
 SpeciesSuggestion pending or accepted
@@ -34,10 +44,10 @@ Accepted suggestion alone must not:
 
 ## Suggested Future UI Behavior
 
-- The Species Suggestions page should show "Use as correction" only when a
+- The Species Suggestions page shows "Use as correction" only when a
   suggestion has enough `visit_id` or `event_id` context for correction.
-- Visit Detail and Review Queue can show suggestions near the correction form.
-- The button should prefill the correction label with `suggested_label`.
+- Visit Detail receives suggestion prefill near the correction form.
+- The button pre-fills the correction label with `suggested_label`.
 - The user can edit the label before submitting.
 - The correction form remains the final truth action.
 - Rejected or superseded suggestions should not offer a primary apply action.

@@ -10,6 +10,7 @@ import type {
   ModelReadinessSummary,
   ReviewCorrectionResult,
   ReviewQueueItem,
+  SpeciesSuggestion,
   Stream,
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
@@ -57,6 +58,14 @@ interface AppData {
   modelReadiness: ModelReadinessSummary | null;
 }
 
+interface VisitCorrectionPrefill {
+  visitId: string;
+  label: string;
+  speciesSuggestionId: string;
+  suggestedCommonName?: string | null;
+  suggestedScientificName?: string | null;
+}
+
 const initialData: AppData = {
   health: null,
   sources: [],
@@ -89,6 +98,8 @@ export default function App() {
   const [selectedStreamId, setSelectedStreamId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [selectedVisitId, setSelectedVisitId] = useState<string | null>(null);
+  const [visitCorrectionPrefill, setVisitCorrectionPrefill] =
+    useState<VisitCorrectionPrefill | null>(null);
   const [data, setData] = useState<AppData>(initialData);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -162,9 +173,22 @@ export default function App() {
     setPage("event-detail");
   }
 
-  function openVisit(visitId: string) {
+  function openVisit(visitId: string, prefill?: Omit<VisitCorrectionPrefill, "visitId">) {
     setSelectedVisitId(visitId);
+    setVisitCorrectionPrefill(prefill ? { visitId, ...prefill } : null);
     setPage("visit-detail");
+  }
+
+  function useSpeciesSuggestionAsCorrection(suggestion: SpeciesSuggestion) {
+    if (!suggestion.visit_id) {
+      return;
+    }
+    openVisit(suggestion.visit_id, {
+      label: suggestion.suggested_label,
+      speciesSuggestionId: suggestion.id,
+      suggestedCommonName: suggestion.suggested_common_name,
+      suggestedScientificName: suggestion.suggested_scientific_name,
+    });
   }
 
   async function createCorrection(
@@ -186,6 +210,12 @@ export default function App() {
   async function refreshAfterLocalReset() {
     setSelectedEventId(null);
     setSelectedVisitId(null);
+    setVisitCorrectionPrefill(null);
+    await loadAppData({ showLoading: false });
+  }
+
+  async function refreshAfterVisitCorrection() {
+    setVisitCorrectionPrefill(null);
     await loadAppData({ showLoading: false });
   }
 
@@ -313,6 +343,7 @@ export default function App() {
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
           onOpenReview={() => setPage("review")}
+          onUseAsCorrection={useSpeciesSuggestionAsCorrection}
         />
       );
     }
@@ -351,7 +382,8 @@ export default function App() {
           onOpenEvent={openEvent}
           onOpenExports={() => setPage("exports")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
-          onCorrectionSaved={() => loadAppData({ showLoading: false })}
+          onCorrectionSaved={refreshAfterVisitCorrection}
+          correctionPrefill={visitCorrectionPrefill}
         />
       );
     }

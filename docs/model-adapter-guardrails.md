@@ -23,6 +23,8 @@ corrections by themselves.
 Any future "use as correction" behavior must enter truth through the existing
 review/correction path. See
 [species-suggestion-correction-flow.md](species-suggestion-correction-flow.md).
+Frontend prefill from a suggestion is allowed only as review assistance; the
+correction submit remains the truth boundary.
 
 ## Adapter Input Contract
 

@@ -41,12 +41,14 @@ interface SpeciesSuggestionsPageProps {
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
   onOpenReview: () => void;
+  onUseAsCorrection: (suggestion: SpeciesSuggestion) => void;
 }
 
 export function SpeciesSuggestionsPage({
   onOpenEvent,
   onOpenVisit,
   onOpenReview,
+  onUseAsCorrection,
 }: SpeciesSuggestionsPageProps) {
   const [suggestions, setSuggestions] = useState<SpeciesSuggestion[]>([]);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
@@ -288,7 +290,8 @@ export function SpeciesSuggestionsPage({
         <strong>Evidence before truth</strong>
         <span>
           Accept means useful suggestion evidence only. Save a correction in review before
-          exports, coverage, or analytics treat a species label as truth.
+          exports, coverage, or analytics treat a species label as truth. You can edit a
+          suggested label before saving it as a correction.
         </span>
       </section>
 
@@ -651,6 +654,17 @@ export function SpeciesSuggestionsPage({
                         Open Visit
                       </button>
                     ) : null}
+                    {selectedSuggestion.visit_id &&
+                    selectedSuggestion.status !== "rejected" &&
+                    selectedSuggestion.status !== "superseded" ? (
+                      <button
+                        className="primary-action"
+                        onClick={() => onUseAsCorrection(selectedSuggestion)}
+                        type="button"
+                      >
+                        Use as correction
+                      </button>
+                    ) : null}
                     {selectedSuggestion.media_asset_id ? (
                       <a
                         className="text-action"
@@ -708,9 +722,22 @@ export function SpeciesSuggestionsPage({
                   <strong>Truth boundary</strong>
                   <span>
                     This suggestion is evidence only. It does not create reviewed labels, mark a
-                    Visit reviewed, update dataset coverage, or make exports ready.
+                    Visit reviewed, update dataset coverage, or make exports ready. Submitting the
+                    correction creates reviewed truth.
                   </span>
                 </section>
+
+                {selectedSuggestion.visit_id &&
+                selectedSuggestion.status !== "rejected" &&
+                selectedSuggestion.status !== "superseded" ? (
+                  <section className="notice-panel">
+                    <strong>Correction prefill available</strong>
+                    <span>
+                      Use as correction opens Visit Detail with this suggested label prefilled.
+                      You can edit it before saving; accepted suggestions are still evidence only.
+                    </span>
+                  </section>
+                ) : null}
 
                 {selectedSuggestion.status === "pending" ? (
                   <section className="species-suggestion-actions">
@@ -730,16 +757,16 @@ export function SpeciesSuggestionsPage({
                       </button>
                     ))}
                     <span className="field-helper">
-                      These actions update suggestion status only. Applying a suggestion as a
-                      correction is intentionally deferred.
+                      These actions update suggestion status only. Use as correction opens the
+                      existing correction form and still requires submit.
                     </span>
                   </section>
                 ) : (
                   <section className="notice-panel">
                     <strong>{formatLabel(selectedSuggestion.status)} suggestion</strong>
                     <span>
-                      This terminal status is read-only here. It still is not reviewed truth; use
-                      the normal review/correction path when that flow is added.
+                      This terminal status is read-only here. It still is not reviewed truth;
+                      use the normal review/correction path to create dataset truth.
                     </span>
                   </section>
                 )}

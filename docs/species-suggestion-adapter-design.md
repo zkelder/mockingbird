@@ -144,6 +144,7 @@ Future follow-on UI can also:
 - show suggestions on Visit Detail, Event Detail, and Review Queue
 - show confidence, rank, and provenance
 - show manual/mock suggestion evidence before any classifier runtime exists
+- prefill the existing correction form from eligible suggestions
 - let the user reject or ignore a suggestion
 - let the user mark suggestion evidence accepted or superseded
 - always show reviewed truth separately from suggestions
@@ -159,7 +160,7 @@ Recommended future phases:
 - Phase 9B: `SpeciesSuggestion` schema/repository/API foundation.
 - Phase 9C: species suggestion UI surface with manual or mock suggestions.
 - Phase 9D: explicit correction-flow design for applying suggestion evidence.
-- Phase 9E: frontend prefill/use-as-correction path, if scoped.
+- Phase 9E: frontend prefill/use-as-correction path.
 - Later: SpeciesNet runtime investigation docs.
 - Phase 9F: custom bird classifier dataset plan.
 
@@ -188,6 +189,14 @@ Phase 9D defines the explicit correction-flow boundary for using a suggestion as
 review input. The recommended next implementation path is frontend prefill into
 the existing Visit/Event correction form, so the existing correction endpoint
 continues to be the only truth writer.
+
+## Phase 9E Status
+
+Phase 9E adds a frontend-only "Use as correction" path from Species Suggestions
+to Visit Detail. Eligible pending or accepted suggestions with `visit_id` context
+can prefill the existing correction form. The user can edit before submitting,
+and no suggestion status update, `ReviewLabel`, reviewed Visit state, export
+truth, dataset coverage truth, or analytics truth is created by navigation.
 
 ## Test Plan
 

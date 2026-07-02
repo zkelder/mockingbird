@@ -244,7 +244,8 @@ Current work:
 - Phase 9B: SpeciesSuggestion schema/repository/API foundation.
 - Phase 9C: SpeciesSuggestion UI surface with manual/mock suggestions.
 - Phase 9D: species suggestion correction-flow design.
-- Next likely phase: Phase 9E — implement frontend prefill/use-as-correction path, or SpeciesNet runtime investigation docs.
+- Phase 9E: SpeciesSuggestion use-as-correction UI prefill.
+- Next likely phase: Phase 9F — SpeciesNet runtime investigation docs or suggestion-to-correction status polish.
 
 Validation:
 
@@ -255,4 +256,5 @@ Validation:
 - Accepted/rejected/superseded suggestion status remains evidence workflow, not dataset truth.
 - The Species Suggestions UI can create manual/mock evidence, inspect context, and update status without creating truth.
 - Applying suggestion evidence must route through explicit review/correction before dataset/export truth changes.
+- Use-as-correction prefill helps users start the existing correction form without creating truth until submit.
 - Media-backed Event/Visit evidence can be the future input to suggestion adapters.
