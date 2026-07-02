@@ -84,6 +84,8 @@ Every future implementation task must restate:
   calls without explicit scope that preserves the optional adapter boundary.
 - Custom classifier or training work must follow
   [docs/custom-bird-classifier-dataset-plan.md](docs/custom-bird-classifier-dataset-plan.md)
+  and
+  [docs/classifier-training-manifest-design.md](docs/classifier-training-manifest-design.md)
   and must not add training dependencies, model files, generated datasets, or
   runtime behavior without explicit scope. Reviewed corrections remain training
   truth; suggestions remain evidence.

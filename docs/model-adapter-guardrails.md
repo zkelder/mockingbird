@@ -60,8 +60,11 @@ pending `SpeciesSuggestion` evidence for review, but they must follow the same
 truth boundary as real model suggestions.
 
 Custom bird classifier and training work must follow
-[custom-bird-classifier-dataset-plan.md](custom-bird-classifier-dataset-plan.md).
-Training data may use reviewed exports only; classifier outputs must enter
+[custom-bird-classifier-dataset-plan.md](custom-bird-classifier-dataset-plan.md)
+and
+[classifier-training-manifest-design.md](classifier-training-manifest-design.md).
+Training data may use reviewed exports only; classifier dataset exports and
+training must not make model output truth. Classifier outputs must enter
 `SpeciesSuggestion` only and must not write `ReviewLabel`, export truth,
 dataset coverage truth, analytics truth, or reviewed Visit/Event state.
 

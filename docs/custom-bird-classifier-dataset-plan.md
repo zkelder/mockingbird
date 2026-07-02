@@ -9,6 +9,11 @@ grounded in clean reviewed data, not raw suggestions or unreviewed events.
 This plan defines dataset and training-readiness boundaries before any training,
 runtime, dependency, model-file, or export implementation work.
 
+Phase 9N expands the future export manifest contract in
+[classifier-training-manifest-design.md](classifier-training-manifest-design.md).
+That document is still design-only; manifest export remains future
+implementation work.
+
 ## Product Flow
 
 media-backed Visit -> user correction/review -> reviewed label becomes dataset
@@ -123,7 +128,9 @@ Possible layouts:
 - labels file
 - taxonomy file
 
-This phase does not implement these exports.
+See [classifier-training-manifest-design.md](classifier-training-manifest-design.md)
+for the Phase 9N manifest fields, skip reasons, quality flags, taxonomy export,
+and split policy. This phase does not implement these exports.
 
 ## Training/Runtime Separation
 
@@ -168,11 +175,12 @@ remains truth.
 
 Tentative future phases:
 
-- Phase 9N: dataset export manifest design for classifier training
-- Phase 9O: classifier-readiness report/API
-- Phase 9P: export reviewed media-backed examples
-- Phase 9Q: training workflow outside core app
-- Phase 9R: optional custom classifier adapter boundary
+- Phase 9N: dataset export manifest design for classifier training.
+- Phase 9O: classifier training manifest API/implementation foundation.
+- Phase 9P: classifier-readiness report/API.
+- Phase 9Q: reviewed media-backed example export.
+- Phase 9R: external training workflow docs.
+- Phase 9S: optional custom classifier adapter boundary.
 
 Keep these phases product-first: reviewed local data, export clarity, and
 truth-boundary tests come before runtime or training work.

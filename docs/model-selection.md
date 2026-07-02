@@ -66,6 +66,12 @@ Phase 9M defines the custom bird classifier dataset/export path in
 The custom classifier path starts from reviewed MockingBird exports, not raw
 suggestions, and remains a future `SpeciesSuggestion` adapter path.
 
+Phase 9N defines the classifier training manifest contract in
+[classifier-training-manifest-design.md](classifier-training-manifest-design.md).
+It selects `manifest.jsonl` as the primary future export shape and keeps
+manifest generation, training, model files, dependencies, and runtime work out
+of the selection phase.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context
@@ -75,9 +81,10 @@ They should follow [species-suggestion-adapter-design.md](species-suggestion-ada
 - feed `SpeciesSuggestion`, not `ReviewLabel`, directly
 - require user review/correction before dataset/export truth changes
 
-Custom classifier training should wait for reviewed media-backed examples,
-dataset coverage/quality checks, and explicit export policy. SpeciesNet stays a
-separate optional external species/taxon candidate.
+Custom classifier training should wait for reviewed media-backed examples, the
+manifest contract, readiness reporting, dataset coverage/quality checks, and
+explicit export policy. SpeciesNet stays a separate optional external
+species/taxon candidate.
 
 ## Dependency Rules
 

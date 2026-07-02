@@ -128,6 +128,11 @@ Phase 9M defines the reviewed-data and export-readiness plan in
 That plan keeps custom classifier output below the same `SpeciesSuggestion`
 evidence boundary as SpeciesNet and manual/mock suggestions.
 
+Phase 9N defines the classifier training manifest contract in
+[classifier-training-manifest-design.md](classifier-training-manifest-design.md).
+Future custom classifier outputs trained from that manifest still return
+`SpeciesSuggestion` evidence only.
+
 ## Relationship To Taxonomy
 
 Suggestions should map to known taxonomy labels where possible.
@@ -206,7 +211,9 @@ Recommended future phases:
 - Phase 9K: SpeciesNet optional adapter boundary plan.
 - Phase 9L: review/species suggestion UI polish.
 - Phase 9M: custom bird classifier dataset/export plan.
-- Later: dataset export manifest design for classifier training or SpeciesNet adapter seam decision.
+- Phase 9N: dataset export manifest design for classifier training.
+- Later: classifier training manifest implementation foundation,
+  classifier-readiness report/API, or SpeciesNet adapter seam decision.
 
 Phase 9B stores manual/mock suggestions and proves they do not create truth. No real classifier runtime exists yet.
 
@@ -299,6 +306,12 @@ separate from correction submit.
 Phase 9M defines how reviewed, media-backed MockingBird observations can later
 become a clean dataset for a custom bird classifier. It adds no training,
 runtime, dependencies, model files, generated datasets, or export code.
+
+## Phase 9N Status
+
+Phase 9N defines the classifier training manifest contract for reviewed,
+media-backed examples. It adds no manifest generation, dataset files, training,
+runtime, dependencies, model files, media decoding, or truth writes.
 
 ## Test Plan
 
