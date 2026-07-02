@@ -703,6 +703,10 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                                   ))}
                                 </div>
                               ) : null}
+                              <span className="meta-text">
+                                Open Motion Evidence to review, ignore, or promote this pending
+                                evidence.
+                              </span>
                             </div>
                           ) : null}
                         </div>

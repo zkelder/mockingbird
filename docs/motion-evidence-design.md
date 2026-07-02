@@ -237,6 +237,15 @@ preserves Source/Stream/Zone context where available, and creates no Event,
 Visit, ReviewLabel, export, dataset coverage truth, model output, or species
 truth.
 
+## Phase 11H Status
+
+Phase 11H polishes the Motion Evidence review UI for saved-preview-origin
+evidence. When attached saved media is present, the UI surfaces media preview/file
+access, safe saved-local-media provenance, Source/Stream/Zone context, and clear
+pending/ignored/promoted state. Ignore and promote remain explicit, and saved
+media still creates no labels, reviewed status, exports, dataset coverage truth,
+model output, or species truth.
+
 ## Phase 8S Status
 
 Phase 8S lets pending MotionEvidence be created with optional `snapshot_media_asset_id`.

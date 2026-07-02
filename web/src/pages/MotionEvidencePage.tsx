@@ -70,6 +70,9 @@ const motionWorkflowSteps = [
   "Review/correct for truth",
 ];
 
+const pendingEvidenceBoundaryCopy =
+  "This is pending evidence. It is not an Event, Visit, label, or truth.";
+
 interface MotionEvidencePageProps {
   streams: Stream[];
   sources: CameraSource[];
@@ -165,6 +168,19 @@ export function MotionEvidencePage({
   const selectedMediaAsset = selectedEvidence?.snapshot_media_asset_id
     ? mediaById.get(selectedEvidence.snapshot_media_asset_id) ?? null
     : null;
+  const selectedSource = selectedEvidence?.source_id
+    ? sourceById.get(selectedEvidence.source_id) ?? null
+    : null;
+  const selectedStream = selectedEvidence?.stream_id
+    ? streamById.get(selectedEvidence.stream_id) ?? null
+    : null;
+  const selectedHasSavedPreviewMedia = selectedEvidence
+    ? isSavedPreviewMediaEvidence(selectedEvidence, selectedMediaAsset)
+    : false;
+  const attachedMediaTitle = selectedHasSavedPreviewMedia ? "Saved preview media" : "Attached media";
+  const attachedMediaProvenance = selectedEvidence
+    ? formatAttachedMediaProvenance(selectedEvidence, selectedMediaAsset)
+    : "";
   const manualMediaAsset = manualSnapshotMediaAssetId
     ? mediaById.get(manualSnapshotMediaAssetId) ?? null
     : null;
@@ -1037,7 +1053,17 @@ export function MotionEvidencePage({
                   </div>
                   <div className="record-status-stack">
                     {item.snapshot_media_asset_id ? (
-                      <EvidenceBadge label="Media attached" tone="evidence" />
+                      <EvidenceBadge
+                        label={
+                          isSavedPreviewMediaEvidence(
+                            item,
+                            mediaById.get(item.snapshot_media_asset_id) ?? null,
+                          )
+                            ? "Saved preview media"
+                            : "Media attached"
+                        }
+                        tone="evidence"
+                      />
                     ) : null}
                     <MotionEvidenceStatusPill status={item.status} />
                   </div>
@@ -1064,8 +1090,14 @@ export function MotionEvidencePage({
                   <MotionEvidenceStatusPill status={selectedEvidence.status} />
                 </div>
 
+                <section className="notice-panel motion-status-note">
+                  <strong>{formatLabel(selectedEvidence.status)} status</strong>
+                  <span>{formatEvidenceStatusCopy(selectedEvidence)}</span>
+                </section>
+
                 <div className="motion-evidence-detail-grid">
                   <DetailItem label="Zone" value={selectedEvidence.zone_id} />
+                  <DetailItem label="Status" value={formatLabel(selectedEvidence.status)} />
                   <DetailItem label="Peak change" value={formatPercent(selectedEvidence.peak_changed_ratio)} />
                   <DetailItem label="Triggered frames" value={`${selectedEvidence.triggered_frame_count}`} />
                   <DetailItem label="Frame/time range" value={formatRange(selectedEvidence)} />
@@ -1080,6 +1112,42 @@ export function MotionEvidencePage({
                   />
                   <DetailItem label="Created" value={formatDateTime(selectedEvidence.created_at)} />
                 </div>
+
+                <section className="motion-evidence-subsection">
+                  <div className="section-heading">
+                    <div>
+                      <h3>Source/Stream/Zone context</h3>
+                      <span className="meta-text">
+                        Context helps decide whether pending evidence should be ignored or promoted.
+                      </span>
+                    </div>
+                    <EvidenceBadge label="Review context" tone="evidence" />
+                  </div>
+                  <div className="motion-review-context-grid">
+                    <ContextItem
+                      label="Source"
+                      value={selectedSource?.name ?? selectedEvidence.source_id ?? "none"}
+                      detail={selectedEvidence.source_id}
+                    />
+                    <ContextItem
+                      label="Stream"
+                      value={selectedStream?.name ?? selectedEvidence.stream_id ?? "none"}
+                      detail={selectedEvidence.stream_id}
+                    />
+                    <ContextItem label="Zone" value={selectedEvidence.zone_id} />
+                    <ContextItem
+                      label="Evidence state"
+                      value={formatLabel(selectedEvidence.status)}
+                      detail={
+                        selectedEvidence.status === "pending"
+                          ? "Review before promoting"
+                          : selectedEvidence.status === "promoted"
+                            ? "Event/Visit review remains"
+                            : "Preserved as ignored evidence"
+                      }
+                    />
+                  </div>
+                </section>
 
                 <section className="motion-evidence-subsection">
                   <h3>Scoring context</h3>
@@ -1136,14 +1204,18 @@ export function MotionEvidencePage({
                 <section className="motion-evidence-subsection attached-media-section">
                   <div className="section-heading">
                     <div>
-                      <h3>Attached visual evidence</h3>
+                      <h3>{attachedMediaTitle}</h3>
                       <span className="meta-text">
-                        Media is evidence context only. It does not create a species label,
-                        reviewed observation, or export-ready truth.
+                        {selectedEvidence.snapshot_media_asset_id
+                          ? attachedMediaProvenance
+                          : "No media is attached to this evidence."}
                       </span>
                     </div>
                     {selectedEvidence.snapshot_media_asset_id ? (
-                      <EvidenceBadge label="Evidence context" tone="evidence" />
+                      <EvidenceBadge
+                        label={selectedHasSavedPreviewMedia ? "Saved local media" : "Evidence context"}
+                        tone="evidence"
+                      />
                     ) : (
                       <EvidenceBadge label="No media" tone="quiet" />
                     )}
@@ -1165,6 +1237,14 @@ export function MotionEvidencePage({
                           </span>
                         </div>
                       )}
+                      <div className="attached-media-provenance">
+                        <strong>Review boundary</strong>
+                        <span>{attachedMediaProvenance}</span>
+                        <span>
+                          Media is evidence context only. It does not create Events, Visits,
+                          labels, reviewed observations, export-ready truth, or dataset truth.
+                        </span>
+                      </div>
                       <div className="detail-actions">
                         <a
                           className="secondary-action"
@@ -1188,6 +1268,9 @@ export function MotionEvidencePage({
                       stable. Correct labels on the promoted review records before export.
                     </p>
                   ) : null}
+                  {selectedEvidence.status === "pending" ? (
+                    <p className="media-readonly-note">{pendingEvidenceBoundaryCopy}</p>
+                  ) : null}
                   {selectedEvidence.status === "ignored" ? (
                     <p className="media-readonly-note">
                       Media attachment is read-only because this evidence was ignored as noise.
@@ -1208,8 +1291,8 @@ export function MotionEvidencePage({
                     <div className="notice-panel">
                       <strong>Pending evidence</strong>
                       <span>
-                        Ignore noisy evidence or promote useful evidence into unreviewed
-                        Event/Visit records. Media is optional and can be attached now or later.
+                        {pendingEvidenceBoundaryCopy} Ignore noisy evidence or promote explicitly
+                        when this should become a reviewable Event/Visit.
                       </span>
                     </div>
                     <form className="motion-attachment-form" onSubmit={attachMediaEvidence}>
@@ -1409,6 +1492,94 @@ function DetailItem({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function ContextItem({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string | null;
+}) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {detail && detail !== value ? <small>{detail}</small> : null}
+    </div>
+  );
+}
+
+function formatEvidenceStatusCopy(evidence: MotionEvidence): string {
+  if (evidence.status === "pending") {
+    return pendingEvidenceBoundaryCopy;
+  }
+  if (evidence.status === "promoted") {
+    return "This evidence was promoted into unreviewed Event/Visit context. Correction remains truth.";
+  }
+  return "This evidence was ignored and remains preserved as non-truth evidence history.";
+}
+
+function isSavedPreviewMediaEvidence(evidence: MotionEvidence, asset: MediaAsset | null): boolean {
+  if (!evidence.snapshot_media_asset_id) {
+    return false;
+  }
+
+  const source = String(evidence.scoring_config.source ?? "").toLowerCase();
+  const notes = `${evidence.notes ?? ""}\n${asset?.notes ?? ""}`.toLowerCase();
+  return (
+    source === "saved_preview_media_asset" ||
+    notes.includes("created from saved mediaasset") ||
+    notes.includes("saved explicit external_url still-image preview") ||
+    notes.includes("provider_key=external_url")
+  );
+}
+
+function formatAttachedMediaProvenance(
+  evidence: MotionEvidence,
+  asset: MediaAsset | null,
+): string {
+  if (!evidence.snapshot_media_asset_id) {
+    return "No media is attached to this evidence.";
+  }
+
+  if (isSavedPreviewMediaEvidence(evidence, asset)) {
+    const host = extractSafeNoteValue(asset?.notes ?? "", "url_host");
+    if (host) {
+      return `This evidence is linked to saved local media from external URL host ${host}.`;
+    }
+    if ((asset?.notes ?? "").toLowerCase().includes("provider_key=external_url")) {
+      return "This evidence is linked to saved local media from an external URL preview.";
+    }
+  }
+
+  return "This evidence is linked to saved local media.";
+}
+
+function extractSafeNoteValue(notes: string, key: string): string | null {
+  const prefixes = [`${key}=`, `${key}:`];
+  const line = notes
+    .split(/\r?\n/)
+    .find((entry) => prefixes.some((prefix) => entry.trim().startsWith(prefix)));
+  if (!line) {
+    return null;
+  }
+
+  const rawValue = prefixes.reduce<string | null>((current, prefix) => {
+    if (current !== null) {
+      return current;
+    }
+    const trimmed = line.trim();
+    return trimmed.startsWith(prefix) ? trimmed.slice(prefix.length).trim() : null;
+  }, null);
+  if (!rawValue) {
+    return null;
+  }
+
+  const safeValue = rawValue.replace(/[^A-Za-z0-9.:\[\]-]/g, "").slice(0, 120);
+  return safeValue || null;
 }
 
 function formatPercent(value: number): string {

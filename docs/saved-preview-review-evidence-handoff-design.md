@@ -16,7 +16,7 @@ as local MediaAsset -> user creates pending MotionEvidence -> optional
 MotionEvidence promotion to Event/Visit -> Visit/Event review -> user correction
 -> ReviewLabel truth -> analytics/exports/classifier readiness.
 
-## Current Behavior Through Phase 11G
+## Current Behavior Through Phase 11H
 
 - Preview fetch is explicit.
 - Save preview is explicit.
@@ -29,6 +29,10 @@ MotionEvidence promotion to Event/Visit -> Visit/Event review -> user correction
 - Pending MotionEvidence creation creates no Visit.
 - Pending MotionEvidence creation creates no ReviewLabel.
 - Pending MotionEvidence creation creates no truth.
+- The Motion Evidence UI shows attached saved preview media, safe provenance
+  copy, Source/Stream/Zone context, and pending/ignored/promoted state.
+- Ignore and promote remain explicit user actions; saved preview media does not
+  become Event/Visit context until promotion, and correction remains truth.
 
 ## Recommended Handoff Path
 
@@ -142,15 +146,16 @@ larger automation exists.
 
 ## UI Design
 
-Future UI can show `Create evidence from this media` on the saved preview
-success card.
+The Streams page can show `Create pending evidence from saved media` after a
+preview is saved as local media.
 
 Copy should say: "This creates pending evidence only. It does not create Events,
 Visits, labels, or truth."
 
-The Motion Evidence page can offer `Create from saved media`. Media preview
-cards can show Source/Stream/provenance. After creation, link to MotionEvidence
-detail. Promotion remains separate. Correction remains separate.
+The Motion Evidence page shows saved-preview-origin evidence with the attached
+media preview/file link, safe saved-local-media provenance, Source/Stream/Zone
+context, and explicit pending/ignored/promoted state. Promotion remains
+separate. Correction remains separate.
 
 Avoid:
 

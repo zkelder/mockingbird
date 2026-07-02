@@ -150,6 +150,11 @@ After save, the UI shows saved MediaAsset status and a link to the existing
 media file route. It should not auto-save, auto-refresh, say "record", imply
 stream capture, or claim live playback.
 
+After the explicit saved-preview-to-MotionEvidence handoff, the Motion Evidence
+UI can review that saved media as pending evidence. It shows attached media and
+safe provenance context, but still requires explicit ignore/promote and later
+review/correction before anything becomes truth.
+
 ## Testing Expectations For Future Implementation
 
 The implementation tests:
@@ -191,6 +196,8 @@ explicit pending MotionEvidence action designed in
 [saved-preview-review-evidence-handoff-design.md](saved-preview-review-evidence-handoff-design.md).
 The saved MediaAsset remains local context until an explicit evidence action
 creates pending MotionEvidence.
+Phase 11H makes that handoff visible in the Motion Evidence review UI with
+attached saved media and provenance context.
 
 ## Recommended Future Phases
 
@@ -199,6 +206,7 @@ creates pending MotionEvidence.
 - Phase 11F: saved preview review/evidence handoff design.
 - Phase 11G: explicit saved-preview-to-MotionEvidence creation, no
   Events/Visits/truth.
+- Phase 11H: saved preview evidence UI/review polish.
 - Later: other source-provider handoff designs separately.
 
 ## Explicit Non-Goals

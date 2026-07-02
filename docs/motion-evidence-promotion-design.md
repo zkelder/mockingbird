@@ -104,6 +104,8 @@ Phase 8O confirms promotion preserves `snapshot_media_asset_id` on MotionEvidenc
 Saved-preview-origin MotionEvidence uses the same explicit promotion semantics.
 The saved preview media reference can travel with the evidence, but promotion
 still creates unreviewed Event/Visit context only.
+Phase 11H surfaces saved-preview media and provenance in the Motion Evidence UI
+before promotion, but does not change promotion rules or truth boundaries.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

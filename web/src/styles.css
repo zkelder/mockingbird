@@ -2098,6 +2098,46 @@ button {
   overflow-wrap: anywhere;
 }
 
+.motion-status-note {
+  border-color: #c7d7e8;
+  background: #f5f9fd;
+}
+
+.motion-review-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.motion-review-context-grid div,
+.attached-media-provenance {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.motion-review-context-grid span,
+.attached-media-provenance strong {
+  color: #627168;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.motion-review-context-grid strong,
+.motion-review-context-grid small,
+.attached-media-provenance span {
+  overflow-wrap: anywhere;
+}
+
+.motion-review-context-grid small,
+.attached-media-provenance span {
+  color: #536258;
+  font-size: 0.88rem;
+}
+
 .motion-evidence-subsection {
   border-top: 1px solid #e0e7dd;
   padding-top: 12px;
@@ -3052,6 +3092,7 @@ button {
   .mock-suggestion-action,
   .motion-create-grid,
   .motion-evidence-layout,
+  .motion-review-context-grid,
   .species-suggestion-form-grid,
   .species-suggestion-filter-grid,
   .species-suggestion-layout,
@@ -3145,6 +3186,7 @@ button {
   .motion-create-grid,
   .motion-evidence-detail-grid,
   .motion-evidence-layout,
+  .motion-review-context-grid,
   .motion-zone-filter,
   .species-suggestion-form-grid,
   .species-suggestion-filter-grid,

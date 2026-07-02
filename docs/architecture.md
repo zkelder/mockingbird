@@ -88,6 +88,9 @@ Phase 11G implements the next boundary:
 saved preview MediaAsset -> explicit pending MotionEvidence handoff -> no
 Event/Visit or truth until later promotion and correction. See
 [saved-preview-review-evidence-handoff-design.md](saved-preview-review-evidence-handoff-design.md).
+Phase 11H makes that handoff visible in the Motion Evidence review UI by
+showing attached saved media, safe provenance copy, Source/Stream/Zone context,
+and explicit pending/ignored/promoted state without creating truth.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
