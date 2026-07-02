@@ -51,6 +51,10 @@ Showing SpeciesSuggestion evidence inside Visit Detail, Review Queue, or Event
 Detail must stay display/prefill-only. Model or suggestion output enters dataset
 truth only when the user submits the existing correction flow.
 
+Suggestion UI must visually and textually distinguish evidence status from
+reviewed truth. "Use as correction" may prefill a correction form, but must not
+auto-submit, mark records reviewed, or update exports/analytics by itself.
+
 Mock species suggestion adapters are demo/testing tools. They may create
 pending `SpeciesSuggestion` evidence for review, but they must follow the same
 truth boundary as real model suggestions.

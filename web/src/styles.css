@@ -1902,6 +1902,40 @@ button {
   gap: 12px;
 }
 
+.prefill-notice,
+.suggestion-prefill-summary,
+.correction-truth-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #c8d8c3;
+  border-radius: 8px;
+  padding: 12px;
+  background: #eef7ee;
+  color: #24382d;
+}
+
+.prefill-notice div,
+.suggestion-prefill-summary div,
+.correction-truth-note {
+  min-width: 0;
+}
+
+.prefill-notice span,
+.suggestion-prefill-summary span,
+.correction-truth-note span {
+  display: block;
+  margin-top: 4px;
+  color: #4f5f55;
+}
+
+.correction-truth-note {
+  display: grid;
+  justify-content: stretch;
+}
+
 .species-suggestion-review-context {
   border-top: 1px solid #e0e7dd;
   padding-top: 14px;
@@ -1923,6 +1957,11 @@ button {
   border-radius: 8px;
   padding: 14px;
   background: #ffffff;
+}
+
+.visit-suggestion-rejected,
+.visit-suggestion-superseded {
+  background: #f7faf3;
 }
 
 .mock-suggestion-action {
@@ -1960,6 +1999,19 @@ button {
 
 .visit-suggestion-card .secondary-action {
   width: fit-content;
+}
+
+.species-suggestion-note {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.suggestion-action-stack {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
 }
 
 .compact-notice,

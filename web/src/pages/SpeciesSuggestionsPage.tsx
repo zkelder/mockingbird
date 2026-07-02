@@ -32,9 +32,9 @@ const statusOptions: Array<{ value: SpeciesSuggestionFilter; label: string }> = 
 
 const statusActions: Array<{ status: Exclude<SpeciesSuggestionStatus, "pending">; label: string }> =
   [
-    { status: "accepted", label: "Accept" },
-    { status: "rejected", label: "Reject" },
-    { status: "superseded", label: "Supersede" },
+    { status: "accepted", label: "Accept evidence" },
+    { status: "rejected", label: "Reject evidence" },
+    { status: "superseded", label: "Supersede evidence" },
   ];
 
 interface SpeciesSuggestionsPageProps {
@@ -289,9 +289,9 @@ export function SpeciesSuggestionsPage({
       <section className="notice-panel">
         <strong>Evidence before truth</strong>
         <span>
-          Accept means useful suggestion evidence only. Save a correction in review before
-          exports, coverage, or analytics treat a species label as truth. You can edit a
-          suggested label before saving it as a correction.
+          Accept means useful evidence only; reject means dismissed evidence; supersede means
+          replaced evidence. Save a correction in review before exports, coverage, or analytics
+          treat a species label as truth.
         </span>
       </section>
 
@@ -619,6 +619,11 @@ export function SpeciesSuggestionsPage({
                   <DetailItem label="Created" value={formatDateTime(selectedSuggestion.created_at)} />
                 </div>
 
+                <section className="notice-panel compact-notice">
+                  <strong>{formatLabel(selectedSuggestion.status)} suggestion evidence</strong>
+                  <span>{suggestionStatusCopy(selectedSuggestion.status)}</span>
+                </section>
+
                 <section className="species-suggestion-subsection">
                   <h3>Evidence context</h3>
                   <div className="species-suggestion-detail-grid">
@@ -662,8 +667,13 @@ export function SpeciesSuggestionsPage({
                         onClick={() => onUseAsCorrection(selectedSuggestion)}
                         type="button"
                       >
-                        Use as correction
+                        Use as correction prefill
                       </button>
+                    ) : null}
+                    {!selectedSuggestion.visit_id ? (
+                      <span className="meta-text">
+                        Link a Visit before this suggestion can prefill correction.
+                      </span>
                     ) : null}
                     {selectedSuggestion.media_asset_id ? (
                       <a
@@ -734,8 +744,8 @@ export function SpeciesSuggestionsPage({
                   <section className="notice-panel">
                     <strong>Correction prefill available</strong>
                     <span>
-                      This opens the correction form. The suggestion is marked accepted only after
-                      correction is saved.
+                      This opens Visit Detail and pre-fills the correction field. It does not save
+                      truth or change status until correction succeeds.
                     </span>
                   </section>
                 ) : null}
@@ -766,8 +776,8 @@ export function SpeciesSuggestionsPage({
                   <section className="notice-panel">
                     <strong>{formatLabel(selectedSuggestion.status)} suggestion</strong>
                     <span>
-                      This terminal status is read-only here. It still is not reviewed truth;
-                      use the normal review/correction path to create dataset truth.
+                      This terminal status is read-only here. It still is not reviewed truth; use
+                      Visit Detail correction to create dataset truth.
                     </span>
                   </section>
                 )}
@@ -787,6 +797,20 @@ export function SpeciesSuggestionsPage({
 
 function SuggestionStatusBadge({ status }: { status: SpeciesSuggestionStatus }) {
   return <span className={`species-status-badge species-status-${status}`}>{formatLabel(status)}</span>;
+}
+
+function suggestionStatusCopy(status: SpeciesSuggestionStatus): string {
+  switch (status) {
+    case "accepted":
+      return "Accepted means this was useful suggestion evidence. It is not reviewed truth by itself.";
+    case "rejected":
+      return "Rejected means dismissed evidence. It does not create or change a reviewed label.";
+    case "superseded":
+      return "Superseded means replaced by better evidence or correction history.";
+    case "pending":
+    default:
+      return "Pending evidence can prefill correction when a Visit is linked.";
+  }
 }
 
 function DetailItem({ label, value }: { label: string; value: string }) {

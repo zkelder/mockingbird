@@ -181,6 +181,10 @@ Phase 9H adds a mock species suggestion adapter action for existing Visits. It
 creates realistic pending `SpeciesSuggestion` evidence for demo/testing without
 running SpeciesNet, inspecting media, adding dependencies, or writing truth.
 
+Phase 9L polishes the review surfaces so suggestions are easier to scan in
+context before real classifier runtime. The UI keeps suggestion status as
+evidence workflow state and keeps correction submit as the truth boundary.
+
 ## API/Repository Plan
 
 Recommended future phases:
@@ -195,7 +199,8 @@ Recommended future phases:
 - Phase 9I: SpeciesNet runtime investigation docs.
 - Phase 9J: SpeciesNet source/license/runtime review.
 - Phase 9K: SpeciesNet optional adapter boundary plan.
-- Later: review/species suggestion UI polish or custom bird classifier dataset plan.
+- Phase 9L: review/species suggestion UI polish.
+- Later: custom bird classifier dataset plan or SpeciesNet adapter seam decision.
 
 Phase 9B stores manual/mock suggestions and proves they do not create truth. No real classifier runtime exists yet.
 
@@ -275,6 +280,13 @@ Phase 9K adds the SpeciesNet optional adapter boundary plan. It defines future
 dependency, local model path, runtime config, input/output, API, status, test,
 UI, and rollback boundaries without adding SpeciesNet runtime, dependencies,
 model files, media decoding, or truth writes.
+
+## Phase 9L Status
+
+Phase 9L improves Visit Detail and Species Suggestions review UI clarity. It
+sorts Visit-linked suggestions by useful review state, labels statuses as
+evidence-only workflow, makes prefill state clear, and keeps suggestion use
+separate from correction submit.
 
 ## Test Plan
 

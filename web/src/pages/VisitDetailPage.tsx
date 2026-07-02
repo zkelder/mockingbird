@@ -47,13 +47,18 @@ export function VisitDetailPage({
   const [isLoadingSpeciesSuggestions, setIsLoadingSpeciesSuggestions] = useState(true);
   const [speciesSuggestionError, setSpeciesSuggestionError] = useState<string | null>(null);
   const [correctionSuggestionId, setCorrectionSuggestionId] = useState<string | null>(null);
+  const [dismissedPrefillId, setDismissedPrefillId] = useState<string | null>(null);
   const [mockSuggestedLabel, setMockSuggestedLabel] = useState("");
   const [isCreatingMockSuggestion, setIsCreatingMockSuggestion] = useState(false);
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [label, setLabel] = useState("");
   const [notes, setNotes] = useState("");
-  const activeCorrectionPrefill =
+  const incomingCorrectionPrefill =
     correctionPrefill?.visitId === visitId ? correctionPrefill : null;
+  const activeCorrectionPrefill =
+    incomingCorrectionPrefill?.speciesSuggestionId !== dismissedPrefillId
+      ? incomingCorrectionPrefill
+      : null;
 
   async function loadDetail(options: { showLoading?: boolean; prefillLabel?: string | null } = {}) {
     const showLoading = options.showLoading ?? true;
@@ -101,15 +106,16 @@ export function VisitDetailPage({
   }
 
   useEffect(() => {
-    if (activeCorrectionPrefill?.speciesSuggestionId) {
+    setDismissedPrefillId(null);
+    if (incomingCorrectionPrefill?.speciesSuggestionId) {
       setMessage(null);
     }
-    setLabel(activeCorrectionPrefill?.label ?? "");
+    setLabel(incomingCorrectionPrefill?.label ?? "");
     setNotes("");
     setMockSuggestedLabel("");
-    setCorrectionSuggestionId(activeCorrectionPrefill?.speciesSuggestionId ?? null);
-    void loadDetail({ prefillLabel: activeCorrectionPrefill?.label });
-  }, [visitId, activeCorrectionPrefill?.speciesSuggestionId]);
+    setCorrectionSuggestionId(incomingCorrectionPrefill?.speciesSuggestionId ?? null);
+    void loadDetail({ prefillLabel: incomingCorrectionPrefill?.label });
+  }, [visitId, incomingCorrectionPrefill?.speciesSuggestionId]);
 
   useEffect(() => {
     setMessage(null);
@@ -173,8 +179,21 @@ export function VisitDetailPage({
     setLabel(suggestion.suggested_label);
     setCorrectionSuggestionId(suggestion.id);
     setMessage(
-      "SpeciesSuggestion prefilled the correction field. Submit the correction to create reviewed truth.",
+      "SpeciesSuggestion prefilled the correction field. Review or edit it, then submit the correction to create truth.",
     );
+  }
+
+  function clearCorrectionPrefill() {
+    const sourceSuggestionId = activeCorrectionPrefill?.speciesSuggestionId ?? correctionSuggestionId;
+    setDismissedPrefillId(sourceSuggestionId);
+    setCorrectionSuggestionId(null);
+    setLabel(
+      detail?.visit.reviewed_label ??
+        detail?.visit.species_guess ??
+        detail?.visit.subject_label ??
+        "",
+    );
+    setMessage("Suggestion prefill cleared. The correction form is ready for manual review.");
   }
 
   async function createMockSuggestion() {
@@ -295,6 +314,7 @@ export function VisitDetailPage({
         taxonomyLabels,
       )
     : "";
+  const sortedSpeciesSuggestions = [...speciesSuggestions].sort(compareSpeciesSuggestions);
 
   return (
     <div className="page-stack">
@@ -325,13 +345,20 @@ export function VisitDetailPage({
       {message ? <div className="notice-panel">{message}</div> : null}
 
       {activeCorrectionPrefill ? (
-        <section className="notice-panel">
-          <strong>Prefilled from SpeciesSuggestion {activeCorrectionPrefill.speciesSuggestionId}</strong>
-          <span>
-            {detail.visit.review_status === "needs_review"
-              ? "This label was prefilled from a SpeciesSuggestion. Submitting the correction creates truth; the suggestion will be marked accepted only after the correction succeeds."
-              : `${correctionPrefillLabel} was passed as suggestion evidence, but this Visit is already reviewed. No truth changed.`}
-          </span>
+        <section className="prefill-notice">
+          <div>
+            <strong>Prefilled from SpeciesSuggestion {activeCorrectionPrefill.speciesSuggestionId}</strong>
+            <span>
+              {detail.visit.review_status === "needs_review"
+                ? `${correctionPrefillLabel} is evidence in the correction field. Submit the correction to create reviewed truth; the suggestion is marked accepted only after save succeeds.`
+                : `${correctionPrefillLabel} was passed as suggestion evidence, but this Visit is already reviewed. No truth changed.`}
+            </span>
+          </div>
+          {detail.visit.review_status === "needs_review" ? (
+            <button className="text-action" onClick={clearCorrectionPrefill} type="button">
+              Clear prefill
+            </button>
+          ) : null}
         </section>
       ) : null}
 
@@ -545,6 +572,13 @@ export function VisitDetailPage({
               ? "Use reviewed species, Unknown bird, or False positive. This value becomes dataset truth for analytics and exports."
               : "Use the reviewed label that should become dataset truth for analytics and exports."}
           </p>
+          <div className="correction-truth-note">
+            <strong>Correction form is the truth action</strong>
+            <span>
+              Suggestions can prefill the label only. You can edit the label and notes before
+              saving; dataset/export truth changes only after this correction is submitted.
+            </span>
+          </div>
           <section className="species-suggestion-review-context">
             <div className="section-heading">
               <div>
@@ -583,12 +617,17 @@ export function VisitDetailPage({
               </span>
             </div>
             {correctionSuggestionId ? (
-              <div className="notice-panel compact-notice">
-                <strong>Correction prefilled from suggestion</strong>
-                <span>
-                  {activeSuggestionLabel} is in the correction field. Edit it if needed; status is
-                  marked accepted only after the correction succeeds.
-                </span>
+              <div className="suggestion-prefill-summary">
+                <div>
+                  <strong>Correction prefilled from suggestion {correctionSuggestionId}</strong>
+                  <span>
+                    {activeSuggestionLabel} is in the correction field. Edit it if needed; status is
+                    marked accepted only after the correction succeeds.
+                  </span>
+                </div>
+                <button className="text-action" onClick={clearCorrectionPrefill} type="button">
+                  Clear prefill
+                </button>
               </div>
             ) : null}
             {isLoadingSpeciesSuggestions ? (
@@ -606,18 +645,20 @@ export function VisitDetailPage({
             !speciesSuggestionError &&
             speciesSuggestions.length > 0 ? (
               <div className="visit-suggestion-list">
-                {speciesSuggestions.map((suggestion) => (
+                {sortedSpeciesSuggestions.map((suggestion) => (
                   <article
                     className={
                       correctionSuggestionId === suggestion.id
-                        ? "visit-suggestion-card selected"
-                        : "visit-suggestion-card"
+                        ? `visit-suggestion-card visit-suggestion-${suggestion.status} selected`
+                        : `visit-suggestion-card visit-suggestion-${suggestion.status}`
                     }
                     key={suggestion.id}
                   >
                     <div className="item-title-row">
                       <div>
-                        <span className="meta-text">{suggestion.adapter_name}</span>
+                        <span className="meta-text">
+                          {suggestion.adapter_name} - {suggestion.adapter_id}
+                        </span>
                         <h4>{displayTaxonomyLabel(suggestion.suggested_label, taxonomyLabels)}</h4>
                         <span className="meta-text">Label: {suggestion.suggested_label}</span>
                         {suggestion.suggested_common_name ||
@@ -634,22 +675,32 @@ export function VisitDetailPage({
                       </div>
                       <SpeciesSuggestionStatusBadge status={suggestion.status} />
                     </div>
+                    <span className="meta-text">{speciesSuggestionStatusCopy(suggestion.status)}</span>
                     <div className="species-suggestion-meta">
                       <span>Rank {suggestion.rank}</span>
                       <span>{formatConfidence(suggestion.confidence)}</span>
+                      <span>{formatDateTime(suggestion.created_at)}</span>
                     </div>
-                    {suggestion.notes ? <p>{suggestion.notes}</p> : null}
+                    {suggestion.notes ? (
+                      <p className="species-suggestion-note">{suggestion.notes}</p>
+                    ) : null}
                     {suggestion.status === "pending" || suggestion.status === "accepted" ? (
-                      <button
-                        className="secondary-action"
-                        onClick={() => useSpeciesSuggestionAsCorrection(suggestion)}
-                        type="button"
-                      >
-                        Use as correction
-                      </button>
+                      <div className="suggestion-action-stack">
+                        <button
+                          className="secondary-action"
+                          onClick={() => useSpeciesSuggestionAsCorrection(suggestion)}
+                          type="button"
+                        >
+                          Use as correction prefill
+                        </button>
+                        <span className="field-helper">
+                          Prefills only. It does not save truth or change status before correction.
+                        </span>
+                      </div>
                     ) : (
                       <span className="meta-text">
-                        {formatLabel(suggestion.status)} suggestion is read-only here.
+                        {formatLabel(suggestion.status)} suggestion is read-only here and remains
+                        separate from reviewed truth.
                       </span>
                     )}
                   </article>
@@ -710,6 +761,43 @@ export function VisitDetailPage({
 
 function SpeciesSuggestionStatusBadge({ status }: { status: SpeciesSuggestion["status"] }) {
   return <span className={`species-status-badge species-status-${status}`}>{formatLabel(status)}</span>;
+}
+
+const speciesSuggestionStatusOrder: Record<SpeciesSuggestion["status"], number> = {
+  pending: 0,
+  accepted: 1,
+  rejected: 2,
+  superseded: 3,
+};
+
+function compareSpeciesSuggestions(a: SpeciesSuggestion, b: SpeciesSuggestion): number {
+  const statusDelta = speciesSuggestionStatusOrder[a.status] - speciesSuggestionStatusOrder[b.status];
+  if (statusDelta !== 0) {
+    return statusDelta;
+  }
+  const rankDelta = a.rank - b.rank;
+  if (rankDelta !== 0) {
+    return rankDelta;
+  }
+  const confidenceDelta = (b.confidence ?? -1) - (a.confidence ?? -1);
+  if (confidenceDelta !== 0) {
+    return confidenceDelta;
+  }
+  return Date.parse(b.created_at) - Date.parse(a.created_at);
+}
+
+function speciesSuggestionStatusCopy(status: SpeciesSuggestion["status"]): string {
+  switch (status) {
+    case "accepted":
+      return "Accepted means helpful evidence; correction still creates truth.";
+    case "rejected":
+      return "Rejected means dismissed evidence, not a reviewed label.";
+    case "superseded":
+      return "Superseded means replaced by better evidence or correction.";
+    case "pending":
+    default:
+      return "Pending evidence can prefill the correction form.";
+  }
 }
 
 function formatConfidence(value?: number | null): string {

@@ -226,6 +226,7 @@ export function ReviewQueuePage({
                 </span>
                 <span>Event: {item.event_id ?? "n/a"}</span>
                 <span>Visit: {item.visit_id ?? "n/a"}</span>
+                {item.visit_id ? <span>Species suggestions: Visit detail</span> : null}
                 {item.media_asset ? <span>Imported media attached</span> : null}
               </div>
               {item.media_asset ? (

@@ -41,6 +41,15 @@ Rejected and superseded suggestions stay read-only in the review context. Review
 Queue and Event Detail suggestion cues remain deferred unless they can be added
 without broad data-shape changes.
 
+## Phase 9L Status
+
+Phase 9L polishes the review UI around this boundary. Visit Detail now makes
+suggestions visible near correction, orders them by review usefulness, shows
+status meaning in context, and treats "use as correction" as label prefill only.
+
+The correction form remains the truth action. Suggestion status still does not
+create reviewed labels, mark Visits reviewed, or update dataset/export truth.
+
 ## Product Flow
 
 SpeciesSuggestion pending or accepted
@@ -78,6 +87,8 @@ Accepted suggestion alone must not:
 - Rejected or superseded suggestions should not offer a primary apply action.
 - Accepted suggestions still require explicit correction submission before
   dataset/export truth changes.
+- Review surfaces should label suggestion status as evidence workflow state, not
+  reviewed truth.
 
 ## Suggested Future API Behavior
 
