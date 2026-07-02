@@ -22,6 +22,8 @@ A frame plane is a rectangular 2D array of numeric grayscale values.
 
 It should be downscaled or normalized enough for motion scoring, and it does not need image metadata. The current backend contract already accepts synthetic or manual frame planes. A future sampler should produce this shape before calling `/api/motion/evaluate-sequence`.
 
+Frame planes are separate from local frame artifacts. Frame planes support scoring and may be discarded; local frame artifacts are optional visual evidence references for review. See [local-frame-artifact-design.md](local-frame-artifact-design.md).
+
 ## Future Sampled Frame Fields
 
 Likely future fields, for design only:
@@ -69,6 +71,8 @@ This phase does not capture or attach media.
 
 A future sampler may attach a best-frame MediaAsset. Best-frame selection should use the candidate peak frame plus quality heuristics from a short buffer. Media attachment is the planned bridge from frame indexes to visible review evidence, and remains evidence/context only. See [best-frame-media-attachment-design.md](best-frame-media-attachment-design.md).
 
+Local frame artifacts define that visible evidence concept without changing the scoring frame-plane contract.
+
 ## Failure And Noise Cases
 
 Expected noise cases include:
@@ -115,14 +119,22 @@ Phase 8N defines best-frame media attachment as the design bridge from candidate
 
 It is design-only: no media capture, decoding, attachment, stream sampling, model calls, or truth writes are implemented.
 
+## Phase 8P Status
+
+Phase 8P defines local frame artifacts as separate from sampled frame planes.
+
+The artifact design explains how a future local visual reference can become or link to a MediaAsset for MotionEvidence review context. It adds no artifact creation, media capture, decoding, thumbnails, stream sampling, source adapter, model call, or truth write.
+
 ## Future Implementation Plan
 
 Tentative future phases:
 
 - Phase 8O: best-frame attachment schema/API compatibility review.
-- Phase 8P: media reference propagation from MotionEvidence to Event/Visit.
-- Phase 8Q: local media/frame attachment using already-available imported images or supplied frame artifacts.
-- Phase 8R: controlled local stream sampling/media capture.
+- Phase 8P: local frame artifact design.
+- Phase 8Q: local frame artifact schema/API compatibility design or implementation.
+- Phase 8R: attach existing MediaAsset to MotionEvidence from manual/imported media.
+- Phase 8S: artifact propagation to Visit detail if any gaps remain.
+- Phase 8T: controlled local frame capture from already-configured streams/imported media.
 
 Each phase should stay product-first: visible stream, configured zones, pending evidence, review/promotion, then correction truth.
 

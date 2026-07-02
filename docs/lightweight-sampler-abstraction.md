@@ -101,6 +101,8 @@ This design does not attach media.
 
 A future sampler may attach a best-frame MediaAsset. Media attachment is evidence and context, not truth. Best-frame selection should use the candidate peak frame and simple quality heuristics later. See [best-frame-media-attachment-design.md](best-frame-media-attachment-design.md).
 
+Sampler output may feed future local frame artifact creation, but artifact retention and MediaAsset attachment should be explicit product logic outside the sampler scoring core. See [local-frame-artifact-design.md](local-frame-artifact-design.md).
+
 ## Failure And Noise Handling
 
 Expected failure and noise cases include:
@@ -129,9 +131,11 @@ Tentative future phases:
 
 - Phase 8N: best-frame media attachment design.
 - Phase 8O: best-frame attachment schema/API compatibility review.
-- Phase 8P: media reference propagation from MotionEvidence to Event/Visit.
-- Phase 8Q: local media/frame attachment using already-available imported images or supplied frame artifacts.
-- Phase 8R: controlled local stream sampling/media capture.
+- Phase 8P: local frame artifact design.
+- Phase 8Q: local frame artifact schema/API compatibility design or implementation.
+- Phase 8R: attach existing MediaAsset to MotionEvidence from manual/imported media.
+- Phase 8S: artifact propagation to Visit detail if any gaps remain.
+- Phase 8T: controlled local frame capture from already-configured streams/imported media.
 
 Each phase should preserve the stream -> zone -> pending evidence -> review/promotion -> correction truth path.
 

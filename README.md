@@ -103,6 +103,8 @@ The backend sampler abstraction now evaluates supplied in-memory frame planes; s
 
 Best-frame media attachment remains optional evidence context; its schema/API compatibility path is documented in [docs/best-frame-media-attachment-design.md](docs/best-frame-media-attachment-design.md).
 
+Local frame artifacts are a design-only bridge from best-frame indexes to future local visual evidence; see [docs/local-frame-artifact-design.md](docs/local-frame-artifact-design.md).
+
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md), and the [local setup checklist](docs/megadetector-local-setup.md).
 
 ## Not the product center

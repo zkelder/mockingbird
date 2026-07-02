@@ -100,6 +100,12 @@ Phase 8O reviews and tests best-frame media attachment schema/API compatibility.
 
 MotionEvidence can preserve optional `snapshot_media_asset_id` through create, list, detail, ignore, and promote paths. Promotion with a Visit can expose linked MediaAsset context through existing Visit/detail media fields. Capture, decoding, stream sampling, thumbnails, model calls, and truth writes remain deferred.
 
+## Phase 8P Status
+
+Phase 8P defines local frame artifacts before implementation.
+
+Local frame artifacts are future local visual evidence references that can link a motion candidate's best frame to a MediaAsset and `MotionEvidence.snapshot_media_asset_id`. This is design-only: no artifact creation, media capture, decoding, thumbnails, stream sampling, source adapter, model call, or truth write is added. See [local-frame-artifact-design.md](local-frame-artifact-design.md).
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

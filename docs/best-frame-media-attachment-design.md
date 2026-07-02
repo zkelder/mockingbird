@@ -54,6 +54,8 @@ The media reference is evidence/context only. It must not create labels, reviewe
 
 When supported, promotion should carry or link the media context to created Event/Visit evidence while keeping those records unreviewed.
 
+The future local frame artifact concept defines the product boundary between motion candidate frame indexes and stored visual review context. See [local-frame-artifact-design.md](local-frame-artifact-design.md).
+
 ## Relationship To Sampler
 
 The sampler outputs frame indexes/timestamps and motion candidates. It does not own review decisions, export decisions, species truth, or dataset readiness.
@@ -99,9 +101,11 @@ These cases should leave evidence reviewable, ignorable, or promotable without c
 Recommended future phases:
 
 - Phase 8O: best-frame attachment schema/API compatibility review.
-- Phase 8P: media reference propagation implementation for direct Event context if needed.
-- Phase 8Q: local media/frame attachment using already-available imported images or supplied frame artifacts.
-- Phase 8R: controlled stream sampling/media capture.
+- Phase 8P: local frame artifact design.
+- Phase 8Q: local frame artifact schema/API compatibility design or implementation.
+- Phase 8R: attach existing MediaAsset to MotionEvidence from manual/imported media.
+- Phase 8S: artifact propagation to Visit detail if any gaps remain.
+- Phase 8T: controlled local frame capture from already-configured streams/imported media.
 
 ## Phase 8O Status
 
@@ -123,6 +127,12 @@ Deferred:
 - thumbnails
 - stream sampling/media capture
 - species/model calls
+
+## Phase 8P Status
+
+Phase 8P defines local frame artifacts as the design bridge from frame-plane scoring to optional visual evidence.
+
+This is design-only. No artifact creation, media capture, decoding, thumbnailing, stream sampling, or model call is implemented. See [local-frame-artifact-design.md](local-frame-artifact-design.md).
 
 ## Test Plan For Future Implementation
 

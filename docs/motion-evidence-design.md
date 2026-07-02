@@ -57,7 +57,7 @@ Likely future fields, for design only:
 
 These fields should stay product-shaped and avoid leaking adapter or worker internals into the user experience.
 
-The existing `snapshot_media_asset_id` field remains optional evidence context. MotionEvidence can be created, listed, viewed, ignored, or promoted without media. Media attachment alone must not create labels, reviewed status, export truth, dataset coverage truth, or species truth.
+The existing `snapshot_media_asset_id` field remains optional evidence context. It may later point to a MediaAsset representing a local frame artifact. MotionEvidence can be created, listed, viewed, ignored, or promoted without media. Media attachment alone must not create labels, reviewed status, export truth, dataset coverage truth, or species truth.
 
 ## Status Lifecycle
 
@@ -200,6 +200,12 @@ Best-frame media can later give MotionEvidence and promoted Event/Visit evidence
 Phase 8O confirms the existing schema/API path for optional best-frame media context.
 
 MotionEvidence create, list, detail, ignore, and promote paths preserve `snapshot_media_asset_id`. Promotion with a created Visit can expose the linked MediaAsset through existing Visit media context. Direct Event-only media propagation remains future work. No media capture, decoding, labels, reviewed status, exports, dataset coverage truth, model output, or species truth is added.
+
+## Phase 8P Status
+
+Phase 8P defines local frame artifacts before implementation.
+
+Local frame artifacts are future local visual evidence references that may become MediaAssets attached through `snapshot_media_asset_id`. They are separate from frame planes and remain evidence context only. No artifact creation, media capture, decoding, thumbnails, labels, exports, dataset coverage truth, model output, or species truth is added. See [local-frame-artifact-design.md](local-frame-artifact-design.md).
 
 ## Test Plan
 

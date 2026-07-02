@@ -202,7 +202,8 @@ Current work:
 - Phase 8M: sampler abstraction code using supplied in-memory frame planes only.
 - Phase 8N: best-frame media attachment design.
 - Phase 8O: best-frame attachment schema/API compatibility review.
-- Next likely phase: Phase 8P — media reference propagation implementation for direct Event context if needed.
+- Phase 8P: local frame artifact design.
+- Next likely phase: Phase 8Q — local frame artifact schema/API compatibility design or implementation.
 
 Validation:
 
@@ -221,5 +222,6 @@ Validation:
 - Sampler abstraction code evaluates supplied in-memory frame planes and can create pending MotionEvidence without creating truth.
 - Best-frame media attachment design defines how candidate frame indexes can later link to optional visible evidence without creating truth.
 - Best-frame attachment compatibility confirms MotionEvidence and Visit/detail media references stay evidence-only.
+- Local frame artifact design separates scoring frame planes from optional visual evidence references.
 - Stream sampling, media decoding, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.
