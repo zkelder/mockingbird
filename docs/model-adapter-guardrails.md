@@ -26,6 +26,13 @@ The SpeciesNet source review in
 dependency, lazy import, explicit local model path/configuration, no automatic
 downloads, and mocked runtime-output tests before any real adapter work.
 
+The SpeciesNet boundary plan in
+[speciesnet-adapter-boundary-plan.md](speciesnet-adapter-boundary-plan.md)
+must be followed before runtime work. Any future SpeciesNet adapter must keep
+the dependency optional, import lazily, require explicit local model paths,
+avoid automatic downloads, start safely when unavailable, and write
+`SpeciesSuggestion` evidence only.
+
 Species suggestion UI actions such as accept, reject, and supersede update
 evidence workflow state only. They must not imply model truth or write reviewed
 corrections by themselves.

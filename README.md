@@ -115,7 +115,7 @@ The current local demo loop is import media -> create media-backed Motion Eviden
 
 Species suggestion now has a manual/mock evidence surface and a frontend prefill path into Visit correction: suggestions are evidence only until review/correction creates truth, and accepted status after correction is evidence metadata only. See [docs/species-suggestion-adapter-design.md](docs/species-suggestion-adapter-design.md) and [docs/species-suggestion-correction-flow.md](docs/species-suggestion-correction-flow.md).
 
-SpeciesNet is under docs-only runtime/source review as a future optional suggestion adapter. See [docs/speciesnet-runtime-investigation.md](docs/speciesnet-runtime-investigation.md) and [docs/speciesnet-source-review.md](docs/speciesnet-source-review.md).
+SpeciesNet is under docs-only runtime/source review as a future optional suggestion adapter, with a boundary plan before any runtime work. See [docs/speciesnet-runtime-investigation.md](docs/speciesnet-runtime-investigation.md), [docs/speciesnet-source-review.md](docs/speciesnet-source-review.md), and [docs/speciesnet-adapter-boundary-plan.md](docs/speciesnet-adapter-boundary-plan.md).
 
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md), and the [local setup checklist](docs/megadetector-local-setup.md).
 

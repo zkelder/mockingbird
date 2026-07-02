@@ -250,14 +250,17 @@ Current work:
 - Phase 9H: mock species suggestion adapter for existing Visits.
 - Phase 9I: SpeciesNet runtime investigation docs.
 - Phase 9J: SpeciesNet source/license/runtime review.
-- Next likely phase: Phase 9K — SpeciesNet optional adapter boundary plan.
+- Phase 9K: SpeciesNet optional adapter boundary plan.
+- Next likely phase: Phase 9L — review/species suggestion UI polish.
 
 Validation:
 
 - Species suggestions remain evidence only.
 - SpeciesSuggestion stays separate from MotionEvidence, DetectionProposal, and ReviewLabel.
 - SpeciesNet and custom bird classifiers remain optional future adapters, not product architecture.
+- SpeciesNet is a candidate with a boundary plan; no runtime is selected or installed.
 - Suggestions do not create reviewed labels, reviewed Visit/Event state, export truth, dataset coverage truth, or analytics truth without explicit user correction.
+- Phase 9L should stay product-first by improving review clarity and suggestion usability before adding classifier runtime.
 - Accepted/rejected/superseded suggestion status remains evidence workflow, not dataset truth.
 - The Species Suggestions UI can create manual/mock evidence, inspect context, and update status without creating truth.
 - Applying suggestion evidence must route through explicit review/correction before dataset/export truth changes.

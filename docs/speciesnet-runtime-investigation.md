@@ -147,7 +147,8 @@ Future implementation tests should prove:
 
 - Phase 9J: SpeciesNet source/license/runtime source review.
 - Phase 9K: optional SpeciesNet adapter boundary plan.
-- Phase 9L: mocked SpeciesNet adapter seam.
+- Phase 9L: review/species suggestion UI polish, unless a mocked
+  SpeciesNet-specific seam adds clear adapter-status value.
 - Real runtime only after dependency, license, and model-file review is complete.
 
 ## Phase 9J Source Review Result
@@ -157,6 +158,12 @@ only to an optional adapter boundary plan. SpeciesNet remains relevant as future
 suggestion evidence, but runtime dependencies are heavy, official scripts can
 download weights, and model-weight license/redistribution terms still need
 deeper review.
+
+## Phase 9K Boundary Result
+
+[speciesnet-adapter-boundary-plan.md](speciesnet-adapter-boundary-plan.md)
+defines the optional adapter boundary. No SpeciesNet runtime is selected,
+installed, or invoked by this docs phase.
 
 ## Explicit Non-Goals
 

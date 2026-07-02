@@ -56,6 +56,11 @@ Phase 9J reviews public SpeciesNet sources in
 candidate, but the recommended next step is an optional adapter boundary plan,
 not dependency or model-file integration.
 
+Phase 9K records that boundary in
+[speciesnet-adapter-boundary-plan.md](speciesnet-adapter-boundary-plan.md).
+SpeciesNet is a candidate with a boundary plan; runtime is not selected,
+installed, or invoked.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context

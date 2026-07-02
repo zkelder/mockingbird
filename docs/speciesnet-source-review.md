@@ -8,6 +8,9 @@ species or taxon suggestion adapter for MockingBird.
 The answer is yes, but only as an evidence-only candidate. The next step should
 be an optional adapter boundary plan, not runtime integration.
 
+Phase 9K defines that boundary in
+[speciesnet-adapter-boundary-plan.md](speciesnet-adapter-boundary-plan.md).
+
 ## Sources Reviewed
 
 Reviewed public sources:
@@ -139,6 +142,10 @@ decoding, or runtime calls yet. The boundary plan should specify adapter status,
 configuration, local model folder requirements, mocked output tests, taxonomy
 mapping policy, and unavailable-safe failure behavior.
 
+Implementation remains blocked until a future scoped task satisfies the Phase 9K
+boundary guardrails and separately resolves runtime, dependency, model-weight,
+and local model path questions.
+
 This recommendation is conservative because:
 
 - SpeciesNet is product-relevant for species/taxon suggestions.
@@ -183,6 +190,9 @@ This is the right next step because it can define the adapter seam, config
 contract, mock tests, and truth boundary without adding runtime dependencies or
 model files. A separate dependency/license spike can follow if the boundary plan
 finds that a real adapter is still worth pursuing.
+
+After Phase 9K, prefer review/species suggestion UI polish unless a mocked
+SpeciesNet-specific seam adds clear adapter-status value.
 
 ## Explicit Non-Goals
 
