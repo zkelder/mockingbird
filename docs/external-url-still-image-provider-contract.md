@@ -3,8 +3,8 @@
 ## Purpose
 
 The `external_url` provider is the safest first real Source path after manual
-media. It can eventually let a configured Source provide an explicit still-image
-preview without video decoding, workers, or live-stream claims.
+media. In Phase 11C it lets a configured Source provide an explicit still-image
+preview without video decoding, workers, storage, or live-stream claims.
 
 This provider bridges Source setup metadata to Source connection status and
 Stream playback status while keeping MockingBird centered on Sources, Streams,
@@ -13,9 +13,9 @@ Zones, Review, Corrections, and Exports.
 ## Product Flow
 
 external_url provider configuration -> Source setup review -> Source connection
-status -> future explicit preview/status request -> Stream playback preview
-handoff -> Zone editing context -> optional future explicit evidence/media flow
--> Event/Visit review -> correction truth.
+status -> explicit preview/status request -> transient Stream/source preview cue
+-> Zone editing context -> optional future explicit evidence/media flow ->
+Event/Visit review -> correction truth.
 
 ## Provider Definition
 
@@ -38,9 +38,10 @@ Designed provider configuration fields:
 - `refresh_hint_seconds`: optional metadata only; not scheduling behavior.
 - `notes`: optional, non-secret.
 
-Current provider configuration stores metadata only. Secret values must be
-redacted. This phase performs no network validation, URL fetch, or background
-refresh behavior.
+Provider configuration stores metadata only. Secret values must be redacted.
+Only the explicit preview route fetches a URL. Setup review, connection status,
+and playback status do not fetch URLs, validate by network call, or schedule
+background refresh behavior.
 
 ## Source Connection Status Relationship
 
@@ -48,7 +49,7 @@ Future source connection behavior should follow these rules:
 
 - Missing `url` reports `not_configured`.
 - Configured `url` can report `configured` but not necessarily `available`.
-- Explicit preview/status requests may later read bounded availability.
+- Explicit preview/status requests can read bounded availability.
 - No live playback is claimed until implementation intentionally supports it.
 - `setup_hint` should guide missing URL setup or future preview availability.
 
@@ -65,22 +66,27 @@ Future playback handoff may use:
 - `supports_zone_editing`: can remain true through placeholder or preview
   context.
 
-## Explicit Preview/Status Request Design
+## Explicit Preview/Status Request
 
-A future route concept could be:
+Implemented route:
 
 `POST /api/sources/{source_id}/external-url/preview`
 
-Future behavior should be:
+Behavior:
 
 - Explicit and user-triggered only.
 - Bounded by a timeout.
 - No background polling.
 - No worker.
 - No automatic evidence or event creation.
-- Returns status and optional preview metadata.
+- Returns status and optional transient preview metadata.
 - May optionally store a preview MediaAsset only in a later explicit phase.
 - Does not create truth.
+
+Defaults:
+
+- `timeout_seconds`: 3.0, clamped from 0.5 to 10.0.
+- `max_bytes`: 5 MB, clamped to at most 10 MB.
 
 ## Network/Security Policy
 
@@ -88,14 +94,17 @@ Future behavior should be:
 - User controls the URL.
 - Secrets are redacted in API, UI, and logs.
 - Raw credentials must not appear in docs or tests.
-- Future implementation requires bounded timeouts.
-- Unsafe URL targets must be blocked or carefully handled before fetch code
-  exists.
-- SSRF risk must be addressed before network fetch code exists.
+- Implementation uses bounded timeouts.
+- Unsafe URL targets are blocked before fetch.
+- SSRF risk is addressed conservatively before network access.
 - Redirects are disabled unless explicitly scoped later.
 - Internal metadata endpoints must not be fetched.
 - Errors must not echo credentials.
 - Local-first remains default.
+- Private RFC1918 LAN addresses are allowed for local-first camera/still-image
+  URLs.
+- Loopback, multicast, unspecified, reserved, link-local, and
+  `169.254.169.254` metadata-style targets are blocked.
 
 ## Privacy/Ignore Policy
 
@@ -118,9 +127,8 @@ Future behavior should be:
 
 ## Dependency Policy
 
-- This design requires no new dependency.
-- Future implementation should prefer Python standard library or the existing
-  stack if safe.
+- This implementation requires no new dependency.
+- It uses Python standard library HTTP utilities.
 - Still-image preview must not add OpenCV, ffmpeg, or video libraries.
 - Optional dependencies must be justified and lazy.
 - The app must start without provider extras.
@@ -128,7 +136,7 @@ Future behavior should be:
 ## Evidence/Event/Truth Boundary
 
 - Configuring a URL does not create MotionEvidence.
-- Fetching a preview does not create Events or Visits.
+- Fetching a preview does not create MotionEvidence, Events, or Visits.
 - Fetching a preview does not create ReviewLabels.
 - Adapter status does not mark Visits reviewed.
 - Future conversion to evidence requires explicit user action or a separately
@@ -149,11 +157,11 @@ Future statuses:
 
 ## Content-type Policy
 
-Future allowed content:
+Allowed content:
 
 - `image/jpeg`
 - `image/png`
-- `image/webp`, if existing app support is adequate
+- `image/webp`
 
 Initially unsupported:
 
@@ -164,9 +172,9 @@ Initially unsupported:
 
 MJPEG or multipart stream handling belongs in a later MJPEG phase.
 
-## Testing Expectations For Future Implementation
+## Testing Expectations
 
-Future implementation must test:
+Implementation tests cover:
 
 - Missing URL reports `not_configured`.
 - Configured URL does not claim live playback.
@@ -197,13 +205,7 @@ MockingBird on ESP32.
 
 ## Proposed Future Phases
 
-Recommended next phase:
-
-- Phase 11C: explicit external URL preview fetch implementation with strict
-  SSRF, timeout, and content-type guardrails; no workers and no truth. Start
-  only after this contract is committed.
-
-Possible follow-on phases:
+Recommended next phases:
 
 - Phase 11D: preview-to-MediaAsset handoff design.
 - Phase 11E: explicit preview storage implementation, if needed.
@@ -212,8 +214,8 @@ Possible follow-on phases:
 
 ## Explicit Non-Goals
 
-- No URL fetch in this phase.
-- No provider implementation.
+- No automatic URL fetch.
+- No background URL fetch.
 - No live playback.
 - No video decoding.
 - No workers.

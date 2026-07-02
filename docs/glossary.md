@@ -32,9 +32,14 @@ skipping review, leaking secrets, or redefining the product flow.
 
 ## External URL Still-image Provider
 
-A future `external_url` Source provider contract for explicit HTTP still-image
+An `external_url` Source provider contract for explicit HTTP still-image
 preview/status. It is not RTSP, continuous video, a worker, evidence, or reviewed
 truth.
+
+## Still-image Preview
+
+A transient, explicit image preview fetched from an `external_url` Source. It is
+not saved media, live playback, evidence, an Event/Visit, or reviewed truth.
 
 ## Source Setup Review
 

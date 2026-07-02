@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
+  ExternalUrlPreviewResponse,
   SourceConnectionStatus,
   SourceProviderConfiguration,
   SourceProviderDefinition,
@@ -85,6 +86,9 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [setupMessage, setSetupMessage] = useState<string | null>(null);
+  const [previewResult, setPreviewResult] = useState<ExternalUrlPreviewResponse | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [isFetchingPreview, setIsFetchingPreview] = useState(false);
   const [isSavingSetup, setIsSavingSetup] = useState(false);
 
   useEffect(() => {
@@ -172,6 +176,12 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     providerDefinitions.find(
       (definition) => definition.provider_key === selectedConfiguration?.provider_key,
     );
+
+  useEffect(() => {
+    setPreviewResult(null);
+    setPreviewError(null);
+    setIsFetchingPreview(false);
+  }, [selectedSourceId, selectedConfiguration?.provider_key]);
 
   useEffect(() => {
     if (!selectedConfiguration) {
@@ -268,6 +278,26 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     }
   }
 
+  async function handleFetchStillImagePreview() {
+    if (!selectedSourceId) {
+      return;
+    }
+
+    setIsFetchingPreview(true);
+    setPreviewError(null);
+    setPreviewResult(null);
+    try {
+      const result = await apiClient.fetchExternalUrlPreview(selectedSourceId, {});
+      setPreviewResult(result);
+    } catch (caught) {
+      setPreviewError(
+        caught instanceof Error ? caught.message : "Could not fetch still-image preview.",
+      );
+    } finally {
+      setIsFetchingPreview(false);
+    }
+  }
+
   const selectedProviderLabel =
     selectedSetupReview?.provider_display_name ??
     selectedProviderDefinition?.display_name ??
@@ -289,13 +319,16 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const isManualMediaReady =
     selectedSetupReview?.provider_key === "manual_media" &&
     selectedSetupReview.readiness_level === "metadata_ready";
+  const isExternalUrlProvider = selectedConfiguration?.provider_key === "external_url";
   const selectedFirstStream = selectedSourceStreams[0] ?? null;
   const nextActionTitle = selectedSetupReview
     ? selectedSetupReview.readiness_level === "demo_ready"
       ? "Next: open Stream Detail and draw Zones."
       : isManualMediaReady
         ? "Next: import media for this Source/Stream."
-        : selectedSetupReview.readiness_level === "needs_setup"
+        : isExternalUrlProvider && selectedSetupReview.readiness_level === "metadata_ready"
+          ? "Next: fetch still-image preview explicitly."
+          : selectedSetupReview.readiness_level === "needs_setup"
           ? "Next: complete setup metadata."
           : selectedSetupReview.readiness_level === "future_adapter_required"
             ? "Next: future provider implementation required before live playback."
@@ -459,6 +492,61 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                       {selectedSetupReview.warnings.map((warning) => (
                         <span key={warning}>{warning}</span>
                       ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {isExternalUrlProvider ? (
+                <div className="external-preview-panel">
+                  <div className="item-title-row">
+                    <h3>Still-image preview</h3>
+                    <StatusPill
+                      label={previewResult ? formatLabel(previewResult.status) : "Explicit"}
+                      tone={previewResult?.status === "available" ? "good" : "quiet"}
+                    />
+                  </div>
+                  <p>
+                    Explicit preview fetch. Not saved. No Events/Visits created. Live playback is
+                    not implemented. Zone editing can continue.
+                  </p>
+                  <button
+                    className="secondary-action"
+                    disabled={isFetchingPreview}
+                    onClick={handleFetchStillImagePreview}
+                    type="button"
+                  >
+                    {isFetchingPreview ? "Fetching preview..." : "Fetch still-image preview"}
+                  </button>
+                  {previewError ? <div className="zone-error">{previewError}</div> : null}
+                  {previewResult ? (
+                    <div className="external-preview-result">
+                      <strong>{previewResult.message}</strong>
+                      {previewResult.warnings.length > 0 ? (
+                        <div className="source-warning-list">
+                          {previewResult.warnings.map((warning) => (
+                            <span key={warning}>{warning}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {previewResult.preview_data_url ? (
+                        <div className="external-preview-image-frame">
+                          <img
+                            alt="External URL still-image preview"
+                            src={previewResult.preview_data_url}
+                          />
+                        </div>
+                      ) : null}
+                      <div className="source-connection-meta">
+                        {previewResult.content_type ? (
+                          <span>Content: {previewResult.content_type}</span>
+                        ) : null}
+                        {previewResult.bytes_read !== null &&
+                        previewResult.bytes_read !== undefined ? (
+                          <span>Bytes read: {previewResult.bytes_read}</span>
+                        ) : null}
+                        <span>Not saved</span>
+                        <span>No Events/Visits created</span>
+                      </div>
                     </div>
                   ) : null}
                 </div>

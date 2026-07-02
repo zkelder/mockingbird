@@ -183,7 +183,7 @@ async def test_future_provider_configuration_reflects_connection_without_live_cl
     assert connection["stream_ids"] == [STREAM_ID]
     assert connection["supports_live_playback"] is False
     assert connection["supports_zone_editing"] is True
-    assert "will not connect" in connection["message"]
+    assert "still-image preview" in connection["message"]
 
 
 async def test_missing_required_fields_reflect_in_configuration_and_connection(

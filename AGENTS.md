@@ -125,6 +125,8 @@ Every future implementation task must restate:
   [docs/external-url-still-image-provider-contract.md](docs/external-url-still-image-provider-contract.md)
   and explicit phase scope. Do not add URL fetches without SSRF, timeout,
   content-type, secret-redaction, storage, and truth-boundary guardrails.
+  External URL fetches must remain explicit, bounded, no-worker, and no-truth
+  unless a later task scopes a different lifecycle.
 - Source setup review/status work must remain read-only and must not connect to
   sources, capture/decode media, run adapters/models, or create evidence/truth.
 - Local MegaDetector setup must follow

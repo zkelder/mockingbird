@@ -63,9 +63,9 @@ Rationale:
 - Can keep live playback unsupported or limited until a later phase.
 - Can feed Stream playback preview fields without creating truth.
 
-This is only a recommendation for a future phase. Phase 11A does not implement
-the adapter, make network calls, or add dependencies. Phase 11B defines the
-provider contract before implementation.
+Phase 11C adds the first bounded provider behavior for this direction: explicit
+still-image preview fetch, no workers, no storage, no live playback, and no
+truth creation.
 
 ## Explicit Non-Recommended First Adapters
 

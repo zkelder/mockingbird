@@ -79,6 +79,8 @@ The first recommended adapter boundary is external URL / HTTP still-image
 preview/status. Its contract is documented in
 [external-url-still-image-provider-contract.md](external-url-still-image-provider-contract.md)
 and remains explicit, bounded, local-first, and non-truth.
+The Phase 11C preview fetch is an explicit request only: no worker, no storage,
+no live playback, and no evidence or truth creation.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

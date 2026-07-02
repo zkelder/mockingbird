@@ -368,8 +368,9 @@ Current work:
 
 - Phase 11A: first real source adapter boundary design.
 - Phase 11B: external URL / HTTP still-image provider contract.
-- Next likely phase: Phase 11C — explicit external URL preview fetch
-  implementation with no workers/no truth, or status integration polish.
+- Phase 11C: explicit external URL preview fetch implementation.
+- Next likely phase: Phase 11D — external URL preview-to-MediaAsset handoff
+  design, or Phase 11E — explicit preview storage implementation.
 
 Validation:
 
@@ -383,6 +384,9 @@ Validation:
 - Phase 11B defines `external_url` provider fields, explicit preview/status
   behavior, content-type boundaries, SSRF/timeout/security guardrails, storage
   rules, and review/truth boundaries before implementation.
+- Phase 11C implements explicit still-image preview fetch with bounded timeout,
+  bounded bytes, supported JPEG/PNG/WebP content types, no redirects, no
+  workers, no media storage, and no truth creation.
 - Future adapter work does not create MotionEvidence, Events, Visits,
   ReviewLabels, analytics truth, export truth, copied media, model files,
   dependencies, or generated artifacts unless explicitly scoped later.

@@ -37,7 +37,9 @@ preview/status. See
 Its configuration metadata may include `url`, optional `label` or
 `display_name`, optional `auth_username`, optional `auth_password`, optional
 `refresh_hint_seconds`, and optional `notes`. This metadata does not fetch or
-validate URLs in this phase.
+validate URLs by itself. The non-secret `url` can feed the explicit preview
+route; secret authentication metadata is still not used for fetch unless a
+future phase scopes it.
 
 ## Provider Configuration Fields
 

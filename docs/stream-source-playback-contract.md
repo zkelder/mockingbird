@@ -63,10 +63,10 @@ For `manual_media` Sources, Stream playback remains a placeholder/media-context
 surface unless a future playback provider exists. The Stream still gives manual
 imports zone and review context.
 
-For `external_url` Sources, future preview behavior may feed `preview_url` or
-`preview_media_asset_id` only through explicit scoped implementation. Playback
-status must not fetch URLs, store media, or imply live playback in the contract
-phase.
+For `external_url` Sources, Phase 11C preview fetch is transient UI context.
+Playback status must not fetch URLs, store media, imply live playback, or persist
+preview media. Future `preview_url` or `preview_media_asset_id` handoff requires
+separate scope.
 
 ## What This Phase Does
 

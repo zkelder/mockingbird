@@ -262,8 +262,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="external_url",
-        display_name="External URL",
-        description="Configuration metadata for a future user-provided playback URL.",
+        display_name="External URL / HTTP still-image",
+        description="Metadata for explicit still-image preview/status; no live playback claim.",
         status=SourceProviderDefinitionStatus.available_contract_only,
         supports_live_playback=False,
         supports_zone_editing=True,
@@ -273,9 +273,49 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 label="URL",
                 required=True,
                 secret=False,
-                description="Stored as metadata only; MockingBird will not connect yet.",
-                placeholder="http://example.local/stream",
-            )
+                description="Used only by explicit still-image preview fetch.",
+                placeholder="http://camera.local/still.jpg",
+            ),
+            SourceProviderField(
+                key="display_name",
+                label="Display name",
+                required=False,
+                secret=False,
+                description="Optional label for this still-image endpoint.",
+                placeholder="Backyard still image",
+            ),
+            SourceProviderField(
+                key="auth_username",
+                label="Auth username",
+                required=False,
+                secret=True,
+                description="Stored only as a configured/not-configured marker.",
+                placeholder="Not used for preview fetch yet",
+            ),
+            SourceProviderField(
+                key="auth_password",
+                label="Auth password",
+                required=False,
+                secret=True,
+                description="Stored only as a configured/not-configured marker.",
+                placeholder="Not used for preview fetch yet",
+            ),
+            SourceProviderField(
+                key="refresh_hint_seconds",
+                label="Refresh hint seconds",
+                required=False,
+                secret=False,
+                description="Metadata only; does not schedule polling.",
+                placeholder="60",
+            ),
+            SourceProviderField(
+                key="notes",
+                label="Notes",
+                required=False,
+                secret=False,
+                description="Optional local setup context.",
+                placeholder="Still-image endpoint for the feeder view",
+            ),
         ],
     ),
     SourceProviderDefinition(
@@ -886,6 +926,13 @@ class ProductRepository:
                     "Import media for a related Source/Stream, then review and correct "
                     "Events/Visits before export."
                 )
+            elif provider_kind == SourceProviderKind.external_url:
+                status = SourceConnectionStatusValue.configured
+                message = (
+                    "External URL metadata is ready for explicit still-image preview fetch; "
+                    "live playback is not implemented."
+                )
+                setup_hint = "Fetch a still-image preview explicitly; zone editing can continue."
             else:
                 status = SourceConnectionStatusValue.configured
                 message = (
@@ -4922,6 +4969,9 @@ def _source_provider_configuration_from_config(
         setup_hint = (
             "Import media for a related Source/Stream; review and correction create truth."
         )
+    elif definition.provider_key == "external_url":
+        message = "External URL metadata is available for explicit still-image preview fetch."
+        setup_hint = "Fetch a still-image preview explicitly; live playback is not implemented."
     else:
         message = "Provider configuration metadata is saved for this Source."
         setup_hint = "Zone editing can continue while playback remains unavailable."
@@ -4993,6 +5043,13 @@ def _source_setup_review_from_contracts(
             "reviewable Events/Visits; corrections remain the source of truth."
         )
         next_step = "Import media for this Source/Stream, then review and correct before export."
+    elif configuration.provider_key == "external_url":
+        readiness_level = "metadata_ready"
+        summary = (
+            "External URL metadata is ready for explicit still-image preview fetch. "
+            "Live playback is not implemented."
+        )
+        next_step = "Fetch still-image preview explicitly; zone editing can continue."
     elif connection.provider_kind == SourceProviderKind.future_adapter or (
         definition is not None
         and definition.status == SourceProviderDefinitionStatus.future_adapter
@@ -5033,6 +5090,15 @@ def _source_setup_review_from_contracts(
             ),
         )
         if configuration.provider_key == "manual_media"
+        else SourceSetupReviewStep(
+            key="external_url_preview",
+            label="Still-image preview",
+            status="available" if not configuration.missing_fields else "warning",
+            message=(
+                "Explicit preview fetch is available; it is not saved and creates no truth."
+            ),
+        )
+        if configuration.provider_key == "external_url"
         else SourceSetupReviewStep(
             key="future_provider",
             label="Future provider work",

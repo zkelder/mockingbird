@@ -22,6 +22,8 @@ import type {
   DetectionRunCreate,
   Event,
   EventDetail,
+  ExternalUrlPreviewRequest,
+  ExternalUrlPreviewResponse,
   FolderImportCreate,
   FolderImportPreview,
   FolderImportPreviewRequest,
@@ -139,6 +141,11 @@ export const apiClient = {
   ) =>
     request<SourceProviderConfiguration>(`/api/sources/${sourceId}/provider-configuration`, {
       method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  fetchExternalUrlPreview: (sourceId: string, payload: ExternalUrlPreviewRequest = {}) =>
+    request<ExternalUrlPreviewResponse>(`/api/sources/${sourceId}/external-url/preview`, {
+      method: "POST",
       body: JSON.stringify(payload),
     }),
   getStreams: () => request<Stream[]>("/api/streams"),

@@ -64,6 +64,14 @@ class StreamPlaybackKind(str, Enum):
     media_preview = "media_preview"
 
 
+class ExternalUrlPreviewStatus(str, Enum):
+    available = "available"
+    not_configured = "not_configured"
+    unavailable = "unavailable"
+    unsupported = "unsupported"
+    error = "error"
+
+
 class ZoneType(str, Enum):
     feeder = "feeder"
     birdbath = "birdbath"
@@ -297,6 +305,28 @@ class StreamPlaybackStatus(BaseModel):
 
 class StreamPlaybackStatusResponse(StreamPlaybackStatus):
     pass
+
+
+class ExternalUrlPreviewRequest(BaseModel):
+    timeout_seconds: float | None = Field(default=3.0)
+    max_bytes: int | None = Field(default=5_000_000)
+
+
+class ExternalUrlPreviewResponse(BaseModel):
+    # External URL preview is transient evidence context, not saved product truth.
+    source_id: str
+    provider_key: str
+    status: ExternalUrlPreviewStatus
+    message: str
+    fetched_at: datetime | None = None
+    content_type: str | None = None
+    content_length: int | None = None
+    bytes_read: int | None = None
+    preview_data_url: str | None = None
+    supports_live_playback: bool = False
+    creates_truth: bool = False
+    creates_media_asset: bool = False
+    warnings: list[str] = Field(default_factory=list)
 
 
 class Point(BaseModel):

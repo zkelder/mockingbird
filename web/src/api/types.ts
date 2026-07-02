@@ -28,6 +28,12 @@ export type StreamPlaybackStatusValue =
   | "offline"
   | "unsupported";
 export type StreamPlaybackKind = "placeholder" | "demo_panel" | "external_url" | "media_preview";
+export type ExternalUrlPreviewStatus =
+  | "available"
+  | "not_configured"
+  | "unavailable"
+  | "unsupported"
+  | "error";
 
 export type ZoneType =
   | "feeder"
@@ -222,6 +228,27 @@ export interface StreamPlaybackStatus {
   last_checked_at?: string | null;
   preview_media_asset_id?: string | null;
   preview_url?: string | null;
+}
+
+export interface ExternalUrlPreviewRequest {
+  timeout_seconds?: number | null;
+  max_bytes?: number | null;
+}
+
+export interface ExternalUrlPreviewResponse {
+  source_id: string;
+  provider_key: string;
+  status: ExternalUrlPreviewStatus;
+  message: string;
+  fetched_at?: string | null;
+  content_type?: string | null;
+  content_length?: number | null;
+  bytes_read?: number | null;
+  preview_data_url?: string | null;
+  supports_live_playback: boolean;
+  creates_truth: boolean;
+  creates_media_asset: boolean;
+  warnings: string[];
 }
 
 export interface Point {

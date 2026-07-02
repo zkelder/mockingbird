@@ -53,10 +53,9 @@ For `manual_media`, connection readiness means the Source is ready for explicit
 local import/review workflows. It is not a camera connection and does not imply
 live playback.
 
-For `external_url`, connection readiness remains metadata/status-only until an
-explicit preview implementation exists. A configured URL can improve setup
-readiness, but it must not trigger network calls or claim live playback in this
-contract phase.
+For `external_url`, connection readiness remains metadata/status-only. A
+configured URL can point users to explicit still-image preview fetch, but
+connection status itself must not trigger network calls or claim live playback.
 
 ## Provider Configuration Relationship
 

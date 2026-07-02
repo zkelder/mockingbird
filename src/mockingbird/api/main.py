@@ -31,6 +31,8 @@ from mockingbird.api.schemas import (
     DetectionProposalDecisionResult,
     DetectionRun,
     DetectionRunCreate,
+    ExternalUrlPreviewRequest,
+    ExternalUrlPreviewResponse,
     Event,
     EventDetail,
     FolderImportCreate,
@@ -103,6 +105,7 @@ from mockingbird.sampler import (
     create_motion_evidence_from_sampler_result,
     evaluate_sampled_frame_sequence,
 )
+from mockingbird.source_providers import external_url_preview
 
 app = FastAPI(
     title="MockingBird API",
@@ -954,6 +957,69 @@ async def update_source_provider_configuration(
     if configuration is None:
         raise _not_found("Source", source_id)
     return configuration
+
+
+@app.post(
+    "/api/sources/{source_id}/external-url/preview",
+    response_model=ExternalUrlPreviewResponse,
+)
+async def fetch_external_url_preview(
+    source_id: str,
+    payload: ExternalUrlPreviewRequest | None = None,
+) -> ExternalUrlPreviewResponse:
+    configuration = get_repository().get_source_provider_configuration(source_id)
+    if configuration is None:
+        raise _not_found("Source", source_id)
+    if configuration.provider_key != "external_url":
+        raise HTTPException(
+            status_code=400,
+            detail="External URL preview requires an external_url Source provider.",
+        )
+
+    url = configuration.safe_config_preview.get("url")
+    warnings: list[str] = []
+    if any(
+        configuration.safe_config_preview.get(field) == "configured"
+        for field in ("auth_username", "auth_password")
+    ):
+        warnings.append(
+            "Authentication metadata is configured but authenticated preview fetch "
+            "is not implemented yet."
+        )
+
+    if not url or url == "not_configured":
+        return ExternalUrlPreviewResponse(
+            source_id=source_id,
+            provider_key=configuration.provider_key,
+            status="not_configured",
+            message="Add an external URL before fetching a still-image preview.",
+            supports_live_playback=False,
+            creates_truth=False,
+            creates_media_asset=False,
+            warnings=warnings,
+        )
+
+    request = payload or ExternalUrlPreviewRequest()
+    result = external_url_preview.fetch_external_url_preview(
+        url,
+        timeout_seconds=request.timeout_seconds,
+        max_bytes=request.max_bytes,
+    )
+    return ExternalUrlPreviewResponse(
+        source_id=source_id,
+        provider_key=configuration.provider_key,
+        status=result.status,
+        message=result.message,
+        fetched_at=result.fetched_at,
+        content_type=result.content_type,
+        content_length=result.content_length,
+        bytes_read=result.bytes_read,
+        preview_data_url=result.preview_data_url,
+        supports_live_playback=False,
+        creates_truth=False,
+        creates_media_asset=False,
+        warnings=[*warnings, *result.warnings],
+    )
 
 
 @app.get("/api/sources/{source_id}/connection", response_model=SourceConnectionStatusResponse)
