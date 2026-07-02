@@ -109,6 +109,9 @@ before promotion, but does not change promotion rules or truth boundaries.
 Phase 11I carries that clarity into Event/Visit detail: saved-preview-origin
 promotions still use the same explicit promote route, and detail pages can show
 saved media provenance while correction remains the truth boundary.
+Phase 12A smoke tests verify that saved-preview-origin promotion creates only
+unreviewed Event/Visit context and that correction is still the first reviewed
+truth write.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 
@@ -173,6 +176,15 @@ Phase 8O tests add:
 - promotion preserves or attaches `snapshot_media_asset_id`
 - promoted Visit/detail surfaces expose the linked MediaAsset when supported
 - media references do not create ReviewLabel, reviewed status, export truth, or dataset coverage truth
+
+Phase 12A tests add full source/stream smoke coverage for:
+
+- external_url status routes with no URL fetch
+- transient preview with no saved records
+- explicit saved MediaAsset with no evidence or truth
+- saved MediaAsset -> pending MotionEvidence only
+- explicit promotion to unreviewed Event/Visit context only
+- ReviewLabel correction as the first dataset/analytics truth change
 
 ## Explicit Non-Goals
 

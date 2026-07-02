@@ -94,6 +94,11 @@ and explicit pending/ignored/promoted state without creating truth.
 Phase 11I carries saved-preview context into the explicit promote/review UI:
 Event and Visit detail can show promoted MotionEvidence provenance and saved
 local media context, while correction remains the analytics/export truth source.
+Phase 12A hardens that source/stream path with backend smoke tests:
+configured Source -> setup review -> Stream playback status -> explicit preview
+-> saved MediaAsset -> pending MotionEvidence -> explicit promotion ->
+review/correction truth. The smoke path adds no provider runtime, live
+playback, automation, media decoding, or truth writes before correction.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

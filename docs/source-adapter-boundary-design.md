@@ -208,6 +208,9 @@ Future implementation must test:
   Events/Visits/truth.
 - Phase 11H: saved preview evidence UI/review polish.
 - Phase 11I: external URL media review/promote flow polish.
+- Phase 12A: source/stream smoke-test hardening for the explicit
+  external_url preview -> MediaAsset -> MotionEvidence -> promotion ->
+  correction path.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 
@@ -223,3 +226,11 @@ Future implementation must test:
 - No truth creation.
 - No model/training work.
 - No production live-stream claims.
+
+## Phase 12A Status
+
+Phase 12A adds smoke coverage for the current external_url Source/Stream path.
+It proves adapters stay underneath product contracts: status routes do not fetch
+URLs, preview is transient, save creates MediaAsset only, saved-media handoff
+creates pending MotionEvidence only, promotion creates unreviewed Event/Visit
+context, and correction remains truth.

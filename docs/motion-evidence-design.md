@@ -253,6 +253,14 @@ promotion. Promoted MotionEvidence can link users to the reviewable Event/Visit,
 and Event/Visit detail pages can show saved media provenance while correction
 remains the only source of analytics/export truth.
 
+## Phase 12A Status
+
+Phase 12A adds source/stream smoke coverage around saved-preview-origin
+MotionEvidence. The tests verify that MediaAsset -> pending MotionEvidence
+handoff creates evidence only, MotionEvidence reads do not fetch external URLs,
+promotion is explicit, and dataset/analytics truth changes only after
+ReviewLabel correction.
+
 ## Phase 8S Status
 
 Phase 8S lets pending MotionEvidence be created with optional `snapshot_media_asset_id`.

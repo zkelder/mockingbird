@@ -246,6 +246,8 @@ Recommended next phases:
   Events/Visits/truth.
 - Phase 11H: saved preview evidence UI/review polish.
 - Phase 11I: external URL media review/promote flow polish.
+- Phase 12A: source/stream smoke-test hardening for explicit
+  preview/fetch/save/handoff/promotion/correction boundaries.
 - Later: MJPEG, RTSP, USB/local camera, ESP32-CAM, and browser camera designs
   separately.
 
@@ -263,3 +265,11 @@ Recommended next phases:
 - No model/training work.
 - No ESP32-specific implementation.
 - No RTSP, USB, MJPEG, or browser camera implementation.
+
+## Phase 12A Status
+
+Phase 12A covers the explicit external_url Source/Stream chain in backend smoke
+tests. Setup review, connection status, playback status, Event/Visit detail,
+and MotionEvidence reads do not fetch the URL. Preview remains transient, save
+creates MediaAsset only, handoff creates pending MotionEvidence only, promotion
+creates unreviewed Event/Visit context only, and correction remains truth.

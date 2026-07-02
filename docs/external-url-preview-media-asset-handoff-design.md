@@ -214,6 +214,8 @@ promotion/review flow.
   Events/Visits/truth.
 - Phase 11H: saved preview evidence UI/review polish.
 - Phase 11I: external URL media review/promote flow polish.
+- Phase 12A: source/stream smoke-test hardening for explicit save as
+  MediaAsset only.
 - Later: other source-provider handoff designs separately.
 
 ## Explicit Non-Goals
@@ -230,3 +232,10 @@ promotion/review flow.
 - No scheduled fetch.
 - No video decoding.
 - No model/training work.
+
+## Phase 12A Status
+
+Phase 12A smoke tests verify that explicit preview save creates exactly one
+MediaAsset under the configured local media root and creates no MotionEvidence,
+Events, Visits, ReviewLabels, SpeciesSuggestions, DetectionProposals,
+DatasetExports, analytics truth, or dataset truth.

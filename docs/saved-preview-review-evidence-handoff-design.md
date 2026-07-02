@@ -237,6 +237,8 @@ Future tests should prove:
 - Phase 11H: saved preview evidence UI/review polish.
 - Phase 11I: explicit MotionEvidence-to-Event/Visit flow polish for
   external_url media.
+- Phase 12A: source/stream smoke-test hardening for MediaAsset ->
+  MotionEvidence -> promotion -> correction boundaries.
 - Later: saved preview cleanup/retention design.
 - Later: automated external_url sampling/motion design, if ever.
 
@@ -254,3 +256,10 @@ Future tests should prove:
 - No video decoding.
 - No model/training work.
 - No automatic labels.
+
+## Phase 12A Status
+
+Phase 12A smoke tests verify that saved preview MediaAsset handoff creates
+pending MotionEvidence only. Event/Visit records appear only after the explicit
+promote route, and reviewed labels, analytics truth, and dataset truth appear
+only after the existing correction route.

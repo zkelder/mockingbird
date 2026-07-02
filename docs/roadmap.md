@@ -376,8 +376,7 @@ Current work:
   Event/Visit/truth.
 - Phase 11H: saved preview evidence UI/review polish.
 - Phase 11I: external URL media review/promote flow polish.
-- Next likely phase: Phase 12A — source/stream smoke-test hardening, or
-  Phase 11J — external_url saved media cleanup/retention design.
+- Next likely phase: Phase 12A — source/stream smoke-test hardening.
 
 Validation:
 
@@ -419,3 +418,31 @@ Validation:
 - Future adapter work does not create MotionEvidence, Events, Visits,
   ReviewLabels, analytics truth, export truth, copied media, model files,
   dependencies, or generated artifacts unless explicitly scoped later.
+
+## Phase 12 — Source/stream validation hardening
+
+Goal: prove the explicit Source/Stream path stays product-shaped before adding
+more provider behavior.
+
+Current work:
+
+- Phase 12A: source/stream smoke-test hardening for the explicit external_url
+  preview -> MediaAsset -> MotionEvidence -> promotion -> correction path.
+- Next likely phase: Phase 12B — Source/Stream UI validation checklist/dev
+  guide, or Phase 12C — external_url saved-media retention/cleanup design.
+
+Validation:
+
+- Phase 12A adds backend smoke coverage only; it adds no runtime code,
+  dependencies, providers, workers, media decoding, automation, model calls, or
+  frontend behavior.
+- Source setup review, Source connection status, Stream playback status, Event
+  detail, Visit detail, and MotionEvidence list/detail do not fetch external
+  URLs.
+- Explicit preview fetch remains transient and creates no MediaAsset,
+  MotionEvidence, Event, Visit, ReviewLabel, SpeciesSuggestion,
+  DetectionProposal, DatasetExport, analytics truth, or dataset truth.
+- Explicit save creates one local MediaAsset only.
+- Explicit saved-media handoff creates one pending MotionEvidence only.
+- Explicit promotion creates unreviewed Event/Visit context only.
+- ReviewLabel correction remains the first dataset-grade truth write.
