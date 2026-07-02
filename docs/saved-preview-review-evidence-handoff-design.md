@@ -16,7 +16,7 @@ as local MediaAsset -> user creates pending MotionEvidence -> optional
 MotionEvidence promotion to Event/Visit -> Visit/Event review -> user correction
 -> ReviewLabel truth -> analytics/exports/classifier readiness.
 
-## Current Behavior Through Phase 11H
+## Current Behavior Through Phase 11I
 
 - Preview fetch is explicit.
 - Save preview is explicit.
@@ -33,6 +33,9 @@ MotionEvidence promotion to Event/Visit -> Visit/Event review -> user correction
   copy, Source/Stream/Zone context, and pending/ignored/promoted state.
 - Ignore and promote remain explicit user actions; saved preview media does not
   become Event/Visit context until promotion, and correction remains truth.
+- Phase 11I keeps saved-preview-origin context visible after explicit promotion:
+  Event and Visit detail can show saved media/provenance while labels remain
+  unconfirmed until review/correction.
 
 ## Recommended Handoff Path
 
@@ -157,6 +160,11 @@ media preview/file link, safe saved-local-media provenance, Source/Stream/Zone
 context, and explicit pending/ignored/promoted state. Promotion remains
 separate. Correction remains separate.
 
+After explicit promotion, Event Detail and Visit Detail can surface that the
+case came from promoted MotionEvidence and show saved preview media provenance
+when available. Detail pages still frame the Event/Visit as reviewable context;
+correction remains the truth action.
+
 Avoid:
 
 - `auto-detect`
@@ -229,6 +237,7 @@ Future tests should prove:
 - Phase 11H: saved preview evidence UI/review polish.
 - Phase 11I: explicit MotionEvidence-to-Event/Visit flow polish for
   external_url media.
+- Later: saved preview cleanup/retention design.
 - Later: automated external_url sampling/motion design, if ever.
 
 ## Explicit Non-Goals

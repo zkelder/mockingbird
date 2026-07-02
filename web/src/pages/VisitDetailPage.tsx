@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
-import type { SpeciesSuggestion, TaxonomyLabel, VisitDetail } from "../api/types";
+import type { MediaAsset, SpeciesSuggestion, TaxonomyLabel, VisitDetail } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
 import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEvidenceCard";
 import { EvidenceBadge } from "../components/EvidenceBadge";
@@ -28,6 +28,8 @@ interface VisitCorrectionPrefill {
   suggestedCommonName?: string | null;
   suggestedScientificName?: string | null;
 }
+
+const visitCorrectionTruthCopy = "Corrections are the source of truth for analytics and exports.";
 
 export function VisitDetailPage({
   visitId,
@@ -304,6 +306,9 @@ export function VisitDetailPage({
     isBirdReviewLabel(detail.visit.species_guess, taxonomyLabels) ||
     isBirdReviewLabel(detail.visit.subject_label, taxonomyLabels);
   const isMotionEvidenceVisit = detail.event.event_type === "motion_evidence";
+  const hasSavedPreviewMedia = isSavedPreviewMedia(detail.media_asset);
+  const mediaProvenance = formatMediaProvenance(detail.media_asset);
+  const mediaContextTitle = hasSavedPreviewMedia ? "Saved preview media" : "Attached media";
   const correctionPrefillLabel = activeCorrectionPrefill
     ? displayTaxonomyLabel(activeCorrectionPrefill.label, taxonomyLabels)
     : "";
@@ -366,9 +371,52 @@ export function VisitDetailPage({
         <section className="notice-panel">
           <strong>Promoted Motion Evidence</strong>
           <span>
-            This visit came from promoted motion evidence. It is reviewable context only until a
-            correction is saved.
+            This Visit came from promoted evidence
+            {hasSavedPreviewMedia ? " linked to saved local media" : ""}.{" "}
+            {visitCorrectionTruthCopy}
           </span>
+        </section>
+      ) : null}
+
+      {isMotionEvidenceVisit ? (
+        <section className="panel promoted-review-context-panel">
+          <div className="section-heading">
+            <div>
+              <h2>Promoted evidence context</h2>
+              <span className="meta-text">
+                Reviewable Event/Visit context stays separate from correction truth.
+              </span>
+            </div>
+            <EvidenceBadge
+              label={hasSavedPreviewMedia ? "Saved local media" : "Review before labeling"}
+              tone="evidence"
+            />
+          </div>
+          <p className="evidence-panel-copy">
+            {detail.media_asset
+              ? mediaProvenance
+              : "This Visit came from promoted evidence without attached media."}{" "}
+            {visitCorrectionTruthCopy}
+          </p>
+          <div className="promoted-review-context-grid">
+            <ContextItem label="Source" value={detail.stream.source_id} />
+            <ContextItem label="Event" value={detail.event.title} detail={detail.event.id} />
+            <ContextItem label="Stream" value={detail.stream.name} detail={detail.stream.id} />
+            <ContextItem
+              label="Zone"
+              value={
+                detail.primary_zone
+                  ? `${detail.primary_zone.name} (${formatLabel(detail.primary_zone.zone_type)})`
+                  : "Unzoned"
+              }
+              detail={detail.primary_zone?.id}
+            />
+            <ContextItem
+              label={mediaContextTitle}
+              value={detail.media_asset?.original_filename ?? "No attached media"}
+              detail={detail.media_asset?.id}
+            />
+          </div>
         </section>
       ) : null}
 
@@ -413,7 +461,9 @@ export function VisitDetailPage({
           <div className="panel case-summary-card">
             <span className="meta-text">Media</span>
             <strong>{detail.media_asset.original_filename}</strong>
-            <span className="meta-text">Local import reference</span>
+            <span className="meta-text">
+              {hasSavedPreviewMedia ? "Saved preview media" : "Local media reference"}
+            </span>
           </div>
         ) : null}
       </section>
@@ -471,10 +521,15 @@ export function VisitDetailPage({
       {detail.media_asset ? (
         <section className="panel media-evidence-panel">
           <div className="section-heading">
-            <h2>Imported media</h2>
-            <span className="meta-text">Local evidence for this visit review</span>
+            <h2>{mediaContextTitle}</h2>
+            <span className="meta-text">{mediaProvenance}</span>
           </div>
           <MediaAssetPreview asset={detail.media_asset} />
+          <div className="attached-media-provenance">
+            <strong>Correction boundary</strong>
+            <span>{visitCorrectionTruthCopy}</span>
+            <span>Saved media does not confirm a label before review.</span>
+          </div>
         </section>
       ) : null}
 
@@ -757,6 +812,62 @@ export function VisitDetailPage({
       )}
     </div>
   );
+}
+
+function ContextItem({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string | null;
+}) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {detail && detail !== value ? <small>{detail}</small> : null}
+    </div>
+  );
+}
+
+function isSavedPreviewMedia(asset: MediaAsset | null | undefined): boolean {
+  const notes = asset?.notes?.toLowerCase() ?? "";
+  return (
+    notes.includes("saved explicit external_url still-image preview") ||
+    notes.includes("provider_key=external_url")
+  );
+}
+
+function formatMediaProvenance(asset: MediaAsset | null | undefined): string {
+  if (!asset) {
+    return "No attached media is available for this Visit.";
+  }
+  if (isSavedPreviewMedia(asset)) {
+    const host = extractSafeNoteValue(asset.notes ?? "", "url_host");
+    if (host) {
+      return `This Visit came from promoted evidence linked to saved local media from external URL host ${host}.`;
+    }
+    return "This Visit came from promoted evidence linked to saved local media from an external URL preview.";
+  }
+  return "This Visit came from promoted evidence linked to saved local media.";
+}
+
+function extractSafeNoteValue(notes: string, key: string): string | null {
+  const prefixes = [`${key}=`, `${key}:`];
+  const line = notes
+    .split(/\r?\n/)
+    .find((entry) => prefixes.some((prefix) => entry.trim().startsWith(prefix)));
+  if (!line) {
+    return null;
+  }
+
+  const trimmed = line.trim();
+  const prefix = prefixes.find((entry) => trimmed.startsWith(entry));
+  const rawValue = prefix ? trimmed.slice(prefix.length).trim() : "";
+  const safeValue = rawValue.replace(/[^A-Za-z0-9.:\[\]-]/g, "").slice(0, 120);
+  return safeValue || null;
 }
 
 function SpeciesSuggestionStatusBadge({ status }: { status: SpeciesSuggestion["status"] }) {

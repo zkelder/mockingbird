@@ -97,6 +97,8 @@ saved preview media still cannot create Events, Visits, labels, or truth without
 explicit promotion and later review/correction.
 The Motion Evidence review UI shows saved preview media/provenance context while
 keeping ignore, promote, and correction as explicit steps.
+After explicit promotion, Event and Visit detail keep saved preview media
+context visible while correction remains the analytics/export truth boundary.
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 
@@ -158,6 +160,9 @@ Manual pending Motion Evidence creation can also start with an existing MediaAss
 The Motion Evidence page shows attached MediaAsset context through the existing media preview/file route.
 
 Saved preview MediaAssets also appear there as pending evidence context after explicit handoff.
+
+Promoted saved preview evidence can keep that saved media context visible on
+Event and Visit detail pages, but no label is truth until correction.
 
 The current local demo loop is import media -> create media-backed Motion Evidence -> promote -> review/correct.
 

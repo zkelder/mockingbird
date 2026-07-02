@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
-import type { EventDetail, TaxonomyLabel } from "../api/types";
+import type { EventDetail, MediaAsset, TaxonomyLabel } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
 import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEvidenceCard";
 import { EvidenceBadge } from "../components/EvidenceBadge";
@@ -18,6 +18,9 @@ interface EventDetailPageProps {
   onOpenReview: () => void;
   onOpenDetectionProposals: () => void;
 }
+
+const eventReviewBoundaryCopy =
+  "This Event is reviewable context. Labels become truth only after Visit correction.";
 
 export function EventDetailPage({
   eventId,
@@ -104,6 +107,9 @@ export function EventDetailPage({
   );
   const reviewedSpeciesVisits = speciesVisits.filter((visit) => visit.reviewed_label);
   const isMotionEvidenceEvent = detail.event.event_type === "motion_evidence";
+  const hasSavedPreviewMedia = isSavedPreviewMedia(detail.media_asset);
+  const mediaProvenance = formatMediaProvenance(detail.media_asset);
+  const mediaContextTitle = hasSavedPreviewMedia ? "Saved preview media" : "Attached media";
 
   return (
     <div className="page-stack">
@@ -127,9 +133,50 @@ export function EventDetailPage({
         <section className="notice-panel">
           <strong>Promoted Motion Evidence</strong>
           <span>
-            This event came from promoted motion evidence and still needs review. Save a correction
-            before exports or analytics treat its label as truth.
+            Created from promoted MotionEvidence. {eventReviewBoundaryCopy}
           </span>
+        </section>
+      ) : null}
+
+      {isMotionEvidenceEvent ? (
+        <section className="panel promoted-review-context-panel">
+          <div className="section-heading">
+            <div>
+              <h2>Promoted evidence context</h2>
+              <span className="meta-text">
+                Source, Stream, Zone, and media context stay visible while review remains separate.
+              </span>
+            </div>
+            <EvidenceBadge
+              label={hasSavedPreviewMedia ? "Saved local media" : "Reviewable Event/Visit"}
+              tone="evidence"
+            />
+          </div>
+          <p className="evidence-panel-copy">
+            {detail.media_asset
+              ? mediaProvenance
+              : "Created from promoted MotionEvidence without attached media."}{" "}
+            {eventReviewBoundaryCopy}
+          </p>
+          <div className="promoted-review-context-grid">
+            <ContextItem label="Source" value={detail.stream.source_id} />
+            <ContextItem label="Stream" value={detail.stream.name} detail={detail.stream.id} />
+            <ContextItem
+              label="Zone"
+              value={
+                detail.primary_zone
+                  ? `${detail.primary_zone.name} (${formatLabel(detail.primary_zone.zone_type)})`
+                  : "Unzoned"
+              }
+              detail={detail.primary_zone?.id}
+            />
+            <ContextItem label="Evidence source" value="Promoted MotionEvidence" />
+            <ContextItem
+              label={mediaContextTitle}
+              value={detail.media_asset?.original_filename ?? "No attached media"}
+              detail={detail.media_asset?.id}
+            />
+          </div>
         </section>
       ) : null}
 
@@ -163,7 +210,9 @@ export function EventDetailPage({
           <div className="panel case-summary-card">
             <span className="meta-text">Media</span>
             <strong>{detail.media_asset.original_filename}</strong>
-            <span className="meta-text">Local import reference</span>
+            <span className="meta-text">
+              {hasSavedPreviewMedia ? "Saved preview media" : "Local media reference"}
+            </span>
           </div>
         ) : null}
       </section>
@@ -223,10 +272,15 @@ export function EventDetailPage({
       {detail.media_asset ? (
         <section className="panel media-evidence-panel">
           <div className="section-heading">
-            <h2>Imported media</h2>
-            <span className="meta-text">Local evidence for this review event</span>
+            <h2>{mediaContextTitle}</h2>
+            <span className="meta-text">{mediaProvenance}</span>
           </div>
           <MediaAssetPreview asset={detail.media_asset} />
+          <div className="attached-media-provenance">
+            <strong>Review boundary</strong>
+            <span>{eventReviewBoundaryCopy}</span>
+            <span>No label has been confirmed yet unless a Visit correction exists.</span>
+          </div>
         </section>
       ) : null}
 
@@ -354,4 +408,60 @@ export function EventDetailPage({
       ) : null}
     </div>
   );
+}
+
+function ContextItem({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string | null;
+}) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {detail && detail !== value ? <small>{detail}</small> : null}
+    </div>
+  );
+}
+
+function isSavedPreviewMedia(asset: MediaAsset | null | undefined): boolean {
+  const notes = asset?.notes?.toLowerCase() ?? "";
+  return (
+    notes.includes("saved explicit external_url still-image preview") ||
+    notes.includes("provider_key=external_url")
+  );
+}
+
+function formatMediaProvenance(asset: MediaAsset | null | undefined): string {
+  if (!asset) {
+    return "No attached media is available for this review context.";
+  }
+  if (isSavedPreviewMedia(asset)) {
+    const host = extractSafeNoteValue(asset.notes ?? "", "url_host");
+    if (host) {
+      return `This review context is linked to saved local media from external URL host ${host}.`;
+    }
+    return "This review context is linked to saved local media from an external URL preview.";
+  }
+  return "This review context is linked to saved local media.";
+}
+
+function extractSafeNoteValue(notes: string, key: string): string | null {
+  const prefixes = [`${key}=`, `${key}:`];
+  const line = notes
+    .split(/\r?\n/)
+    .find((entry) => prefixes.some((prefix) => entry.trim().startsWith(prefix)));
+  if (!line) {
+    return null;
+  }
+
+  const trimmed = line.trim();
+  const prefix = prefixes.find((entry) => trimmed.startsWith(entry));
+  const rawValue = prefix ? trimmed.slice(prefix.length).trim() : "";
+  const safeValue = rawValue.replace(/[^A-Za-z0-9.:\[\]-]/g, "").slice(0, 120);
+  return safeValue || null;
 }

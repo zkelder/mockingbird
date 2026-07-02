@@ -73,6 +73,9 @@ and still must not create truth.
 Phase 11G adds the explicit saved-MediaAsset-to-pending-MotionEvidence handoff.
 Adapters and preview/save routes still do not create Events, Visits, reviewed
 labels, exports, analytics truth, or classifier truth by themselves.
+Phase 11I polishes the explicit promote/review surface for saved preview media:
+Event/Visit detail can show saved local media provenance only after
+MotionEvidence promotion, while correction remains the truth boundary.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -203,6 +206,8 @@ Future implementation must test:
 - Phase 11F: saved preview review/evidence handoff design.
 - Phase 11G: explicit saved-preview-to-MotionEvidence creation, no
   Events/Visits/truth.
+- Phase 11H: saved preview evidence UI/review polish.
+- Phase 11I: external URL media review/promote flow polish.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

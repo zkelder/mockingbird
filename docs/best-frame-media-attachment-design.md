@@ -32,6 +32,9 @@ The best frame is evidence context only. It is not a species label, not a review
 - No media capture, image parsing, video parsing, decoding, or thumbnail generation is implemented yet.
 - Phase 11G treats saved external URL previews as another existing MediaAsset
   source that can attach to MotionEvidence through explicit handoff.
+- Phase 11I lets promoted saved-preview evidence surface as representative or
+  attached media context in Event/Visit detail when the existing media reference
+  is available.
 
 ## Future Best-Frame Selection Policy
 
@@ -60,6 +63,9 @@ The media reference is evidence/context only. It must not create labels, reviewe
 Saved preview MediaAssets follow the same rule: they can provide visible context
 for evidence/review through explicit pending MotionEvidence creation, but they do
 not create truth by being attached.
+After explicit promotion, saved preview media can remain visible as review
+context on Event/Visit detail. It still does not confirm labels, reviewed status,
+export readiness, or dataset truth.
 
 When supported, promotion should carry or link the media context to created Event/Visit evidence while keeping those records unreviewed.
 

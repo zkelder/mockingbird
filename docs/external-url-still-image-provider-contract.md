@@ -168,6 +168,9 @@ Preview-to-MediaAsset behavior must follow
   evidence handoff such as pending MotionEvidence.
 - Phase 11G adds that explicit saved-media-to-pending-MotionEvidence handoff;
   it still creates no Events, Visits, ReviewLabels, or truth.
+- Phase 11I clarifies the later review surface: saved media can appear in
+  Event/Visit detail only after explicit MotionEvidence promotion, and
+  correction remains truth.
 - Future automated conversion to evidence requires a separately designed phase.
 - ReviewLabel correction remains truth.
 
@@ -241,6 +244,8 @@ Recommended next phases:
 - Phase 11F: saved preview review/evidence handoff design.
 - Phase 11G: explicit saved-preview-to-MotionEvidence creation, no
   Events/Visits/truth.
+- Phase 11H: saved preview evidence UI/review polish.
+- Phase 11I: external URL media review/promote flow polish.
 - Later: MJPEG, RTSP, USB/local camera, ESP32-CAM, and browser camera designs
   separately.
 

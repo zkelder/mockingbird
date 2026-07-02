@@ -91,6 +91,9 @@ Event/Visit or truth until later promotion and correction. See
 Phase 11H makes that handoff visible in the Motion Evidence review UI by
 showing attached saved media, safe provenance copy, Source/Stream/Zone context,
 and explicit pending/ignored/promoted state without creating truth.
+Phase 11I carries saved-preview context into the explicit promote/review UI:
+Event and Visit detail can show promoted MotionEvidence provenance and saved
+local media context, while correction remains the analytics/export truth source.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

@@ -137,6 +137,12 @@ Local evidence that a motion candidate occurred in a stream zone; it is not revi
 
 An explicit action that turns pending Motion Evidence into unreviewed Event/Visit evidence; it does not create reviewed truth.
 
+## Promoted Saved Preview Evidence
+
+Reviewable Event/Visit context created by explicitly promoting MotionEvidence
+that was linked to saved preview media. It can show saved local media provenance,
+but correction remains truth.
+
 ## SpeciesSuggestion
 
 Local classifier evidence that a media item or crop may contain a species or taxon; its pending/accepted/rejected/superseded status is not reviewed truth.

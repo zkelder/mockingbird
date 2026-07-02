@@ -1404,8 +1404,9 @@ export function MotionEvidencePage({
                   <div className="notice-panel">
                     <strong>Promoted evidence</strong>
                     <span>
-                      This Motion Evidence is now unreviewed Event/Visit evidence. Open the detail
-                      records and correct labels before export.
+                      Promoted evidence created a reviewable Event/Visit. It still has no label or
+                      truth until review/correction. Open the detail pages and correct labels
+                      before export.
                       {selectedEvidence.snapshot_media_asset_id
                         ? ` Attached media ${selectedEvidence.snapshot_media_asset_id} remains evidence context.`
                         : ""}
@@ -1517,7 +1518,7 @@ function formatEvidenceStatusCopy(evidence: MotionEvidence): string {
     return pendingEvidenceBoundaryCopy;
   }
   if (evidence.status === "promoted") {
-    return "This evidence was promoted into unreviewed Event/Visit context. Correction remains truth.";
+    return "Promoted evidence created a reviewable Event/Visit. It still has no label or truth until review/correction.";
   }
   return "This evidence was ignored and remains preserved as non-truth evidence history.";
 }

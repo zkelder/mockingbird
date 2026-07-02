@@ -375,8 +375,9 @@ Current work:
 - Phase 11G: explicit saved-preview-to-MotionEvidence creation, no
   Event/Visit/truth.
 - Phase 11H: saved preview evidence UI/review polish.
-- Next likely phase: Phase 11I — explicit external-url media review/promote
-  flow polish, or Phase 12A — source/stream smoke-test hardening.
+- Phase 11I: external URL media review/promote flow polish.
+- Next likely phase: Phase 12A — source/stream smoke-test hardening, or
+  Phase 11J — external_url saved media cleanup/retention design.
 
 Validation:
 
@@ -411,6 +412,10 @@ Validation:
   review UI with attached media preview/file access, safe provenance copy,
   Source/Stream/Zone context, clear status, and explicit ignore/promote actions
   without creating Events, Visits, labels, reviewed status, exports, or truth.
+- Phase 11I carries saved-preview context through explicit promotion into
+  Event/Visit detail, showing promoted MotionEvidence provenance, saved local
+  media context, Source/Stream/Zone context, and correction truth boundaries
+  without changing promotion behavior or creating ReviewLabels/export truth.
 - Future adapter work does not create MotionEvidence, Events, Visits,
   ReviewLabels, analytics truth, export truth, copied media, model files,
   dependencies, or generated artifacts unless explicitly scoped later.

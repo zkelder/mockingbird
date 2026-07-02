@@ -155,6 +155,10 @@ UI can review that saved media as pending evidence. It shows attached media and
 safe provenance context, but still requires explicit ignore/promote and later
 review/correction before anything becomes truth.
 
+After explicit MotionEvidence promotion, Event/Visit detail can continue to show
+saved local media provenance as review context. The saved preview still does not
+confirm a label; Visit correction remains the source of truth.
+
 ## Testing Expectations For Future Implementation
 
 The implementation tests:
@@ -198,6 +202,8 @@ The saved MediaAsset remains local context until an explicit evidence action
 creates pending MotionEvidence.
 Phase 11H makes that handoff visible in the Motion Evidence review UI with
 attached saved media and provenance context.
+Phase 11I carries the same saved media context into the explicit
+promotion/review flow.
 
 ## Recommended Future Phases
 
@@ -207,6 +213,7 @@ attached saved media and provenance context.
 - Phase 11G: explicit saved-preview-to-MotionEvidence creation, no
   Events/Visits/truth.
 - Phase 11H: saved preview evidence UI/review polish.
+- Phase 11I: external URL media review/promote flow polish.
 - Later: other source-provider handoff designs separately.
 
 ## Explicit Non-Goals

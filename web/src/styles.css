@@ -1558,6 +1558,42 @@ button {
   justify-self: start;
 }
 
+.promoted-review-context-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.promoted-review-context-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.promoted-review-context-grid div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.promoted-review-context-grid span {
+  color: #627168;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.promoted-review-context-grid strong,
+.promoted-review-context-grid small {
+  overflow-wrap: anywhere;
+}
+
+.promoted-review-context-grid small {
+  color: #536258;
+  font-size: 0.88rem;
+}
+
 .detail-actions {
   display: flex;
   flex-wrap: wrap;
@@ -3069,6 +3105,7 @@ button {
   .manifest-summary,
   .manifest-export-form,
   .manifest-export-grid,
+  .promoted-review-context-grid,
   .species-export-summary,
   .species-state-grid,
   .coverage-metric-grid,
@@ -3194,6 +3231,7 @@ button {
   .species-suggestion-layout,
   .sampled-frame-result-list,
   .proposal-decision-panel,
+  .promoted-review-context-grid,
   .zone-editor-grid {
     grid-template-columns: 1fr;
   }

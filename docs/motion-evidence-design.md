@@ -246,6 +246,13 @@ pending/ignored/promoted state. Ignore and promote remain explicit, and saved
 media still creates no labels, reviewed status, exports, dataset coverage truth,
 model output, or species truth.
 
+## Phase 11I Status
+
+Phase 11I keeps saved-preview-origin evidence understandable after explicit
+promotion. Promoted MotionEvidence can link users to the reviewable Event/Visit,
+and Event/Visit detail pages can show saved media provenance while correction
+remains the only source of analytics/export truth.
+
 ## Phase 8S Status
 
 Phase 8S lets pending MotionEvidence be created with optional `snapshot_media_asset_id`.
