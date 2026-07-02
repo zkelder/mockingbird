@@ -78,7 +78,7 @@ An explicit action that turns pending Motion Evidence into unreviewed Event/Visi
 
 ## SpeciesSuggestion
 
-Local classifier evidence that a media item or crop may contain a species or taxon; it is not reviewed truth.
+Local classifier evidence that a media item or crop may contain a species or taxon; its pending/accepted/rejected/superseded status is not reviewed truth.
 
 ## SpeciesSuggestionAdapter
 

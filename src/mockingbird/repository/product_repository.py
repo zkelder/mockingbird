@@ -101,6 +101,10 @@ from mockingbird.api.schemas import (
     ReviewLabel,
     ReviewQueueItem,
     ReviewStatus,
+    SpeciesSuggestionCreateRequest,
+    SpeciesSuggestionResponse,
+    SpeciesSuggestionStatus,
+    SpeciesSuggestionStatusUpdateRequest,
     SourceKind,
     SourceStatus,
     Stream,
@@ -214,6 +218,33 @@ class MotionEvidenceModel(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class SpeciesSuggestionModel(Base):
+    __tablename__ = "species_suggestions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey("camera_sources.id"), nullable=True)
+    stream_id: Mapped[str | None] = mapped_column(ForeignKey("streams.id"), nullable=True)
+    event_id: Mapped[str | None] = mapped_column(ForeignKey("events.id"), nullable=True)
+    visit_id: Mapped[str | None] = mapped_column(ForeignKey("visits.id"), nullable=True)
+    media_asset_id: Mapped[str | None] = mapped_column(ForeignKey("media_assets.id"), nullable=True)
+    motion_evidence_id: Mapped[str | None] = mapped_column(
+        ForeignKey("motion_evidence.id"),
+        nullable=True,
+    )
+    adapter_id: Mapped[str] = mapped_column(String, nullable=False)
+    adapter_name: Mapped[str] = mapped_column(String, nullable=False)
+    suggested_label: Mapped[str] = mapped_column(String, nullable=False)
+    suggested_common_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    suggested_scientific_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    alternatives_json: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_region_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class ProductRepository:
     """Persist product-level stream, zone, event, review, and export state.
 
@@ -249,6 +280,7 @@ class ProductRepository:
         with self.session_factory() as session:
             with session.begin():
                 for model in (
+                    SpeciesSuggestionModel,
                     MotionEvidenceModel,
                     DetectionProposalModel,
                     DetectionRunModel,
@@ -883,6 +915,135 @@ class ProductRepository:
                     event_id=event_id,
                     visit_id=visit_id,
                 )
+
+    def create_species_suggestion(
+        self,
+        payload: SpeciesSuggestionCreateRequest,
+    ) -> SpeciesSuggestionResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                source_id = _clean_optional_text(payload.source_id)
+                stream_id = _clean_optional_text(payload.stream_id)
+                event_id = _clean_optional_text(payload.event_id)
+                visit_id = _clean_optional_text(payload.visit_id)
+                media_asset_id = _clean_optional_text(payload.media_asset_id)
+                motion_evidence_id = _clean_optional_text(payload.motion_evidence_id)
+
+                if source_id is not None and session.get(CameraSourceModel, source_id) is None:
+                    raise ValueError("missing_source")
+                if stream_id is not None and session.get(StreamModel, stream_id) is None:
+                    raise ValueError("missing_stream")
+                if event_id is not None and session.get(EventModel, event_id) is None:
+                    raise ValueError("missing_event")
+                if visit_id is not None and session.get(VisitModel, visit_id) is None:
+                    raise ValueError("missing_visit")
+                if (
+                    media_asset_id is not None
+                    and session.get(MediaAssetModel, media_asset_id) is None
+                ):
+                    raise ValueError("missing_media_asset")
+                if (
+                    motion_evidence_id is not None
+                    and session.get(MotionEvidenceModel, motion_evidence_id) is None
+                ):
+                    raise ValueError("missing_motion_evidence")
+
+                suggestion_model = SpeciesSuggestionModel(
+                    id=self._next_id(session, SpeciesSuggestionModel, "species-suggestion"),
+                    source_id=source_id,
+                    stream_id=stream_id,
+                    event_id=event_id,
+                    visit_id=visit_id,
+                    media_asset_id=media_asset_id,
+                    motion_evidence_id=motion_evidence_id,
+                    adapter_id=payload.adapter_id.strip(),
+                    adapter_name=payload.adapter_name.strip(),
+                    suggested_label=payload.suggested_label.strip(),
+                    suggested_common_name=_clean_optional_text(payload.suggested_common_name),
+                    suggested_scientific_name=_clean_optional_text(
+                        payload.suggested_scientific_name
+                    ),
+                    confidence=payload.confidence,
+                    rank=payload.rank,
+                    alternatives_json=json.dumps(payload.alternatives, sort_keys=True),
+                    evidence_region_json=(
+                        json.dumps(payload.evidence_region, sort_keys=True)
+                        if payload.evidence_region is not None
+                        else None
+                    ),
+                    status=SpeciesSuggestionStatus.pending.value,
+                    created_at=datetime.now(UTC),
+                    notes=_clean_optional_text(payload.notes),
+                )
+                session.add(suggestion_model)
+                session.flush()
+                return _species_suggestion_from_model(suggestion_model)
+
+    def list_species_suggestions(
+        self,
+        *,
+        status: SpeciesSuggestionStatus | None = None,
+        visit_id: str | None = None,
+        event_id: str | None = None,
+        media_asset_id: str | None = None,
+        suggested_label: str | None = None,
+    ) -> list[SpeciesSuggestionResponse]:
+        with self.session_factory() as session:
+            query = select(SpeciesSuggestionModel)
+            if status is not None:
+                query = query.where(SpeciesSuggestionModel.status == status.value)
+            normalized_visit_id = _clean_optional_text(visit_id)
+            if normalized_visit_id is not None:
+                query = query.where(SpeciesSuggestionModel.visit_id == normalized_visit_id)
+            normalized_event_id = _clean_optional_text(event_id)
+            if normalized_event_id is not None:
+                query = query.where(SpeciesSuggestionModel.event_id == normalized_event_id)
+            normalized_media_asset_id = _clean_optional_text(media_asset_id)
+            if normalized_media_asset_id is not None:
+                query = query.where(
+                    SpeciesSuggestionModel.media_asset_id == normalized_media_asset_id
+                )
+            normalized_label = _clean_optional_text(suggested_label)
+            if normalized_label is not None:
+                query = query.where(SpeciesSuggestionModel.suggested_label == normalized_label)
+
+            suggestion_models = session.scalars(
+                query.order_by(
+                    SpeciesSuggestionModel.created_at,
+                    SpeciesSuggestionModel.rank,
+                    SpeciesSuggestionModel.id,
+                )
+            ).all()
+            return [
+                _species_suggestion_from_model(suggestion)
+                for suggestion in suggestion_models
+            ]
+
+    def get_species_suggestion(self, suggestion_id: str) -> SpeciesSuggestionResponse | None:
+        with self.session_factory() as session:
+            suggestion_model = session.get(SpeciesSuggestionModel, suggestion_id)
+            return (
+                _species_suggestion_from_model(suggestion_model)
+                if suggestion_model
+                else None
+            )
+
+    def update_species_suggestion_status(
+        self,
+        suggestion_id: str,
+        payload: SpeciesSuggestionStatusUpdateRequest,
+    ) -> SpeciesSuggestionResponse | None:
+        with self.session_factory() as session:
+            with session.begin():
+                suggestion_model = session.get(SpeciesSuggestionModel, suggestion_id)
+                if suggestion_model is None:
+                    return None
+                if suggestion_model.status != SpeciesSuggestionStatus.pending.value:
+                    raise ValueError("species_suggestion_not_pending")
+
+                suggestion_model.status = payload.status.value
+                session.flush()
+                return _species_suggestion_from_model(suggestion_model)
 
     def list_model_adapters(self) -> list[ModelAdapter]:
         return [adapter.model_copy(deep=True) for adapter in _model_adapters()]
@@ -3708,6 +3869,36 @@ def _motion_evidence_from_model(evidence: MotionEvidenceModel) -> MotionEvidence
     )
 
 
+def _species_suggestion_from_model(
+    suggestion: SpeciesSuggestionModel,
+) -> SpeciesSuggestionResponse:
+    return SpeciesSuggestionResponse(
+        id=suggestion.id,
+        source_id=suggestion.source_id,
+        stream_id=suggestion.stream_id,
+        event_id=suggestion.event_id,
+        visit_id=suggestion.visit_id,
+        media_asset_id=suggestion.media_asset_id,
+        motion_evidence_id=suggestion.motion_evidence_id,
+        adapter_id=suggestion.adapter_id,
+        adapter_name=suggestion.adapter_name,
+        suggested_label=suggestion.suggested_label,
+        suggested_common_name=suggestion.suggested_common_name,
+        suggested_scientific_name=suggestion.suggested_scientific_name,
+        confidence=suggestion.confidence,
+        rank=suggestion.rank,
+        alternatives=list(json.loads(suggestion.alternatives_json)),
+        evidence_region=(
+            dict(json.loads(suggestion.evidence_region_json))
+            if suggestion.evidence_region_json
+            else None
+        ),
+        status=SpeciesSuggestionStatus(suggestion.status),
+        created_at=_as_utc(suggestion.created_at),
+        notes=suggestion.notes,
+    )
+
+
 def _detection_run_from_model(run: DetectionRunModel) -> DetectionRun:
     return DetectionRun(
         id=run.id,
@@ -3834,6 +4025,13 @@ def _merge_notes(existing_notes: str | None, new_notes: str) -> str:
     if not existing_notes:
         return new_notes
     return f"{existing_notes}\n{new_notes}"
+
+
+def _clean_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 def _as_utc(value: datetime) -> datetime:

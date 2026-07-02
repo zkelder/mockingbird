@@ -42,9 +42,9 @@ These layers stay separate:
 
 A future Event or Visit can show several evidence layers together, but only explicit review/correction behavior creates truth.
 
-## Suggested Future Fields
+## SpeciesSuggestion Fields
 
-Design only, not implemented in this phase:
+Phase 9B implements the schema/repository/API foundation for manual or mock suggestions with these product-shaped fields:
 
 - `id`
 - `source_id` nullable
@@ -66,7 +66,7 @@ Design only, not implemented in this phase:
 - `created_at`
 - `notes` or `provenance`
 
-Fields should stay product-shaped and should not leak model runtime internals into core review data.
+Fields stay product-shaped and do not leak model runtime internals into core review data.
 
 ## Adapter Contract
 
@@ -128,6 +128,8 @@ Future crops may improve classifier results when the subject is small or the fra
 
 An accepted suggestion is still only evidence until explicit review/correction behavior writes the reviewed label.
 
+Phase 9B status updates are evidence workflow only. Accepting, rejecting, or superseding a suggestion does not create a reviewed label, mark Event/Visit records reviewed, update exports, or change dataset coverage truth.
+
 ## UI Plan
 
 Future UI should:
@@ -144,17 +146,23 @@ The UI should make it clear which text is model-suggested evidence and which lab
 
 Recommended future phases:
 
-- Phase 9B: `SpeciesSuggestion` schema/repository foundation.
+- Phase 9B: `SpeciesSuggestion` schema/repository/API foundation.
 - Phase 9C: species suggestion UI surface with manual or mock suggestions.
 - Phase 9D: SpeciesNet runtime investigation docs.
 - Phase 9E: optional SpeciesNet adapter boundary.
 - Phase 9F: custom bird classifier dataset plan.
 
-The first implementation phase should store suggestions and prove they do not create truth.
+Phase 9B stores manual/mock suggestions and proves they do not create truth. No real classifier runtime exists yet.
+
+## Phase 9B Status
+
+Phase 9B adds `SpeciesSuggestion` schemas, repository persistence, and API routes for creating pending suggestions, listing/filtering them, reading detail, and updating status to accepted, rejected, or superseded.
+
+This foundation is manual/mock evidence only. It adds no SpeciesNet runtime, classifier dependency, model file, media decoding, training, Event/Visit creation, ReviewLabel creation, export truth, dataset coverage truth, or reviewed species truth.
 
 ## Test Plan
 
-Future tests should prove:
+Implementation tests should prove:
 
 - pending `SpeciesSuggestion` can be created
 - suggestions do not create `ReviewLabel`

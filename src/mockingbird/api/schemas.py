@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SourceKind(str, Enum):
@@ -93,6 +95,13 @@ class MotionEvidenceStatus(str, Enum):
     pending = "pending"
     promoted = "promoted"
     ignored = "ignored"
+
+
+class SpeciesSuggestionStatus(str, Enum):
+    pending = "pending"
+    accepted = "accepted"
+    rejected = "rejected"
+    superseded = "superseded"
 
 
 class LabelCategory(str, Enum):
@@ -522,6 +531,81 @@ class MotionEvidencePromoteResponse(BaseModel):
     visit_id: str | None
 
 
+class SpeciesSuggestionCreateRequest(BaseModel):
+    source_id: str | None = None
+    stream_id: str | None = None
+    event_id: str | None = None
+    visit_id: str | None = None
+    media_asset_id: str | None = None
+    motion_evidence_id: str | None = None
+    adapter_id: str
+    adapter_name: str
+    suggested_label: str
+    suggested_common_name: str | None = None
+    suggested_scientific_name: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    rank: int = Field(default=1, ge=1)
+    alternatives: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_region: dict[str, Any] | None = None
+    notes: str | None = None
+
+    @field_validator("adapter_id", "adapter_name", "suggested_label")
+    @classmethod
+    def require_nonblank_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("field must not be blank")
+        return value
+
+    @field_validator("alternatives")
+    @classmethod
+    def alternatives_must_be_json_compatible(
+        cls,
+        value: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        _ensure_json_compatible(value, "alternatives")
+        return value
+
+    @field_validator("evidence_region")
+    @classmethod
+    def evidence_region_must_be_json_compatible(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is not None:
+            _ensure_json_compatible(value, "evidence_region")
+        return value
+
+
+class SpeciesSuggestionResponse(BaseModel):
+    id: str
+    source_id: str | None
+    stream_id: str | None
+    event_id: str | None
+    visit_id: str | None
+    media_asset_id: str | None
+    motion_evidence_id: str | None
+    adapter_id: str
+    adapter_name: str
+    suggested_label: str
+    suggested_common_name: str | None
+    suggested_scientific_name: str | None
+    confidence: float | None
+    rank: int
+    alternatives: list[dict[str, Any]]
+    evidence_region: dict[str, Any] | None
+    status: SpeciesSuggestionStatus
+    created_at: datetime
+    notes: str | None
+
+
+class SpeciesSuggestionListResponse(BaseModel):
+    species_suggestions: list[SpeciesSuggestionResponse]
+
+
+class SpeciesSuggestionStatusUpdateRequest(BaseModel):
+    status: SpeciesSuggestionStatus
+
+
 class DetectionProposal(BaseModel):
     id: str
     run_id: str
@@ -866,3 +950,10 @@ class VisitDetail(BaseModel):
     review_labels: list[ReviewLabel]
     dataset_ready: bool
     review_summary: str
+
+
+def _ensure_json_compatible(value: Any, field_name: str) -> None:
+    try:
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{field_name} must be JSON-compatible") from error

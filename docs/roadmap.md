@@ -241,7 +241,8 @@ Goal: add species assistance as review evidence without weakening user correctio
 Current work:
 
 - Phase 9A: species suggestion adapter design.
-- Next likely phase: Phase 9B — SpeciesSuggestion schema/repository foundation.
+- Phase 9B: SpeciesSuggestion schema/repository/API foundation.
+- Next likely phase: Phase 9C — SpeciesSuggestion UI surface with manual/mock suggestions.
 
 Validation:
 
@@ -249,4 +250,5 @@ Validation:
 - SpeciesSuggestion stays separate from MotionEvidence, DetectionProposal, and ReviewLabel.
 - SpeciesNet and custom bird classifiers remain optional future adapters, not product architecture.
 - Suggestions do not create reviewed labels, reviewed Visit/Event state, export truth, dataset coverage truth, or analytics truth without explicit user correction.
+- Accepted/rejected/superseded suggestion status remains evidence workflow, not dataset truth.
 - Media-backed Event/Visit evidence can be the future input to suggestion adapters.

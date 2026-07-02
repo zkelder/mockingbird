@@ -60,6 +60,11 @@ from mockingbird.api.schemas import (
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
     ReviewQueueItem,
+    SpeciesSuggestionCreateRequest,
+    SpeciesSuggestionListResponse,
+    SpeciesSuggestionResponse,
+    SpeciesSuggestionStatus,
+    SpeciesSuggestionStatusUpdateRequest,
     Stream,
     TaxonomyLabel,
     Visit,
@@ -459,6 +464,28 @@ def _motion_evidence_error(error: ValueError) -> HTTPException:
     return HTTPException(status_code=400, detail="Motion Evidence could not be processed.")
 
 
+def _species_suggestion_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "missing_source":
+        return _not_found("Source", "species suggestion source")
+    if reason == "missing_stream":
+        return _not_found("Stream", "species suggestion stream")
+    if reason == "missing_event":
+        return _not_found("Event", "species suggestion event")
+    if reason == "missing_visit":
+        return _not_found("Visit", "species suggestion visit")
+    if reason == "missing_media_asset":
+        return _not_found("Media asset", "species suggestion media")
+    if reason == "missing_motion_evidence":
+        return _not_found("Motion Evidence", "species suggestion evidence")
+    if reason == "species_suggestion_not_pending":
+        return HTTPException(
+            status_code=400,
+            detail="Only pending SpeciesSuggestion evidence can change status.",
+        )
+    return HTTPException(status_code=400, detail="SpeciesSuggestion could not be processed.")
+
+
 def _motion_zone_from_payload(zone: MotionZoneInput) -> MotionZone:
     return MotionZone(
         zone_id=zone.zone_id,
@@ -731,6 +758,64 @@ async def ignore_motion_evidence(evidence_id: str) -> MotionEvidenceResponse:
     if evidence is None:
         raise _not_found("Motion Evidence", evidence_id)
     return evidence
+
+
+@app.post("/api/species-suggestions", response_model=SpeciesSuggestionResponse, status_code=201)
+async def create_species_suggestion(
+    payload: SpeciesSuggestionCreateRequest,
+) -> SpeciesSuggestionResponse:
+    # Species suggestions are classifier evidence only. Review labels remain truth.
+    try:
+        return get_repository().create_species_suggestion(payload)
+    except ValueError as error:
+        raise _species_suggestion_error(error) from error
+
+
+@app.get("/api/species-suggestions", response_model=SpeciesSuggestionListResponse)
+async def list_species_suggestions(
+    status: SpeciesSuggestionStatus | None = None,
+    visit_id: str | None = None,
+    event_id: str | None = None,
+    media_asset_id: str | None = None,
+    suggested_label: str | None = None,
+) -> SpeciesSuggestionListResponse:
+    return SpeciesSuggestionListResponse(
+        species_suggestions=get_repository().list_species_suggestions(
+            status=status,
+            visit_id=visit_id,
+            event_id=event_id,
+            media_asset_id=media_asset_id,
+            suggested_label=suggested_label,
+        )
+    )
+
+
+@app.get("/api/species-suggestions/{suggestion_id}", response_model=SpeciesSuggestionResponse)
+async def get_species_suggestion(suggestion_id: str) -> SpeciesSuggestionResponse:
+    suggestion = get_repository().get_species_suggestion(suggestion_id)
+    if suggestion is None:
+        raise _not_found("SpeciesSuggestion", suggestion_id)
+    return suggestion
+
+
+@app.post(
+    "/api/species-suggestions/{suggestion_id}/status",
+    response_model=SpeciesSuggestionResponse,
+)
+async def update_species_suggestion_status(
+    suggestion_id: str,
+    payload: SpeciesSuggestionStatusUpdateRequest,
+) -> SpeciesSuggestionResponse:
+    try:
+        suggestion = get_repository().update_species_suggestion_status(
+            suggestion_id,
+            payload,
+        )
+    except ValueError as error:
+        raise _species_suggestion_error(error) from error
+    if suggestion is None:
+        raise _not_found("SpeciesSuggestion", suggestion_id)
+    return suggestion
 
 
 @app.get("/api/taxonomy/labels", response_model=list[TaxonomyLabel])
