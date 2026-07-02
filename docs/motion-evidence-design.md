@@ -219,6 +219,12 @@ Phase 8R improves the Motion Evidence review surface for attached media context.
 
 When `snapshot_media_asset_id` is present, the UI shows the attached visual evidence context, the MediaAsset ID, existing media-file access, and inline preview when the existing MediaAsset preview path supports it. Evidence without media remains reviewable, ignorable, and promotable. Media context does not create species labels, reviewed observations, exports, dataset coverage truth, or any other dataset truth.
 
+## Phase 8S Status
+
+Phase 8S lets pending MotionEvidence be created with optional `snapshot_media_asset_id`.
+
+The media reference must point to an existing MediaAsset on the same stream. Media-backed creation still creates only pending evidence: no Event, Visit, ReviewLabel, export, dataset coverage truth, reviewed status, media file, thumbnail, model output, or species truth is created.
+
 ## Test Plan
 
 Implementation tests should prove:

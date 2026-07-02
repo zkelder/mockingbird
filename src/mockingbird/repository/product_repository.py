@@ -668,8 +668,13 @@ class ProductRepository:
                     if stream_model.source_id != source_id:
                         raise ValueError("stream_source_mismatch")
 
-                if payload.snapshot_media_asset_id is not None:
-                    asset_model = session.get(MediaAssetModel, payload.snapshot_media_asset_id)
+                snapshot_media_asset_id = (
+                    payload.snapshot_media_asset_id.strip()
+                    if payload.snapshot_media_asset_id and payload.snapshot_media_asset_id.strip()
+                    else None
+                )
+                if snapshot_media_asset_id is not None:
+                    asset_model = session.get(MediaAssetModel, snapshot_media_asset_id)
                     if asset_model is None:
                         raise ValueError("missing_media_asset")
                     if asset_model.stream_id != stream_model.id:
@@ -691,7 +696,7 @@ class ProductRepository:
                     peak_changed_ratio=payload.peak_changed_ratio,
                     triggered_frame_count=payload.triggered_frame_count,
                     scoring_config_json=json.dumps(payload.scoring_config, sort_keys=True),
-                    snapshot_media_asset_id=payload.snapshot_media_asset_id,
+                    snapshot_media_asset_id=snapshot_media_asset_id,
                     status=MotionEvidenceStatus.pending.value,
                     promoted_event_id=None,
                     promoted_visit_id=None,

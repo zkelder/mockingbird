@@ -119,11 +119,13 @@ def coverage_truth_counts(coverage: dict) -> dict[str, int]:
 def add_test_media_asset(
     repository: ProductRepository,
     media_id: str = "media_best_frame_001",
+    stream_id: str = STREAM_ID,
+    source_id: str | None = SOURCE_ID,
 ) -> MediaAssetModel:
     asset = MediaAssetModel(
         id=media_id,
-        source_id=SOURCE_ID,
-        stream_id=STREAM_ID,
+        source_id=source_id,
+        stream_id=stream_id,
         filename=f"{media_id}.jpg",
         content_type="image/jpeg",
         media_type="image",
@@ -190,6 +192,56 @@ async def test_motion_evidence_snapshot_media_reference_survives_list_and_detail
     assert detail_response.status_code == 200
     assert list_response.json()["motion_evidence"][0]["snapshot_media_asset_id"] == asset.id
     assert detail_response.json()["snapshot_media_asset_id"] == asset.id
+    assert await product_counts(client) == before_counts
+    assert coverage_truth_counts(await dataset_coverage(client)) == coverage_truth_counts(
+        before_coverage
+    )
+
+
+async def test_create_motion_evidence_with_existing_media_asset_stays_pending_without_truth(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(isolated_repository, media_id="media_best_frame_create_001")
+    before_counts = await product_counts(client)
+    before_coverage = await dataset_coverage(client)
+
+    response = await create_motion_evidence(client, snapshot_media_asset_id=asset.id)
+
+    assert response.status_code == 201
+    created = response.json()
+    assert created["status"] == "pending"
+    assert created["snapshot_media_asset_id"] == asset.id
+    assert created["promoted_event_id"] is None
+    assert created["promoted_visit_id"] is None
+
+    detail_response = await client.get(f"/api/motion/evidence/{created['id']}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["snapshot_media_asset_id"] == asset.id
+    assert await product_counts(client) == before_counts
+    assert coverage_truth_counts(await dataset_coverage(client)) == coverage_truth_counts(
+        before_coverage
+    )
+
+
+async def test_create_motion_evidence_rejects_media_from_another_stream(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(
+        isolated_repository,
+        media_id="media_best_frame_other_stream",
+        stream_id="stream-other-local-media",
+    )
+    before_counts = await product_counts(client)
+    before_coverage = await dataset_coverage(client)
+
+    response = await create_motion_evidence(client, snapshot_media_asset_id=asset.id)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Motion evidence snapshot media must belong to the selected stream."
+    )
     assert await product_counts(client) == before_counts
     assert coverage_truth_counts(await dataset_coverage(client)) == coverage_truth_counts(
         before_coverage

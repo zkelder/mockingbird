@@ -118,6 +118,12 @@ Phase 8R polishes Motion Evidence media visibility.
 
 Attached existing MediaAsset references are easier to see and open from the Motion Evidence review surface, with preview when the current MediaAsset preview path supports it. Automated capture, media decoding, thumbnail generation, source adapters, stream workers, model calls, and truth writes remain deferred.
 
+## Phase 8S Status
+
+Phase 8S adds media-backed manual MotionEvidence creation.
+
+Users can create pending MotionEvidence with an existing imported/local MediaAsset already attached as visual evidence context. Automated capture, media decoding, thumbnail generation, source adapters, stream workers, model calls, and truth writes remain deferred.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

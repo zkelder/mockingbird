@@ -1541,6 +1541,13 @@ button {
   gap: 10px;
 }
 
+.manual-media-preview {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #e0e7dd;
+  padding-top: 12px;
+}
+
 .sampled-frame-actions {
   align-items: center;
 }

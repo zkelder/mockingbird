@@ -158,6 +158,9 @@ export function MotionEvidencePage({
   const selectedMediaAsset = selectedEvidence?.snapshot_media_asset_id
     ? mediaById.get(selectedEvidence.snapshot_media_asset_id) ?? null
     : null;
+  const manualMediaAsset = manualSnapshotMediaAssetId
+    ? mediaById.get(manualSnapshotMediaAssetId) ?? null
+    : null;
   const evidenceCounts = useMemo(() => {
     const counts: Record<MotionEvidenceFilter, number> = {
       all: zoneFilteredEvidence.length,
@@ -277,7 +280,9 @@ export function MotionEvidencePage({
       setZoneFilter(created.zone_id);
       setSelectedEvidenceId(created.id);
       setMessage(
-        `${created.id} created as pending Motion Evidence. Review it before promotion.`,
+        created.snapshot_media_asset_id
+          ? `${created.id} created as pending Motion Evidence with media ${created.snapshot_media_asset_id}. Review it before promotion.`
+          : `${created.id} created as pending Motion Evidence. Review it before promotion.`,
       );
       await loadEvidence({ showLoading: false, selectEvidenceId: created.id });
       await onEvidenceChanged();
@@ -553,14 +558,58 @@ export function MotionEvidencePage({
                 placeholder="2"
               />
             </label>
-            <label>
-              Snapshot media asset ID
-              <input
+            <label className="motion-wide-field">
+              Attach existing media asset
+              <select
+                disabled={mediaAssets.length === 0}
                 value={manualSnapshotMediaAssetId}
                 onChange={(event) => setManualSnapshotMediaAssetId(event.target.value)}
-                placeholder="optional"
-              />
+              >
+                <option value="">No attached media</option>
+                {[...mediaAssets].reverse().map((asset) => (
+                  <option key={asset.id} value={asset.id}>
+                    {asset.original_filename} - {asset.id}
+                  </option>
+                ))}
+              </select>
+              <span className="field-helper">
+                Optional: attach an existing local media asset as visual evidence. This creates
+                pending evidence only; it does not create labels, reviewed observations, or
+                export-ready truth.
+              </span>
             </label>
+            {manualSnapshotMediaAssetId ? (
+              <div className="manual-media-preview motion-wide-field">
+                <div className="section-heading">
+                  <div>
+                    <h3>Creation media context</h3>
+                    <span className="meta-text">
+                      The selected MediaAsset must belong to the same stream as this evidence.
+                    </span>
+                  </div>
+                  <EvidenceBadge label="Evidence context" tone="evidence" />
+                </div>
+                {manualMediaAsset ? (
+                  <>
+                    <MediaAssetPreview asset={manualMediaAsset} compact />
+                    <div className="detail-actions">
+                      <a
+                        className="text-action"
+                        href={apiClient.mediaFileUrl(manualMediaAsset.id)}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Open media file
+                      </a>
+                    </div>
+                  </>
+                ) : (
+                  <span className="meta-text">
+                    Media details are not loaded yet. The backend will validate this ID on create.
+                  </span>
+                )}
+              </div>
+            ) : null}
             <label>
               Start frame
               <input
@@ -609,7 +658,8 @@ export function MotionEvidencePage({
               {isCreating ? "Creating..." : "Create pending evidence"}
             </button>
             <span className="field-helper">
-              Leave source and stream blank to let the backend use the selected zone.
+              Leave source and stream blank to let the backend use the selected zone. Imported
+              media can be attached now or later from the detail panel.
             </span>
           </div>
         </form>

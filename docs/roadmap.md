@@ -205,7 +205,8 @@ Current work:
 - Phase 8P: local frame artifact design.
 - Phase 8Q: attach existing MediaAsset to MotionEvidence.
 - Phase 8R: Motion Evidence media preview polish.
-- Next likely phase: Phase 8S — local frame artifact creation from existing imported media or media-reference propagation polish.
+- Phase 8S: media-backed MotionEvidence creation from existing MediaAsset.
+- Next likely phase: Phase 8T — local frame artifact creation from existing imported media or controlled frame capture design.
 
 Validation:
 
@@ -227,5 +228,6 @@ Validation:
 - Local frame artifact design separates scoring frame planes from optional visual evidence references.
 - Existing MediaAsset attachment lets pending MotionEvidence carry visual evidence context without creating truth.
 - Motion Evidence media preview polish makes attached MediaAsset context visible without capture, decoding, thumbnails, model calls, or truth writes.
+- Media-backed MotionEvidence creation lets manual pending evidence start with existing MediaAsset context without capture, decoding, thumbnails, model calls, or truth writes.
 - Stream sampling, media decoding, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.
