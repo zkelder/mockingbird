@@ -196,7 +196,8 @@ Current work:
 - Phase 8G: MotionEvidence review surface.
 - Phase 8H: manual MotionEvidence creation UI/dev surface.
 - Phase 8I: frame sequence motion-to-evidence backend contract for already-sampled frame planes.
-- Next likely phase: Phase 8J — frame sampler design or sampled-frame ingestion boundary.
+- Phase 8J: sampled-frame ingestion boundary design.
+- Next likely phase: Phase 8K — sampled-frame dev harness or sampler abstraction design/implementation.
 
 Validation:
 
@@ -209,5 +210,6 @@ Validation:
 - MotionEvidence review surface lets users inspect, ignore, and promote evidence without creating truth.
 - Manual MotionEvidence creation lets the browser exercise the evidence loop before stream sampling without creating truth.
 - Frame sequence evaluation can create pending MotionEvidence from caller-provided frame planes without creating truth.
+- Sampled-frame ingestion design defines the bridge from visible streams to frame planes before implementation.
 - Stream sampling, media decoding, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.

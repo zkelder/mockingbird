@@ -169,6 +169,12 @@ Phase 8I adds frame sequence evaluation as another way to create pending MotionE
 
 The backend accepts already-sampled grayscale frame planes, scores consecutive pairs, extracts debounced candidates, and can optionally save those candidates as pending MotionEvidence. This remains evidence only: it does not create Events, Visits, ReviewLabels, exports, dataset coverage truth, media files, stream samples, detector output, or species truth.
 
+## Phase 8J Status
+
+Phase 8J defines sampled-frame ingestion as the planned upstream source of pending MotionEvidence.
+
+Sampled frames should bridge visible streams to frame-plane evaluation, then MotionEvidence review/promotion. The design keeps sampling, media attachment, and automation separate from reviewed labels, exports, dataset coverage truth, detector output, and species truth. See [sampled-frame-ingestion-design.md](sampled-frame-ingestion-design.md).
+
 ## Test Plan
 
 Implementation tests should prove:

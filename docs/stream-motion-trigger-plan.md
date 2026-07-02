@@ -64,6 +64,12 @@ The API scores consecutive frame pairs, debounces zone-local motion candidates, 
 
 Real stream sampling and media capture remain deferred to a later boundary.
 
+## Phase 8J Status
+
+Phase 8J defines the sampled-frame ingestion boundary. Sampled frames are the planned bridge between visible streams and `/api/motion/evaluate-sequence`; they become small grayscale frame planes before zone-aware motion evaluation.
+
+Implementation remains deferred: no media decoding, stream worker, source adapter, model runtime, or automatic truth creation is added in this phase. See [sampled-frame-ingestion-design.md](sampled-frame-ingestion-design.md).
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

@@ -48,6 +48,14 @@ A machine-generated observation that may be right or wrong.
 
 A debounced motion signal from scored frame differences in a stream zone.
 
+## Sampled Frame
+
+A lightweight local representation of a stream or media moment that can become a frame plane for motion scoring; it is not reviewed truth.
+
+## Frame Plane
+
+A rectangular 2D array of numeric grayscale values used for zone-aware motion scoring.
+
 ## Motion Evidence
 
 Local evidence that a motion candidate occurred in a stream zone; it is not reviewed truth.
