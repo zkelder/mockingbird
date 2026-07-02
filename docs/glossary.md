@@ -48,6 +48,10 @@ A machine-generated observation that may be right or wrong.
 
 A debounced motion signal from scored frame differences in a stream zone.
 
+## Best Frame
+
+The candidate frame most useful for review context or later species suggestion; it is evidence context, not truth.
+
 ## Sampled Frame
 
 A lightweight local representation of a stream or media moment that can become a frame plane for motion scoring; it is not reviewed truth.

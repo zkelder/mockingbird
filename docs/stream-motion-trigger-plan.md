@@ -88,6 +88,12 @@ Phase 8M implements the backend sampler abstraction for supplied in-memory frame
 
 The sampler evaluates supplied frame sequences, extracts debounced zone-local candidates, and can create pending MotionEvidence only when explicitly configured. It still does not sample real streams, decode media, attach media, run model runtimes, create reviewed labels, or create export-ready truth.
 
+## Phase 8N Status
+
+Phase 8N defines best-frame media attachment before implementation.
+
+The design explains how `best_frame_index` can later become optional `snapshot_media_asset_id` context on pending MotionEvidence and promoted Event/Visit evidence. It adds no media capture, decoding, stream sampling, endpoints, workers, model calls, or truth writes. See [best-frame-media-attachment-design.md](best-frame-media-attachment-design.md).
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

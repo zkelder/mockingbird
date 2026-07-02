@@ -57,6 +57,8 @@ Likely future fields, for design only:
 
 These fields should stay product-shaped and avoid leaking adapter or worker internals into the user experience.
 
+The existing `snapshot_media_asset_id` field remains optional evidence context. MotionEvidence can be created, reviewed, ignored, or promoted without media, and media attachment alone must not create labels, reviewed status, or export truth.
+
 ## Status Lifecycle
 
 `pending` means motion was detected and retained, but no Event or Visit has been created from it.
@@ -186,6 +188,12 @@ When requested, the harness creates pending MotionEvidence only. Users still ign
 Phase 8L defines the sampler as a future upstream source of pending MotionEvidence.
 
 The sampler should produce frame planes from configured stream/media context and call the existing sequence evaluation contract. It should create pending MotionEvidence only when explicitly configured, and correction remains the only dataset/export truth path.
+
+## Phase 8N Status
+
+Phase 8N defines best-frame media attachment as design-only.
+
+Best-frame media can later give MotionEvidence and promoted Event/Visit evidence visible context, but `snapshot_media_asset_id` remains nullable and optional. This phase adds no media capture, decoding, model calls, labels, reviewed status, exports, dataset coverage truth, or species truth. See [best-frame-media-attachment-design.md](best-frame-media-attachment-design.md).
 
 ## Test Plan
 

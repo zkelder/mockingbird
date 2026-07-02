@@ -99,7 +99,7 @@ The user can ignore or promote MotionEvidence. Promotion creates unreviewed Even
 
 This design does not attach media.
 
-A future sampler may attach a best-frame MediaAsset. Media attachment is evidence and context, not truth. Best-frame selection should use the candidate peak frame and simple quality heuristics later.
+A future sampler may attach a best-frame MediaAsset. Media attachment is evidence and context, not truth. Best-frame selection should use the candidate peak frame and simple quality heuristics later. See [best-frame-media-attachment-design.md](best-frame-media-attachment-design.md).
 
 ## Failure And Noise Handling
 
@@ -127,9 +127,11 @@ The backend sampler evaluates consecutive frame pairs, extracts debounced motion
 
 Tentative future phases:
 
-- Phase 8N: sampled-frame source contract for already-available stream/import frames.
-- Phase 8O: optional best-frame MediaAsset attachment.
-- Phase 8P: controlled local stream sampling.
+- Phase 8N: best-frame media attachment design.
+- Phase 8O: best-frame attachment schema/API compatibility review.
+- Phase 8P: media reference propagation from MotionEvidence to Event/Visit.
+- Phase 8Q: local media/frame attachment using already-available imported images or supplied frame artifacts.
+- Phase 8R: controlled local stream sampling/media capture.
 
 Each phase should preserve the stream -> zone -> pending evidence -> review/promotion -> correction truth path.
 

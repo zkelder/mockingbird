@@ -67,7 +67,7 @@ MotionEvidence can be ignored or promoted. Promotion creates unreviewed Event/Vi
 
 This phase does not capture or attach media.
 
-A future sampler may attach a best-frame MediaAsset. Best-frame selection should use the candidate peak frame plus quality heuristics from a short buffer. Media attachment is evidence and context, not truth.
+A future sampler may attach a best-frame MediaAsset. Best-frame selection should use the candidate peak frame plus quality heuristics from a short buffer. Media attachment is the planned bridge from frame indexes to visible review evidence, and remains evidence/context only. See [best-frame-media-attachment-design.md](best-frame-media-attachment-design.md).
 
 ## Failure And Noise Cases
 
@@ -109,13 +109,20 @@ Phase 8M adds backend sampler code for supplied in-memory frame planes.
 
 `/api/motion/evaluate-sequence` now uses the sampler service to evaluate consecutive frame pairs, extract zone-local motion candidates, and optionally create pending MotionEvidence. This still does not sample real streams, decode media, attach media, run models, create Event/Visit records, or write review/export truth.
 
+## Phase 8N Status
+
+Phase 8N defines best-frame media attachment as the design bridge from candidate frame indexes to future visible MotionEvidence context.
+
+It is design-only: no media capture, decoding, attachment, stream sampling, model calls, or truth writes are implemented.
+
 ## Future Implementation Plan
 
 Tentative future phases:
 
-- Phase 8N: sampled-frame source contract for already-available stream/import frames.
-- Phase 8O: optional best-frame MediaAsset attachment.
-- Phase 8P: controlled local stream sampling.
+- Phase 8O: best-frame attachment schema/API compatibility review.
+- Phase 8P: media reference propagation from MotionEvidence to Event/Visit.
+- Phase 8Q: local media/frame attachment using already-available imported images or supplied frame artifacts.
+- Phase 8R: controlled local stream sampling/media capture.
 
 Each phase should stay product-first: visible stream, configured zones, pending evidence, review/promotion, then correction truth.
 

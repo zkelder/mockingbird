@@ -101,6 +101,8 @@ The Motion Evidence page includes a sampled-frame evaluation harness for supplie
 
 The backend sampler abstraction now evaluates supplied in-memory frame planes; see [docs/lightweight-sampler-abstraction.md](docs/lightweight-sampler-abstraction.md).
 
+Best-frame media attachment is design-only and remains optional evidence context; see [docs/best-frame-media-attachment-design.md](docs/best-frame-media-attachment-design.md).
+
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md), and the [local setup checklist](docs/megadetector-local-setup.md).
 
 ## Not the product center
