@@ -20,6 +20,10 @@ Species suggestion UI actions such as accept, reject, and supersede update
 evidence workflow state only. They must not imply model truth or write reviewed
 corrections by themselves.
 
+Any future "use as correction" behavior must enter truth through the existing
+review/correction path. See
+[species-suggestion-correction-flow.md](species-suggestion-correction-flow.md).
+
 ## Adapter Input Contract
 
 Adapters must accept product-level inputs, not adapter-specific workflows:
@@ -47,6 +51,9 @@ Each proposal should include:
 Detector adapters must not create `Event`, `Visit`, `ReviewLabel`, dataset export records, coverage truth, or analytics truth directly.
 
 Species suggestion adapters are a separate future adapter class. They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md) and keep classifier output below review/correction truth.
+
+Species suggestion adapter output must enter `SpeciesSuggestion`, not
+`ReviewLabel`, even when the suggested label is high confidence.
 
 ## Runtime Safety
 

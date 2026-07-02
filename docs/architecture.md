@@ -38,6 +38,7 @@ Source adapters feed media into the platform, but the product is not organized a
 - Motion Evidence between scoring/evaluation and Event/Visit creation
 - Motion Evidence persistence and ignore lifecycle
 - SpeciesSuggestion evidence layer between media-backed Event/Visit evidence and review/correction
+- SpeciesSuggestion correction flow as a pre-correction assist, not a truth layer
 - Animal detection
 - Species classification
 - Event grouping

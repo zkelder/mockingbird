@@ -10,7 +10,9 @@ MotionEvidence, Event, and Visit media may show an animal clearly enough for a c
 
 media-backed Event/Visit -> species suggestion adapter receives image/media context -> adapter returns candidate labels/taxa/confidence -> suggestion is shown as evidence -> user accepts, corrects, or rejects during review -> reviewed correction becomes dataset/export truth.
 
-The adapter assists the review loop. It does not replace it.
+The adapter assists the review loop. It does not replace it. Applying a
+suggestion to reviewed truth must follow
+[species-suggestion-correction-flow.md](species-suggestion-correction-flow.md).
 
 ## Species Suggestion Definition
 
@@ -122,11 +124,13 @@ Future crops may improve classifier results when the subject is small or the fra
 ## Status Lifecycle
 
 - `pending`: suggestion is shown but not used.
-- `accepted`: user chose it as correction/review input.
+- `accepted`: user found it useful as review evidence.
 - `rejected`: user dismissed it.
 - `superseded`: a later correction or model result replaced it.
 
-An accepted suggestion is still only evidence until explicit review/correction behavior writes the reviewed label.
+An accepted suggestion is still only evidence until explicit review/correction
+behavior writes the reviewed label. "Use as correction" must remain a separate
+user action that submits the existing correction flow.
 
 Phase 9B status updates are evidence workflow only. Accepting, rejecting, or superseding a suggestion does not create a reviewed label, mark Event/Visit records reviewed, update exports, or change dataset coverage truth.
 
@@ -155,8 +159,8 @@ Recommended future phases:
 - Phase 9B: `SpeciesSuggestion` schema/repository/API foundation.
 - Phase 9C: species suggestion UI surface with manual or mock suggestions.
 - Phase 9D: explicit correction-flow design for applying suggestion evidence.
+- Phase 9E: frontend prefill/use-as-correction path, if scoped.
 - Later: SpeciesNet runtime investigation docs.
-- Phase 9E: optional SpeciesNet adapter boundary.
 - Phase 9F: custom bird classifier dataset plan.
 
 Phase 9B stores manual/mock suggestions and proves they do not create truth. No real classifier runtime exists yet.
@@ -177,6 +181,13 @@ These UI actions change suggestion evidence status only. They do not run
 SpeciesNet or a custom classifier, inspect media, create `ReviewLabel`, mark
 Event/Visit records reviewed, update dataset coverage, create exports, or write
 reviewed species truth.
+
+## Phase 9D Status
+
+Phase 9D defines the explicit correction-flow boundary for using a suggestion as
+review input. The recommended next implementation path is frontend prefill into
+the existing Visit/Event correction form, so the existing correction endpoint
+continues to be the only truth writer.
 
 ## Test Plan
 

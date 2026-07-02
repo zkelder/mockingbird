@@ -84,6 +84,10 @@ Local classifier evidence that a media item or crop may contain a species or tax
 
 A local optional adapter that creates SpeciesSuggestion evidence from media-backed Event/Visit context without creating labels, exports, or dataset truth.
 
+## Apply Suggestion As Correction
+
+A future explicit user action that pre-fills the existing correction flow from a SpeciesSuggestion; truth is created only when the correction is submitted.
+
 ## Review
 
 The user process of confirming, correcting, merging, hiding, or rejecting events.

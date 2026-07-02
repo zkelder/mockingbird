@@ -1,0 +1,152 @@
+# Species Suggestion Correction Flow
+
+## Purpose
+
+Species suggestions can make review faster, but they are still evidence. Applying
+a suggestion needs an explicit correction flow so user review remains the only
+source of dataset/export truth.
+
+This design defines how a `SpeciesSuggestion` can help a user create a normal
+correction without letting suggestion status become truth by itself.
+
+## Product Flow
+
+SpeciesSuggestion pending or accepted
+-> user selects "Use as correction"
+-> existing Visit/Event review context opens or receives the suggested label
+-> user confirms or edits the correction
+-> `ReviewLabel` or user correction is created
+-> Visit/Event review state updates according to existing correction behavior
+-> dataset/export truth updates only from that correction
+
+## Key Distinction
+
+- Accepted suggestion: the user found the suggestion useful as evidence.
+- Applied correction: the user explicitly created reviewed label/truth through
+  the correction flow.
+
+Accepted suggestion alone must not:
+
+- create `ReviewLabel`
+- mark Visit reviewed
+- update dataset coverage truth
+- make an export-ready record
+
+## Suggested Future UI Behavior
+
+- The Species Suggestions page should show "Use as correction" only when a
+  suggestion has enough `visit_id` or `event_id` context for correction.
+- Visit Detail and Review Queue can show suggestions near the correction form.
+- The button should prefill the correction label with `suggested_label`.
+- The user can edit the label before submitting.
+- The correction form remains the final truth action.
+- Rejected or superseded suggestions should not offer a primary apply action.
+- Accepted suggestions may still require explicit correction submission.
+
+## Suggested Future API Behavior
+
+Option A:
+
+- The frontend uses the existing correction endpoint with `suggested_label`
+  prefilled.
+- SpeciesSuggestion status may optionally be updated to accepted after the
+  correction succeeds.
+
+Option B:
+
+- Add a future endpoint such as
+  `POST /api/species-suggestions/{id}/apply-as-correction`.
+- The endpoint internally calls the same correction service/path.
+- It must require explicit user action.
+- It must return the created correction/review result.
+- It must update suggestion status only after correction succeeds.
+
+Recommendation: start with Option A. It is safer because it keeps one truth
+writer, one review form, and one correction API path. Option B is reasonable
+later only if it wraps the existing correction behavior and tests prove it does
+not duplicate truth logic.
+
+## Recommended Implementation Approach
+
+Start with frontend-only prefill if the existing correction APIs support it:
+
+- Link from a suggestion to Visit Detail or Event Detail.
+- Pass the suggested label in UI state, query state, or local component state if
+  practical.
+- Let the user submit the existing correction form.
+
+If backend implementation is needed later:
+
+- Wrap existing correction behavior.
+- Do not duplicate review/truth logic.
+- Tests must prove the same correction path is used.
+
+## Status Lifecycle Interaction
+
+- A pending suggestion can be applied as correction, then may become accepted or
+  superseded depending on future policy.
+- An accepted suggestion is still not truth until correction is submitted.
+- A rejected suggestion should not be applied without reopening or an explicit
+  override policy.
+- A superseded suggestion should remain historical evidence.
+- A correction may supersede other suggestions for the same Visit/media later,
+  but only with explicit policy.
+
+## Relationship To Taxonomy
+
+- `suggested_label` should map to taxonomy labels when possible.
+- Out-of-taxonomy suggestions should require review and may become freeform only
+  if the existing correction flow allows it.
+- Taxonomy suggestions should assist correction, not bypass validation.
+
+## Relationship To Review Queue And Visit Detail
+
+- Suggestions are most useful near Visit Detail and Review Queue.
+- Suggestions should show confidence, rank, adapter, and provenance.
+- Reviewed truth should be visually separate from suggestions.
+
+## Truth Boundary Requirements
+
+- Suggestion status updates do not create truth.
+- Apply action must use the correction/review path.
+- Correction remains auditable.
+- Exports and dataset coverage rely on reviewed correction only.
+
+## Error And Failure Cases
+
+- Suggestion has no `visit_id` or `event_id`: show evidence detail, but no
+  primary apply action.
+- Referenced Visit/Event is missing: show a safe error and do not update status
+  or truth.
+- Suggested label is not in taxonomy: require user review; allow freeform only
+  if the correction form already allows it.
+- Suggestion is rejected or superseded: do not primary-apply it.
+- Correction fails: do not update suggestion status.
+- Multiple suggestions conflict: show them as competing evidence and let the
+  user choose or type the correction.
+- User edits label before submitting: store the edited label as truth.
+
+## Test Plan For Future Implementation
+
+- Accepted suggestion alone creates no `ReviewLabel`.
+- Use-as-correction requires explicit action.
+- Correction endpoint creates `ReviewLabel` using suggested label only after
+  submit.
+- User can edit suggested label before correction.
+- Rejected/superseded suggestions cannot be primary-applied.
+- Dataset coverage/export truth changes only after correction.
+- Suggestion status updates after successful correction, if implemented.
+- Failures do not partially update suggestion/truth.
+- No model runtime is required.
+
+## Explicit Non-Goals
+
+- no SpeciesNet runtime
+- no model dependency
+- no automatic correction
+- no reviewed labels from suggestions alone
+- no export truth from suggestions alone
+- no stream capture
+- no media decoding
+- no cloud upload
+- no production accuracy claims
