@@ -73,7 +73,7 @@ export function ClassifierReadinessPage({
       <PageHeader
         eyebrow="Future classifier export"
         title="Classifier Readiness"
-        description="Classifier readiness summarizes reviewed media-backed examples that could support a future custom bird classifier. It does not generate datasets, train models, or create reviewed truth."
+        description="Classifier readiness summarizes reviewed media-backed examples that can feed the classifier manifest preview and metadata export. It does not copy media, train models, or create reviewed truth."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenClassifierManifest}>
@@ -93,8 +93,8 @@ export function ClassifierReadinessPage({
         <strong>Reviewed corrections are the only training truth</strong>
         <span>
           SpeciesSuggestion status is review evidence, not training truth. MotionEvidence and
-          DetectionProposal records are evidence only. The manifest preview is browser/reporting
-          only; generated dataset files and classifier training remain future work.
+          DetectionProposal records are evidence only. Metadata export lives on the manifest page;
+          copied media, generated image datasets, and classifier training remain future work.
         </span>
       </section>
 
@@ -103,7 +103,7 @@ export function ClassifierReadinessPage({
           <div className="quality-issue-title">
             <h2>Readiness status</h2>
             <StatusPill
-              label={report.ready_for_manifest_export ? "Ready for future manifest export" : "Not ready"}
+              label={report.ready_for_manifest_export ? "Ready for manifest metadata export" : "Not ready"}
               tone={report.ready_for_manifest_export ? "good" : "review"}
             />
           </div>
@@ -237,7 +237,7 @@ export function ClassifierReadinessPage({
           ) : (
             <EmptyState
               title="All target labels have media-backed examples"
-              description="Future manifest work can still use readiness warnings before export."
+              description="The manifest page can still use readiness warnings before metadata export."
             />
           )}
         </div>
@@ -288,7 +288,7 @@ export function ClassifierReadinessPage({
         ) : (
           <EmptyState
             title="No report-level warnings"
-            description="The readiness report has no current warnings, but export generation remains future work."
+            description="The readiness report has no current warnings. Metadata export still stays separate from training."
           />
         )}
       </section>

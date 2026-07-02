@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
-import type { ClassifierTrainingManifestResponse } from "../api/types";
+import type {
+  ClassifierManifestFileExportResponse,
+  ClassifierTrainingManifestResponse,
+} from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
@@ -26,6 +29,19 @@ function buildManifestJson(manifest: ClassifierTrainingManifestResponse): string
   return JSON.stringify(manifest, null, 2);
 }
 
+function formatBytes(bytes?: number | null): string {
+  if (bytes == null) {
+    return "Planned";
+  }
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function countSkippedReasons(manifest: ClassifierTrainingManifestResponse): Record<string, number> {
   return manifest.skipped_records.reduce<Record<string, number>>((counts, record) => {
     counts[record.reason] = (counts[record.reason] ?? 0) + 1;
@@ -42,6 +58,15 @@ export function ClassifierManifestPage({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [includeCsv, setIncludeCsv] = useState(false);
+  const [includeSummary, setIncludeSummary] = useState(true);
+  const [outputName, setOutputName] = useState("");
+  const [splitSeed, setSplitSeed] = useState("");
+  const [exportResult, setExportResult] =
+    useState<ClassifierManifestFileExportResponse | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [exportAction, setExportAction] = useState<"dry_run" | "create" | null>(null);
 
   async function loadManifest() {
     setIsLoading(true);
@@ -103,6 +128,49 @@ export function ClassifierManifestPage({
     setMessage("Browser JSON preview download started.");
   }
 
+  async function runMetadataExport(dryRun: boolean) {
+    setExportAction(dryRun ? "dry_run" : "create");
+    setExportError(null);
+    setExportMessage(null);
+    try {
+      const result = await apiClient.createClassifierManifestExport({
+        include_csv: includeCsv,
+        include_summary: includeSummary,
+        output_name: outputName.trim() ? outputName.trim() : null,
+        split_seed: splitSeed.trim() ? splitSeed.trim() : null,
+        media_policy: "reference_only",
+        dry_run: dryRun,
+      });
+      setExportResult(result);
+      setExportMessage(
+        dryRun
+          ? "Dry run complete. No files were written."
+          : "Metadata export created. Review the local output directory before external training work.",
+      );
+    } catch (caught) {
+      setExportError(caught instanceof Error ? caught.message : "Could not create metadata export.");
+    } finally {
+      setExportAction(null);
+    }
+  }
+
+  async function copyOutputDirectory() {
+    if (!exportResult?.output_directory) {
+      return;
+    }
+    setExportError(null);
+    if (!navigator.clipboard?.writeText) {
+      setExportError("Clipboard access is not available in this browser.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(exportResult.output_directory);
+      setExportMessage("Output directory copied to clipboard.");
+    } catch {
+      setExportError("Clipboard copy failed.");
+    }
+  }
+
   if (isLoading) {
     return <div className="panel">Loading classifier manifest preview...</div>;
   }
@@ -128,7 +196,7 @@ export function ClassifierManifestPage({
       <PageHeader
         eyebrow="Future classifier export"
         title="Classifier Training Manifest"
-        description="This manifest preview shows reviewed media-backed examples that could support a future custom bird classifier. It does not copy media, generate dataset files, train models, or create reviewed truth."
+        description="This manifest preview shows reviewed media-backed examples and can create local metadata export files for later external training review. It does not copy media, train models, or create reviewed truth."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenClassifierReadiness}>
@@ -151,8 +219,8 @@ export function ClassifierManifestPage({
         <strong>Reviewed corrections are the only training truth</strong>
         <span>
           SpeciesSuggestion status is not training truth. MotionEvidence and DetectionProposal
-          records are evidence only. This page copies or downloads the already-loaded JSON in the
-          browser and does not generate training files or train models.
+          records are evidence only. Metadata export creation does not change review state, dataset
+          coverage truth, model state, or analytics truth. Training remains external and future.
         </span>
       </section>
 
@@ -161,6 +229,166 @@ export function ClassifierManifestPage({
         <MetricCard label="Skipped" value={manifest.summary.skipped} detail="explicit reasons" />
         <MetricCard label="Labels" value={Object.keys(manifest.summary.labels).length} detail="included classes" />
         <MetricCard label="Taxonomy" value={manifest.taxonomy.length} detail="target species" />
+      </section>
+
+      <section className="panel classifier-manifest-export-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Metadata export</h2>
+            <span className="meta-text">
+              This writes classifier manifest metadata files only. It does not copy media, train
+              models, or create reviewed truth.
+            </span>
+          </div>
+          <EvidenceBadge label="reference_only" tone="quiet" />
+        </div>
+
+        <div className="manifest-export-form" aria-label="Classifier manifest metadata export">
+          <label className="checkbox-row">
+            <input
+              checked={includeCsv}
+              onChange={(event) => setIncludeCsv(event.target.checked)}
+              type="checkbox"
+            />
+            Include manifest.csv
+          </label>
+          <label className="checkbox-row">
+            <input
+              checked={includeSummary}
+              onChange={(event) => setIncludeSummary(event.target.checked)}
+              type="checkbox"
+            />
+            Include summary.json
+          </label>
+          <label>
+            Output name
+            <input
+              onChange={(event) => setOutputName(event.target.value)}
+              placeholder="optional-safe-export-name"
+              value={outputName}
+            />
+          </label>
+          <label>
+            Split seed
+            <input
+              onChange={(event) => setSplitSeed(event.target.value)}
+              placeholder="optional seed note"
+              value={splitSeed}
+            />
+          </label>
+          <div className="locked-field">
+            <span className="metric-label">Media policy</span>
+            <strong>reference_only</strong>
+          </div>
+        </div>
+
+        <div className="notice-panel manifest-truth-boundary">
+          <strong>Export boundary</strong>
+          <span>
+            Uses reviewed corrections only. SpeciesSuggestion, MotionEvidence, and
+            DetectionProposal remain evidence. Export creation does not mark Visits reviewed, update
+            dataset coverage truth, or create model artifacts.
+          </span>
+        </div>
+
+        <div className="detail-actions">
+          <button
+            className="secondary-action"
+            disabled={exportAction !== null}
+            onClick={() => void runMetadataExport(true)}
+            type="button"
+          >
+            {exportAction === "dry_run" ? "Checking..." : "Dry run"}
+          </button>
+          <button
+            className="primary-action"
+            disabled={exportAction !== null}
+            onClick={() => void runMetadataExport(false)}
+            type="button"
+          >
+            {exportAction === "create" ? "Creating..." : "Create metadata export"}
+          </button>
+        </div>
+
+        {exportMessage ? <div className="notice-panel">{exportMessage}</div> : null}
+        {exportError ? <div className="error-panel">{exportError}</div> : null}
+
+        {exportResult ? (
+          <div className="manifest-export-result">
+            <div className="section-heading">
+              <div>
+                <h3>{exportResult.dry_run ? "Dry-run plan" : "Created export"}</h3>
+                <span className="meta-text">
+                  {exportResult.dry_run
+                    ? "Dry run: no files written"
+                    : `Created ${formatDateTime(exportResult.created_at)}`}
+                </span>
+              </div>
+              <StatusPill
+                label={exportResult.dry_run ? "No files written" : "Metadata files created"}
+                tone={exportResult.dry_run ? "review" : "good"}
+              />
+            </div>
+
+            <div className="manifest-export-grid">
+              <div>
+                <span className="metric-label">Export ID</span>
+                <strong>{exportResult.export_id}</strong>
+              </div>
+              <div>
+                <span className="metric-label">Examples</span>
+                <strong>{exportResult.examples}</strong>
+              </div>
+              <div>
+                <span className="metric-label">Skipped</span>
+                <strong>{exportResult.skipped}</strong>
+              </div>
+              <div>
+                <span className="metric-label">Output directory</span>
+                <strong>{exportResult.output_directory ?? "None"}</strong>
+              </div>
+            </div>
+
+            {exportResult.output_directory ? (
+              <div className="detail-actions">
+                <button
+                  className="secondary-action"
+                  onClick={() => void copyOutputDirectory()}
+                  type="button"
+                >
+                  Copy output directory
+                </button>
+              </div>
+            ) : null}
+
+            <div className="manifest-file-list" role="table" aria-label="Classifier manifest export files">
+              <div className="manifest-file-row manifest-file-head" role="row">
+                <span role="columnheader">Name</span>
+                <span role="columnheader">Relative path</span>
+                <span role="columnheader">Content type</span>
+                <span role="columnheader">Size</span>
+              </div>
+              {exportResult.files.map((file) => (
+                <div className="manifest-file-row" key={file.name} role="row">
+                  <strong role="cell">{file.name}</strong>
+                  <span role="cell">{file.relative_path}</span>
+                  <span role="cell">{file.content_type}</span>
+                  <span role="cell">{formatBytes(file.size_bytes)}</span>
+                </div>
+              ))}
+            </div>
+
+            {exportResult.warnings.length > 0 ? (
+              <div className="readiness-warning-stack">
+                {exportResult.warnings.map((warning) => (
+                  <div className="notice-panel readiness-warning" key={warning}>
+                    <strong>{warning}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="panel manifest-preview-status">

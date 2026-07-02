@@ -48,6 +48,12 @@ it is docs-only and still creates no files.
 Phase 9T implements backend metadata file export under an ignored local path.
 It writes manifest files only and still does not copy media, train, run
 classifier runtime, or create truth.
+Phase 9U adds frontend controls/status for dry-run and metadata export
+creation. It keeps export UI separate from media copying, training, runtime, and
+review truth.
+Phase 9V documents the external training workflow boundary in
+[external-training-workflow.md](external-training-workflow.md), keeping training
+dependencies, model artifacts, and experiment output outside the core app.
 
 ## Manifest File Formats
 
@@ -260,6 +266,9 @@ Phase 9S documents the future file export policy for local metadata files only,
 with media copying, training, and model runtime still deferred.
 Phase 9T implements that backend metadata export path while keeping media
 copying, training, and model runtime deferred.
+Phase 9U makes dry-run and metadata export status visible in the manifest UI.
+Phase 9V defines the next boundary: exported metadata may feed an external
+workspace, but training and model artifacts stay outside core MockingBird.
 
 ## Relationship To Existing Dataset And Export Features
 
@@ -324,8 +333,9 @@ Tentative product-first phases:
 - Phase 9S: classifier manifest file export design.
 - Phase 9T: manifest file export backend implementation, metadata files only.
 - Phase 9U: classifier manifest export UI/status.
-- Phase 9V: optional media-copy export design.
-- Phase 9W: external training workflow docs.
+- Phase 9V: external training workflow documentation.
+- Phase 9W: media-copy export design.
+- Phase 9X: external training workspace checklist.
 
 These phases remain tentative. Manifest and readiness work should come before
 training, runtime, or model integration.
@@ -338,6 +348,7 @@ training, runtime, or model integration.
 - no server-side manifest file export or media copying in Phase 9R
 - no file generation in Phase 9S
 - no media copying in Phase 9T
+- no media copying or training in Phase 9U
 - no training
 - no model dependencies
 - no model files

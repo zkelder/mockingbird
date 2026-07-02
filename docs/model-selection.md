@@ -98,6 +98,15 @@ Phase 9T implements backend metadata file export for that manifest under an
 ignored local path. It still does not copy media, generate training folders,
 train, run SpeciesNet, run a custom classifier, or add model dependencies.
 
+Phase 9U adds frontend dry-run/create controls and status for that metadata
+export route. It still does not select or run a classifier, copy media, train,
+or add dependencies.
+
+Phase 9V defines the external training workflow in
+[external-training-workflow.md](external-training-workflow.md). Custom
+classifier work remains future until media-copy policy, external workspace
+checks, and runtime adapter boundaries are explicitly scoped.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context
@@ -108,8 +117,8 @@ They should follow [species-suggestion-adapter-design.md](species-suggestion-ada
 - require user review/correction before dataset/export truth changes
 
 Custom classifier training remains future work until reviewed media-backed
-examples, metadata export review, dataset coverage/quality checks, and an
-external training workflow are in place.
+examples, metadata export review, dataset coverage/quality checks, external
+training workflow, and runtime boundary planning are in place.
 SpeciesNet stays a separate optional external species/taxon candidate.
 
 ## Dependency Rules

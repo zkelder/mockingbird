@@ -96,6 +96,15 @@ must never create reviewed truth or make model output truth.
 The Phase 9T backend export writes metadata files only; export generation must
 not run classifier runtime, create training artifacts, copy media, or mutate
 ReviewLabels, Visits, DatasetExports, dataset coverage, or analytics truth.
+The Phase 9U export UI may dry-run and request metadata export creation only.
+It must not imply training readiness as model accuracy, create file download
+endpoints, copy media, create training artifacts, or turn export status into
+reviewed truth.
+External training workflow work must follow
+[external-training-workflow.md](external-training-workflow.md). Training
+dependencies, generated datasets, model checkpoints, experiment logs, and model
+artifacts must not enter the core app without an explicit optional adapter
+boundary, ignored local paths, and evidence-only `SpeciesSuggestion` output.
 
 ## Adapter Input Contract
 

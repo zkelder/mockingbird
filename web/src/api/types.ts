@@ -389,6 +389,33 @@ export interface ClassifierTrainingManifestResponse {
   warnings: string[];
 }
 
+export interface ClassifierManifestFileExportRequest {
+  include_csv?: boolean;
+  include_summary?: boolean;
+  split_seed?: string | null;
+  output_name?: string | null;
+  media_policy?: "reference_only";
+  dry_run?: boolean;
+}
+
+export interface ClassifierManifestExportFile {
+  name: string;
+  relative_path: string;
+  content_type: string;
+  size_bytes?: number | null;
+}
+
+export interface ClassifierManifestFileExportResponse {
+  export_id: string;
+  output_directory?: string | null;
+  files: ClassifierManifestExportFile[];
+  examples: number;
+  skipped: number;
+  warnings: string[];
+  created_at: string;
+  dry_run: boolean;
+}
+
 export interface DetectionProposal {
   id: string;
   run_id: string;

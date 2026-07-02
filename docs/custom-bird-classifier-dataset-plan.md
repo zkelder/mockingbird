@@ -40,6 +40,14 @@ Phase 9T implements backend manifest metadata file export only. It writes local
 manifest files under an ignored export path, but it does not copy media, create
 training folders, train models, or run classifier runtime.
 
+Phase 9U adds frontend dry-run and metadata export status controls for that
+backend route. External training, media copying, and classifier runtime remain
+future work.
+
+Phase 9V documents the external training workflow boundary in
+[external-training-workflow.md](external-training-workflow.md). Training remains
+outside core MockingBird, and model artifacts remain ignored local files.
+
 ## Product Flow
 
 media-backed Visit -> user correction/review -> reviewed label becomes dataset
@@ -135,6 +143,11 @@ Phase 9S defines the local file policy for a later metadata-only export without
 implementing it.
 Phase 9T implements the metadata-only file export path. Media copying,
 training folders, classifier runtime, and model artifacts remain out of scope.
+Phase 9U makes that metadata export path visible in the UI without changing the
+training/runtime boundary.
+Phase 9V defines how exported metadata can feed an external workspace while
+training, copied media datasets, and runtime adapters remain separate future
+phases.
 
 ## Export Format Plan
 
@@ -170,6 +183,8 @@ and split policy. Phase 9Q returns this shape as structured API data only; file
 exports and media-copy policies remain future work.
 See [classifier-manifest-file-export-design.md](classifier-manifest-file-export-design.md)
 for the Phase 9S/9T server-side metadata file export boundary.
+See [external-training-workflow.md](external-training-workflow.md) for the
+Phase 9V external workspace and training boundary.
 
 ## Training/Runtime Separation
 
@@ -222,8 +237,9 @@ Tentative future phases:
 - Phase 9S: classifier manifest file export design.
 - Phase 9T: manifest file export backend implementation, metadata files only.
 - Phase 9U: classifier manifest export UI/status.
-- Phase 9V: optional media-copy export design.
-- Phase 9W: external training workflow docs.
+- Phase 9V: external training workflow documentation.
+- Phase 9W: media-copy export design.
+- Phase 9X: external training workspace checklist.
 
 Keep these phases product-first: reviewed local data, export clarity, and
 truth-boundary tests come before runtime or training work.

@@ -11,6 +11,12 @@ Phase 9S created this design contract. Phase 9T implements backend metadata
 file export from the existing manifest preview. It writes manifest metadata
 files only; it does not copy media, train models, add dependencies, or add
 runtime behavior.
+Phase 9U adds frontend controls/status for dry-run and metadata export creation
+against that existing backend route. The UI does not add file download
+endpoints, copy media, train models, or create reviewed truth.
+Phase 9V documents the external training workflow boundary in
+[external-training-workflow.md](external-training-workflow.md). Metadata export
+is an input to that external workflow only; it is not training or model runtime.
 
 ## Product Flow
 
@@ -24,6 +30,7 @@ Backend export may write manifest metadata files only.
 
 - Media copying is a separate future phase.
 - Training happens outside the core app.
+- Metadata export is an input to the external workflow, not training itself.
 - No model files are generated.
 - No image dataset folders are generated.
 - Generated files must live under ignored local data/export paths.
@@ -122,7 +129,7 @@ The first implementation keeps `media_policy` fixed to `reference_only`.
 
 - Dry-run output should match the current preview API as closely as possible.
 - Dry-run should report planned filenames, counts, warnings, and skipped reasons.
-- Dry-run is useful for UI validation before any local files are created.
+- Phase 9U uses dry-run for UI validation before any local files are created.
 - Dry-run creates no export directories, files, media copies, labels, or truth
   records.
 
@@ -197,8 +204,9 @@ Implementation phases:
 
 - Phase 9T: manifest file export backend implementation, metadata files only.
 - Phase 9U: classifier manifest export UI/status.
-- Phase 9V: optional media-copy export design.
-- Phase 9W: external training workflow documentation.
+- Phase 9V: external training workflow documentation.
+- Phase 9W: media-copy export design.
+- Phase 9X: external training workspace checklist.
 
 Keep these phases product-first: reviewed corrections, local artifact safety,
 and clear export boundaries come before training or runtime work.

@@ -2421,6 +2421,7 @@ button {
 }
 
 .manifest-preview-status,
+.classifier-manifest-export-panel,
 .classifier-manifest-panel,
 .manifest-skipped-list,
 .taxonomy-preview-grid {
@@ -2441,6 +2442,95 @@ button {
 .manifest-preview-status p {
   margin-top: 8px;
   color: #4f5f55;
+}
+
+.manifest-export-form,
+.manifest-export-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.manifest-export-form label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.manifest-export-form input {
+  min-height: 40px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.manifest-export-form .checkbox-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: center;
+  align-items: center;
+}
+
+.locked-field,
+.manifest-export-grid div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.locked-field strong,
+.manifest-export-grid strong {
+  overflow-wrap: anywhere;
+}
+
+.manifest-truth-boundary {
+  border-color: #d6bb7a;
+  background: #fff9e9;
+}
+
+.manifest-export-result,
+.manifest-file-list {
+  display: grid;
+  gap: 12px;
+}
+
+.manifest-file-list {
+  overflow: hidden;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.manifest-file-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) minmax(140px, 1fr) minmax(80px, 0.6fr);
+  gap: 12px;
+  align-items: center;
+  border-top: 1px solid #e3e9df;
+  padding: 12px;
+}
+
+.manifest-file-row:first-child {
+  border-top: 0;
+}
+
+.manifest-file-head {
+  background: #f2f7ef;
+  color: #536258;
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.manifest-file-row span,
+.manifest-file-row strong {
+  overflow-wrap: anywhere;
 }
 
 .manifest-example-table {
@@ -2523,6 +2613,8 @@ button {
   .metric-grid,
   .case-summary-grid,
   .manifest-summary,
+  .manifest-export-form,
+  .manifest-export-grid,
   .species-export-summary,
   .species-state-grid,
   .coverage-metric-grid,
@@ -2637,6 +2729,9 @@ button {
 
   .classifier-readiness-status,
   .manifest-preview-status,
+  .manifest-export-form,
+  .manifest-export-grid,
+  .manifest-file-row,
   .manifest-example-row,
   .taxonomy-preview-grid,
   .readiness-table-row {
