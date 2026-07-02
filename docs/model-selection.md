@@ -113,6 +113,10 @@ classifier path still awaits future media-copy/export workflow implementation,
 external training workspace checks, and a runtime adapter boundary before any
 classifier dependency or model artifact work.
 
+Phase 9X adds copy-media dry-run planning only. The custom classifier path still
+awaits actual media-copy export, external training workflow checks, and runtime
+adapter boundary planning before dependency, training, or model artifact work.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context

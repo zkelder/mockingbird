@@ -57,6 +57,9 @@ dependencies, model artifacts, and experiment output outside the core app.
 Phase 9W defines the future optional media-copy export boundary in
 [media-copy-export-design.md](media-copy-export-design.md). The current
 implementation still supports reference-only metadata export.
+Phase 9X adds copy-media dry-run planning so users can inspect planned local
+media paths, skip reasons, and byte estimates before any actual media-copy
+implementation.
 
 ## Manifest File Formats
 
@@ -276,6 +279,8 @@ Phase 9V defines the next boundary: exported metadata may feed an external
 workspace, but training and model artifacts stay outside core MockingBird.
 Phase 9W defines how optional copied media could later join that workflow while
 remaining local, ignored, and separate from reviewed truth.
+Phase 9X implements dry-run media planning only; it writes no media files and
+creates no export truth.
 
 ## Relationship To Existing Dataset And Export Features
 
@@ -342,8 +347,9 @@ Tentative product-first phases:
 - Phase 9U: classifier manifest export UI/status.
 - Phase 9V: external training workflow documentation.
 - Phase 9W: media-copy export design.
-- Phase 9X: media-copy export dry-run implementation or external training
-  workspace checklist.
+- Phase 9X: media-copy export dry-run implementation.
+- Phase 9Y: media-copy export implementation, still no training, or external
+  training workspace checklist.
 
 These phases remain tentative. Manifest and readiness work should come before
 training, runtime, or model integration.
@@ -358,6 +364,7 @@ training, runtime, or model integration.
 - no media copying in Phase 9T
 - no media copying or training in Phase 9U
 - no media copying in Phase 9W
+- no actual media copying in Phase 9X
 - no training
 - no model dependencies
 - no model files

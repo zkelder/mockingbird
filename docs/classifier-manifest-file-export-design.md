@@ -20,6 +20,8 @@ is an input to that external workflow only; it is not training or model runtime.
 Phase 9W documents the future optional media-copy boundary in
 [media-copy-export-design.md](media-copy-export-design.md). Copy-media export is
 design-only and not part of the current implementation.
+Phase 9X implements `copy_media` dry-run planning only. Actual media copying
+remains future work.
 
 ## Product Flow
 
@@ -106,7 +108,7 @@ Request:
 - `include_summary: bool = true`
 - `split_seed: str | None = None`
 - `output_name: str | None = None`
-- `media_policy: "reference_only"`
+- `media_policy: "reference_only" | "copy_media"`
 - `dry_run: bool = false`
 
 Response:
@@ -118,14 +120,18 @@ Response:
 - `skipped`
 - `warnings`
 - `created_at`
+- `media_policy`
+- `planned_media_files`
+- `skipped_media`
+- `total_planned_media_bytes`
 
 Potential read routes, if consistent with existing export patterns:
 
 - `GET /api/classifier-training-manifest/exports/{export_id}`
 - `GET /api/classifier-training-manifest/exports`
 
-The current implementation keeps `media_policy` fixed to `reference_only`.
-`copy_media` is a future design only; see
+The current implementation keeps non-dry-run export fixed to
+`media_policy: "reference_only"`. `copy_media` is dry-run only in Phase 9X; see
 [media-copy-export-design.md](media-copy-export-design.md).
 
 ## Dry-Run Behavior
@@ -211,8 +217,9 @@ Implementation phases:
 - Phase 9U: classifier manifest export UI/status.
 - Phase 9V: external training workflow documentation.
 - Phase 9W: media-copy export design.
-- Phase 9X: media-copy export dry-run implementation or external training
-  workspace checklist.
+- Phase 9X: media-copy export dry-run implementation.
+- Phase 9Y: media-copy export implementation, still no training, or external
+  training workspace checklist.
 
 Keep these phases product-first: reviewed corrections, local artifact safety,
 and clear export boundaries come before training or runtime work.
@@ -220,6 +227,7 @@ and clear export boundaries come before training or runtime work.
 ## Explicit Non-Goals
 
 - no media copying
+- no non-dry-run `copy_media` export
 - no training
 - no model dependencies
 - no model files

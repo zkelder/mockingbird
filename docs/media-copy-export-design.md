@@ -6,8 +6,9 @@ Metadata exports already reference reviewed media-backed examples. Some external
 training workflows may eventually need a copied local media bundle so experiments
 can run outside the core app without depending on live MockingBird media paths.
 
-This design defines that future boundary before any media copying,
+This design defines the boundary before any actual media copying,
 dataset-generation, training, dependency, or runtime work is implemented.
+Phase 9X implements dry-run media planning only.
 
 ## Product Flow
 
@@ -20,6 +21,7 @@ train/evaluate workflow -> future trained classifier adapter ->
 
 - Media copying is optional future functionality.
 - Metadata-only export already exists and remains valid on its own.
+- Phase 9X `copy_media` support is dry-run only.
 - Copied media is for external training workspace convenience.
 - Copied media does not create truth.
 - Copied media does not train a model by itself.
@@ -128,37 +130,38 @@ Future media-copy implementation may add these skip reasons:
 - Repeated exports should create separate directories.
 - Copied media must not be committed.
 
-## API Design For Future Implementation
+## API Design
 
-Do not implement this in Phase 9W. A later phase may extend:
+Phase 9X extends:
 
 `POST /api/classifier-training-manifest/exports`
 
-Future request extension:
+Request policy:
 
-- `media_policy: "reference_only" | "copy_media"`
-- `include_media: bool` or `media_policy` only
-- `max_media_bytes` optional future
-- `include_video` optional future, default `false`
-- `dry_run` support
+- `media_policy: "reference_only"` works for dry-run and non-dry-run exports.
+- `media_policy: "copy_media"` works only when `dry_run` is `true`.
+- `media_policy: "copy_media"` with `dry_run` false is rejected.
+- `max_media_bytes` and `include_video` remain future options.
 
-Future response additions:
+Phase 9X response fields:
 
-- `copied_media_files`
-- `total_media_bytes`
-- `skipped_media`
 - `media_policy`
+- `planned_media_files`
+- `skipped_media`
+- `total_planned_media_bytes`
 
-Current implementation supports `reference_only` only.
+Actual copied-media file fields remain future work.
 
 ## Dry-Run Behavior
 
-Future dry-run behavior should:
+Phase 9X dry-run behavior:
 
 - estimate what media would be copied
 - write no files
 - report skipped media reasons
 - help users avoid unexpected storage use
+- never create copied media directories
+- never copy or decode media
 
 ## Truth Boundary
 
@@ -167,6 +170,7 @@ Future dry-run behavior should:
 - Copying media does not create dataset coverage truth.
 - Copying media does not create `SpeciesSuggestion`.
 - Copied media is training artifact/context only.
+- Dry-run media planning is report metadata only.
 - Training output must return `SpeciesSuggestion` evidence only.
 
 ## External Training Relationship
@@ -201,8 +205,10 @@ Future tests should prove:
 Tentative product-first phases:
 
 - Phase 9X: media-copy export dry-run implementation.
-- Phase 9Y: media-copy export implementation, still no training.
-- Phase 9Z: external training workspace checklist/tooling docs.
+- Phase 9Y: media-copy export implementation, still no training, or external
+  training workspace checklist.
+- Phase 9Z: external training workspace checklist/tooling docs, if not done in
+  Phase 9Y.
 - Later: custom classifier runtime boundary.
 
 These phases should keep reviewed corrections, local storage safety, and the
@@ -210,7 +216,7 @@ truth boundary ahead of training or runtime work.
 
 ## Explicit Non-Goals
 
-- no media copying in this phase
+- no actual media copying in this phase
 - no media decoding
 - no crop generation
 - no thumbnail generation

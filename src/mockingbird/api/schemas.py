@@ -937,9 +937,15 @@ class ClassifierManifestFileExportRequest(BaseModel):
     @field_validator("media_policy")
     @classmethod
     def validate_media_policy(cls, value: str) -> str:
-        if value != "reference_only":
-            raise ValueError("media_policy must be 'reference_only' in this phase")
+        if value not in {"reference_only", "copy_media"}:
+            raise ValueError("media_policy must be 'reference_only' or 'copy_media'")
         return value
+
+    @model_validator(mode="after")
+    def validate_copy_media_phase(self) -> "ClassifierManifestFileExportRequest":
+        if self.media_policy == "copy_media" and not self.dry_run:
+            raise ValueError("copy_media export is dry-run only in this phase.")
+        return self
 
     @field_validator("output_name")
     @classmethod
@@ -974,6 +980,23 @@ class ClassifierManifestExportFile(BaseModel):
     size_bytes: int | None = Field(default=None, ge=0)
 
 
+class ClassifierManifestPlannedMediaFile(BaseModel):
+    example_id: str
+    media_asset_id: str
+    source_path: str | None = None
+    planned_relative_path: str
+    size_bytes: int | None = Field(default=None, ge=0)
+    reason: str | None = None
+
+
+class ClassifierManifestSkippedMediaRecord(BaseModel):
+    example_id: str
+    media_asset_id: str
+    source_path: str | None = None
+    reason: str
+    detail: str | None = None
+
+
 class ClassifierManifestFileExportResponse(BaseModel):
     # Metadata exports write local manifest files only; reviewed corrections remain truth.
     export_id: str
@@ -984,6 +1007,10 @@ class ClassifierManifestFileExportResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     created_at: str
     dry_run: bool
+    media_policy: str = "reference_only"
+    planned_media_files: list[ClassifierManifestPlannedMediaFile] = Field(default_factory=list)
+    skipped_media: list[ClassifierManifestSkippedMediaRecord] = Field(default_factory=list)
+    total_planned_media_bytes: int | None = Field(default=None, ge=0)
 
 
 class AnalyticsSummary(BaseModel):

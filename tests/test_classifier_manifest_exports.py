@@ -145,7 +145,67 @@ async def test_classifier_manifest_export_dry_run_plans_files_without_writing(
         "manifest.csv",
     }
     assert all(file["size_bytes"] is None for file in export["files"])
+    assert export["media_policy"] == "reference_only"
+    assert export["planned_media_files"] == []
+    assert export["skipped_media"] == []
+    assert export["total_planned_media_bytes"] is None
     assert not isolated_repository.exists()
+    assert await local_truth_snapshot(client) == truth_before
+
+
+async def test_classifier_manifest_copy_media_dry_run_plans_media_without_writing(
+    client: httpx.AsyncClient,
+    isolated_repository: Path,
+) -> None:
+    imported = await create_reviewed_bird_example(
+        client,
+        filename="private-yard/classifier-export-bird.png",
+    )
+    preview = await classifier_manifest(client)
+    truth_before = await local_truth_snapshot(client)
+    source_path = Path(imported["media_asset"]["local_path"])
+    source_size = source_path.stat().st_size
+
+    response = await client.post(
+        "/api/classifier-training-manifest/exports",
+        json={
+            "dry_run": True,
+            "include_csv": True,
+            "media_policy": "copy_media",
+            "output_name": "copy-media-dry-run",
+        },
+    )
+
+    assert response.status_code == 201
+    export = response.json()
+    planned = export["planned_media_files"]
+    expected_example = preview["examples"][0]
+
+    assert export["dry_run"] is True
+    assert export["media_policy"] == "copy_media"
+    assert export["output_directory"] is None
+    assert export["examples"] == len(preview["examples"])
+    assert export["skipped"] == len(preview["skipped_records"])
+    assert len(planned) == 1
+    assert planned[0]["example_id"] == expected_example["example_id"]
+    assert planned[0]["media_asset_id"] == expected_example["media_asset_id"]
+    assert planned[0]["source_path"] == str(source_path)
+    assert planned[0]["planned_relative_path"] == (
+        f"media/{expected_example['example_id']}.png"
+    )
+    assert not Path(planned[0]["planned_relative_path"]).is_absolute()
+    assert ".." not in Path(planned[0]["planned_relative_path"]).parts
+    assert Path(planned[0]["planned_relative_path"]).parts == (
+        "media",
+        f"{expected_example['example_id']}.png",
+    )
+    assert "classifier-export-bird" not in planned[0]["planned_relative_path"]
+    assert planned[0]["size_bytes"] == source_size
+    assert planned[0]["reason"] is None
+    assert export["skipped_media"] == []
+    assert export["total_planned_media_bytes"] == source_size
+    assert not isolated_repository.exists()
+    assert not (isolated_repository / planned[0]["planned_relative_path"]).exists()
     assert await local_truth_snapshot(client) == truth_before
 
 
@@ -194,6 +254,10 @@ async def test_classifier_manifest_export_writes_metadata_files_matching_preview
     assert summary["labels"] == preview["summary"]["labels"]
     assert summary["splits"] == preview["summary"]["splits"]
     assert summary["media_policy"] == "reference_only"
+    assert export["media_policy"] == "reference_only"
+    assert export["planned_media_files"] == []
+    assert export["skipped_media"] == []
+    assert export["total_planned_media_bytes"] is None
     assert await local_truth_snapshot(client) == truth_before
     assert all(
         path.suffix not in {".onnx", ".pt", ".pth", ".weights", ".engine", ".ckpt"}
@@ -225,7 +289,7 @@ async def test_classifier_manifest_export_csv_option_and_summary_omission(
     assert any(row["label"] == "blue_jay" for row in rows)
 
 
-async def test_classifier_manifest_export_rejects_media_copy_and_unsafe_output_name(
+async def test_classifier_manifest_export_rejects_non_dry_run_media_copy_and_unsafe_input(
     client: httpx.AsyncClient,
     isolated_repository: Path,
 ) -> None:
@@ -233,14 +297,83 @@ async def test_classifier_manifest_export_rejects_media_copy_and_unsafe_output_n
         "/api/classifier-training-manifest/exports",
         json={"media_policy": "copy_media"},
     )
+    invalid_policy_response = await client.post(
+        "/api/classifier-training-manifest/exports",
+        json={"media_policy": "unknown_policy", "dry_run": True},
+    )
     traversal_response = await client.post(
         "/api/classifier-training-manifest/exports",
         json={"output_name": "../outside"},
     )
 
     assert media_copy_response.status_code == 422
+    assert "copy_media export is dry-run only in this phase." in json.dumps(
+        media_copy_response.json()["detail"]
+    )
+    assert invalid_policy_response.status_code == 422
+    assert "media_policy must be 'reference_only' or 'copy_media'" in json.dumps(
+        invalid_policy_response.json()["detail"]
+    )
     assert traversal_response.status_code == 422
     assert not isolated_repository.exists()
+
+
+async def test_classifier_manifest_copy_media_dry_run_reports_stale_media_reference(
+    client: httpx.AsyncClient,
+    isolated_repository: Path,
+) -> None:
+    imported = await create_reviewed_bird_example(
+        client,
+        filename="classifier-stale-media.png",
+    )
+    source_path = Path(imported["media_asset"]["local_path"])
+    source_path.unlink()
+    truth_before = await local_truth_snapshot(client)
+
+    response = await client.post(
+        "/api/classifier-training-manifest/exports",
+        json={"dry_run": True, "media_policy": "copy_media"},
+    )
+
+    assert response.status_code == 201
+    export = response.json()
+    assert export["planned_media_files"] == []
+    assert len(export["skipped_media"]) == 1
+    assert export["skipped_media"][0]["media_asset_id"] == imported["media_asset"]["id"]
+    assert export["skipped_media"][0]["source_path"] == str(source_path)
+    assert export["skipped_media"][0]["reason"] == "stale_media_reference"
+    assert export["total_planned_media_bytes"] == 0
+    assert not isolated_repository.exists()
+    assert await local_truth_snapshot(client) == truth_before
+
+
+async def test_classifier_manifest_copy_media_dry_run_reports_unsupported_extension(
+    client: httpx.AsyncClient,
+    isolated_repository: Path,
+) -> None:
+    imported = await create_reviewed_bird_example(
+        client,
+        filename="classifier-export-bird.txt",
+    )
+    source_path = Path(imported["media_asset"]["local_path"])
+    truth_before = await local_truth_snapshot(client)
+
+    response = await client.post(
+        "/api/classifier-training-manifest/exports",
+        json={"dry_run": True, "media_policy": "copy_media"},
+    )
+
+    assert response.status_code == 201
+    export = response.json()
+    assert export["planned_media_files"] == []
+    assert len(export["skipped_media"]) == 1
+    assert export["skipped_media"][0]["media_asset_id"] == imported["media_asset"]["id"]
+    assert export["skipped_media"][0]["source_path"] == str(source_path)
+    assert export["skipped_media"][0]["reason"] == "unsupported_media_type"
+    assert export["total_planned_media_bytes"] == 0
+    assert source_path.exists()
+    assert not isolated_repository.exists()
+    assert await local_truth_snapshot(client) == truth_before
 
 
 async def test_classifier_manifest_exports_are_unique_and_do_not_create_truth(

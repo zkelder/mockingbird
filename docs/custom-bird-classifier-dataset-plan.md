@@ -51,6 +51,9 @@ outside core MockingBird, and model artifacts remain ignored local files.
 Phase 9W documents future optional media-copy export in
 [media-copy-export-design.md](media-copy-export-design.md). Media-copy export
 remains separate from metadata export and is not implemented in this phase.
+Phase 9X adds copy-media dry-run planning only. It can report planned local
+media paths, skips, and byte estimates, but it does not create datasets or copy
+media.
 
 ## Product Flow
 
@@ -154,6 +157,8 @@ training, copied media datasets, and runtime adapters remain separate future
 phases.
 Phase 9W defines the copied-media boundary without generating datasets, copying
 media, training, or adding runtime behavior.
+Phase 9X implements dry-run copied-media planning without creating datasets,
+copying media, training, or adding runtime behavior.
 
 ## Export Format Plan
 
@@ -247,8 +252,9 @@ Tentative future phases:
 - Phase 9U: classifier manifest export UI/status.
 - Phase 9V: external training workflow documentation.
 - Phase 9W: media-copy export design.
-- Phase 9X: media-copy export dry-run implementation or external training
-  workspace checklist.
+- Phase 9X: media-copy export dry-run implementation.
+- Phase 9Y: media-copy export implementation, still no training, or external
+  training workspace checklist.
 
 Keep these phases product-first: reviewed local data, export clarity, and
 truth-boundary tests come before runtime or training work.

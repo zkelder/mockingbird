@@ -110,6 +110,9 @@ Copied media bundles and copied classifier datasets must follow
 explicit scope, ignored local paths, and must not be committed or create
 `ReviewLabel`, Event, Visit, dataset coverage, export, analytics, or
 `SpeciesSuggestion` truth.
+Phase 9X copy-media dry-run planning is report metadata only. It must not copy
+media, create directories, generate datasets, add model artifacts, or mutate
+review truth.
 
 ## Adapter Input Contract
 

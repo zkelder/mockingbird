@@ -58,6 +58,8 @@ from mockingbird.api.schemas import (
     ClassifierManifestFileExportRequest,
     ClassifierManifestFileExportResponse,
     ClassifierManifestSkippedRecord,
+    ClassifierManifestPlannedMediaFile,
+    ClassifierManifestSkippedMediaRecord,
     ClassifierManifestSummary,
     ClassifierManifestTaxonomyEntry,
     ClassifierReadinessReport,
@@ -170,6 +172,12 @@ SUPPORTED_MEDIA_EXTENSIONS = {
     ".webp": ("image/webp", "image"),
     ".mp4": ("video/mp4", "video"),
     ".mov": ("video/quicktime", "video"),
+}
+
+CLASSIFIER_MANIFEST_COPY_IMAGE_EXTENSIONS = {
+    extension
+    for extension, (_content_type, media_type) in SUPPORTED_MEDIA_EXTENSIONS.items()
+    if media_type == "image"
 }
 
 DEFAULT_CLASSIFIER_MANIFEST_EXPORT_ROOT = Path("data/classifier_manifest_exports")
@@ -3973,9 +3981,22 @@ class ProductRepository:
         payload: ClassifierManifestFileExportRequest,
         manifest: ClassifierTrainingManifestResponse,
     ) -> ClassifierManifestFileExportResponse:
+        if payload.media_policy == "copy_media" and not payload.dry_run:
+            raise ValueError("copy_media export is dry-run only in this phase.")
+
         created_at = datetime.now(UTC).isoformat()
         export_id = self._classifier_manifest_export_id(payload.output_name)
         file_names = self._classifier_manifest_export_file_names(payload)
+        planned_media_files: list[ClassifierManifestPlannedMediaFile] = []
+        skipped_media: list[ClassifierManifestSkippedMediaRecord] = []
+        total_planned_media_bytes: int | None = None
+
+        if payload.media_policy == "copy_media":
+            (
+                planned_media_files,
+                skipped_media,
+                total_planned_media_bytes,
+            ) = self._plan_classifier_manifest_media_copy(manifest)
 
         if payload.dry_run:
             return ClassifierManifestFileExportResponse(
@@ -3995,6 +4016,10 @@ class ProductRepository:
                 warnings=manifest.warnings,
                 created_at=created_at,
                 dry_run=True,
+                media_policy=payload.media_policy,
+                planned_media_files=planned_media_files,
+                skipped_media=skipped_media,
+                total_planned_media_bytes=total_planned_media_bytes,
             )
 
         export_root = self.classifier_manifest_export_root.resolve(strict=False)
@@ -4039,6 +4064,10 @@ class ProductRepository:
             warnings=manifest.warnings,
             created_at=created_at,
             dry_run=False,
+            media_policy=payload.media_policy,
+            planned_media_files=[],
+            skipped_media=[],
+            total_planned_media_bytes=None,
         )
 
     def _classifier_manifest_export_id(self, output_name: str | None) -> str:
@@ -4066,6 +4095,93 @@ class ProductRepository:
         if payload.include_csv:
             file_names.append("manifest.csv")
         return file_names
+
+    def _plan_classifier_manifest_media_copy(
+        self,
+        manifest: ClassifierTrainingManifestResponse,
+    ) -> tuple[
+        list[ClassifierManifestPlannedMediaFile],
+        list[ClassifierManifestSkippedMediaRecord],
+        int | None,
+    ]:
+        planned_media_files: list[ClassifierManifestPlannedMediaFile] = []
+        skipped_media: list[ClassifierManifestSkippedMediaRecord] = []
+
+        for example in manifest.examples:
+            source_path = example.local_media_path
+            if not source_path:
+                skipped_media.append(
+                    ClassifierManifestSkippedMediaRecord(
+                        example_id=example.example_id,
+                        media_asset_id=example.media_asset_id,
+                        source_path=None,
+                        reason="media_source_missing",
+                        detail="Manifest example has no local media path to copy.",
+                    )
+                )
+                continue
+
+            path = Path(source_path)
+            suffix = path.suffix.lower()
+            if suffix not in CLASSIFIER_MANIFEST_COPY_IMAGE_EXTENSIONS:
+                skipped_media.append(
+                    ClassifierManifestSkippedMediaRecord(
+                        example_id=example.example_id,
+                        media_asset_id=example.media_asset_id,
+                        source_path=source_path,
+                        reason="unsupported_media_type",
+                        detail="Media-copy dry-run initially supports image file extensions only.",
+                    )
+                )
+                continue
+            if not path.exists() or not path.is_file():
+                skipped_media.append(
+                    ClassifierManifestSkippedMediaRecord(
+                        example_id=example.example_id,
+                        media_asset_id=example.media_asset_id,
+                        source_path=source_path,
+                        reason="stale_media_reference",
+                        detail="Local media path does not point to an existing file.",
+                    )
+                )
+                continue
+
+            try:
+                size_bytes = path.stat().st_size
+            except OSError:
+                skipped_media.append(
+                    ClassifierManifestSkippedMediaRecord(
+                        example_id=example.example_id,
+                        media_asset_id=example.media_asset_id,
+                        source_path=source_path,
+                        reason="stale_media_reference",
+                        detail="Local media size could not be read with filesystem metadata.",
+                    )
+                )
+                continue
+
+            planned_media_files.append(
+                ClassifierManifestPlannedMediaFile(
+                    example_id=example.example_id,
+                    media_asset_id=example.media_asset_id,
+                    source_path=source_path,
+                    planned_relative_path=(
+                        f"media/{self._classifier_manifest_safe_media_stem(example.example_id)}"
+                        f"{suffix}"
+                    ),
+                    size_bytes=size_bytes,
+                    reason=None,
+                )
+            )
+
+        total_planned_media_bytes = sum(
+            planned.size_bytes or 0 for planned in planned_media_files
+        )
+        return planned_media_files, skipped_media, total_planned_media_bytes
+
+    def _classifier_manifest_safe_media_stem(self, example_id: str) -> str:
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "-", example_id).strip(".-")
+        return safe or "classifier-example"
 
     def _write_classifier_manifest_files(
         self,
