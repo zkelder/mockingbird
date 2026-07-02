@@ -41,6 +41,11 @@ truth.
 A transient, explicit image preview fetched from an `external_url` Source. It is
 not saved media, live playback, evidence, an Event/Visit, or reviewed truth.
 
+## Preview MediaAsset
+
+A future explicitly saved still-image preview linked to Source/Stream context.
+It is local media context, not MotionEvidence, an Event/Visit, or reviewed truth.
+
 ## Source Setup Review
 
 A read-only product summary of provider configuration, Source connection

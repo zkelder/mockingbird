@@ -81,6 +81,8 @@ preview/status. Its contract is documented in
 and remains explicit, bounded, local-first, and non-truth.
 The Phase 11C preview fetch is an explicit request only: no worker, no storage,
 no live playback, and no evidence or truth creation.
+Preview-to-MediaAsset handoff is a future explicit storage boundary; see
+[external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

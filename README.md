@@ -85,6 +85,9 @@ guardrails, storage limits, and review/truth boundaries before implementation.
 The current implementation can fetch an explicit still-image preview for
 configured `external_url` Sources. It is transient, not saved, not live playback,
 and creates no Events/Visits or truth.
+Future save-preview behavior is design-only in
+[docs/external-url-preview-media-asset-handoff-design.md](docs/external-url-preview-media-asset-handoff-design.md);
+saving fetched previews must be explicit, local, bounded, and truth-safe.
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 

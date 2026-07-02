@@ -66,6 +66,9 @@ Rationale:
 Phase 11C adds the first bounded provider behavior for this direction: explicit
 still-image preview fetch, no workers, no storage, no live playback, and no
 truth creation.
+Saving preview media requires the explicit handoff design in
+[external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md)
+and still must not create truth.
 
 ## Explicit Non-Recommended First Adapters
 

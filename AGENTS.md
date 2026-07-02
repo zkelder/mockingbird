@@ -127,6 +127,9 @@ Every future implementation task must restate:
   content-type, secret-redaction, storage, and truth-boundary guardrails.
   External URL fetches must remain explicit, bounded, no-worker, and no-truth
   unless a later task scopes a different lifecycle.
+- Saving fetched previews as MediaAssets must follow
+  [docs/external-url-preview-media-asset-handoff-design.md](docs/external-url-preview-media-asset-handoff-design.md),
+  use ignored local paths, require explicit scope, and create no truth by itself.
 - Source setup review/status work must remain read-only and must not connect to
   sources, capture/decode media, run adapters/models, or create evidence/truth.
 - Local MegaDetector setup must follow

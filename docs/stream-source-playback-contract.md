@@ -67,6 +67,8 @@ For `external_url` Sources, Phase 11C preview fetch is transient UI context.
 Playback status must not fetch URLs, store media, imply live playback, or persist
 preview media. Future `preview_url` or `preview_media_asset_id` handoff requires
 separate scope.
+Future saved previews may become MediaAssets only through explicit handoff, and
+they do not become playback truth or evidence by default.
 
 ## What This Phase Does
 
@@ -95,6 +97,8 @@ playback status is the product-facing playback surface for future adapters, not
 an evidence or truth surface.
 The external URL still-image provider contract is documented in
 [external-url-still-image-provider-contract.md](external-url-still-image-provider-contract.md).
+Preview-to-MediaAsset handoff design is documented in
+[external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
 
 ## Zone Editing Relationship
 

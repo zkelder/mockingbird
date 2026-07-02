@@ -83,6 +83,11 @@ Behavior:
 - May optionally store a preview MediaAsset only in a later explicit phase.
 - Does not create truth.
 
+The future save boundary is documented in
+[external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
+Until that behavior is explicitly implemented, Phase 11C preview remains
+transient and unsaved.
+
 Defaults:
 
 - `timeout_seconds`: 3.0, clamped from 0.5 to 10.0.
@@ -124,6 +129,9 @@ Defaults:
 - Generated preview artifacts must live under ignored local data paths.
 - Cleanup and retention are required before storing fetched media.
 - Generated media must not be committed.
+
+Future preview-to-MediaAsset behavior must follow
+[external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
 
 ## Dependency Policy
 
