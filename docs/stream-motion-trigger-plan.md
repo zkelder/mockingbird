@@ -76,6 +76,12 @@ Phase 8K adds a browser harness for supplied tiny frame planes on the Motion Evi
 
 The harness exercises `/api/motion/evaluate-sequence`, shows frame-score and candidate results, and can optionally create pending MotionEvidence. It still does not sample real streams, decode media, run models, create labels, or create reviewed/export-ready truth.
 
+## Phase 8L Status
+
+Phase 8L defines the lightweight sampler abstraction that will later bridge visible streams/imported media to low-resolution frame planes.
+
+The current system still uses manual and harness-supplied frames. No real stream sampling, media decoding, worker, source adapter, model runtime, or truth creation is added in this phase. See [lightweight-sampler-abstraction.md](lightweight-sampler-abstraction.md).
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

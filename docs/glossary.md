@@ -56,6 +56,10 @@ A lightweight local representation of a stream or media moment that can become a
 
 A rectangular 2D array of numeric grayscale values used for zone-aware motion scoring.
 
+## Sampler
+
+A local component that can produce frame planes from configured stream or media context; it is not a source adapter, detector, or truth source.
+
 ## Motion Evidence
 
 Local evidence that a motion candidate occurred in a stream zone; it is not reviewed truth.

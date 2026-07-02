@@ -181,6 +181,12 @@ Phase 8K adds a browser harness that submits supplied tiny frame planes to the s
 
 When requested, the harness creates pending MotionEvidence only. Users still ignore or promote evidence from the normal Motion Evidence surface, and correction remains the only dataset/export truth path.
 
+## Phase 8L Status
+
+Phase 8L defines the sampler as a future upstream source of pending MotionEvidence.
+
+The sampler should produce frame planes from configured stream/media context and call the existing sequence evaluation contract. It should create pending MotionEvidence only when explicitly configured, and correction remains the only dataset/export truth path.
+
 ## Test Plan
 
 Implementation tests should prove:

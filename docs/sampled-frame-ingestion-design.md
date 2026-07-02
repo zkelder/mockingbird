@@ -97,13 +97,20 @@ Phase 8K adds a browser harness on the Motion Evidence page for supplied synthet
 
 The harness calls `/api/motion/evaluate-sequence`, shows frame score/candidate results, and can optionally create pending MotionEvidence records. It does not sample real streams, decode media, run models, attach media, create labels, create reviewed observations, or write export-ready truth.
 
+## Phase 8L Status
+
+Phase 8L defines the lightweight sampler abstraction that will eventually produce frame planes from already-configured source/stream/media context.
+
+Sampler implementation remains future work. The current system still uses manual or harness-supplied frame planes. See [lightweight-sampler-abstraction.md](lightweight-sampler-abstraction.md).
+
 ## Future Implementation Plan
 
 Tentative future phases:
 
-- Phase 8L: lightweight local sampler abstraction, still without a camera-specific adapter.
-- Phase 8M: attach best-frame media asset from already-available stream/import frames.
-- Phase 8N: automated MotionEvidence creation from selected streams and zones.
+- Phase 8M: sampler abstraction code using supplied in-memory frame planes only.
+- Phase 8N: sampled-frame source contract for already-available stream/import frames.
+- Phase 8O: optional best-frame MediaAsset attachment.
+- Phase 8P: controlled local stream sampling.
 
 Each phase should stay product-first: visible stream, configured zones, pending evidence, review/promotion, then correction truth.
 
