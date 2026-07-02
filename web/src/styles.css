@@ -627,7 +627,8 @@ button {
 }
 
 .external-preview-panel,
-.external-preview-result {
+.external-preview-result,
+.external-preview-save-status {
   display: grid;
   gap: 10px;
   border: 1px solid #d8e2d3;
@@ -637,8 +638,20 @@ button {
 }
 
 .external-preview-panel p,
-.external-preview-result p {
+.external-preview-result p,
+.external-preview-save-status p {
   margin: 0;
+}
+
+.external-preview-save-actions {
+  display: grid;
+  gap: 8px;
+  align-items: start;
+}
+
+.external-preview-save-status {
+  border-color: #b9d7c8;
+  background: #f6fbf7;
 }
 
 .external-preview-image-frame {

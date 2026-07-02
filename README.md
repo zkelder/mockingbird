@@ -85,7 +85,9 @@ guardrails, storage limits, and review/truth boundaries before implementation.
 The current implementation can fetch an explicit still-image preview for
 configured `external_url` Sources. It is transient, not saved, not live playback,
 and creates no Events/Visits or truth.
-Future save-preview behavior is design-only in
+The current implementation can also save that fetched preview as one local
+MediaAsset through an explicit user action. It creates no Events, Visits,
+MotionEvidence, ReviewLabels, or truth. The boundary is documented in
 [docs/external-url-preview-media-asset-handoff-design.md](docs/external-url-preview-media-asset-handoff-design.md);
 saving fetched previews must be explicit, local, bounded, and truth-safe.
 

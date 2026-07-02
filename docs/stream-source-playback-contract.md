@@ -65,10 +65,9 @@ imports zone and review context.
 
 For `external_url` Sources, Phase 11C preview fetch is transient UI context.
 Playback status must not fetch URLs, store media, imply live playback, or persist
-preview media. Future `preview_url` or `preview_media_asset_id` handoff requires
-separate scope.
-Future saved previews may become MediaAssets only through explicit handoff, and
-they do not become playback truth or evidence by default.
+preview media. Phase 11E saved previews become MediaAssets only through explicit
+save action, and they do not become playback truth or evidence by default.
+Future playback use of `preview_media_asset_id` requires separate scope.
 
 ## What This Phase Does
 

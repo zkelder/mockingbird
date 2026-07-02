@@ -72,6 +72,14 @@ class ExternalUrlPreviewStatus(str, Enum):
     error = "error"
 
 
+class ExternalUrlPreviewSaveStatus(str, Enum):
+    saved = "saved"
+    not_configured = "not_configured"
+    unavailable = "unavailable"
+    unsupported = "unsupported"
+    error = "error"
+
+
 class ZoneType(str, Enum):
     feeder = "feeder"
     birdbath = "birdbath"
@@ -312,6 +320,13 @@ class ExternalUrlPreviewRequest(BaseModel):
     max_bytes: int | None = Field(default=5_000_000)
 
 
+class ExternalUrlPreviewSaveRequest(BaseModel):
+    stream_id: str | None = None
+    timeout_seconds: float | None = Field(default=3.0)
+    max_bytes: int | None = Field(default=5_000_000)
+    note: str | None = None
+
+
 class ExternalUrlPreviewResponse(BaseModel):
     # External URL preview is transient evidence context, not saved product truth.
     source_id: str
@@ -326,6 +341,24 @@ class ExternalUrlPreviewResponse(BaseModel):
     supports_live_playback: bool = False
     creates_truth: bool = False
     creates_media_asset: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ExternalUrlPreviewSaveResponse(BaseModel):
+    # Saved previews are local MediaAssets only; correction remains truth.
+    source_id: str
+    stream_id: str | None = None
+    media_asset_id: str | None = None
+    status: ExternalUrlPreviewSaveStatus
+    message: str
+    fetched_at: datetime | None = None
+    content_type: str | None = None
+    bytes_written: int = Field(default=0, ge=0)
+    file_name: str | None = None
+    relative_path: str | None = None
+    creates_event: bool = False
+    creates_visit: bool = False
+    creates_truth: bool = False
     warnings: list[str] = Field(default_factory=list)
 
 

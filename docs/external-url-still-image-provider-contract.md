@@ -6,16 +6,17 @@ The `external_url` provider is the safest first real Source path after manual
 media. In Phase 11C it lets a configured Source provide an explicit still-image
 preview without video decoding, workers, storage, or live-stream claims.
 
-This provider bridges Source setup metadata to Source connection status and
-Stream playback status while keeping MockingBird centered on Sources, Streams,
-Zones, Review, Corrections, and Exports.
+This provider bridges Source setup metadata to explicit still-image preview and
+optional local MediaAsset save while keeping MockingBird centered on Sources,
+Streams, Zones, Review, Corrections, and Exports.
 
 ## Product Flow
 
 external_url provider configuration -> Source setup review -> Source connection
 status -> explicit preview/status request -> transient Stream/source preview cue
--> Zone editing context -> optional future explicit evidence/media flow ->
-Event/Visit review -> correction truth.
+-> optional explicit save as local MediaAsset -> Zone editing context ->
+optional future explicit evidence/review flow -> Event/Visit review ->
+correction truth.
 
 ## Provider Definition
 
@@ -80,13 +81,29 @@ Behavior:
 - No worker.
 - No automatic evidence or event creation.
 - Returns status and optional transient preview metadata.
-- May optionally store a preview MediaAsset only in a later explicit phase.
+- Does not store a preview MediaAsset unless the user calls the explicit save
+  route.
 - Does not create truth.
 
-The future save boundary is documented in
+The save boundary is documented in
 [external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
-Until that behavior is explicitly implemented, Phase 11C preview remains
-transient and unsaved.
+The preview route remains transient and unsaved.
+
+## Explicit Save Request
+
+Implemented route:
+
+`POST /api/sources/{source_id}/external-url/preview/save`
+
+Behavior:
+
+- Explicit and user-triggered only.
+- Reuses preview URL/security/content-type/timeout/byte guardrails.
+- Writes one local still-image file under ignored media storage on success.
+- Creates one MediaAsset on success.
+- Links the MediaAsset to Source and Stream context.
+- Creates no Events, Visits, MotionEvidence, ReviewLabels, or truth.
+- Does not mark anything reviewed.
 
 Defaults:
 
@@ -122,15 +139,14 @@ Defaults:
 
 ## Storage Policy
 
-- This phase stores no media.
-- Future explicit preview may return a remote preview URL or store local preview
-  only if separately scoped.
+- The transient preview route stores no media.
+- The explicit save route may store one bounded local still-image MediaAsset.
 - Storage must not be unbounded.
 - Generated preview artifacts must live under ignored local data paths.
 - Cleanup and retention are required before storing fetched media.
 - Generated media must not be committed.
 
-Future preview-to-MediaAsset behavior must follow
+Preview-to-MediaAsset behavior must follow
 [external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
 
 ## Dependency Policy
@@ -145,7 +161,8 @@ Future preview-to-MediaAsset behavior must follow
 
 - Configuring a URL does not create MotionEvidence.
 - Fetching a preview does not create MotionEvidence, Events, or Visits.
-- Fetching a preview does not create ReviewLabels.
+- Saving a preview creates a MediaAsset only.
+- Fetching or saving a preview does not create ReviewLabels.
 - Adapter status does not mark Visits reviewed.
 - Future conversion to evidence requires explicit user action or a separately
   designed automation phase.
@@ -193,7 +210,7 @@ Implementation tests cover:
 - Unsafe URL is blocked or rejected according to the security policy.
 - Unsupported content type is rejected safely.
 - No Events, Visits, ReviewLabels, or MotionEvidence are created.
-- No generated media unless explicitly scoped.
+- Save route creates one local MediaAsset only on success.
 - App works without extra dependencies.
 
 ## Relationship To ESP32-CAM-style Sources
@@ -216,7 +233,8 @@ MockingBird on ESP32.
 Recommended next phases:
 
 - Phase 11D: preview-to-MediaAsset handoff design.
-- Phase 11E: explicit preview storage implementation, if needed.
+- Phase 11E: explicit preview-to-MediaAsset save implementation, no
+  Events/Visits/truth.
 - Later: MJPEG, RTSP, USB/local camera, ESP32-CAM, and browser camera designs
   separately.
 
@@ -228,7 +246,7 @@ Recommended next phases:
 - No video decoding.
 - No workers.
 - No camera connection.
-- No media storage.
+- No automatic media storage.
 - No evidence/event creation.
 - No truth creation.
 - No model/training work.

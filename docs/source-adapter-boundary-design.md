@@ -66,7 +66,8 @@ Rationale:
 Phase 11C adds the first bounded provider behavior for this direction: explicit
 still-image preview fetch, no workers, no storage, no live playback, and no
 truth creation.
-Saving preview media requires the explicit handoff design in
+Phase 11E adds explicit save-as-MediaAsset for fetched previews only. Saving
+preview media requires the handoff design in
 [external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md)
 and still must not create truth.
 
@@ -192,7 +193,9 @@ Future implementation must test:
 - Phase 11B: external URL / HTTP still-image provider contract.
 - Phase 11C: explicit preview fetch implementation, no workers/no truth.
 - Phase 11D: preview-to-MediaAsset handoff design, still explicit.
-- Phase 11E: first real adapter UI polish.
+- Phase 11E: explicit preview-to-MediaAsset save implementation, no
+  Events/Visits/truth.
+- Phase 11F: saved preview review/evidence handoff design.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

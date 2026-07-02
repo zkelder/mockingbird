@@ -33,6 +33,7 @@ class ExternalUrlPreviewFetchResult:
     content_length: int | None = None
     bytes_read: int | None = None
     preview_data_url: str | None = None
+    fetched_bytes: bytes | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -109,6 +110,7 @@ def fetch_external_url_preview(
                 content_length=content_length,
                 bytes_read=len(body),
                 preview_data_url=f"data:{content_type};base64,{preview}",
+                fetched_bytes=body,
             )
     except HTTPError as error:
         if 300 <= error.code < 400:
@@ -147,6 +149,11 @@ def _validate_external_url(url: str) -> None:
     # loopback, multicast, unspecified, reserved, and link-local targets fail closed.
     for address in _resolve_host_addresses(parsed.hostname):
         _validate_resolved_address(address)
+
+
+def safe_url_host(url: str) -> str | None:
+    host = urlparse(url).hostname
+    return host.lower() if host else None
 
 
 def _validate_resolved_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:

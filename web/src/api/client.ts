@@ -24,6 +24,8 @@ import type {
   EventDetail,
   ExternalUrlPreviewRequest,
   ExternalUrlPreviewResponse,
+  ExternalUrlPreviewSaveRequest,
+  ExternalUrlPreviewSaveResponse,
   FolderImportCreate,
   FolderImportPreview,
   FolderImportPreviewRequest,
@@ -145,6 +147,11 @@ export const apiClient = {
     }),
   fetchExternalUrlPreview: (sourceId: string, payload: ExternalUrlPreviewRequest = {}) =>
     request<ExternalUrlPreviewResponse>(`/api/sources/${sourceId}/external-url/preview`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  saveExternalUrlPreview: (sourceId: string, payload: ExternalUrlPreviewSaveRequest = {}) =>
+    request<ExternalUrlPreviewSaveResponse>(`/api/sources/${sourceId}/external-url/preview/save`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),

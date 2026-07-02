@@ -34,6 +34,12 @@ export type ExternalUrlPreviewStatus =
   | "unavailable"
   | "unsupported"
   | "error";
+export type ExternalUrlPreviewSaveStatus =
+  | "saved"
+  | "not_configured"
+  | "unavailable"
+  | "unsupported"
+  | "error";
 
 export type ZoneType =
   | "feeder"
@@ -235,6 +241,13 @@ export interface ExternalUrlPreviewRequest {
   max_bytes?: number | null;
 }
 
+export interface ExternalUrlPreviewSaveRequest {
+  stream_id?: string | null;
+  timeout_seconds?: number | null;
+  max_bytes?: number | null;
+  note?: string | null;
+}
+
 export interface ExternalUrlPreviewResponse {
   source_id: string;
   provider_key: string;
@@ -248,6 +261,23 @@ export interface ExternalUrlPreviewResponse {
   supports_live_playback: boolean;
   creates_truth: boolean;
   creates_media_asset: boolean;
+  warnings: string[];
+}
+
+export interface ExternalUrlPreviewSaveResponse {
+  source_id: string;
+  stream_id?: string | null;
+  media_asset_id?: string | null;
+  status: ExternalUrlPreviewSaveStatus;
+  message: string;
+  fetched_at?: string | null;
+  content_type?: string | null;
+  bytes_written: number;
+  file_name?: string | null;
+  relative_path?: string | null;
+  creates_event: boolean;
+  creates_visit: boolean;
+  creates_truth: boolean;
   warnings: string[];
 }
 

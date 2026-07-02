@@ -33,6 +33,8 @@ from mockingbird.api.schemas import (
     DetectionRunCreate,
     ExternalUrlPreviewRequest,
     ExternalUrlPreviewResponse,
+    ExternalUrlPreviewSaveRequest,
+    ExternalUrlPreviewSaveResponse,
     Event,
     EventDetail,
     FolderImportCreate,
@@ -274,6 +276,44 @@ def _media_import_error(error: ValueError) -> HTTPException:
             detail="Choose a stream for this media import.",
         )
     return HTTPException(status_code=400, detail="Media import could not be created.")
+
+
+def _external_url_preview_warnings(configuration: SourceProviderConfiguration) -> list[str]:
+    warnings: list[str] = []
+    if any(
+        configuration.safe_config_preview.get(field) == "configured"
+        for field in ("auth_username", "auth_password")
+    ):
+        warnings.append(
+            "Authentication metadata is configured but authenticated preview fetch "
+            "is not implemented yet."
+        )
+    return warnings
+
+
+def _resolve_external_url_save_stream_id(
+    repository: ProductRepository,
+    source_id: str,
+    requested_stream_id: str | None,
+) -> str:
+    if requested_stream_id:
+        stream = repository.get_stream(requested_stream_id)
+        if stream is None:
+            raise _not_found("Stream", requested_stream_id)
+        if stream.source_id != source_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Selected stream does not belong to the external URL Source.",
+            )
+        return stream.id
+
+    streams = repository.streams_for_source(source_id)
+    if not streams:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose a stream before saving this external URL preview.",
+        )
+    return streams[0].id
 
 
 def _folder_import_error(error: ValueError) -> HTTPException:
@@ -967,7 +1007,8 @@ async def fetch_external_url_preview(
     source_id: str,
     payload: ExternalUrlPreviewRequest | None = None,
 ) -> ExternalUrlPreviewResponse:
-    configuration = get_repository().get_source_provider_configuration(source_id)
+    repository = get_repository()
+    configuration = repository.get_source_provider_configuration(source_id)
     if configuration is None:
         raise _not_found("Source", source_id)
     if configuration.provider_key != "external_url":
@@ -977,15 +1018,7 @@ async def fetch_external_url_preview(
         )
 
     url = configuration.safe_config_preview.get("url")
-    warnings: list[str] = []
-    if any(
-        configuration.safe_config_preview.get(field) == "configured"
-        for field in ("auth_username", "auth_password")
-    ):
-        warnings.append(
-            "Authentication metadata is configured but authenticated preview fetch "
-            "is not implemented yet."
-        )
+    warnings = _external_url_preview_warnings(configuration)
 
     if not url or url == "not_configured":
         return ExternalUrlPreviewResponse(
@@ -1018,6 +1051,92 @@ async def fetch_external_url_preview(
         supports_live_playback=False,
         creates_truth=False,
         creates_media_asset=False,
+        warnings=[*warnings, *result.warnings],
+    )
+
+
+@app.post(
+    "/api/sources/{source_id}/external-url/preview/save",
+    response_model=ExternalUrlPreviewSaveResponse,
+)
+async def save_external_url_preview(
+    source_id: str,
+    payload: ExternalUrlPreviewSaveRequest | None = None,
+) -> ExternalUrlPreviewSaveResponse:
+    repository = get_repository()
+    configuration = repository.get_source_provider_configuration(source_id)
+    if configuration is None:
+        raise _not_found("Source", source_id)
+    if configuration.provider_key != "external_url":
+        raise HTTPException(
+            status_code=400,
+            detail="External URL preview save requires an external_url Source provider.",
+        )
+
+    request = payload or ExternalUrlPreviewSaveRequest()
+    warnings = _external_url_preview_warnings(configuration)
+    url = configuration.safe_config_preview.get("url")
+    if not url or url == "not_configured":
+        return ExternalUrlPreviewSaveResponse(
+            source_id=source_id,
+            stream_id=request.stream_id,
+            status="not_configured",
+            message="Add an external URL before saving a still-image preview.",
+            creates_event=False,
+            creates_visit=False,
+            creates_truth=False,
+            warnings=warnings,
+        )
+
+    stream_id = _resolve_external_url_save_stream_id(repository, source_id, request.stream_id)
+    result = external_url_preview.fetch_external_url_preview(
+        url,
+        timeout_seconds=request.timeout_seconds,
+        max_bytes=request.max_bytes,
+    )
+    if result.status != "available" or result.fetched_bytes is None or result.fetched_at is None:
+        save_status = result.status if result.status != "available" else "error"
+        return ExternalUrlPreviewSaveResponse(
+            source_id=source_id,
+            stream_id=stream_id,
+            status=save_status,
+            message=result.message,
+            fetched_at=result.fetched_at,
+            content_type=result.content_type,
+            bytes_written=0,
+            creates_event=False,
+            creates_visit=False,
+            creates_truth=False,
+            warnings=[*warnings, *result.warnings],
+        )
+
+    try:
+        media_asset = repository.create_external_url_preview_media_asset(
+            source_id=source_id,
+            stream_id=stream_id,
+            content=result.fetched_bytes,
+            content_type=result.content_type or "",
+            fetched_at=result.fetched_at,
+            url_host=external_url_preview.safe_url_host(url),
+            note=request.note,
+        )
+    except ValueError as error:
+        raise _media_import_error(error) from error
+
+    return ExternalUrlPreviewSaveResponse(
+        source_id=source_id,
+        stream_id=media_asset.stream_id,
+        media_asset_id=media_asset.id,
+        status="saved",
+        message="Saved still-image preview as local media only. No Events, Visits, or truth were created.",
+        fetched_at=media_asset.created_at,
+        content_type=media_asset.content_type,
+        bytes_written=media_asset.file_size_bytes,
+        file_name=media_asset.filename,
+        relative_path=media_asset.filename,
+        creates_event=False,
+        creates_visit=False,
+        creates_truth=False,
         warnings=[*warnings, *result.warnings],
     )
 

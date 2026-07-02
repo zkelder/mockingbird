@@ -2,20 +2,20 @@
 
 ## Purpose
 
-Phase 11C external URL previews are transient and not saved. A future user may
-want to keep a fetched still image as local media evidence or context, but saving
-preview bytes is more sensitive than showing them transiently.
+Phase 11C external URL previews are transient unless the user explicitly saves
+one. Phase 11E adds that save action for users who want to keep a fetched still
+image as local MediaAsset context.
 
-This handoff design defines the boundary for a future explicit save action.
+This handoff design defines the boundary for the explicit save action.
 MediaAsset storage must be user-triggered, local-first, bounded, cleanup-aware,
 and truth-safe.
 
 ## Product Flow
 
 external_url Source setup -> explicit still-image preview fetch -> user reviews
-transient preview -> optional future "save preview as MediaAsset" -> MediaAsset
-linked to Source/Stream context -> optional future explicit evidence/import/review
-flow -> Event/Visit review -> user correction -> ReviewLabel truth.
+transient preview -> optional "save preview as MediaAsset" -> MediaAsset linked
+to Source/Stream context -> optional future explicit evidence/import/review flow
+-> Event/Visit review -> user correction -> ReviewLabel truth.
 
 ## Current Phase 11C Behavior
 
@@ -27,17 +27,13 @@ flow -> Event/Visit review -> user correction -> ReviewLabel truth.
 - No Events, Visits, MotionEvidence, ReviewLabels, or truth are created.
 - No background worker exists.
 
-## Future Save-preview Action
+## Phase 11E Save-preview Action
 
-A future explicit action could use one of these route shapes:
+Implemented route:
 
 - `POST /api/sources/{source_id}/external-url/preview/save`
-- `POST /api/sources/{source_id}/external-url/preview` followed by
-  `POST /api/sources/{source_id}/external-url/preview-media-assets`
 
-This phase does not implement either route.
-
-The future action should:
+The action:
 
 - Be user-triggered only.
 - Reuse the same URL, security, content-type, timeout, and max-byte guardrails.
@@ -50,7 +46,8 @@ The future action should:
 
 ## MediaAsset Provenance
 
-Future saved preview metadata should record:
+Saved preview provenance is recorded through existing MediaAsset fields and
+notes because there is no separate metadata column yet. It records:
 
 - `provider_key`: `external_url`
 - `source_id`
@@ -60,7 +57,6 @@ Future saved preview metadata should record:
 - `bytes_written`
 - `original_url_host` or a safe redacted URL summary
 - `url_config_field`: `url`
-- `preview_fetch_request_id`, if future request IDs exist
 - `save_reason` or user note, if useful
 
 It must not record raw credentials or raw auth secrets.
@@ -128,7 +124,7 @@ It must not record raw credentials or raw auth secrets.
 
 ## API Response Design
 
-Future response fields should include:
+The Phase 11E save response includes:
 
 - `media_asset_id`
 - `source_id`
@@ -146,17 +142,17 @@ Future response fields should include:
 
 ## UI Design
 
-After a transient preview appears, the UI may show `Save preview as local media`.
+After a transient preview appears, the UI shows `Save preview as local media`.
 Copy should say: "This saves the still image locally but does not create Events,
 Visits, or truth."
 
-After save, the UI should show a saved MediaAsset link or preview. It should not
-auto-save, auto-refresh, say "record", imply stream capture, or claim live
-playback.
+After save, the UI shows saved MediaAsset status and a link to the existing
+media file route. It should not auto-save, auto-refresh, say "record", imply
+stream capture, or claim live playback.
 
 ## Testing Expectations For Future Implementation
 
-Future implementation must test:
+The implementation tests:
 
 - Save action requires `external_url` provider.
 - Missing URL does not save.
@@ -200,9 +196,9 @@ explicitly chooses it.
 
 ## Explicit Non-Goals
 
-- No implementation in this phase.
-- No media writes.
-- No MediaAsset creation.
+- No automatic save.
+- No background save.
+- No unbounded media writes.
 - No Events or Visits.
 - No MotionEvidence.
 - No ReviewLabels.

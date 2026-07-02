@@ -40,8 +40,8 @@ Its configuration metadata may include `url`, optional `label` or
 validate URLs by itself. The non-secret `url` can feed the explicit preview
 route; secret authentication metadata is still not used for fetch unless a
 future phase scopes it.
-Provider configuration can feed preview/save flows, but it does not store media
-itself.
+Provider configuration can feed the explicit preview and save-as-MediaAsset
+routes, but it does not store media itself.
 
 ## Provider Configuration Fields
 

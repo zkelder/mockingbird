@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import type {
   CameraSource,
   ExternalUrlPreviewResponse,
+  ExternalUrlPreviewSaveResponse,
   SourceConnectionStatus,
   SourceProviderConfiguration,
   SourceProviderDefinition,
@@ -87,8 +88,12 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const [setupError, setSetupError] = useState<string | null>(null);
   const [setupMessage, setSetupMessage] = useState<string | null>(null);
   const [previewResult, setPreviewResult] = useState<ExternalUrlPreviewResponse | null>(null);
+  const [previewSaveResult, setPreviewSaveResult] =
+    useState<ExternalUrlPreviewSaveResponse | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewSaveError, setPreviewSaveError] = useState<string | null>(null);
   const [isFetchingPreview, setIsFetchingPreview] = useState(false);
+  const [isSavingPreview, setIsSavingPreview] = useState(false);
   const [isSavingSetup, setIsSavingSetup] = useState(false);
 
   useEffect(() => {
@@ -179,8 +184,11 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
 
   useEffect(() => {
     setPreviewResult(null);
+    setPreviewSaveResult(null);
     setPreviewError(null);
+    setPreviewSaveError(null);
     setIsFetchingPreview(false);
+    setIsSavingPreview(false);
   }, [selectedSourceId, selectedConfiguration?.provider_key]);
 
   useEffect(() => {
@@ -286,6 +294,8 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setIsFetchingPreview(true);
     setPreviewError(null);
     setPreviewResult(null);
+    setPreviewSaveError(null);
+    setPreviewSaveResult(null);
     try {
       const result = await apiClient.fetchExternalUrlPreview(selectedSourceId, {});
       setPreviewResult(result);
@@ -295,6 +305,28 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
       );
     } finally {
       setIsFetchingPreview(false);
+    }
+  }
+
+  async function handleSaveStillImagePreview() {
+    if (!selectedSourceId) {
+      return;
+    }
+
+    setIsSavingPreview(true);
+    setPreviewSaveError(null);
+    setPreviewSaveResult(null);
+    try {
+      const result = await apiClient.saveExternalUrlPreview(selectedSourceId, {
+        stream_id: selectedFirstStream?.id ?? null,
+      });
+      setPreviewSaveResult(result);
+    } catch (caught) {
+      setPreviewSaveError(
+        caught instanceof Error ? caught.message : "Could not save still-image preview.",
+      );
+    } finally {
+      setIsSavingPreview(false);
     }
   }
 
@@ -321,6 +353,8 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     selectedSetupReview.readiness_level === "metadata_ready";
   const isExternalUrlProvider = selectedConfiguration?.provider_key === "external_url";
   const selectedFirstStream = selectedSourceStreams[0] ?? null;
+  const canSavePreview =
+    previewResult?.status === "available" && Boolean(previewResult.preview_data_url);
   const nextActionTitle = selectedSetupReview
     ? selectedSetupReview.readiness_level === "demo_ready"
       ? "Next: open Stream Detail and draw Zones."
@@ -547,6 +581,51 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                         <span>Not saved</span>
                         <span>No Events/Visits created</span>
                       </div>
+                      {canSavePreview ? (
+                        <div className="external-preview-save-actions">
+                          <button
+                            className="primary-action"
+                            disabled={isSavingPreview}
+                            onClick={handleSaveStillImagePreview}
+                            type="button"
+                          >
+                            {isSavingPreview
+                              ? "Saving preview..."
+                              : "Save preview as local media"}
+                          </button>
+                          <span className="meta-text">
+                            Saved as local media only. No Events, Visits, or truth will be created.
+                          </span>
+                        </div>
+                      ) : null}
+                      {previewSaveError ? <div className="zone-error">{previewSaveError}</div> : null}
+                      {previewSaveResult ? (
+                        <div className="external-preview-save-status">
+                          <strong>{previewSaveResult.message}</strong>
+                          <div className="source-connection-meta">
+                            {previewSaveResult.media_asset_id ? (
+                              <span>MediaAsset: {previewSaveResult.media_asset_id}</span>
+                            ) : null}
+                            {previewSaveResult.content_type ? (
+                              <span>Content: {previewSaveResult.content_type}</span>
+                            ) : null}
+                            <span>Bytes written: {previewSaveResult.bytes_written}</span>
+                          </div>
+                          <span className="meta-text">
+                            Saved as local media only. No Events, Visits, or truth were created.
+                          </span>
+                          {previewSaveResult.media_asset_id ? (
+                            <a
+                              className="inline-link"
+                              href={apiClient.mediaFileUrl(previewSaveResult.media_asset_id)}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              Open saved media
+                            </a>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

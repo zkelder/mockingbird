@@ -179,6 +179,12 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
     "video/quicktime": "video",
 }
 
+EXTERNAL_URL_PREVIEW_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+
 SUPPORTED_MEDIA_EXTENSIONS = {
     ".jpg": ("image/jpeg", "image"),
     ".jpeg": ("image/jpeg", "image"),
@@ -1187,6 +1193,67 @@ class ProductRepository:
         if asset is None:
             return None
         return Path(asset.local_path)
+
+    def create_external_url_preview_media_asset(
+        self,
+        *,
+        source_id: str,
+        stream_id: str,
+        content: bytes,
+        content_type: str,
+        fetched_at: datetime,
+        url_host: str | None = None,
+        note: str | None = None,
+    ) -> MediaAsset:
+        if not content:
+            raise ValueError("empty_file")
+
+        media_type = SUPPORTED_MEDIA_CONTENT_TYPES.get(content_type)
+        extension = EXTERNAL_URL_PREVIEW_EXTENSIONS.get(content_type)
+        if media_type != "image" or extension is None:
+            raise ValueError("unsupported_content_type")
+
+        with self.session_factory() as session:
+            with session.begin():
+                source_model = session.get(CameraSourceModel, source_id)
+                if source_model is None:
+                    raise ValueError("missing_source")
+
+                stream_model = session.get(StreamModel, stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+                if stream_model.source_id != source_id:
+                    raise ValueError("stream_source_mismatch")
+
+                media_id = self._next_id(session, MediaAssetModel, "media-asset")
+                original_filename = f"external-url-preview-{media_id}{extension}"
+                filename = f"{media_id}-external-url-preview{extension}"
+                filename, local_path = self._write_media_file(filename, content)
+                notes = self._external_url_preview_media_notes(
+                    source_id=source_id,
+                    stream_id=stream_id,
+                    fetched_at=fetched_at,
+                    content_type=content_type,
+                    bytes_written=len(content),
+                    url_host=url_host,
+                    note=note,
+                )
+                asset_model = MediaAssetModel(
+                    id=media_id,
+                    source_id=source_id,
+                    stream_id=stream_id,
+                    filename=filename,
+                    content_type=content_type,
+                    media_type=media_type,
+                    local_path=str(local_path),
+                    original_filename=original_filename,
+                    file_size_bytes=len(content),
+                    created_at=fetched_at,
+                    notes=notes,
+                )
+                session.add(asset_model)
+                session.flush()
+                return _media_asset_from_model(asset_model)
 
     def create_motion_evidence(
         self,
@@ -2756,6 +2823,34 @@ class ProductRepository:
                 counter += 1
         path.write_bytes(content)
         return path.name, path
+
+    def _external_url_preview_media_notes(
+        self,
+        *,
+        source_id: str,
+        stream_id: str,
+        fetched_at: datetime,
+        content_type: str,
+        bytes_written: int,
+        url_host: str | None,
+        note: str | None,
+    ) -> str:
+        lines = [
+            "Saved explicit external_url still-image preview.",
+            "Creates no Events, Visits, ReviewLabels, or truth.",
+            "provider_key=external_url",
+            f"source_id={source_id}",
+            f"stream_id={stream_id}",
+            f"fetched_at={fetched_at.isoformat()}",
+            f"content_type={content_type}",
+            f"bytes_written={bytes_written}",
+        ]
+        if url_host:
+            lines.append(f"url_host={url_host}")
+        cleaned_note = _clean_optional_text(note)
+        if cleaned_note is not None:
+            lines.append(f"note={cleaned_note}")
+        return "\n".join(lines)
 
     def _preview_folder_import_for_path(self, folder: Path) -> FolderImportPreview:
         if not folder.exists():

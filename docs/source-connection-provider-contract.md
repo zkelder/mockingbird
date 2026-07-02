@@ -56,8 +56,8 @@ live playback.
 For `external_url`, connection readiness remains metadata/status-only. A
 configured URL can point users to explicit still-image preview fetch, but
 connection status itself must not trigger network calls or claim live playback.
-Source connection status also must not persist preview media; future saved
-preview files belong behind an explicit MediaAsset handoff.
+Source connection status also must not persist preview media or imply saved
+media exists; saved preview files belong behind the explicit MediaAsset handoff.
 
 ## Provider Configuration Relationship
 
