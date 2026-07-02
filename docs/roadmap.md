@@ -206,7 +206,8 @@ Current work:
 - Phase 8Q: attach existing MediaAsset to MotionEvidence.
 - Phase 8R: Motion Evidence media preview polish.
 - Phase 8S: media-backed MotionEvidence creation from existing MediaAsset.
-- Next likely phase: Phase 8T — local frame artifact creation from existing imported media or controlled frame capture design.
+- Phase 8T: end-to-end motion/media review demo polish.
+- Next likely phase: Phase 8U — local frame artifact creation from existing imported media or controlled frame capture design.
 
 Validation:
 
@@ -229,5 +230,6 @@ Validation:
 - Existing MediaAsset attachment lets pending MotionEvidence carry visual evidence context without creating truth.
 - Motion Evidence media preview polish makes attached MediaAsset context visible without capture, decoding, thumbnails, model calls, or truth writes.
 - Media-backed MotionEvidence creation lets manual pending evidence start with existing MediaAsset context without capture, decoding, thumbnails, model calls, or truth writes.
+- End-to-end motion/media review demo polish makes the current import -> media-backed MotionEvidence -> preview -> promote -> review/correction loop easier to validate without capture, decoding, thumbnails, model calls, or truth writes from MotionEvidence.
 - Stream sampling, media decoding, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.

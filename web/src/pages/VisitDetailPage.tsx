@@ -141,6 +141,7 @@ export function VisitDetailPage({
     isBirdReviewLabel(detail.visit.reviewed_label, taxonomyLabels) ||
     isBirdReviewLabel(detail.visit.species_guess, taxonomyLabels) ||
     isBirdReviewLabel(detail.visit.subject_label, taxonomyLabels);
+  const isMotionEvidenceVisit = detail.event.event_type === "motion_evidence";
 
   return (
     <div className="page-stack">
@@ -169,6 +170,16 @@ export function VisitDetailPage({
       </div>
 
       {message ? <div className="notice-panel">{message}</div> : null}
+
+      {isMotionEvidenceVisit ? (
+        <section className="notice-panel">
+          <strong>Promoted Motion Evidence</strong>
+          <span>
+            This visit came from promoted motion evidence. It is reviewable context only until a
+            correction is saved.
+          </span>
+        </section>
+      ) : null}
 
       <section className="case-summary-grid">
         <div className="panel case-summary-card">

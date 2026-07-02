@@ -308,7 +308,12 @@ export function ManualImportPage({
 
         <div className="panel">
           <div className="section-heading">
-            <h2>Imported media</h2>
+            <div>
+              <h2>Imported media</h2>
+              <span className="meta-text">
+                Existing MediaAssets can be attached to Motion Evidence as visual context.
+              </span>
+            </div>
             <button className="secondary-action" onClick={() => void loadMedia()}>
               Refresh
             </button>
@@ -321,6 +326,10 @@ export function ManualImportPage({
                 <div className="data-row">
                   <span>Stream</span>
                   <strong>{streams.find((stream) => stream.id === asset.stream_id)?.name ?? asset.stream_id}</strong>
+                </div>
+                <div className="data-row">
+                  <span>MediaAsset ID</span>
+                  <strong>{asset.id}</strong>
                 </div>
                 {asset.notes ? <p>{asset.notes}</p> : null}
               </article>

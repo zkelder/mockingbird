@@ -225,6 +225,12 @@ Phase 8S lets pending MotionEvidence be created with optional `snapshot_media_as
 
 The media reference must point to an existing MediaAsset on the same stream. Media-backed creation still creates only pending evidence: no Event, Visit, ReviewLabel, export, dataset coverage truth, reviewed status, media file, thumbnail, model output, or species truth is created.
 
+## Phase 8T Status
+
+Phase 8T polishes the local media-backed MotionEvidence demo loop.
+
+The Motion Evidence page now makes the workflow clearer: create or evaluate evidence, optionally attach existing imported media, preview that media, promote useful evidence into unreviewed Event/Visit records, then correct labels during review. Event and Visit detail pages identify promoted Motion Evidence using existing product fields. No stream capture, media decoding, thumbnail generation, source adapter, model call, ReviewLabel, export, dataset coverage truth, or species truth is created by this polish.
+
 ## Test Plan
 
 Implementation tests should prove:

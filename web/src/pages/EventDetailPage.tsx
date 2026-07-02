@@ -103,6 +103,7 @@ export function EventDetailPage({
     (visit) => visit.review_status === "needs_review" || !visit.reviewed_label,
   );
   const reviewedSpeciesVisits = speciesVisits.filter((visit) => visit.reviewed_label);
+  const isMotionEvidenceEvent = detail.event.event_type === "motion_evidence";
 
   return (
     <div className="page-stack">
@@ -121,6 +122,16 @@ export function EventDetailPage({
           tone={detail.dataset_ready ? "good" : "review"}
         />
       </div>
+
+      {isMotionEvidenceEvent ? (
+        <section className="notice-panel">
+          <strong>Promoted Motion Evidence</strong>
+          <span>
+            This event came from promoted motion evidence and still needs review. Save a correction
+            before exports or analytics treat its label as truth.
+          </span>
+        </section>
+      ) : null}
 
       <section className="case-summary-grid">
         <div className="panel case-summary-card">

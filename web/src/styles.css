@@ -1541,6 +1541,31 @@ button {
   gap: 10px;
 }
 
+.motion-workflow-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.motion-workflow-panel p {
+  margin: 6px 0 0;
+  color: #5c6a61;
+}
+
+.motion-workflow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.motion-workflow-steps span {
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #edf2e9;
+  color: #34473b;
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
 .manual-media-preview {
   display: grid;
   gap: 12px;
@@ -1706,6 +1731,11 @@ button {
 }
 
 .motion-attachment-form p {
+  margin: 4px 0 0;
+  color: #627168;
+}
+
+.motion-promote-form p {
   margin: 4px 0 0;
   color: #627168;
 }

@@ -63,6 +63,13 @@ const noMotionSampleFrames = `[
   ]
 ]`;
 
+const motionWorkflowSteps = [
+  "Create or evaluate motion evidence",
+  "Attach existing local media",
+  "Promote useful evidence",
+  "Review/correct for truth",
+];
+
 interface MotionEvidencePageProps {
   streams: Stream[];
   sources: CameraSource[];
@@ -485,6 +492,22 @@ export function MotionEvidencePage({
         </span>
       </section>
 
+      <section className="panel motion-workflow-panel">
+        <div>
+          <h2>Workflow</h2>
+          <p>
+            Create or evaluate motion evidence, attach existing local media if available, promote
+            useful evidence into unreviewed Event/Visit records, then correct labels during review.
+            Only review/correction creates dataset truth.
+          </p>
+        </div>
+        <div className="motion-workflow-steps" aria-label="Motion Evidence workflow">
+          {motionWorkflowSteps.map((step) => (
+            <span key={step}>{step}</span>
+          ))}
+        </div>
+      </section>
+
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
 
@@ -573,9 +596,9 @@ export function MotionEvidencePage({
                 ))}
               </select>
               <span className="field-helper">
-                Optional: attach an existing local media asset as visual evidence. This creates
-                pending evidence only; it does not create labels, reviewed observations, or
-                export-ready truth.
+                Optional: attach an existing local media asset as visual evidence. Import media
+                first on the Import Media page, then select it here. This creates pending evidence
+                only; it does not create labels, reviewed observations, or export-ready truth.
               </span>
             </label>
             {manualSnapshotMediaAssetId ? (
@@ -1096,7 +1119,7 @@ export function MotionEvidencePage({
                         className="text-action"
                         onClick={() => onOpenEvent(selectedEvidence.promoted_event_id!)}
                       >
-                        Event detail
+                        Open promoted Event
                       </button>
                     ) : null}
                     {selectedEvidence.promoted_visit_id ? (
@@ -1104,7 +1127,7 @@ export function MotionEvidencePage({
                         className="text-action"
                         onClick={() => onOpenVisit(selectedEvidence.promoted_visit_id!)}
                       >
-                        Visit detail
+                        Open promoted Visit
                       </button>
                     ) : null}
                   </div>
@@ -1182,6 +1205,13 @@ export function MotionEvidencePage({
 
                 {selectedEvidence.status === "pending" ? (
                   <section className="motion-action-panel">
+                    <div className="notice-panel">
+                      <strong>Pending evidence</strong>
+                      <span>
+                        Ignore noisy evidence or promote useful evidence into unreviewed
+                        Event/Visit records. Media is optional and can be attached now or later.
+                      </span>
+                    </div>
                     <form className="motion-attachment-form" onSubmit={attachMediaEvidence}>
                       <div>
                         <strong>Attach existing media</strong>
@@ -1245,6 +1275,13 @@ export function MotionEvidencePage({
                       </button>
                     </div>
                     <form className="motion-promote-form" onSubmit={promoteEvidence}>
+                      <div>
+                        <strong>Promote to review</strong>
+                        <p>
+                          Promotion creates unreviewed Event/Visit evidence only. Correct labels in
+                          Review or Visit Detail before export.
+                        </p>
+                      </div>
                       <label>
                         Event title
                         <input
@@ -1290,13 +1327,35 @@ export function MotionEvidencePage({
                         ? ` Attached media ${selectedEvidence.snapshot_media_asset_id} remains evidence context.`
                         : ""}
                     </span>
+                    <div className="detail-actions">
+                      {selectedEvidence.promoted_event_id ? (
+                        <button
+                          className="secondary-action"
+                          onClick={() => onOpenEvent(selectedEvidence.promoted_event_id!)}
+                          type="button"
+                        >
+                          Open promoted Event
+                        </button>
+                      ) : null}
+                      {selectedEvidence.promoted_visit_id ? (
+                        <button
+                          className="secondary-action"
+                          onClick={() => onOpenVisit(selectedEvidence.promoted_visit_id!)}
+                          type="button"
+                        >
+                          Open promoted Visit
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
 
                 {selectedEvidence.status === "ignored" ? (
                   <div className="notice-panel">
                     <strong>Ignored evidence</strong>
-                    <span>This evidence was dismissed as noise and cannot be promoted.</span>
+                    <span>
+                      This evidence is preserved as noise/evidence history and cannot be promoted.
+                    </span>
                   </div>
                 ) : null}
 
@@ -1307,6 +1366,26 @@ export function MotionEvidencePage({
                       Event {lastPromotion.event_id ?? "none"} · Visit{" "}
                       {lastPromotion.visit_id ?? "none"}
                     </span>
+                    <div className="detail-actions">
+                      {lastPromotion.event_id ? (
+                        <button
+                          className="secondary-action"
+                          onClick={() => onOpenEvent(lastPromotion.event_id!)}
+                          type="button"
+                        >
+                          Open promoted Event
+                        </button>
+                      ) : null}
+                      {lastPromotion.visit_id ? (
+                        <button
+                          className="secondary-action"
+                          onClick={() => onOpenVisit(lastPromotion.visit_id!)}
+                          type="button"
+                        >
+                          Open promoted Visit
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
               </>

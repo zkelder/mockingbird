@@ -111,6 +111,8 @@ Manual pending Motion Evidence creation can also start with an existing MediaAss
 
 The Motion Evidence page shows attached MediaAsset context through the existing media preview/file route.
 
+The current local demo loop is import media -> create media-backed Motion Evidence -> promote -> review/correct.
+
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md), and the [local setup checklist](docs/megadetector-local-setup.md).
 
 ## Not the product center

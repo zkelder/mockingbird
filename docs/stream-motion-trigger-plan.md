@@ -124,6 +124,12 @@ Phase 8S adds media-backed manual MotionEvidence creation.
 
 Users can create pending MotionEvidence with an existing imported/local MediaAsset already attached as visual evidence context. Automated capture, media decoding, thumbnail generation, source adapters, stream workers, model calls, and truth writes remain deferred.
 
+## Phase 8T Status
+
+Phase 8T polishes the end-to-end local motion/media review demo loop.
+
+The UI now better guides users through importing local media, creating media-backed MotionEvidence, previewing attached media, promoting useful evidence into unreviewed Event/Visit records, and saving review corrections as dataset/export truth. Automated capture, media decoding, thumbnail generation, source adapters, stream workers, SpeciesNet, MegaDetector, and truth writes from MotionEvidence remain deferred.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.
