@@ -37,6 +37,7 @@ Source adapters feed media into the platform, but the product is not organized a
 - Local frame artifacts as future visual evidence references
 - Motion Evidence between scoring/evaluation and Event/Visit creation
 - Motion Evidence persistence and ignore lifecycle
+- SpeciesSuggestion between media-backed Event/Visit evidence and review/correction
 - Animal detection
 - Species classification
 - Event grouping

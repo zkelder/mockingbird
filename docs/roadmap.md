@@ -233,3 +233,20 @@ Validation:
 - End-to-end motion/media review demo polish makes the current import -> media-backed MotionEvidence -> preview -> promote -> review/correction loop easier to validate without capture, decoding, thumbnails, model calls, or truth writes from MotionEvidence.
 - Stream sampling, media decoding, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.
+
+## Phase 9 — Species suggestion assistance
+
+Goal: add species assistance as review evidence without weakening user correction as dataset/export truth.
+
+Current work:
+
+- Phase 9A: species suggestion adapter design.
+- Next likely phase: Phase 9B — SpeciesSuggestion schema/repository foundation.
+
+Validation:
+
+- Species suggestions remain evidence only.
+- SpeciesSuggestion stays separate from MotionEvidence, DetectionProposal, and ReviewLabel.
+- SpeciesNet and custom bird classifiers remain optional future adapters, not product architecture.
+- Suggestions do not create reviewed labels, reviewed Visit/Event state, export truth, dataset coverage truth, or analytics truth without explicit user correction.
+- Media-backed Event/Visit evidence can be the future input to suggestion adapters.

@@ -10,9 +10,11 @@ MockingBird is a local-first outdoor video intelligence platform. Streams, zones
 
 ## Truth Boundary
 
-Adapters produce `DetectionProposal` evidence only. They never create reviewed truth, never mark a label export-ready, and never bypass Review Queue or Visit Detail correction.
+Detector adapters produce `DetectionProposal` evidence only. They never create reviewed truth, never mark a label export-ready, and never bypass Review Queue or Visit Detail correction.
 
 User corrections remain dataset truth. Exports use reviewed and corrected labels. Raw detector labels remain evidence even when they are useful.
+
+Species classifier outputs are `SpeciesSuggestion` evidence only. They must not create reviewed labels, dataset coverage truth, export truth, analytics truth, or reviewed Visit/Event state without explicit user correction.
 
 ## Adapter Input Contract
 
@@ -27,7 +29,7 @@ The first real local detector remains scoped to imported image media unless a la
 
 ## Adapter Output Contract
 
-Adapter outputs must flow through existing `DetectionRun` and `DetectionProposal` records.
+Detector adapter outputs must flow through existing `DetectionRun` and `DetectionProposal` records.
 
 Each proposal should include:
 
@@ -38,7 +40,9 @@ Each proposal should include:
 - suggested event type such as `animal_visit`
 - suggested subject/species fields when the adapter can safely provide them
 
-Adapters must not create `Event`, `Visit`, `ReviewLabel`, dataset export records, coverage truth, or analytics truth directly.
+Detector adapters must not create `Event`, `Visit`, `ReviewLabel`, dataset export records, coverage truth, or analytics truth directly.
+
+Species suggestion adapters are a separate future adapter class. They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md) and keep classifier output below review/correction truth.
 
 ## Runtime Safety
 
@@ -79,6 +83,7 @@ Rollback must be simple:
 ## What Adapters Must Never Do
 
 - create reviewed truth directly
+- create species truth from classifier suggestions alone
 - bypass Review Queue or Visit Detail correction
 - mark exports, coverage, QA, or analytics truth from raw detector labels
 - require cloud services for the local product loop

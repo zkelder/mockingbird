@@ -35,6 +35,18 @@ A candidate model should:
 
 MegaDetector-family animal/person/vehicle detection remains useful future proposal enrichment. It is no longer the active first implementation path. The next implementation path is zone-aware motion triggering, with species suggestion handled by a separate future adapter.
 
+## Future Species Suggestion Candidates
+
+SpeciesNet and a custom backyard bird classifier are future species suggestion candidates, not detector adapters and not truth writers.
+
+They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
+
+- receive media-backed Event/Visit evidence, optional zone context, and optional crop context
+- return ranked species or taxon suggestions with confidence/provenance when available
+- remain optional and local
+- avoid runtime dependencies until a dedicated implementation phase
+- require user review/correction before dataset/export truth changes
+
 ## Dependency Rules
 
 Prefer the existing unavailable-safe detector shell and the motion-trigger path first.

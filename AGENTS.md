@@ -72,6 +72,10 @@ Every future implementation task must restate:
 - Real MegaDetector runtime work must follow
   [docs/megadetector-runtime-plan.md](docs/megadetector-runtime-plan.md) and stay
   optional, lazy-loaded, local, and evidence-only.
+- Species/classifier outputs must follow
+  [docs/species-suggestion-adapter-design.md](docs/species-suggestion-adapter-design.md)
+  and remain suggestion evidence only until explicit review/correction creates
+  truth.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.

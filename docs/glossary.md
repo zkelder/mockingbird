@@ -76,6 +76,14 @@ Local evidence that a motion candidate occurred in a stream zone; it is not revi
 
 An explicit action that turns pending Motion Evidence into unreviewed Event/Visit evidence; it does not create reviewed truth.
 
+## SpeciesSuggestion
+
+Local classifier evidence that a media item or crop may contain a species or taxon; it is not reviewed truth.
+
+## SpeciesSuggestionAdapter
+
+A local optional adapter that creates SpeciesSuggestion evidence from media-backed Event/Visit context without creating labels, exports, or dataset truth.
+
 ## Review
 
 The user process of confirming, correcting, merging, hiding, or rejecting events.
