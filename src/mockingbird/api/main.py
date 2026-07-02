@@ -14,6 +14,7 @@ from mockingbird.api.schemas import (
     AdapterEvaluationSummary,
     CameraSource,
     ClassifierReadinessReport,
+    ClassifierTrainingManifestResponse,
     DatasetCoverageSummary,
     DatasetExport,
     DatasetExportCreate,
@@ -1394,6 +1395,11 @@ async def get_dataset_quality_summary() -> DatasetQualitySummary:
 @app.get("/api/classifier-readiness", response_model=ClassifierReadinessReport)
 async def get_classifier_readiness() -> ClassifierReadinessReport:
     return get_repository().classifier_readiness_report()
+
+
+@app.get("/api/classifier-training-manifest", response_model=ClassifierTrainingManifestResponse)
+async def get_classifier_training_manifest() -> ClassifierTrainingManifestResponse:
+    return get_repository().build_classifier_training_manifest()
 
 
 @app.get("/api/analytics/summary", response_model=AnalyticsSummary)

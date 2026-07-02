@@ -22,6 +22,11 @@ Phase 9P surfaces that readiness report in the frontend so users can inspect
 species coverage, skip reasons, and warnings before any manifest export work.
 There is still no manifest export or training in this phase.
 
+Phase 9Q adds a read-only backend classifier training manifest response. It
+returns structured example, skip, taxonomy, split, and provenance data in memory
+only; it does not write manifest files, copy media, generate datasets, train, or
+run classifier runtime.
+
 ## Product Flow
 
 media-backed Visit -> user correction/review -> reviewed label becomes dataset
@@ -109,8 +114,9 @@ Readiness signals should include:
 - dataset quality flags
 
 Phase 9O implements these as a backend report only. Phase 9P makes the report
-visible in the UI. Neither phase copies media, writes manifest files, trains
-classifiers, or creates truth.
+visible in the UI. Phase 9Q adds the read-only manifest preview response.
+None of these phases copies media, writes manifest files, trains classifiers,
+or creates truth.
 
 ## Export Format Plan
 
@@ -142,7 +148,8 @@ Possible layouts:
 
 See [classifier-training-manifest-design.md](classifier-training-manifest-design.md)
 for the Phase 9N manifest fields, skip reasons, quality flags, taxonomy export,
-and split policy. This phase does not implement these exports.
+and split policy. Phase 9Q returns this shape as structured API data only; file
+exports and media-copy policies remain future work.
 
 ## Training/Runtime Separation
 
@@ -190,8 +197,9 @@ Tentative future phases:
 - Phase 9N: dataset export manifest design for classifier training.
 - Phase 9O: classifier-readiness report/API.
 - Phase 9P: classifier readiness UI surface.
-- Phase 9Q: classifier training manifest export implementation foundation.
-- Phase 9R: reviewed media-backed example export.
+- Phase 9Q: classifier training manifest preview/API implementation foundation.
+- Phase 9R: classifier manifest UI/download preview or reviewed media-backed
+  example export file generation design.
 - Phase 9S: external training workflow docs.
 - Phase 9T: optional custom classifier adapter boundary.
 

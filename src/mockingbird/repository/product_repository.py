@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
 import re
+from typing import Any
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy import Engine, delete, func, select
@@ -48,9 +50,14 @@ from mockingbird.api.schemas import (
     AnalyticsSummary,
     BoundingBox,
     CameraSource,
+    ClassifierManifestExample,
+    ClassifierManifestSkippedRecord,
+    ClassifierManifestSummary,
+    ClassifierManifestTaxonomyEntry,
     ClassifierReadinessReport,
     ClassifierReadinessSkipSummary,
     ClassifierReadinessSpeciesSummary,
+    ClassifierTrainingManifestResponse,
     DatasetCoverageGap,
     DatasetCoverageSpecies,
     DatasetCoverageSummary,
@@ -2111,6 +2118,10 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._classifier_readiness_report(session)
 
+    def build_classifier_training_manifest(self) -> ClassifierTrainingManifestResponse:
+        with self.session_factory() as session:
+            return self._classifier_training_manifest(session)
+
     def visit_is_dataset_ready(self, visit: Visit) -> bool:
         with self.session_factory() as session:
             return self._visit_is_dataset_ready(session, visit)
@@ -3576,6 +3587,356 @@ class ProductRepository:
             ],
             warnings=warnings,
             recommended_next_step=recommended_next_step,
+        )
+
+    def _classifier_training_manifest(
+        self,
+        session: Session,
+    ) -> ClassifierTrainingManifestResponse:
+        target_species_models = session.scalars(
+            select(TaxonomyLabelModel)
+            .where(
+                TaxonomyLabelModel.category == LabelCategory.bird.value,
+                TaxonomyLabelModel.is_species.is_(True),
+            )
+            .order_by(TaxonomyLabelModel.sort_order, TaxonomyLabelModel.display_name)
+        ).all()
+        target_species_labels = {label.label for label in target_species_models}
+        taxonomy_entries = [
+            ClassifierManifestTaxonomyEntry(
+                label=label.label,
+                taxonomy_id=label.id,
+                common_name=label.display_name,
+                scientific_name=label.scientific_name,
+                aliases=list(_taxonomy_label_from_model(label).aliases),
+            )
+            for label in target_species_models
+        ]
+        example_payloads: list[dict[str, Any]] = []
+        skipped_records: list[ClassifierManifestSkippedRecord] = []
+
+        def latest_label_model(labels: list[ReviewLabelModel]) -> ReviewLabelModel | None:
+            if not labels:
+                return None
+            return max(labels, key=lambda label: (_as_utc(label.created_at), label.id))
+
+        def has_conflicting_corrections(labels: list[ReviewLabelModel]) -> bool:
+            normalized_labels = {
+                self._normalize_label_from_session(session, label.label)
+                for label in labels
+            }
+            return len(normalized_labels) > 1
+
+        def add_skipped(
+            *,
+            visit: Visit,
+            event_id: str | None,
+            media_asset_id: str | None,
+            label: str | None,
+            reason: str,
+            detail: str | None = None,
+        ) -> None:
+            skipped_records.append(
+                ClassifierManifestSkippedRecord(
+                    record_id=f"record-{visit.id}",
+                    record_type="visit",
+                    visit_id=visit.id,
+                    event_id=event_id,
+                    media_asset_id=media_asset_id,
+                    label=label,
+                    reason=reason,
+                    detail=detail,
+                )
+            )
+
+        def split_for_example(example_id: str, example_count: int) -> str:
+            if example_count < 3:
+                return "train"
+
+            bucket = int(hashlib.sha256(example_id.encode("utf-8")).hexdigest()[:8], 16) % 100
+            if bucket < 80:
+                return "train"
+            if bucket < 90:
+                return "validation"
+            return "test"
+
+        for visit in self._visits_for_eventless_query(session):
+            event_model = session.get(EventModel, visit.event_id)
+            if event_model is None:
+                add_skipped(
+                    visit=visit,
+                    event_id=visit.event_id,
+                    media_asset_id=None,
+                    label=visit.reviewed_label or visit.species_guess or visit.subject_label,
+                    reason="insufficient_metadata",
+                    detail="Visit event metadata is missing.",
+                )
+                continue
+
+            stream_model = session.get(StreamModel, event_model.stream_id)
+            if stream_model is None:
+                add_skipped(
+                    visit=visit,
+                    event_id=event_model.id,
+                    media_asset_id=None,
+                    label=visit.reviewed_label or visit.species_guess or visit.subject_label,
+                    reason="insufficient_metadata",
+                    detail="Visit stream metadata is missing.",
+                )
+                continue
+
+            event = self._event_from_model(session, event_model)
+            stream = _stream_from_model(stream_model)
+            zone_model = (
+                session.get(ZoneModel, event.primary_zone_id)
+                if event.primary_zone_id is not None
+                else None
+            )
+            if zone_model is not None and zone_model.zone_type == ZoneType.privacy.value:
+                add_skipped(
+                    visit=visit,
+                    event_id=event.id,
+                    media_asset_id=None,
+                    label=visit.reviewed_label or visit.species_guess or visit.subject_label,
+                    reason="privacy_zone",
+                    detail="Privacy zone visits are excluded from classifier manifests.",
+                )
+                continue
+            if zone_model is not None and zone_model.zone_type == ZoneType.ignore.value:
+                add_skipped(
+                    visit=visit,
+                    event_id=event.id,
+                    media_asset_id=None,
+                    label=visit.reviewed_label or visit.species_guess or visit.subject_label,
+                    reason="ignore_zone",
+                    detail="Ignore zone visits are excluded from classifier manifests.",
+                )
+                continue
+
+            visit_labels = self._review_label_models_for_visit(session, visit.id)
+            event_labels = self._review_label_models_for_event(session, event.id)
+            review_label_model = latest_label_model(visit_labels) or latest_label_model(event_labels)
+            label = visit.reviewed_label or (
+                review_label_model.label if review_label_model is not None else None
+            )
+            fallback_label = label or visit.species_guess or visit.subject_label
+            dataset_ready = self._visit_is_dataset_ready(session, visit)
+
+            if not dataset_ready:
+                add_skipped(
+                    visit=visit,
+                    event_id=event.id,
+                    media_asset_id=None,
+                    label=fallback_label,
+                    reason=(
+                        "unreviewed"
+                        if visit.review_status != ReviewStatus.reviewed
+                        else "missing_review_label"
+                    ),
+                    detail="Only reviewed correction truth can enter classifier manifests.",
+                )
+                continue
+
+            if label is None:
+                add_skipped(
+                    visit=visit,
+                    event_id=event.id,
+                    media_asset_id=None,
+                    label=fallback_label,
+                    reason="missing_review_label",
+                    detail="Reviewed visit has no correction label.",
+                )
+                continue
+
+            normalized_label = self._normalize_label_from_session(session, label)
+            has_conflicts = has_conflicting_corrections(visit_labels) or (
+                not visit_labels and has_conflicting_corrections(event_labels)
+            )
+            if has_conflicts:
+                add_skipped(
+                    visit=visit,
+                    event_id=event.id,
+                    media_asset_id=None,
+                    label=normalized_label,
+                    reason="conflicting_corrections",
+                    detail="Multiple correction labels exist for this reviewed visit.",
+                )
+                continue
+            if normalized_label in {"unknown_bird", "unknown_animal"}:
+                add_skipped(
+                    visit=visit,
+                    event_id=event.id,
+                    media_asset_id=None,
+                    label=normalized_label,
+                    reason="unknown_label",
+                    detail="Unknown reviewed labels are cleanup targets, not species examples.",
+                )
+                continue
+            if normalized_label == "false_positive":
+                add_skipped(
+                    visit=visit,
+                    event_id=event.id,
+                    media_asset_id=None,
+                    label=normalized_label,
+                    reason="false_positive_policy_excluded",
+                    detail="False positives are excluded until a negative training policy exists.",
+                )
+                continue
+
+            media_asset = self._media_asset_for_path_from_session(
+                session,
+                visit.representative_media_path,
+            )
+            if media_asset is None:
+                add_skipped(
+                    visit=visit,
+                    event_id=event.id,
+                    media_asset_id=None,
+                    label=normalized_label,
+                    reason="missing_media",
+                    detail="Visit has no existing MediaAsset-backed local media reference.",
+                )
+                continue
+            if media_asset.media_type != "image":
+                add_skipped(
+                    visit=visit,
+                    event_id=event.id,
+                    media_asset_id=media_asset.id,
+                    label=normalized_label,
+                    reason="unsupported_media_type",
+                    detail="Initial classifier manifests include imported image media only.",
+                )
+                continue
+            if media_asset.stream_id != stream.id:
+                add_skipped(
+                    visit=visit,
+                    event_id=event.id,
+                    media_asset_id=media_asset.id,
+                    label=normalized_label,
+                    reason="insufficient_metadata",
+                    detail="MediaAsset stream does not match the reviewed visit stream.",
+                )
+                continue
+
+            taxonomy_label_model = self._taxonomy_label_model_for_input(session, normalized_label)
+            taxonomy = (
+                _taxonomy_label_from_model(taxonomy_label_model)
+                if taxonomy_label_model
+                else None
+            )
+            is_target_species = (
+                taxonomy is not None
+                and taxonomy.label in target_species_labels
+                and taxonomy.category == LabelCategory.bird
+                and taxonomy.is_species
+            )
+            if not is_target_species:
+                add_skipped(
+                    visit=visit,
+                    event_id=event.id,
+                    media_asset_id=media_asset.id,
+                    label=normalized_label,
+                    reason="out_of_taxonomy",
+                    detail="Reviewed label is not a target bird species taxonomy label.",
+                )
+                continue
+
+            example_id = f"classifier-example-{visit.id}"
+            example_payloads.append(
+                {
+                    "example_id": example_id,
+                    "visit_id": visit.id,
+                    "event_id": event.id,
+                    "media_asset_id": media_asset.id,
+                    "source_id": media_asset.source_id or stream.source_id,
+                    "stream_id": stream.id,
+                    "zone_id": event.primary_zone_id,
+                    "local_media_path": media_asset.local_path,
+                    "label": taxonomy.label,
+                    "taxonomy_id": taxonomy.id,
+                    "common_name": taxonomy.display_name,
+                    "scientific_name": taxonomy.scientific_name,
+                    "reviewed_label_id": (
+                        review_label_model.id if review_label_model is not None else None
+                    ),
+                    "reviewed_at": (
+                        _as_utc(review_label_model.created_at).isoformat()
+                        if review_label_model is not None
+                        else None
+                    ),
+                    "created_at": _as_utc(event.started_at).isoformat(),
+                    "quality_flags": [],
+                    "provenance": {
+                        "manifest_source": "classifier_training_manifest_preview",
+                        "truth_source": "review_label",
+                        "review_target_type": (
+                            review_label_model.target_type
+                            if review_label_model is not None
+                            else "visit"
+                        ),
+                        "review_target_id": (
+                            review_label_model.target_id
+                            if review_label_model is not None
+                            else visit.id
+                        ),
+                        "media_reference": "media_asset.local_path",
+                        "evidence_only_sources": [
+                            "SpeciesSuggestion",
+                            "MotionEvidence",
+                            "DetectionProposal",
+                        ],
+                    },
+                }
+            )
+
+        example_count = len(example_payloads)
+        examples = [
+            ClassifierManifestExample(
+                **payload,
+                split=split_for_example(payload["example_id"], example_count),
+            )
+            for payload in example_payloads
+        ]
+        label_counts = Counter(example.label for example in examples)
+        split_counts = Counter(example.split for example in examples)
+        skip_counts = Counter(record.reason for record in skipped_records)
+        warnings: list[str] = []
+
+        if example_count == 0:
+            warnings.append(
+                "No reviewed media-backed bird species examples are ready for manifest export."
+            )
+        elif example_count < 3:
+            warnings.append("Small manifest preview uses train split only until more examples exist.")
+        elif {"train", "validation", "test"} - set(split_counts):
+            warnings.append("Split coverage is limited; add more reviewed examples before training.")
+        if skip_counts["missing_media"] > 0:
+            warnings.append("Some reviewed visits are missing MediaAsset-backed media references.")
+        if skip_counts["unknown_label"] > 0:
+            warnings.append("Unknown labels need correction before classifier training.")
+        if skip_counts["false_positive_policy_excluded"] > 0:
+            warnings.append("False positives are excluded until negative training policy exists.")
+        if skip_counts["out_of_taxonomy"] > 0:
+            warnings.append("Some reviewed labels are outside target bird species taxonomy.")
+        if skip_counts["conflicting_corrections"] > 0:
+            warnings.append("Conflicting corrections should be cleaned before classifier export.")
+
+        summary = ClassifierManifestSummary(
+            examples=example_count,
+            skipped=len(skipped_records),
+            labels=dict(sorted(label_counts.items())),
+            splits=dict(sorted(split_counts.items())),
+            warnings=warnings,
+        )
+
+        return ClassifierTrainingManifestResponse(
+            manifest_version="classifier-training-preview-v1",
+            generated_at=datetime.now(UTC).isoformat(),
+            examples=examples,
+            skipped_records=skipped_records,
+            taxonomy=taxonomy_entries,
+            summary=summary,
+            warnings=warnings,
         )
 
     def _analytics_summary(self, session: Session) -> AnalyticsSummary:

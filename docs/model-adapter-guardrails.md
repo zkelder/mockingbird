@@ -76,6 +76,12 @@ Classifier readiness UI is also read-only. It may show reviewed-data readiness,
 skip reasons, and warnings, but it must not create exports, labels, datasets,
 or classifier suggestions.
 
+Classifier training manifest preview is read-only structured data. It may
+package reviewed media-backed correction truth and skip reasons for inspection,
+but it must not copy media, write manifest files, train, run classifier runtime,
+create labels, or treat `SpeciesSuggestion`, `MotionEvidence`, or
+`DetectionProposal` as truth.
+
 ## Adapter Input Contract
 
 Adapters must accept product-level inputs, not adapter-specific workflows:

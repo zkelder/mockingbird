@@ -80,6 +80,11 @@ Phase 9P surfaces classifier readiness in the frontend. It makes readiness and
 skip warnings visible, but still does not generate manifests, train models, or
 select classifier runtime.
 
+Phase 9Q adds a read-only classifier training manifest preview/API foundation.
+It returns reviewed media-backed examples, skipped records, taxonomy metadata,
+split assignment, and provenance as structured data only. It does not write
+manifest files, copy media, train, run classifier runtime, or change truth.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context
@@ -90,8 +95,9 @@ They should follow [species-suggestion-adapter-design.md](species-suggestion-ada
 - require user review/correction before dataset/export truth changes
 
 Custom classifier training remains future work until readiness reporting and
-UI review, manifest export implementation, reviewed media-backed examples,
-dataset coverage/quality checks, and explicit export policy are in place.
+UI review, manifest preview/export tooling, reviewed media-backed examples,
+dataset coverage/quality checks, external training workflow, and explicit export
+policy are in place.
 SpeciesNet stays a separate optional external species/taxon candidate.
 
 ## Dependency Rules

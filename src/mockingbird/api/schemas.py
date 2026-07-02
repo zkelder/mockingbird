@@ -867,6 +867,65 @@ class ClassifierReadinessReport(BaseModel):
     recommended_next_step: str
 
 
+class ClassifierManifestExample(BaseModel):
+    example_id: str
+    visit_id: str
+    event_id: str | None = None
+    media_asset_id: str
+    source_id: str | None = None
+    stream_id: str | None = None
+    zone_id: str | None = None
+    local_media_path: str | None = None
+    label: str
+    taxonomy_id: str | None = None
+    common_name: str | None = None
+    scientific_name: str | None = None
+    reviewed_label_id: str | None = None
+    reviewed_at: str | None = None
+    created_at: str | None = None
+    split: str
+    quality_flags: list[str] = Field(default_factory=list)
+    provenance: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClassifierManifestSkippedRecord(BaseModel):
+    record_id: str
+    record_type: str
+    visit_id: str | None = None
+    event_id: str | None = None
+    media_asset_id: str | None = None
+    label: str | None = None
+    reason: str
+    detail: str | None = None
+
+
+class ClassifierManifestTaxonomyEntry(BaseModel):
+    label: str
+    taxonomy_id: str | None = None
+    common_name: str | None = None
+    scientific_name: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+
+
+class ClassifierManifestSummary(BaseModel):
+    examples: int = Field(ge=0)
+    skipped: int = Field(ge=0)
+    labels: dict[str, int]
+    splits: dict[str, int]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ClassifierTrainingManifestResponse(BaseModel):
+    # Manifest preview is read-only structured data. It writes no files and runs no models.
+    manifest_version: str
+    generated_at: str
+    examples: list[ClassifierManifestExample]
+    skipped_records: list[ClassifierManifestSkippedRecord]
+    taxonomy: list[ClassifierManifestTaxonomyEntry]
+    summary: ClassifierManifestSummary
+    warnings: list[str] = Field(default_factory=list)
+
+
 class AnalyticsSummary(BaseModel):
     event_count: int = Field(ge=0)
     visit_count: int = Field(ge=0)

@@ -5,9 +5,9 @@
 Define the future manifest contract for exporting stable, auditable,
 reviewed media-backed examples for classifier training or evaluation.
 
-This is a design contract only. It adds no training dependencies, model
-runtime, generated dataset, media copying, or export implementation to the core
-app.
+Phase 9Q implements the first backend foundation as a read-only structured
+manifest preview API. It still adds no training dependencies, model runtime,
+generated dataset, media copying, or file export implementation to the core app.
 
 ## Product Flow
 
@@ -36,6 +36,9 @@ Phase 9O adds a read-only classifier readiness report to summarize these
 counts and warnings before any manifest export implementation is added.
 Phase 9P adds the frontend readiness surface so those signals can guide future
 manifest export decisions without generating export files.
+Phase 9Q adds a read-only manifest response for reviewed media-backed examples,
+skipped records, taxonomy metadata, split assignment, provenance, and summary
+warnings. It writes no manifest files and creates no truth.
 
 ## Manifest File Formats
 
@@ -54,6 +57,9 @@ Optional companion files:
   `splits.json`.
 - `skipped_records.jsonl` and a skip summary for records excluded from the
   export.
+
+Phase 9Q does not create any of these files. It returns the same information as
+JSON-friendly API data so export/download behavior can be designed separately.
 
 ## Required Fields
 
@@ -227,11 +233,11 @@ Future exports should produce a summary report with:
 - quality flag counts
 - readiness warnings
 
-The Phase 9O readiness report should gate later manifest export work by showing
-whether reviewed media-backed species examples, taxonomy coverage, skip
-reasons, and quality warnings are ready enough to proceed.
-The Phase 9P UI makes those signals visible before any manifest implementation
-or training workflow exists.
+The Phase 9O readiness report gates manifest work by showing whether reviewed
+media-backed species examples, taxonomy coverage, skip reasons, and quality
+warnings are ready enough to proceed. The Phase 9P UI makes those signals
+visible. Phase 9Q adds the backend manifest preview foundation while still
+deferring file export, media copying, training, and runtime behavior.
 
 ## Relationship To Existing Dataset And Export Features
 
@@ -271,6 +277,10 @@ Future tests should prove:
 - no model or training dependency is required
 - no generated model files are created
 
+Phase 9Q backend tests cover this foundation for the read-only API response,
+including reviewed media-backed inclusion, skip reasons, taxonomy entries,
+deterministic splits, read-only behavior, and evidence-not-truth boundaries.
+
 ## Rollback Plan
 
 Manifest implementation should be easy to disable or remove:
@@ -287,8 +297,9 @@ Tentative product-first phases:
 
 - Phase 9O: classifier-readiness report/API.
 - Phase 9P: classifier readiness UI surface.
-- Phase 9Q: classifier training manifest export implementation foundation.
-- Phase 9R: reviewed media-backed example export.
+- Phase 9Q: classifier training manifest preview/API implementation foundation.
+- Phase 9R: classifier manifest UI/download preview or reviewed media-backed
+  example export file generation design.
 - Phase 9S: external training workflow docs.
 - Phase 9T: optional custom classifier adapter boundary.
 
@@ -298,6 +309,8 @@ training, runtime, or model integration.
 ## Explicit Non-Goals
 
 - no generated dataset in this phase
+- no manifest file export in Phase 9Q
+- no media copying in Phase 9Q
 - no training
 - no model dependencies
 - no model files
