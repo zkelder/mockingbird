@@ -21,6 +21,11 @@ SpeciesNet or any other species classifier runtime must follow
 before dependencies, model files, download behavior, or classifier calls are
 added. Its outputs must create `SpeciesSuggestion` evidence only.
 
+The SpeciesNet source review in
+[speciesnet-source-review.md](speciesnet-source-review.md) requires optional
+dependency, lazy import, explicit local model path/configuration, no automatic
+downloads, and mocked runtime-output tests before any real adapter work.
+
 Species suggestion UI actions such as accept, reject, and supersede update
 evidence workflow state only. They must not imply model truth or write reviewed
 corrections by themselves.

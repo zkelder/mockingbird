@@ -78,8 +78,9 @@ Every future implementation task must restate:
   truth.
 - SpeciesNet or classifier runtime work must follow
   [docs/speciesnet-runtime-investigation.md](docs/speciesnet-runtime-investigation.md)
-  and must not add dependencies, model files, automatic downloads, or classifier
-  calls without an explicit follow-up runtime plan.
+  and [docs/speciesnet-source-review.md](docs/speciesnet-source-review.md), and
+  must not add dependencies, model files, automatic downloads, or classifier
+  calls without an explicit optional adapter boundary plan.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.

@@ -51,6 +51,11 @@ output-mapping questions in
 [speciesnet-runtime-investigation.md](speciesnet-runtime-investigation.md).
 This does not select SpeciesNet as an implementation runtime yet.
 
+Phase 9J reviews public SpeciesNet sources in
+[speciesnet-source-review.md](speciesnet-source-review.md). SpeciesNet remains a
+candidate, but the recommended next step is an optional adapter boundary plan,
+not dependency or model-file integration.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context

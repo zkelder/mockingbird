@@ -249,7 +249,8 @@ Current work:
 - Phase 9G: Visit Detail species suggestion surface polish.
 - Phase 9H: mock species suggestion adapter for existing Visits.
 - Phase 9I: SpeciesNet runtime investigation docs.
-- Next likely phase: Phase 9J — SpeciesNet source/license/runtime source review or optional adapter boundary plan.
+- Phase 9J: SpeciesNet source/license/runtime review.
+- Next likely phase: Phase 9K — SpeciesNet optional adapter boundary plan.
 
 Validation:
 
@@ -266,3 +267,4 @@ Validation:
 - Mock species suggestion generation creates pending evidence only and does not run a model or inspect media.
 - Media-backed Event/Visit evidence can be the future input to suggestion adapters.
 - SpeciesNet remains under investigation as an optional future suggestion adapter; no runtime, model files, or dependency changes happen before source/license/runtime review.
+- SpeciesNet source review recommends boundary planning next, while runtime dependencies, model files, and downloads remain deferred.

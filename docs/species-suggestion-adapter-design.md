@@ -103,6 +103,11 @@ mapping questions in
 SpeciesNet remains a future optional adapter only until that review is complete
 and a later implementation phase explicitly scopes the runtime work.
 
+Phase 9J adds the concrete source review in
+[speciesnet-source-review.md](speciesnet-source-review.md). The recommendation
+is to proceed only to an optional adapter boundary plan, with no dependency,
+model-file, download, media-decoding, or runtime work yet.
+
 Before implementation, licensing, runtime behavior, model-file handling, supported taxa, local configuration, and failure behavior must be reviewed.
 
 ## Custom Backyard Bird Classifier Path
@@ -183,7 +188,8 @@ Recommended future phases:
 - Phase 9G: Visit Detail species suggestion review-context surface.
 - Phase 9H: mock species suggestion adapter for demo/testing.
 - Phase 9I: SpeciesNet runtime investigation docs.
-- Later: SpeciesNet source/license/runtime review or custom bird classifier dataset plan.
+- Phase 9J: SpeciesNet source/license/runtime review.
+- Later: SpeciesNet optional adapter boundary plan or custom bird classifier dataset plan.
 
 Phase 9B stores manual/mock suggestions and proves they do not create truth. No real classifier runtime exists yet.
 
@@ -249,6 +255,13 @@ Phase 9I adds the SpeciesNet runtime investigation record before any runtime
 dependency, model file, classifier call, media decoding, or implementation work.
 It keeps SpeciesNet as an optional future `SpeciesSuggestion` adapter and
 preserves correction as dataset/export truth.
+
+## Phase 9J Status
+
+Phase 9J reviews official/public SpeciesNet sources and recommends the next
+step as an optional adapter boundary plan. SpeciesNet stays evidence-only and
+deferred from runtime implementation until model-weight terms, local model path
+shape, dependency behavior, and taxonomy mapping are settled.
 
 ## Test Plan
 

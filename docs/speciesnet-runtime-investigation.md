@@ -150,6 +150,14 @@ Future implementation tests should prove:
 - Phase 9L: mocked SpeciesNet adapter seam.
 - Real runtime only after dependency, license, and model-file review is complete.
 
+## Phase 9J Source Review Result
+
+[speciesnet-source-review.md](speciesnet-source-review.md) recommends proceeding
+only to an optional adapter boundary plan. SpeciesNet remains relevant as future
+suggestion evidence, but runtime dependencies are heavy, official scripts can
+download weights, and model-weight license/redistribution terms still need
+deeper review.
+
 ## Explicit Non-Goals
 
 - no SpeciesNet runtime
