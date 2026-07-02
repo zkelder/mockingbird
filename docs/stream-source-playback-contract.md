@@ -63,6 +63,11 @@ For `manual_media` Sources, Stream playback remains a placeholder/media-context
 surface unless a future playback provider exists. The Stream still gives manual
 imports zone and review context.
 
+For `external_url` Sources, future preview behavior may feed `preview_url` or
+`preview_media_asset_id` only through explicit scoped implementation. Playback
+status must not fetch URLs, store media, or imply live playback in the contract
+phase.
+
 ## What This Phase Does
 
 - Adds a read-only playback status route for streams.
@@ -88,6 +93,8 @@ The Source adapter boundary is documented in
 [source-adapter-boundary-design.md](source-adapter-boundary-design.md). Stream
 playback status is the product-facing playback surface for future adapters, not
 an evidence or truth surface.
+The external URL still-image provider contract is documented in
+[external-url-still-image-provider-contract.md](external-url-still-image-provider-contract.md).
 
 ## Zone Editing Relationship
 

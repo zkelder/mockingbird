@@ -30,6 +30,12 @@ The design boundary that keeps real provider code underneath Source connection
 and Stream playback contracts. It prevents adapters from creating truth,
 skipping review, leaking secrets, or redefining the product flow.
 
+## External URL Still-image Provider
+
+A future `external_url` Source provider contract for explicit HTTP still-image
+preview/status. It is not RTSP, continuous video, a worker, evidence, or reviewed
+truth.
+
 ## Source Setup Review
 
 A read-only product summary of provider configuration, Source connection

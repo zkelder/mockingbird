@@ -75,6 +75,11 @@ connection status, and Stream playback status. Future adapter work must follow
 provider code feeds product contracts without replacing the Stream, Zone,
 review, correction, export, and analytics loop.
 
+The first recommended adapter boundary is external URL / HTTP still-image
+preview/status. Its contract is documented in
+[external-url-still-image-provider-contract.md](external-url-still-image-provider-contract.md)
+and remains explicit, bounded, local-first, and non-truth.
+
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
 it must not store raw secrets, connect to sources, decode media, create evidence,

@@ -78,6 +78,10 @@ The first real Source adapter boundary is design-only and documented in
 The recommended next direction is an explicit external URL / HTTP still-image
 preview/status path that feeds existing Source connection and Stream playback
 contracts without workers or truth creation.
+The provider-specific contract is documented in
+[docs/external-url-still-image-provider-contract.md](docs/external-url-still-image-provider-contract.md);
+it defines required metadata, explicit preview/status behavior, security
+guardrails, storage limits, and review/truth boundaries before implementation.
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 

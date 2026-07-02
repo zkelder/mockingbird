@@ -53,6 +53,11 @@ For `manual_media`, connection readiness means the Source is ready for explicit
 local import/review workflows. It is not a camera connection and does not imply
 live playback.
 
+For `external_url`, connection readiness remains metadata/status-only until an
+explicit preview implementation exists. A configured URL can improve setup
+readiness, but it must not trigger network calls or claim live playback in this
+contract phase.
+
 ## Provider Configuration Relationship
 
 Source provider configuration is the metadata layer underneath connection
@@ -102,6 +107,8 @@ The Source adapter boundary is documented in
 [source-adapter-boundary-design.md](source-adapter-boundary-design.md).
 Source connection status is the product-facing adapter status surface; adapters
 should not introduce a separate user-facing product model.
+External URL still-image behavior is further constrained by
+[external-url-still-image-provider-contract.md](external-url-still-image-provider-contract.md).
 
 ## Zone Editing Relationship
 

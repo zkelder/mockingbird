@@ -367,8 +367,9 @@ runtime behavior.
 Current work:
 
 - Phase 11A: first real source adapter boundary design.
-- Next likely phase: Phase 11B — external URL / HTTP still-image provider
-  boundary or implementation.
+- Phase 11B: external URL / HTTP still-image provider contract.
+- Next likely phase: Phase 11C — explicit external URL preview fetch
+  implementation with no workers/no truth, or status integration polish.
 
 Validation:
 
@@ -379,6 +380,9 @@ Validation:
 - Stream playback status is the product-facing playback surface.
 - Recommended first real adapter direction is explicit external URL / HTTP
   still-image preview/status, not a worker.
+- Phase 11B defines `external_url` provider fields, explicit preview/status
+  behavior, content-type boundaries, SSRF/timeout/security guardrails, storage
+  rules, and review/truth boundaries before implementation.
 - Future adapter work does not create MotionEvidence, Events, Visits,
   ReviewLabels, analytics truth, export truth, copied media, model files,
   dependencies, or generated artifacts unless explicitly scoped later.

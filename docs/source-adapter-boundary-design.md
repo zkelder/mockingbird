@@ -50,6 +50,8 @@ analytics/exports.
 The safest first implementation after this design is a simple `external_url` /
 HTTP still-image preview provider, implemented later as an explicit
 user-triggered preview/status path, not a worker.
+Its provider-specific contract is documented in
+[external-url-still-image-provider-contract.md](external-url-still-image-provider-contract.md).
 
 Rationale:
 
@@ -62,7 +64,8 @@ Rationale:
 - Can feed Stream playback preview fields without creating truth.
 
 This is only a recommendation for a future phase. Phase 11A does not implement
-the adapter, make network calls, or add dependencies.
+the adapter, make network calls, or add dependencies. Phase 11B defines the
+provider contract before implementation.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -183,8 +186,7 @@ Future implementation must test:
 
 ## Proposed Future Phases
 
-- Phase 11B: external URL / HTTP still-image provider status design or
-  implementation boundary.
+- Phase 11B: external URL / HTTP still-image provider contract.
 - Phase 11C: explicit preview fetch implementation, no workers/no truth.
 - Phase 11D: preview-to-MediaAsset handoff design, still explicit.
 - Phase 11E: first real adapter UI polish.

@@ -31,6 +31,14 @@ live playback or source connection behavior.
 can guide users toward importing media for a Source/Stream, but it does not imply
 live playback, capture, or automatic media analysis.
 
+`external_url` is the contract for future explicit HTTP still-image
+preview/status. See
+[external-url-still-image-provider-contract.md](external-url-still-image-provider-contract.md).
+Its configuration metadata may include `url`, optional `label` or
+`display_name`, optional `auth_username`, optional `auth_password`, optional
+`refresh_hint_seconds`, and optional `notes`. This metadata does not fetch or
+validate URLs in this phase.
+
 ## Provider Configuration Fields
 
 Each provider definition can expose fields with:
@@ -107,6 +115,9 @@ Future provider implementation must follow
 [source-adapter-boundary-design.md](source-adapter-boundary-design.md).
 Provider configuration metadata feeds future adapters, but it does not implement
 them or make provider runtime claims by itself.
+External URL implementation must also follow
+[external-url-still-image-provider-contract.md](external-url-still-image-provider-contract.md)
+before any URL fetch or validation behavior is added.
 
 ## Zone Editing Relationship
 
