@@ -21,6 +21,7 @@ Source adapters feed media into the platform, but the product is not organized a
 
 - Sources
 - Source provider configuration contract
+- Source setup review/status contract
 - Source connection/provider status contract
 - Streams
 - Stream playback status contract
@@ -72,6 +73,11 @@ Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
 it must not store raw secrets, connect to sources, decode media, create evidence,
 or write review truth.
+
+Source setup review is a read-only product/status boundary over provider
+configuration, source connection readiness, and related stream playback status.
+It may guide the next setup step, but it must not connect to sources, decode
+media, create evidence, write review truth, or create exports.
 
 Source connection status is the product boundary between source metadata and
 future provider readiness. Providers may feed safe status, field readiness, and

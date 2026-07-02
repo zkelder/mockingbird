@@ -18,6 +18,17 @@ provider implementation, connection attempt, evidence, or reviewed truth.
 A read-only product contract describing Source provider readiness and related
 Streams. It is not a provider implementation, evidence, or reviewed truth.
 
+## Source Setup Review
+
+A read-only product summary of provider configuration, Source connection
+readiness, and related Stream playback readiness. It does not connect, capture,
+decode, create evidence, or write reviewed truth.
+
+## Readiness Level
+
+A user-facing setup state such as demo ready, metadata ready, needs setup, future
+adapter required, or unavailable.
+
 ## Stream
 
 The central video experience shown in the app.

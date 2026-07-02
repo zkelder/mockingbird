@@ -42,6 +42,12 @@ Stream playback status is the stream-specific contract for what Stream Detail ca
 show. A Source may be demo or not configured while its Streams still support zone
 editing through demo or placeholder panels.
 
+## Source Setup Review Relationship
+
+Source setup review can include Stream playback readiness for the Streams that
+belong to a Source. It is a summary layer only and does not change playback
+behavior, start live video, create evidence, or write review truth.
+
 ## Provider Configuration Relationship
 
 Provider configuration metadata can make Source connection status more specific,

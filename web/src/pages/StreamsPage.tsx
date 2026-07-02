@@ -5,6 +5,7 @@ import type {
   SourceConnectionStatus,
   SourceProviderConfiguration,
   SourceProviderDefinition,
+  SourceSetupReviewResponse,
   Stream,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
@@ -23,6 +24,30 @@ function connectionTone(status: SourceConnectionStatus["status"]): "good" | "rev
     return "good";
   }
   if (status === "not_configured" || status === "unavailable") {
+    return "review";
+  }
+  return "quiet";
+}
+
+function readinessTone(
+  readinessLevel: SourceSetupReviewResponse["readiness_level"],
+): "good" | "review" | "quiet" {
+  if (readinessLevel === "demo_ready" || readinessLevel === "metadata_ready") {
+    return "good";
+  }
+  if (readinessLevel === "needs_setup" || readinessLevel === "unavailable") {
+    return "review";
+  }
+  return "quiet";
+}
+
+function stepTone(
+  status: SourceSetupReviewResponse["steps"][number]["status"],
+): "good" | "review" | "quiet" {
+  if (status === "complete" || status === "available") {
+    return "good";
+  }
+  if (status === "missing" || status === "warning" || status === "unavailable") {
     return "review";
   }
   return "quiet";
@@ -53,6 +78,7 @@ export function StreamsPage({ streams, sources, onOpenStream }: StreamsPageProps
   const [providerConfigurations, setProviderConfigurations] = useState<
     Record<string, SourceProviderConfiguration>
   >({});
+  const [setupReviews, setSetupReviews] = useState<Record<string, SourceSetupReviewResponse>>({});
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(sources[0]?.id ?? null);
   const [providerKey, setProviderKey] = useState("");
   const [configDraft, setConfigDraft] = useState<Record<string, string>>({});
@@ -68,31 +94,40 @@ export function StreamsPage({ streams, sources, onOpenStream }: StreamsPageProps
       if (sources.length === 0) {
         setConnectionStatuses({});
         setProviderConfigurations({});
+        setSetupReviews({});
         setConnectionError(null);
         return;
       }
 
       setConnectionError(null);
       try {
-        const [definitions, connectionEntries, configurationEntries] = await Promise.all([
-          apiClient.getSourceProviderDefinitions(),
-          Promise.all(
-            sources.map(async (source) => [
-              source.id,
-              await apiClient.getSourceConnectionStatus(source.id),
-            ] as const),
-          ),
-          Promise.all(
-            sources.map(async (source) => [
-              source.id,
-              await apiClient.getSourceProviderConfiguration(source.id),
-            ] as const),
-          ),
-        ]);
+        const [definitions, connectionEntries, configurationEntries, reviewEntries] =
+          await Promise.all([
+            apiClient.getSourceProviderDefinitions(),
+            Promise.all(
+              sources.map(async (source) => [
+                source.id,
+                await apiClient.getSourceConnectionStatus(source.id),
+              ] as const),
+            ),
+            Promise.all(
+              sources.map(async (source) => [
+                source.id,
+                await apiClient.getSourceProviderConfiguration(source.id),
+              ] as const),
+            ),
+            Promise.all(
+              sources.map(async (source) => [
+                source.id,
+                await apiClient.getSourceSetupReview(source.id),
+              ] as const),
+            ),
+          ]);
         if (isMounted) {
           setProviderDefinitions(definitions);
           setConnectionStatuses(Object.fromEntries(connectionEntries));
           setProviderConfigurations(Object.fromEntries(configurationEntries));
+          setSetupReviews(Object.fromEntries(reviewEntries));
         }
       } catch (caught) {
         if (isMounted) {
@@ -125,6 +160,7 @@ export function StreamsPage({ streams, sources, onOpenStream }: StreamsPageProps
   const selectedConfiguration = selectedSourceId
     ? providerConfigurations[selectedSourceId] ?? null
     : null;
+  const selectedSetupReview = selectedSourceId ? setupReviews[selectedSourceId] ?? null : null;
   const selectedProviderDefinition =
     providerDefinitions.find((definition) => definition.provider_key === providerKey) ??
     providerDefinitions.find(
@@ -177,7 +213,10 @@ export function StreamsPage({ streams, sources, onOpenStream }: StreamsPageProps
         provider_key: selectedProviderDefinition.provider_key,
         config,
       });
-      const connection = await apiClient.getSourceConnectionStatus(selectedSourceId);
+      const [connection, setupReview] = await Promise.all([
+        apiClient.getSourceConnectionStatus(selectedSourceId),
+        apiClient.getSourceSetupReview(selectedSourceId),
+      ]);
       setProviderConfigurations((current) => ({
         ...current,
         [selectedSourceId]: configuration,
@@ -185,6 +224,10 @@ export function StreamsPage({ streams, sources, onOpenStream }: StreamsPageProps
       setConnectionStatuses((current) => ({
         ...current,
         [selectedSourceId]: connection,
+      }));
+      setSetupReviews((current) => ({
+        ...current,
+        [selectedSourceId]: setupReview,
       }));
       setSetupMessage("Source setup metadata saved.");
     } catch (caught) {
@@ -194,18 +237,27 @@ export function StreamsPage({ streams, sources, onOpenStream }: StreamsPageProps
     }
   }
 
-  async function refreshSourceConnectionStatuses() {
+  async function refreshSourceSetupStatuses() {
     try {
-      const entries = await Promise.all(
-        sources.map(async (source) => [
-          source.id,
-          await apiClient.getSourceConnectionStatus(source.id),
-        ] as const),
-      );
-      setConnectionStatuses(Object.fromEntries(entries));
+      const [connectionEntries, reviewEntries] = await Promise.all([
+        Promise.all(
+          sources.map(async (source) => [
+            source.id,
+            await apiClient.getSourceConnectionStatus(source.id),
+          ] as const),
+        ),
+        Promise.all(
+          sources.map(async (source) => [
+            source.id,
+            await apiClient.getSourceSetupReview(source.id),
+          ] as const),
+        ),
+      ]);
+      setConnectionStatuses(Object.fromEntries(connectionEntries));
+      setSetupReviews(Object.fromEntries(reviewEntries));
     } catch (caught) {
       setConnectionError(
-        caught instanceof Error ? caught.message : "Could not load source connection status.",
+        caught instanceof Error ? caught.message : "Could not load source setup status.",
       );
     }
   }
@@ -304,6 +356,90 @@ export function StreamsPage({ streams, sources, onOpenStream }: StreamsPageProps
                 <p>Live playback requires a future provider implementation.</p>
                 <p>Zone editing can continue with placeholders/demo panels.</p>
               </div>
+              {selectedSetupReview ? (
+                <div className="source-review-panel">
+                  <div className="item-title-row">
+                    <h3>Source setup review</h3>
+                    <StatusPill
+                      label={formatLabel(selectedSetupReview.readiness_level)}
+                      tone={readinessTone(selectedSetupReview.readiness_level)}
+                    />
+                  </div>
+                  <p>{selectedSetupReview.summary}</p>
+                  <div className="source-review-next">
+                    <strong>Next step</strong>
+                    <span>{selectedSetupReview.next_step}</span>
+                  </div>
+                  <div className="source-field-summary">
+                    <div>
+                      <strong>Configured</strong>
+                      <div className="source-field-tags">
+                        {selectedSetupReview.configured_fields.length > 0 ? (
+                          selectedSetupReview.configured_fields.map((field) => (
+                            <span key={field}>{formatLabel(field)}</span>
+                          ))
+                        ) : (
+                          <span>None</span>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <strong>Missing</strong>
+                      <div className="source-field-tags">
+                        {selectedSetupReview.missing_fields.length > 0 ? (
+                          selectedSetupReview.missing_fields.map((field) => (
+                            <span key={field}>{formatLabel(field)}</span>
+                          ))
+                        ) : (
+                          <span>None</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {selectedSetupReview.warnings.length > 0 ? (
+                    <div className="source-warning-list">
+                      {selectedSetupReview.warnings.map((warning) => (
+                        <span key={warning}>{warning}</span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="source-review-step-list">
+                    {selectedSetupReview.steps.map((step) => (
+                      <div className="source-review-step" key={step.key}>
+                        <div className="item-title-row">
+                          <strong>{step.label}</strong>
+                          <StatusPill
+                            label={formatLabel(step.status)}
+                            tone={stepTone(step.status)}
+                          />
+                        </div>
+                        <p>{step.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="source-review-stream-list">
+                    <strong>Related Streams</strong>
+                    {selectedSetupReview.streams.length > 0 ? (
+                      selectedSetupReview.streams.map((stream) => (
+                        <div className="source-review-stream" key={stream.stream_id}>
+                          <div className="item-title-row">
+                            <span>{stream.display_name}</span>
+                            <StatusPill label={formatLabel(stream.playback_status)} />
+                          </div>
+                          <p>{stream.message}</p>
+                          <span className="meta-text">
+                            Playback readiness: {formatLabel(stream.playback_kind)} · Live playback:{" "}
+                            {stream.supports_live_playback ? "Available" : "Not available"} · Zone
+                            editing: {stream.supports_zone_editing ? "Available" : "Unavailable"}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <span className="meta-text">No related Streams yet.</span>
+                    )}
+                  </div>
+                </div>
+              ) : null}
               {selectedConfiguration ? (
                 <div className="source-field-summary">
                   <div>
@@ -387,7 +523,7 @@ export function StreamsPage({ streams, sources, onOpenStream }: StreamsPageProps
                 </button>
                 <button
                   className="secondary-action"
-                  onClick={refreshSourceConnectionStatuses}
+                  onClick={refreshSourceSetupStatuses}
                   type="button"
                 >
                   Refresh status

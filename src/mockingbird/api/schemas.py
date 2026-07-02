@@ -233,6 +233,43 @@ class SourceProviderConfigurationUpdate(BaseModel):
     config: dict[str, str | None] = Field(default_factory=dict)
 
 
+class SourceSetupReviewStep(BaseModel):
+    key: str
+    label: str
+    status: str
+    message: str
+
+
+class SourceSetupReviewStream(BaseModel):
+    stream_id: str
+    display_name: str
+    playback_status: str
+    playback_kind: str
+    supports_live_playback: bool
+    supports_zone_editing: bool
+    message: str
+
+
+class SourceSetupReviewResponse(BaseModel):
+    # Read-only setup review combines product status without touching adapters.
+    source_id: str
+    provider_key: str
+    provider_display_name: str
+    source_status: str
+    readiness_level: str
+    display_title: str
+    summary: str
+    next_step: str
+    configured_fields: list[str] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    supports_live_playback: bool
+    supports_zone_editing: bool
+    stream_count: int = Field(ge=0)
+    streams: list[SourceSetupReviewStream] = Field(default_factory=list)
+    steps: list[SourceSetupReviewStep] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class Stream(BaseModel):
     id: str
     source_id: str

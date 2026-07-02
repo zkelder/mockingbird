@@ -56,6 +56,7 @@ import type {
   SourceProviderConfiguration,
   SourceProviderConfigurationUpdate,
   SourceProviderDefinition,
+  SourceSetupReviewResponse,
   Stream,
   StreamPlaybackStatus,
   TaxonomyLabel,
@@ -128,6 +129,8 @@ export const apiClient = {
     request<SourceProviderDefinition[]>("/api/source-provider-definitions"),
   getSourceConnectionStatus: (sourceId: string) =>
     request<SourceConnectionStatus>(`/api/sources/${sourceId}/connection`),
+  getSourceSetupReview: (sourceId: string) =>
+    request<SourceSetupReviewResponse>(`/api/sources/${sourceId}/setup-review`),
   getSourceProviderConfiguration: (sourceId: string) =>
     request<SourceProviderConfiguration>(`/api/sources/${sourceId}/provider-configuration`),
   updateSourceProviderConfiguration: (

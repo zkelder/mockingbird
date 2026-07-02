@@ -126,6 +126,9 @@ from mockingbird.api.schemas import (
     SourceProviderDefinition,
     SourceProviderDefinitionStatus,
     SourceProviderField,
+    SourceSetupReviewResponse,
+    SourceSetupReviewStep,
+    SourceSetupReviewStream,
     SpeciesSuggestionCreateRequest,
     SpeciesSuggestionResponse,
     SpeciesSuggestionStatus,
@@ -896,6 +899,34 @@ class ProductRepository:
                 missing_fields=configuration.missing_fields,
                 stream_ids=stream_ids,
             )
+
+    def get_source_setup_review(self, source_id: str) -> SourceSetupReviewResponse | None:
+        source = self.get_source(source_id)
+        if source is None:
+            return None
+
+        configuration = self.get_source_provider_configuration(source_id)
+        connection = self.get_source_connection_status(source_id)
+        if configuration is None or connection is None:
+            return None
+
+        definition = _source_provider_definition(configuration.provider_key)
+        provider_display_name = (
+            definition.display_name if definition is not None else configuration.provider_key
+        )
+        streams = [
+            playback
+            for stream in self.streams_for_source(source_id)
+            if (playback := self.get_stream_playback_status(stream.id)) is not None
+        ]
+        return _source_setup_review_from_contracts(
+            source=source,
+            configuration=configuration,
+            connection=connection,
+            provider_display_name=provider_display_name,
+            definition=definition,
+            streams=streams,
+        )
 
     def list_streams(self) -> list[Stream]:
         with self.session_factory() as session:
@@ -4891,6 +4922,146 @@ def _source_provider_configuration_from_config(
         message=message,
         setup_hint=setup_hint,
     )
+
+
+def _source_setup_review_from_contracts(
+    *,
+    source: CameraSource,
+    configuration: SourceProviderConfiguration,
+    connection: SourceConnectionStatus,
+    provider_display_name: str,
+    definition: SourceProviderDefinition | None,
+    streams: list[StreamPlaybackStatus],
+) -> SourceSetupReviewResponse:
+    missing_labels = _field_labels(definition, configuration.missing_fields)
+    stream_reviews = [
+        SourceSetupReviewStream(
+            stream_id=stream.stream_id,
+            display_name=stream.display_title,
+            playback_status=stream.status.value,
+            playback_kind=stream.playback_kind.value,
+            supports_live_playback=stream.supports_live_playback,
+            supports_zone_editing=stream.supports_zone_editing,
+            message=stream.message,
+        )
+        for stream in streams
+    ]
+    supports_live_playback = connection.supports_live_playback or any(
+        stream.supports_live_playback for stream in streams
+    )
+    supports_zone_editing = connection.supports_zone_editing or any(
+        stream.supports_zone_editing for stream in streams
+    )
+
+    if connection.status in {
+        SourceConnectionStatusValue.offline,
+        SourceConnectionStatusValue.unavailable,
+        SourceConnectionStatusValue.unsupported,
+    }:
+        readiness_level = "unavailable"
+        summary = "Source setup cannot provide playback readiness from the current metadata."
+        next_step = connection.setup_hint or "Review source metadata before future provider work."
+    elif configuration.provider_key == "demo":
+        readiness_level = "demo_ready"
+        summary = "Demo setup metadata is ready for local stream, zone, and review workflows."
+        next_step = (
+            "Draw zones and review the demo flow; real playback still needs future provider work."
+        )
+    elif configuration.missing_fields:
+        readiness_level = "needs_setup"
+        summary = "Source setup metadata is incomplete."
+        next_step = f"Add setup metadata for: {', '.join(missing_labels)}."
+    elif configuration.provider_key == "manual_media":
+        readiness_level = "metadata_ready"
+        summary = "Manual media setup metadata is ready without a live playback claim."
+        next_step = "Use manual media review/import flows; live playback is not expected here."
+    elif connection.provider_kind == SourceProviderKind.future_adapter or (
+        definition is not None
+        and definition.status == SourceProviderDefinitionStatus.future_adapter
+    ):
+        readiness_level = "future_adapter_required"
+        summary = "Setup metadata is present, but live playback still needs provider work."
+        next_step = "Future provider implementation required before live playback is available."
+    else:
+        readiness_level = "future_adapter_required"
+        summary = "Setup metadata is present, but live playback is not implemented yet."
+        next_step = "Live playback is not implemented for this provider yet."
+
+    warnings: list[str] = []
+    if configuration.missing_fields:
+        warnings.append(f"Missing setup metadata: {', '.join(missing_labels)}.")
+    if not supports_live_playback:
+        warnings.append("Live playback is not implemented for this provider yet.")
+    if not supports_zone_editing:
+        warnings.append("No related stream panel is available for zone editing yet.")
+
+    steps = [
+        SourceSetupReviewStep(
+            key="setup_metadata",
+            label="Setup metadata",
+            status="missing" if configuration.missing_fields else "complete",
+            message=configuration.message,
+        ),
+        SourceSetupReviewStep(
+            key="playback_readiness",
+            label="Playback readiness",
+            status="available" if supports_live_playback else "future",
+            message=(
+                "Live playback is available."
+                if supports_live_playback
+                else "Live playback is not implemented for this provider yet."
+            ),
+        ),
+        SourceSetupReviewStep(
+            key="zone_editing",
+            label="Zone editing",
+            status="available" if supports_zone_editing else "unavailable",
+            message=(
+                "Zone editing can continue with the stream panel."
+                if supports_zone_editing
+                else "Add a product Stream before zone editing can continue."
+            ),
+        ),
+        SourceSetupReviewStep(
+            key="future_provider",
+            label="Future provider work",
+            status="future" if not supports_live_playback else "complete",
+            message=(
+                "Provider metadata remains underneath the product loop."
+                if supports_live_playback
+                else "Future provider implementation required for real playback."
+            ),
+        ),
+    ]
+
+    return SourceSetupReviewResponse(
+        source_id=source.id,
+        provider_key=configuration.provider_key,
+        provider_display_name=provider_display_name,
+        source_status=connection.status.value,
+        readiness_level=readiness_level,
+        display_title=connection.display_title,
+        summary=summary,
+        next_step=next_step,
+        configured_fields=configuration.configured_fields,
+        missing_fields=configuration.missing_fields,
+        supports_live_playback=supports_live_playback,
+        supports_zone_editing=supports_zone_editing,
+        stream_count=len(stream_reviews),
+        streams=stream_reviews,
+        steps=steps,
+        warnings=warnings,
+    )
+
+
+def _field_labels(
+    definition: SourceProviderDefinition | None,
+    field_keys: list[str],
+) -> list[str]:
+    if definition is None:
+        return field_keys
+    fields_by_key = {field.key: field.label for field in definition.fields}
+    return [fields_by_key.get(field_key, field_key) for field_key in field_keys]
 
 
 def _source_from_model(source: CameraSourceModel) -> CameraSource:

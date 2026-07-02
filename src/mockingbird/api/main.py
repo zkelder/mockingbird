@@ -75,6 +75,7 @@ from mockingbird.api.schemas import (
     SourceProviderConfiguration,
     SourceProviderConfigurationUpdate,
     SourceProviderDefinition,
+    SourceSetupReviewResponse,
     Stream,
     StreamPlaybackStatus,
     StreamPlaybackStatusResponse,
@@ -961,6 +962,14 @@ async def get_source_connection_status(source_id: str) -> SourceConnectionStatus
     if status is None:
         raise _not_found("Source", source_id)
     return status
+
+
+@app.get("/api/sources/{source_id}/setup-review", response_model=SourceSetupReviewResponse)
+async def get_source_setup_review(source_id: str) -> SourceSetupReviewResponse:
+    review = get_repository().get_source_setup_review(source_id)
+    if review is None:
+        raise _not_found("Source", source_id)
+    return review
 
 
 @app.get("/api/sources/{source_id}/streams", response_model=list[Stream])

@@ -424,7 +424,10 @@ button {
 .source-setup-summary,
 .source-setup-form,
 .source-setup-copy,
-.source-field-summary {
+.source-field-summary,
+.source-review-panel,
+.source-review-step-list,
+.source-review-stream-list {
   display: grid;
   gap: 12px;
 }
@@ -473,6 +476,55 @@ button {
   color: #34473b;
   font-size: 0.85rem;
   font-weight: 700;
+}
+
+.source-review-panel {
+  border: 1px solid #d8e2d3;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfdf9;
+}
+
+.source-review-panel h3,
+.source-review-panel p,
+.source-review-step p,
+.source-review-stream p {
+  margin: 0;
+}
+
+.source-review-next,
+.source-review-step,
+.source-review-stream {
+  display: grid;
+  gap: 6px;
+}
+
+.source-review-next {
+  border-left: 3px solid #6e9567;
+  padding-left: 10px;
+}
+
+.source-warning-list {
+  display: grid;
+  gap: 6px;
+}
+
+.source-warning-list span {
+  border: 1px solid #d6bb7a;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff9e9;
+  color: #5f5027;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.source-review-step,
+.source-review-stream {
+  border: 1px solid #e2e8de;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
 }
 
 .provider-field-grid {

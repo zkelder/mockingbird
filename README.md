@@ -64,6 +64,9 @@ not-configured, unavailable, offline, or future-provider-ready states. See
 Source setup can store provider configuration metadata only, with secret fields
 redacted to configured/not-configured markers. See
 [docs/source-provider-configuration-contract.md](docs/source-provider-configuration-contract.md).
+The Streams page also shows a read-only Source setup review that combines setup
+metadata, connection readiness, and Stream playback readiness without connecting
+to sources or creating product truth.
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 

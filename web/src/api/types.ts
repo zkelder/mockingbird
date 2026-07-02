@@ -149,6 +149,57 @@ export interface SourceProviderConfigurationUpdate {
   config: Record<string, string | null>;
 }
 
+export type SourceSetupReviewStepStatus =
+  | "complete"
+  | "missing"
+  | "future"
+  | "available"
+  | "unavailable"
+  | "warning";
+
+export type SourceSetupReviewReadinessLevel =
+  | "demo_ready"
+  | "metadata_ready"
+  | "needs_setup"
+  | "future_adapter_required"
+  | "unavailable";
+
+export interface SourceSetupReviewStep {
+  key: string;
+  label: string;
+  status: SourceSetupReviewStepStatus;
+  message: string;
+}
+
+export interface SourceSetupReviewStream {
+  stream_id: string;
+  display_name: string;
+  playback_status: StreamPlaybackStatusValue;
+  playback_kind: StreamPlaybackKind;
+  supports_live_playback: boolean;
+  supports_zone_editing: boolean;
+  message: string;
+}
+
+export interface SourceSetupReviewResponse {
+  source_id: string;
+  provider_key: string;
+  provider_display_name: string;
+  source_status: SourceConnectionStatusValue;
+  readiness_level: SourceSetupReviewReadinessLevel;
+  display_title: string;
+  summary: string;
+  next_step: string;
+  configured_fields: string[];
+  missing_fields: string[];
+  supports_live_playback: boolean;
+  supports_zone_editing: boolean;
+  stream_count: number;
+  streams: SourceSetupReviewStream[];
+  steps: SourceSetupReviewStep[];
+  warnings: string[];
+}
+
 export interface Stream {
   id: string;
   source_id: string;

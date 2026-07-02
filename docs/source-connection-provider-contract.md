@@ -8,8 +8,8 @@ implementation, media decoding, or camera connection.
 
 ## Product Flow
 
-Source -> connection/configuration status -> Stream playback contract -> zone
-editing -> future provider implementation.
+Source -> configuration metadata -> setup review -> connection status -> Stream
+playback contract -> zone editing -> future provider implementation.
 
 ## Source Connection Contract Fields
 
@@ -55,6 +55,13 @@ Source provider configuration is the metadata layer underneath connection
 status. Connection status reports the selected provider key, configured fields,
 and missing fields, but it still does not connect to a Source or claim live
 playback.
+
+## Source Setup Review Relationship
+
+Source setup review combines provider configuration, this connection status, and
+related Stream playback status into a read-only user-facing readiness summary. It
+does not create evidence, write truth, connect to sources, inspect media, or run
+provider/model code.
 
 ## Relationship To Stream Playback Contract
 

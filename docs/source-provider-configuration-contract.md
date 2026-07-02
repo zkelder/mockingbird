@@ -8,8 +8,8 @@ camera connection, media decoding, stream work, or provider execution.
 
 ## Product Flow
 
-Source -> intended provider/config metadata -> connection readiness -> Stream
-playback contract -> future real adapter implementation.
+Source -> intended provider/config metadata -> setup review -> connection
+readiness -> Stream playback contract -> future real adapter implementation.
 
 ## Provider Definitions
 
@@ -54,6 +54,13 @@ Source connection status reads provider configuration metadata to report
 configured and missing fields. A Source can be `configured` while
 `supports_live_playback` remains false because real provider behavior is still a
 future phase.
+
+## Relationship To Source Setup Review
+
+Source setup review is a read-only product summary over provider configuration,
+source connection readiness, and related Stream playback readiness. It can report
+next setup steps, missing metadata, and future provider requirements, but it does
+not connect, capture, decode, inspect media, create evidence, or write truth.
 
 ## Relationship To Stream Playback Status
 
