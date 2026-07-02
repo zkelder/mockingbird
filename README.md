@@ -99,7 +99,7 @@ Sampled-frame ingestion is the planned bridge from visible streams to frame-plan
 
 The Motion Evidence page includes a sampled-frame evaluation harness for supplied tiny frame planes; it can create pending evidence only.
 
-The future lightweight sampler abstraction is documented in [docs/lightweight-sampler-abstraction.md](docs/lightweight-sampler-abstraction.md).
+The backend sampler abstraction now evaluates supplied in-memory frame planes; see [docs/lightweight-sampler-abstraction.md](docs/lightweight-sampler-abstraction.md).
 
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md), and the [local setup checklist](docs/megadetector-local-setup.md).
 

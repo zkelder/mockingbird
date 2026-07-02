@@ -82,6 +82,12 @@ Phase 8L defines the lightweight sampler abstraction that will later bridge visi
 
 The current system still uses manual and harness-supplied frames. No real stream sampling, media decoding, worker, source adapter, model runtime, or truth creation is added in this phase. See [lightweight-sampler-abstraction.md](lightweight-sampler-abstraction.md).
 
+## Phase 8M Status
+
+Phase 8M implements the backend sampler abstraction for supplied in-memory frame planes.
+
+The sampler evaluates supplied frame sequences, extracts debounced zone-local candidates, and can create pending MotionEvidence only when explicitly configured. It still does not sample real streams, decode media, attach media, run model runtimes, create reviewed labels, or create export-ready truth.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.

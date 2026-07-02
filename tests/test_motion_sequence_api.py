@@ -208,7 +208,7 @@ async def test_evaluate_sequence_can_create_pending_motion_evidence_without_trut
     assert evidence["peak_changed_ratio"] == 0.75
     assert evidence["triggered_frame_count"] == 2
     assert evidence["scoring_config"] == {
-        "source": "frame_sequence_evaluation",
+        "source": "sampler",
         "pixel_delta_threshold": 25.0,
         "min_changed_ratio": 0.25,
         "min_triggered_frames": 2,

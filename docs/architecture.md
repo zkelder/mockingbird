@@ -32,7 +32,7 @@ Source adapters feed media into the platform, but the product is not organized a
 
 - Motion/activity detection
 - Sampled-frame ingestion boundary between visible streams and frame-plane evaluation
-- Lightweight sampler abstraction for future bounded frame-plane production
+- Lightweight sampler abstraction for supplied frame-plane evaluation
 - Motion Evidence between scoring/evaluation and Event/Visit creation
 - Motion Evidence persistence and ignore lifecycle
 - Animal detection

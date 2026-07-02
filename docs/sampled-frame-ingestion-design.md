@@ -101,13 +101,18 @@ The harness calls `/api/motion/evaluate-sequence`, shows frame score/candidate r
 
 Phase 8L defines the lightweight sampler abstraction that will eventually produce frame planes from already-configured source/stream/media context.
 
-Sampler implementation remains future work. The current system still uses manual or harness-supplied frame planes. See [lightweight-sampler-abstraction.md](lightweight-sampler-abstraction.md).
+At that phase, sampler implementation remained future work and the system still used manual or harness-supplied frame planes. See [lightweight-sampler-abstraction.md](lightweight-sampler-abstraction.md).
+
+## Phase 8M Status
+
+Phase 8M adds backend sampler code for supplied in-memory frame planes.
+
+`/api/motion/evaluate-sequence` now uses the sampler service to evaluate consecutive frame pairs, extract zone-local motion candidates, and optionally create pending MotionEvidence. This still does not sample real streams, decode media, attach media, run models, create Event/Visit records, or write review/export truth.
 
 ## Future Implementation Plan
 
 Tentative future phases:
 
-- Phase 8M: sampler abstraction code using supplied in-memory frame planes only.
 - Phase 8N: sampled-frame source contract for already-available stream/import frames.
 - Phase 8O: optional best-frame MediaAsset attachment.
 - Phase 8P: controlled local stream sampling.

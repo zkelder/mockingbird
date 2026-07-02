@@ -2,17 +2,19 @@
 
 ## Purpose
 
-The sampler abstraction is the future boundary between visible streams or imported media and the existing motion evaluation contract.
+The sampler abstraction is the boundary between visible streams or imported media and the existing motion evaluation contract.
 
-It should let MockingBird turn already-configured source/stream/media context into low-resolution grayscale frame planes, then pass those planes to `/api/motion/evaluate-sequence`. The sampler keeps source adapters, media decoding, workers, detectors, and review/export decisions outside the core motion scoring contract.
+Phase 8M adds backend sampler code for supplied in-memory grayscale frame planes. Future stream or media producers can feed the same shape later, while source adapters, media decoding, workers, detectors, and review/export decisions stay outside the core motion scoring contract.
 
 ## Product Flow
 
-source/stream visible in MockingBird -> sampler selects a small frame sequence -> frames become low-resolution grayscale frame planes -> zones are applied -> `/api/motion/evaluate-sequence` evaluates motion -> optional pending MotionEvidence is created -> user reviews, ignores, or promotes -> correction creates truth.
+source/stream visible in MockingBird -> supplied or future sampler-produced frame planes -> zones are applied -> `/api/motion/evaluate-sequence` evaluates motion through the sampler service -> optional pending MotionEvidence is created -> user reviews, ignores, or promotes -> correction creates truth.
 
 ## Sampler Definition
 
-A sampler is a local component that produces frame planes from an already-configured source, stream, or media context.
+A sampler is a local component that evaluates frame planes from an already-configured source, stream, or media context.
+
+The current implementation accepts already-supplied in-memory frame planes only. It does not connect to streams, read media, or produce frames from files.
 
 It is not:
 
@@ -26,7 +28,14 @@ The sampler exists underneath the product loop. Its output is evidence for revie
 
 ## Sampler Input Contract
 
-Likely future inputs, for design only:
+Current Phase 8M inputs:
+
+- supplied grayscale frame planes
+- `SamplerZone` bounds
+- `SamplerConfig` thresholds and candidate settings
+- optional `SamplerContext` with source, stream, and notes for evidence creation
+
+Likely future inputs:
 
 - `source_id`
 - `stream_id`
@@ -42,6 +51,13 @@ Likely future inputs, for design only:
 The input contract should stay product-shaped: stream, zones, scoring config, and evidence policy.
 
 ## Sampler Output Contract
+
+Current Phase 8M outputs:
+
+- frame scores
+- motion candidates
+- optional created pending MotionEvidence records from a separate helper
+- warnings list, currently empty
 
 Likely future outputs:
 
@@ -69,9 +85,9 @@ It should not process every full-resolution frame by default. It should use shor
 
 ## Relationship To `/api/motion/evaluate-sequence`
 
-`/api/motion/evaluate-sequence` already accepts frame planes and can create pending MotionEvidence.
+`/api/motion/evaluate-sequence` accepts frame planes and can create pending MotionEvidence.
 
-The sampler should call this contract instead of duplicating scoring logic. The evaluation route remains evidence-only: it does not create Event, Visit, ReviewLabel, export, dataset coverage, or correction truth.
+The route now uses the sampler service for supplied frame-plane evaluation instead of duplicating sequence scoring logic. The evaluation route remains evidence-only: it does not create Event, Visit, ReviewLabel, export, dataset coverage, or correction truth.
 
 ## Relationship To MotionEvidence
 
@@ -101,22 +117,27 @@ Expected failure and noise cases include:
 
 Failures should be safe, local, and reviewable. Bad input should fail without truth writes. Repeated motion should be controlled by debounce/cooldown behavior before evidence can pile up.
 
+## Phase 8M Status
+
+Phase 8M implements the sampler abstraction for supplied in-memory frame planes.
+
+The backend sampler evaluates consecutive frame pairs, extracts debounced motion candidates, and can create pending MotionEvidence when explicitly enabled. It does not create Event, Visit, ReviewLabel, export, dataset coverage, species truth, media files, source adapters, model runtime calls, workers, or stream connections.
+
 ## Implementation Plan
 
 Tentative future phases:
 
-- Phase 8M: sampler abstraction code using supplied in-memory frame planes only.
 - Phase 8N: sampled-frame source contract for already-available stream/import frames.
 - Phase 8O: optional best-frame MediaAsset attachment.
 - Phase 8P: controlled local stream sampling.
 
 Each phase should preserve the stream -> zone -> pending evidence -> review/promotion -> correction truth path.
 
-## Test Plan For Future Implementation
+## Test Plan
 
-Future tests should prove:
+Current and future tests should prove:
 
-- sampler builds a valid `/api/motion/evaluate-sequence` request
+- sampler evaluates supplied frame planes deterministically
 - sampler passes zones correctly
 - privacy/ignore zones suppress evidence
 - `create_motion_evidence=false` creates no evidence

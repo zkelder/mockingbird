@@ -199,7 +199,8 @@ Current work:
 - Phase 8J: sampled-frame ingestion boundary design.
 - Phase 8K: sampled-frame evaluation browser harness.
 - Phase 8L: lightweight sampler abstraction design.
-- Next likely phase: Phase 8M — sampler abstraction code using supplied in-memory frame planes only.
+- Phase 8M: sampler abstraction code using supplied in-memory frame planes only.
+- Next likely phase: Phase 8N — sampled-frame source contract for already-available stream/import frames.
 
 Validation:
 
@@ -215,5 +216,6 @@ Validation:
 - Sampled-frame ingestion design defines the bridge from visible streams to frame planes before implementation.
 - Sampled-frame evaluation harness exercises supplied frame planes in the browser without real stream sampling.
 - Lightweight sampler abstraction design defines future sampler inputs, outputs, zone/privacy behavior, and truth boundary before implementation.
+- Sampler abstraction code evaluates supplied in-memory frame planes and can create pending MotionEvidence without creating truth.
 - Stream sampling, media decoding, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.
