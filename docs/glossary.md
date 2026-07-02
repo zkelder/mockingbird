@@ -8,6 +8,11 @@ A user-facing outdoor camera concept.
 
 An adapter-backed input that can provide video, images, clips, or stream data.
 
+## Source Connection Status
+
+A read-only product contract describing Source provider readiness and related
+Streams. It is not a provider implementation, evidence, or reviewed truth.
+
 ## Stream
 
 The central video experience shown in the app.

@@ -35,6 +35,13 @@ connect source -> inspect stream playback status -> view stream panel/placeholde
 - `offline`: the source is known but disconnected.
 - `unsupported`: the source type cannot provide playback through the current contract.
 
+## Source Connection Relationship
+
+Source connection status is the upstream readiness contract for the Source.
+Stream playback status is the stream-specific contract for what Stream Detail can
+show. A Source may be demo or not configured while its Streams still support zone
+editing through demo or placeholder panels.
+
 ## What This Phase Does
 
 - Adds a read-only playback status route for streams.

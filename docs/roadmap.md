@@ -310,18 +310,27 @@ source adapters exist.
 Current work:
 
 - Phase 10A: stream/source playback contract for Stream Detail.
-- Next likely phase: Phase 10B — source adapter configuration design for feeding
-  playback status without implementing capture or media decoding.
+- Phase 10B: source connection/provider status contract.
+- Next likely phase: Phase 10C — source provider configuration UI/contract
+  planning without capture, media decoding, workers, or provider implementation.
 
 Validation:
 
 - Known streams return product-level playback status.
+- Known sources return product-level connection/provider status.
 - Unknown streams return 404.
+- Unknown sources return 404.
 - Demo and placeholder streams do not claim real live playback.
+- Demo and not-configured sources do not claim real live playback.
 - Zone editing remains central even when playback is not configured.
+- Source connection status includes related Stream ids and safe field readiness
+  lists without exposing provider internals.
 - Playback status does not create MotionEvidence, Events, Visits, ReviewLabels,
   SpeciesSuggestions, exports, analytics truth, media files, model artifacts, or
   adapter runtime calls.
+- Source connection status does not create MotionEvidence, Events, Visits,
+  ReviewLabels, SpeciesSuggestions, exports, analytics truth, media files, model
+  artifacts, or provider runtime calls.
 - Future source adapters feed the playback contract instead of redefining the
   Source, Stream, Zone, Event, Visit, review/correction, export, and analytics
   loop.

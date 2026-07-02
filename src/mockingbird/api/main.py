@@ -70,6 +70,8 @@ from mockingbird.api.schemas import (
     SpeciesSuggestionResponse,
     SpeciesSuggestionStatus,
     SpeciesSuggestionStatusUpdateRequest,
+    SourceConnectionStatus,
+    SourceConnectionStatusResponse,
     Stream,
     StreamPlaybackStatus,
     StreamPlaybackStatusResponse,
@@ -913,6 +915,14 @@ async def get_source(source_id: str) -> CameraSource:
     if source is None:
         raise _not_found("Source", source_id)
     return source
+
+
+@app.get("/api/sources/{source_id}/connection", response_model=SourceConnectionStatusResponse)
+async def get_source_connection_status(source_id: str) -> SourceConnectionStatus:
+    status = get_repository().get_source_connection_status(source_id)
+    if status is None:
+        raise _not_found("Source", source_id)
+    return status
 
 
 @app.get("/api/sources/{source_id}/streams", response_model=list[Stream])

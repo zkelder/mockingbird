@@ -186,6 +186,7 @@ button {
 .dashboard-hero,
 .panel,
 .metric-card,
+.source-connection-card,
 .stream-list-item,
 .queue-card,
 .event-card,
@@ -350,6 +351,7 @@ button {
 }
 
 .list-stack,
+.source-connection-section,
 .stream-list,
 .queue-list,
 .event-list,
@@ -374,6 +376,38 @@ button {
   justify-content: space-between;
   gap: 20px;
   padding: 18px;
+}
+
+.source-connection-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.source-connection-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.source-connection-card h3,
+.source-connection-card p {
+  margin: 0;
+}
+
+.source-connection-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.source-connection-meta span {
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #edf2e9;
+  color: #34473b;
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
 .status-pill {
@@ -2682,6 +2716,10 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .source-connection-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .manifest-example-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2739,6 +2777,7 @@ button {
   .detection-proposal-meta,
   .playback-status-grid,
   .record-meta-grid,
+  .source-connection-grid,
   .split-grid,
   .folder-import-layout,
     .manual-import-layout,

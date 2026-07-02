@@ -20,6 +20,7 @@ Source adapters feed media into the platform, but the product is not organized a
 ## Product API
 
 - Sources
+- Source connection/provider status contract
 - Streams
 - Stream playback status contract
 - Zones
@@ -65,6 +66,11 @@ Examples for later phases:
 - Webhook
 
 Adapters should normalize into the same source, stream, media, event, and visit model.
+
+Source connection status is the product boundary between source metadata and
+future provider readiness. Providers may feed safe status, field readiness, and
+related Stream ids later, but the contract must not connect sources, decode media,
+create evidence, write review truth, or create exports by itself.
 
 Stream playback status is the product boundary between visible streams and future
 adapter playback. Adapters may feed status, preview references, or local playback

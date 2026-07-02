@@ -57,6 +57,10 @@ can show demo or placeholder panels while future source adapters feed real
 playback without changing zone editing or review/correction truth. See
 [docs/stream-source-playback-contract.md](docs/stream-source-playback-contract.md).
 
+Sources also expose a read-only connection/provider status contract for demo,
+not-configured, unavailable, offline, or future-provider-ready states. See
+[docs/source-connection-provider-contract.md](docs/source-connection-provider-contract.md).
+
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 
 ## Local frontend development

@@ -26,6 +26,23 @@ class SourceStatus(str, Enum):
     needs_setup = "needs_setup"
 
 
+class SourceConnectionStatusValue(str, Enum):
+    demo = "demo"
+    not_configured = "not_configured"
+    configured = "configured"
+    unavailable = "unavailable"
+    offline = "offline"
+    unsupported = "unsupported"
+
+
+class SourceProviderKind(str, Enum):
+    demo = "demo"
+    placeholder = "placeholder"
+    future_adapter = "future_adapter"
+    manual_media = "manual_media"
+    external_url = "external_url"
+
+
 class StreamPlaybackStatusValue(str, Enum):
     demo = "demo"
     not_configured = "not_configured"
@@ -150,6 +167,28 @@ class CameraSource(BaseModel):
     kind: SourceKind
     status: SourceStatus
     description: str
+
+
+class SourceConnectionStatus(BaseModel):
+    # Source connection status is product-level readiness, not provider plumbing.
+    source_id: str
+    status: SourceConnectionStatusValue
+    provider_kind: SourceProviderKind
+    display_title: str
+    message: str
+    setup_hint: str | None = None
+    supports_streams: bool
+    supports_live_playback: bool
+    supports_zone_editing: bool
+    adapter_key: str | None = None
+    configured_fields: list[str] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    stream_ids: list[str] = Field(default_factory=list)
+    last_checked_at: datetime | None = None
+
+
+class SourceConnectionStatusResponse(SourceConnectionStatus):
+    pass
 
 
 class Stream(BaseModel):

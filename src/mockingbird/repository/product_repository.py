@@ -119,11 +119,14 @@ from mockingbird.api.schemas import (
     ReviewLabel,
     ReviewQueueItem,
     ReviewStatus,
+    SourceConnectionStatus,
+    SourceConnectionStatusValue,
     SpeciesSuggestionCreateRequest,
     SpeciesSuggestionResponse,
     SpeciesSuggestionStatus,
     SpeciesSuggestionStatusUpdateRequest,
     SourceKind,
+    SourceProviderKind,
     SourceStatus,
     Stream,
     StreamPlaybackKind,
@@ -590,6 +593,85 @@ class ProductRepository:
         with self.session_factory() as session:
             source = session.get(CameraSourceModel, source_id)
             return _source_from_model(source) if source else None
+
+    def get_source_connection_status(self, source_id: str) -> SourceConnectionStatus | None:
+        with self.session_factory() as session:
+            source = session.get(CameraSourceModel, source_id)
+            if source is None:
+                return None
+
+            stream_ids = [
+                stream.id
+                for stream in session.scalars(
+                    select(StreamModel)
+                    .where(StreamModel.source_id == source_id)
+                    .order_by(StreamModel.id)
+                ).all()
+            ]
+            supports_zone_editing = len(stream_ids) > 0
+
+            if source.kind == SourceKind.demo.value:
+                return SourceConnectionStatus(
+                    source_id=source.id,
+                    status=SourceConnectionStatusValue.demo,
+                    provider_kind=SourceProviderKind.demo,
+                    display_title=source.name,
+                    message=(
+                        "This source uses local demo metadata and demo stream panels; "
+                        "no real playback provider is connected yet."
+                    ),
+                    setup_hint=(
+                        "Future source providers will feed this contract while streams "
+                        "and zones stay product-level."
+                    ),
+                    supports_streams=True,
+                    supports_live_playback=False,
+                    supports_zone_editing=supports_zone_editing,
+                    adapter_key=source.kind,
+                    configured_fields=["source_kind", "demo_seed"],
+                    missing_fields=[],
+                    stream_ids=stream_ids,
+                )
+
+            provider_kind = (
+                SourceProviderKind.manual_media
+                if source.kind in {SourceKind.manual_upload.value, SourceKind.local_folder.value}
+                else SourceProviderKind.future_adapter
+            )
+            configured_fields = ["source_kind"]
+            missing_fields = ["provider_configuration"]
+
+            if source.status == SourceStatus.disconnected.value:
+                status = SourceConnectionStatusValue.offline
+                message = "This source is offline, so streams can show only placeholders."
+                setup_hint = "Reconnect or configure a future provider before expecting playback."
+            elif source.status == SourceStatus.needs_setup.value:
+                status = SourceConnectionStatusValue.not_configured
+                message = "This source needs provider setup before playback can be shown."
+                setup_hint = "Complete provider setup later; stream zones can still be prepared now."
+            else:
+                status = SourceConnectionStatusValue.not_configured
+                message = "This source has product metadata but no provider configuration yet."
+                setup_hint = (
+                    "A future provider can feed this source without changing stream, zone, "
+                    "or review workflows."
+                )
+
+            return SourceConnectionStatus(
+                source_id=source.id,
+                status=status,
+                provider_kind=provider_kind,
+                display_title=source.name,
+                message=message,
+                setup_hint=setup_hint,
+                supports_streams=len(stream_ids) > 0,
+                supports_live_playback=False,
+                supports_zone_editing=supports_zone_editing,
+                adapter_key=source.kind,
+                configured_fields=configured_fields,
+                missing_fields=missing_fields,
+                stream_ids=stream_ids,
+            )
 
     def list_streams(self) -> list[Stream]:
         with self.session_factory() as session:

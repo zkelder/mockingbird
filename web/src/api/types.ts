@@ -8,6 +8,19 @@ export type SourceKind =
   | "integration";
 
 export type SourceStatus = "connected" | "disconnected" | "needs_setup";
+export type SourceConnectionStatusValue =
+  | "demo"
+  | "not_configured"
+  | "configured"
+  | "unavailable"
+  | "offline"
+  | "unsupported";
+export type SourceProviderKind =
+  | "demo"
+  | "placeholder"
+  | "future_adapter"
+  | "manual_media"
+  | "external_url";
 export type StreamPlaybackStatusValue =
   | "demo"
   | "not_configured"
@@ -81,6 +94,23 @@ export interface CameraSource {
   kind: SourceKind;
   status: SourceStatus;
   description: string;
+}
+
+export interface SourceConnectionStatus {
+  source_id: string;
+  status: SourceConnectionStatusValue;
+  provider_kind: SourceProviderKind;
+  display_title: string;
+  message: string;
+  setup_hint?: string | null;
+  supports_streams: boolean;
+  supports_live_playback: boolean;
+  supports_zone_editing: boolean;
+  adapter_key?: string | null;
+  configured_fields: string[];
+  missing_fields: string[];
+  stream_ids: string[];
+  last_checked_at?: string | null;
 }
 
 export interface Stream {

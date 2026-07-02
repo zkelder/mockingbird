@@ -52,6 +52,7 @@ import type {
   SpeciesSuggestionListResponse,
   SpeciesSuggestionStatus,
   SpeciesSuggestionStatusUpdateRequest,
+  SourceConnectionStatus,
   Stream,
   StreamPlaybackStatus,
   TaxonomyLabel,
@@ -120,6 +121,8 @@ export const apiClient = {
     return request<TaxonomyLabel[]>(`/api/taxonomy/suggestions${query ? `?${query}` : ""}`);
   },
   getSources: () => request<CameraSource[]>("/api/sources"),
+  getSourceConnectionStatus: (sourceId: string) =>
+    request<SourceConnectionStatus>(`/api/sources/${sourceId}/connection`),
   getStreams: () => request<Stream[]>("/api/streams"),
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),
   getStreamPlaybackStatus: (streamId: string) =>

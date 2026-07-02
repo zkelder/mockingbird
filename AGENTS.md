@@ -110,6 +110,9 @@ Every future implementation task must restate:
   Playback status is product-level, read-only, and must not create evidence,
   reviewed truth, exports, analytics truth, capture behavior, or adapter runtime
   work unless explicitly scoped.
+- Source connection/provider work must follow
+  [docs/source-connection-provider-contract.md](docs/source-connection-provider-contract.md)
+  and stay product-level until real provider implementation is explicitly scoped.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.
