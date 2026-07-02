@@ -207,6 +207,12 @@ Phase 8P defines local frame artifacts before implementation.
 
 Local frame artifacts are future local visual evidence references that may become MediaAssets attached through `snapshot_media_asset_id`. They are separate from frame planes and remain evidence context only. No artifact creation, media capture, decoding, thumbnails, labels, exports, dataset coverage truth, model output, or species truth is added. See [local-frame-artifact-design.md](local-frame-artifact-design.md).
 
+## Phase 8Q Status
+
+Phase 8Q lets pending MotionEvidence attach, replace, or clear an existing MediaAsset reference through `snapshot_media_asset_id`.
+
+The attachment is evidence context only. It does not create Event, Visit, ReviewLabel, export, dataset coverage truth, reviewed status, media files, thumbnails, model output, or species truth. Ignored and promoted evidence reject media attachment changes.
+
 ## Test Plan
 
 Implementation tests should prove:

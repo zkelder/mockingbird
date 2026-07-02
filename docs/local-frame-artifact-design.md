@@ -4,7 +4,9 @@
 
 Local frame artifacts exist because sampled frame planes are lightweight scoring inputs, while review and later species-suggestion workflows eventually need local visual evidence tied to MotionEvidence.
 
-The artifact concept bridges `best_frame_index` to an optional MediaAsset reference without adding media capture, decoding, thumbnails, stream sampling, or truth creation in this phase.
+The artifact concept bridges `best_frame_index` to an optional MediaAsset reference without requiring media capture, decoding, thumbnails, stream sampling, or truth creation.
+
+Phase 8Q implements the first small slice of this path: pending MotionEvidence can attach, replace, or clear an existing MediaAsset reference through `snapshot_media_asset_id`. It does not create frame artifacts yet.
 
 ## Product Flow
 
@@ -88,6 +90,8 @@ MotionEvidence can exist without an artifact.
 
 An artifact can attach later by setting `snapshot_media_asset_id`. Promotion should preserve that reference. Attachment must not create ReviewLabel, mark Event/Visit reviewed, create dataset/export truth, or call models.
 
+Phase 8Q supports attaching an already-existing MediaAsset to pending MotionEvidence. Ignored and promoted MotionEvidence stay locked against media changes to avoid mutating dismissed noise or already-promoted review context.
+
 ## Relationship To Sampler
 
 The sampler identifies candidate windows and `best_frame_index`.
@@ -126,12 +130,33 @@ These failures should keep MotionEvidence reviewable or ignorable without creati
 
 Recommended future phases:
 
-- Phase 8Q: local frame artifact schema/API compatibility design or implementation.
-- Phase 8R: attach existing MediaAsset to MotionEvidence from manual/imported media.
+- Phase 8Q: attach existing MediaAsset to pending MotionEvidence.
+- Phase 8R: Motion Evidence media preview polish or local frame artifact creation from imported media.
 - Phase 8S: artifact propagation to Visit detail if any gaps remain.
 - Phase 8T: controlled local frame capture from already-configured streams/imported media.
 
 These phases should stay product-first: stream, zone, MotionEvidence, review/promotion, correction truth.
+
+## Phase 8Q Status
+
+Phase 8Q implements existing MediaAsset attachment to pending MotionEvidence.
+
+Supported now:
+
+- pending MotionEvidence can attach or replace `snapshot_media_asset_id`
+- pending MotionEvidence can clear `snapshot_media_asset_id`
+- missing MediaAsset references fail safely
+- ignored and promoted MotionEvidence reject attachment changes
+- promotion preserves the attached media reference
+- attachment writes no Event, Visit, ReviewLabel, export, dataset coverage truth, species truth, media files, thumbnails, or model output
+
+Deferred:
+
+- creating local frame artifacts
+- deriving artifacts from imported media
+- media preview polish beyond existing media-file links
+- automated stream/frame capture
+- direct Event-only media propagation if needed
 
 ## Test Plan For Future Implementation
 

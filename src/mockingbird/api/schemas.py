@@ -503,6 +503,10 @@ class MotionEvidenceListResponse(BaseModel):
     motion_evidence: list[MotionEvidenceResponse]
 
 
+class MotionEvidenceAttachMediaRequest(BaseModel):
+    snapshot_media_asset_id: str | None = None
+
+
 class MotionEvidencePromoteRequest(BaseModel):
     event_title: str | None = None
     visit_label_hint: str | None = None

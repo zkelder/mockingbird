@@ -196,6 +196,101 @@ async def test_motion_evidence_snapshot_media_reference_survives_list_and_detail
     )
 
 
+async def test_attach_existing_media_asset_to_pending_motion_evidence(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(isolated_repository)
+    created = (await create_motion_evidence(client)).json()
+    before_counts = await product_counts(client)
+    before_coverage = await dataset_coverage(client)
+
+    response = await client.post(
+        f"/api/motion/evidence/{created['id']}/attach-media",
+        json={"snapshot_media_asset_id": asset.id},
+    )
+
+    assert response.status_code == 200
+    attached = response.json()
+    assert attached["id"] == created["id"]
+    assert attached["status"] == "pending"
+    assert attached["snapshot_media_asset_id"] == asset.id
+
+    list_response = await client.get("/api/motion/evidence")
+    detail_response = await client.get(f"/api/motion/evidence/{created['id']}")
+
+    assert list_response.status_code == 200
+    assert detail_response.status_code == 200
+    assert list_response.json()["motion_evidence"][0]["snapshot_media_asset_id"] == asset.id
+    assert detail_response.json()["snapshot_media_asset_id"] == asset.id
+    assert await product_counts(client) == before_counts
+    assert coverage_truth_counts(await dataset_coverage(client)) == coverage_truth_counts(
+        before_coverage
+    )
+
+
+async def test_clear_motion_evidence_media_attachment(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(isolated_repository)
+    created = (
+        await create_motion_evidence(
+            client,
+            snapshot_media_asset_id=asset.id,
+        )
+    ).json()
+
+    response = await client.post(
+        f"/api/motion/evidence/{created['id']}/attach-media",
+        json={"snapshot_media_asset_id": None},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["snapshot_media_asset_id"] is None
+    detail_response = await client.get(f"/api/motion/evidence/{created['id']}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["snapshot_media_asset_id"] is None
+
+
+async def test_attach_missing_media_asset_to_motion_evidence_fails_safely(
+    client: httpx.AsyncClient,
+) -> None:
+    created = (await create_motion_evidence(client)).json()
+    before_counts = await product_counts(client)
+    before_coverage = await dataset_coverage(client)
+
+    response = await client.post(
+        f"/api/motion/evidence/{created['id']}/attach-media",
+        json={"snapshot_media_asset_id": "media_best_frame_missing"},
+    )
+
+    assert response.status_code == 404
+    assert "Media asset" in response.json()["detail"]
+    detail_response = await client.get(f"/api/motion/evidence/{created['id']}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["snapshot_media_asset_id"] is None
+    assert await product_counts(client) == before_counts
+    assert coverage_truth_counts(await dataset_coverage(client)) == coverage_truth_counts(
+        before_coverage
+    )
+
+
+async def test_attach_media_to_missing_motion_evidence_returns_404(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(isolated_repository)
+
+    response = await client.post(
+        "/api/motion/evidence/motion-evidence-missing/attach-media",
+        json={"snapshot_media_asset_id": asset.id},
+    )
+
+    assert response.status_code == 404
+    assert "Motion Evidence" in response.json()["detail"]
+
+
 async def test_motion_evidence_detail_route_returns_evidence(client: httpx.AsyncClient) -> None:
     created = (await create_motion_evidence(client)).json()
 
@@ -275,6 +370,26 @@ async def test_ignore_preserves_snapshot_media_reference(
     assert coverage_truth_counts(await dataset_coverage(client)) == coverage_truth_counts(
         before_coverage
     )
+
+
+async def test_attach_media_to_ignored_motion_evidence_returns_400(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(isolated_repository)
+    created = (await create_motion_evidence(client)).json()
+    await client.post(f"/api/motion/evidence/{created['id']}/ignore")
+
+    response = await client.post(
+        f"/api/motion/evidence/{created['id']}/attach-media",
+        json={"snapshot_media_asset_id": asset.id},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Ignored Motion Evidence cannot change media attachment."
+    detail_response = await client.get(f"/api/motion/evidence/{created['id']}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["snapshot_media_asset_id"] is None
 
 
 async def test_ignore_missing_motion_evidence_returns_404(client: httpx.AsyncClient) -> None:
@@ -427,6 +542,27 @@ async def test_promote_motion_evidence_can_create_event_without_visit(
     assert after_counts["exports"] == before_counts["exports"]
 
 
+async def test_attach_media_to_promoted_motion_evidence_returns_400(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(isolated_repository)
+    created = (await create_motion_evidence(client)).json()
+    promote_response = await client.post(f"/api/motion/evidence/{created['id']}/promote")
+    assert promote_response.status_code == 200
+
+    response = await client.post(
+        f"/api/motion/evidence/{created['id']}/attach-media",
+        json={"snapshot_media_asset_id": asset.id},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Promoted Motion Evidence cannot change media attachment."
+    detail_response = await client.get(f"/api/motion/evidence/{created['id']}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["snapshot_media_asset_id"] is None
+
+
 async def test_repeated_motion_evidence_promotion_is_rejected_without_duplicates(
     client: httpx.AsyncClient,
 ) -> None:
@@ -577,6 +713,32 @@ async def test_motion_evidence_promotion_preserves_snapshot_media_reference(
     after_coverage = await dataset_coverage(client)
     assert after_coverage["export_ready_count"] == before_coverage["export_ready_count"]
     assert after_coverage["reviewed_record_count"] == before_coverage["reviewed_record_count"]
+
+
+async def test_attached_motion_evidence_media_is_preserved_on_promotion(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(isolated_repository, media_id="media_best_frame_003")
+    created = (await create_motion_evidence(client)).json()
+
+    attach_response = await client.post(
+        f"/api/motion/evidence/{created['id']}/attach-media",
+        json={"snapshot_media_asset_id": asset.id},
+    )
+    assert attach_response.status_code == 200
+
+    response = await client.post(f"/api/motion/evidence/{created['id']}/promote")
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["evidence"]["snapshot_media_asset_id"] == asset.id
+    evidence_response = await client.get(f"/api/motion/evidence/{created['id']}")
+    visit_detail_response = await client.get(f"/api/visits/{result['visit_id']}/detail")
+    assert evidence_response.status_code == 200
+    assert visit_detail_response.status_code == 200
+    assert evidence_response.json()["snapshot_media_asset_id"] == asset.id
+    assert visit_detail_response.json()["media_asset"]["id"] == asset.id
 
 
 async def test_motion_evidence_promotion_can_attach_snapshot_media_reference(

@@ -203,7 +203,8 @@ Current work:
 - Phase 8N: best-frame media attachment design.
 - Phase 8O: best-frame attachment schema/API compatibility review.
 - Phase 8P: local frame artifact design.
-- Next likely phase: Phase 8Q — local frame artifact schema/API compatibility design or implementation.
+- Phase 8Q: attach existing MediaAsset to MotionEvidence.
+- Next likely phase: Phase 8R — Motion Evidence media preview polish or local frame artifact creation from imported media.
 
 Validation:
 
@@ -223,5 +224,6 @@ Validation:
 - Best-frame media attachment design defines how candidate frame indexes can later link to optional visible evidence without creating truth.
 - Best-frame attachment compatibility confirms MotionEvidence and Visit/detail media references stay evidence-only.
 - Local frame artifact design separates scoring frame planes from optional visual evidence references.
+- Existing MediaAsset attachment lets pending MotionEvidence carry visual evidence context without creating truth.
 - Stream sampling, media decoding, and species suggestion remain later phases.
 - Motion output remains candidate evidence only; user correction remains dataset truth.

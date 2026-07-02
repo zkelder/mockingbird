@@ -41,6 +41,7 @@ from mockingbird.api.schemas import (
     ModelAdapterRunRequest,
     ModelAdapterRunResult,
     MotionCandidateResponse,
+    MotionEvidenceAttachMediaRequest,
     MotionEvidenceCreateRequest,
     MotionEvidenceListResponse,
     MotionEvidencePromoteRequest,
@@ -410,6 +411,21 @@ def _motion_evidence_error(error: ValueError) -> HTTPException:
             status_code=400,
             detail="Only pending Motion Evidence can be ignored.",
         )
+    if reason == "motion_evidence_attach_ignored":
+        return HTTPException(
+            status_code=400,
+            detail="Ignored Motion Evidence cannot change media attachment.",
+        )
+    if reason == "motion_evidence_attach_promoted":
+        return HTTPException(
+            status_code=400,
+            detail="Promoted Motion Evidence cannot change media attachment.",
+        )
+    if reason == "motion_evidence_attach_not_pending":
+        return HTTPException(
+            status_code=400,
+            detail="Only pending Motion Evidence can change media attachment.",
+        )
     if reason == "motion_evidence_ignored":
         return HTTPException(
             status_code=400,
@@ -661,6 +677,26 @@ async def list_motion_evidence(
 @app.get("/api/motion/evidence/{evidence_id}", response_model=MotionEvidenceResponse)
 async def get_motion_evidence(evidence_id: str) -> MotionEvidenceResponse:
     evidence = get_repository().get_motion_evidence(evidence_id)
+    if evidence is None:
+        raise _not_found("Motion Evidence", evidence_id)
+    return evidence
+
+
+@app.post(
+    "/api/motion/evidence/{evidence_id}/attach-media",
+    response_model=MotionEvidenceResponse,
+)
+async def attach_motion_evidence_media(
+    evidence_id: str,
+    payload: MotionEvidenceAttachMediaRequest,
+) -> MotionEvidenceResponse:
+    try:
+        evidence = get_repository().attach_motion_evidence_media(
+            evidence_id,
+            payload.snapshot_media_asset_id,
+        )
+    except ValueError as error:
+        raise _motion_evidence_error(error) from error
     if evidence is None:
         raise _not_found("Motion Evidence", evidence_id)
     return evidence

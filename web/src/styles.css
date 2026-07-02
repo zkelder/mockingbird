@@ -1456,6 +1456,7 @@ button {
 .motion-create-panel,
 .motion-create-form,
 .motion-action-panel,
+.motion-attachment-form,
 .motion-promote-form,
 .motion-evidence-subsection,
 .sampled-frame-results,
@@ -1474,6 +1475,7 @@ button {
 
 .motion-zone-filter label,
 .motion-create-form label,
+.motion-attachment-form label,
 .motion-promote-form label {
   display: grid;
   gap: 6px;
@@ -1486,6 +1488,7 @@ button {
 .motion-create-form input,
 .motion-create-form select,
 .motion-create-form textarea,
+.motion-attachment-form input,
 .motion-promote-form input,
 .motion-promote-form textarea {
   min-height: 42px;
@@ -1652,6 +1655,16 @@ button {
 .motion-evidence-subsection {
   border-top: 1px solid #e0e7dd;
   padding-top: 12px;
+}
+
+.motion-attachment-form {
+  border-bottom: 1px solid #e0e7dd;
+  padding-bottom: 12px;
+}
+
+.motion-attachment-form p {
+  margin: 4px 0 0;
+  color: #627168;
 }
 
 .motion-evidence-subsection h3 {

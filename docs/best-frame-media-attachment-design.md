@@ -25,6 +25,7 @@ The best frame is evidence context only. It is not a species label, not a review
 - Manual and `/api/motion/evaluate-sequence` flows can create MotionEvidence without media.
 - Phase 8O confirms MotionEvidence create/list/detail/ignore/promote responses preserve `snapshot_media_asset_id`.
 - Promotion can attach or preserve `snapshot_media_asset_id`; when a Visit is created, the current Visit model exposes the media through `representative_media_path`, and Event/Visit detail responses can expose the linked MediaAsset.
+- Phase 8Q adds the ability to attach, replace, or clear an existing MediaAsset reference on pending MotionEvidence.
 - Event-only promotion does not have a direct Event media field yet, so the media reference remains on MotionEvidence until a future propagation phase.
 - No media capture, media attachment, image parsing, video parsing, or decoding is implemented yet.
 
@@ -102,8 +103,8 @@ Recommended future phases:
 
 - Phase 8O: best-frame attachment schema/API compatibility review.
 - Phase 8P: local frame artifact design.
-- Phase 8Q: local frame artifact schema/API compatibility design or implementation.
-- Phase 8R: attach existing MediaAsset to MotionEvidence from manual/imported media.
+- Phase 8Q: attach existing MediaAsset to pending MotionEvidence.
+- Phase 8R: Motion Evidence media preview polish or local frame artifact creation from imported media.
 - Phase 8S: artifact propagation to Visit detail if any gaps remain.
 - Phase 8T: controlled local frame capture from already-configured streams/imported media.
 
@@ -133,6 +134,12 @@ Deferred:
 Phase 8P defines local frame artifacts as the design bridge from frame-plane scoring to optional visual evidence.
 
 This is design-only. No artifact creation, media capture, decoding, thumbnailing, stream sampling, or model call is implemented. See [local-frame-artifact-design.md](local-frame-artifact-design.md).
+
+## Phase 8Q Status
+
+Phase 8Q implements attachment of existing MediaAsset references to pending MotionEvidence.
+
+This proves the reference path without creating media: no capture, decoding, thumbnailing, stream sampling, source adapter, model call, or truth write is added. Promotion keeps the reference as evidence context.
 
 ## Test Plan For Future Implementation
 

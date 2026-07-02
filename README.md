@@ -105,6 +105,8 @@ Best-frame media attachment remains optional evidence context; its schema/API co
 
 Local frame artifacts are a design-only bridge from best-frame indexes to future local visual evidence; see [docs/local-frame-artifact-design.md](docs/local-frame-artifact-design.md).
 
+Pending Motion Evidence can attach an existing local MediaAsset as visual evidence without creating labels, reviewed observations, or export-ready truth.
+
 Before wiring a real detector model, follow [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [docs/model-selection.md](docs/model-selection.md), the [MegaDetector decision record](docs/detector-decision-megadetector.md), the [MegaDetector runtime plan](docs/megadetector-runtime-plan.md), and the [local setup checklist](docs/megadetector-local-setup.md).
 
 ## Not the product center

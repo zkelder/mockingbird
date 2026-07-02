@@ -737,6 +737,39 @@ class ProductRepository:
                 session.flush()
                 return _motion_evidence_from_model(evidence_model)
 
+    def attach_motion_evidence_media(
+        self,
+        evidence_id: str,
+        snapshot_media_asset_id: str | None,
+    ) -> MotionEvidenceResponse | None:
+        with self.session_factory() as session:
+            with session.begin():
+                evidence_model = session.get(MotionEvidenceModel, evidence_id)
+                if evidence_model is None:
+                    return None
+                if evidence_model.status == MotionEvidenceStatus.ignored.value:
+                    raise ValueError("motion_evidence_attach_ignored")
+                if evidence_model.status == MotionEvidenceStatus.promoted.value:
+                    raise ValueError("motion_evidence_attach_promoted")
+                if evidence_model.status != MotionEvidenceStatus.pending.value:
+                    raise ValueError("motion_evidence_attach_not_pending")
+
+                media_id = (
+                    snapshot_media_asset_id.strip()
+                    if snapshot_media_asset_id and snapshot_media_asset_id.strip()
+                    else None
+                )
+                if media_id is not None:
+                    asset_model = session.get(MediaAssetModel, media_id)
+                    if asset_model is None:
+                        raise ValueError("missing_media_asset")
+                    if asset_model.stream_id != evidence_model.stream_id:
+                        raise ValueError("media_stream_mismatch")
+
+                evidence_model.snapshot_media_asset_id = media_id
+                session.flush()
+                return _motion_evidence_from_model(evidence_model)
+
     def promote_motion_evidence(
         self,
         evidence_id: str,

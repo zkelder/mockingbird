@@ -116,6 +116,7 @@ export function MotionEvidencePage({
   const [eventTitle, setEventTitle] = useState("");
   const [visitLabelHint, setVisitLabelHint] = useState("unknown_animal");
   const [promotionNotes, setPromotionNotes] = useState("");
+  const [attachMediaAssetId, setAttachMediaAssetId] = useState("");
   const [lastPromotion, setLastPromotion] = useState<MotionEvidencePromoteResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -200,8 +201,9 @@ export function MotionEvidencePage({
     );
     setVisitLabelHint("unknown_animal");
     setPromotionNotes("");
+    setAttachMediaAssetId(selectedEvidence?.snapshot_media_asset_id ?? "");
     setLastPromotion(null);
-  }, [selectedEvidence?.id]);
+  }, [selectedEvidence?.id, selectedEvidence?.snapshot_media_asset_id]);
 
   async function applyZoneFilter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -363,6 +365,47 @@ export function MotionEvidencePage({
       await onEvidenceChanged();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Motion Evidence could not be ignored.");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function attachMediaEvidence(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedEvidence || selectedEvidence.status !== "pending") {
+      return;
+    }
+
+    await updateMediaAttachment(selectedEvidence, attachMediaAssetId.trim() || null);
+  }
+
+  async function clearMediaAttachment(item: MotionEvidence) {
+    if (item.status !== "pending") {
+      return;
+    }
+
+    await updateMediaAttachment(item, null);
+  }
+
+  async function updateMediaAttachment(item: MotionEvidence, mediaAssetId: string | null) {
+    setActionId(`${item.id}:attach-media`);
+    setError(null);
+    setMessage(null);
+    try {
+      const updated = await apiClient.attachMotionEvidenceMedia(item.id, {
+        snapshot_media_asset_id: mediaAssetId,
+      });
+      setSelectedEvidenceId(updated.id);
+      setAttachMediaAssetId(updated.snapshot_media_asset_id ?? "");
+      setMessage(
+        updated.snapshot_media_asset_id
+          ? `${updated.id} now references existing media ${updated.snapshot_media_asset_id}. No labels or truth were created.`
+          : `${updated.id} no longer has a media reference. No labels or truth were changed.`,
+      );
+      await loadEvidence({ showLoading: false, selectEvidenceId: updated.id });
+      await onEvidenceChanged();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Media could not be attached.");
     } finally {
       setActionId(null);
     }
@@ -969,6 +1012,16 @@ export function MotionEvidencePage({
                     <span>Promoted Visit: {selectedEvidence.promoted_visit_id ?? "none"}</span>
                   </div>
                   <div className="detail-actions">
+                    {selectedEvidence.snapshot_media_asset_id ? (
+                      <a
+                        className="text-action"
+                        href={apiClient.mediaFileUrl(selectedEvidence.snapshot_media_asset_id)}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Open media asset
+                      </a>
+                    ) : null}
                     {selectedEvidence.promoted_event_id ? (
                       <button
                         className="text-action"
@@ -998,6 +1051,46 @@ export function MotionEvidencePage({
 
                 {selectedEvidence.status === "pending" ? (
                   <section className="motion-action-panel">
+                    <form className="motion-attachment-form" onSubmit={attachMediaEvidence}>
+                      <div>
+                        <strong>Attach existing media</strong>
+                        <p>
+                          Attach an existing local media asset as visual evidence. This does not
+                          create labels, reviewed observations, or export-ready truth.
+                        </p>
+                      </div>
+                      <label>
+                        MediaAsset ID
+                        <input
+                          value={attachMediaAssetId}
+                          onChange={(event) => setAttachMediaAssetId(event.target.value)}
+                          placeholder="media_best_frame_001"
+                        />
+                      </label>
+                      <div className="detail-actions">
+                        <button
+                          className="secondary-action"
+                          disabled={actionId === `${selectedEvidence.id}:attach-media`}
+                          type="submit"
+                        >
+                          {actionId === `${selectedEvidence.id}:attach-media`
+                            ? "Updating..."
+                            : selectedEvidence.snapshot_media_asset_id
+                              ? "Update media"
+                              : "Attach media"}
+                        </button>
+                        {selectedEvidence.snapshot_media_asset_id ? (
+                          <button
+                            className="text-action"
+                            disabled={actionId === `${selectedEvidence.id}:attach-media`}
+                            onClick={() => void clearMediaAttachment(selectedEvidence)}
+                            type="button"
+                          >
+                            Clear
+                          </button>
+                        ) : null}
+                      </div>
+                    </form>
                     <div className="detail-actions">
                       <button
                         className="secondary-action"

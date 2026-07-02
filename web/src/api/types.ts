@@ -408,6 +408,10 @@ export interface MotionEvidenceCreateRequest {
   notes?: string | null;
 }
 
+export interface MotionEvidenceAttachMediaRequest {
+  snapshot_media_asset_id?: string | null;
+}
+
 export interface MotionZoneInput {
   zone_id: string;
   left: number;
