@@ -109,16 +109,26 @@ async def dataset_coverage(client: httpx.AsyncClient) -> dict:
     return response.json()
 
 
-def add_test_media_asset(repository: ProductRepository) -> MediaAssetModel:
+def coverage_truth_counts(coverage: dict) -> dict[str, int]:
+    return {
+        "export_ready_count": coverage["export_ready_count"],
+        "reviewed_record_count": coverage["reviewed_record_count"],
+    }
+
+
+def add_test_media_asset(
+    repository: ProductRepository,
+    media_id: str = "media_best_frame_001",
+) -> MediaAssetModel:
     asset = MediaAssetModel(
-        id="media-asset-motion-evidence-test",
+        id=media_id,
         source_id=SOURCE_ID,
         stream_id=STREAM_ID,
-        filename="motion-evidence-test.jpg",
+        filename=f"{media_id}.jpg",
         content_type="image/jpeg",
         media_type="image",
-        local_path="demo://motion-evidence/test.jpg",
-        original_filename="motion-evidence-test.jpg",
+        local_path=f"demo://motion-evidence/{media_id}.jpg",
+        original_filename=f"{media_id}.jpg",
         file_size_bytes=128,
         created_at=datetime.now(UTC),
         notes="Test-only local media reference.",
@@ -156,6 +166,34 @@ async def test_created_motion_evidence_can_be_listed(client: httpx.AsyncClient) 
 
     assert response.status_code == 200
     assert [item["id"] for item in response.json()["motion_evidence"]] == [created["id"]]
+
+
+async def test_motion_evidence_snapshot_media_reference_survives_list_and_detail(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(isolated_repository)
+    before_counts = await product_counts(client)
+    before_coverage = await dataset_coverage(client)
+
+    response = await create_motion_evidence(client, snapshot_media_asset_id=asset.id)
+
+    assert response.status_code == 201
+    created = response.json()
+    assert created["status"] == "pending"
+    assert created["snapshot_media_asset_id"] == asset.id
+
+    list_response = await client.get("/api/motion/evidence")
+    detail_response = await client.get(f"/api/motion/evidence/{created['id']}")
+
+    assert list_response.status_code == 200
+    assert detail_response.status_code == 200
+    assert list_response.json()["motion_evidence"][0]["snapshot_media_asset_id"] == asset.id
+    assert detail_response.json()["snapshot_media_asset_id"] == asset.id
+    assert await product_counts(client) == before_counts
+    assert coverage_truth_counts(await dataset_coverage(client)) == coverage_truth_counts(
+        before_coverage
+    )
 
 
 async def test_motion_evidence_detail_route_returns_evidence(client: httpx.AsyncClient) -> None:
@@ -210,6 +248,35 @@ async def test_ignore_pending_motion_evidence_marks_ignored(
     assert ignored["promoted_visit_id"] is None
 
 
+async def test_ignore_preserves_snapshot_media_reference(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(isolated_repository)
+    created = (
+        await create_motion_evidence(
+            client,
+            snapshot_media_asset_id=asset.id,
+        )
+    ).json()
+    before_counts = await product_counts(client)
+    before_coverage = await dataset_coverage(client)
+
+    response = await client.post(f"/api/motion/evidence/{created['id']}/ignore")
+
+    assert response.status_code == 200
+    ignored = response.json()
+    assert ignored["status"] == "ignored"
+    assert ignored["snapshot_media_asset_id"] == asset.id
+    detail_response = await client.get(f"/api/motion/evidence/{created['id']}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["snapshot_media_asset_id"] == asset.id
+    assert await product_counts(client) == before_counts
+    assert coverage_truth_counts(await dataset_coverage(client)) == coverage_truth_counts(
+        before_coverage
+    )
+
+
 async def test_ignore_missing_motion_evidence_returns_404(client: httpx.AsyncClient) -> None:
     response = await client.post("/api/motion/evidence/motion-evidence-missing/ignore")
 
@@ -238,6 +305,25 @@ async def test_create_motion_evidence_does_not_create_product_truth(
 
     assert response.status_code == 201
     assert await product_counts(client) == before_counts
+
+
+async def test_missing_snapshot_media_reference_fails_safely(
+    client: httpx.AsyncClient,
+) -> None:
+    before_counts = await product_counts(client)
+    before_coverage = await dataset_coverage(client)
+
+    response = await create_motion_evidence(
+        client,
+        snapshot_media_asset_id="media_best_frame_missing",
+    )
+
+    assert response.status_code == 404
+    assert "Media asset" in response.json()["detail"]
+    assert await product_counts(client) == before_counts
+    assert coverage_truth_counts(await dataset_coverage(client)) == coverage_truth_counts(
+        before_coverage
+    )
 
 
 async def test_ignore_motion_evidence_does_not_create_or_delete_product_truth(
@@ -456,15 +542,64 @@ async def test_motion_evidence_promotion_preserves_snapshot_media_reference(
             snapshot_media_asset_id=asset.id,
         )
     ).json()
+    before_counts = await product_counts(client)
+    before_coverage = await dataset_coverage(client)
 
     response = await client.post(f"/api/motion/evidence/{created['id']}/promote")
 
     assert response.status_code == 200
     result = response.json()
     assert result["evidence"]["snapshot_media_asset_id"] == asset.id
+    assert result["evidence"]["status"] == "promoted"
+
+    evidence_response = await client.get(f"/api/motion/evidence/{created['id']}")
     visit_response = await client.get(f"/api/visits/{result['visit_id']}")
+    event_detail_response = await client.get(f"/api/events/{result['event_id']}/detail")
+    visit_detail_response = await client.get(f"/api/visits/{result['visit_id']}/detail")
+
+    assert evidence_response.status_code == 200
     assert visit_response.status_code == 200
+    assert event_detail_response.status_code == 200
+    assert visit_detail_response.status_code == 200
+    assert evidence_response.json()["snapshot_media_asset_id"] == asset.id
     assert visit_response.json()["representative_media_path"] == asset.local_path
+    assert event_detail_response.json()["media_asset"]["id"] == asset.id
+    assert visit_detail_response.json()["media_asset"]["id"] == asset.id
+    assert event_detail_response.json()["dataset_ready"] is False
+    assert visit_detail_response.json()["dataset_ready"] is False
+
+    after_counts = await product_counts(client)
+    assert after_counts["events"] == before_counts["events"] + 1
+    assert after_counts["visits"] == before_counts["visits"] + 1
+    assert after_counts["review_labels"] == before_counts["review_labels"]
+    assert after_counts["exports"] == before_counts["exports"]
+
+    after_coverage = await dataset_coverage(client)
+    assert after_coverage["export_ready_count"] == before_coverage["export_ready_count"]
+    assert after_coverage["reviewed_record_count"] == before_coverage["reviewed_record_count"]
+
+
+async def test_motion_evidence_promotion_can_attach_snapshot_media_reference(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(isolated_repository, media_id="media_best_frame_002")
+    created = (await create_motion_evidence(client)).json()
+
+    response = await client.post(
+        f"/api/motion/evidence/{created['id']}/promote",
+        json={"attach_snapshot_media_asset_id": asset.id},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["evidence"]["snapshot_media_asset_id"] == asset.id
+    visit_response = await client.get(f"/api/visits/{result['visit_id']}")
+    visit_detail_response = await client.get(f"/api/visits/{result['visit_id']}/detail")
+    assert visit_response.status_code == 200
+    assert visit_detail_response.status_code == 200
+    assert visit_response.json()["representative_media_path"] == asset.local_path
+    assert visit_detail_response.json()["media_asset"]["id"] == asset.id
 
 
 async def test_invalid_peak_changed_ratio_returns_422(client: httpx.AsyncClient) -> None:

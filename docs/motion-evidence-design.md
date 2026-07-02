@@ -57,7 +57,7 @@ Likely future fields, for design only:
 
 These fields should stay product-shaped and avoid leaking adapter or worker internals into the user experience.
 
-The existing `snapshot_media_asset_id` field remains optional evidence context. MotionEvidence can be created, reviewed, ignored, or promoted without media, and media attachment alone must not create labels, reviewed status, or export truth.
+The existing `snapshot_media_asset_id` field remains optional evidence context. MotionEvidence can be created, listed, viewed, ignored, or promoted without media. Media attachment alone must not create labels, reviewed status, export truth, dataset coverage truth, or species truth.
 
 ## Status Lifecycle
 
@@ -194,6 +194,12 @@ The sampler should produce frame planes from configured stream/media context and
 Phase 8N defines best-frame media attachment as design-only.
 
 Best-frame media can later give MotionEvidence and promoted Event/Visit evidence visible context, but `snapshot_media_asset_id` remains nullable and optional. This phase adds no media capture, decoding, model calls, labels, reviewed status, exports, dataset coverage truth, or species truth. See [best-frame-media-attachment-design.md](best-frame-media-attachment-design.md).
+
+## Phase 8O Status
+
+Phase 8O confirms the existing schema/API path for optional best-frame media context.
+
+MotionEvidence create, list, detail, ignore, and promote paths preserve `snapshot_media_asset_id`. Promotion with a created Visit can expose the linked MediaAsset through existing Visit media context. Direct Event-only media propagation remains future work. No media capture, decoding, labels, reviewed status, exports, dataset coverage truth, model output, or species truth is added.
 
 ## Test Plan
 

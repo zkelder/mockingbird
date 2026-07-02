@@ -23,6 +23,9 @@ The best frame is evidence context only. It is not a species label, not a review
 - Phase 8M sampler output includes `best_frame_index` on each `MotionCandidate`.
 - MotionEvidence already has nullable `snapshot_media_asset_id`.
 - Manual and `/api/motion/evaluate-sequence` flows can create MotionEvidence without media.
+- Phase 8O confirms MotionEvidence create/list/detail/ignore/promote responses preserve `snapshot_media_asset_id`.
+- Promotion can attach or preserve `snapshot_media_asset_id`; when a Visit is created, the current Visit model exposes the media through `representative_media_path`, and Event/Visit detail responses can expose the linked MediaAsset.
+- Event-only promotion does not have a direct Event media field yet, so the media reference remains on MotionEvidence until a future propagation phase.
 - No media capture, media attachment, image parsing, video parsing, or decoding is implemented yet.
 
 ## Future Best-Frame Selection Policy
@@ -61,6 +64,8 @@ A future media-capable sampler may request or produce a best-frame MediaAsset, b
 
 Promotion can carry `snapshot_media_asset_id` into Event/Visit evidence when the product model supports that link.
 
+Phase 8O confirms the current Visit model can expose the promoted media context through `representative_media_path`, and Event/Visit detail responses can expose the linked MediaAsset when a Visit is created. A direct Event media field is not added in this phase.
+
 Promoted Event/Visit records remain unreviewed. Promotion must not create a ReviewLabel, mark records reviewed, or write export-ready truth. Review and correction remain the dataset/export truth boundary.
 
 ## Relationship To SpeciesNet/Species Suggestions
@@ -94,9 +99,30 @@ These cases should leave evidence reviewable, ignorable, or promotable without c
 Recommended future phases:
 
 - Phase 8O: best-frame attachment schema/API compatibility review.
-- Phase 8P: media reference propagation from MotionEvidence to Event/Visit.
+- Phase 8P: media reference propagation implementation for direct Event context if needed.
 - Phase 8Q: local media/frame attachment using already-available imported images or supplied frame artifacts.
 - Phase 8R: controlled stream sampling/media capture.
+
+## Phase 8O Status
+
+Phase 8O reviews and tests the existing compatibility path.
+
+Supported now:
+
+- MotionEvidence can be created without media.
+- MotionEvidence can be created with `snapshot_media_asset_id` that points to an existing MediaAsset on the same stream.
+- MotionEvidence create/list/detail/ignore/promote responses expose and preserve `snapshot_media_asset_id`.
+- Promotion preserves the MotionEvidence media reference.
+- Promotion with a Visit carries the MediaAsset context through the Visit's `representative_media_path`, and Event/Visit detail responses expose the linked MediaAsset.
+
+Deferred:
+
+- direct Event-only media propagation
+- best-frame extraction
+- media capture or decoding
+- thumbnails
+- stream sampling/media capture
+- species/model calls
 
 ## Test Plan For Future Implementation
 

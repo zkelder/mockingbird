@@ -94,6 +94,12 @@ Phase 8N defines best-frame media attachment before implementation.
 
 The design explains how `best_frame_index` can later become optional `snapshot_media_asset_id` context on pending MotionEvidence and promoted Event/Visit evidence. It adds no media capture, decoding, stream sampling, endpoints, workers, model calls, or truth writes. See [best-frame-media-attachment-design.md](best-frame-media-attachment-design.md).
 
+## Phase 8O Status
+
+Phase 8O reviews and tests best-frame media attachment schema/API compatibility.
+
+MotionEvidence can preserve optional `snapshot_media_asset_id` through create, list, detail, ignore, and promote paths. Promotion with a Visit can expose linked MediaAsset context through existing Visit/detail media fields. Capture, decoding, stream sampling, thumbnails, model calls, and truth writes remain deferred.
+
 ## Product Flow
 
 The product should stay centered on streams, zones, reviewable events/visits, corrections, exports, and analytics.
