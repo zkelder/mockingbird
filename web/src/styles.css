@@ -1925,6 +1925,30 @@ button {
   background: #ffffff;
 }
 
+.mock-suggestion-action {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(220px, 1.5fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.mock-suggestion-action label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.mock-suggestion-action input {
+  min-height: 42px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
 .visit-suggestion-card.selected {
   border-color: #2e6f5e;
   background: #eef7ee;
@@ -2316,6 +2340,7 @@ button {
     .split-grid,
     .folder-import-layout,
     .manual-import-layout,
+    .mock-suggestion-action,
     .motion-create-grid,
     .motion-evidence-layout,
     .species-suggestion-form-grid,
@@ -2382,6 +2407,7 @@ button {
   .folder-import-layout,
     .manual-import-layout,
     .media-preview-meta,
+    .mock-suggestion-action,
     .motion-create-grid,
     .motion-evidence-detail-grid,
     .motion-evidence-layout,

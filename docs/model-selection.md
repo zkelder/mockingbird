@@ -41,6 +41,11 @@ SpeciesNet and a custom backyard bird classifier are future species suggestion c
 
 Phase 9B adds the `SpeciesSuggestion` schema/repository/API foundation before any SpeciesNet or custom classifier runtime. Phase 9C adds a manual/mock UI surface for suggestion evidence and status workflow; it still adds no species runtime, model dependency, media inspection, or truth writing. Phase 9D defines the explicit correction-flow boundary for using suggestion evidence without making status updates into truth.
 
+Phase 9H adds a mock species suggestion adapter for existing Visits before any
+SpeciesNet or custom classifier runtime. It creates pending suggestion evidence
+for the review loop only and does not inspect media, run a model, or create
+reviewed truth.
+
 They should follow [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md):
 
 - receive media-backed Event/Visit evidence, optional zone context, and optional crop context

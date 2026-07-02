@@ -47,6 +47,8 @@ export function VisitDetailPage({
   const [isLoadingSpeciesSuggestions, setIsLoadingSpeciesSuggestions] = useState(true);
   const [speciesSuggestionError, setSpeciesSuggestionError] = useState<string | null>(null);
   const [correctionSuggestionId, setCorrectionSuggestionId] = useState<string | null>(null);
+  const [mockSuggestedLabel, setMockSuggestedLabel] = useState("");
+  const [isCreatingMockSuggestion, setIsCreatingMockSuggestion] = useState(false);
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [label, setLabel] = useState("");
   const [notes, setNotes] = useState("");
@@ -104,6 +106,7 @@ export function VisitDetailPage({
     }
     setLabel(activeCorrectionPrefill?.label ?? "");
     setNotes("");
+    setMockSuggestedLabel("");
     setCorrectionSuggestionId(activeCorrectionPrefill?.speciesSuggestionId ?? null);
     void loadDetail({ prefillLabel: activeCorrectionPrefill?.label });
   }, [visitId, activeCorrectionPrefill?.speciesSuggestionId]);
@@ -172,6 +175,33 @@ export function VisitDetailPage({
     setMessage(
       "SpeciesSuggestion prefilled the correction field. Submit the correction to create reviewed truth.",
     );
+  }
+
+  async function createMockSuggestion() {
+    setIsCreatingMockSuggestion(true);
+    setMessage(null);
+    setSpeciesSuggestionError(null);
+    try {
+      const trimmedLabel = mockSuggestedLabel.trim();
+      const created = await apiClient.createMockSpeciesSuggestion({
+        visit_id: visitId,
+        suggested_label: trimmedLabel || undefined,
+      });
+      setMockSuggestedLabel("");
+      setMessage(
+        `${displayTaxonomyLabel(
+          created.suggested_label,
+          taxonomyLabels,
+        )} mock SpeciesSuggestion evidence created. Reviewed truth was not changed.`,
+      );
+      await loadSpeciesSuggestions({ showLoading: false });
+    } catch (caught) {
+      setSpeciesSuggestionError(
+        caught instanceof Error ? caught.message : "Mock suggestion could not be created.",
+      );
+    } finally {
+      setIsCreatingMockSuggestion(false);
+    }
   }
 
   async function saveCorrection(event: FormEvent<HTMLFormElement>) {
@@ -529,6 +559,28 @@ export function VisitDetailPage({
                 }`}
                 tone={speciesSuggestions.length > 0 ? "evidence" : "quiet"}
               />
+            </div>
+            <div className="mock-suggestion-action">
+              <label>
+                Mock label
+                <input
+                  value={mockSuggestedLabel}
+                  onChange={(event) => setMockSuggestedLabel(event.target.value)}
+                  placeholder="optional; defaults to unknown_bird"
+                />
+              </label>
+              <button
+                className="secondary-action"
+                disabled={isCreatingMockSuggestion}
+                onClick={() => void createMockSuggestion()}
+                type="button"
+              >
+                {isCreatingMockSuggestion ? "Creating..." : "Create mock suggestion"}
+              </button>
+              <span className="field-helper">
+                Creates demo SpeciesSuggestion evidence only. It does not run a model or create
+                reviewed truth.
+              </span>
             </div>
             {correctionSuggestionId ? (
               <div className="notice-panel compact-notice">

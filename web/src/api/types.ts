@@ -523,6 +523,15 @@ export interface SpeciesSuggestionCreateRequest {
   notes?: string | null;
 }
 
+export interface MockSpeciesSuggestionRequest {
+  visit_id: string;
+  adapter_id?: string;
+  adapter_name?: string;
+  suggested_label?: string | null;
+  confidence?: number;
+  notes?: string | null;
+}
+
 export interface SpeciesSuggestionListResponse {
   species_suggestions: SpeciesSuggestion[];
 }

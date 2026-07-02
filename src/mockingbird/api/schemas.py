@@ -576,6 +576,29 @@ class SpeciesSuggestionCreateRequest(BaseModel):
         return value
 
 
+class MockSpeciesSuggestionRequest(BaseModel):
+    visit_id: str
+    adapter_id: str = "mock_species_suggester"
+    adapter_name: str = "Mock species suggester"
+    suggested_label: str | None = None
+    confidence: float = Field(default=0.72, ge=0, le=1)
+    notes: str | None = None
+
+    @field_validator("visit_id", "adapter_id", "adapter_name")
+    @classmethod
+    def require_nonblank_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("field must not be blank")
+        return value
+
+    @field_validator("suggested_label")
+    @classmethod
+    def optional_label_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("field must not be blank")
+        return value
+
+
 class SpeciesSuggestionResponse(BaseModel):
     id: str
     source_id: str | None

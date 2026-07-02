@@ -26,6 +26,7 @@ import type {
   LocalDataStatus,
   MediaAsset,
   MediaImportResult,
+  MockSpeciesSuggestionRequest,
   ModelAdapter,
   ModelReadinessSummary,
   ModelAdapterRunRequest,
@@ -256,6 +257,11 @@ export const apiClient = {
     request<SpeciesSuggestion>(`/api/species-suggestions/${encodeURIComponent(id)}`),
   createSpeciesSuggestion: (payload: SpeciesSuggestionCreateRequest) =>
     request<SpeciesSuggestion>("/api/species-suggestions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  createMockSpeciesSuggestion: (payload: MockSpeciesSuggestionRequest) =>
+    request<SpeciesSuggestion>("/api/species-suggestions/mock", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

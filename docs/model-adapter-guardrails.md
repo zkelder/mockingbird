@@ -34,6 +34,10 @@ Showing SpeciesSuggestion evidence inside Visit Detail, Review Queue, or Event
 Detail must stay display/prefill-only. Model or suggestion output enters dataset
 truth only when the user submits the existing correction flow.
 
+Mock species suggestion adapters are demo/testing tools. They may create
+pending `SpeciesSuggestion` evidence for review, but they must follow the same
+truth boundary as real model suggestions.
+
 ## Adapter Input Contract
 
 Adapters must accept product-level inputs, not adapter-specific workflows:

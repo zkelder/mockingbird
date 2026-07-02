@@ -161,6 +161,10 @@ Phase 9G starts this review-context surface on Visit Detail by showing
 Visit-linked suggestions near the existing correction form. This is still
 manual/mock evidence UI and does not require runtime or model integration.
 
+Phase 9H adds a mock species suggestion adapter action for existing Visits. It
+creates realistic pending `SpeciesSuggestion` evidence for demo/testing without
+running SpeciesNet, inspecting media, adding dependencies, or writing truth.
+
 ## API/Repository Plan
 
 Recommended future phases:
@@ -171,6 +175,7 @@ Recommended future phases:
 - Phase 9E: frontend prefill/use-as-correction path.
 - Phase 9F: post-correction accepted-status polish.
 - Phase 9G: Visit Detail species suggestion review-context surface.
+- Phase 9H: mock species suggestion adapter for demo/testing.
 - Later: SpeciesNet runtime investigation docs or custom bird classifier dataset plan.
 
 Phase 9B stores manual/mock suggestions and proves they do not create truth. No real classifier runtime exists yet.
@@ -223,6 +228,14 @@ suggestions, while rejected and superseded suggestions remain read-only context.
 No SpeciesNet runtime, classifier dependency, media inspection, or automatic
 truth write is added.
 
+## Phase 9H Status
+
+Phase 9H adds a mock species suggestion adapter route and Visit Detail action.
+The mock adapter creates one pending SpeciesSuggestion for an existing Visit,
+infers clean product context, and stays evidence-only. It does not inspect media,
+run a classifier, create `ReviewLabel`, mark Visits reviewed, create exports, or
+change dataset coverage truth.
+
 ## Test Plan
 
 Implementation tests should prove:
@@ -234,6 +247,7 @@ Implementation tests should prove:
 - applying a suggestion requires the explicit correction/review path
 - suggestion status changes after correction success do not create truth
 - showing suggestions in review context does not create truth
+- mock suggestions for existing Visits do not create truth
 - dataset/export truth changes only after correction
 - unknown and out-of-taxonomy suggestions remain reviewable
 - missing media fails safely

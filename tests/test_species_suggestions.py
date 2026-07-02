@@ -68,6 +68,12 @@ async def create_species_suggestion(client: httpx.AsyncClient, **overrides):
     )
 
 
+async def create_mock_species_suggestion(client: httpx.AsyncClient, **overrides):
+    payload = {"visit_id": BIRD_VISIT_ID}
+    payload.update(overrides)
+    return await client.post("/api/species-suggestions/mock", json=payload)
+
+
 async def create_motion_evidence(client: httpx.AsyncClient) -> str:
     response = await client.post(
         "/api/motion/evidence",
@@ -88,6 +94,7 @@ async def create_motion_evidence(client: httpx.AsyncClient) -> str:
 def add_test_media_asset(
     repository: ProductRepository,
     media_id: str = "media_species_suggestion_001",
+    local_path: str | None = None,
 ) -> MediaAssetModel:
     asset = MediaAssetModel(
         id=media_id,
@@ -96,7 +103,7 @@ def add_test_media_asset(
         filename=f"{media_id}.jpg",
         content_type="image/jpeg",
         media_type="image",
-        local_path=f"demo://species-suggestion/{media_id}.jpg",
+        local_path=local_path or f"demo://species-suggestion/{media_id}.jpg",
         original_filename=f"{media_id}.jpg",
         file_size_bytes=128,
         created_at=datetime.now(UTC),
@@ -176,6 +183,92 @@ async def test_create_species_suggestion_can_reference_media_and_motion_evidence
     assert suggestion["media_asset_id"] == asset.id
     assert suggestion["motion_evidence_id"] == motion_evidence_id
     assert suggestion["status"] == "pending"
+
+
+async def test_mock_species_suggestion_for_visit_creates_pending_default_evidence(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await create_mock_species_suggestion(client)
+
+    assert response.status_code == 201
+    suggestion = response.json()
+    assert suggestion["id"].startswith("species-suggestion-")
+    assert suggestion["source_id"] == SOURCE_ID
+    assert suggestion["stream_id"] == STREAM_ID
+    assert suggestion["event_id"] == BIRD_EVENT_ID
+    assert suggestion["visit_id"] == BIRD_VISIT_ID
+    assert suggestion["media_asset_id"] is None
+    assert suggestion["adapter_id"] == "mock_species_suggester"
+    assert suggestion["adapter_name"] == "Mock species suggester"
+    assert suggestion["suggested_label"] == "unknown_bird"
+    assert suggestion["confidence"] == 0.72
+    assert suggestion["rank"] == 1
+    assert suggestion["alternatives"] == []
+    assert suggestion["status"] == "pending"
+    assert "No model runtime or media inspection" in suggestion["notes"]
+
+
+async def test_mock_species_suggestion_respects_label_and_infers_existing_media(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(
+        isolated_repository,
+        media_id="media_mock_species_visit",
+        local_path="demo://backyard-feeder/bird-feeder-001.jpg",
+    )
+
+    response = await create_mock_species_suggestion(
+        client,
+        suggested_label="blue_jay",
+        confidence=0.64,
+        notes="Mock blue jay suggestion for review.",
+    )
+
+    assert response.status_code == 201
+    suggestion = response.json()
+    assert suggestion["suggested_label"] == "blue_jay"
+    assert suggestion["confidence"] == 0.64
+    assert suggestion["media_asset_id"] == asset.id
+    assert suggestion["event_id"] == BIRD_EVENT_ID
+    assert suggestion["stream_id"] == STREAM_ID
+    assert suggestion["source_id"] == SOURCE_ID
+    assert suggestion["notes"] == "Mock blue jay suggestion for review."
+
+
+async def test_mock_species_suggestion_validates_visit_and_confidence(
+    client: httpx.AsyncClient,
+) -> None:
+    missing_visit = await create_mock_species_suggestion(
+        client,
+        visit_id="visit-missing",
+    )
+    invalid_confidence = await create_mock_species_suggestion(
+        client,
+        confidence=1.2,
+    )
+
+    assert missing_visit.status_code == 404
+    assert "Visit" in missing_visit.json()["detail"]
+    assert invalid_confidence.status_code == 422
+
+
+async def test_mock_species_suggestion_does_not_create_product_truth(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    add_test_media_asset(
+        isolated_repository,
+        media_id="media_mock_species_truth",
+        local_path="demo://backyard-feeder/bird-feeder-001.jpg",
+    )
+    before_truth = await product_truth_snapshot(client)
+
+    response = await create_mock_species_suggestion(client)
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "pending"
+    assert await product_truth_snapshot(client) == before_truth
 
 
 async def test_species_suggestion_list_and_filters(

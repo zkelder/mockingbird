@@ -40,6 +40,7 @@ from mockingbird.api.schemas import (
     ModelReadinessSummary,
     ModelAdapterRunRequest,
     ModelAdapterRunResult,
+    MockSpeciesSuggestionRequest,
     MotionCandidateResponse,
     MotionEvidenceAttachMediaRequest,
     MotionEvidenceCreateRequest,
@@ -767,6 +768,61 @@ async def create_species_suggestion(
     # Species suggestions are classifier evidence only. Review labels remain truth.
     try:
         return get_repository().create_species_suggestion(payload)
+    except ValueError as error:
+        raise _species_suggestion_error(error) from error
+
+
+@app.post(
+    "/api/species-suggestions/mock",
+    response_model=SpeciesSuggestionResponse,
+    status_code=201,
+)
+async def create_mock_species_suggestion(
+    payload: MockSpeciesSuggestionRequest,
+) -> SpeciesSuggestionResponse:
+    repository = get_repository()
+    visit = repository.get_visit(payload.visit_id)
+    if visit is None:
+        raise _not_found("Visit", payload.visit_id)
+
+    event = repository.get_event(visit.event_id)
+    if event is None:
+        raise _not_found("Event", visit.event_id)
+
+    stream = repository.get_stream(event.stream_id)
+    if stream is None:
+        raise _not_found("Stream", event.stream_id)
+
+    media_asset = repository.media_asset_for_path(visit.representative_media_path)
+    notes = (
+        payload.notes.strip()
+        if payload.notes and payload.notes.strip()
+        else (
+            "Mock/demo SpeciesSuggestion evidence for Visit review. "
+            "No model runtime or media inspection was run."
+        )
+    )
+    suggestion_payload = SpeciesSuggestionCreateRequest(
+        source_id=stream.source_id,
+        stream_id=stream.id,
+        event_id=event.id,
+        visit_id=visit.id,
+        media_asset_id=media_asset.id if media_asset else None,
+        adapter_id=payload.adapter_id.strip(),
+        adapter_name=payload.adapter_name.strip(),
+        suggested_label=(
+            payload.suggested_label.strip()
+            if payload.suggested_label is not None
+            else "unknown_bird"
+        ),
+        confidence=payload.confidence,
+        rank=1,
+        alternatives=[],
+        evidence_region=None,
+        notes=notes,
+    )
+    try:
+        return repository.create_species_suggestion(suggestion_payload)
     except ValueError as error:
         raise _species_suggestion_error(error) from error
 
