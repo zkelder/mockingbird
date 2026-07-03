@@ -88,6 +88,18 @@ async def test_provider_definitions_return_contract_keys_and_field_metadata(
     assert any(field["required"] for field in rtsp_definition["fields"])
     assert any(field["secret"] for field in rtsp_definition["fields"])
 
+    folder_definition = next(
+        definition
+        for definition in definitions
+        if definition["provider_key"] == "folder_import_future"
+    )
+    assert folder_definition["display_name"] == "Folder / trail-cam import"
+    folder_fields = {field["key"]: field for field in folder_definition["fields"]}
+    assert folder_fields["folder_path"]["required"] is True
+    assert folder_fields["folder_path"]["secret"] is True
+    assert folder_fields["recursive"]["placeholder"] == "false"
+    assert folder_fields["allowed_extensions"]["placeholder"] == "jpg,jpeg,png,webp"
+
 
 async def test_known_source_provider_configuration_returns_safe_default(
     client: httpx.AsyncClient,
@@ -196,15 +208,15 @@ async def test_missing_required_fields_reflect_in_configuration_and_connection(
     assert response.status_code == 200
     configuration = response.json()
     assert configuration["configured_fields"] == []
-    assert configuration["missing_fields"] == ["folder_label"]
-    assert configuration["safe_config_preview"]["folder_label"] == "not_configured"
+    assert configuration["missing_fields"] == ["folder_path"]
+    assert configuration["safe_config_preview"]["folder_path"] == "not_configured"
 
     connection_response = await client.get(f"/api/sources/{SOURCE_ID}/connection")
     assert connection_response.status_code == 200
     connection = connection_response.json()
     assert connection["status"] == "not_configured"
     assert connection["adapter_key"] == "folder_import_future"
-    assert connection["missing_fields"] == ["folder_label"]
+    assert connection["missing_fields"] == ["folder_path"]
     assert connection["supports_live_playback"] is False
 
 

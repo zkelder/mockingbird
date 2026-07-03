@@ -15,6 +15,10 @@ The provider must not accidentally become a hidden watcher, background import
 loop, continuous poller, live playback path, model runner, or media deletion
 tool.
 
+Phase 13B adds only the provider configuration/status contract for
+`folder_import_future`. It stores safe setup intent and reports readiness; it
+still does not scan folders, import files, or create media/evidence/truth.
+
 ## Product Flow
 
 folder/trail-cam Source setup -> explicit folder selection/config metadata ->
@@ -57,15 +61,20 @@ casually exposed in API responses or UI. This phase does not scan folders,
 validate paths beyond metadata, read files, import media, or imply any
 background watcher.
 
+In Phase 13B, the provider definition is represented in
+`GET /api/source-provider-definitions`. Because the current provider field
+schema is string-based, `recursive` and `allowed_extensions` are stored as
+metadata strings; parsing remains future work. `folder_path` is redacted to a
+configured/not-configured marker.
+
 ## Source Connection Status Relationship
 
-Future Source connection status should treat this provider as import readiness,
-not camera connectivity.
+Source connection status should treat this provider as import readiness, not
+camera connectivity.
 
 - Missing `folder_path` reports `not_configured`.
-- Configured folder metadata may report `configured` or metadata-ready.
-- Status copy should say explicit folder import is available only when the
-  future provider implementation exists.
+- Configured folder metadata reports metadata configured/future adapter required.
+- Status copy should say explicit folder import preview/import is future work.
 - `supports_live_playback` remains `false`.
 - `supports_zone_editing` can remain `true` for related Stream context.
 
@@ -76,6 +85,10 @@ create records, or start any provider runtime.
 
 Folder/trail-cam import does not provide live playback. Stream playback remains
 placeholder or media-context only.
+
+Phase 13B keeps explicitly configured folder/trail-cam Streams on placeholder
+playback with no preview URL, no MediaAsset reference, and no live playback
+claim.
 
 Imported MediaAssets can later provide review context for a Stream. Zone editing
 remains useful because users can classify imported media, MotionEvidence, or

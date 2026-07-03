@@ -122,6 +122,11 @@ Phase 13A defines the next provider boundary: Folder / trail-cam import. It is
 design-only and keeps local folder batch media under Source/Stream contracts,
 explicit import planning, MediaAsset review context, and correction truth. It
 adds no folder scan, watcher, polling, import, decoding, or provider runtime.
+Phase 13B adds the folder/trail-cam provider metadata/status layer:
+`folder_import_future` appears in provider definitions, redacts `folder_path`,
+reports setup readiness, and keeps related Stream playback placeholder-only.
+It still adds no folder scan, import, copy/reference behavior, MediaAsset,
+MotionEvidence, Event/Visit, label, truth, worker, or dependency behavior.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
@@ -143,6 +148,7 @@ trail-camera dumps, NAS folders, and exported image batches. It should follow
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md)
 before any folder scan, import, copy/reference behavior, watcher, polling,
 record creation, or truth-affecting behavior is added.
+The current implementation layer for that provider is configuration/status only.
 
 The Streams, Stream Detail, and Import Media surfaces present provider
 configuration, setup review, connection readiness, playback status, zone editing,

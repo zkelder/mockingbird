@@ -103,8 +103,8 @@ async def test_future_provider_missing_fields_reports_needs_setup(
     review = response.json()
     assert review["provider_key"] == "folder_import_future"
     assert review["readiness_level"] == "needs_setup"
-    assert review["missing_fields"] == ["folder_label"]
-    assert "Folder label" in review["next_step"]
+    assert review["missing_fields"] == ["folder_path"]
+    assert "Folder path" in review["next_step"]
     assert any(step["status"] == "missing" for step in review["steps"])
     assert review["supports_live_playback"] is False
 

@@ -52,6 +52,10 @@ trail-cam import. It should store setup metadata such as sensitive
 This metadata must not scan folders, validate paths by reading them, import
 media, create records, or imply a background watcher. See
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
+Phase 13B represents this provider in configuration/status contracts only:
+`folder_path` is required and redacted to configured/not-configured, while
+boolean/list-like fields are stored as metadata strings until a future parser is
+scoped.
 
 ## Provider Configuration Fields
 
@@ -73,6 +77,10 @@ details.
 Secret fields are never returned raw. When a secret field is supplied,
 MockingBird stores and returns only a configured/not-configured marker. This
 phase does not store real credentials or validate them.
+
+For `folder_import_future`, `folder_path` is sensitive local data and follows
+the same marker policy. API responses and the Streams UI must not echo raw local
+folder paths.
 
 ## Relationship To Source Connection Status
 
@@ -152,6 +160,7 @@ reviewable activity.
 ## Testing Expectations
 
 - Provider definitions include expected keys and field metadata.
+- `folder_import_future` exposes `folder_path` as required/sensitive metadata.
 - Source provider configuration returns safe status for known sources.
 - Unknown sources return 404.
 - Unknown provider keys are rejected.

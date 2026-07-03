@@ -413,20 +413,81 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="folder_import_future",
-        display_name="Folder import future provider",
-        description="Future provider contract for local folder-based media ingestion.",
+        display_name="Folder / trail-cam import",
+        description=(
+            "Metadata for future explicit local folder or trail-cam import; "
+            "no folder scan, import, or live playback yet."
+        ),
         status=SourceProviderDefinitionStatus.future_adapter,
         supports_live_playback=False,
         supports_zone_editing=True,
         fields=[
             SourceProviderField(
-                key="folder_label",
-                label="Folder label",
+                key="folder_path",
+                label="Folder path",
                 required=True,
+                secret=True,
+                description=(
+                    "Local folder, SD-card dump, NAS folder, or trail-cam export location."
+                ),
+                placeholder="/path/to/trailcam/folder",
+            ),
+            SourceProviderField(
+                key="display_name",
+                label="Display name",
+                required=False,
                 secret=False,
-                description="Stored as metadata only; no folder is read in this phase.",
-                placeholder="Trail cam card",
-            )
+                description="Optional label for this folder/trail-cam source.",
+                placeholder="Backyard trail cam",
+            ),
+            SourceProviderField(
+                key="recursive",
+                label="Recursive",
+                required=False,
+                secret=False,
+                description="Metadata string only; parsing is future work.",
+                placeholder="false",
+            ),
+            SourceProviderField(
+                key="allowed_extensions",
+                label="Allowed extensions",
+                required=False,
+                secret=False,
+                description="Metadata string only; parsing is future work.",
+                placeholder="jpg,jpeg,png,webp",
+            ),
+            SourceProviderField(
+                key="default_stream_id",
+                label="Default stream ID",
+                required=False,
+                secret=False,
+                description="Optional related Stream context for future imports.",
+                placeholder="stream-backyard-feeder",
+            ),
+            SourceProviderField(
+                key="default_zone_id",
+                label="Default zone ID",
+                required=False,
+                secret=False,
+                description="Optional related Zone context for future imports.",
+                placeholder="zone-feeder",
+            ),
+            SourceProviderField(
+                key="import_mode",
+                label="Import mode",
+                required=False,
+                secret=False,
+                description="Metadata only; future implementation decides behavior.",
+                placeholder="media_only",
+            ),
+            SourceProviderField(
+                key="notes",
+                label="Notes",
+                required=False,
+                secret=False,
+                description="Optional local setup context.",
+                placeholder="SD-card dump from the back fence trail cam",
+            ),
         ],
     ),
     SourceProviderDefinition(
@@ -922,8 +983,31 @@ class ProductRepository:
                 )
             elif configuration.missing_fields:
                 status = SourceConnectionStatusValue.not_configured
-                message = "This source still needs provider metadata before a future provider can run."
-                setup_hint = configuration.setup_hint
+                if configuration.provider_key == "folder_import_future":
+                    message = (
+                        "This source needs folder path metadata before future folder import "
+                        "preview can run."
+                    )
+                    setup_hint = (
+                        "Add folder path metadata; MockingBird will not scan or import folders "
+                        "from status."
+                    )
+                else:
+                    message = (
+                        "This source still needs provider metadata before a future provider can run."
+                    )
+                    setup_hint = configuration.setup_hint
+            elif configuration.provider_key == "folder_import_future":
+                status = SourceConnectionStatusValue.configured
+                message = (
+                    "Folder/trail-cam metadata is configured for future import preview/import. "
+                    "MockingBird does not scan or import folders yet, and live playback is not "
+                    "expected for this provider."
+                )
+                setup_hint = (
+                    "Future folder import preview implementation is required before importing "
+                    "folder media."
+                )
             elif definition is not None and definition.status == SourceProviderDefinitionStatus.future_adapter:
                 status = SourceConnectionStatusValue.configured
                 message = (
@@ -1031,6 +1115,44 @@ class ProductRepository:
                 )
 
             adapter_key = source.kind
+            model = session.get(SourceProviderConfigurationModel, source.id)
+            configured_provider_key = model.provider_key if model is not None else None
+            if configured_provider_key == "folder_import_future":
+                configuration = _source_provider_configuration_from_model(
+                    source,
+                    model,
+                    [stream.id],
+                )
+                if configuration.missing_fields:
+                    message = (
+                        "This stream has folder/trail-cam provider metadata pending. "
+                        "Playback remains placeholder/media-context only."
+                    )
+                    setup_hint = (
+                        "Add folder path metadata before any future folder import preview work."
+                    )
+                else:
+                    message = (
+                        "Folder/trail-cam metadata is configured for future import context. "
+                        "This stream does not provide live playback."
+                    )
+                    setup_hint = (
+                        "Future folder import preview implementation is required before folder "
+                        "media can appear here; zone editing can continue."
+                    )
+                return StreamPlaybackStatus(
+                    stream_id=stream.id,
+                    source_id=stream.source_id,
+                    status=StreamPlaybackStatusValue.not_configured,
+                    playback_kind=StreamPlaybackKind.placeholder,
+                    display_title=stream.name,
+                    message=message,
+                    setup_hint=setup_hint,
+                    supports_zone_editing=True,
+                    supports_live_playback=False,
+                    adapter_key=configured_provider_key,
+                )
+
             if source.kind == SourceKind.demo.value:
                 return StreamPlaybackStatus(
                     stream_id=stream.id,
@@ -5680,8 +5802,21 @@ def _source_provider_configuration_from_config(
         missing_labels = [
             field.label for field in definition.fields if field.key in set(missing_fields)
         ]
-        message = "Provider configuration metadata is incomplete."
-        setup_hint = f"Add metadata for: {', '.join(missing_labels)}."
+        if definition.provider_key == "folder_import_future":
+            message = "Folder/trail-cam setup metadata is incomplete."
+            setup_hint = "Add folder path metadata before future import preview can run."
+        else:
+            message = "Provider configuration metadata is incomplete."
+            setup_hint = f"Add metadata for: {', '.join(missing_labels)}."
+    elif definition.provider_key == "folder_import_future":
+        message = (
+            "Folder/trail-cam setup metadata is saved. MockingBird does not scan or import "
+            "folders yet."
+        )
+        setup_hint = (
+            "Future folder import preview implementation is required before importing folder "
+            "media."
+        )
     elif definition.status == SourceProviderDefinitionStatus.future_adapter:
         message = (
             "Provider configuration metadata is saved. MockingBird will not connect "
@@ -5777,6 +5912,15 @@ def _source_setup_review_from_contracts(
             "Live playback is not implemented."
         )
         next_step = "Fetch still-image preview explicitly; zone editing can continue."
+    elif configuration.provider_key == "folder_import_future":
+        readiness_level = "future_adapter_required"
+        summary = (
+            "Folder/trail-cam setup metadata is present, but MockingBird does not scan or "
+            "import folders yet."
+        )
+        next_step = (
+            "Future folder import preview implementation required before importing folder media."
+        )
     elif connection.provider_kind == SourceProviderKind.future_adapter or (
         definition is not None
         and definition.status == SourceProviderDefinitionStatus.future_adapter
@@ -5792,14 +5936,17 @@ def _source_setup_review_from_contracts(
     warnings: list[str] = []
     if configuration.missing_fields:
         warnings.append(f"Missing setup metadata: {', '.join(missing_labels)}.")
-    if not supports_live_playback and configuration.provider_key != "manual_media":
+    if configuration.provider_key == "folder_import_future":
+        warnings.append("Folder scan/import is not implemented for this provider yet.")
+        warnings.append("Live playback is not expected for this provider.")
+    elif not supports_live_playback and configuration.provider_key != "manual_media":
         warnings.append("Live playback is not implemented for this provider yet.")
     if not supports_zone_editing:
         warnings.append("No related stream panel is available for zone editing yet.")
 
     playback_message = (
         "Live playback is not expected for this provider."
-        if configuration.provider_key == "manual_media"
+        if configuration.provider_key in {"manual_media", "folder_import_future"}
         else (
             "Live playback is available."
             if supports_live_playback
@@ -5826,6 +5973,16 @@ def _source_setup_review_from_contracts(
             ),
         )
         if configuration.provider_key == "external_url"
+        else SourceSetupReviewStep(
+            key="folder_import_preview",
+            label="Folder import preview",
+            status="future",
+            message=(
+                "Folder preview/import is future work. Status does not scan folders, "
+                "import files, or create truth."
+            ),
+        )
+        if configuration.provider_key == "folder_import_future"
         else SourceSetupReviewStep(
             key="future_provider",
             label="Future provider work",

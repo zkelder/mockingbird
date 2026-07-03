@@ -21,8 +21,9 @@ source of truth.
 
 ## Folder / Trail-cam Import Provider
 
-A future Source provider boundary for explicit local folder, SD-card dump, NAS
-folder, or exported image batch import. It is not live playback, a watcher,
+A Source provider configuration/status contract for future explicit local
+folder, SD-card dump, NAS folder, or exported image batch import. In the current
+phase it stores redacted setup intent only. It is not live playback, a watcher,
 polling loop, evidence, or reviewed truth.
 
 ## Source Connection Status

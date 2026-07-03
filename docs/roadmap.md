@@ -491,24 +491,32 @@ or trail-camera import behavior.
 Current work:
 
 - Phase 13A: folder/trail-cam import provider boundary design.
-- Next likely phase: Phase 13B — folder/trail-cam provider configuration
-  UI/status contract.
+- Phase 13B: folder/trail-cam provider configuration/status contract.
+- Next likely phase: Phase 13C — folder import preview API, dry-run only.
 
 Validation:
 
 - Phase 13A is docs/design only.
+- Phase 13B adds `folder_import_future` to provider definitions, provider
+  configuration, Source connection status, Source setup review, and placeholder
+  Stream playback only.
 - Recommended canonical provider key is `folder_import_future`, with display
   name Folder / trail-cam import.
+- `folder_path` is required sensitive metadata and must be redacted to
+  configured/not-configured in API/UI responses.
 - Folder/trail-cam provider work stays underneath Source setup, Source
   connection status, and Stream playback contracts.
 - Folder/trail-cam setup represents explicit local batch import readiness, not
   live playback, camera connection, watcher behavior, polling, or background
   indexing.
+- Configured folder/trail-cam metadata means future import readiness only; it
+  does not make import, preview, or live playback available.
 - Future preview/import behavior must be explicit, local-first, bounded, and
   review/truth-safe.
 - Folder import creates MediaAssets at most by default; MotionEvidence,
   Events/Visits, labels, analytics truth, exports, and classifier readiness
   require explicit future routes and reviewed correction semantics.
-- No folder scan, media import, media copy/reference behavior, media deletion,
-  decoding, worker, scheduler, dependency, or generated artifact is added in
-  Phase 13A.
+- No folder scan, filesystem path validation, media import, media copy/reference
+  behavior, media deletion, decoding, worker, scheduler, dependency, generated
+  artifact, MediaAsset, MotionEvidence, Event/Visit, ReviewLabel, export, or
+  truth creation is added in Phase 13B.

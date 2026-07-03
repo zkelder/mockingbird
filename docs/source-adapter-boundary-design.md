@@ -87,6 +87,9 @@ Folder / trail-cam import. It should reuse Source/Stream setup and explicit
 local media import concepts without live playback, watchers, polling, decoding,
 or truth creation. See
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
+Phase 13B represents `folder_import_future` in provider configuration, Source
+connection status, setup review, and placeholder Stream playback only. It adds
+no folder preview, scan, import, or media/evidence records.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -229,6 +232,7 @@ Future implementation must test:
 - Phase 12C: external_url saved media cleanup/retention design.
 - Phase 13A: folder/trail-cam import provider boundary design.
 - Phase 13B: folder/trail-cam provider configuration UI/status contract.
+- Phase 13C: folder import preview API, dry-run only.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

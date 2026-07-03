@@ -110,8 +110,10 @@ separate scope and must follow
 [docs/external-url-saved-media-retention-design.md](docs/external-url-saved-media-retention-design.md).
 The next provider boundary is Folder / trail-cam import, documented in
 [docs/folder-trailcam-provider-boundary-design.md](docs/folder-trailcam-provider-boundary-design.md).
-It is design-only: no folder scan, watcher, polling, import, live playback,
-media decoding, or truth creation is implemented.
+It is now represented as a provider configuration/status contract:
+`folder_import_future` stores redacted setup metadata and reports readiness, but
+adds no folder scan, watcher, polling, import, live playback, media decoding, or
+truth creation.
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 

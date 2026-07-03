@@ -391,6 +391,9 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     selectedSetupReview?.provider_key === "manual_media" &&
     selectedSetupReview.readiness_level === "metadata_ready";
   const isExternalUrlProvider = selectedConfiguration?.provider_key === "external_url";
+  const isFolderImportProvider =
+    selectedSetupReview?.provider_key === "folder_import_future" ||
+    selectedConfiguration?.provider_key === "folder_import_future";
   const selectedFirstStream = selectedSourceStreams[0] ?? null;
   const canSavePreview =
     previewResult?.status === "available" && Boolean(previewResult.preview_data_url);
@@ -399,6 +402,11 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
       ? "Next: open Stream Detail and draw Zones."
       : isManualMediaReady
         ? "Next: import media for this Source/Stream."
+        : isFolderImportProvider && selectedSetupReview.readiness_level === "needs_setup"
+          ? "Next: complete folder path metadata."
+        : isFolderImportProvider &&
+            selectedSetupReview.readiness_level === "future_adapter_required"
+          ? "Next: future folder import preview required."
         : isExternalUrlProvider && selectedSetupReview.readiness_level === "metadata_ready"
           ? "Next: fetch still-image preview explicitly."
           : selectedSetupReview.readiness_level === "needs_setup"
@@ -713,6 +721,18 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                       ) : null}
                     </div>
                   ) : null}
+                </div>
+              ) : null}
+              {isFolderImportProvider ? (
+                <div className="source-review-step">
+                  <div className="item-title-row">
+                    <strong>Folder / trail-cam import</strong>
+                    <StatusPill label="Metadata only" tone="quiet" />
+                  </div>
+                  <p>
+                    Folder setup is saved as redacted metadata. MockingBird does not scan folders,
+                    import files, or provide live playback for this provider yet.
+                  </p>
                 </div>
               ) : null}
             </div>
