@@ -293,6 +293,14 @@ duplicates by default, attaches each MediaAsset through `snapshot_media_asset_id
 and creates no Event, Visit, ReviewLabel, reviewed status, model output, or
 truth.
 
+## Phase 13J Status
+
+Phase 13J polishes folder-origin MotionEvidence review. The UI shows
+folder-imported media, safe relative provenance, Source/Stream/Zone context,
+pending/ignored/promoted state, and explicit ignore/promote actions. Attached
+folder media remains evidence context only; Event/Visit review and correction
+remain separate.
+
 ## Phase 12A Status
 
 Phase 12A adds source/stream smoke coverage around saved-preview-origin

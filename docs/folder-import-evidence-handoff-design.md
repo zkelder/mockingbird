@@ -7,6 +7,8 @@ exposes explicit preview/import UI for those files. Phase 13G adds explicit
 single-media handoff to pending MotionEvidence. Phase 13H adds a batch dry-run
 report before any future batch creation. Phase 13I adds confirmed batch
 creation of pending MotionEvidence for eligible folder-imported MediaAssets.
+Phase 13J polishes the review/promote UI so folder provenance, attached media,
+pending/ignored/promoted state, and truth boundaries stay visible.
 
 Folder-imported MediaAssets are local media context. They are not evidence,
 Events, Visits, labels, classifier examples, analytics truth, export truth, or
@@ -17,6 +19,8 @@ explicitly creating one pending MotionEvidence record from one folder-imported
 MediaAsset. They can also dry-run a batch handoff report for imported
 MediaAssets and confirm batch creation for eligible items. This design records
 those handoffs while keeping promotion, correction, and truth separate.
+Folder-origin evidence remains evidence until explicit promote, and
+review/correction remains the truth boundary.
 
 ## Product Flow
 
@@ -26,7 +30,7 @@ media or confirms eligible batch -> explicit "create pending evidence" -> pendin
 explicit ignore or promote -> Event/Visit review -> user correction -> ReviewLabel truth ->
 analytics/exports/classifier readiness.
 
-## Current Behavior After Phase 13I
+## Current Behavior After Phase 13J
 
 - Folder preview is an explicit dry run.
 - Folder import is explicit.
@@ -41,6 +45,10 @@ analytics/exports/classifier readiness.
 - Confirmed batch creation can create pending MotionEvidence for eligible
   folder-imported MediaAssets only.
 - Batch creation skips duplicates by default and reports skipped items.
+- Motion Evidence review shows folder-imported media provenance and attached
+  media context without exposing raw absolute folder paths.
+- Promoted Event/Visit detail can show folder-imported media context while
+  correction remains truth.
 - No Event is created.
 - No Visit is created.
 - No ReviewLabel is created.
@@ -290,11 +298,15 @@ after folder import results.
 Current behavior:
 
 - acts on one imported MediaAsset at a time
-- does not run batch creation
+- supports a dry-run and confirmed batch creation path for pending evidence
 - reports duplicate skips and validation errors
 - cues the user to open the Motion Evidence page after creation
 - use copy such as "Pending evidence only. No Events, Visits, labels, or truth
   created."
+- Motion Evidence shows folder-imported media, safe relative provenance,
+  pending/ignored/promoted state, and explicit ignore/promote actions.
+- Event/Visit detail can show promoted folder-origin media while keeping
+  correction as the truth boundary.
 
 Avoid product copy that implies automatic detection, confirmed visits, training,
 watching folders, polling, stream recording, or adapter/debug internals.
@@ -317,7 +329,8 @@ Tests prove:
 - no source folder files are deleted
 - no network fetch occurs
 
-Future batch tests should separately prove dry-run and selected-media behavior.
+Batch tests separately prove dry-run, confirmed creation, and selected-media
+behavior.
 
 ## Recommended Future Phases
 
@@ -326,11 +339,12 @@ Future batch tests should separately prove dry-run and selected-media behavior.
 - Phase 13H: batch folder media evidence handoff dry-run.
 - Phase 13I: batch folder media evidence creation, no Event/Visit/truth.
 - Phase 13J: folder media review/promote UI polish.
+- Next likely: Phase 13K folder import retention/report design, or Phase 14A
+  source/provider consolidation and smoke-test expansion.
 - Later: automated folder scoring/design, if ever.
 
 ## Explicit Non-Goals
 
-- No batch MotionEvidence creation.
 - No automatic MotionEvidence creation.
 - No Events/Visits.
 - No ReviewLabels.

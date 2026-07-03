@@ -72,6 +72,10 @@ const motionWorkflowSteps = [
 
 const pendingEvidenceBoundaryCopy =
   "This is pending evidence. It is not an Event, Visit, label, or truth.";
+const pendingFolderEvidenceBoundaryCopy =
+  "This is pending evidence from imported local media. It is not an Event, Visit, label, or truth.";
+const promotedEvidenceBoundaryCopy =
+  "Promoted evidence created a reviewable Event/Visit. Correction remains the truth boundary.";
 
 interface MotionEvidencePageProps {
   streams: Stream[];
@@ -177,10 +181,22 @@ export function MotionEvidencePage({
   const selectedHasSavedPreviewMedia = selectedEvidence
     ? isSavedPreviewMediaEvidence(selectedEvidence, selectedMediaAsset)
     : false;
-  const attachedMediaTitle = selectedHasSavedPreviewMedia ? "Saved preview media" : "Attached media";
+  const selectedHasFolderImportMedia = selectedEvidence
+    ? isFolderImportMediaEvidence(selectedEvidence, selectedMediaAsset)
+    : false;
+  const attachedMediaTitle = selectedHasFolderImportMedia
+    ? "Folder-imported media"
+    : selectedHasSavedPreviewMedia
+      ? "Saved preview media"
+      : "Attached media";
   const attachedMediaProvenance = selectedEvidence
     ? formatAttachedMediaProvenance(selectedEvidence, selectedMediaAsset)
     : "";
+  const selectedFolderRelativePath = extractSafeRelativePath(
+    selectedMediaAsset?.notes ?? "",
+    "relative_source_path",
+  );
+  const selectedFolderCopyMode = extractSafeNoteValue(selectedMediaAsset?.notes ?? "", "copy_mode");
   const manualMediaAsset = manualSnapshotMediaAssetId
     ? mediaById.get(manualSnapshotMediaAssetId) ?? null
     : null;
@@ -1026,8 +1042,8 @@ export function MotionEvidencePage({
           title={hasFilters ? "No Motion Evidence matches this filter." : "No Motion Evidence yet."}
           description={
             hasFilters
-              ? "Try another status or zone. Future stream sampling will add new evidence automatically."
-              : "Future stream sampling will create MotionEvidence automatically; current records can come from explicit backend/API creation."
+              ? "Try another status or zone, or review explicit media handoff results."
+              : "Current records can come from explicit media handoff, manual creation, or sampled-frame evaluation."
           }
         />
       ) : null}
@@ -1055,12 +1071,10 @@ export function MotionEvidencePage({
                     {item.snapshot_media_asset_id ? (
                       <EvidenceBadge
                         label={
-                          isSavedPreviewMediaEvidence(
+                          formatMotionEvidenceMediaBadge(
                             item,
                             mediaById.get(item.snapshot_media_asset_id) ?? null,
                           )
-                            ? "Saved preview media"
-                            : "Media attached"
                         }
                         tone="evidence"
                       />
@@ -1092,7 +1106,7 @@ export function MotionEvidencePage({
 
                 <section className="notice-panel motion-status-note">
                   <strong>{formatLabel(selectedEvidence.status)} status</strong>
-                  <span>{formatEvidenceStatusCopy(selectedEvidence)}</span>
+                  <span>{formatEvidenceStatusCopy(selectedEvidence, selectedMediaAsset)}</span>
                 </section>
 
                 <div className="motion-evidence-detail-grid">
@@ -1213,7 +1227,13 @@ export function MotionEvidencePage({
                     </div>
                     {selectedEvidence.snapshot_media_asset_id ? (
                       <EvidenceBadge
-                        label={selectedHasSavedPreviewMedia ? "Saved local media" : "Evidence context"}
+                        label={
+                          selectedHasFolderImportMedia
+                            ? "Folder-imported media"
+                            : selectedHasSavedPreviewMedia
+                              ? "Saved local media"
+                              : "Evidence context"
+                        }
                         tone="evidence"
                       />
                     ) : (
@@ -1244,7 +1264,30 @@ export function MotionEvidencePage({
                           Media is evidence context only. It does not create Events, Visits,
                           labels, reviewed observations, export-ready truth, or dataset truth.
                         </span>
+                        <span>No label has been confirmed yet by Motion Evidence itself.</span>
                       </div>
+                      {selectedHasFolderImportMedia ? (
+                        <div className="motion-review-context-grid">
+                          <ContextItem label="Provider" value="folder_import_future" />
+                          <ContextItem
+                            label="Original relative path"
+                            value={selectedFolderRelativePath ?? "not available"}
+                          />
+                          <ContextItem
+                            label="Import context"
+                            value={
+                              selectedFolderCopyMode
+                                ? formatLabel(selectedFolderCopyMode)
+                                : "Imported local media"
+                            }
+                          />
+                          <ContextItem
+                            label="Evidence state"
+                            value={formatLabel(selectedEvidence.status)}
+                            detail="Folder media remains evidence until explicit promotion and correction."
+                          />
+                        </div>
+                      ) : null}
                       <div className="detail-actions">
                         <a
                           className="secondary-action"
@@ -1269,7 +1312,9 @@ export function MotionEvidencePage({
                     </p>
                   ) : null}
                   {selectedEvidence.status === "pending" ? (
-                    <p className="media-readonly-note">{pendingEvidenceBoundaryCopy}</p>
+                    <p className="media-readonly-note">
+                      {formatPendingEvidenceBoundaryCopy(selectedEvidence, selectedMediaAsset)}
+                    </p>
                   ) : null}
                   {selectedEvidence.status === "ignored" ? (
                     <p className="media-readonly-note">
@@ -1291,8 +1336,9 @@ export function MotionEvidencePage({
                     <div className="notice-panel">
                       <strong>Pending evidence</strong>
                       <span>
-                        {pendingEvidenceBoundaryCopy} Ignore noisy evidence or promote explicitly
-                        when this should become a reviewable Event/Visit.
+                        {formatPendingEvidenceBoundaryCopy(selectedEvidence, selectedMediaAsset)}{" "}
+                        Ignore noisy evidence or promote explicitly when this should become a
+                        reviewable Event/Visit.
                       </span>
                     </div>
                     <form className="motion-attachment-form" onSubmit={attachMediaEvidence}>
@@ -1404,9 +1450,8 @@ export function MotionEvidencePage({
                   <div className="notice-panel">
                     <strong>Promoted evidence</strong>
                     <span>
-                      Promoted evidence created a reviewable Event/Visit. It still has no label or
-                      truth until review/correction. Open the detail pages and correct labels
-                      before export.
+                      {promotedEvidenceBoundaryCopy} No label is truth until review/correction.
+                      Open the detail pages and correct labels before export.
                       {selectedEvidence.snapshot_media_asset_id
                         ? ` Attached media ${selectedEvidence.snapshot_media_asset_id} remains evidence context.`
                         : ""}
@@ -1513,14 +1558,36 @@ function ContextItem({
   );
 }
 
-function formatEvidenceStatusCopy(evidence: MotionEvidence): string {
+function formatEvidenceStatusCopy(evidence: MotionEvidence, asset: MediaAsset | null): string {
   if (evidence.status === "pending") {
-    return pendingEvidenceBoundaryCopy;
+    return formatPendingEvidenceBoundaryCopy(evidence, asset);
   }
   if (evidence.status === "promoted") {
-    return "Promoted evidence created a reviewable Event/Visit. It still has no label or truth until review/correction.";
+    return `${promotedEvidenceBoundaryCopy} No label has been confirmed yet unless review/correction has been saved.`;
   }
   return "This evidence was ignored and remains preserved as non-truth evidence history.";
+}
+
+function formatPendingEvidenceBoundaryCopy(
+  evidence: MotionEvidence,
+  asset: MediaAsset | null,
+): string {
+  return isFolderImportMediaEvidence(evidence, asset)
+    ? pendingFolderEvidenceBoundaryCopy
+    : pendingEvidenceBoundaryCopy;
+}
+
+function formatMotionEvidenceMediaBadge(
+  evidence: MotionEvidence,
+  asset: MediaAsset | null,
+): string {
+  if (isFolderImportMediaEvidence(evidence, asset)) {
+    return "Folder-imported media";
+  }
+  if (isSavedPreviewMediaEvidence(evidence, asset)) {
+    return "Saved preview media";
+  }
+  return "Media attached";
 }
 
 function isSavedPreviewMediaEvidence(evidence: MotionEvidence, asset: MediaAsset | null): boolean {
@@ -1535,6 +1602,20 @@ function isSavedPreviewMediaEvidence(evidence: MotionEvidence, asset: MediaAsset
     notes.includes("created from saved mediaasset") ||
     notes.includes("saved explicit external_url still-image preview") ||
     notes.includes("provider_key=external_url")
+  );
+}
+
+function isFolderImportMediaEvidence(evidence: MotionEvidence, asset: MediaAsset | null): boolean {
+  if (!evidence.snapshot_media_asset_id) {
+    return false;
+  }
+
+  const source = String(evidence.scoring_config.source ?? "").toLowerCase();
+  const notes = `${evidence.notes ?? ""}\n${asset?.notes ?? ""}`.toLowerCase();
+  return (
+    source === "folder_import_media_asset" ||
+    notes.includes("folder-imported mediaasset") ||
+    notes.includes("provider_key=folder_import_future")
   );
 }
 
@@ -1554,6 +1635,14 @@ function formatAttachedMediaProvenance(
     if ((asset?.notes ?? "").toLowerCase().includes("provider_key=external_url")) {
       return "This evidence is linked to saved local media from an external URL preview.";
     }
+  }
+
+  if (isFolderImportMediaEvidence(evidence, asset)) {
+    const relativePath = extractSafeRelativePath(asset?.notes ?? "", "relative_source_path");
+    if (relativePath) {
+      return `This evidence is linked to folder-imported local media from ${relativePath}.`;
+    }
+    return "This evidence is linked to folder-imported local media.";
   }
 
   return "This evidence is linked to saved local media.";
@@ -1581,6 +1670,47 @@ function extractSafeNoteValue(notes: string, key: string): string | null {
 
   const safeValue = rawValue.replace(/[^A-Za-z0-9.:\[\]-]/g, "").slice(0, 120);
   return safeValue || null;
+}
+
+function extractSafeRelativePath(notes: string, key: string): string | null {
+  const rawValue = extractRawNoteValue(notes, key);
+  if (!rawValue) {
+    return null;
+  }
+
+  const normalized = rawValue.trim().replace(/\\/g, "/");
+  if (
+    !normalized ||
+    normalized.startsWith("/") ||
+    normalized.startsWith("~/") ||
+    /^[A-Za-z]:/.test(normalized)
+  ) {
+    return null;
+  }
+
+  const segments = normalized.split("/").filter(Boolean);
+  if (segments.length === 0 || segments.some((segment) => segment === "..")) {
+    return null;
+  }
+
+  return segments
+    .map((segment) => segment.replace(/[^A-Za-z0-9._ -]/g, "-").slice(0, 80))
+    .join("/")
+    .slice(0, 180);
+}
+
+function extractRawNoteValue(notes: string, key: string): string | null {
+  const prefixes = [`${key}=`, `${key}:`];
+  const line = notes
+    .split(/\r?\n/)
+    .find((entry) => prefixes.some((prefix) => entry.trim().startsWith(prefix)));
+  if (!line) {
+    return null;
+  }
+
+  const trimmed = line.trim();
+  const prefix = prefixes.find((entry) => trimmed.startsWith(entry));
+  return prefix ? trimmed.slice(prefix.length).trim() : null;
 }
 
 function formatPercent(value: number): string {

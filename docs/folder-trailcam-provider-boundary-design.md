@@ -41,6 +41,9 @@ Phase 13I adds confirmed batch creation of pending MotionEvidence from eligible
 folder-imported MediaAssets. It still creates no Events, Visits, labels, or
 truth, and it does not scan folders, import media, decode media, or call model
 runtimes.
+Phase 13J polishes the review/promote UI so folder-imported media evidence has
+clear provenance, attached media context, status, and correction truth
+boundaries.
 
 ## Product Flow
 
@@ -313,6 +316,9 @@ Phase 13E implements the first compact UI surface for this contract on the
 Streams page. It previews candidates/skips on request, imports previewed
 relative paths as MediaAssets on request, hides the raw folder path, and keeps
 MotionEvidence/Event/Visit/review truth as a later explicit handoff.
+Phase 13J makes that later handoff easier to review: Motion Evidence and
+promoted Event/Visit detail can show folder-imported media provenance while
+correction remains truth.
 
 ## Testing Expectations
 
@@ -366,12 +372,16 @@ initially, and must preserve retention, provenance, and truth boundaries.
 - Phase 13G: single folder-imported MediaAsset to pending MotionEvidence, no
   Event/Visit/truth.
 - Phase 13H: batch folder media evidence handoff dry-run.
+- Phase 13I: batch folder media evidence creation, pending MotionEvidence only.
+- Phase 13J: folder media review/promote UI polish.
+- Next likely: Phase 13K folder import retention/report design, or Phase 14A
+  source/provider consolidation and smoke-test expansion.
 
 ## Explicit Non-Goals
 
 - No watcher.
 - No polling.
-- No automatic or batch MotionEvidence creation.
+- No automatic MotionEvidence creation.
 - No media deletion.
 - No Event/Visit creation.
 - No ReviewLabel/truth.

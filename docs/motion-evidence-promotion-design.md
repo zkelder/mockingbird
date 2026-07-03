@@ -143,6 +143,9 @@ Phase 13I can create those eligible pending MotionEvidence records after
 confirmation. Batch-created folder evidence still uses this same explicit
 promotion route; no Event, Visit, label, reviewed status, or truth is created by
 batch creation itself.
+Phase 13J keeps promoted folder-origin evidence understandable in Event/Visit
+detail. Safe folder provenance and attached media can remain visible after
+promotion, while correction remains the only analytics/export truth boundary.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

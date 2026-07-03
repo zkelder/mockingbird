@@ -121,6 +121,9 @@ MediaAssets. The handoff remains explicit and under Source/Stream contracts: it
 creates pending MotionEvidence only and still creates no Event, Visit,
 ReviewLabel, analytics/export truth, model output, folder scan, import, worker,
 or runtime dependency.
+Phase 13J polishes the folder-origin evidence UI without adding adapter
+runtime behavior: Motion Evidence, Event Detail, and Visit Detail can show safe
+folder provenance and attached media context while correction remains truth.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -269,6 +272,9 @@ Future implementation must test:
 - Phase 13F: folder-imported MediaAsset to MotionEvidence handoff design.
 - Phase 13G: single folder-imported MediaAsset to pending MotionEvidence, no
   Event/Visit/truth.
+- Phase 13H: batch folder media evidence handoff dry-run/report.
+- Phase 13I: batch folder media evidence creation, pending MotionEvidence only.
+- Phase 13J: folder media review/promote UI polish.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

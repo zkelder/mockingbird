@@ -77,6 +77,9 @@ Phase 13I can create pending MotionEvidence in a confirmed batch, using
 folder-imported MediaAssets as `snapshot_media_asset_id` evidence context. The
 attachment still creates no Event, Visit, label, reviewed status, export truth,
 dataset coverage truth, or species truth.
+Phase 13J makes folder-imported MediaAssets visible as attached/representative
+media in review context. They can help a user decide whether to ignore,
+promote, or correct, but they still do not confirm labels or create truth.
 After explicit promotion, saved preview media can remain visible as review
 context on Event/Visit detail. It still does not confirm labels, reviewed status,
 export readiness, or dataset truth.

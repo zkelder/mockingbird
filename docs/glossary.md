@@ -64,8 +64,9 @@ Events, Visits, ReviewLabels, reviewed status, or truth.
 
 Pending MotionEvidence created from one folder-imported MediaAsset or a
 confirmed eligible batch. It points to the imported MediaAsset as
-`snapshot_media_asset_id` and remains evidence until explicit promotion and
-later review/correction.
+`snapshot_media_asset_id`, can show safe folder-import provenance and attached
+media in review UI, and remains evidence until explicit promotion and later
+review/correction.
 
 ## Source Connection Status
 

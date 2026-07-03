@@ -54,6 +54,9 @@ media, call models, or create truth.
 Phase 13I adds confirmed batch creation of pending MotionEvidence from those
 folder-imported MediaAssets. This still does not generate frame artifacts,
 decode media, call models, or create truth.
+Phase 13J shows folder-imported review media in Motion Evidence and promoted
+Event/Visit detail. That media is copied/imported local review context, not a
+sampled-frame artifact, generated best-frame artifact, or truth source.
 Phase 13F keeps that distinction explicit: folder-imported MediaAssets can
 become `snapshot_media_asset_id` context for pending MotionEvidence, but they
 are not sampled-frame artifacts and do not create truth by being imported.

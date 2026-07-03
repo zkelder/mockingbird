@@ -307,8 +307,28 @@ export function VisitDetailPage({
     isBirdReviewLabel(detail.visit.subject_label, taxonomyLabels);
   const isMotionEvidenceVisit = detail.event.event_type === "motion_evidence";
   const hasSavedPreviewMedia = isSavedPreviewMedia(detail.media_asset);
+  const hasFolderImportMedia = isFolderImportMedia(detail.media_asset);
   const mediaProvenance = formatMediaProvenance(detail.media_asset);
-  const mediaContextTitle = hasSavedPreviewMedia ? "Saved preview media" : "Attached media";
+  const mediaContextTitle = hasFolderImportMedia
+    ? "Folder-imported media"
+    : hasSavedPreviewMedia
+      ? "Saved preview media"
+      : "Attached media";
+  const mediaContextBadge = hasFolderImportMedia
+    ? "Folder-imported media"
+    : hasSavedPreviewMedia
+      ? "Saved local media"
+      : "Review before labeling";
+  const promotedEvidenceCopy = hasFolderImportMedia
+    ? "This Visit came from promoted evidence linked to folder-imported local media."
+    : hasSavedPreviewMedia
+      ? "This Visit came from promoted evidence linked to saved local media."
+      : "This Visit came from promoted evidence.";
+  const folderRelativePath = extractSafeRelativePath(
+    detail.media_asset?.notes ?? "",
+    "relative_source_path",
+  );
+  const folderCopyMode = extractSafeNoteValue(detail.media_asset?.notes ?? "", "copy_mode");
   const correctionPrefillLabel = activeCorrectionPrefill
     ? displayTaxonomyLabel(activeCorrectionPrefill.label, taxonomyLabels)
     : "";
@@ -371,9 +391,7 @@ export function VisitDetailPage({
         <section className="notice-panel">
           <strong>Promoted Motion Evidence</strong>
           <span>
-            This Visit came from promoted evidence
-            {hasSavedPreviewMedia ? " linked to saved local media" : ""}.{" "}
-            {visitCorrectionTruthCopy}
+            {promotedEvidenceCopy} {visitCorrectionTruthCopy}
           </span>
         </section>
       ) : null}
@@ -388,7 +406,7 @@ export function VisitDetailPage({
               </span>
             </div>
             <EvidenceBadge
-              label={hasSavedPreviewMedia ? "Saved local media" : "Review before labeling"}
+              label={mediaContextBadge}
               tone="evidence"
             />
           </div>
@@ -416,6 +434,19 @@ export function VisitDetailPage({
               value={detail.media_asset?.original_filename ?? "No attached media"}
               detail={detail.media_asset?.id}
             />
+            {hasFolderImportMedia ? (
+              <>
+                <ContextItem label="Provider" value="folder_import_future" />
+                <ContextItem
+                  label="Original relative path"
+                  value={folderRelativePath ?? "not available"}
+                />
+                <ContextItem
+                  label="Import context"
+                  value={folderCopyMode ? formatLabel(folderCopyMode) : "Imported local media"}
+                />
+              </>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -462,7 +493,11 @@ export function VisitDetailPage({
             <span className="meta-text">Media</span>
             <strong>{detail.media_asset.original_filename}</strong>
             <span className="meta-text">
-              {hasSavedPreviewMedia ? "Saved preview media" : "Local media reference"}
+              {hasFolderImportMedia
+                ? "Folder-imported media"
+                : hasSavedPreviewMedia
+                  ? "Saved preview media"
+                  : "Local media reference"}
             </span>
           </div>
         ) : null}
@@ -528,8 +563,31 @@ export function VisitDetailPage({
           <div className="attached-media-provenance">
             <strong>Correction boundary</strong>
             <span>{visitCorrectionTruthCopy}</span>
-            <span>Saved media does not confirm a label before review.</span>
+            {hasFolderImportMedia ? (
+              <span>This Visit came from promoted evidence linked to folder-imported local media.</span>
+            ) : null}
+            <span>
+              {hasFolderImportMedia ? "Folder-imported media" : "Saved media"} does not confirm a
+              label before review.
+            </span>
+            {detail.review_labels.length === 0 ? (
+              <span>No label has been confirmed yet.</span>
+            ) : null}
           </div>
+          {hasFolderImportMedia ? (
+            <div className="promoted-review-context-grid">
+              <ContextItem label="Provider" value="folder_import_future" />
+              <ContextItem
+                label="Original relative path"
+                value={folderRelativePath ?? "not available"}
+              />
+              <ContextItem
+                label="Import context"
+                value={folderCopyMode ? formatLabel(folderCopyMode) : "Imported local media"}
+              />
+              <ContextItem label="Truth boundary" value="Corrections decide analytics and exports" />
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -840,9 +898,24 @@ function isSavedPreviewMedia(asset: MediaAsset | null | undefined): boolean {
   );
 }
 
+function isFolderImportMedia(asset: MediaAsset | null | undefined): boolean {
+  const notes = asset?.notes?.toLowerCase() ?? "";
+  return (
+    notes.includes("provider_key=folder_import_future") ||
+    notes.includes("imported explicit folder/trail-cam media as mediaasset only")
+  );
+}
+
 function formatMediaProvenance(asset: MediaAsset | null | undefined): string {
   if (!asset) {
     return "No attached media is available for this Visit.";
+  }
+  if (isFolderImportMedia(asset)) {
+    const relativePath = extractSafeRelativePath(asset.notes ?? "", "relative_source_path");
+    if (relativePath) {
+      return `This Visit came from promoted evidence linked to folder-imported local media from ${relativePath}.`;
+    }
+    return "This Visit came from promoted evidence linked to folder-imported local media.";
   }
   if (isSavedPreviewMedia(asset)) {
     const host = extractSafeNoteValue(asset.notes ?? "", "url_host");
@@ -868,6 +941,47 @@ function extractSafeNoteValue(notes: string, key: string): string | null {
   const rawValue = prefix ? trimmed.slice(prefix.length).trim() : "";
   const safeValue = rawValue.replace(/[^A-Za-z0-9.:\[\]-]/g, "").slice(0, 120);
   return safeValue || null;
+}
+
+function extractSafeRelativePath(notes: string, key: string): string | null {
+  const rawValue = extractRawNoteValue(notes, key);
+  if (!rawValue) {
+    return null;
+  }
+
+  const normalized = rawValue.trim().replace(/\\/g, "/");
+  if (
+    !normalized ||
+    normalized.startsWith("/") ||
+    normalized.startsWith("~/") ||
+    /^[A-Za-z]:/.test(normalized)
+  ) {
+    return null;
+  }
+
+  const segments = normalized.split("/").filter(Boolean);
+  if (segments.length === 0 || segments.some((segment) => segment === "..")) {
+    return null;
+  }
+
+  return segments
+    .map((segment) => segment.replace(/[^A-Za-z0-9._ -]/g, "-").slice(0, 80))
+    .join("/")
+    .slice(0, 180);
+}
+
+function extractRawNoteValue(notes: string, key: string): string | null {
+  const prefixes = [`${key}=`, `${key}:`];
+  const line = notes
+    .split(/\r?\n/)
+    .find((entry) => prefixes.some((prefix) => entry.trim().startsWith(prefix)));
+  if (!line) {
+    return null;
+  }
+
+  const trimmed = line.trim();
+  const prefix = prefixes.find((entry) => trimmed.startsWith(entry));
+  return prefix ? trimmed.slice(prefix.length).trim() : null;
 }
 
 function SpeciesSuggestionStatusBadge({ status }: { status: SpeciesSuggestion["status"] }) {

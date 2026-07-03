@@ -1539,8 +1539,9 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                                       ))}
                                     </div>
                                     <span className="meta-text">
-                                      Open Motion Evidence to review, ignore, or promote created
-                                      pending evidence.
+                                      Open Motion Evidence to review, ignore, or promote pending
+                                      evidence. Use the Motion Evidence navigation item for the
+                                      review step.
                                     </span>
                                   </div>
                                 ) : null}
@@ -1615,8 +1616,8 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                                     <span>
                                       {folderEvidenceResults[item.media_asset_id]
                                         .duplicate_skipped
-                                        ? "Existing evidence reused. Open Motion Evidence from the review navigation."
-                                        : "Open Motion Evidence from the review navigation."}
+                                        ? "Existing evidence reused. Open Motion Evidence to review, ignore, or promote pending evidence."
+                                        : "Open Motion Evidence to review, ignore, or promote pending evidence."}
                                     </span>
                                     {folderEvidenceResults[item.media_asset_id].warnings.length >
                                     0 ? (

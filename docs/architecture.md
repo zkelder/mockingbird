@@ -160,6 +160,10 @@ Phase 13I adds confirmed batch creation from eligible folder-imported
 MediaAssets to pending MotionEvidence. It reuses dry-run eligibility, creates no
 Events, Visits, labels, reviewed status, truth, folder scans, imports, decoding,
 workers, or model runtime behavior.
+Phase 13J polishes folder-origin evidence review and promotion UI. Motion
+Evidence can show folder-imported media, safe relative provenance, and
+pending/ignored/promoted state; promoted Event/Visit detail can show the same
+review context while correction remains the truth boundary.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
@@ -187,8 +191,9 @@ page UI for those actions.
 The folder-import MediaAsset -> MotionEvidence handoff is implemented for one
 media item at a time in Phase 13G. Phase 13H adds a read-only batch dry-run
 report for that handoff. Phase 13I adds confirmed batch pending-evidence
-creation for eligible imported media. No folder import route or status route
-creates evidence by itself.
+creation for eligible imported media. Phase 13J makes that evidence handoff
+visible in review/promote UI without adding creation behavior. No folder import
+route or status route creates evidence by itself.
 
 The Streams, Stream Detail, and Import Media surfaces present provider
 configuration, setup review, connection readiness, playback status, zone editing,
