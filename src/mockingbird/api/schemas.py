@@ -1459,6 +1459,55 @@ class SourceFolderImportPreviewResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class SourceFolderImportRequest(BaseModel):
+    recursive: bool | None = None
+    allowed_extensions: list[str] | None = None
+    max_files: int | None = Field(default=500, ge=1)
+    max_depth: int | None = Field(default=1, ge=0)
+    relative_paths: list[str] | None = None
+    default_stream_id: str | None = None
+    default_zone_id: str | None = None
+    note: str | None = None
+    copy_mode: str = "copy_to_media_root"
+
+
+class SourceFolderImportCreatedMediaAsset(BaseModel):
+    media_asset_id: str
+    relative_source_path: str
+    file_name: str
+    content_type: str | None = None
+    size_bytes: int | None = Field(default=None, ge=0)
+    stream_id: str | None = None
+    zone_id: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SourceFolderImportSkipped(BaseModel):
+    relative_path: str | None = None
+    file_name: str | None = None
+    reason: str
+    message: str
+
+
+class SourceFolderImportResponse(BaseModel):
+    # Source-scoped folder import copies media only; review truth remains future/user-created.
+    source_id: str
+    provider_key: str
+    imported: list[SourceFolderImportCreatedMediaAsset] = Field(default_factory=list)
+    skipped: list[SourceFolderImportSkipped] = Field(default_factory=list)
+    total_imported: int = Field(ge=0)
+    total_skipped: int = Field(ge=0)
+    total_bytes_copied: int = Field(ge=0)
+    imported_at: datetime
+    copy_mode: str
+    creates_media_assets: bool
+    creates_motion_evidence: bool = False
+    creates_events: bool = False
+    creates_visits: bool = False
+    creates_truth: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
 class FolderImportCandidate(BaseModel):
     filename: str
     path: str

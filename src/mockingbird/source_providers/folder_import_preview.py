@@ -22,6 +22,7 @@ class FolderPreviewCandidate:
     size_bytes: int | None
     modified_at: datetime | None
     planned_media_kind: str
+    source_path: Path = field(repr=False, compare=False)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -93,78 +94,13 @@ def preview_folder_import(
             )
             continue
 
-        if path.is_symlink():
-            skipped.append(_skipped(path, root, "symlink", "Symlink paths are skipped."))
-            continue
-
-        if path.is_dir():
-            if not recursive:
-                skipped.append(
-                    _skipped(
-                        path,
-                        root,
-                        "directory_skipped",
-                        "Directories are skipped unless recursive preview is enabled.",
-                    )
-                )
-            continue
-
-        if not _safe_is_file(path):
-            skipped.append(_skipped(path, root, "not_file", "Only regular files are previewed."))
-            continue
-
-        try:
-            resolved_path = path.resolve(strict=True)
-        except OSError:
-            skipped.append(_skipped(path, root, "unavailable", "Path metadata was unavailable."))
-            continue
-        if not _is_relative_to(resolved_path, root):
-            skipped.append(
-                _skipped(path, root, "outside_folder", "Resolved path is outside the folder.")
-            )
-            continue
-
-        extension = path.suffix.lower()
-        if extension not in SUPPORTED_EXTENSIONS:
-            skipped.append(
-                _skipped(
-                    path,
-                    root,
-                    "unsupported_extension",
-                    "Only JPEG, PNG, and WebP image extensions are supported for preview.",
-                )
-            )
-            continue
-        if extension not in normalized_allowed:
-            skipped.append(
-                _skipped(
-                    path,
-                    root,
-                    "extension_not_allowed",
-                    "This extension is not enabled for this preview request.",
-                )
-            )
-            continue
-
-        try:
-            stat_result = path.stat()
-            size_bytes = stat_result.st_size
-            modified_at = datetime.fromtimestamp(stat_result.st_mtime, UTC)
-        except OSError:
-            size_bytes = None
-            modified_at = None
-
-        candidates.append(
-            FolderPreviewCandidate(
-                relative_path=_relative_path(path, root),
-                file_name=path.name,
-                extension=extension,
-                size_bytes=size_bytes,
-                modified_at=modified_at,
-                planned_media_kind="image",
-                warnings=[] if size_bytes is not None else ["File size could not be read."],
-            )
-        )
+        candidate, skipped_item = _candidate_for_path(path, root, normalized_allowed)
+        if candidate is not None:
+            candidates.append(candidate)
+        elif skipped_item is not None:
+            if skipped_item.reason == "directory_skipped" and recursive:
+                continue
+            skipped.append(skipped_item)
 
     if truncated:
         warnings.append(f"Preview truncated at {file_limit} candidate files.")
@@ -178,6 +114,62 @@ def preview_folder_import(
         unknown_size_count=sum(1 for candidate in candidates if candidate.size_bytes is None),
         scanned_at=datetime.now(UTC),
         warnings=warnings,
+    )
+
+
+def preview_folder_import_relative_paths(
+    folder_path: str,
+    relative_paths: list[str],
+    *,
+    allowed_extensions: list[str] | None = None,
+) -> FolderPreviewResult:
+    root = _validate_root(folder_path)
+    normalized_allowed, extension_warnings = normalize_allowed_extensions(allowed_extensions)
+
+    candidates: list[FolderPreviewCandidate] = []
+    skipped: list[FolderPreviewSkipped] = []
+    seen: set[str] = set()
+    for raw_relative_path in relative_paths:
+        relative_path = raw_relative_path.strip()
+        if relative_path in seen:
+            skipped.append(
+                FolderPreviewSkipped(
+                    relative_path=relative_path or None,
+                    file_name=Path(relative_path).name or None,
+                    reason="duplicate_selection",
+                    message="This relative path was selected more than once.",
+                )
+            )
+            continue
+        seen.add(relative_path)
+
+        path = _safe_relative_candidate(root, relative_path)
+        if path is None:
+            skipped.append(
+                FolderPreviewSkipped(
+                    relative_path=None,
+                    file_name=Path(relative_path).name or None,
+                    reason="unsafe_relative_path",
+                    message="Selected paths must be relative file paths inside the folder.",
+                )
+            )
+            continue
+
+        candidate, skipped_item = _candidate_for_path(path, root, normalized_allowed)
+        if candidate is not None:
+            candidates.append(candidate)
+        elif skipped_item is not None:
+            skipped.append(skipped_item)
+
+    return FolderPreviewResult(
+        recursive=True,
+        allowed_extensions=normalized_allowed,
+        candidates=candidates,
+        skipped=skipped,
+        total_known_bytes=sum(candidate.size_bytes or 0 for candidate in candidates),
+        unknown_size_count=sum(1 for candidate in candidates if candidate.size_bytes is None),
+        scanned_at=datetime.now(UTC),
+        warnings=extension_warnings,
     )
 
 
@@ -251,6 +243,73 @@ def _walk_folder(root: Path, *, recursive: bool, max_depth: int) -> list[_Folder
     return entries
 
 
+def _candidate_for_path(
+    path: Path,
+    root: Path,
+    normalized_allowed: list[str],
+) -> tuple[FolderPreviewCandidate | None, FolderPreviewSkipped | None]:
+    if _path_has_symlink(root, path):
+        return None, _skipped(path, root, "symlink", "Symlink paths are skipped.")
+
+    if path.is_dir():
+        return None, _skipped(
+            path,
+            root,
+            "directory_skipped",
+            "Directories are skipped unless recursive preview is enabled.",
+        )
+
+    if not _safe_is_file(path):
+        return None, _skipped(path, root, "not_file", "Only regular files are previewed.")
+
+    try:
+        resolved_path = path.resolve(strict=True)
+    except OSError:
+        return None, _skipped(path, root, "unavailable", "Path metadata was unavailable.")
+    if not _is_relative_to(resolved_path, root):
+        return None, _skipped(
+            path,
+            root,
+            "outside_folder",
+            "Resolved path is outside the folder.",
+        )
+
+    extension = path.suffix.lower()
+    if extension not in SUPPORTED_EXTENSIONS:
+        return None, _skipped(
+            path,
+            root,
+            "unsupported_extension",
+            "Only JPEG, PNG, and WebP image extensions are supported for preview.",
+        )
+    if extension not in normalized_allowed:
+        return None, _skipped(
+            path,
+            root,
+            "extension_not_allowed",
+            "This extension is not enabled for this preview request.",
+        )
+
+    try:
+        stat_result = path.stat()
+        size_bytes = stat_result.st_size
+        modified_at = datetime.fromtimestamp(stat_result.st_mtime, UTC)
+    except OSError:
+        size_bytes = None
+        modified_at = None
+
+    return FolderPreviewCandidate(
+        relative_path=_relative_path(path, root),
+        file_name=path.name,
+        extension=extension,
+        size_bytes=size_bytes,
+        modified_at=modified_at,
+        planned_media_kind="image",
+        source_path=path,
+        warnings=[] if size_bytes is not None else ["File size could not be read."],
+    ), None
+
+
 def _safe_is_file(path: Path) -> bool:
     try:
         return path.is_file()
@@ -271,6 +330,29 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _safe_relative_candidate(root: Path, relative_path: str) -> Path | None:
+    if not relative_path:
+        return None
+    candidate = Path(relative_path)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return None
+    return root / candidate
+
+
+def _path_has_symlink(root: Path, path: Path) -> bool:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return True
+
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
 
 
 def _relative_path(path: Path, root: Path) -> str:

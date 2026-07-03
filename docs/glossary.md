@@ -24,8 +24,15 @@ source of truth.
 A Source provider configuration/status contract for future explicit local
 folder, SD-card dump, NAS folder, or exported image batch import. The current
 implementation stores redacted setup intent and supports an explicit dry-run
-preview that reports candidate/skipped files with relative paths only. It is not
-live playback, a watcher, polling loop, evidence, import, or reviewed truth.
+preview plus explicit import to MediaAssets only. It is not live playback, a
+watcher, polling loop, evidence, Events/Visits, or reviewed truth.
+
+## Folder Import MediaAsset
+
+A supported image copied from a configured folder/trail-cam Source into local
+MockingBird media storage through explicit user action. It has safe relative
+source provenance and Stream context, but it is not MotionEvidence, an
+Event/Visit, or reviewed truth.
 
 ## Source Connection Status
 

@@ -125,9 +125,10 @@ Every future implementation task must restate:
   [docs/folder-trailcam-provider-boundary-design.md](docs/folder-trailcam-provider-boundary-design.md)
   and explicit phase scope. The source-scoped folder preview route is dry-run
   only: relative candidate/skipped paths, no MediaAssets, no evidence, no
-  Events/Visits, no truth. Do not add watchers, polling, imports, copy/reference
-  behavior, media deletion, decoding, workers, dependencies, or truth creation
-  without that scope.
+  Events/Visits, no truth. Source-scoped folder import may create MediaAssets
+  only when explicitly scoped and must not create MotionEvidence, Events, Visits,
+  labels, or truth. Do not add watchers, polling, media deletion, decoding,
+  workers, dependencies, or truth creation without that scope.
 - External URL provider implementation must follow
   [docs/external-url-still-image-provider-contract.md](docs/external-url-still-image-provider-contract.md)
   and explicit phase scope. Do not add URL fetches without SSRF, timeout,

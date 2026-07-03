@@ -83,6 +83,8 @@ from mockingbird.api.schemas import (
     SpeciesSuggestionStatusUpdateRequest,
     SourceConnectionStatus,
     SourceConnectionStatusResponse,
+    SourceFolderImportRequest,
+    SourceFolderImportResponse,
     SourceFolderImportPreviewRequest,
     SourceFolderImportPreviewResponse,
     SourceProviderConfiguration,
@@ -353,6 +355,43 @@ def _folder_import_preview_error(error: ValueError) -> HTTPException:
         return HTTPException(status_code=400, detail="Configured folder must not be a symlink.")
     if reason == "folder_unavailable":
         return HTTPException(status_code=400, detail="Configured folder is unavailable.")
+    return _media_import_error(error)
+
+
+def _source_folder_import_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "folder_provider_required":
+        return HTTPException(
+            status_code=400,
+            detail="Folder import requires a folder_import_future Source provider.",
+        )
+    if reason == "folder_required":
+        return HTTPException(status_code=400, detail="Folder path metadata is required.")
+    if reason == "folder_missing":
+        return HTTPException(status_code=404, detail="Configured folder was not found.")
+    if reason == "folder_not_directory":
+        return HTTPException(status_code=400, detail="Configured folder must be a directory.")
+    if reason == "folder_symlink":
+        return HTTPException(status_code=400, detail="Configured folder must not be a symlink.")
+    if reason == "folder_unavailable":
+        return HTTPException(status_code=400, detail="Configured folder is unavailable.")
+    if reason == "unsupported_copy_mode":
+        return HTTPException(status_code=400, detail="Only copy_to_media_root is supported.")
+    if reason == "stream_required":
+        return HTTPException(
+            status_code=400,
+            detail="Choose a stream before importing folder media.",
+        )
+    if reason == "stream_source_mismatch":
+        return HTTPException(
+            status_code=400,
+            detail="Selected stream does not belong to the folder import Source.",
+        )
+    if reason == "zone_blocked":
+        return HTTPException(
+            status_code=400,
+            detail="Folder import cannot assign privacy or ignore zones.",
+        )
     return _media_import_error(error)
 
 
@@ -1085,6 +1124,27 @@ async def preview_source_folder_import(
     if preview is None:
         raise _not_found("Source", source_id)
     return preview
+
+
+@app.post(
+    "/api/sources/{source_id}/folder-import",
+    response_model=SourceFolderImportResponse,
+    status_code=201,
+)
+async def import_source_folder_media_assets(
+    source_id: str,
+    payload: SourceFolderImportRequest | None = None,
+) -> SourceFolderImportResponse:
+    try:
+        result = get_repository().import_source_folder_media_assets(
+            source_id,
+            payload or SourceFolderImportRequest(),
+        )
+    except ValueError as error:
+        raise _source_folder_import_error(error) from error
+    if result is None:
+        raise _not_found("Source", source_id)
+    return result
 
 
 @app.post(

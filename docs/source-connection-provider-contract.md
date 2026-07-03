@@ -54,13 +54,15 @@ local import/review workflows. It is not a camera connection and does not imply
 live playback.
 
 For `folder_import_future`, future connection readiness means local folder
-import metadata is present and an explicit import workflow may be available once
-implemented. It is not a camera connection, folder watcher, polling loop, or
-live playback claim.
+import metadata is present and explicit preview/import workflows may be
+available. It is not a camera connection, folder watcher, polling loop, or live
+playback claim.
 Phase 13B reports missing `folder_path` as `not_configured` and configured
 folder metadata as `configured`/future-provider-ready. Phase 13C adds an
 explicit dry-run preview route, but connection status itself still must not scan
 folders, validate paths, import files, or create records.
+Phase 13D adds an explicit import route that creates MediaAssets only; source
+connection status still does not call it or imply imported media exists.
 
 For `external_url`, connection readiness remains metadata/status-only. A
 configured URL can point users to explicit still-image preview fetch, but
@@ -152,6 +154,7 @@ respect those zones when later phases create evidence or reviewable activity.
 - Safe configured/missing field lists are present.
 - Folder/trail-cam status never exposes raw `folder_path`.
 - Folder/trail-cam status does not call the explicit folder preview scanner.
+- Folder/trail-cam status does not import folder media or create MediaAssets.
 - The route does not call provider runtimes, inspect media, create artifacts, or
   mutate product state.
 - Source connection status never creates evidence, review truth, exports, or

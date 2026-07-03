@@ -111,11 +111,14 @@ separate scope and must follow
 The next provider boundary is Folder / trail-cam import, documented in
 [docs/folder-trailcam-provider-boundary-design.md](docs/folder-trailcam-provider-boundary-design.md).
 It is now represented as a provider configuration/status contract plus an
-explicit source-scoped dry-run preview:
+explicit source-scoped dry-run preview and MediaAsset-only import:
 `folder_import_future` stores redacted setup metadata, reports readiness, and
-can list candidate/skipped files without importing media or creating truth.
+can list candidate/skipped files or copy supported selected/candidate files into
+local MediaAssets without creating truth.
 It still adds no watcher, polling, live playback, media decoding, or background
-import behavior.
+import behavior. Folder-imported MediaAssets require a future explicit
+evidence/review handoff before they can become MotionEvidence, Events, Visits,
+or reviewed truth.
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 

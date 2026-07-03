@@ -133,6 +133,12 @@ file reports, and creates no MediaAssets, MotionEvidence, Events, Visits,
 ReviewLabels, DatasetExports, SpeciesSuggestions, DetectionProposals, or truth.
 It adds no watcher, polling loop, media decoding, import/copy behavior, runtime
 dependency, or model behavior.
+Phase 13D adds explicit source-scoped folder import to MediaAssets only. It uses
+the same folder/path guardrails as preview, copies supported files into
+MockingBird-managed local media storage, records safe relative-path provenance,
+and creates no MotionEvidence, Events, Visits, ReviewLabels, DatasetExports,
+SpeciesSuggestions, DetectionProposals, analytics/export truth, watcher,
+polling loop, media decoding, dependency, or model behavior.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
@@ -152,10 +158,10 @@ from review/correction.
 Folder/trail-cam provider work is a future local media Source boundary for
 trail-camera dumps, NAS folders, and exported image batches. It should follow
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md)
-before any folder import, copy/reference behavior, watcher, polling, record
-creation, or truth-affecting behavior is added.
+before any folder evidence/review handoff, watcher, polling, truth-affecting
+behavior, or delete behavior is added.
 The current implementation layer for that provider is configuration/status plus
-explicit dry-run preview only.
+explicit dry-run preview and explicit MediaAsset-only import.
 
 The Streams, Stream Detail, and Import Media surfaces present provider
 configuration, setup review, connection readiness, playback status, zone editing,

@@ -94,6 +94,11 @@ Phase 13C adds an explicit source-scoped folder import preview route. It scans
 configured folder metadata only on request, returns relative candidate/skipped
 file reports, and still adds no import, MediaAsset, MotionEvidence, Event/Visit,
 review label, truth, watcher, polling, decoding, or dependency behavior.
+Phase 13D adds explicit source-scoped folder import to MediaAssets only. It
+copies supported selected/candidate files into local media storage and records
+safe provenance, but still creates no MotionEvidence, Events, Visits, reviewed
+labels, exports, analytics truth, watcher, polling, decoding, or dependency
+behavior.
 
 ## Explicit Non-Recommended First Adapters
 

@@ -130,6 +130,10 @@ from mockingbird.api.schemas import (
     SavedPreviewMotionEvidenceRequest,
     SourceConnectionStatus,
     SourceConnectionStatusValue,
+    SourceFolderImportCreatedMediaAsset,
+    SourceFolderImportRequest,
+    SourceFolderImportResponse,
+    SourceFolderImportSkipped,
     SourceFolderImportPreviewCandidate,
     SourceFolderImportPreviewRequest,
     SourceFolderImportPreviewResponse,
@@ -420,8 +424,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
         provider_key="folder_import_future",
         display_name="Folder / trail-cam import",
         description=(
-            "Metadata for future explicit local folder or trail-cam import; "
-            "no folder scan, import, or live playback yet."
+            "Metadata for explicit local folder or trail-cam preview/import; "
+            "imports create MediaAssets only and no live playback."
         ),
         status=SourceProviderDefinitionStatus.future_adapter,
         supports_live_playback=False,
@@ -1027,6 +1031,190 @@ class ProductRepository:
             preview=preview,
         )
 
+    def import_source_folder_media_assets(
+        self,
+        source_id: str,
+        payload: SourceFolderImportRequest,
+    ) -> SourceFolderImportResponse | None:
+        if payload.copy_mode != "copy_to_media_root":
+            raise ValueError("unsupported_copy_mode")
+
+        with self.session_factory() as session:
+            source = session.get(CameraSourceModel, source_id)
+            if source is None:
+                return None
+
+            stream_ids = self._stream_ids_for_source(session, source_id)
+            model = session.get(SourceProviderConfigurationModel, source_id)
+            configuration = _source_provider_configuration_from_model(source, model, stream_ids)
+            if configuration.provider_key != "folder_import_future":
+                raise ValueError("folder_provider_required")
+
+            config = json.loads(model.config_json) if model is not None else {}
+            folder_path = (config.get("folder_path") or "").strip()
+            if not folder_path or folder_path == "configured":
+                raise ValueError("folder_required")
+            config_recursive = _source_provider_bool(config.get("recursive"))
+            config_allowed = _source_provider_list(config.get("allowed_extensions"))
+            config_stream_id = _clean_optional_text(config.get("default_stream_id"))
+            config_zone_id = _clean_optional_text(config.get("default_zone_id"))
+
+        recursive = payload.recursive if payload.recursive is not None else config_recursive
+        allowed_extensions = (
+            payload.allowed_extensions
+            if payload.allowed_extensions is not None
+            else config_allowed
+        )
+        selected_paths = (
+            [path for path in payload.relative_paths if path.strip()]
+            if payload.relative_paths is not None
+            else None
+        )
+        if selected_paths is not None:
+            preview = folder_import_preview.preview_folder_import_relative_paths(
+                folder_path,
+                selected_paths,
+                allowed_extensions=allowed_extensions,
+            )
+        else:
+            preview = folder_import_preview.preview_folder_import(
+                folder_path,
+                recursive=recursive,
+                allowed_extensions=allowed_extensions,
+                max_files=payload.max_files,
+                max_depth=payload.max_depth,
+            )
+
+        imported_at = datetime.now(UTC)
+        imported: list[SourceFolderImportCreatedMediaAsset] = []
+        skipped = [
+            SourceFolderImportSkipped(
+                relative_path=item.relative_path,
+                file_name=item.file_name,
+                reason=item.reason,
+                message=item.message,
+            )
+            for item in preview.skipped
+        ]
+        warnings = list(preview.warnings)
+        total_bytes_copied = 0
+        requested_stream_id = _clean_optional_text(payload.default_stream_id) or config_stream_id
+        requested_zone_id = _clean_optional_text(payload.default_zone_id) or config_zone_id
+        note = _clean_optional_text(payload.note)
+
+        with self.session_factory() as session:
+            with session.begin():
+                stream_model, stream_warning = self._resolve_source_import_stream(
+                    session,
+                    source_id=source_id,
+                    stream_id=requested_stream_id,
+                )
+                if stream_warning is not None:
+                    warnings.append(stream_warning)
+                zone_model = self._resolve_source_import_zone(
+                    session,
+                    zone_id=requested_zone_id,
+                    stream_id=stream_model.id,
+                )
+
+                for candidate in preview.candidates:
+                    content_type, media_type = SUPPORTED_MEDIA_EXTENSIONS[candidate.extension]
+                    if self._folder_import_duplicate_exists(
+                        session,
+                        source_id=source_id,
+                        relative_source_path=candidate.relative_path,
+                        size_bytes=candidate.size_bytes,
+                        modified_at=candidate.modified_at,
+                    ):
+                        skipped.append(
+                            SourceFolderImportSkipped(
+                                relative_path=candidate.relative_path,
+                                file_name=candidate.file_name,
+                                reason="already_imported",
+                                message="This source file was already imported.",
+                            )
+                        )
+                        continue
+
+                    media_id = self._next_id(session, MediaAssetModel, "media-asset")
+                    destination_name = (
+                        f"{media_id}-folder-import-{_safe_filename(candidate.file_name)}"
+                    )
+                    try:
+                        filename, local_path = self._copy_media_file(
+                            destination_name,
+                            candidate.source_path,
+                        )
+                        copied_size = local_path.stat().st_size
+                    except OSError:
+                        skipped.append(
+                            SourceFolderImportSkipped(
+                                relative_path=candidate.relative_path,
+                                file_name=candidate.file_name,
+                                reason="copy_error",
+                                message="File could not be copied into local media storage.",
+                            )
+                        )
+                        continue
+
+                    asset_model = MediaAssetModel(
+                        id=media_id,
+                        source_id=source_id,
+                        stream_id=stream_model.id,
+                        filename=filename,
+                        content_type=content_type,
+                        media_type=media_type,
+                        local_path=str(local_path),
+                        original_filename=candidate.file_name,
+                        file_size_bytes=copied_size,
+                        created_at=imported_at,
+                        notes=_folder_import_media_notes(
+                            source_id=source_id,
+                            stream_id=stream_model.id,
+                            zone_id=zone_model.id if zone_model else None,
+                            relative_source_path=candidate.relative_path,
+                            original_filename=candidate.file_name,
+                            size_bytes=candidate.size_bytes,
+                            modified_at=candidate.modified_at,
+                            imported_at=imported_at,
+                            copy_mode=payload.copy_mode,
+                            note=note,
+                        ),
+                    )
+                    session.add(asset_model)
+                    session.flush()
+                    imported.append(
+                        SourceFolderImportCreatedMediaAsset(
+                            media_asset_id=media_id,
+                            relative_source_path=candidate.relative_path,
+                            file_name=candidate.file_name,
+                            content_type=content_type,
+                            size_bytes=copied_size,
+                            stream_id=stream_model.id,
+                            zone_id=zone_model.id if zone_model else None,
+                            warnings=list(candidate.warnings),
+                        )
+                    )
+                    total_bytes_copied += copied_size
+
+        return SourceFolderImportResponse(
+            source_id=source_id,
+            provider_key="folder_import_future",
+            imported=imported,
+            skipped=skipped,
+            total_imported=len(imported),
+            total_skipped=len(skipped),
+            total_bytes_copied=total_bytes_copied,
+            imported_at=imported_at,
+            copy_mode=payload.copy_mode,
+            creates_media_assets=bool(imported),
+            creates_motion_evidence=False,
+            creates_events=False,
+            creates_visits=False,
+            creates_truth=False,
+            warnings=warnings,
+        )
+
     def get_source_connection_status(self, source_id: str) -> SourceConnectionStatus | None:
         with self.session_factory() as session:
             source = session.get(CameraSourceModel, source_id)
@@ -1058,8 +1246,8 @@ class ProductRepository:
                 status = SourceConnectionStatusValue.not_configured
                 if configuration.provider_key == "folder_import_future":
                     message = (
-                        "This source needs folder path metadata before future folder import "
-                        "preview can run."
+                        "This source needs folder path metadata before explicit folder "
+                        "preview/import can run."
                     )
                     setup_hint = (
                         "Add folder path metadata; MockingBird will not scan or import folders "
@@ -1073,12 +1261,13 @@ class ProductRepository:
             elif configuration.provider_key == "folder_import_future":
                 status = SourceConnectionStatusValue.configured
                 message = (
-                    "Folder/trail-cam metadata is configured for explicit dry-run preview. "
-                    "MockingBird does not import folders, and live playback is not expected "
-                    "for this provider."
+                    "Folder/trail-cam metadata is configured for explicit preview/import. "
+                    "Folder import creates MediaAssets only, and live playback is not "
+                    "expected for this provider."
                 )
                 setup_hint = (
-                    "Run folder import preview explicitly before any future folder import."
+                    "Preview or import folder media explicitly; evidence/review handoff "
+                    "requires future scope."
                 )
             elif definition is not None and definition.status == SourceProviderDefinitionStatus.future_adapter:
                 status = SourceConnectionStatusValue.configured
@@ -1201,7 +1390,7 @@ class ProductRepository:
                         "Playback remains placeholder/media-context only."
                     )
                     setup_hint = (
-                        "Add folder path metadata before any future folder import preview work."
+                        "Add folder path metadata before folder preview/import can run."
                     )
                 else:
                     message = (
@@ -1209,8 +1398,8 @@ class ProductRepository:
                         "This stream does not provide live playback."
                     )
                     setup_hint = (
-                        "Run folder import preview from Source setup; folder media still "
-                        "requires future import work before it can appear here."
+                        "Preview or import folder media from Source setup; imported media "
+                        "remains MediaAsset context until a future evidence handoff."
                     )
                 return StreamPlaybackStatus(
                     stream_id=stream.id,
@@ -3564,6 +3753,33 @@ class ProductRepository:
             raise ValueError("stream_required")
         return streams[0]
 
+    def _resolve_source_import_stream(
+        self,
+        session: Session,
+        *,
+        source_id: str,
+        stream_id: str | None,
+    ) -> tuple[StreamModel, str | None]:
+        if stream_id:
+            stream_model = session.get(StreamModel, stream_id)
+            if stream_model is None:
+                raise ValueError("missing_stream")
+            if stream_model.source_id != source_id:
+                raise ValueError("stream_source_mismatch")
+            return stream_model, None
+
+        streams = list(
+            session.scalars(
+                select(StreamModel).where(StreamModel.source_id == source_id).order_by(StreamModel.id)
+            ).all()
+        )
+        if not streams:
+            raise ValueError("stream_required")
+        return (
+            streams[0],
+            "No stream was supplied; MockingBird used the first stream for this Source.",
+        )
+
     def _resolve_import_zone(
         self,
         session: Session,
@@ -3579,6 +3795,51 @@ class ProductRepository:
         if zone_model.stream_id != stream_id:
             raise ValueError("zone_stream_mismatch")
         return zone_model
+
+    def _resolve_source_import_zone(
+        self,
+        session: Session,
+        *,
+        zone_id: str | None,
+        stream_id: str,
+    ) -> ZoneModel | None:
+        if zone_id is None:
+            return None
+
+        zone_model = session.get(ZoneModel, zone_id)
+        if zone_model is None:
+            raise ValueError("missing_zone")
+        if zone_model.stream_id != stream_id:
+            raise ValueError("zone_stream_mismatch")
+        if zone_model.zone_type in {ZoneType.privacy.value, ZoneType.ignore.value}:
+            raise ValueError("zone_blocked")
+        return zone_model
+
+    def _folder_import_duplicate_exists(
+        self,
+        session: Session,
+        *,
+        source_id: str,
+        relative_source_path: str,
+        size_bytes: int | None,
+        modified_at: datetime | None,
+    ) -> bool:
+        size_value = "" if size_bytes is None else str(size_bytes)
+        modified_value = "" if modified_at is None else modified_at.isoformat()
+        assets = session.scalars(
+            select(MediaAssetModel).where(MediaAssetModel.source_id == source_id)
+        ).all()
+        for asset in assets:
+            fields = _folder_import_note_fields(asset.notes)
+            if (
+                fields.get("provider_key") == "folder_import_future"
+                and fields.get("source_id") == source_id
+                and fields.get("relative_source_path") == relative_source_path
+                and fields.get("size_bytes", "") == size_value
+                and fields.get("modified_at", "") == modified_value
+            ):
+                return True
+        return False
 
     def _taxonomy_label_model_for_input(
         self,
@@ -3648,6 +3909,21 @@ class ProductRepository:
                     break
                 counter += 1
         path.write_bytes(content)
+        return path.name, path
+
+    def _copy_media_file(self, filename: str, source_path: Path) -> tuple[str, Path]:
+        self.media_root.mkdir(parents=True, exist_ok=True)
+        path = self.media_root / filename
+        if path.exists():
+            name = Path(filename)
+            counter = 2
+            while True:
+                candidate = self.media_root / f"{name.stem}-{counter}{name.suffix}"
+                if not candidate.exists():
+                    path = candidate
+                    break
+                counter += 1
+        shutil.copyfile(source_path, path)
         return path.name, path
 
     def _external_url_preview_media_notes(
@@ -5879,17 +6155,18 @@ def _source_provider_configuration_from_config(
         ]
         if definition.provider_key == "folder_import_future":
             message = "Folder/trail-cam setup metadata is incomplete."
-            setup_hint = "Add folder path metadata before future import preview can run."
+            setup_hint = "Add folder path metadata before explicit preview/import can run."
         else:
             message = "Provider configuration metadata is incomplete."
             setup_hint = f"Add metadata for: {', '.join(missing_labels)}."
     elif definition.provider_key == "folder_import_future":
         message = (
-            "Folder/trail-cam setup metadata is saved. Explicit dry-run preview is "
-            "available, but folder import is not implemented."
+            "Folder/trail-cam setup metadata is saved. Explicit preview/import is "
+            "available, and import creates MediaAssets only."
         )
         setup_hint = (
-            "Run folder import preview explicitly before any future folder import."
+            "Preview or import folder media explicitly; future handoff is required before "
+            "evidence or review."
         )
     elif definition.status == SourceProviderDefinitionStatus.future_adapter:
         message = (
@@ -5989,12 +6266,13 @@ def _source_setup_review_from_contracts(
     elif configuration.provider_key == "folder_import_future":
         readiness_level = "future_adapter_required"
         summary = (
-            "Folder/trail-cam setup metadata is present. Explicit dry-run preview is "
-            "available, but folder import and live playback are not implemented."
+            "Folder/trail-cam setup metadata is present. Explicit preview/import is "
+            "available, import creates MediaAssets only, and live playback is not "
+            "implemented."
         )
         next_step = (
-            "Run folder import preview explicitly; future import work is required before "
-            "creating MediaAssets."
+            "Import folder media as MediaAssets explicitly; future evidence handoff is "
+            "required before review."
         )
     elif connection.provider_kind == SourceProviderKind.future_adapter or (
         definition is not None
@@ -6012,7 +6290,7 @@ def _source_setup_review_from_contracts(
     if configuration.missing_fields:
         warnings.append(f"Missing setup metadata: {', '.join(missing_labels)}.")
     if configuration.provider_key == "folder_import_future":
-        warnings.append("Folder import is not implemented for this provider yet.")
+        warnings.append("Folder import creates MediaAssets only; evidence handoff is future.")
         warnings.append("Live playback is not expected for this provider.")
     elif not supports_live_playback and configuration.provider_key != "manual_media":
         warnings.append("Live playback is not implemented for this provider yet.")
@@ -6053,8 +6331,8 @@ def _source_setup_review_from_contracts(
             label="Folder import preview",
             status="available" if not configuration.missing_fields else "warning",
             message=(
-                "Explicit dry-run preview scans only when requested and creates no media "
-                "or truth; folder import remains future work."
+                "Explicit preview and MediaAsset-only import are available; neither creates "
+                "evidence, Events/Visits, or truth."
             ),
         )
         if configuration.provider_key == "folder_import_future"
@@ -6785,6 +7063,54 @@ def _is_external_url_preview_media_asset(asset: MediaAssetModel) -> bool:
 
 
 def _external_url_preview_note_fields(notes: str | None) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in (notes or "").splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key:
+            fields[key] = value.strip()
+    return fields
+
+
+def _folder_import_media_notes(
+    *,
+    source_id: str,
+    stream_id: str,
+    zone_id: str | None,
+    relative_source_path: str,
+    original_filename: str,
+    size_bytes: int | None,
+    modified_at: datetime | None,
+    imported_at: datetime,
+    copy_mode: str,
+    note: str | None,
+) -> str:
+    lines = [
+        "Imported explicit folder/trail-cam media as MediaAsset only.",
+        "Creates no MotionEvidence, Events, Visits, ReviewLabels, or truth.",
+        "provider_key=folder_import_future",
+        f"source_id={source_id}",
+        f"stream_id={stream_id}",
+        f"relative_source_path={relative_source_path}",
+        f"original_filename={original_filename}",
+        f"imported_at={imported_at.isoformat()}",
+        f"copy_mode={copy_mode}",
+    ]
+    if zone_id is not None:
+        lines.append(f"zone_id={zone_id}")
+    if size_bytes is not None:
+        lines.append(f"size_bytes={size_bytes}")
+    if modified_at is not None:
+        lines.append(f"modified_at={modified_at.isoformat()}")
+    cleaned_note = _clean_optional_text(note)
+    if cleaned_note is not None:
+        lines.append(f"note={cleaned_note}")
+    return "\n".join(lines)
+
+
+def _folder_import_note_fields(notes: str | None) -> dict[str, str]:
     fields: dict[str, str] = {}
     for line in (notes or "").splitlines():
         if "=" not in line:

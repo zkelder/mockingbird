@@ -493,8 +493,9 @@ Current work:
 - Phase 13A: folder/trail-cam import provider boundary design.
 - Phase 13B: folder/trail-cam provider configuration/status contract.
 - Phase 13C: folder import preview API, dry-run only.
-- Next likely phase: Phase 13D — folder import implementation to MediaAssets
-  only.
+- Phase 13D: folder import implementation to MediaAssets only.
+- Next likely phase: Phase 13E — folder import UI preview/import, or Phase 13F
+  folder-import-to-MotionEvidence handoff design.
 
 Validation:
 
@@ -504,6 +505,8 @@ Validation:
   Stream playback only.
 - Phase 13C adds `POST /api/sources/{source_id}/folder-import/preview` for
   explicit dry-run preview only.
+- Phase 13D adds `POST /api/sources/{source_id}/folder-import` for explicit
+  copy-to-local-MediaAsset import only.
 - Recommended canonical provider key is `folder_import_future`, with display
   name Folder / trail-cam import.
 - `folder_path` is required sensitive metadata and must be redacted to
@@ -514,7 +517,8 @@ Validation:
   live playback, camera connection, watcher behavior, polling, or background
   indexing.
 - Configured folder/trail-cam metadata enables explicit preview planning only;
-  it does not make import or live playback available.
+  Phase 13D adds explicit MediaAsset-only import; it still does not make live
+  playback available.
 - Preview/import behavior must be explicit, local-first, bounded, and
   review/truth-safe.
 - Preview responses return relative candidate/skipped paths only and create no
@@ -530,3 +534,7 @@ Validation:
 - No import, media copy/reference behavior, media deletion, decoding, worker,
   scheduler, dependency, generated artifact, MediaAsset, MotionEvidence,
   Event/Visit, ReviewLabel, export, or truth creation is added in Phase 13C.
+- No MotionEvidence, Event/Visit, ReviewLabel, DatasetExport, SpeciesSuggestion,
+  DetectionProposal, analytics truth, export truth, media deletion, decoding,
+  worker, scheduler, dependency, generated model/dataset artifact, watcher, or
+  polling behavior is added in Phase 13D.

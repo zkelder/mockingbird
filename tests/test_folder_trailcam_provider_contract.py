@@ -183,8 +183,8 @@ async def test_configured_folder_path_is_redacted_and_reports_future_import_stat
     assert connection["provider_kind"] == "future_adapter"
     assert connection["supports_live_playback"] is False
     assert connection["supports_zone_editing"] is True
-    assert "explicit dry-run preview" in connection["message"]
-    assert "does not import folders" in connection["message"]
+    assert "explicit preview/import" in connection["message"]
+    assert "creates MediaAssets only" in connection["message"]
     assert raw_folder_path not in str(connection)
 
     review_response = await client.get(f"/api/sources/{SOURCE_ID}/setup-review")
@@ -193,11 +193,13 @@ async def test_configured_folder_path_is_redacted_and_reports_future_import_stat
     assert review["readiness_level"] == "future_adapter_required"
     assert review["supports_live_playback"] is False
     assert review["supports_zone_editing"] is True
-    assert "Explicit dry-run preview is available" in review["summary"]
-    assert "future import work" in review["next_step"]
+    assert "Explicit preview/import is available" in review["summary"]
+    assert "MediaAssets only" in review["summary"]
+    assert "future evidence handoff" in review["next_step"]
     folder_step = next(step for step in review["steps"] if step["key"] == "folder_import_preview")
     assert folder_step["status"] == "available"
-    assert "creates no media or truth" in folder_step["message"]
+    assert "MediaAsset-only import" in folder_step["message"]
+    assert "neither creates evidence" in folder_step["message"]
     assert raw_folder_path not in str(review)
 
 

@@ -19,12 +19,16 @@ Phase 13C adds the source-scoped folder import preview API for
 `folder_import_future`. It scans only when the explicit preview route is called,
 reports relative candidate/skipped paths, and still does not import files or
 create media/evidence/truth.
+Phase 13D adds explicit source-scoped folder import to local MediaAssets only.
+It copies supported selected/candidate files into MockingBird-managed local
+media storage and still creates no MotionEvidence, Events, Visits, labels, or
+truth.
 
 ## Product Flow
 
 folder/trail-cam Source setup -> explicit folder selection/config metadata ->
-explicit dry-run preview -> candidate/skipped file report -> explicit import
-action later -> MediaAssets -> optional MotionEvidence or Event/Visit creation
+explicit dry-run preview -> candidate/skipped file report -> explicit import ->
+MediaAssets -> optional MotionEvidence or Event/Visit creation
 depending on future route -> review/correction -> analytics/exports/classifier
 readiness.
 
@@ -66,9 +70,9 @@ read files, import media, or imply any background watcher.
 In Phase 13B, the provider definition is represented in
 `GET /api/source-provider-definitions`. Because the current provider field
 schema is string-based, `recursive` and `allowed_extensions` are stored as
-metadata strings. Phase 13C parses those values only for explicit preview.
-`folder_path` is redacted to a configured/not-configured marker in normal
-responses.
+metadata strings. Phase 13C parses those values for explicit preview; Phase 13D
+also uses them for explicit import. `folder_path` is redacted to a
+configured/not-configured marker in normal responses.
 
 ## Source Connection Status Relationship
 
@@ -93,6 +97,9 @@ placeholder or media-context only.
 Phase 13C keeps explicitly configured folder/trail-cam Streams on placeholder
 playback with no preview URL, no MediaAsset reference, and no live playback
 claim.
+Phase 13D folder import can create MediaAssets linked to a Source/Stream, but
+it still does not turn folder imports into live playback or change Stream
+playback status.
 
 Imported MediaAssets can later provide review context for a Stream. Zone editing
 remains useful because users can classify imported media, MotionEvidence, or
@@ -130,24 +137,25 @@ Behavior:
 
 ## Import Implementation Design
 
-Future import route, not implemented in this phase:
+Phase 13D import route:
 
 ```text
 POST /api/sources/{source_id}/folder-import
 ```
 
-Future behavior:
+Behavior:
 
 - explicit user-triggered action
-- imports selected or planned files
-- creates MediaAssets
-- creates reviewable Events/Visits only if a later route explicitly requests and
-  designs that behavior
-- creates no ReviewLabels or truth
+- imports selected relative paths or current preview candidates
+- copies supported files to MockingBird-managed local media storage
+- creates MediaAssets only
+- creates no MotionEvidence, Events, Visits, ReviewLabels, SpeciesSuggestions,
+  DetectionProposals, DatasetExports, or truth
 - respects Source, Stream, and optional Zone context
 - records safe provenance
-- writes only into ignored local data/media paths if copying
-- stores references only if an explicit reference-only policy is chosen
+- writes only into ignored local data/media paths
+- reports already-imported files using safe relative path, size, and modified
+  time provenance
 
 ## Reference Vs Copy Policy
 
@@ -156,7 +164,7 @@ Two possible modes:
 - `reference_only`: keep files in the original folder and store references.
 - `copy_to_media_root`: copy files into ignored MockingBird local media storage.
 
-Recommended first implementation: `copy_to_media_root`.
+Current implementation: `copy_to_media_root`.
 
 Copying is safer for app-managed storage, retention, repeatable review, and
 provenance because MockingBird controls the imported file location after the
@@ -187,9 +195,9 @@ Defer:
 - metadata extraction/EXIF parsing
 - thumbnails/crops
 
-The first metadata/import pass should not require decoding. Content type may be
-inferred conservatively from extension at first; stronger validation can be a
-future phase.
+The first metadata/import pass does not require decoding. Content type is
+inferred conservatively from extension; stronger validation can be a future
+phase.
 
 ## Duplicate Handling
 
@@ -202,7 +210,7 @@ Future import planning should not create duplicate records silently.
 
 ## Provenance Policy
 
-Future imported MediaAssets should record safe provenance:
+Imported MediaAssets record safe provenance:
 
 - `provider_key`
 - `source_id`
@@ -214,6 +222,7 @@ Future imported MediaAssets should record safe provenance:
 - modified time if available
 - import batch ID if future
 - reference/copy mode
+- optional user note
 - no secrets
 
 Absolute paths should be avoided in normal API/UI responses. If a local path is
@@ -288,14 +297,15 @@ Preview tests should prove:
 
 Future import tests should prove:
 
-- import creates MediaAssets only by default
-- no Events/Visits unless explicitly requested
+- import creates MediaAssets only
+- no MotionEvidence
+- no Events/Visits
 - no ReviewLabels or truth
 - duplicate files are skipped or reported
-- stale reference behavior is safe
 - no model/runtime calls
 - no media deletion
 - no source files are moved or deleted
+- copied files are under ignored local media storage
 
 ## Relationship To Existing Manual Media Import
 
@@ -319,16 +329,13 @@ initially, and must preserve retention, provenance, and truth boundaries.
 - Phase 13B: folder/trail-cam provider configuration UI/status contract.
 - Phase 13C: folder import preview API, dry-run only.
 - Phase 13D: folder import implementation to MediaAssets only.
-- Phase 13E: folder import UI polish.
-- Later: folder media to MotionEvidence/Event review workflow.
+- Phase 13E: folder import UI preview/import.
+- Phase 13F: folder media to MotionEvidence/Event review handoff design.
 
 ## Explicit Non-Goals
 
-- No import implementation in this phase.
 - No watcher.
 - No polling.
-- No media import.
-- No MediaAsset creation.
 - No MotionEvidence creation.
 - No media deletion.
 - No Event/Visit creation.

@@ -51,10 +51,12 @@ trail-cam import. It should store setup metadata such as sensitive
 `default_stream_id`, `default_zone_id`, future `import_mode`, and `notes`.
 This metadata must not scan folders by itself, import media, create records, or
 imply a background watcher. Phase 13C uses the stored `folder_path` only when
-the explicit source-scoped preview route is called. See
+the explicit source-scoped preview route is called. Phase 13D also uses it for
+the explicit source-scoped import route that creates MediaAssets only. See
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
 Phase 13B represents this provider in configuration/status contracts. Phase 13C
 adds explicit dry-run preview parsing for `recursive` and `allowed_extensions`.
+Phase 13D uses the same metadata for explicit import-to-MediaAssets only.
 `folder_path` is required and redacted to configured/not-configured in normal
 API/UI responses.
 
@@ -80,8 +82,8 @@ responses return only a configured/not-configured marker. This phase does not
 store real credentials or validate them.
 
 For `folder_import_future`, `folder_path` is sensitive local data. It may be
-used internally by the explicit preview route, but API responses, status routes,
-and the Streams UI must not echo raw local folder paths.
+used internally by the explicit preview/import routes, but API responses, status
+routes, and the Streams UI must not echo raw local folder paths.
 
 ## Relationship To Source Connection Status
 
@@ -143,8 +145,8 @@ External URL implementation must also follow
 before any URL fetch or validation behavior is added.
 Folder/trail-cam implementation must follow
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md)
-before any folder scan, import, copy/reference behavior, watcher, polling, media
-record creation, or truth-affecting behavior is added.
+before any folder evidence/review handoff, watcher, polling, media deletion, or
+truth-affecting behavior is added.
 
 ## Zone Editing Relationship
 
@@ -168,6 +170,8 @@ reviewable activity.
 - Secret fields are never returned raw.
 - Folder preview can use stored `folder_path` only behind the explicit
   source-scoped dry-run preview route.
+- Folder import can use stored `folder_path` only behind the explicit
+  source-scoped import route, and it creates MediaAssets only.
 - Source connection status reflects configured and missing fields.
 - Stream playback remains honest and does not claim live playback.
 - Manual media setup points to explicit import/review, not live playback.
