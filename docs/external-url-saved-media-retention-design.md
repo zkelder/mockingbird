@@ -19,6 +19,10 @@ Phase 12E adds the frontend Saved Media Retention page for viewing that report
 and running dry-run cleanup previews. It still adds no actual cleanup
 implementation, media deletion, record deletion, generated media, or truth
 mutation.
+Phase 12F implements the first destructive action: an explicit, confirmed,
+file-only cleanup route for low-risk unlinked saved preview media. It deletes no
+MediaAsset records, MotionEvidence, Events, Visits, ReviewLabels,
+DatasetExports, or truth.
 
 ## Product Flow Covered
 
@@ -34,7 +38,9 @@ retention/cleanup decision.
 - Media-to-evidence creates pending MotionEvidence only.
 - Promotion creates Event/Visit only through the explicit route.
 - Correction creates ReviewLabel truth.
-- No cleanup or delete workflow exists yet.
+- Confirmed low-risk file cleanup can delete only an unlinked saved preview file.
+- Record deletion, protected cleanup, background cleanup, and bulk destructive
+  cleanup remain future work.
 - Saved preview media lives under ignored local data/media storage.
 
 ## Retention Principles
@@ -94,13 +100,14 @@ rarer, more explicit, and better protected.
 Future implementation can consider:
 
 - list saved preview media with linkage and risk summary
-- delete unlinked saved preview media
+- delete unlinked saved preview media files
 - detach or delete ignored-evidence media with warning
 - archive or mark stale instead of delete
 - bulk cleanup only for low-risk/unlinked media
 - skip protected records by default
 
-Do not implement destructive cleanup actions in Phase 12D.
+Phase 12F implements only explicit low-risk file deletion. Record deletion,
+protected cleanup, and bulk destructive cleanup require separate future scope.
 
 ## Current Report API
 
@@ -162,9 +169,35 @@ If no filters are supplied, dry-run defaults to low-risk candidates only.
 Protected media is skipped unless explicitly included, and even then this route
 only reports what a future cleanup might affect.
 
+## Current File-Only Cleanup API
+
+Implemented in Phase 12F:
+
+```text
+POST /api/media/{media_asset_id}/cleanup-preview
+```
+
+Request:
+
+- `mode`: must be `delete_file_only`
+- `confirm`: must be `true`
+- `reason`: optional local operator note for the request
+
+The route is intentionally narrow:
+
+- accepts only saved external_url preview MediaAssets
+- allows only `risk_level=low` and `media_state=saved_unlinked`
+- deletes only the local file after path safety checks
+- rejects medium, high, protected, unknown, linked, reviewed, unsafe-path, and
+  symlink media
+- returns `already_missing` for a missing eligible file
+- leaves the MediaAsset record and all product truth unchanged
+- returns no absolute filesystem path
+
 ## Current UI
 
-Implemented in Phase 12E, the Saved Media Retention page shows:
+Implemented in Phase 12E and extended in Phase 12F, the Saved Media Retention
+page shows:
 
 - file size
 - safe provenance
@@ -173,11 +206,12 @@ Implemented in Phase 12E, the Saved Media Retention page shows:
 - dry-run cleanup filters for risk level and protected media
 - dry-run totals and per-item skipped/planned effects
 - warnings for linked, promoted, or reviewed media
-- clear no-delete/no-truth boundary copy
+- a confirmed `Delete local file` action only for low-risk `saved_unlinked`
+  items
+- clear file-only/no-record/no-truth boundary copy
 
-The UI has no actual cleanup button. No destructive bulk action should run
-without a future explicit implementation phase. The UI must never hide truth
-implications.
+The UI has no bulk cleanup button and no protected-media cleanup. It must never
+hide truth implications.
 
 ## Dry-Run Cleanup Policy
 
@@ -229,7 +263,7 @@ unreviewed media safely.
 ## Relationship To MotionEvidence
 
 MotionEvidence may reference saved media via `snapshot_media_asset_id`. Deleting
-media can weaken evidence review context even when it does not delete truth.
+media can weaken evidence review context even when reviewed truth is unchanged.
 
 Ignored MotionEvidence may be a cleanup candidate. Pending and promoted
 MotionEvidence should show warnings. Promotion and correction truth remain
@@ -261,21 +295,24 @@ Future tests should prove:
 - no URL fetch required for cleanup
 - no secret leakage
 
-Actual cleanup implementation remains future work and needs separate tests for
-path safety and deletion behavior.
+Phase 12F cleanup tests add coverage for confirmation, mode rejection, low-risk
+file deletion, missing files, linked/protected rejection, unsafe paths, symlink
+paths, no record deletion, no truth mutation, no URL fetch, and no detector or
+model calls.
 
 ## Recommended Future Phases
 
 - Phase 12D: saved media retention report/dry-run API, no deletion.
 - Phase 12E: saved media retention UI, dry-run only.
-- Next likely Phase 12F: low-risk unlinked media cleanup implementation.
+- Phase 12F: low-risk unlinked saved media file cleanup implementation.
+- Next likely Phase 12G: cleanup UI polish/audit trail design.
 - Alternative next: Phase 13A next provider boundary design.
 - Later: protected media/archive policy.
 
 ## Explicit Non-Goals
 
 - No actual cleanup implementation in Phase 12D or Phase 12E.
-- No media deletion.
+- No medium, high, protected, or unknown-risk cleanup in Phase 12F.
 - No record deletion.
 - No background cleanup.
 - No scheduled cleanup.

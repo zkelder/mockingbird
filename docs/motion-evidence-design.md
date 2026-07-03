@@ -288,6 +288,12 @@ Phase 12E surfaces attached saved-preview media retention risk in the Saved
 Media Retention UI. The UI can run dry-run cleanup previews, but it deletes no
 files, deletes no records, and creates no truth.
 
+## Phase 12F Status
+
+Phase 12F adds confirmed file-only cleanup for low-risk unlinked saved preview
+media. Media attached to MotionEvidence is medium risk or higher and is
+protected from this low-risk cleanup path.
+
 ## Phase 8S Status
 
 Phase 8S lets pending MotionEvidence be created with optional `snapshot_media_asset_id`.

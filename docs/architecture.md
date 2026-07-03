@@ -114,6 +114,10 @@ does not delete files, delete records, fetch URLs, decode media, or mutate truth
 Phase 12E adds the Saved Media Retention UI as a read-only storage visibility
 layer over that report and dry-run planner. It shows risk, linkage, warnings,
 and dry-run effects without adding cleanup/delete behavior.
+Phase 12F adds explicit low-risk file-only cleanup for unlinked saved preview
+media. The cleanup route deletes no MediaAsset records, MotionEvidence, Events,
+Visits, ReviewLabels, DatasetExports, or truth, and rejects linked, protected,
+unsafe-path, and symlink media.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
@@ -152,7 +156,8 @@ MockingBird should prefer local storage for media, labels, corrections, metadata
 
 Cloud services may be optional later, but they should not be required for the core product loop.
 
-Saved media retention is a storage boundary. Current retention report/dry-run
-routes and UI are read-only. Future cleanup work must separate file deletion
-from record deletion, protect reviewed truth by default, and report stale or
-missing media safely without decoding media.
+Saved media retention is a storage boundary. Current retention report and
+dry-run routes are read-only; the current cleanup route is file-only and limited
+to confirmed low-risk unlinked saved preview media. Future cleanup work must
+separate file deletion from record deletion, protect reviewed truth by default,
+and report stale or missing media safely without decoding media.

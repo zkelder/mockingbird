@@ -122,6 +122,8 @@ from mockingbird.api.schemas import (
     SavedMediaCleanupDryRunItem,
     SavedMediaCleanupDryRunRequest,
     SavedMediaCleanupDryRunResponse,
+    SavedMediaCleanupRequest,
+    SavedMediaCleanupResponse,
     SavedMediaRetentionItem,
     SavedMediaRetentionReportResponse,
     SavedMediaRetentionSummary,
@@ -1517,6 +1519,199 @@ class ProductRepository:
             size_bytes=item.size_bytes,
             warnings=warnings,
         )
+
+    def cleanup_saved_preview_media(
+        self,
+        media_asset_id: str,
+        payload: SavedMediaCleanupRequest,
+    ) -> SavedMediaCleanupResponse | None:
+        media_id = media_asset_id.strip()
+        if not media_id:
+            return None
+
+        mode = payload.mode.strip() if payload.mode.strip() else "delete_file_only"
+        if not payload.confirm:
+            raise ValueError("cleanup_requires_confirmation")
+        if mode != "delete_file_only":
+            raise ValueError("unsupported_cleanup_mode")
+
+        with self.session_factory() as session:
+            asset_model = session.get(MediaAssetModel, media_id)
+            if asset_model is None:
+                return None
+
+            if not _is_external_url_preview_media_asset(asset_model):
+                return SavedMediaCleanupResponse(
+                    media_asset_id=media_id,
+                    status="rejected",
+                    risk_level="unknown",
+                    media_state="unknown",
+                    file_deleted=False,
+                    record_deleted=False,
+                    creates_truth=False,
+                    deletes_truth=False,
+                    message=(
+                        "Only saved external_url preview MediaAssets are eligible for "
+                        "file-only cleanup in this phase."
+                    ),
+                    file_name=asset_model.filename,
+                    size_bytes=asset_model.file_size_bytes,
+                    warnings=["MediaAsset is not a saved external_url preview."],
+                )
+
+            item = self._saved_preview_retention_item(session, asset_model)
+            local_path = asset_model.local_path
+
+        warnings = list(item.warnings)
+        if item.risk_level != "low" or item.media_state != "saved_unlinked":
+            warnings.append(
+                "Phase 12F cleanup is limited to low-risk unlinked saved preview media."
+            )
+            return SavedMediaCleanupResponse(
+                media_asset_id=item.media_asset_id,
+                status="rejected",
+                risk_level=item.risk_level,
+                media_state=item.media_state,
+                file_deleted=False,
+                record_deleted=False,
+                creates_truth=False,
+                deletes_truth=False,
+                message=(
+                    "Cleanup rejected. This MediaAsset is linked to evidence, "
+                    "Event/Visit context, reviewed truth, or unknown retention state."
+                ),
+                file_name=item.file_name,
+                size_bytes=item.size_bytes,
+                warnings=warnings,
+            )
+
+        media_path, rejection_reason, path_warnings = self._safe_saved_preview_cleanup_path(
+            local_path,
+        )
+        warnings.extend(path_warnings)
+        if rejection_reason is not None or media_path is None:
+            return SavedMediaCleanupResponse(
+                media_asset_id=item.media_asset_id,
+                status="rejected",
+                risk_level=item.risk_level,
+                media_state=item.media_state,
+                file_deleted=False,
+                record_deleted=False,
+                creates_truth=False,
+                deletes_truth=False,
+                message=rejection_reason or "Cleanup rejected by path safety checks.",
+                file_name=item.file_name,
+                size_bytes=item.size_bytes,
+                warnings=warnings,
+            )
+
+        if not media_path.exists():
+            return SavedMediaCleanupResponse(
+                media_asset_id=item.media_asset_id,
+                status="already_missing",
+                risk_level=item.risk_level,
+                media_state=item.media_state,
+                file_deleted=False,
+                record_deleted=False,
+                creates_truth=False,
+                deletes_truth=False,
+                message=(
+                    "Local file was already missing. The MediaAsset record remains and "
+                    "no truth was changed."
+                ),
+                file_name=item.file_name,
+                size_bytes=item.size_bytes,
+                warnings=warnings,
+            )
+
+        try:
+            media_path.unlink()
+        except OSError:
+            warnings.append("Local file could not be deleted; no records were changed.")
+            return SavedMediaCleanupResponse(
+                media_asset_id=item.media_asset_id,
+                status="rejected",
+                risk_level=item.risk_level,
+                media_state=item.media_state,
+                file_deleted=False,
+                record_deleted=False,
+                creates_truth=False,
+                deletes_truth=False,
+                message="File-only cleanup failed before deleting the local file.",
+                file_name=item.file_name,
+                size_bytes=item.size_bytes,
+                warnings=warnings,
+            )
+
+        return SavedMediaCleanupResponse(
+            media_asset_id=item.media_asset_id,
+            status="deleted_file",
+            risk_level=item.risk_level,
+            media_state=item.media_state,
+            file_deleted=True,
+            record_deleted=False,
+            creates_truth=False,
+            deletes_truth=False,
+            message=(
+                "Deleted the local saved preview file only. The MediaAsset record, "
+                "evidence, Events, Visits, labels, exports, and truth remain unchanged."
+            ),
+            file_name=item.file_name,
+            size_bytes=item.size_bytes,
+            warnings=warnings,
+        )
+
+    def _safe_saved_preview_cleanup_path(
+        self,
+        local_path: str,
+    ) -> tuple[Path | None, str | None, list[str]]:
+        warnings: list[str] = []
+        try:
+            media_root = self.media_root.resolve()
+            candidate = Path(local_path)
+            if not candidate.is_absolute():
+                candidate = self.media_root / candidate
+            candidate = candidate.absolute()
+            resolved_candidate = candidate.resolve(strict=False)
+        except OSError:
+            return (
+                None,
+                "Cleanup rejected because the local media path could not be resolved.",
+                ["Local media path could not be resolved."],
+            )
+
+        if not resolved_candidate.is_relative_to(media_root):
+            return (
+                None,
+                "Cleanup rejected because the local media path is outside the media root.",
+                ["Local media path is outside the configured media root."],
+            )
+
+        for path_part in (candidate, *candidate.parents):
+            if path_part == media_root:
+                break
+            if path_part.is_symlink():
+                return (
+                    None,
+                    "Cleanup rejected because symlink media paths are not eligible.",
+                    ["Local media path includes a symlink; file-only cleanup skipped."],
+                )
+
+        if candidate.exists() and candidate.is_dir():
+            return (
+                None,
+                "Cleanup rejected because the local media path is a directory.",
+                ["Local media path points to a directory; file-only cleanup skipped."],
+            )
+
+        if candidate.exists() and not candidate.is_file():
+            return (
+                None,
+                "Cleanup rejected because the local media path is not a regular file.",
+                ["Local media path is not a regular file; file-only cleanup skipped."],
+            )
+
+        return candidate, None, warnings
 
     def create_external_url_preview_media_asset(
         self,

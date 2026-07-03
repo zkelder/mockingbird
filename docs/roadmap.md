@@ -433,8 +433,9 @@ Current work:
 - Phase 12C: external_url saved media cleanup/retention design.
 - Phase 12D: saved media retention report/dry-run API, no deletion.
 - Phase 12E: saved media retention UI, dry-run only.
-- Next likely phase: Phase 12F — low-risk unlinked saved media cleanup
-  implementation, or Phase 13A next provider boundary design.
+- Phase 12F: low-risk unlinked saved media file cleanup implementation.
+- Next likely phase: Phase 12G — cleanup UI polish/audit trail design, or
+  Phase 13A next provider boundary design.
 
 Validation:
 
@@ -473,6 +474,10 @@ Validation:
   protected-media skips, and dry-run totals without adding cleanup/delete
   behavior, media deletion, record deletion, evidence creation, or truth
   mutation.
+- Phase 12F adds explicit, confirmed, low-risk saved preview file cleanup. It
+  deletes only eligible unlinked local files and deletes no MediaAsset records,
+  MotionEvidence, Events, Visits, ReviewLabels, DatasetExports, exports,
+  analytics truth, classifier truth, or reviewed truth.
 - Saved preview cleanup must separate file deletion from MediaAsset record
   deletion, classify risk by linkage/review state, dry-run before destructive
   work, and protect reviewed truth/export/classifier-readiness context by

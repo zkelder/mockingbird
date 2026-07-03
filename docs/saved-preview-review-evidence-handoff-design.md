@@ -222,6 +222,9 @@ pending/ignored evidence is medium risk, promoted Event/Visit context is high
 risk, and reviewed correction context is protected.
 Phase 12E surfaces those risk levels in the Saved Media Retention UI so linked
 evidence is visible before any future cleanup implementation.
+Phase 12F implements only confirmed file cleanup for low-risk unlinked saved
+preview media. Media linked to pending, ignored, or promoted MotionEvidence is
+not eligible for that low-risk cleanup path.
 
 ## Testing Expectations For Future Implementation
 

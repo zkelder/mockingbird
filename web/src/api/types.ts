@@ -373,6 +373,27 @@ export interface SavedMediaCleanupDryRunResponse {
   warnings: string[];
 }
 
+export interface SavedMediaCleanupRequest {
+  mode?: string;
+  confirm?: boolean;
+  reason?: string | null;
+}
+
+export interface SavedMediaCleanupResponse {
+  media_asset_id: string;
+  status: "deleted_file" | "already_missing" | "skipped" | "rejected" | string;
+  risk_level: string;
+  media_state: string;
+  file_deleted: boolean;
+  record_deleted: boolean;
+  creates_truth: boolean;
+  deletes_truth: boolean;
+  message: string;
+  file_name?: string | null;
+  size_bytes?: number | null;
+  warnings: string[];
+}
+
 export interface Point {
   x: number;
   y: number;

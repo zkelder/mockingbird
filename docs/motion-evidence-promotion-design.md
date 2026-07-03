@@ -124,6 +124,8 @@ makes it protected, and the dry-run route does not delete files or records.
 Phase 12E makes the same state visible in the Saved Media Retention UI:
 promoted evidence media appears high risk, and reviewed correction context
 appears protected.
+Phase 12F keeps promoted evidence media out of low-risk cleanup. The file-only
+cleanup route rejects promoted Event/Visit context and reviewed truth context.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

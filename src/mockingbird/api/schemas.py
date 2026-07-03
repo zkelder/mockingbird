@@ -385,7 +385,7 @@ class SavedPreviewMotionEvidenceResponse(BaseModel):
 
 
 class SavedMediaRetentionItem(BaseModel):
-    # Retention reporting is read-only; cleanup remains dry-run planning only.
+    # Retention reporting classifies storage risk without changing truth.
     media_asset_id: str
     source_id: str | None = None
     stream_id: str | None = None
@@ -453,6 +453,27 @@ class SavedMediaCleanupDryRunResponse(BaseModel):
     dry_run: bool = True
     creates_truth: bool = False
     deletes_truth: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SavedMediaCleanupRequest(BaseModel):
+    mode: str = "delete_file_only"
+    confirm: bool = False
+    reason: str | None = None
+
+
+class SavedMediaCleanupResponse(BaseModel):
+    media_asset_id: str
+    status: str
+    risk_level: str
+    media_state: str
+    file_deleted: bool
+    record_deleted: bool = False
+    creates_truth: bool = False
+    deletes_truth: bool = False
+    message: str
+    file_name: str | None = None
+    size_bytes: int | None = Field(default=None, ge=0)
     warnings: list[str] = Field(default_factory=list)
 
 

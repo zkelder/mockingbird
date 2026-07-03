@@ -103,9 +103,10 @@ The source/stream smoke-test hardening plan is documented in
 [docs/source-stream-smoke-test-hardening.md](docs/source-stream-smoke-test-hardening.md).
 For manual browser/API validation of that same explicit path, use
 [docs/source-stream-dev-smoke-checklist.md](docs/source-stream-dev-smoke-checklist.md).
-Saved external_url preview media now has a read-only retention report, cleanup
-dry-run planner, and Saved Media Retention UI. Cleanup/delete work still
-requires separate scope and must follow
+Saved external_url preview media now has a retention report, cleanup dry-run
+planner, Saved Media Retention UI, and confirmed low-risk file-only cleanup.
+Record deletion, protected cleanup, and background cleanup still require
+separate scope and must follow
 [docs/external-url-saved-media-retention-design.md](docs/external-url-saved-media-retention-design.md).
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.

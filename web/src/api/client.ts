@@ -53,6 +53,8 @@ import type {
   ReviewQueueItem,
   SavedMediaCleanupDryRunRequest,
   SavedMediaCleanupDryRunResponse,
+  SavedMediaCleanupRequest,
+  SavedMediaCleanupResponse,
   SavedMediaRetentionReportResponse,
   SavedPreviewMotionEvidenceRequest,
   SavedPreviewMotionEvidenceResponse,
@@ -176,6 +178,14 @@ export const apiClient = {
   dryRunSavedMediaCleanup: (payload: SavedMediaCleanupDryRunRequest = {}) =>
     request<SavedMediaCleanupDryRunResponse>(
       "/api/media/saved-preview-retention/dry-run-cleanup",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+  cleanupSavedPreviewMedia: (mediaAssetId: string, payload: SavedMediaCleanupRequest) =>
+    request<SavedMediaCleanupResponse>(
+      `/api/media/${encodeURIComponent(mediaAssetId)}/cleanup-preview`,
       {
         method: "POST",
         body: JSON.stringify(payload),

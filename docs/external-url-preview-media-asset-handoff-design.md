@@ -82,6 +82,10 @@ does not delete files or records.
 Phase 12E shows saved preview MediaAssets in the Saved Media Retention UI with
 risk badges and dry-run cleanup previews. The UI still does not delete files,
 delete records, or create truth.
+Phase 12F allows explicit file-only cleanup only for low-risk unlinked saved
+preview media. Once saved preview media is linked to evidence, Event/Visit
+context, or reviewed correction truth, it is not eligible for this low-risk
+cleanup path.
 
 ## Supported Content Policy
 

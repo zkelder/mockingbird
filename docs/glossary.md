@@ -73,8 +73,14 @@ no review truth.
 ## Saved Media Retention UI
 
 A frontend view of saved preview media retention status, risk levels, warnings,
-and cleanup dry-run results. It is storage visibility only and has no actual
-cleanup/delete action.
+cleanup dry-run results, and confirmed low-risk file cleanup. It must not delete
+records or reviewed truth.
+
+## File-only Cleanup
+
+An explicit local storage action that deletes an eligible saved preview media
+file while leaving the MediaAsset record, evidence, Events, Visits, labels,
+exports, and reviewed truth intact.
 
 ## Retention Risk Level
 

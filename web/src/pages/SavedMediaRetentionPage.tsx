@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
 import type {
   SavedMediaCleanupDryRunResponse,
+  SavedMediaCleanupResponse,
   SavedMediaRetentionItem,
   SavedMediaRetentionReportResponse,
 } from "../api/types";
@@ -95,7 +96,25 @@ function RetentionLinkage({ item }: { item: SavedMediaRetentionItem }) {
   );
 }
 
-function RetentionItemCard({ item }: { item: SavedMediaRetentionItem }) {
+function isCleanupEligible(item: SavedMediaRetentionItem): boolean {
+  return item.risk_level === "low" && item.media_state === "saved_unlinked";
+}
+
+function RetentionItemCard({
+  item,
+  cleanupConfirmed,
+  isCleaning,
+  onCleanupConfirmChange,
+  onRunCleanup,
+}: {
+  item: SavedMediaRetentionItem;
+  cleanupConfirmed: boolean;
+  isCleaning: boolean;
+  onCleanupConfirmChange: (mediaAssetId: string, confirmed: boolean) => void;
+  onRunCleanup: (mediaAssetId: string) => void;
+}) {
+  const canCleanFile = isCleanupEligible(item);
+
   return (
     <article className="retention-item-card">
       <div className="section-heading">
@@ -158,6 +177,36 @@ function RetentionItemCard({ item }: { item: SavedMediaRetentionItem }) {
       </div>
 
       <RetentionWarningList warnings={item.warnings} />
+
+      {canCleanFile ? (
+        <div className="retention-cleanup-action">
+          <div>
+            <strong>Low-risk file cleanup</strong>
+            <span>
+              This deletes the local file only. The MediaAsset record remains. No evidence,
+              Events, Visits, labels, or truth are deleted.
+            </span>
+          </div>
+          <label className="checkbox-row retention-cleanup-confirm">
+            <input
+              checked={cleanupConfirmed}
+              onChange={(event) =>
+                onCleanupConfirmChange(item.media_asset_id, event.target.checked)
+              }
+              type="checkbox"
+            />
+            Confirm local file-only cleanup
+          </label>
+          <button
+            className="danger-action"
+            disabled={!cleanupConfirmed || isCleaning}
+            onClick={() => onRunCleanup(item.media_asset_id)}
+            type="button"
+          >
+            Delete local file
+          </button>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -165,13 +214,17 @@ function RetentionItemCard({ item }: { item: SavedMediaRetentionItem }) {
 export function SavedMediaRetentionPage() {
   const [report, setReport] = useState<SavedMediaRetentionReportResponse | null>(null);
   const [dryRunResult, setDryRunResult] = useState<SavedMediaCleanupDryRunResponse | null>(null);
+  const [cleanupResult, setCleanupResult] = useState<SavedMediaCleanupResponse | null>(null);
+  const [cleanupConfirmedById, setCleanupConfirmedById] = useState<Record<string, boolean>>({});
   const [selectedRiskLevels, setSelectedRiskLevels] = useState<string[]>(["low"]);
   const [includeProtected, setIncludeProtected] = useState(false);
   const [mode, setMode] = useState("delete_file_only");
   const [isLoading, setIsLoading] = useState(true);
   const [isDryRunning, setIsDryRunning] = useState(false);
+  const [cleaningMediaId, setCleaningMediaId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dryRunError, setDryRunError] = useState<string | null>(null);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
 
   async function loadReport(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
@@ -234,6 +287,38 @@ export function SavedMediaRetentionPage() {
     }
   }
 
+  function updateCleanupConfirmation(mediaAssetId: string, confirmed: boolean) {
+    setCleanupConfirmedById((current) => ({
+      ...current,
+      [mediaAssetId]: confirmed,
+    }));
+  }
+
+  async function runCleanup(mediaAssetId: string) {
+    setCleaningMediaId(mediaAssetId);
+    setCleanupError(null);
+    setCleanupResult(null);
+    try {
+      const result = await apiClient.cleanupSavedPreviewMedia(mediaAssetId, {
+        mode: "delete_file_only",
+        confirm: true,
+        reason: "Saved Media Retention low-risk file cleanup",
+      });
+      setCleanupResult(result);
+      setCleanupConfirmedById((current) => ({
+        ...current,
+        [mediaAssetId]: false,
+      }));
+      await loadReport({ showLoading: false });
+    } catch (caught) {
+      setCleanupError(
+        caught instanceof Error ? caught.message : "Could not clean saved preview media.",
+      );
+    } finally {
+      setCleaningMediaId(null);
+    }
+  }
+
   if (isLoading) {
     return <div className="panel">Loading saved media retention...</div>;
   }
@@ -259,7 +344,7 @@ export function SavedMediaRetentionPage() {
       <PageHeader
         eyebrow="Local storage visibility"
         title="Saved Media Retention"
-        description="Review saved external_url preview media, risk level, and dry-run cleanup planning without deleting files, deleting records, or changing reviewed truth."
+        description="Review saved external_url preview media, risk level, dry-run planning, and confirmed low-risk local file cleanup without deleting records or changing reviewed truth."
         actions={
           <button className="secondary-action" onClick={() => void loadReport({ showLoading: false })}>
             Refresh report
@@ -268,8 +353,11 @@ export function SavedMediaRetentionPage() {
       />
 
       <section className="notice-panel retention-boundary-panel">
-        <strong>Dry run only</strong>
-        <span>No files deleted. No records deleted. No truth changed.</span>
+        <strong>File-only cleanup boundary</strong>
+        <span>
+          Low-risk cleanup can delete a confirmed local file only. No MediaAsset records,
+          evidence, Events, Visits, labels, exports, or truth are deleted.
+        </span>
       </section>
 
       <section className="panel retention-report-status">
@@ -280,8 +368,43 @@ export function SavedMediaRetentionPage() {
             metadata and linkage only.
           </p>
         </div>
-        <StatusPill label={report.dry_run_only ? "Dry-run only" : "Check report"} tone="review" />
+        <StatusPill label={report.dry_run_only ? "Report read-only" : "Check report"} tone="review" />
       </section>
+
+      {cleanupError ? (
+        <section className="error-panel compact-error">
+          <strong>Cleanup did not run.</strong>
+          <span>{cleanupError}</span>
+        </section>
+      ) : null}
+
+      {cleanupResult ? (
+        <section className="notice-panel retention-cleanup-result">
+          <div>
+            <strong>Cleanup result: {formatLabel(cleanupResult.status)}</strong>
+            <span>{cleanupResult.message}</span>
+          </div>
+          <div className="retention-dry-run-summary">
+            <div>
+              <span>File deleted</span>
+              <strong>{yesNo(cleanupResult.file_deleted)}</strong>
+            </div>
+            <div>
+              <span>Record deleted</span>
+              <strong>{yesNo(cleanupResult.record_deleted)}</strong>
+            </div>
+            <div>
+              <span>Creates truth</span>
+              <strong>{yesNo(cleanupResult.creates_truth)}</strong>
+            </div>
+            <div>
+              <span>Truth removed</span>
+              <strong>{yesNo(cleanupResult.deletes_truth)}</strong>
+            </div>
+          </div>
+          <RetentionWarningList warnings={cleanupResult.warnings} />
+        </section>
+      ) : null}
 
       {report.summary.warnings.length > 0 ? (
         <section className="notice-panel readiness-warning">
@@ -321,7 +444,7 @@ export function SavedMediaRetentionPage() {
           value={report.summary.unknown_size_count}
           detail="metadata incomplete"
         />
-        <MetricCard label="Dry-run only" value={report.dry_run_only ? "Yes" : "No"} />
+        <MetricCard label="Report read-only" value={report.dry_run_only ? "Yes" : "No"} />
       </section>
 
       <section className="panel retention-dry-run-panel">
@@ -430,7 +553,7 @@ export function SavedMediaRetentionPage() {
                 <strong>{yesNo(dryRunResult.creates_truth)}</strong>
               </div>
               <div>
-                <span>Deletes truth</span>
+                <span>Truth removed</span>
                 <strong>{yesNo(dryRunResult.deletes_truth)}</strong>
               </div>
             </div>
@@ -499,7 +622,14 @@ export function SavedMediaRetentionPage() {
         {sortedItems.length > 0 ? (
           <div className="retention-item-list">
             {sortedItems.map((item) => (
-              <RetentionItemCard item={item} key={item.media_asset_id} />
+              <RetentionItemCard
+                cleanupConfirmed={Boolean(cleanupConfirmedById[item.media_asset_id])}
+                isCleaning={cleaningMediaId === item.media_asset_id}
+                item={item}
+                key={item.media_asset_id}
+                onCleanupConfirmChange={updateCleanupConfirmation}
+                onRunCleanup={(mediaAssetId) => void runCleanup(mediaAssetId)}
+              />
             ))}
           </div>
         ) : (

@@ -232,6 +232,7 @@ button {
 
 .primary-action,
 .secondary-action,
+.danger-action,
 .text-action {
   min-height: 42px;
   border-radius: 8px;
@@ -259,6 +260,17 @@ button {
 .secondary-action:disabled {
   cursor: wait;
   opacity: 0.65;
+}
+
+.danger-action {
+  border: 1px solid #a8432f;
+  background: #a8432f;
+  color: #ffffff;
+}
+
+.danger-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .text-action {
@@ -3091,6 +3103,8 @@ button {
 .retention-report-status,
 .retention-dry-run-panel,
 .retention-dry-run-result,
+.retention-cleanup-action,
+.retention-cleanup-result,
 .retention-item-list-panel,
 .retention-item-list,
 .retention-dry-run-items,
@@ -3216,6 +3230,42 @@ button {
   color: #5f5027;
   font-size: 0.84rem;
   font-weight: 700;
+}
+
+.retention-cleanup-action {
+  border: 1px solid #e0c8bf;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff7f4;
+}
+
+.retention-cleanup-action div,
+.retention-cleanup-result {
+  min-width: 0;
+}
+
+.retention-cleanup-action strong,
+.retention-cleanup-action span,
+.retention-cleanup-result strong,
+.retention-cleanup-result span {
+  overflow-wrap: anywhere;
+}
+
+.retention-cleanup-action span {
+  display: block;
+  margin-top: 4px;
+  color: #5f504b;
+}
+
+.retention-cleanup-confirm {
+  width: fit-content;
+  min-height: 40px;
+  border: 1px solid #e0c8bf;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #4f342c;
+  font-weight: 800;
 }
 
 .retention-dry-run-form {

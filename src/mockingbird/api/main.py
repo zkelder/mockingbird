@@ -71,6 +71,8 @@ from mockingbird.api.schemas import (
     ReviewQueueItem,
     SavedMediaCleanupDryRunRequest,
     SavedMediaCleanupDryRunResponse,
+    SavedMediaCleanupRequest,
+    SavedMediaCleanupResponse,
     SavedMediaRetentionReportResponse,
     SavedPreviewMotionEvidenceRequest,
     SavedPreviewMotionEvidenceResponse,
@@ -542,6 +544,26 @@ def _saved_preview_motion_evidence_error(
     if str(error) == "missing_media_asset":
         return _not_found("Media asset", media_asset_id)
     return _motion_evidence_error(error)
+
+
+def _saved_media_cleanup_error(error: ValueError, media_asset_id: str) -> HTTPException:
+    reason = str(error)
+    if reason == "missing_media_asset":
+        return _not_found("Media asset", media_asset_id)
+    if reason == "cleanup_requires_confirmation":
+        return HTTPException(
+            status_code=400,
+            detail="Confirm this file-only cleanup before deleting local saved preview media.",
+        )
+    if reason == "unsupported_cleanup_mode":
+        return HTTPException(
+            status_code=400,
+            detail="Only delete_file_only cleanup is supported in this phase.",
+        )
+    return HTTPException(
+        status_code=400,
+        detail="Saved preview media cleanup could not be processed.",
+    )
 
 
 def _species_suggestion_error(error: ValueError) -> HTTPException:
@@ -1458,6 +1480,23 @@ async def saved_preview_cleanup_dry_run(
     return get_repository().saved_preview_cleanup_dry_run(
         payload or SavedMediaCleanupDryRunRequest(),
     )
+
+
+@app.post("/api/media/{media_id}/cleanup-preview", response_model=SavedMediaCleanupResponse)
+async def cleanup_saved_preview_media(
+    media_id: str,
+    payload: SavedMediaCleanupRequest | None = None,
+) -> SavedMediaCleanupResponse:
+    try:
+        response = get_repository().cleanup_saved_preview_media(
+            media_id,
+            payload or SavedMediaCleanupRequest(),
+        )
+    except ValueError as error:
+        raise _saved_media_cleanup_error(error, media_id) from error
+    if response is None:
+        raise _not_found("Media asset", media_id)
+    return response
 
 
 @app.get("/api/media/{media_id}", response_model=MediaAsset)

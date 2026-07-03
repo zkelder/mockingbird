@@ -178,6 +178,18 @@ curl -s -X POST http://127.0.0.1:8000/api/media/saved-preview-retention/dry-run-
 These retention routes are report/dry-run only. They must not delete files,
 delete records, create evidence, or mutate review truth.
 
+Optional low-risk file-only cleanup check after saving an unlinked preview:
+
+```sh
+curl -s -X POST http://127.0.0.1:8000/api/media/{media_asset_id}/cleanup-preview \
+  -H "content-type: application/json" \
+  -d '{"mode": "delete_file_only", "confirm": true, "reason": "manual smoke validation"}'
+```
+
+Run this only for a low-risk `saved_unlinked` saved preview MediaAsset. The
+response may delete the local file, but the MediaAsset record and all
+MotionEvidence, Events, Visits, labels, exports, and truth must remain.
+
 ## Browser Checklist: Saved Media Retention
 
 - [ ] After saving preview media, open `Saved Media Retention`.
@@ -188,7 +200,10 @@ delete records, create evidence, or mutate review truth.
 - [ ] Confirm totals and per-item plans appear.
 - [ ] Confirm the page says no files deleted, no records deleted, and no truth
       changed.
-- [ ] Confirm there is no actual cleanup or delete action.
+- [ ] Confirm only low-risk `saved_unlinked` items show `Delete local file`.
+- [ ] Confirm the delete action requires explicit checkbox confirmation.
+- [ ] If you run confirmed cleanup, confirm the MediaAsset record remains and
+      no evidence, Events, Visits, labels, exports, or truth changed.
 
 ## Truth-Boundary Checklist
 
@@ -201,6 +216,8 @@ delete records, create evidence, or mutate review truth.
 - [ ] No DetectionProposal is created.
 - [ ] No DatasetExport is created unless the user explicitly uses export flow.
 - [ ] No model or detector runtime is called.
+- [ ] Low-risk file cleanup, if used, deletes no product records and changes no
+      reviewed truth.
 
 ## Artifact/Storage Checklist
 
@@ -215,7 +232,7 @@ delete records, create evidence, or mutate review truth.
 - [ ] Treat saved preview media as governed by
       [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md):
       unlinked media is lowest risk, linked/reviewed media needs warnings, and
-      cleanup/delete behavior is not implemented in this checklist.
+      only confirmed low-risk file cleanup is implemented.
 
 ## Troubleshooting
 
@@ -256,10 +273,9 @@ delete records, create evidence, or mutate review truth.
 
 ## Recommended Next Phase
 
-Recommended next: Phase 12F — low-risk unlinked saved media cleanup
-implementation, only after separate scope and validation. Phase 12E makes the
-retention report and dry-run planning visible without adding destructive
-cleanup.
+Recommended next: Phase 12G — cleanup UI polish/audit trail design, or Phase
+13A next provider boundary design. Phase 12F implements only confirmed low-risk
+file cleanup.
 
 Other reasonable follow-ups:
 

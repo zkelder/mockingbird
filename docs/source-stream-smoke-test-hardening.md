@@ -20,6 +20,9 @@ it remains separate from source/stream smoke behavior and does not delete files
 or mutate truth.
 Phase 12E exposes that report/dry-run path in the frontend while preserving the
 same no-delete and no-truth boundary.
+Phase 12F adds explicit file-only cleanup for low-risk unlinked saved preview
+media. It is a separate storage action and does not delete MediaAsset records,
+evidence, Events, Visits, labels, exports, or truth.
 
 ## Product Flow Covered
 
@@ -90,9 +93,9 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - No media decoding or frame extraction.
 - No model, detector, or classifier runtime.
 - No frontend behavior beyond existing API contracts.
-- No cleanup/delete implementation. Retention report and dry-run planning are
-  separate from this smoke path and create no product truth. The frontend now
-  exposes those read-only retention checks without adding deletion behavior.
+- No record deletion, protected cleanup, background cleanup, live capture, or
+  truth mutation. Retention report, dry-run planning, and confirmed low-risk
+  file cleanup are separate from this smoke path.
 
 ## Future Smoke-Test Expansions
 
@@ -102,5 +105,6 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - Phase 12C: external_url saved-media retention and cleanup design.
 - Phase 12D: saved media retention report/dry-run API, no deletion.
 - Phase 12E: saved media retention UI, dry-run only.
+- Phase 12F: low-risk saved media file cleanup only.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.
