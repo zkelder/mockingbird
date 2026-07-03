@@ -499,8 +499,8 @@ Current work:
 - Phase 13G: single folder-imported MediaAsset to pending MotionEvidence, no
   Event/Visit/truth.
 - Phase 13H: batch folder media evidence handoff dry-run/report, no creation.
-- Next likely phase: Phase 13I — batch folder media evidence creation, no
-  Event/Visit/truth, or Phase 13J — folder media review/promote UI polish.
+- Phase 13I: batch folder media evidence creation, pending MotionEvidence only.
+- Next likely phase: Phase 13J — folder media review/promote UI polish.
 
 Validation:
 
@@ -527,6 +527,11 @@ Validation:
   Event, Visit, ReviewLabel, SpeciesSuggestion, DetectionProposal,
   DatasetExport, analytics/export truth, model output, folder scan, import,
   worker, or reviewed truth.
+- Phase 13I adds confirmed batch creation for eligible folder-imported
+  MediaAssets. It reuses dry-run eligibility, creates pending MotionEvidence
+  only, skips duplicates by default, and creates no Event, Visit, ReviewLabel,
+  SpeciesSuggestion, DetectionProposal, DatasetExport, analytics/export truth,
+  model output, folder scan, import, worker, promotion, or reviewed truth.
 - Recommended canonical provider key is `folder_import_future`, with display
   name Folder / trail-cam import.
 - `folder_path` is required sensitive metadata and must be redacted to
@@ -576,3 +581,7 @@ Validation:
   media import/copy/delete, folder scan, decoding, worker, dependency,
   model/runtime behavior, batch creation, or generated artifact is added in
   Phase 13H.
+- No automatic MotionEvidence creation, Event/Visit creation, ReviewLabel/truth
+  creation, promotion, media import/copy/delete, folder scan, decoding, worker,
+  dependency, model/runtime behavior, or generated artifact is added in Phase
+  13I.

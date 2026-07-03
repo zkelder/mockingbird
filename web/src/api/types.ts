@@ -344,6 +344,45 @@ export interface FolderImportEvidenceBatchDryRunResponse {
   warnings: string[];
 }
 
+export interface FolderImportEvidenceBatchCreateRequest {
+  media_asset_ids?: string[] | null;
+  source_id?: string | null;
+  stream_id?: string | null;
+  zone_id?: string | null;
+  duplicate_policy?: "skip_existing" | "allow_duplicate";
+  max_items?: number | null;
+  confirm?: boolean;
+  note?: string | null;
+  reason?: string | null;
+}
+
+export interface FolderImportEvidenceBatchCreateItem {
+  media_asset_id: string;
+  motion_evidence_id?: string | null;
+  source_id?: string | null;
+  stream_id?: string | null;
+  zone_id?: string | null;
+  created: boolean;
+  duplicate_skipped: boolean;
+  existing_motion_evidence_id?: string | null;
+  skip_reason?: string | null;
+  warnings: string[];
+}
+
+export interface FolderImportEvidenceBatchCreateResponse {
+  items: FolderImportEvidenceBatchCreateItem[];
+  total_items: number;
+  created_count: number;
+  skipped_count: number;
+  duplicate_skipped_count: number;
+  creates_motion_evidence: boolean;
+  creates_events: boolean;
+  creates_visits: boolean;
+  creates_truth: boolean;
+  message: string;
+  warnings: string[];
+}
+
 export interface SavedMediaRetentionItem {
   media_asset_id: string;
   source_id?: string | null;

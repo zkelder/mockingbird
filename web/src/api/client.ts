@@ -26,6 +26,8 @@ import type {
   ExternalUrlPreviewResponse,
   ExternalUrlPreviewSaveRequest,
   ExternalUrlPreviewSaveResponse,
+  FolderImportEvidenceBatchCreateRequest,
+  FolderImportEvidenceBatchCreateResponse,
   FolderImportEvidenceBatchDryRunRequest,
   FolderImportEvidenceBatchDryRunResponse,
   FolderImportRequest,
@@ -262,6 +264,11 @@ export const apiClient = {
     ),
   dryRunFolderImportEvidence: (payload: FolderImportEvidenceBatchDryRunRequest) =>
     request<FolderImportEvidenceBatchDryRunResponse>("/api/folder-import/evidence/dry-run", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  createFolderImportEvidenceBatch: (payload: FolderImportEvidenceBatchCreateRequest) =>
+    request<FolderImportEvidenceBatchCreateResponse>("/api/folder-import/evidence/batch", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

@@ -37,9 +37,10 @@ Event/Visit, or reviewed truth.
 ## Folder Import UI
 
 The Streams page surface for explicitly previewing configured folder candidates
-importing previewed files as MediaAssets only, and dry-running evidence handoff
-for imported items. It does not watch folders, provide live playback, create
-Events/Visits, or create reviewed truth.
+and importing previewed files as MediaAssets only, dry-running evidence handoff
+for imported items, and confirming eligible pending-evidence creation. It does
+not watch folders, provide live playback, create Events/Visits, or create
+reviewed truth.
 
 ## Folder Import Evidence Handoff
 
@@ -53,12 +54,18 @@ A read-only report over already-imported folder MediaAssets that shows which
 items would be eligible for pending MotionEvidence and which would be skipped.
 It creates no MotionEvidence, Events, Visits, labels, or reviewed truth.
 
+## Batch Folder Evidence Creation
+
+A confirmed action that creates pending MotionEvidence for eligible
+folder-imported MediaAssets from the batch dry-run boundary. It creates no
+Events, Visits, ReviewLabels, reviewed status, or truth.
+
 ## Folder Import Evidence
 
-Pending MotionEvidence created from a folder-imported MediaAsset through
-explicit user action. It points to the imported MediaAsset as
-`snapshot_media_asset_id` and remains evidence until explicit promotion and later
-review/correction.
+Pending MotionEvidence created from one folder-imported MediaAsset or a
+confirmed eligible batch. It points to the imported MediaAsset as
+`snapshot_media_asset_id` and remains evidence until explicit promotion and
+later review/correction.
 
 ## Source Connection Status
 

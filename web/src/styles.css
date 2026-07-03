@@ -699,6 +699,7 @@ button {
 .folder-import-result-panel,
 .folder-import-list,
 .folder-evidence-dry-run-panel,
+.folder-evidence-batch-create-panel,
 .folder-evidence-dry-run-list,
 .folder-import-file-card {
   display: grid;
@@ -797,6 +798,11 @@ button {
   border-radius: 8px;
   padding: 12px;
   background: #f5f9fd;
+}
+
+.folder-evidence-batch-create-panel {
+  border-top: 1px solid #d7e3ec;
+  padding-top: 12px;
 }
 
 .folder-evidence-dry-run-list {

@@ -38,6 +38,8 @@ from mockingbird.api.schemas import (
     Event,
     EventDetail,
     FolderImportCreate,
+    FolderImportEvidenceBatchCreateRequest,
+    FolderImportEvidenceBatchCreateResponse,
     FolderImportEvidenceBatchDryRunRequest,
     FolderImportEvidenceBatchDryRunResponse,
     FolderImportPreview,
@@ -630,6 +632,21 @@ def _folder_import_evidence_dry_run_error(error: ValueError) -> HTTPException:
         return HTTPException(
             status_code=400,
             detail="Choose MediaAssets, Source, or Stream for this folder evidence dry run.",
+        )
+    return _motion_evidence_error(error)
+
+
+def _folder_import_evidence_batch_create_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "batch_create_requires_confirmation":
+        return HTTPException(
+            status_code=400,
+            detail="Confirm this folder evidence batch before creating pending MotionEvidence.",
+        )
+    if reason == "batch_dry_run_requires_selection":
+        return HTTPException(
+            status_code=400,
+            detail="Choose MediaAssets, Source, or Stream for this folder evidence batch.",
         )
     return _motion_evidence_error(error)
 
@@ -1625,6 +1642,22 @@ async def dry_run_folder_import_evidence_batch(
         )
     except ValueError as error:
         raise _folder_import_evidence_dry_run_error(error) from error
+
+
+@app.post(
+    "/api/folder-import/evidence/batch",
+    response_model=FolderImportEvidenceBatchCreateResponse,
+)
+async def create_folder_import_evidence_batch(
+    payload: FolderImportEvidenceBatchCreateRequest | None = None,
+) -> FolderImportEvidenceBatchCreateResponse:
+    # Confirmed batch handoff creates pending evidence only.
+    try:
+        return get_repository().create_folder_import_evidence_batch(
+            payload or FolderImportEvidenceBatchCreateRequest(),
+        )
+    except ValueError as error:
+        raise _folder_import_evidence_batch_create_error(error) from error
 
 
 @app.post("/api/media/{media_id}/cleanup-preview", response_model=SavedMediaCleanupResponse)

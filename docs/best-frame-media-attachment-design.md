@@ -73,6 +73,10 @@ label, or truth.
 Phase 13H adds a batch dry-run/report for folder-imported MediaAssets. It
 reports possible evidence handoff outcomes without creating MotionEvidence,
 Events, Visits, labels, or truth.
+Phase 13I can create pending MotionEvidence in a confirmed batch, using
+folder-imported MediaAssets as `snapshot_media_asset_id` evidence context. The
+attachment still creates no Event, Visit, label, reviewed status, export truth,
+dataset coverage truth, or species truth.
 After explicit promotion, saved preview media can remain visible as review
 context on Event/Visit detail. It still does not confirm labels, reviewed status,
 export readiness, or dataset truth.

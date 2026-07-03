@@ -139,6 +139,10 @@ correction remains the truth boundary.
 Phase 13H adds a batch dry-run before any batch creation path. The dry-run can
 report which folder-imported MediaAssets would be eligible, but promotion still
 requires actual pending MotionEvidence and remains explicit.
+Phase 13I can create those eligible pending MotionEvidence records after
+confirmation. Batch-created folder evidence still uses this same explicit
+promotion route; no Event, Visit, label, reviewed status, or truth is created by
+batch creation itself.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

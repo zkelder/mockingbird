@@ -2,7 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
+  FolderImportEvidenceBatchCreateResponse,
   FolderImportEvidenceBatchDryRunResponse,
+  FolderImportEvidenceBatchDryRunRequest,
   FolderImportPreviewRequest,
   FolderImportPreviewResponse,
   FolderImportCreatedMediaAsset,
@@ -137,6 +139,10 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const [folderImportResult, setFolderImportResult] = useState<FolderImportResponse | null>(null);
   const [folderEvidenceDryRunResult, setFolderEvidenceDryRunResult] =
     useState<FolderImportEvidenceBatchDryRunResponse | null>(null);
+  const [folderEvidenceDryRunRequest, setFolderEvidenceDryRunRequest] =
+    useState<FolderImportEvidenceBatchDryRunRequest | null>(null);
+  const [folderEvidenceBatchCreateResult, setFolderEvidenceBatchCreateResult] =
+    useState<FolderImportEvidenceBatchCreateResponse | null>(null);
   const [folderEvidenceResults, setFolderEvidenceResults] = useState<
     Record<string, SavedPreviewMotionEvidenceResponse>
   >({});
@@ -152,12 +158,17 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const [folderPreviewError, setFolderPreviewError] = useState<string | null>(null);
   const [folderImportError, setFolderImportError] = useState<string | null>(null);
   const [folderEvidenceDryRunError, setFolderEvidenceDryRunError] = useState<string | null>(null);
+  const [folderEvidenceBatchCreateError, setFolderEvidenceBatchCreateError] = useState<
+    string | null
+  >(null);
   const [isFetchingPreview, setIsFetchingPreview] = useState(false);
   const [isSavingPreview, setIsSavingPreview] = useState(false);
   const [isCreatingPreviewEvidence, setIsCreatingPreviewEvidence] = useState(false);
   const [isPreviewingFolderImport, setIsPreviewingFolderImport] = useState(false);
   const [isImportingFolderMedia, setIsImportingFolderMedia] = useState(false);
   const [isDryRunningFolderEvidence, setIsDryRunningFolderEvidence] = useState(false);
+  const [isCreatingFolderEvidenceBatch, setIsCreatingFolderEvidenceBatch] = useState(false);
+  const [folderEvidenceBatchConfirmed, setFolderEvidenceBatchConfirmed] = useState(false);
   const [folderEvidenceLoadingId, setFolderEvidenceLoadingId] = useState<string | null>(null);
   const [isSavingSetup, setIsSavingSetup] = useState(false);
 
@@ -257,9 +268,12 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setFolderPreviewResult(null);
     setFolderImportResult(null);
     setFolderEvidenceDryRunResult(null);
+    setFolderEvidenceDryRunRequest(null);
+    setFolderEvidenceBatchCreateResult(null);
     setFolderPreviewError(null);
     setFolderImportError(null);
     setFolderEvidenceDryRunError(null);
+    setFolderEvidenceBatchCreateError(null);
     setFolderEvidenceResults({});
     setFolderEvidenceErrors({});
     setIsFetchingPreview(false);
@@ -268,6 +282,8 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setIsPreviewingFolderImport(false);
     setIsImportingFolderMedia(false);
     setIsDryRunningFolderEvidence(false);
+    setIsCreatingFolderEvidenceBatch(false);
+    setFolderEvidenceBatchConfirmed(false);
     setFolderEvidenceLoadingId(null);
   }, [selectedSourceId, selectedConfiguration?.provider_key]);
 
@@ -471,7 +487,11 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setFolderPreviewResult(null);
     setFolderImportResult(null);
     setFolderEvidenceDryRunResult(null);
+    setFolderEvidenceDryRunRequest(null);
+    setFolderEvidenceBatchCreateResult(null);
     setFolderEvidenceDryRunError(null);
+    setFolderEvidenceBatchCreateError(null);
+    setFolderEvidenceBatchConfirmed(false);
     setFolderEvidenceResults({});
     setFolderEvidenceErrors({});
     setFolderEvidenceLoadingId(null);
@@ -522,7 +542,11 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setFolderImportError(null);
     setFolderImportResult(null);
     setFolderEvidenceDryRunResult(null);
+    setFolderEvidenceDryRunRequest(null);
+    setFolderEvidenceBatchCreateResult(null);
     setFolderEvidenceDryRunError(null);
+    setFolderEvidenceBatchCreateError(null);
+    setFolderEvidenceBatchConfirmed(false);
     setFolderEvidenceResults({});
     setFolderEvidenceErrors({});
     setFolderEvidenceLoadingId(null);
@@ -547,14 +571,20 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setIsDryRunningFolderEvidence(true);
     setFolderEvidenceDryRunError(null);
     setFolderEvidenceDryRunResult(null);
+    setFolderEvidenceBatchCreateResult(null);
+    setFolderEvidenceBatchCreateError(null);
+    setFolderEvidenceBatchConfirmed(false);
     try {
-      const result = await apiClient.dryRunFolderImportEvidence({
+      const requestPayload: FolderImportEvidenceBatchDryRunRequest = {
         media_asset_ids: folderImportResult.imported.map((item) => item.media_asset_id),
         duplicate_policy: "skip_existing",
         max_items: folderImportResult.imported.length,
-      });
+      };
+      const result = await apiClient.dryRunFolderImportEvidence(requestPayload);
+      setFolderEvidenceDryRunRequest(requestPayload);
       setFolderEvidenceDryRunResult(result);
     } catch (caught) {
+      setFolderEvidenceDryRunRequest(null);
       setFolderEvidenceDryRunError(
         caught instanceof Error ? caught.message : "Could not dry-run evidence handoff.",
       );
@@ -563,12 +593,57 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     }
   }
 
+  async function handleCreateFolderEvidenceBatch() {
+    if (!folderEvidenceDryRunResult || !folderEvidenceDryRunRequest) {
+      setFolderEvidenceBatchCreateError("Dry-run eligible media before batch creation.");
+      return;
+    }
+    if (!folderEvidenceBatchConfirmed) {
+      setFolderEvidenceBatchCreateError("Confirm this batch before creating pending evidence.");
+      return;
+    }
+
+    const eligibleMediaIds = folderEvidenceDryRunResult.items
+      .filter((item) => item.would_create_motion_evidence)
+      .map((item) => item.media_asset_id);
+    if (eligibleMediaIds.length === 0) {
+      setFolderEvidenceBatchCreateError("No eligible MediaAssets are available to create.");
+      return;
+    }
+
+    setIsCreatingFolderEvidenceBatch(true);
+    setFolderEvidenceBatchCreateError(null);
+    setFolderEvidenceBatchCreateResult(null);
+    try {
+      const result = await apiClient.createFolderImportEvidenceBatch({
+        ...folderEvidenceDryRunRequest,
+        media_asset_ids: eligibleMediaIds,
+        max_items: eligibleMediaIds.length,
+        confirm: true,
+        note: "Folder import batch evidence handoff.",
+        reason: "User confirmed eligible folder-imported media from batch dry-run.",
+      });
+      setFolderEvidenceBatchCreateResult(result);
+      setFolderEvidenceBatchConfirmed(false);
+    } catch (caught) {
+      setFolderEvidenceBatchCreateError(
+        caught instanceof Error ? caught.message : "Could not create pending evidence batch.",
+      );
+    } finally {
+      setIsCreatingFolderEvidenceBatch(false);
+    }
+  }
+
   async function handleCreateMotionEvidenceFromFolderImport(
     item: FolderImportCreatedMediaAsset,
   ) {
     setFolderEvidenceLoadingId(item.media_asset_id);
     setFolderEvidenceDryRunResult(null);
+    setFolderEvidenceDryRunRequest(null);
+    setFolderEvidenceBatchCreateResult(null);
     setFolderEvidenceDryRunError(null);
+    setFolderEvidenceBatchCreateError(null);
+    setFolderEvidenceBatchConfirmed(false);
     setFolderEvidenceErrors((current) => {
       const next = { ...current };
       delete next[item.media_asset_id];
@@ -624,6 +699,9 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const selectedFirstStream = selectedSourceStreams[0] ?? null;
   const canSavePreview =
     previewResult?.status === "available" && Boolean(previewResult.preview_data_url);
+  const folderEvidenceDryRunEligibleCount =
+    folderEvidenceDryRunResult?.items.filter((item) => item.would_create_motion_evidence).length ??
+    0;
   const nextActionTitle = selectedSetupReview
     ? selectedSetupReview.readiness_level === "demo_ready"
       ? "Next: open Stream Detail and draw Zones."
@@ -1327,6 +1405,145 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                                     ) : null}
                                   </article>
                                 ))}
+                              </div>
+                              <div className="folder-evidence-batch-create-panel">
+                                <div className="item-title-row">
+                                  <strong>Confirmed batch creation</strong>
+                                  <StatusPill
+                                    label={`${folderEvidenceDryRunEligibleCount} eligible`}
+                                    tone={
+                                      folderEvidenceDryRunEligibleCount > 0 ? "good" : "quiet"
+                                    }
+                                  />
+                                </div>
+                                <label className="checkbox-row">
+                                  <input
+                                    checked={folderEvidenceBatchConfirmed}
+                                    disabled={folderEvidenceDryRunEligibleCount === 0}
+                                    onChange={(event) =>
+                                      setFolderEvidenceBatchConfirmed(event.target.checked)
+                                    }
+                                    type="checkbox"
+                                  />
+                                  Confirm eligible media
+                                </label>
+                                <div className="folder-evidence-action">
+                                  <button
+                                    className="primary-action"
+                                    disabled={
+                                      isCreatingFolderEvidenceBatch ||
+                                      !folderEvidenceBatchConfirmed ||
+                                      folderEvidenceDryRunEligibleCount === 0
+                                    }
+                                    onClick={() => void handleCreateFolderEvidenceBatch()}
+                                    type="button"
+                                  >
+                                    {isCreatingFolderEvidenceBatch
+                                      ? "Creating pending evidence..."
+                                      : "Create pending evidence for eligible media"}
+                                  </button>
+                                  <span className="meta-text">
+                                    Creates pending MotionEvidence only. No Events, Visits, labels,
+                                    or truth are created.
+                                  </span>
+                                </div>
+                                {folderEvidenceBatchCreateError ? (
+                                  <div className="zone-error">
+                                    {folderEvidenceBatchCreateError}
+                                  </div>
+                                ) : null}
+                                {folderEvidenceBatchCreateResult ? (
+                                  <div className="folder-evidence-result">
+                                    <strong>{folderEvidenceBatchCreateResult.message}</strong>
+                                    <div className="folder-import-summary-grid">
+                                      <div>
+                                        <span>Created</span>
+                                        <strong>
+                                          {folderEvidenceBatchCreateResult.created_count}
+                                        </strong>
+                                      </div>
+                                      <div>
+                                        <span>Skipped</span>
+                                        <strong>
+                                          {folderEvidenceBatchCreateResult.skipped_count}
+                                        </strong>
+                                      </div>
+                                      <div>
+                                        <span>Duplicates skipped</span>
+                                        <strong>
+                                          {
+                                            folderEvidenceBatchCreateResult.duplicate_skipped_count
+                                          }
+                                        </strong>
+                                      </div>
+                                      <div>
+                                        <span>Items</span>
+                                        <strong>
+                                          {folderEvidenceBatchCreateResult.total_items}
+                                        </strong>
+                                      </div>
+                                    </div>
+                                    {folderEvidenceBatchCreateResult.warnings.length > 0 ? (
+                                      <div className="source-warning-list">
+                                        {folderEvidenceBatchCreateResult.warnings.map((warning) => (
+                                          <span key={warning}>{warning}</span>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                    <div className="folder-evidence-dry-run-list">
+                                      {folderEvidenceBatchCreateResult.items.map((item) => (
+                                        <article
+                                          className="folder-import-file-card"
+                                          key={`${item.media_asset_id}-${
+                                            item.motion_evidence_id ?? item.skip_reason ?? "batch"
+                                          }`}
+                                        >
+                                          <div className="item-title-row">
+                                            <strong>{item.media_asset_id}</strong>
+                                            <StatusPill
+                                              label={
+                                                item.created
+                                                  ? "Created"
+                                                  : formatLabel(item.skip_reason ?? "Skipped")
+                                              }
+                                              tone={item.created ? "good" : "quiet"}
+                                            />
+                                          </div>
+                                          <div className="source-connection-meta">
+                                            {item.motion_evidence_id ? (
+                                              <span>
+                                                MotionEvidence: {item.motion_evidence_id}
+                                              </span>
+                                            ) : null}
+                                            {item.stream_id ? (
+                                              <span>Stream: {item.stream_id}</span>
+                                            ) : null}
+                                            {item.zone_id ? (
+                                              <span>Zone: {item.zone_id}</span>
+                                            ) : null}
+                                            {item.existing_motion_evidence_id ? (
+                                              <span>
+                                                Existing MotionEvidence:{" "}
+                                                {item.existing_motion_evidence_id}
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                          {item.warnings.length > 0 ? (
+                                            <div className="source-warning-list">
+                                              {item.warnings.map((warning) => (
+                                                <span key={warning}>{warning}</span>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                        </article>
+                                      ))}
+                                    </div>
+                                    <span className="meta-text">
+                                      Open Motion Evidence to review, ignore, or promote created
+                                      pending evidence.
+                                    </span>
+                                  </div>
+                                ) : null}
                               </div>
                             </>
                           ) : null}

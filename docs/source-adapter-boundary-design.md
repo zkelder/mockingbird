@@ -116,6 +116,11 @@ handoff. It evaluates already-imported media only, reports duplicate/skip/privac
 outcomes, and creates no MotionEvidence, Event, Visit, ReviewLabel,
 analytics/export truth, model output, folder scan, import, worker, or runtime
 dependency.
+Phase 13I adds confirmed batch creation for eligible folder-imported
+MediaAssets. The handoff remains explicit and under Source/Stream contracts: it
+creates pending MotionEvidence only and still creates no Event, Visit,
+ReviewLabel, analytics/export truth, model output, folder scan, import, worker,
+or runtime dependency.
 
 ## Explicit Non-Recommended First Adapters
 

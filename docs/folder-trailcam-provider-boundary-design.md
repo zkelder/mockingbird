@@ -37,14 +37,18 @@ Phase 13H adds a batch evidence handoff dry-run/report for already-imported
 folder MediaAssets. It creates no MotionEvidence, Events, Visits, labels, or
 truth, and it does not scan folders, import media, decode media, or call model
 runtimes.
+Phase 13I adds confirmed batch creation of pending MotionEvidence from eligible
+folder-imported MediaAssets. It still creates no Events, Visits, labels, or
+truth, and it does not scan folders, import media, decode media, or call model
+runtimes.
 
 ## Product Flow
 
 folder/trail-cam Source setup -> explicit folder selection/config metadata ->
 explicit dry-run preview -> candidate/skipped file report -> explicit import ->
 MediaAssets -> optional batch evidence dry-run -> optional explicit
-single-media pending MotionEvidence handoff -> explicit promotion ->
-review/correction -> analytics/exports/classifier readiness.
+single-media or confirmed batch pending MotionEvidence handoff -> explicit
+promotion -> review/correction -> analytics/exports/classifier readiness.
 
 ## Provider Definition
 

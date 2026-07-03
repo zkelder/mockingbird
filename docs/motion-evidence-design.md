@@ -285,6 +285,14 @@ batch evidence creation exists. It reports eligible items, duplicate skips,
 missing local media, privacy/ignore zone blocks, and context mismatches, while
 creating no MotionEvidence, Event, Visit, ReviewLabel, model output, or truth.
 
+## Phase 13I Status
+
+Phase 13I adds confirmed batch creation of pending MotionEvidence from eligible
+folder-imported MediaAssets. It reuses the dry-run eligibility boundary, skips
+duplicates by default, attaches each MediaAsset through `snapshot_media_asset_id`,
+and creates no Event, Visit, ReviewLabel, reviewed status, model output, or
+truth.
+
 ## Phase 12A Status
 
 Phase 12A adds source/stream smoke coverage around saved-preview-origin

@@ -5,7 +5,8 @@
 Phase 13D imports folder/trail-cam files as local MediaAssets only. Phase 13E
 exposes explicit preview/import UI for those files. Phase 13G adds explicit
 single-media handoff to pending MotionEvidence. Phase 13H adds a batch dry-run
-report before any future batch creation.
+report before any future batch creation. Phase 13I adds confirmed batch
+creation of pending MotionEvidence for eligible folder-imported MediaAssets.
 
 Folder-imported MediaAssets are local media context. They are not evidence,
 Events, Visits, labels, classifier examples, analytics truth, export truth, or
@@ -14,18 +15,18 @@ reviewed truth by themselves.
 Users can now review imported trail-cam media as possible outdoor activity by
 explicitly creating one pending MotionEvidence record from one folder-imported
 MediaAsset. They can also dry-run a batch handoff report for imported
-MediaAssets. This design records those handoffs while keeping batch creation,
-promotion, correction, and truth separate.
+MediaAssets and confirm batch creation for eligible items. This design records
+those handoffs while keeping promotion, correction, and truth separate.
 
 ## Product Flow
 
 folder_import_future Source setup -> folder import preview -> explicit import
 to MediaAssets -> optional batch evidence dry-run -> user chooses imported
-media -> explicit "create pending evidence" -> pending MotionEvidence ->
+media or confirms eligible batch -> explicit "create pending evidence" -> pending MotionEvidence ->
 explicit ignore or promote -> Event/Visit review -> user correction -> ReviewLabel truth ->
 analytics/exports/classifier readiness.
 
-## Current Behavior After Phase 13H
+## Current Behavior After Phase 13I
 
 - Folder preview is an explicit dry run.
 - Folder import is explicit.
@@ -34,9 +35,12 @@ analytics/exports/classifier readiness.
 - Folder import itself creates no MotionEvidence.
 - One folder-imported MediaAsset can become one pending MotionEvidence only
   through explicit user action.
-- Batch evidence handoff has a dry-run report only.
+- Batch evidence handoff has a dry-run report and confirmed create action.
 - The batch dry-run can report eligible, duplicate, skipped, privacy/ignore,
   missing-file, and context-mismatch cases.
+- Confirmed batch creation can create pending MotionEvidence for eligible
+  folder-imported MediaAssets only.
+- Batch creation skips duplicates by default and reports skipped items.
 - No Event is created.
 - No Visit is created.
 - No ReviewLabel is created.
@@ -115,6 +119,26 @@ The dry-run action:
 - creates no truth
 - performs no folder scan, media import, decoding, or model runtime call
 
+Implemented batch creation route:
+
+```text
+POST /api/folder-import/evidence/batch
+```
+
+The confirmed batch action:
+
+- requires explicit confirmation
+- reuses the batch dry-run eligibility rules
+- creates pending MotionEvidence for eligible folder-imported MediaAssets only
+- sets `snapshot_media_asset_id`
+- preserves Source/Stream/Zone context
+- skips duplicates by default
+- reports skipped items with reasons
+- creates no Event/Visit
+- creates no ReviewLabel
+- creates no truth
+- performs no folder scan, media import, decoding, URL fetch, or model runtime call
+
 ## Eligibility Policy
 
 Eligible media:
@@ -190,17 +214,19 @@ Current Phase 13H behavior:
 - cap dry-run size
 - create no product records
 
-Future batch creation options:
+Current Phase 13I behavior:
 
 - create pending evidence for selected imported MediaAssets
-- require dry-run review first
+- require explicit confirmation
+- reuse dry-run eligibility
 - skip existing evidence by default
 - show counts and skipped reasons
 - create no Event/Visit automatically
 - create no labels automatically
 - include max batch size safeguards
 
-Phase 13H does not implement batch creation.
+Phase 13I implements batch creation of pending MotionEvidence only. Promotion,
+Event/Visit creation, and ReviewLabel truth remain explicit later steps.
 
 ## Duplicate Evidence Policy
 

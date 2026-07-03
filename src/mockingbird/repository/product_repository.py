@@ -93,6 +93,9 @@ from mockingbird.api.schemas import (
     ExportStatus,
     FolderImportCandidate,
     FolderImportCreate,
+    FolderImportEvidenceBatchCreateItem,
+    FolderImportEvidenceBatchCreateRequest,
+    FolderImportEvidenceBatchCreateResponse,
     FolderImportEvidenceBatchDryRunItem,
     FolderImportEvidenceBatchDryRunRequest,
     FolderImportEvidenceBatchDryRunResponse,
@@ -2441,6 +2444,99 @@ class ProductRepository:
             creates_visits=False,
             creates_truth=False,
             warnings=warnings,
+        )
+
+    def create_folder_import_evidence_batch(
+        self,
+        payload: FolderImportEvidenceBatchCreateRequest,
+    ) -> FolderImportEvidenceBatchCreateResponse:
+        if not payload.confirm:
+            raise ValueError("batch_create_requires_confirmation")
+
+        duplicate_policy = _clean_optional_text(payload.duplicate_policy) or "skip_existing"
+        if duplicate_policy not in {"skip_existing", "allow_duplicate"}:
+            raise ValueError("unsupported_duplicate_policy")
+
+        dry_run = self.dry_run_folder_import_evidence_batch(
+            FolderImportEvidenceBatchDryRunRequest(
+                media_asset_ids=payload.media_asset_ids,
+                source_id=payload.source_id,
+                stream_id=payload.stream_id,
+                zone_id=payload.zone_id,
+                duplicate_policy=duplicate_policy,
+                max_items=payload.max_items,
+            )
+        )
+
+        items: list[FolderImportEvidenceBatchCreateItem] = []
+        for dry_run_item in dry_run.items:
+            if not dry_run_item.would_create_motion_evidence:
+                items.append(
+                    FolderImportEvidenceBatchCreateItem(
+                        media_asset_id=dry_run_item.media_asset_id,
+                        motion_evidence_id=None,
+                        source_id=dry_run_item.source_id,
+                        stream_id=dry_run_item.stream_id,
+                        zone_id=dry_run_item.zone_id,
+                        created=False,
+                        duplicate_skipped=dry_run_item.duplicate_skipped,
+                        existing_motion_evidence_id=dry_run_item.existing_motion_evidence_id,
+                        skip_reason=dry_run_item.skip_reason,
+                        warnings=dry_run_item.warnings,
+                    )
+                )
+                continue
+
+            result = self.create_motion_evidence_from_saved_media(
+                dry_run_item.media_asset_id,
+                SavedPreviewMotionEvidenceRequest(
+                    stream_id=dry_run_item.stream_id,
+                    zone_id=dry_run_item.zone_id,
+                    note=payload.note,
+                    reason=payload.reason,
+                    duplicate_policy=duplicate_policy,
+                ),
+            )
+            warnings = _unique_strings([*dry_run_item.warnings, *result.warnings])
+            items.append(
+                FolderImportEvidenceBatchCreateItem(
+                    media_asset_id=dry_run_item.media_asset_id,
+                    motion_evidence_id=(
+                        None if result.duplicate_skipped else result.evidence.id
+                    ),
+                    source_id=result.evidence.source_id,
+                    stream_id=result.evidence.stream_id,
+                    zone_id=result.evidence.zone_id,
+                    created=not result.duplicate_skipped,
+                    duplicate_skipped=result.duplicate_skipped,
+                    existing_motion_evidence_id=result.existing_motion_evidence_id,
+                    skip_reason="duplicate_evidence" if result.duplicate_skipped else None,
+                    warnings=warnings,
+                )
+            )
+
+        created_count = sum(1 for item in items if item.created)
+        duplicate_skipped_count = sum(1 for item in items if item.duplicate_skipped)
+        return FolderImportEvidenceBatchCreateResponse(
+            items=items,
+            total_items=len(items),
+            created_count=created_count,
+            skipped_count=len(items) - created_count,
+            duplicate_skipped_count=duplicate_skipped_count,
+            creates_motion_evidence=created_count > 0,
+            creates_events=False,
+            creates_visits=False,
+            creates_truth=False,
+            message=(
+                "Created pending MotionEvidence from eligible folder-imported media. "
+                "No Events, Visits, labels, or truth were created."
+                if created_count > 0
+                else (
+                    "No pending MotionEvidence was created. "
+                    "No Events, Visits, labels, or truth were created."
+                )
+            ),
+            warnings=dry_run.warnings,
         )
 
     def _folder_import_evidence_batch_dry_run_item(
@@ -7533,6 +7629,17 @@ def _merge_notes(existing_notes: str | None, new_notes: str) -> str:
     if not existing_notes:
         return new_notes
     return f"{existing_notes}\n{new_notes}"
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return unique
 
 
 def _clean_optional_text(value: str | None) -> str | None:

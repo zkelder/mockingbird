@@ -427,6 +427,46 @@ class FolderImportEvidenceBatchDryRunResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class FolderImportEvidenceBatchCreateRequest(BaseModel):
+    media_asset_ids: list[str] | None = None
+    source_id: str | None = None
+    stream_id: str | None = None
+    zone_id: str | None = None
+    duplicate_policy: str = "skip_existing"
+    max_items: int | None = Field(default=100, ge=1)
+    confirm: bool = False
+    note: str | None = None
+    reason: str | None = None
+
+
+class FolderImportEvidenceBatchCreateItem(BaseModel):
+    media_asset_id: str
+    motion_evidence_id: str | None = None
+    source_id: str | None = None
+    stream_id: str | None = None
+    zone_id: str | None = None
+    created: bool
+    duplicate_skipped: bool = False
+    existing_motion_evidence_id: str | None = None
+    skip_reason: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FolderImportEvidenceBatchCreateResponse(BaseModel):
+    # Confirmed batch handoff creates pending evidence only; correction remains truth.
+    items: list[FolderImportEvidenceBatchCreateItem]
+    total_items: int = Field(ge=0)
+    created_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    duplicate_skipped_count: int = Field(ge=0)
+    creates_motion_evidence: bool
+    creates_events: bool = False
+    creates_visits: bool = False
+    creates_truth: bool = False
+    message: str
+    warnings: list[str] = Field(default_factory=list)
+
+
 class SavedMediaRetentionItem(BaseModel):
     # Retention reporting classifies storage risk without changing truth.
     media_asset_id: str
