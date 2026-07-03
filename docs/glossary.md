@@ -34,6 +34,13 @@ MockingBird media storage through explicit user action. It has safe relative
 source provenance and Stream context, but it is not MotionEvidence, an
 Event/Visit, or reviewed truth.
 
+## Folder Import UI
+
+The Streams page surface for explicitly previewing configured folder candidates
+and importing previewed files as MediaAssets only. It does not watch folders,
+provide live playback, create evidence, create Events/Visits, or create reviewed
+truth.
+
 ## Source Connection Status
 
 A read-only product contract describing Source provider readiness and related

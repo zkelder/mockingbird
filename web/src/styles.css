@@ -553,6 +553,7 @@ button {
 }
 
 .source-setup-summary select,
+.source-setup-summary textarea,
 .source-setup-form input,
 .source-setup-form select {
   min-height: 40px;
@@ -561,6 +562,11 @@ button {
   padding: 8px 10px;
   background: #ffffff;
   color: #18231d;
+}
+
+.source-setup-summary textarea {
+  min-height: 86px;
+  resize: vertical;
 }
 
 .source-setup-copy p {
@@ -686,6 +692,83 @@ button {
   width: 100%;
   max-height: 280px;
   object-fit: contain;
+}
+
+.folder-source-import-panel,
+.folder-import-preview-result,
+.folder-import-result-panel,
+.folder-import-list,
+.folder-import-file-card {
+  display: grid;
+  gap: 10px;
+}
+
+.folder-source-import-panel,
+.folder-import-preview-result,
+.folder-import-result-panel {
+  border: 1px solid #d8e2d3;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.folder-source-import-panel p,
+.folder-import-preview-result p,
+.folder-import-result-panel p {
+  margin: 0;
+}
+
+.folder-import-result-panel {
+  border-color: #b9d7c8;
+  background: #f6fbf7;
+}
+
+.folder-import-control-grid,
+.folder-import-summary-grid,
+.folder-import-list-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.folder-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.folder-import-summary-grid div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.folder-import-summary-grid span,
+.folder-import-file-card span {
+  color: #627168;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.folder-import-summary-grid strong,
+.folder-import-file-card strong,
+.folder-import-file-card span {
+  overflow-wrap: anywhere;
+}
+
+.folder-import-list {
+  align-content: start;
+}
+
+.folder-import-file-card {
+  border: 1px solid #e2e8de;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
 }
 
 .source-streams-panel {
@@ -3460,6 +3543,9 @@ button {
   .source-selector-row,
   .source-setup-layout,
   .source-stream-grid,
+  .folder-import-control-grid,
+  .folder-import-list-grid,
+  .folder-import-summary-grid,
   .split-grid,
   .folder-import-layout,
   .manual-import-layout,

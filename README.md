@@ -115,6 +115,9 @@ explicit source-scoped dry-run preview and MediaAsset-only import:
 `folder_import_future` stores redacted setup metadata, reports readiness, and
 can list candidate/skipped files or copy supported selected/candidate files into
 local MediaAssets without creating truth.
+The Streams page exposes those preview/import actions for configured
+`folder_import_future` Sources, showing candidates, skips, warnings, and created
+MediaAssets without exposing the raw folder path.
 It still adds no watcher, polling, live playback, media decoding, or background
 import behavior. Folder-imported MediaAssets require a future explicit
 evidence/review handoff before they can become MotionEvidence, Events, Visits,

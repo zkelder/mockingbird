@@ -26,10 +26,14 @@ import type {
   ExternalUrlPreviewResponse,
   ExternalUrlPreviewSaveRequest,
   ExternalUrlPreviewSaveResponse,
-  FolderImportCreate,
+  FolderImportRequest,
+  FolderImportResponse,
+  LegacyFolderImportCreate,
   FolderImportPreview,
   FolderImportPreviewRequest,
+  FolderImportPreviewResponse,
   FolderImportResult,
+  LegacyFolderImportPreviewRequest,
   HealthStatus,
   LocalDataStatus,
   MediaAsset,
@@ -116,6 +120,58 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+function previewFolderImport(
+  sourceId: string,
+  payload?: FolderImportPreviewRequest,
+): Promise<FolderImportPreviewResponse>;
+function previewFolderImport(
+  payload: LegacyFolderImportPreviewRequest,
+): Promise<FolderImportPreview>;
+function previewFolderImport(
+  sourceIdOrPayload: string | LegacyFolderImportPreviewRequest,
+  payload: FolderImportPreviewRequest = {},
+) {
+  if (typeof sourceIdOrPayload === "string") {
+    return request<FolderImportPreviewResponse>(
+      `/api/sources/${encodeURIComponent(sourceIdOrPayload)}/folder-import/preview`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  }
+
+  return request<FolderImportPreview>("/api/media/folder-preview", {
+    method: "POST",
+    body: JSON.stringify(sourceIdOrPayload),
+  });
+}
+
+function importFolderMedia(
+  sourceId: string,
+  payload?: FolderImportRequest,
+): Promise<FolderImportResponse>;
+function importFolderMedia(payload: LegacyFolderImportCreate): Promise<FolderImportResult>;
+function importFolderMedia(
+  sourceIdOrPayload: string | LegacyFolderImportCreate,
+  payload: FolderImportRequest = {},
+) {
+  if (typeof sourceIdOrPayload === "string") {
+    return request<FolderImportResponse>(
+      `/api/sources/${encodeURIComponent(sourceIdOrPayload)}/folder-import`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  }
+
+  return request<FolderImportResult>("/api/media/folder-import", {
+    method: "POST",
+    body: JSON.stringify(sourceIdOrPayload),
+  });
 }
 
 export const apiClient = {
@@ -231,16 +287,8 @@ export const apiClient = {
       method: "POST",
       body: payload,
     }),
-  previewFolderImport: (payload: FolderImportPreviewRequest) =>
-    request<FolderImportPreview>("/api/media/folder-preview", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-  importFolderMedia: (payload: FolderImportCreate) =>
-    request<FolderImportResult>("/api/media/folder-import", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
+  previewFolderImport,
+  importFolderMedia,
   mediaFileUrl: (mediaId: string) => `${API_BASE_URL}/api/media/${encodeURIComponent(mediaId)}/file`,
   getModelAdapters: () => request<ModelAdapter[]>("/api/model-adapters"),
   getModelAdapter: (adapterId: string) =>

@@ -57,6 +57,8 @@ the explicit source-scoped import route that creates MediaAssets only. See
 Phase 13B represents this provider in configuration/status contracts. Phase 13C
 adds explicit dry-run preview parsing for `recursive` and `allowed_extensions`.
 Phase 13D uses the same metadata for explicit import-to-MediaAssets only.
+Phase 13E exposes preview/import actions in the Streams page UI after
+configuration, without exposing the raw folder path.
 `folder_path` is required and redacted to configured/not-configured in normal
 API/UI responses.
 
@@ -172,6 +174,8 @@ reviewable activity.
   source-scoped dry-run preview route.
 - Folder import can use stored `folder_path` only behind the explicit
   source-scoped import route, and it creates MediaAssets only.
+- Folder preview/import UI remains an explicit configured-Source action, not
+  automatic setup, status, or playback behavior.
 - Source connection status reflects configured and missing fields.
 - Stream playback remains honest and does not claim live playback.
 - Manual media setup points to explicit import/review, not live playback.

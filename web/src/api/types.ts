@@ -964,6 +964,99 @@ export interface SpeciesSuggestionStatusUpdateRequest {
 }
 
 export interface FolderImportPreviewRequest {
+  recursive?: boolean | null;
+  allowed_extensions?: string[] | null;
+  max_files?: number | null;
+  max_depth?: number | null;
+}
+
+export interface FolderImportPreviewCandidate {
+  relative_path: string;
+  file_name: string;
+  extension: string;
+  size_bytes?: number | null;
+  modified_at?: string | null;
+  planned_media_kind: string;
+  warnings: string[];
+}
+
+export interface FolderImportPreviewSkipped {
+  relative_path?: string | null;
+  file_name?: string | null;
+  reason: string;
+  message: string;
+}
+
+export interface FolderImportPreviewResponse {
+  source_id: string;
+  provider_key: string;
+  folder_configured: boolean;
+  recursive: boolean;
+  allowed_extensions: string[];
+  candidates: FolderImportPreviewCandidate[];
+  skipped: FolderImportPreviewSkipped[];
+  total_candidates: number;
+  total_skipped: number;
+  total_known_bytes: number;
+  unknown_size_count: number;
+  scanned_at: string;
+  dry_run: boolean;
+  creates_media_assets: boolean;
+  creates_events: boolean;
+  creates_visits: boolean;
+  creates_truth: boolean;
+  warnings: string[];
+}
+
+export interface FolderImportRequest {
+  recursive?: boolean | null;
+  allowed_extensions?: string[] | null;
+  max_files?: number | null;
+  max_depth?: number | null;
+  relative_paths?: string[] | null;
+  default_stream_id?: string | null;
+  default_zone_id?: string | null;
+  note?: string | null;
+  copy_mode?: string;
+}
+
+export interface FolderImportCreatedMediaAsset {
+  media_asset_id: string;
+  relative_source_path: string;
+  file_name: string;
+  content_type?: string | null;
+  size_bytes?: number | null;
+  stream_id?: string | null;
+  zone_id?: string | null;
+  warnings: string[];
+}
+
+export interface FolderImportSkipped {
+  relative_path?: string | null;
+  file_name?: string | null;
+  reason: string;
+  message: string;
+}
+
+export interface FolderImportResponse {
+  source_id: string;
+  provider_key: string;
+  imported: FolderImportCreatedMediaAsset[];
+  skipped: FolderImportSkipped[];
+  total_imported: number;
+  total_skipped: number;
+  total_bytes_copied: number;
+  imported_at: string;
+  copy_mode: string;
+  creates_media_assets: boolean;
+  creates_motion_evidence: boolean;
+  creates_events: boolean;
+  creates_visits: boolean;
+  creates_truth: boolean;
+  warnings: string[];
+}
+
+export interface LegacyFolderImportPreviewRequest {
   folder_path: string;
 }
 
@@ -988,7 +1081,7 @@ export interface FolderImportPreview {
   skipped_count: number;
 }
 
-export interface FolderImportCreate {
+export interface LegacyFolderImportCreate {
   folder_path: string;
   stream_id?: string | null;
   zone_id?: string | null;

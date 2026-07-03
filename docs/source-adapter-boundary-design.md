@@ -99,6 +99,9 @@ copies supported selected/candidate files into local media storage and records
 safe provenance, but still creates no MotionEvidence, Events, Visits, reviewed
 labels, exports, analytics truth, watcher, polling, decoding, or dependency
 behavior.
+Phase 13E exposes that explicit preview/import flow in the Streams page UI. It
+does not add a watcher, polling, background import, decoding, live playback, or
+truth creation path.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -243,6 +246,7 @@ Future implementation must test:
 - Phase 13B: folder/trail-cam provider configuration UI/status contract.
 - Phase 13C: folder import preview API, dry-run only.
 - Phase 13D: folder import implementation to MediaAssets only.
+- Phase 13E: folder import UI preview/import.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

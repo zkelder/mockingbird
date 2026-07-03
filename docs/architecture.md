@@ -139,6 +139,11 @@ MockingBird-managed local media storage, records safe relative-path provenance,
 and creates no MotionEvidence, Events, Visits, ReviewLabels, DatasetExports,
 SpeciesSuggestions, DetectionProposals, analytics/export truth, watcher,
 polling loop, media decoding, dependency, or model behavior.
+Phase 13E adds the Streams page UI for folder preview/import. The UI is an
+explicit local-media ingest surface: it previews candidate/skipped relative
+paths, imports previewed files as MediaAssets only, and leaves MotionEvidence,
+Events/Visits, labels, analytics/export truth, and review/correction to later
+explicit steps.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
@@ -161,7 +166,8 @@ trail-camera dumps, NAS folders, and exported image batches. It should follow
 before any folder evidence/review handoff, watcher, polling, truth-affecting
 behavior, or delete behavior is added.
 The current implementation layer for that provider is configuration/status plus
-explicit dry-run preview and explicit MediaAsset-only import.
+explicit dry-run preview, explicit MediaAsset-only import, and a compact Streams
+page UI for those actions.
 
 The Streams, Stream Detail, and Import Media surfaces present provider
 configuration, setup review, connection readiness, playback status, zone editing,

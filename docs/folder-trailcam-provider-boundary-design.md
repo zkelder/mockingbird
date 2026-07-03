@@ -23,6 +23,9 @@ Phase 13D adds explicit source-scoped folder import to local MediaAssets only.
 It copies supported selected/candidate files into MockingBird-managed local
 media storage and still creates no MotionEvidence, Events, Visits, labels, or
 truth.
+Phase 13E exposes those explicit preview/import actions in the Streams page UI.
+The backend boundary remains unchanged: preview is dry-run only, and import
+creates MediaAssets only.
 
 ## Product Flow
 
@@ -281,6 +284,11 @@ Future UI should provide:
 
 The UI should not imply live playback, continuous watching, automatic import, or
 camera-brand-specific behavior.
+
+Phase 13E implements the first compact UI surface for this contract on the
+Streams page. It previews candidates/skips on request, imports previewed
+relative paths as MediaAssets on request, hides the raw folder path, and keeps
+MotionEvidence/Event/Visit/review truth as a later explicit handoff.
 
 ## Testing Expectations
 

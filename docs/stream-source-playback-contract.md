@@ -74,6 +74,9 @@ and no live playback claim.
 Phase 13D explicit folder import can create MediaAssets linked to Source/Stream
 context. Those MediaAssets do not become live playback, MotionEvidence,
 Events/Visits, or truth without a later explicit handoff.
+Phase 13E exposes folder preview/import on the Streams page, but it does not
+change live playback support, preview URLs, playback status, or Stream Detail
+behavior.
 
 For `external_url` Sources, Phase 11C preview fetch is transient UI context.
 Playback status must not fetch URLs, store media, imply live playback, or persist
@@ -147,6 +150,8 @@ activity.
   media references.
 - Folder import creates MediaAssets only and does not change live playback
   support.
+- Folder import UI does not make folder/trail-cam Sources into live playback
+  providers.
 - The route does not create evidence, review truth, exports, analytics truth,
   media files, model artifacts, or adapter runtime calls.
 

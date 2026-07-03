@@ -2,6 +2,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
+  FolderImportPreviewRequest,
+  FolderImportPreviewResponse,
+  FolderImportRequest,
+  FolderImportResponse,
   ExternalUrlPreviewResponse,
   ExternalUrlPreviewSaveResponse,
   SavedPreviewMotionEvidenceResponse,
@@ -14,7 +18,7 @@ import type {
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatLabel } from "../utils";
+import { formatDateTime, formatLabel } from "../utils";
 
 interface StreamsPageProps {
   streams: Stream[];
@@ -73,6 +77,39 @@ function draftFromConfiguration(
   );
 }
 
+function formatBytes(bytes?: number | null): string {
+  if (bytes == null) {
+    return "Unknown size";
+  }
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function parseIntegerAtLeast(value: string, label: string, minimum: number): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < minimum) {
+    throw new Error(`${label} must be a whole number of at least ${minimum}.`);
+  }
+  return parsed;
+}
+
+function parseAllowedExtensions(value: string): string[] | null {
+  const extensions = value
+    .split(",")
+    .map((extension) => extension.trim())
+    .filter(Boolean);
+  return extensions.length > 0 ? extensions : null;
+}
+
 export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: StreamsPageProps) {
   const [connectionStatuses, setConnectionStatuses] = useState<
     Record<string, SourceConnectionStatus>
@@ -93,12 +130,24 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     useState<ExternalUrlPreviewSaveResponse | null>(null);
   const [previewEvidenceResult, setPreviewEvidenceResult] =
     useState<SavedPreviewMotionEvidenceResponse | null>(null);
+  const [folderPreviewResult, setFolderPreviewResult] =
+    useState<FolderImportPreviewResponse | null>(null);
+  const [folderImportResult, setFolderImportResult] = useState<FolderImportResponse | null>(null);
+  const [folderRecursive, setFolderRecursive] = useState(false);
+  const [folderAllowedExtensions, setFolderAllowedExtensions] = useState("jpg,jpeg,png,webp");
+  const [folderMaxFiles, setFolderMaxFiles] = useState("500");
+  const [folderMaxDepth, setFolderMaxDepth] = useState("1");
+  const [folderImportNote, setFolderImportNote] = useState("");
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewSaveError, setPreviewSaveError] = useState<string | null>(null);
   const [previewEvidenceError, setPreviewEvidenceError] = useState<string | null>(null);
+  const [folderPreviewError, setFolderPreviewError] = useState<string | null>(null);
+  const [folderImportError, setFolderImportError] = useState<string | null>(null);
   const [isFetchingPreview, setIsFetchingPreview] = useState(false);
   const [isSavingPreview, setIsSavingPreview] = useState(false);
   const [isCreatingPreviewEvidence, setIsCreatingPreviewEvidence] = useState(false);
+  const [isPreviewingFolderImport, setIsPreviewingFolderImport] = useState(false);
+  const [isImportingFolderMedia, setIsImportingFolderMedia] = useState(false);
   const [isSavingSetup, setIsSavingSetup] = useState(false);
 
   useEffect(() => {
@@ -194,9 +243,15 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setPreviewError(null);
     setPreviewSaveError(null);
     setPreviewEvidenceError(null);
+    setFolderPreviewResult(null);
+    setFolderImportResult(null);
+    setFolderPreviewError(null);
+    setFolderImportError(null);
     setIsFetchingPreview(false);
     setIsSavingPreview(false);
     setIsCreatingPreviewEvidence(false);
+    setIsPreviewingFolderImport(false);
+    setIsImportingFolderMedia(false);
   }, [selectedSourceId, selectedConfiguration?.provider_key]);
 
   useEffect(() => {
@@ -366,6 +421,93 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
       );
     } finally {
       setIsCreatingPreviewEvidence(false);
+    }
+  }
+
+  function buildFolderPreviewRequest(): FolderImportPreviewRequest {
+    return {
+      recursive: folderRecursive,
+      allowed_extensions: parseAllowedExtensions(folderAllowedExtensions),
+      max_files: parseIntegerAtLeast(folderMaxFiles, "Max files", 1),
+      max_depth: parseIntegerAtLeast(folderMaxDepth, "Max depth", 0),
+    };
+  }
+
+  async function handlePreviewFolderImport() {
+    if (!selectedSourceId) {
+      return;
+    }
+
+    let requestPayload: FolderImportPreviewRequest;
+    try {
+      requestPayload = buildFolderPreviewRequest();
+    } catch (caught) {
+      setFolderPreviewError(
+        caught instanceof Error ? caught.message : "Folder import preview settings are invalid.",
+      );
+      return;
+    }
+
+    setIsPreviewingFolderImport(true);
+    setFolderPreviewError(null);
+    setFolderImportError(null);
+    setFolderPreviewResult(null);
+    setFolderImportResult(null);
+    try {
+      const result = await apiClient.previewFolderImport(selectedSourceId, requestPayload);
+      setFolderPreviewResult(result);
+    } catch (caught) {
+      setFolderPreviewError(
+        caught instanceof Error ? caught.message : "Could not preview folder import.",
+      );
+    } finally {
+      setIsPreviewingFolderImport(false);
+    }
+  }
+
+  async function handleImportPreviewedFolderFiles() {
+    if (!selectedSourceId || !folderPreviewResult) {
+      return;
+    }
+    if (folderPreviewResult.candidates.length === 0) {
+      setFolderImportError("Preview has no supported files to import as MediaAssets.");
+      return;
+    }
+    if (!selectedFirstStream) {
+      setFolderImportError("Add Stream context before importing previewed files as MediaAssets.");
+      return;
+    }
+
+    let previewOptions: FolderImportPreviewRequest;
+    try {
+      previewOptions = buildFolderPreviewRequest();
+    } catch (caught) {
+      setFolderImportError(
+        caught instanceof Error ? caught.message : "Folder import settings are invalid.",
+      );
+      return;
+    }
+
+    const importPayload: FolderImportRequest = {
+      ...previewOptions,
+      relative_paths: folderPreviewResult.candidates.map((candidate) => candidate.relative_path),
+      default_stream_id: selectedFirstStream.id,
+      note: folderImportNote.trim() || null,
+      copy_mode: "copy_to_media_root",
+    };
+
+    setIsImportingFolderMedia(true);
+    setFolderImportError(null);
+    setFolderImportResult(null);
+    try {
+      const result = await apiClient.importFolderMedia(selectedSourceId, importPayload);
+      setFolderImportResult(result);
+    } catch (caught) {
+      setFolderImportError(
+        caught instanceof Error ? caught.message : "Could not import previewed folder files.",
+      );
+    } finally {
+      setIsImportingFolderMedia(false);
     }
   }
 
@@ -724,15 +866,350 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                 </div>
               ) : null}
               {isFolderImportProvider ? (
-                <div className="source-review-step">
+                <div className="folder-source-import-panel">
                   <div className="item-title-row">
-                    <strong>Folder / trail-cam import</strong>
-                    <StatusPill label="Metadata only" tone="quiet" />
+                    <h3>Folder import</h3>
+                    <StatusPill
+                      label={folderPreviewResult ? "Preview ready" : "Explicit"}
+                      tone={folderPreviewResult ? "good" : "quiet"}
+                    />
                   </div>
                   <p>
-                    Folder setup is saved as redacted metadata. MockingBird does not scan folders,
-                    import files, or provide live playback for this provider yet.
+                    Folder import is explicit. Preview scans the configured folder and creates no
+                    records. Import copies supported files into local media and creates MediaAssets
+                    only.
                   </p>
+                  <p className="meta-text">
+                    Review/evidence handoff is a future explicit step. No Events, Visits, labels,
+                    or truth are created here.
+                  </p>
+                  <div className="folder-import-control-grid">
+                    <label className="checkbox-row">
+                      <input
+                        checked={folderRecursive}
+                        onChange={(event) => {
+                          setFolderRecursive(event.target.checked);
+                          setFolderPreviewResult(null);
+                          setFolderImportResult(null);
+                        }}
+                        type="checkbox"
+                      />
+                      Recursive
+                    </label>
+                    <label>
+                      Allowed extensions
+                      <input
+                        onChange={(event) => {
+                          setFolderAllowedExtensions(event.target.value);
+                          setFolderPreviewResult(null);
+                          setFolderImportResult(null);
+                        }}
+                        value={folderAllowedExtensions}
+                      />
+                    </label>
+                    <label>
+                      Max files
+                      <input
+                        min="1"
+                        onChange={(event) => {
+                          setFolderMaxFiles(event.target.value);
+                          setFolderPreviewResult(null);
+                          setFolderImportResult(null);
+                        }}
+                        type="number"
+                        value={folderMaxFiles}
+                      />
+                    </label>
+                    <label>
+                      Max depth
+                      <input
+                        min="0"
+                        onChange={(event) => {
+                          setFolderMaxDepth(event.target.value);
+                          setFolderPreviewResult(null);
+                          setFolderImportResult(null);
+                        }}
+                        type="number"
+                        value={folderMaxDepth}
+                      />
+                    </label>
+                  </div>
+                  <label>
+                    Import note
+                    <textarea
+                      onChange={(event) => setFolderImportNote(event.target.value)}
+                      placeholder="optional local media context"
+                      value={folderImportNote}
+                    />
+                  </label>
+                  <div className="folder-import-actions">
+                    <button
+                      className="secondary-action"
+                      disabled={isPreviewingFolderImport}
+                      onClick={() => void handlePreviewFolderImport()}
+                      type="button"
+                    >
+                      {isPreviewingFolderImport
+                        ? "Previewing folder import..."
+                        : "Preview folder import"}
+                    </button>
+                    {folderPreviewResult ? (
+                      <button
+                        className="primary-action"
+                        disabled={
+                          isImportingFolderMedia ||
+                          folderPreviewResult.candidates.length === 0 ||
+                          !selectedFirstStream
+                        }
+                        onClick={() => void handleImportPreviewedFolderFiles()}
+                        type="button"
+                      >
+                        {isImportingFolderMedia
+                          ? "Importing as MediaAssets..."
+                          : "Import previewed files as MediaAssets"}
+                      </button>
+                    ) : null}
+                  </div>
+                  {selectedFirstStream ? (
+                    <span className="meta-text">
+                      Stream context: {selectedFirstStream.name}. Local media stays linked to this
+                      Source/Stream context.
+                    </span>
+                  ) : (
+                    <span className="meta-text">
+                      This Source has no related Stream yet, so import will wait for Stream context.
+                    </span>
+                  )}
+                  {folderPreviewError ? <div className="zone-error">{folderPreviewError}</div> : null}
+                  {folderImportError ? <div className="zone-error">{folderImportError}</div> : null}
+                  {folderPreviewResult ? (
+                    <div className="folder-import-preview-result">
+                      <div className="folder-import-summary-grid">
+                        <div>
+                          <span>Candidates</span>
+                          <strong>{folderPreviewResult.total_candidates}</strong>
+                        </div>
+                        <div>
+                          <span>Skipped</span>
+                          <strong>{folderPreviewResult.total_skipped}</strong>
+                        </div>
+                        <div>
+                          <span>Known bytes</span>
+                          <strong>{formatBytes(folderPreviewResult.total_known_bytes)}</strong>
+                        </div>
+                        <div>
+                          <span>Unknown sizes</span>
+                          <strong>{folderPreviewResult.unknown_size_count}</strong>
+                        </div>
+                      </div>
+                      <div className="source-connection-meta">
+                        <span>Scanned: {formatDateTime(folderPreviewResult.scanned_at)}</span>
+                        <span>Dry run: {folderPreviewResult.dry_run ? "Yes" : "No"}</span>
+                        <span>
+                          Creates MediaAssets:{" "}
+                          {folderPreviewResult.creates_media_assets ? "Yes" : "No"}
+                        </span>
+                        <span>
+                          Creates Events/Visits:{" "}
+                          {folderPreviewResult.creates_events ||
+                          folderPreviewResult.creates_visits
+                            ? "Yes"
+                            : "No"}
+                        </span>
+                        <span>
+                          Creates truth: {folderPreviewResult.creates_truth ? "Yes" : "No"}
+                        </span>
+                      </div>
+                      <span className="meta-text">
+                        Preview only: no MediaAssets, Events, Visits, labels, or truth were
+                        created.
+                      </span>
+                      {folderPreviewResult.warnings.length > 0 ? (
+                        <div className="source-warning-list">
+                          {folderPreviewResult.warnings.map((warning) => (
+                            <span key={warning}>{warning}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="folder-import-list-grid">
+                        <div className="folder-import-list">
+                          <div className="item-title-row">
+                            <strong>Candidates</strong>
+                            <StatusPill
+                              label={`${folderPreviewResult.candidates.length} files`}
+                              tone="good"
+                            />
+                          </div>
+                          {folderPreviewResult.candidates.length > 0 ? (
+                            folderPreviewResult.candidates.map((candidate) => (
+                              <article
+                                className="folder-import-file-card"
+                                key={candidate.relative_path}
+                              >
+                                <strong>{candidate.file_name}</strong>
+                                <span>{candidate.relative_path}</span>
+                                <div className="source-connection-meta">
+                                  <span>{candidate.extension}</span>
+                                  <span>{candidate.planned_media_kind}</span>
+                                  <span>{formatBytes(candidate.size_bytes)}</span>
+                                  {candidate.modified_at ? (
+                                    <span>{formatDateTime(candidate.modified_at)}</span>
+                                  ) : null}
+                                </div>
+                                {candidate.warnings.length > 0 ? (
+                                  <div className="source-warning-list">
+                                    {candidate.warnings.map((warning) => (
+                                      <span key={warning}>{warning}</span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </article>
+                            ))
+                          ) : (
+                            <span className="meta-text">No supported files in this preview.</span>
+                          )}
+                        </div>
+                        <div className="folder-import-list">
+                          <div className="item-title-row">
+                            <strong>Skipped</strong>
+                            <StatusPill
+                              label={`${folderPreviewResult.skipped.length} skipped`}
+                              tone="quiet"
+                            />
+                          </div>
+                          {folderPreviewResult.skipped.length > 0 ? (
+                            folderPreviewResult.skipped.map((skipped) => (
+                              <article
+                                className="folder-import-file-card"
+                                key={`${skipped.relative_path ?? skipped.file_name ?? "file"}-${
+                                  skipped.reason
+                                }-${skipped.message}`}
+                              >
+                                <strong>
+                                  {skipped.file_name ?? skipped.relative_path ?? "Skipped file"}
+                                </strong>
+                                {skipped.relative_path ? <span>{skipped.relative_path}</span> : null}
+                                <div className="source-connection-meta">
+                                  <span>{formatLabel(skipped.reason)}</span>
+                                  <span>{skipped.message}</span>
+                                </div>
+                              </article>
+                            ))
+                          ) : (
+                            <span className="meta-text">No skipped files in this preview.</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  {folderImportResult ? (
+                    <div className="folder-import-result-panel">
+                      <div className="item-title-row">
+                        <strong>Import result</strong>
+                        <StatusPill
+                          label={`${folderImportResult.total_imported} MediaAssets`}
+                          tone={folderImportResult.total_imported > 0 ? "good" : "quiet"}
+                        />
+                      </div>
+                      <div className="folder-import-summary-grid">
+                        <div>
+                          <span>Imported</span>
+                          <strong>{folderImportResult.total_imported}</strong>
+                        </div>
+                        <div>
+                          <span>Skipped</span>
+                          <strong>{folderImportResult.total_skipped}</strong>
+                        </div>
+                        <div>
+                          <span>Bytes copied</span>
+                          <strong>{formatBytes(folderImportResult.total_bytes_copied)}</strong>
+                        </div>
+                        <div>
+                          <span>Copy mode</span>
+                          <strong>{formatLabel(folderImportResult.copy_mode)}</strong>
+                        </div>
+                      </div>
+                      <span className="meta-text">
+                        MediaAssets only. No MotionEvidence, Events, Visits, labels, or truth were
+                        created.
+                      </span>
+                      {folderImportResult.warnings.length > 0 ? (
+                        <div className="source-warning-list">
+                          {folderImportResult.warnings.map((warning) => (
+                            <span key={warning}>{warning}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="folder-import-list-grid">
+                        <div className="folder-import-list">
+                          <div className="item-title-row">
+                            <strong>Created MediaAssets</strong>
+                            <StatusPill
+                              label={`${folderImportResult.imported.length} created`}
+                              tone="good"
+                            />
+                          </div>
+                          {folderImportResult.imported.length > 0 ? (
+                            folderImportResult.imported.map((item) => (
+                              <article
+                                className="folder-import-file-card"
+                                key={item.media_asset_id}
+                              >
+                                <strong>{item.media_asset_id}</strong>
+                                <span>{item.relative_source_path}</span>
+                                <div className="source-connection-meta">
+                                  <span>{item.file_name}</span>
+                                  {item.content_type ? <span>{item.content_type}</span> : null}
+                                  <span>{formatBytes(item.size_bytes)}</span>
+                                  {item.stream_id ? <span>Stream: {item.stream_id}</span> : null}
+                                  {item.zone_id ? <span>Zone: {item.zone_id}</span> : null}
+                                </div>
+                                {item.warnings.length > 0 ? (
+                                  <div className="source-warning-list">
+                                    {item.warnings.map((warning) => (
+                                      <span key={warning}>{warning}</span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </article>
+                            ))
+                          ) : (
+                            <span className="meta-text">No MediaAssets created.</span>
+                          )}
+                        </div>
+                        <div className="folder-import-list">
+                          <div className="item-title-row">
+                            <strong>Skipped during import</strong>
+                            <StatusPill
+                              label={`${folderImportResult.skipped.length} skipped`}
+                              tone="quiet"
+                            />
+                          </div>
+                          {folderImportResult.skipped.length > 0 ? (
+                            folderImportResult.skipped.map((skipped) => (
+                              <article
+                                className="folder-import-file-card"
+                                key={`${skipped.relative_path ?? skipped.file_name ?? "file"}-${
+                                  skipped.reason
+                                }-${skipped.message}`}
+                              >
+                                <strong>
+                                  {skipped.file_name ?? skipped.relative_path ?? "Skipped file"}
+                                </strong>
+                                {skipped.relative_path ? <span>{skipped.relative_path}</span> : null}
+                                <div className="source-connection-meta">
+                                  <span>{formatLabel(skipped.reason)}</span>
+                                  <span>{skipped.message}</span>
+                                </div>
+                              </article>
+                            ))
+                          ) : (
+                            <span className="meta-text">No files skipped during import.</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>

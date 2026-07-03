@@ -63,6 +63,9 @@ explicit dry-run preview route, but connection status itself still must not scan
 folders, validate paths, import files, or create records.
 Phase 13D adds an explicit import route that creates MediaAssets only; source
 connection status still does not call it or imply imported media exists.
+Phase 13E adds a Streams page UI for those explicit preview/import actions.
+Source connection status remains metadata/status only and still does not scan
+folders, import media, or create MediaAssets.
 
 For `external_url`, connection readiness remains metadata/status-only. A
 configured URL can point users to explicit still-image preview fetch, but
