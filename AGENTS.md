@@ -121,6 +121,11 @@ Every future implementation task must restate:
   [docs/source-adapter-boundary-design.md](docs/source-adapter-boundary-design.md)
   and explicit task scope. Do not add capture, decoding, workers, network calls,
   dependencies, generated media, or truth creation by accident.
+- Folder/trail-cam provider work must follow
+  [docs/folder-trailcam-provider-boundary-design.md](docs/folder-trailcam-provider-boundary-design.md)
+  and explicit phase scope. Do not add folder scans, watchers, polling, imports,
+  copy/reference behavior, media deletion, decoding, workers, dependencies, or
+  truth creation without that scope.
 - External URL provider implementation must follow
   [docs/external-url-still-image-provider-contract.md](docs/external-url-still-image-provider-contract.md)
   and explicit phase scope. Do not add URL fetches without SSRF, timeout,

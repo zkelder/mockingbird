@@ -434,8 +434,8 @@ Current work:
 - Phase 12D: saved media retention report/dry-run API, no deletion.
 - Phase 12E: saved media retention UI, dry-run only.
 - Phase 12F: low-risk unlinked saved media file cleanup implementation.
-- Next likely phase: Phase 12G — cleanup UI polish/audit trail design, or
-  Phase 13A next provider boundary design.
+- Next likely phase: Phase 13A folder/trail-cam provider boundary design, or
+  Phase 12G cleanup UI polish/audit trail design.
 
 Validation:
 
@@ -482,3 +482,33 @@ Validation:
   deletion, classify risk by linkage/review state, dry-run before destructive
   work, and protect reviewed truth/export/classifier-readiness context by
   default.
+
+## Phase 13 — Folder/trail-cam provider boundary
+
+Goal: define the next local-first Source provider boundary before adding folder
+or trail-camera import behavior.
+
+Current work:
+
+- Phase 13A: folder/trail-cam import provider boundary design.
+- Next likely phase: Phase 13B — folder/trail-cam provider configuration
+  UI/status contract.
+
+Validation:
+
+- Phase 13A is docs/design only.
+- Recommended canonical provider key is `folder_import_future`, with display
+  name Folder / trail-cam import.
+- Folder/trail-cam provider work stays underneath Source setup, Source
+  connection status, and Stream playback contracts.
+- Folder/trail-cam setup represents explicit local batch import readiness, not
+  live playback, camera connection, watcher behavior, polling, or background
+  indexing.
+- Future preview/import behavior must be explicit, local-first, bounded, and
+  review/truth-safe.
+- Folder import creates MediaAssets at most by default; MotionEvidence,
+  Events/Visits, labels, analytics truth, exports, and classifier readiness
+  require explicit future routes and reviewed correction semantics.
+- No folder scan, media import, media copy/reference behavior, media deletion,
+  decoding, worker, scheduler, dependency, or generated artifact is added in
+  Phase 13A.

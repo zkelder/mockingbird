@@ -42,6 +42,16 @@ route; secret authentication metadata is still not used for fetch unless a
 future phase scopes it.
 Provider configuration can feed the explicit preview and save-as-MediaAsset
 routes, but it does not store media itself.
+Saved preview media still needs a separate explicit review/evidence handoff
+before it can become MotionEvidence, Event/Visit context, or correction truth.
+
+`folder_import_future` is the recommended future provider key for Folder /
+trail-cam import. It should store setup metadata such as sensitive
+`folder_path`, optional `display_name`, `recursive`, `allowed_extensions`,
+`default_stream_id`, `default_zone_id`, future `import_mode`, and `notes`.
+This metadata must not scan folders, validate paths by reading them, import
+media, create records, or imply a background watcher. See
+[folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
 
 ## Provider Configuration Fields
 
@@ -122,6 +132,10 @@ them or make provider runtime claims by itself.
 External URL implementation must also follow
 [external-url-still-image-provider-contract.md](external-url-still-image-provider-contract.md)
 before any URL fetch or validation behavior is added.
+Folder/trail-cam implementation must follow
+[folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md)
+before any folder scan, import, copy/reference behavior, watcher, polling, media
+record creation, or truth-affecting behavior is added.
 
 ## Zone Editing Relationship
 

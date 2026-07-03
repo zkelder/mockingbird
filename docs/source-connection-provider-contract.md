@@ -53,6 +53,11 @@ For `manual_media`, connection readiness means the Source is ready for explicit
 local import/review workflows. It is not a camera connection and does not imply
 live playback.
 
+For `folder_import_future`, future connection readiness means local folder
+import metadata is present and an explicit import workflow may be available once
+implemented. It is not a camera connection, folder watcher, polling loop, or
+live playback claim.
+
 For `external_url`, connection readiness remains metadata/status-only. A
 configured URL can point users to explicit still-image preview fetch, but
 connection status itself must not trigger network calls or claim live playback.
@@ -112,6 +117,10 @@ External URL still-image behavior is further constrained by
 [external-url-still-image-provider-contract.md](external-url-still-image-provider-contract.md).
 Future saved preview behavior is designed in
 [external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
+Saved preview review/evidence handoff is designed in
+[saved-preview-review-evidence-handoff-design.md](saved-preview-review-evidence-handoff-design.md).
+Folder/trail-cam import behavior is designed in
+[folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
 
 ## Zone Editing Relationship
 

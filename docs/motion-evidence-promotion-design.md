@@ -126,6 +126,10 @@ promoted evidence media appears high risk, and reviewed correction context
 appears protected.
 Phase 12F keeps promoted evidence media out of low-risk cleanup. The file-only
 cleanup route rejects promoted Event/Visit context and reviewed truth context.
+Future folder-origin evidence should use the same explicit promotion semantics:
+folder-import MediaAssets can provide context only after an explicit evidence
+action, and promotion still creates unreviewed Event/Visit context without
+reviewed truth.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

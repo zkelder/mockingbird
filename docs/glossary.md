@@ -19,6 +19,12 @@ A Source/provider path for explicit local media import into Stream and Zone
 context. Imports can create reviewable Events/Visits, but corrections remain the
 source of truth.
 
+## Folder / Trail-cam Import Provider
+
+A future Source provider boundary for explicit local folder, SD-card dump, NAS
+folder, or exported image batch import. It is not live playback, a watcher,
+polling loop, evidence, or reviewed truth.
+
 ## Source Connection Status
 
 A read-only product contract describing Source provider readiness and related

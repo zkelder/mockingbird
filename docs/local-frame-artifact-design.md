@@ -43,6 +43,10 @@ Saved external URL preview MediaAssets are different from local frame artifacts:
 they are fetched still images saved from a Source preview, not derived artifacts
 from sampled frame indexes. They can still use the same MediaAsset attachment
 path into MotionEvidence through the explicit Phase 11G handoff.
+Folder/trail-cam imported MediaAssets are also different from local frame
+artifacts: they are user-selected batch media from local folders, not generated
+best-frame artifacts from sampler output. They may later attach to
+MotionEvidence through explicit review/evidence actions.
 Phase 11I keeps that distinction visible after promotion: saved external URL
 preview media can appear as Event/Visit review context, but it is still not a
 sampled-frame artifact and does not create truth.

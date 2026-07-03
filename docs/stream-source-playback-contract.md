@@ -63,6 +63,11 @@ For `manual_media` Sources, Stream playback remains a placeholder/media-context
 surface unless a future playback provider exists. The Stream still gives manual
 imports zone and review context.
 
+For `folder_import_future` Sources, Stream playback should remain
+placeholder/media-context. Folder/trail-cam import can later create MediaAssets
+for review context, but it does not provide live playback, folder watching,
+polling, or continuous stream claims.
+
 For `external_url` Sources, Phase 11C preview fetch is transient UI context.
 Playback status must not fetch URLs, store media, imply live playback, or persist
 preview media. Phase 11E saved previews become MediaAssets only through explicit
@@ -103,6 +108,8 @@ Preview-to-MediaAsset handoff design is documented in
 [external-url-preview-media-asset-handoff-design.md](external-url-preview-media-asset-handoff-design.md).
 Saved preview review/evidence handoff design is documented in
 [saved-preview-review-evidence-handoff-design.md](saved-preview-review-evidence-handoff-design.md).
+Folder/trail-cam import provider boundary design is documented in
+[folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
 
 ## Zone Editing Relationship
 

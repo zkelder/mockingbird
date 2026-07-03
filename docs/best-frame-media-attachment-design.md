@@ -63,6 +63,10 @@ The media reference is evidence/context only. It must not create labels, reviewe
 Saved preview MediaAssets follow the same rule: they can provide visible context
 for evidence/review through explicit pending MotionEvidence creation, but they do
 not create truth by being attached.
+Folder/trail-cam MediaAssets should follow the same rule if implemented later:
+they can provide local review context, but attachment alone must not create
+labels, reviewed status, export readiness, dataset coverage truth, or species
+truth.
 After explicit promotion, saved preview media can remain visible as review
 context on Event/Visit detail. It still does not confirm labels, reviewed status,
 export readiness, or dataset truth.

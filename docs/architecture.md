@@ -118,6 +118,10 @@ Phase 12F adds explicit low-risk file-only cleanup for unlinked saved preview
 media. The cleanup route deletes no MediaAsset records, MotionEvidence, Events,
 Visits, ReviewLabels, DatasetExports, or truth, and rejects linked, protected,
 unsafe-path, and symlink media.
+Phase 13A defines the next provider boundary: Folder / trail-cam import. It is
+design-only and keeps local folder batch media under Source/Stream contracts,
+explicit import planning, MediaAsset review context, and correction truth. It
+adds no folder scan, watcher, polling, import, decoding, or provider runtime.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
@@ -133,6 +137,12 @@ Manual media provider integration is an explicit local import boundary. Source
 setup/status may guide the user to import media for a Source/Stream, and that
 import can create reviewable Events/Visits, but reviewed truth still comes only
 from review/correction.
+
+Folder/trail-cam provider work is a future local media Source boundary for
+trail-camera dumps, NAS folders, and exported image batches. It should follow
+[folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md)
+before any folder scan, import, copy/reference behavior, watcher, polling,
+record creation, or truth-affecting behavior is added.
 
 The Streams, Stream Detail, and Import Media surfaces present provider
 configuration, setup review, connection readiness, playback status, zone editing,

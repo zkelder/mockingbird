@@ -62,6 +62,9 @@ The existing `snapshot_media_asset_id` field remains optional evidence context. 
 Saved external URL preview MediaAssets are another explicit source for
 `snapshot_media_asset_id`. Phase 11G lets them enter MotionEvidence through a
 user action, not automatically when the preview is saved.
+Future folder/trail-cam MediaAssets can follow the same evidence boundary: they
+may become MotionEvidence only through an explicit action, not by being present
+in a folder or imported as media.
 
 ## Status Lifecycle
 
@@ -293,6 +296,12 @@ files, deletes no records, and creates no truth.
 Phase 12F adds confirmed file-only cleanup for low-risk unlinked saved preview
 media. Media attached to MotionEvidence is medium risk or higher and is
 protected from this low-risk cleanup path.
+
+## Phase 13A Relationship
+
+Phase 13A designs Folder / trail-cam import as a future Source provider
+boundary. Folder-origin MediaAssets should remain media context until an
+explicit MotionEvidence, promotion, and later review/correction path is scoped.
 
 ## Phase 8S Status
 

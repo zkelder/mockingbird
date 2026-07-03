@@ -82,6 +82,11 @@ explicit and below Source/Stream contracts in the running app:
 Phase 12C defines retention policy for saved preview MediaAssets before any
 cleanup behavior is implemented:
 [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
+After the external_url path, the recommended next provider boundary is
+Folder / trail-cam import. It should reuse Source/Stream setup and explicit
+local media import concepts without live playback, watchers, polling, decoding,
+or truth creation. See
+[folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
 
 ## Explicit Non-Recommended First Adapters
 
@@ -222,6 +227,8 @@ Future implementation must test:
 - Phase 12B: source/stream smoke-test dev checklist for manual browser/API
   validation of the same explicit path.
 - Phase 12C: external_url saved media cleanup/retention design.
+- Phase 13A: folder/trail-cam import provider boundary design.
+- Phase 13B: folder/trail-cam provider configuration UI/status contract.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

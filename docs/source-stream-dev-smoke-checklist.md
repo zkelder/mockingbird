@@ -11,6 +11,11 @@ This checklist documents validation only. It does not add provider behavior,
 live playback, automatic evidence creation, automatic Event/Visit creation,
 runtime dependencies, or model/training work.
 
+Folder / trail-cam import is a future provider boundary documented in
+[folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
+It is not part of this external_url smoke checklist and should receive a
+separate future checklist before implementation.
+
 ## Product Flow Covered
 
 Configure external_url Source -> setup review -> Stream playback status ->
@@ -274,9 +279,9 @@ MotionEvidence, Events, Visits, labels, exports, and truth must remain.
 ## Recommended Next Phase
 
 Recommended next: Phase 12G — cleanup UI polish/audit trail design, or Phase
-13A next provider boundary design. Phase 12F implements only confirmed low-risk
-file cleanup.
+13A/13B folder-trail-cam provider boundary/status work. Phase 12F implements
+only confirmed low-risk file cleanup.
 
 Other reasonable follow-ups:
 
-- Phase 13A: next provider boundary design.
+- Phase 13B: folder/trail-cam provider configuration UI/status contract.
