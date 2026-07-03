@@ -30,13 +30,16 @@ Phase 13F designs the future explicit handoff from folder-imported MediaAssets
 to pending MotionEvidence. It adds no implementation; imported MediaAssets
 remain media context, not evidence or truth. See
 [folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md).
+Phase 13G implements the single-media version of that handoff: one explicit
+user action can create one pending MotionEvidence from one folder-imported
+MediaAsset. Folder import itself still creates MediaAssets only.
 
 ## Product Flow
 
 folder/trail-cam Source setup -> explicit folder selection/config metadata ->
 explicit dry-run preview -> candidate/skipped file report -> explicit import ->
-MediaAssets -> optional MotionEvidence or Event/Visit creation
-depending on future route -> review/correction -> analytics/exports/classifier
+MediaAssets -> optional explicit single-media pending MotionEvidence handoff ->
+explicit promotion -> review/correction -> analytics/exports/classifier
 readiness.
 
 ## Provider Definition
@@ -254,10 +257,14 @@ Optional MotionEvidence creation must be explicit. Optional Event/Visit creation
 must be explicit and separately designed. ReviewLabel correction remains truth,
 and classifier/export readiness depends on reviewed corrections.
 
-The folder-import evidence handoff design defines the future path:
+The folder-import evidence handoff design defines the path:
 folder-imported MediaAsset -> explicit pending MotionEvidence -> explicit
 promotion -> Event/Visit review -> correction truth. Folder import itself still
 does not create evidence or truth.
+
+Phase 13G implements the single MediaAsset -> pending MotionEvidence handoff
+through the shared media evidence route. It remains explicit, one item at a
+time, and still creates no Event, Visit, ReviewLabel, or truth.
 
 ## Storage/Retention Boundary
 
@@ -350,12 +357,13 @@ initially, and must preserve retention, provenance, and truth boundaries.
 - Phase 13F: folder media to MotionEvidence handoff design.
 - Phase 13G: single folder-imported MediaAsset to pending MotionEvidence, no
   Event/Visit/truth.
+- Phase 13H: batch folder media evidence handoff dry-run.
 
 ## Explicit Non-Goals
 
 - No watcher.
 - No polling.
-- No MotionEvidence creation.
+- No automatic or batch MotionEvidence creation.
 - No media deletion.
 - No Event/Visit creation.
 - No ReviewLabel/truth.

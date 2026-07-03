@@ -106,6 +106,11 @@ Phase 13F designs the future folder-imported MediaAsset -> pending
 MotionEvidence handoff. Folder-imported MediaAssets still require explicit
 evidence handoff before they can enter MotionEvidence, Event/Visit review,
 analytics truth, export truth, or classifier readiness.
+Phase 13G implements that handoff for one folder-imported MediaAsset at a time.
+The shared media evidence route can create pending MotionEvidence from imported
+folder media only after explicit user action, skips duplicates by default, and
+creates no Event, Visit, ReviewLabel, analytics/export truth, or classifier
+truth.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -252,6 +257,8 @@ Future implementation must test:
 - Phase 13D: folder import implementation to MediaAssets only.
 - Phase 13E: folder import UI preview/import.
 - Phase 13F: folder-imported MediaAsset to MotionEvidence handoff design.
+- Phase 13G: single folder-imported MediaAsset to pending MotionEvidence, no
+  Event/Visit/truth.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

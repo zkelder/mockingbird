@@ -148,6 +148,10 @@ Phase 13F designs that later boundary:
 folder-imported MediaAsset -> explicit pending MotionEvidence handoff -> explicit
 promotion -> Event/Visit review -> correction truth. See
 [folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md).
+Phase 13G implements the single-media version of that boundary: one
+folder-imported MediaAsset can become one pending MotionEvidence through
+explicit user action, with duplicate skips by default and no Event/Visit,
+ReviewLabel, model output, or truth creation.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
@@ -172,8 +176,9 @@ behavior, or delete behavior is added.
 The current implementation layer for that provider is configuration/status plus
 explicit dry-run preview, explicit MediaAsset-only import, and a compact Streams
 page UI for those actions.
-The future folder-import MediaAsset -> MotionEvidence handoff is design-only in
-Phase 13F; no folder import route or status route creates evidence by itself.
+The folder-import MediaAsset -> MotionEvidence handoff is implemented for one
+media item at a time in Phase 13G; no folder import route or status route
+creates evidence by itself.
 
 The Streams, Stream Detail, and Import Media surfaces present provider
 configuration, setup review, connection readiness, playback status, zone editing,

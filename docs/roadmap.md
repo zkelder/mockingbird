@@ -496,8 +496,10 @@ Current work:
 - Phase 13D: folder import implementation to MediaAssets only.
 - Phase 13E: folder import UI preview/import.
 - Phase 13F: folder-import-to-MotionEvidence handoff design.
-- Next likely phase: Phase 13G — single folder MediaAsset to pending
-  MotionEvidence implementation, no Event/Visit/truth.
+- Phase 13G: single folder-imported MediaAsset to pending MotionEvidence, no
+  Event/Visit/truth.
+- Next likely phase: Phase 13H — batch folder media evidence handoff dry-run,
+  or Phase 13I — folder media review/promote UI polish.
 
 Validation:
 
@@ -513,6 +515,11 @@ Validation:
   skipped, warning, and MediaAsset result reporting.
 - Phase 13F designs the explicit handoff from folder-imported MediaAssets to
   pending MotionEvidence before any implementation.
+- Phase 13G implements that handoff one MediaAsset at a time through explicit
+  user action, reusing the shared media evidence route, preserving
+  Source/Stream/Zone context, and creating no Event, Visit, ReviewLabel,
+  SpeciesSuggestion, DetectionProposal, DatasetExport, analytics/export truth,
+  model output, or reviewed truth.
 - Recommended canonical provider key is `folder_import_future`, with display
   name Folder / trail-cam import.
 - `folder_path` is required sensitive metadata and must be redacted to
@@ -533,6 +540,8 @@ Validation:
 - Folder import creates MediaAssets at most by default; MotionEvidence,
   Events/Visits, labels, analytics truth, exports, and classifier readiness
   require explicit future routes and reviewed correction semantics.
+  Phase 13G adds the explicit single-media MotionEvidence route, but folder
+  import itself still creates MediaAssets only.
 - No folder scan, filesystem path validation, media import, media copy/reference
   behavior, media deletion, decoding, worker, scheduler, dependency, generated
   artifact, MediaAsset, MotionEvidence, Event/Visit, ReviewLabel, export, or
@@ -552,3 +561,7 @@ Validation:
   creation, ReviewLabel/truth creation, media deletion, decoding, worker,
   dependency, model/runtime behavior, or generated artifact is added in Phase
   13F.
+- No automatic MotionEvidence creation, batch evidence creation, Event/Visit
+  creation, ReviewLabel/truth creation, media deletion, decoding, worker,
+  dependency, model/runtime behavior, or generated artifact is added in Phase
+  13G.

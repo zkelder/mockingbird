@@ -4,6 +4,7 @@ import type {
   CameraSource,
   FolderImportPreviewRequest,
   FolderImportPreviewResponse,
+  FolderImportCreatedMediaAsset,
   FolderImportRequest,
   FolderImportResponse,
   ExternalUrlPreviewResponse,
@@ -133,6 +134,10 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const [folderPreviewResult, setFolderPreviewResult] =
     useState<FolderImportPreviewResponse | null>(null);
   const [folderImportResult, setFolderImportResult] = useState<FolderImportResponse | null>(null);
+  const [folderEvidenceResults, setFolderEvidenceResults] = useState<
+    Record<string, SavedPreviewMotionEvidenceResponse>
+  >({});
+  const [folderEvidenceErrors, setFolderEvidenceErrors] = useState<Record<string, string>>({});
   const [folderRecursive, setFolderRecursive] = useState(false);
   const [folderAllowedExtensions, setFolderAllowedExtensions] = useState("jpg,jpeg,png,webp");
   const [folderMaxFiles, setFolderMaxFiles] = useState("500");
@@ -148,6 +153,7 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const [isCreatingPreviewEvidence, setIsCreatingPreviewEvidence] = useState(false);
   const [isPreviewingFolderImport, setIsPreviewingFolderImport] = useState(false);
   const [isImportingFolderMedia, setIsImportingFolderMedia] = useState(false);
+  const [folderEvidenceLoadingId, setFolderEvidenceLoadingId] = useState<string | null>(null);
   const [isSavingSetup, setIsSavingSetup] = useState(false);
 
   useEffect(() => {
@@ -247,11 +253,14 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setFolderImportResult(null);
     setFolderPreviewError(null);
     setFolderImportError(null);
+    setFolderEvidenceResults({});
+    setFolderEvidenceErrors({});
     setIsFetchingPreview(false);
     setIsSavingPreview(false);
     setIsCreatingPreviewEvidence(false);
     setIsPreviewingFolderImport(false);
     setIsImportingFolderMedia(false);
+    setFolderEvidenceLoadingId(null);
   }, [selectedSourceId, selectedConfiguration?.provider_key]);
 
   useEffect(() => {
@@ -453,6 +462,9 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setFolderImportError(null);
     setFolderPreviewResult(null);
     setFolderImportResult(null);
+    setFolderEvidenceResults({});
+    setFolderEvidenceErrors({});
+    setFolderEvidenceLoadingId(null);
     try {
       const result = await apiClient.previewFolderImport(selectedSourceId, requestPayload);
       setFolderPreviewResult(result);
@@ -499,6 +511,9 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setIsImportingFolderMedia(true);
     setFolderImportError(null);
     setFolderImportResult(null);
+    setFolderEvidenceResults({});
+    setFolderEvidenceErrors({});
+    setFolderEvidenceLoadingId(null);
     try {
       const result = await apiClient.importFolderMedia(selectedSourceId, importPayload);
       setFolderImportResult(result);
@@ -508,6 +523,37 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
       );
     } finally {
       setIsImportingFolderMedia(false);
+    }
+  }
+
+  async function handleCreateMotionEvidenceFromFolderImport(
+    item: FolderImportCreatedMediaAsset,
+  ) {
+    setFolderEvidenceLoadingId(item.media_asset_id);
+    setFolderEvidenceErrors((current) => {
+      const next = { ...current };
+      delete next[item.media_asset_id];
+      return next;
+    });
+    try {
+      const result = await apiClient.createMotionEvidenceFromMedia(item.media_asset_id, {
+        stream_id: item.stream_id ?? selectedFirstStream?.id ?? null,
+        note: "Folder import evidence handoff.",
+        reason: "User requested pending evidence from folder-imported media.",
+        duplicate_policy: "skip_existing",
+      });
+      setFolderEvidenceResults((current) => ({
+        ...current,
+        [item.media_asset_id]: result,
+      }));
+    } catch (caught) {
+      setFolderEvidenceErrors((current) => ({
+        ...current,
+        [item.media_asset_id]:
+          caught instanceof Error ? caught.message : "Could not create pending evidence.",
+      }));
+    } finally {
+      setFolderEvidenceLoadingId(null);
     }
   }
 
@@ -1169,6 +1215,56 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                                     {item.warnings.map((warning) => (
                                       <span key={warning}>{warning}</span>
                                     ))}
+                                  </div>
+                                ) : null}
+                                <div className="folder-evidence-action">
+                                  <button
+                                    className="secondary-action"
+                                    disabled={folderEvidenceLoadingId === item.media_asset_id}
+                                    onClick={() =>
+                                      void handleCreateMotionEvidenceFromFolderImport(item)
+                                    }
+                                    type="button"
+                                  >
+                                    {folderEvidenceLoadingId === item.media_asset_id
+                                      ? "Creating pending evidence..."
+                                      : "Create pending evidence"}
+                                  </button>
+                                  <span className="meta-text">
+                                    Pending evidence only. No Events, Visits, labels, or truth were
+                                    created.
+                                  </span>
+                                </div>
+                                {folderEvidenceErrors[item.media_asset_id] ? (
+                                  <div className="zone-error">
+                                    {folderEvidenceErrors[item.media_asset_id]}
+                                  </div>
+                                ) : null}
+                                {folderEvidenceResults[item.media_asset_id] ? (
+                                  <div className="folder-evidence-result">
+                                    <strong>
+                                      MotionEvidence:{" "}
+                                      {
+                                        folderEvidenceResults[item.media_asset_id]
+                                          .motion_evidence_id
+                                      }
+                                    </strong>
+                                    <span>
+                                      {folderEvidenceResults[item.media_asset_id]
+                                        .duplicate_skipped
+                                        ? "Existing evidence reused. Open Motion Evidence from the review navigation."
+                                        : "Open Motion Evidence from the review navigation."}
+                                    </span>
+                                    {folderEvidenceResults[item.media_asset_id].warnings.length >
+                                    0 ? (
+                                      <div className="source-warning-list">
+                                        {folderEvidenceResults[item.media_asset_id].warnings.map(
+                                          (warning) => (
+                                            <span key={warning}>{warning}</span>
+                                          ),
+                                        )}
+                                      </div>
+                                    ) : null}
                                   </div>
                                 ) : null}
                               </article>

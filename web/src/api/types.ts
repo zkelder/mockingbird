@@ -286,6 +286,7 @@ export interface SavedPreviewMotionEvidenceRequest {
   zone_id?: string | null;
   note?: string | null;
   reason?: string | null;
+  duplicate_policy?: "skip_existing" | "allow_duplicate" | null;
 }
 
 export interface SavedPreviewMotionEvidenceResponse {
@@ -299,6 +300,9 @@ export interface SavedPreviewMotionEvidenceResponse {
   creates_event: boolean;
   creates_visit: boolean;
   creates_truth: boolean;
+  duplicate_skipped: boolean;
+  existing_motion_evidence_id?: string | null;
+  provenance_kind?: string | null;
   warnings: string[];
 }
 

@@ -119,13 +119,12 @@ The Streams page exposes those preview/import actions for configured
 `folder_import_future` Sources, showing candidates, skips, warnings, and created
 MediaAssets without exposing the raw folder path.
 It still adds no watcher, polling, live playback, media decoding, or background
-import behavior. Folder-imported MediaAssets require a future explicit
-evidence/review handoff before they can become MotionEvidence, Events, Visits,
-or reviewed truth.
-That future handoff is now designed in
+import behavior. Folder-imported MediaAssets can now become pending
+MotionEvidence one at a time through explicit user action, but folder import
+itself still creates no MotionEvidence, Events, Visits, labels, or truth.
+That handoff is documented in
 [docs/folder-import-evidence-handoff-design.md](docs/folder-import-evidence-handoff-design.md):
-folder-imported MediaAssets may later become pending MotionEvidence only through
-explicit user action, with promotion and correction still separate.
+promotion and correction remain separate.
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 

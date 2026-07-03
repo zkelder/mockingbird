@@ -43,9 +43,16 @@ truth.
 
 ## Folder Import Evidence Handoff
 
-A future explicit action that can turn a folder-imported MediaAsset into pending
+An explicit action that can turn one folder-imported MediaAsset into pending
 MotionEvidence with attached media context. It does not create Events, Visits,
 ReviewLabels, or reviewed truth.
+
+## Folder Import Evidence
+
+Pending MotionEvidence created from a folder-imported MediaAsset through
+explicit user action. It points to the imported MediaAsset as
+`snapshot_media_asset_id` and remains evidence until explicit promotion and later
+review/correction.
 
 ## Source Connection Status
 

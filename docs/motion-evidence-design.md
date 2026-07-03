@@ -62,14 +62,14 @@ The existing `snapshot_media_asset_id` field remains optional evidence context. 
 Saved external URL preview MediaAssets are another explicit source for
 `snapshot_media_asset_id`. Phase 11G lets them enter MotionEvidence through a
 user action, not automatically when the preview is saved.
-Future folder/trail-cam MediaAssets can follow the same evidence boundary: they
-may become MotionEvidence only through an explicit action, not by being present
-in a folder or imported as media.
-Phase 13F defines that future folder-imported MediaAsset -> pending
-MotionEvidence handoff in
+Folder/trail-cam MediaAssets follow the same evidence boundary: after Phase
+13G, one imported MediaAsset may become pending MotionEvidence only through an
+explicit action, not by being present in a folder or imported as media.
+Phase 13F defines the folder-imported MediaAsset -> pending MotionEvidence
+handoff in
 [folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md).
-The design keeps folder media as local context until an explicit evidence action
-creates pending MotionEvidence.
+Phase 13G implements the single-media handoff while keeping folder media as
+local context until that action creates pending MotionEvidence.
 
 ## Status Lifecycle
 
@@ -268,6 +268,15 @@ MotionEvidence source. The handoff should reuse pending/ignored/promoted
 lifecycle, attach the imported media through `snapshot_media_asset_id`, and
 create no Events, Visits, ReviewLabels, or truth until later explicit promotion
 and correction.
+
+## Phase 13G Status
+
+Phase 13G implements the single folder-imported MediaAsset -> pending
+MotionEvidence handoff through the shared media evidence route. It requires
+explicit user action, attaches the MediaAsset as `snapshot_media_asset_id`,
+preserves Source/Stream/Zone context, skips duplicate evidence by default, and
+creates no Event, Visit, ReviewLabel, SpeciesSuggestion, DetectionProposal,
+DatasetExport, reviewed status, model output, or truth.
 
 ## Phase 12A Status
 

@@ -543,6 +543,15 @@ class _CoverageAccumulator:
     last_seen_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class _SavedMediaMotionEvidenceResult:
+    evidence: MotionEvidenceResponse
+    warnings: list[str]
+    duplicate_skipped: bool = False
+    existing_motion_evidence_id: str | None = None
+    provenance_kind: str | None = None
+
+
 class MotionEvidenceModel(Base):
     __tablename__ = "motion_evidence"
 
@@ -2161,16 +2170,26 @@ class ProductRepository:
         self,
         media_asset_id: str,
         payload: SavedPreviewMotionEvidenceRequest,
-    ) -> tuple[MotionEvidenceResponse, list[str]]:
+    ) -> _SavedMediaMotionEvidenceResult:
         media_id = media_asset_id.strip()
         if not media_id:
             raise ValueError("missing_media_asset")
+        duplicate_policy = _clean_optional_text(payload.duplicate_policy) or "skip_existing"
+        if duplicate_policy not in {"skip_existing", "allow_duplicate"}:
+            raise ValueError("unsupported_duplicate_policy")
 
         with self.session_factory() as session:
             with session.begin():
                 asset_model = session.get(MediaAssetModel, media_id)
                 if asset_model is None:
                     raise ValueError("missing_media_asset")
+                if (
+                    asset_model.media_type != "image"
+                    or asset_model.content_type not in EXTERNAL_URL_PREVIEW_EXTENSIONS
+                ):
+                    raise ValueError("unsupported_motion_evidence_media_type")
+                if not Path(asset_model.local_path).is_file():
+                    raise ValueError("missing_media_file")
 
                 stream_id = _clean_optional_text(payload.stream_id) or asset_model.stream_id
                 stream_model = session.get(StreamModel, stream_id)
@@ -2186,6 +2205,7 @@ class ProductRepository:
                 if stream_model.source_id != source_id:
                     raise ValueError("stream_source_mismatch")
 
+                provenance_kind = _media_asset_motion_evidence_provenance_kind(asset_model)
                 warnings: list[str] = []
                 zone_id = _clean_optional_text(payload.zone_id)
                 if zone_id is not None:
@@ -2226,8 +2246,43 @@ class ProductRepository:
                         "reviewable zone for this stream."
                     )
 
+                existing_evidence = session.scalars(
+                    select(MotionEvidenceModel)
+                    .where(
+                        MotionEvidenceModel.snapshot_media_asset_id == media_id,
+                        MotionEvidenceModel.status.in_(
+                            [
+                                MotionEvidenceStatus.pending.value,
+                                MotionEvidenceStatus.promoted.value,
+                                MotionEvidenceStatus.ignored.value,
+                            ]
+                        ),
+                    )
+                    .order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
+                ).first()
+                if existing_evidence is not None and duplicate_policy == "skip_existing":
+                    warnings.append(
+                        "Existing MotionEvidence already references this MediaAsset; "
+                        "no duplicate pending evidence was created."
+                    )
+                    return _SavedMediaMotionEvidenceResult(
+                        evidence=_motion_evidence_from_model(existing_evidence),
+                        warnings=warnings,
+                        duplicate_skipped=True,
+                        existing_motion_evidence_id=existing_evidence.id,
+                        provenance_kind=provenance_kind,
+                    )
+
+                scoring_source = {
+                    "external_url_preview": "saved_preview_media_asset",
+                    "folder_import": "folder_import_media_asset",
+                }.get(provenance_kind, "media_asset")
+                source_label = {
+                    "external_url_preview": "saved MediaAsset",
+                    "folder_import": "folder-imported MediaAsset",
+                }.get(provenance_kind, "MediaAsset")
                 note_parts = [
-                    f"Created from saved MediaAsset {media_id} by explicit user action.",
+                    f"Created from {source_label} {media_id} by explicit user action.",
                     "No Events, Visits, ReviewLabels, or truth were created.",
                 ]
                 reason = _clean_optional_text(payload.reason)
@@ -2252,7 +2307,7 @@ class ProductRepository:
                     triggered_frame_count=1,
                     scoring_config_json=json.dumps(
                         {
-                            "source": "saved_preview_media_asset",
+                            "source": scoring_source,
                             "media_asset_id": media_id,
                             "motion_score_available": False,
                             "requires_review": True,
@@ -2268,7 +2323,11 @@ class ProductRepository:
                 )
                 session.add(evidence_model)
                 session.flush()
-                return _motion_evidence_from_model(evidence_model), warnings
+                return _SavedMediaMotionEvidenceResult(
+                    evidence=_motion_evidence_from_model(evidence_model),
+                    warnings=warnings,
+                    provenance_kind=provenance_kind,
+                )
 
     def create_motion_evidence(
         self,
@@ -7060,6 +7119,22 @@ def _is_external_url_preview_media_asset(asset: MediaAssetModel) -> bool:
         "provider_key=external_url" in notes
         and "Saved explicit external_url still-image preview." in notes
     )
+
+
+def _is_folder_import_media_asset(asset: MediaAssetModel) -> bool:
+    notes = asset.notes or ""
+    return (
+        "provider_key=folder_import_future" in notes
+        and "Imported explicit folder/trail-cam media as MediaAsset only." in notes
+    )
+
+
+def _media_asset_motion_evidence_provenance_kind(asset: MediaAssetModel) -> str:
+    if _is_external_url_preview_media_asset(asset):
+        return "external_url_preview"
+    if _is_folder_import_media_asset(asset):
+        return "folder_import"
+    return "media_asset"
 
 
 def _external_url_preview_note_fields(notes: str | None) -> dict[str, str]:

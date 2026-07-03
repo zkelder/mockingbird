@@ -367,10 +367,11 @@ class SavedPreviewMotionEvidenceRequest(BaseModel):
     zone_id: str | None = None
     note: str | None = None
     reason: str | None = None
+    duplicate_policy: str | None = "skip_existing"
 
 
 class SavedPreviewMotionEvidenceResponse(BaseModel):
-    # Saved media can become pending evidence only through explicit user action.
+    # Saved/imported media can become pending evidence only through explicit user action.
     motion_evidence_id: str
     media_asset_id: str
     source_id: str | None = None
@@ -381,6 +382,9 @@ class SavedPreviewMotionEvidenceResponse(BaseModel):
     creates_event: bool = False
     creates_visit: bool = False
     creates_truth: bool = False
+    duplicate_skipped: bool = False
+    existing_motion_evidence_id: str | None = None
+    provenance_kind: str | None = None
     warnings: list[str] = Field(default_factory=list)
 
 

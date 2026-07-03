@@ -771,6 +771,25 @@ button {
   background: #ffffff;
 }
 
+.folder-evidence-action,
+.folder-evidence-result {
+  display: grid;
+  gap: 8px;
+}
+
+.folder-evidence-action {
+  align-items: start;
+  border-top: 1px solid #e2e8de;
+  padding-top: 10px;
+}
+
+.folder-evidence-result {
+  border: 1px solid #cfe2d5;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f4fbf5;
+}
+
 .source-streams-panel {
   display: grid;
   gap: 12px;

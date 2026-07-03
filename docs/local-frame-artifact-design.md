@@ -45,11 +45,12 @@ from sampled frame indexes. They can still use the same MediaAsset attachment
 path into MotionEvidence through the explicit Phase 11G handoff.
 Folder/trail-cam imported MediaAssets are also different from local frame
 artifacts: they are user-selected batch media from local folders, not generated
-best-frame artifacts from sampler output. They may later attach to
-MotionEvidence through explicit review/evidence actions.
+best-frame artifacts from sampler output. Phase 13G lets one imported
+MediaAsset attach to pending MotionEvidence through explicit review/evidence
+action.
 Phase 13F keeps that distinction explicit: folder-imported MediaAssets can
-become `snapshot_media_asset_id` context for pending MotionEvidence later, but
-they are not sampled-frame artifacts and do not create truth by being imported.
+become `snapshot_media_asset_id` context for pending MotionEvidence, but they
+are not sampled-frame artifacts and do not create truth by being imported.
 Phase 11I keeps that distinction visible after promotion: saved external URL
 preview media can appear as Event/Visit review context, but it is still not a
 sampled-frame artifact and does not create truth.

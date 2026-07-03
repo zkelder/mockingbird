@@ -535,6 +535,21 @@ def _motion_evidence_error(error: ValueError) -> HTTPException:
             status_code=400,
             detail="Motion evidence snapshot media must belong to the selected stream.",
         )
+    if reason == "missing_media_file":
+        return HTTPException(
+            status_code=400,
+            detail="Motion evidence media file is missing.",
+        )
+    if reason == "unsupported_motion_evidence_media_type":
+        return HTTPException(
+            status_code=400,
+            detail="Motion Evidence can be created from supported still-image media only.",
+        )
+    if reason == "unsupported_duplicate_policy":
+        return HTTPException(
+            status_code=400,
+            detail="Unsupported Motion Evidence duplicate policy.",
+        )
     if reason == "motion_evidence_not_pending":
         return HTTPException(
             status_code=400,
@@ -1616,32 +1631,43 @@ async def get_media_asset(media_id: str) -> MediaAsset:
 )
 async def create_motion_evidence_from_saved_media(
     media_id: str,
+    response: Response,
     payload: SavedPreviewMotionEvidenceRequest | None = None,
 ) -> SavedPreviewMotionEvidenceResponse:
-    # Explicit saved-media handoff creates pending evidence only.
+    # Explicit media handoff creates pending evidence only.
     try:
-        evidence, warnings = get_repository().create_motion_evidence_from_saved_media(
+        result = get_repository().create_motion_evidence_from_saved_media(
             media_id,
             payload or SavedPreviewMotionEvidenceRequest(),
         )
     except ValueError as error:
         raise _saved_preview_motion_evidence_error(error, media_id) from error
+    if result.duplicate_skipped:
+        response.status_code = 200
 
     return SavedPreviewMotionEvidenceResponse(
-        motion_evidence_id=evidence.id,
+        motion_evidence_id=result.evidence.id,
         media_asset_id=media_id,
-        source_id=evidence.source_id,
-        stream_id=evidence.stream_id,
-        zone_id=evidence.zone_id,
-        status=evidence.status,
+        source_id=result.evidence.source_id,
+        stream_id=result.evidence.stream_id,
+        zone_id=result.evidence.zone_id,
+        status=result.evidence.status,
         message=(
-            "Created pending MotionEvidence from saved media. "
-            "No Events, Visits, labels, or truth were created."
+            "Existing MotionEvidence already references this media. "
+            "No duplicate evidence was created."
+            if result.duplicate_skipped
+            else (
+                "Created pending MotionEvidence from media. "
+                "No Events, Visits, labels, or truth were created."
+            )
         ),
         creates_event=False,
         creates_visit=False,
         creates_truth=False,
-        warnings=warnings,
+        duplicate_skipped=result.duplicate_skipped,
+        existing_motion_evidence_id=result.existing_motion_evidence_id,
+        provenance_kind=result.provenance_kind,
+        warnings=result.warnings,
     )
 
 

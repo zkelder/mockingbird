@@ -9,26 +9,28 @@ Folder-imported MediaAssets are local media context. They are not evidence,
 Events, Visits, labels, classifier examples, analytics truth, export truth, or
 reviewed truth by themselves.
 
-Users may later want to review imported trail-cam media as possible outdoor
-activity. This design defines the future handoff from folder-imported
-MediaAssets into pending MotionEvidence while keeping review, promotion,
-correction, and truth separate.
+Users can now review imported trail-cam media as possible outdoor activity by
+explicitly creating one pending MotionEvidence record from one folder-imported
+MediaAsset. This design records that handoff while keeping batch creation,
+promotion, correction, and truth separate.
 
 ## Product Flow
 
 folder_import_future Source setup -> folder import preview -> explicit import
-to MediaAssets -> user reviews imported media -> optional future "create
-MotionEvidence from folder media" -> pending MotionEvidence -> explicit ignore
-or promote -> Event/Visit review -> user correction -> ReviewLabel truth ->
+to MediaAssets -> user chooses one imported media item -> explicit "create
+pending evidence" -> pending MotionEvidence -> explicit ignore or promote ->
+Event/Visit review -> user correction -> ReviewLabel truth ->
 analytics/exports/classifier readiness.
 
-## Current Behavior After Phase 13E
+## Current Behavior After Phase 13G
 
 - Folder preview is an explicit dry run.
 - Folder import is explicit.
 - Import copies supported files to the local media root.
 - Import creates MediaAssets only.
-- No MotionEvidence is created.
+- Folder import itself creates no MotionEvidence.
+- One folder-imported MediaAsset can become one pending MotionEvidence only
+  through explicit user action.
 - No Event is created.
 - No Visit is created.
 - No ReviewLabel is created.
@@ -62,18 +64,16 @@ automatically, and mirrors the saved external URL preview handoff pattern.
 - Model classification during import: deferred because suggestions must remain
   evidence only and never create truth during import.
 
-## Future Explicit Action Design
+## Implemented Explicit Action
 
-Future implementation can use:
+Implemented route:
 
 ```text
 POST /api/media/{media_asset_id}/create-motion-evidence
 ```
 
-If the existing saved-media handoff route is generic enough, reuse it instead of
-creating a folder-specific duplicate route.
-
-The future action should:
+The shared saved-media handoff route now supports folder-imported MediaAssets
+instead of adding a folder-specific duplicate route. The action:
 
 - require explicit user action
 - validate the MediaAsset exists
@@ -84,6 +84,7 @@ The future action should:
 - reject Privacy Zone and Ignore Zone by default
 - create pending MotionEvidence only
 - set `snapshot_media_asset_id`
+- skip existing pending, promoted, or ignored evidence by default
 - create no Event/Visit
 - create no ReviewLabel
 - create no truth
@@ -101,8 +102,8 @@ Ineligible or warning cases:
 
 - stale or missing media files
 - media without Stream context unless the user supplies one
-- media already linked to pending/promoted evidence, unless duplicate creation
-  is explicitly allowed later
+- media already linked to pending/promoted/ignored evidence, unless duplicate
+  creation is explicitly requested
 - Privacy Zone or Ignore Zone context
 - unsupported media types
 - media already tied to reviewed truth, unless creating another evidence record
@@ -110,14 +111,13 @@ Ineligible or warning cases:
 
 ## Request Fields
 
-Possible future request:
+Request:
 
 - `media_asset_id` path parameter
 - `stream_id`, optional if inferable
 - `zone_id`, optional
 - `note`, optional
 - `reason`, optional
-- `batch_id`, optional for future folder batches
 - `duplicate_policy`, optional, such as `skip_existing` or `allow_duplicate`
 
 No model inference happens here. No species label is accepted as truth. Zone
@@ -125,7 +125,7 @@ context is context only, not label truth.
 
 ## Response Fields
 
-Possible future response:
+Response:
 
 - `motion_evidence_id`
 - `media_asset_id`
@@ -137,6 +137,8 @@ Possible future response:
 - `creates_visit`: false
 - `creates_truth`: false
 - `duplicate_skipped`: bool
+- `existing_motion_evidence_id`, optional
+- `provenance_kind`, such as `folder_import`
 - `message`
 - `warnings`
 
@@ -168,9 +170,9 @@ This phase does not implement batch handoff.
 
 ## Duplicate Evidence Policy
 
-If a MediaAsset already has pending or promoted MotionEvidence, default behavior
-should skip it. A future explicit duplicate override can exist only with clear
-warnings.
+If a MediaAsset already has pending, promoted, or ignored MotionEvidence, default
+behavior skips it and returns the existing evidence id. An explicit
+`allow_duplicate` override exists for rare manual review cases.
 
 Duplicate MotionEvidence can confuse review queues, duplicate promotion, and make
 cleanup risk harder to understand. Skipped duplicates should be reported with
@@ -222,35 +224,32 @@ Both require explicit handoff to MotionEvidence, both use
 
 ## UI Design
 
-Future UI can show "Create pending evidence from imported media" after folder
-import results.
+The Streams page shows "Create pending evidence" on each imported MediaAsset
+after folder import results.
 
-Recommended behavior:
+Current behavior:
 
-- allow selected files or all newly imported files
-- run a dry-run first for batch actions
-- show evidence creation preview counts
-- show skipped duplicates and privacy/ignore skips
-- link to the Motion Evidence page after creation
+- acts on one imported MediaAsset at a time
+- does not run batch creation
+- reports duplicate skips and validation errors
+- cues the user to open the Motion Evidence page after creation
 - use copy such as "Pending evidence only. No Events, Visits, labels, or truth
   created."
 
 Avoid product copy that implies automatic detection, confirmed visits, training,
 watching folders, polling, stream recording, or adapter/debug internals.
 
-## Testing Expectations For Future Implementation
+## Testing Expectations
 
-Future tests should prove:
+Tests prove:
 
 - explicit handoff creates pending MotionEvidence only
 - MediaAsset must exist
 - folder-import provenance is preserved
-- missing/stale media is skipped
+- missing/stale media is rejected safely
 - duplicate evidence is skipped by default
 - stream and zone validation work
 - privacy/ignore zones are rejected
-- batch dry-run creates nothing
-- batch create creates only MotionEvidence
 - no Events/Visits are created
 - no ReviewLabels/truth are created
 - classifier readiness/export is unchanged
@@ -258,9 +257,11 @@ Future tests should prove:
 - no source folder files are deleted
 - no network fetch occurs
 
+Future batch tests should separately prove dry-run and selected-media behavior.
+
 ## Recommended Future Phases
 
-- Phase 13G: implement single folder-imported MediaAsset to pending
+- Phase 13G: implemented single folder-imported MediaAsset to pending
   MotionEvidence, no Event/Visit/truth.
 - Phase 13H: batch folder media evidence handoff dry-run.
 - Phase 13I: batch folder media evidence creation, no Event/Visit/truth.
@@ -269,8 +270,8 @@ Future tests should prove:
 
 ## Explicit Non-Goals
 
-- No implementation in this phase.
-- No MotionEvidence creation.
+- No batch MotionEvidence creation.
+- No automatic MotionEvidence creation.
 - No Events/Visits.
 - No ReviewLabels.
 - No truth creation.

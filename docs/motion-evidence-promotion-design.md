@@ -126,15 +126,16 @@ promoted evidence media appears high risk, and reviewed correction context
 appears protected.
 Phase 12F keeps promoted evidence media out of low-risk cleanup. The file-only
 cleanup route rejects promoted Event/Visit context and reviewed truth context.
-Future folder-origin evidence should use the same explicit promotion semantics:
+Folder-origin evidence uses the same explicit promotion semantics:
 folder-import MediaAssets can provide context only after an explicit evidence
 action, and promotion still creates unreviewed Event/Visit context without
 reviewed truth.
-Phase 13F documents that future evidence handoff in
+Phase 13F documents that evidence handoff in
 [folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md).
-Once folder-origin MotionEvidence exists, promotion should continue to reject
-privacy/ignore zones, create only unreviewed Event/Visit context, and leave
-ReviewLabel correction as the truth boundary.
+Phase 13G implements the single-media pending evidence handoff. Folder-origin
+MotionEvidence continues to use this promotion route: privacy/ignore zones are
+rejected, promotion creates only unreviewed Event/Visit context, and ReviewLabel
+correction remains the truth boundary.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

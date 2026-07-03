@@ -132,7 +132,9 @@ Every future implementation task must restate:
 - Folder-imported MediaAssets must follow
   [docs/folder-import-evidence-handoff-design.md](docs/folder-import-evidence-handoff-design.md)
   before they become MotionEvidence. Evidence handoff must be explicit and must
-  not create Events, Visits, labels, or truth.
+  not create Events, Visits, labels, or truth. Folder import must not
+  auto-create or batch-create evidence unless a future task explicitly scopes
+  that boundary.
 - External URL provider implementation must follow
   [docs/external-url-still-image-provider-contract.md](docs/external-url-still-image-provider-contract.md)
   and explicit phase scope. Do not add URL fetches without SSRF, timeout,
