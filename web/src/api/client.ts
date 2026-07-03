@@ -51,6 +51,9 @@ import type {
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
   ReviewQueueItem,
+  SavedMediaCleanupDryRunRequest,
+  SavedMediaCleanupDryRunResponse,
+  SavedMediaRetentionReportResponse,
   SavedPreviewMotionEvidenceRequest,
   SavedPreviewMotionEvidenceResponse,
   SpeciesSuggestion,
@@ -168,6 +171,16 @@ export const apiClient = {
   getVisitDetail: (visitId: string) => request<VisitDetail>(`/api/visits/${visitId}/detail`),
   getMediaAssets: () => request<MediaAsset[]>("/api/media"),
   getMediaAsset: (mediaId: string) => request<MediaAsset>(`/api/media/${mediaId}`),
+  getSavedMediaRetentionReport: () =>
+    request<SavedMediaRetentionReportResponse>("/api/media/saved-preview-retention"),
+  dryRunSavedMediaCleanup: (payload: SavedMediaCleanupDryRunRequest = {}) =>
+    request<SavedMediaCleanupDryRunResponse>(
+      "/api/media/saved-preview-retention/dry-run-cleanup",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
   createMotionEvidenceFromMedia: (
     mediaId: string,
     payload: SavedPreviewMotionEvidenceRequest = {},

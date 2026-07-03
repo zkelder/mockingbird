@@ -220,6 +220,8 @@ cleanup, and reviewed truth-linked media is protected by default.
 Phase 12D exposes that policy through a read-only report and dry-run planner:
 pending/ignored evidence is medium risk, promoted Event/Visit context is high
 risk, and reviewed correction context is protected.
+Phase 12E surfaces those risk levels in the Saved Media Retention UI so linked
+evidence is visible before any future cleanup implementation.
 
 ## Testing Expectations For Future Implementation
 

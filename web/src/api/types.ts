@@ -302,6 +302,77 @@ export interface SavedPreviewMotionEvidenceResponse {
   warnings: string[];
 }
 
+export interface SavedMediaRetentionItem {
+  media_asset_id: string;
+  source_id?: string | null;
+  stream_id?: string | null;
+  file_name?: string | null;
+  content_type?: string | null;
+  size_bytes?: number | null;
+  created_at?: string | null;
+  fetched_at?: string | null;
+  provider_key?: string | null;
+  provenance?: string | null;
+  linked_motion_evidence_count: number;
+  linked_event_count: number;
+  linked_visit_count: number;
+  reviewed_truth_count: number;
+  risk_level: "low" | "medium" | "high" | "protected" | string;
+  media_state: string;
+  recommended_action: string;
+  warnings: string[];
+}
+
+export interface SavedMediaRetentionSummary {
+  total_items: number;
+  total_known_bytes: number;
+  unknown_size_count: number;
+  low_risk_count: number;
+  medium_risk_count: number;
+  high_risk_count: number;
+  protected_count: number;
+  warnings: string[];
+}
+
+export interface SavedMediaRetentionReportResponse {
+  items: SavedMediaRetentionItem[];
+  summary: SavedMediaRetentionSummary;
+  generated_at: string;
+  dry_run_only: boolean;
+}
+
+export interface SavedMediaCleanupDryRunRequest {
+  media_asset_ids?: string[] | null;
+  risk_levels?: string[] | null;
+  include_protected?: boolean;
+  mode?: string;
+}
+
+export interface SavedMediaCleanupDryRunItem {
+  media_asset_id: string;
+  risk_level: string;
+  would_delete_file: boolean;
+  would_delete_record: boolean;
+  would_skip: boolean;
+  skip_reason?: string | null;
+  file_name?: string | null;
+  size_bytes?: number | null;
+  warnings: string[];
+}
+
+export interface SavedMediaCleanupDryRunResponse {
+  items: SavedMediaCleanupDryRunItem[];
+  total_would_delete_files: number;
+  total_would_delete_records: number;
+  total_known_bytes_to_delete: number;
+  skipped_count: number;
+  protected_skipped_count: number;
+  dry_run: boolean;
+  creates_truth: boolean;
+  deletes_truth: boolean;
+  warnings: string[];
+}
+
 export interface Point {
   x: number;
   y: number;

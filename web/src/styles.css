@@ -3083,6 +3083,194 @@ button {
   margin: 0;
 }
 
+.retention-boundary-panel {
+  border-color: #d6bb7a;
+  background: #fff9e9;
+}
+
+.retention-report-status,
+.retention-dry-run-panel,
+.retention-dry-run-result,
+.retention-item-list-panel,
+.retention-item-list,
+.retention-dry-run-items,
+.retention-item-card,
+.retention-dry-run-item {
+  display: grid;
+  gap: 12px;
+}
+
+.retention-report-status {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.retention-report-status h2,
+.retention-report-status p,
+.retention-item-card h3,
+.retention-dry-run-item h4,
+.retention-risk-copy {
+  margin: 0;
+}
+
+.retention-report-status p,
+.retention-risk-copy {
+  margin-top: 6px;
+  color: #4f5f55;
+}
+
+.retention-item-card,
+.retention-dry-run-item {
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.risk-badge {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.risk-badge-low {
+  background: #dcefd4;
+  color: #245436;
+}
+
+.risk-badge-medium {
+  background: #fff1bf;
+  color: #6c4b09;
+}
+
+.risk-badge-high {
+  background: #f8d9cf;
+  color: #7c2d1e;
+}
+
+.risk-badge-protected {
+  background: #dce8f1;
+  color: #24465b;
+}
+
+.risk-badge-unknown {
+  background: #e8ece6;
+  color: #536258;
+}
+
+.retention-detail-grid,
+.retention-linkage-grid,
+.retention-dry-run-summary,
+.retention-dry-run-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.retention-detail-grid div,
+.retention-linkage-grid div,
+.retention-dry-run-summary div,
+.retention-provenance {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfdf9;
+}
+
+.retention-detail-grid span,
+.retention-linkage-grid span,
+.retention-dry-run-summary span,
+.retention-provenance span {
+  color: #627168;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.retention-detail-grid strong,
+.retention-linkage-grid strong,
+.retention-dry-run-summary strong,
+.retention-provenance strong,
+.retention-item-card h3,
+.retention-dry-run-item h4 {
+  overflow-wrap: anywhere;
+}
+
+.retention-warning-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.retention-warning-list span {
+  border: 1px solid #d6bb7a;
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: #fff9e9;
+  color: #5f5027;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.retention-dry-run-form {
+  grid-template-columns: minmax(260px, 1.4fr) minmax(220px, 0.8fr) minmax(220px, 0.8fr);
+  align-items: end;
+}
+
+.retention-dry-run-form fieldset,
+.retention-dry-run-form label {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.retention-dry-run-form legend {
+  padding: 0;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.retention-checkbox-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.retention-checkbox-grid .checkbox-row,
+.retention-include-protected {
+  min-height: 40px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+}
+
+.retention-dry-run-form select {
+  min-height: 40px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.retention-dry-run-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -3139,6 +3327,13 @@ button {
   }
 
   .readiness-table-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .retention-detail-grid,
+  .retention-linkage-grid,
+  .retention-dry-run-form,
+  .retention-dry-run-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -3259,6 +3454,11 @@ button {
   .manifest-export-grid,
   .manifest-file-row,
   .manifest-example-row,
+  .retention-detail-grid,
+  .retention-linkage-grid,
+  .retention-dry-run-form,
+  .retention-dry-run-summary,
+  .retention-report-status,
   .taxonomy-preview-grid,
   .readiness-table-row {
     grid-template-columns: 1fr;

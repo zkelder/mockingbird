@@ -26,6 +26,7 @@ import { ManualImportPage } from "./pages/ManualImportPage";
 import { ModelAdaptersPage } from "./pages/ModelAdaptersPage";
 import { MotionEvidencePage } from "./pages/MotionEvidencePage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
+import { SavedMediaRetentionPage } from "./pages/SavedMediaRetentionPage";
 import { SpeciesSuggestionsPage } from "./pages/SpeciesSuggestionsPage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
@@ -48,6 +49,7 @@ type Page =
   | "review"
   | "analytics"
   | "exports"
+  | "saved-media-retention"
   | "settings";
 
 interface AppData {
@@ -96,6 +98,7 @@ const navItems: Array<{ page: Page; label: string }> = [
   { page: "review", label: "Review" },
   { page: "analytics", label: "Analytics" },
   { page: "exports", label: "Exports" },
+  { page: "saved-media-retention", label: "Saved Media Retention" },
   { page: "settings", label: "Local Data" },
 ];
 
@@ -467,6 +470,10 @@ export default function App() {
           onExportsChanged={() => loadAppData({ showLoading: false })}
         />
       );
+    }
+
+    if (page === "saved-media-retention") {
+      return <SavedMediaRetentionPage />;
     }
 
     return (

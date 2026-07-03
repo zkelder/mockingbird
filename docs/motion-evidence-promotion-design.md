@@ -121,6 +121,9 @@ because deleting it can weaken Event/Visit review provenance. See
 Phase 12D exposes that classification in the retention report and dry-run
 planner. Promoted saved-preview media is high risk until reviewed correction
 makes it protected, and the dry-run route does not delete files or records.
+Phase 12E makes the same state visible in the Saved Media Retention UI:
+promoted evidence media appears high risk, and reviewed correction context
+appears protected.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 
@@ -204,6 +207,9 @@ protected by default.
 
 Phase 12D adds backend report/dry-run coverage for that policy without adding
 cleanup/delete behavior.
+
+Phase 12E adds frontend visibility for that report and dry-run plan without
+adding cleanup/delete behavior.
 
 ## Explicit Non-Goals
 

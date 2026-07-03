@@ -15,6 +15,10 @@ Phase 12C was design only. Phase 12D implements the first read-only retention
 report and cleanup dry-run planning API. It still adds no cleanup
 implementation, retention job, UI, generated media, record deletion, file
 deletion, or truth mutation.
+Phase 12E adds the frontend Saved Media Retention page for viewing that report
+and running dry-run cleanup previews. It still adds no actual cleanup
+implementation, media deletion, record deletion, generated media, or truth
+mutation.
 
 ## Product Flow Covered
 
@@ -158,20 +162,22 @@ If no filters are supplied, dry-run defaults to low-risk candidates only.
 Protected media is skipped unless explicitly included, and even then this route
 only reports what a future cleanup might affect.
 
-## UI Design
+## Current UI
 
-Future UI can add a Saved Media / Retention section that shows:
+Implemented in Phase 12E, the Saved Media Retention page shows:
 
 - file size
 - safe provenance
 - linked evidence, Event, Visit, and review status
 - clear risk badge
-- `Delete unlinked local media` for low-risk media only
+- dry-run cleanup filters for risk level and protected media
+- dry-run totals and per-item skipped/planned effects
 - warnings for linked, promoted, or reviewed media
-- cleanup summary before applying changes
+- clear no-delete/no-truth boundary copy
 
-No destructive bulk action should run without preview/dry-run. The UI must never
-hide truth implications.
+The UI has no actual cleanup button. No destructive bulk action should run
+without a future explicit implementation phase. The UI must never hide truth
+implications.
 
 ## Dry-Run Cleanup Policy
 
@@ -262,12 +268,13 @@ path safety and deletion behavior.
 
 - Phase 12D: saved media retention report/dry-run API, no deletion.
 - Phase 12E: saved media retention UI, dry-run only.
-- Phase 12F: low-risk unlinked media cleanup implementation.
+- Next likely Phase 12F: low-risk unlinked media cleanup implementation.
+- Alternative next: Phase 13A next provider boundary design.
 - Later: protected media/archive policy.
 
 ## Explicit Non-Goals
 
-- No actual cleanup implementation in Phase 12D.
+- No actual cleanup implementation in Phase 12D or Phase 12E.
 - No media deletion.
 - No record deletion.
 - No background cleanup.

@@ -432,7 +432,9 @@ Current work:
   validation of the same explicit path.
 - Phase 12C: external_url saved media cleanup/retention design.
 - Phase 12D: saved media retention report/dry-run API, no deletion.
-- Next likely phase: Phase 12E — saved media retention UI, dry-run only.
+- Phase 12E: saved media retention UI, dry-run only.
+- Next likely phase: Phase 12F — low-risk unlinked saved media cleanup
+  implementation, or Phase 13A next provider boundary design.
 
 Validation:
 
@@ -466,6 +468,11 @@ Validation:
   and ReviewLabel links, reports stale media safely, and deletes no files,
   deletes no records, fetches no URLs, creates no evidence, and mutates no
   truth.
+- Phase 12E adds frontend visibility for that retention report and dry-run
+  planner. The UI shows risk badges, media state, linkage counts, warnings,
+  protected-media skips, and dry-run totals without adding cleanup/delete
+  behavior, media deletion, record deletion, evidence creation, or truth
+  mutation.
 - Saved preview cleanup must separate file deletion from MediaAsset record
   deletion, classify risk by linkage/review state, dry-run before destructive
   work, and protect reviewed truth/export/classifier-readiness context by

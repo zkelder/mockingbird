@@ -70,6 +70,12 @@ A read-only preview of what a future cleanup action might affect. It reports
 candidate files or records and protected skips, but deletes nothing and changes
 no review truth.
 
+## Saved Media Retention UI
+
+A frontend view of saved preview media retention status, risk levels, warnings,
+and cleanup dry-run results. It is storage visibility only and has no actual
+cleanup/delete action.
+
 ## Retention Risk Level
 
 A cleanup classification for saved media, such as low, medium, high, or

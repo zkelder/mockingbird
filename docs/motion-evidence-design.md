@@ -282,6 +282,12 @@ planner. Pending and ignored MotionEvidence media is medium risk, promoted
 Event/Visit media is high risk, reviewed correction media is protected, and the
 routes delete nothing and create no truth.
 
+## Phase 12E Status
+
+Phase 12E surfaces attached saved-preview media retention risk in the Saved
+Media Retention UI. The UI can run dry-run cleanup previews, but it deletes no
+files, deletes no records, and creates no truth.
+
 ## Phase 8S Status
 
 Phase 8S lets pending MotionEvidence be created with optional `snapshot_media_asset_id`.

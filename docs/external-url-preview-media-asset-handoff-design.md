@@ -79,6 +79,9 @@ not silently remove reviewed truth or provenance.
 Phase 12D adds a read-only saved-preview retention report and cleanup dry-run
 planner for these MediaAssets. It classifies risk and reports linkage, but it
 does not delete files or records.
+Phase 12E shows saved preview MediaAssets in the Saved Media Retention UI with
+risk badges and dry-run cleanup previews. The UI still does not delete files,
+delete records, or create truth.
 
 ## Supported Content Policy
 

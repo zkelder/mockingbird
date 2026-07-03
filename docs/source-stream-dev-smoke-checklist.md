@@ -178,6 +178,18 @@ curl -s -X POST http://127.0.0.1:8000/api/media/saved-preview-retention/dry-run-
 These retention routes are report/dry-run only. They must not delete files,
 delete records, create evidence, or mutate review truth.
 
+## Browser Checklist: Saved Media Retention
+
+- [ ] After saving preview media, open `Saved Media Retention`.
+- [ ] Confirm the saved MediaAsset appears with a risk level and media state.
+- [ ] Confirm Source, Stream, provenance, size, and linkage counts are visible.
+- [ ] Confirm dry-run defaults to low risk only.
+- [ ] Run dry-run cleanup.
+- [ ] Confirm totals and per-item plans appear.
+- [ ] Confirm the page says no files deleted, no records deleted, and no truth
+      changed.
+- [ ] Confirm there is no actual cleanup or delete action.
+
 ## Truth-Boundary Checklist
 
 - [ ] Preview fetch creates no records.
@@ -244,13 +256,11 @@ delete records, create evidence, or mutate review truth.
 
 ## Recommended Next Phase
 
-Recommended next: Phase 12E — saved media retention UI, dry-run only. Phase
-12D gives the backend a read-only report and dry-run planner, so the next
-product-safe step is making the same risk classification visible without adding
-destructive cleanup.
+Recommended next: Phase 12F — low-risk unlinked saved media cleanup
+implementation, only after separate scope and validation. Phase 12E makes the
+retention report and dry-run planning visible without adding destructive
+cleanup.
 
 Other reasonable follow-ups:
 
-- Phase 12F: low-risk unlinked saved media cleanup implementation, only after
-  separate scope and validation.
 - Phase 13A: next provider boundary design.
