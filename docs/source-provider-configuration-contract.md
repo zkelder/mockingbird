@@ -59,6 +59,9 @@ adds explicit dry-run preview parsing for `recursive` and `allowed_extensions`.
 Phase 13D uses the same metadata for explicit import-to-MediaAssets only.
 Phase 13E exposes preview/import actions in the Streams page UI after
 configuration, without exposing the raw folder path.
+Phase 13F designs a future explicit evidence handoff after import. Provider
+configuration and import still do not create MotionEvidence, Events, Visits,
+ReviewLabels, or truth.
 `folder_path` is required and redacted to configured/not-configured in normal
 API/UI responses.
 
@@ -147,6 +150,7 @@ External URL implementation must also follow
 before any URL fetch or validation behavior is added.
 Folder/trail-cam implementation must follow
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md)
+and [folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md)
 before any folder evidence/review handoff, watcher, polling, media deletion, or
 truth-affecting behavior is added.
 
@@ -176,6 +180,8 @@ reviewable activity.
   source-scoped import route, and it creates MediaAssets only.
 - Folder preview/import UI remains an explicit configured-Source action, not
   automatic setup, status, or playback behavior.
+- Folder-imported MediaAssets require a later explicit evidence handoff before
+  MotionEvidence can exist.
 - Source connection status reflects configured and missing fields.
 - Stream playback remains honest and does not claim live playback.
 - Manual media setup points to explicit import/review, not live playback.

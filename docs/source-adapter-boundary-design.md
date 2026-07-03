@@ -102,6 +102,10 @@ behavior.
 Phase 13E exposes that explicit preview/import flow in the Streams page UI. It
 does not add a watcher, polling, background import, decoding, live playback, or
 truth creation path.
+Phase 13F designs the future folder-imported MediaAsset -> pending
+MotionEvidence handoff. Folder-imported MediaAssets still require explicit
+evidence handoff before they can enter MotionEvidence, Event/Visit review,
+analytics truth, export truth, or classifier readiness.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -247,6 +251,7 @@ Future implementation must test:
 - Phase 13C: folder import preview API, dry-run only.
 - Phase 13D: folder import implementation to MediaAssets only.
 - Phase 13E: folder import UI preview/import.
+- Phase 13F: folder-imported MediaAsset to MotionEvidence handoff design.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

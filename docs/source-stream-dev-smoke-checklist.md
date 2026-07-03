@@ -13,8 +13,10 @@ runtime dependencies, or model/training work.
 
 Folder / trail-cam import is a future provider boundary documented in
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
-It is not part of this external_url smoke checklist and should receive a
-separate future checklist before implementation.
+Folder preview/import and the Phase 13F evidence handoff design are not part of
+this external_url smoke checklist. Folder-imported media should receive a
+separate future checklist when its explicit MotionEvidence handoff is
+implemented.
 
 ## Product Flow Covered
 
@@ -278,10 +280,10 @@ MotionEvidence, Events, Visits, labels, exports, and truth must remain.
 
 ## Recommended Next Phase
 
-Recommended next: Phase 12G — cleanup UI polish/audit trail design, or Phase
-13A/13B folder-trail-cam provider boundary/status work. Phase 12F implements
-only confirmed low-risk file cleanup.
+Recommended next for the folder path: Phase 13G — single folder MediaAsset to
+pending MotionEvidence implementation, no Event/Visit/truth. Phase 13F is the
+docs-only handoff design.
 
 Other reasonable follow-ups:
 
-- Phase 13B: folder/trail-cam provider configuration UI/status contract.
+- Folder-import handoff manual checklist after Phase 13G implementation.

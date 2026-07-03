@@ -24,8 +24,11 @@ Phase 12F adds explicit file-only cleanup for low-risk unlinked saved preview
 media. It is a separate storage action and does not delete MediaAsset records,
 evidence, Events, Visits, labels, exports, or truth.
 Phase 13A is a separate docs-only boundary for future Folder / trail-cam import.
+Phase 13B adds folder/trail-cam provider configuration/status only.
+Phase 13F designs the future folder-imported MediaAsset -> pending
+MotionEvidence handoff only; it adds no implementation or smoke-test runtime.
 The current proven smoke path remains external_url; folder/trail-cam import
-needs its own future smoke path before implementation.
+needs its own future smoke path when the handoff is implemented.
 
 ## Product Flow Covered
 
@@ -110,5 +113,9 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - Phase 12E: saved media retention UI, dry-run only.
 - Phase 12F: low-risk saved media file cleanup only.
 - Phase 13A: folder/trail-cam import provider boundary design.
+- Phase 13B: folder/trail-cam provider configuration/status contract.
+- Phase 13F: folder-imported MediaAsset -> MotionEvidence handoff design.
+- Phase 13G: add focused smoke coverage only if the single-media handoff is
+  implemented.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.

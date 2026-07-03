@@ -206,6 +206,13 @@ Existing manual media import may create reviewable Events/Visits by explicit
 behavior. Saved preview should not automatically do that unless a future route
 explicitly chooses it.
 
+Folder import follows a closer MediaAsset-only pattern after Phase 13D/13E:
+explicit preview/import can create local MediaAssets, but the future evidence
+handoff is separate and documented in
+[folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md).
+Both saved previews and folder-imported media require explicit MotionEvidence
+handoff before review/promotion.
+
 ## Relationship To Classifier/Export Pipeline
 
 - Saved preview MediaAssets are not training truth by themselves.

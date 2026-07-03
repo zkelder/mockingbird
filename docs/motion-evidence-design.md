@@ -65,6 +65,11 @@ user action, not automatically when the preview is saved.
 Future folder/trail-cam MediaAssets can follow the same evidence boundary: they
 may become MotionEvidence only through an explicit action, not by being present
 in a folder or imported as media.
+Phase 13F defines that future folder-imported MediaAsset -> pending
+MotionEvidence handoff in
+[folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md).
+The design keeps folder media as local context until an explicit evidence action
+creates pending MotionEvidence.
 
 ## Status Lifecycle
 
@@ -255,6 +260,14 @@ Phase 11I keeps saved-preview-origin evidence understandable after explicit
 promotion. Promoted MotionEvidence can link users to the reviewable Event/Visit,
 and Event/Visit detail pages can show saved media provenance while correction
 remains the only source of analytics/export truth.
+
+## Phase 13F Relationship
+
+Phase 13F designs folder-imported MediaAssets as a future explicit
+MotionEvidence source. The handoff should reuse pending/ignored/promoted
+lifecycle, attach the imported media through `snapshot_media_asset_id`, and
+create no Events, Visits, ReviewLabels, or truth until later explicit promotion
+and correction.
 
 ## Phase 12A Status
 

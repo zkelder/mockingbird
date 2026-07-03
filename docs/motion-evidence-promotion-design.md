@@ -130,6 +130,11 @@ Future folder-origin evidence should use the same explicit promotion semantics:
 folder-import MediaAssets can provide context only after an explicit evidence
 action, and promotion still creates unreviewed Event/Visit context without
 reviewed truth.
+Phase 13F documents that future evidence handoff in
+[folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md).
+Once folder-origin MotionEvidence exists, promotion should continue to reject
+privacy/ignore zones, create only unreviewed Event/Visit context, and leave
+ReviewLabel correction as the truth boundary.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

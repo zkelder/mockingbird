@@ -26,6 +26,10 @@ truth.
 Phase 13E exposes those explicit preview/import actions in the Streams page UI.
 The backend boundary remains unchanged: preview is dry-run only, and import
 creates MediaAssets only.
+Phase 13F designs the future explicit handoff from folder-imported MediaAssets
+to pending MotionEvidence. It adds no implementation; imported MediaAssets
+remain media context, not evidence or truth. See
+[folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md).
 
 ## Product Flow
 
@@ -250,6 +254,11 @@ Optional MotionEvidence creation must be explicit. Optional Event/Visit creation
 must be explicit and separately designed. ReviewLabel correction remains truth,
 and classifier/export readiness depends on reviewed corrections.
 
+The folder-import evidence handoff design defines the future path:
+folder-imported MediaAsset -> explicit pending MotionEvidence -> explicit
+promotion -> Event/Visit review -> correction truth. Folder import itself still
+does not create evidence or truth.
+
 ## Storage/Retention Boundary
 
 Folder imports can create many files. Import preview should estimate counts and
@@ -338,7 +347,9 @@ initially, and must preserve retention, provenance, and truth boundaries.
 - Phase 13C: folder import preview API, dry-run only.
 - Phase 13D: folder import implementation to MediaAssets only.
 - Phase 13E: folder import UI preview/import.
-- Phase 13F: folder media to MotionEvidence/Event review handoff design.
+- Phase 13F: folder media to MotionEvidence handoff design.
+- Phase 13G: single folder-imported MediaAsset to pending MotionEvidence, no
+  Event/Visit/truth.
 
 ## Explicit Non-Goals
 

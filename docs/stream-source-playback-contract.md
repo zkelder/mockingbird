@@ -77,6 +77,9 @@ Events/Visits, or truth without a later explicit handoff.
 Phase 13E exposes folder preview/import on the Streams page, but it does not
 change live playback support, preview URLs, playback status, or Stream Detail
 behavior.
+Phase 13F designs a future explicit evidence handoff for imported folder media.
+That handoff does not make folder/trail-cam Sources live playback providers and
+does not change playback status.
 
 For `external_url` Sources, Phase 11C preview fetch is transient UI context.
 Playback status must not fetch URLs, store media, imply live playback, or persist
@@ -120,6 +123,8 @@ Saved preview review/evidence handoff design is documented in
 [saved-preview-review-evidence-handoff-design.md](saved-preview-review-evidence-handoff-design.md).
 Folder/trail-cam import provider boundary design is documented in
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
+Folder-import evidence handoff design is documented in
+[folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md).
 
 ## Zone Editing Relationship
 
@@ -152,6 +157,7 @@ activity.
   support.
 - Folder import UI does not make folder/trail-cam Sources into live playback
   providers.
+- Folder-import evidence handoff does not change playback/live status.
 - The route does not create evidence, review truth, exports, analytics truth,
   media files, model artifacts, or adapter runtime calls.
 

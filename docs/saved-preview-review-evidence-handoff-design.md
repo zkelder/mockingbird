@@ -187,6 +187,16 @@ Future saved-preview-to-MotionEvidence should be a separate explicit path. Both
 workflows must preserve correction truth. Manual media import remains useful for
 user-supplied files.
 
+## Relationship To Folder Import MediaAssets
+
+Folder import creates local MediaAssets from configured folder/trail-cam Sources.
+Like saved external URL previews, those MediaAssets are media context only until
+an explicit handoff creates pending MotionEvidence. The folder-import handoff is
+designed in
+[folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md)
+and should reuse the same `snapshot_media_asset_id`, pending evidence, explicit
+promotion, and correction-truth boundaries.
+
 ## Relationship To Classifier/Export Pipeline
 
 - Saved previews are not classifier examples by themselves.

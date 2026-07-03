@@ -495,7 +495,9 @@ Current work:
 - Phase 13C: folder import preview API, dry-run only.
 - Phase 13D: folder import implementation to MediaAssets only.
 - Phase 13E: folder import UI preview/import.
-- Next likely phase: Phase 13F — folder-import-to-MotionEvidence handoff design.
+- Phase 13F: folder-import-to-MotionEvidence handoff design.
+- Next likely phase: Phase 13G — single folder MediaAsset to pending
+  MotionEvidence implementation, no Event/Visit/truth.
 
 Validation:
 
@@ -509,6 +511,8 @@ Validation:
   copy-to-local-MediaAsset import only.
 - Phase 13E exposes folder preview/import on the Streams page with candidate,
   skipped, warning, and MediaAsset result reporting.
+- Phase 13F designs the explicit handoff from folder-imported MediaAssets to
+  pending MotionEvidence before any implementation.
 - Recommended canonical provider key is `folder_import_future`, with display
   name Folder / trail-cam import.
 - `folder_path` is required sensitive metadata and must be redacted to
@@ -544,3 +548,7 @@ Validation:
   DetectionProposal, analytics truth, export truth, media deletion, decoding,
   worker, scheduler, dependency, generated model/dataset artifact, watcher,
   polling, or live playback behavior is added in Phase 13E.
+- No backend code, frontend code, tests, MotionEvidence creation, Event/Visit
+  creation, ReviewLabel/truth creation, media deletion, decoding, worker,
+  dependency, model/runtime behavior, or generated artifact is added in Phase
+  13F.

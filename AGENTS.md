@@ -129,6 +129,10 @@ Every future implementation task must restate:
   only when explicitly scoped and must not create MotionEvidence, Events, Visits,
   labels, or truth. Do not add watchers, polling, media deletion, decoding,
   workers, dependencies, or truth creation without that scope.
+- Folder-imported MediaAssets must follow
+  [docs/folder-import-evidence-handoff-design.md](docs/folder-import-evidence-handoff-design.md)
+  before they become MotionEvidence. Evidence handoff must be explicit and must
+  not create Events, Visits, labels, or truth.
 - External URL provider implementation must follow
   [docs/external-url-still-image-provider-contract.md](docs/external-url-still-image-provider-contract.md)
   and explicit phase scope. Do not add URL fetches without SSRF, timeout,

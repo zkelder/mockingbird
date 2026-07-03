@@ -41,6 +41,12 @@ and importing previewed files as MediaAssets only. It does not watch folders,
 provide live playback, create evidence, create Events/Visits, or create reviewed
 truth.
 
+## Folder Import Evidence Handoff
+
+A future explicit action that can turn a folder-imported MediaAsset into pending
+MotionEvidence with attached media context. It does not create Events, Visits,
+ReviewLabels, or reviewed truth.
+
 ## Source Connection Status
 
 A read-only product contract describing Source provider readiness and related

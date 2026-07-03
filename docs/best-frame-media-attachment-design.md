@@ -67,6 +67,9 @@ Folder/trail-cam MediaAssets should follow the same rule if implemented later:
 they can provide local review context, but attachment alone must not create
 labels, reviewed status, export readiness, dataset coverage truth, or species
 truth.
+Phase 13F designs folder-imported MediaAssets as a future explicit source for
+`snapshot_media_asset_id` on pending MotionEvidence. The handoff remains
+user-triggered and creates no Event, Visit, label, or truth.
 After explicit promotion, saved preview media can remain visible as review
 context on Event/Visit detail. It still does not confirm labels, reviewed status,
 export readiness, or dataset truth.

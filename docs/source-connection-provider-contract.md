@@ -66,6 +66,9 @@ connection status still does not call it or imply imported media exists.
 Phase 13E adds a Streams page UI for those explicit preview/import actions.
 Source connection status remains metadata/status only and still does not scan
 folders, import media, or create MediaAssets.
+Phase 13F designs a future explicit handoff from folder-imported MediaAssets to
+pending MotionEvidence. Source status still must not imply evidence exists or
+create evidence itself.
 
 For `external_url`, connection readiness remains metadata/status-only. A
 configured URL can point users to explicit still-image preview fetch, but
@@ -130,6 +133,8 @@ Saved preview review/evidence handoff is designed in
 [saved-preview-review-evidence-handoff-design.md](saved-preview-review-evidence-handoff-design.md).
 Folder/trail-cam import behavior is designed in
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
+The folder-import evidence handoff boundary is designed in
+[folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md).
 
 ## Zone Editing Relationship
 
