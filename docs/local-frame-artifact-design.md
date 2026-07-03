@@ -48,6 +48,9 @@ artifacts: they are user-selected batch media from local folders, not generated
 best-frame artifacts from sampler output. Phase 13G lets one imported
 MediaAsset attach to pending MotionEvidence through explicit review/evidence
 action.
+Phase 13H adds a dry-run/report for multiple folder-imported MediaAssets before
+any batch evidence creation path. It does not generate frame artifacts, decode
+media, call models, or create truth.
 Phase 13F keeps that distinction explicit: folder-imported MediaAssets can
 become `snapshot_media_asset_id` context for pending MotionEvidence, but they
 are not sampled-frame artifacts and do not create truth by being imported.

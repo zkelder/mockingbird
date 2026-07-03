@@ -93,6 +93,9 @@ from mockingbird.api.schemas import (
     ExportStatus,
     FolderImportCandidate,
     FolderImportCreate,
+    FolderImportEvidenceBatchDryRunItem,
+    FolderImportEvidenceBatchDryRunRequest,
+    FolderImportEvidenceBatchDryRunResponse,
     FolderImportPreview,
     FolderImportResult,
     FolderImportSkippedFile,
@@ -2328,6 +2331,307 @@ class ProductRepository:
                     warnings=warnings,
                     provenance_kind=provenance_kind,
                 )
+
+    def dry_run_folder_import_evidence_batch(
+        self,
+        payload: FolderImportEvidenceBatchDryRunRequest,
+    ) -> FolderImportEvidenceBatchDryRunResponse:
+        media_asset_ids = [
+            media_asset_id.strip()
+            for media_asset_id in (payload.media_asset_ids or [])
+            if media_asset_id and media_asset_id.strip()
+        ]
+        source_id = _clean_optional_text(payload.source_id)
+        stream_id = _clean_optional_text(payload.stream_id)
+        zone_id = _clean_optional_text(payload.zone_id)
+        duplicate_policy = _clean_optional_text(payload.duplicate_policy) or "skip_existing"
+        if duplicate_policy not in {"skip_existing", "allow_duplicate"}:
+            raise ValueError("unsupported_duplicate_policy")
+        if not media_asset_ids and source_id is None and stream_id is None:
+            raise ValueError("batch_dry_run_requires_selection")
+
+        max_items = payload.max_items or 100
+        warnings: list[str] = []
+        if max_items > 500:
+            max_items = 500
+            warnings.append("max_items was capped at 500.")
+
+        items: list[FolderImportEvidenceBatchDryRunItem] = []
+        with self.session_factory() as session:
+            if source_id is not None and session.get(CameraSourceModel, source_id) is None:
+                raise ValueError("missing_source")
+            if stream_id is not None:
+                stream_model = session.get(StreamModel, stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+                if source_id is not None and stream_model.source_id != source_id:
+                    raise ValueError("stream_source_mismatch")
+
+            if media_asset_ids:
+                evaluation_ids = media_asset_ids[:max_items]
+                overflow_ids = media_asset_ids[max_items:]
+                if overflow_ids:
+                    warnings.append(f"Dry run truncated at {max_items} items.")
+
+                for media_asset_id in evaluation_ids:
+                    items.append(
+                        self._folder_import_evidence_batch_dry_run_item(
+                            session,
+                            media_asset_id=media_asset_id,
+                            asset_model=session.get(MediaAssetModel, media_asset_id),
+                            requested_source_id=source_id,
+                            requested_stream_id=stream_id,
+                            requested_zone_id=zone_id,
+                            duplicate_policy=duplicate_policy,
+                        )
+                    )
+                for media_asset_id in overflow_ids:
+                    items.append(
+                        FolderImportEvidenceBatchDryRunItem(
+                            media_asset_id=media_asset_id,
+                            eligible=False,
+                            would_create_motion_evidence=False,
+                            skip_reason="max_items_exceeded",
+                            warnings=["Dry run max_items limit skipped this MediaAsset."],
+                        )
+                    )
+            else:
+                query = select(MediaAssetModel).order_by(
+                    MediaAssetModel.created_at,
+                    MediaAssetModel.id,
+                )
+                if source_id is not None:
+                    query = query.where(MediaAssetModel.source_id == source_id)
+                if stream_id is not None:
+                    query = query.where(MediaAssetModel.stream_id == stream_id)
+
+                folder_assets = [
+                    asset_model
+                    for asset_model in session.scalars(query).all()
+                    if _is_folder_import_media_asset(asset_model)
+                ]
+                if len(folder_assets) > max_items:
+                    warnings.append(f"Dry run truncated at {max_items} items.")
+                for asset_model in folder_assets[:max_items]:
+                    items.append(
+                        self._folder_import_evidence_batch_dry_run_item(
+                            session,
+                            media_asset_id=asset_model.id,
+                            asset_model=asset_model,
+                            requested_source_id=source_id,
+                            requested_stream_id=stream_id,
+                            requested_zone_id=zone_id,
+                            duplicate_policy=duplicate_policy,
+                        )
+                    )
+
+        eligible_count = sum(1 for item in items if item.eligible)
+        would_create_count = sum(1 for item in items if item.would_create_motion_evidence)
+        duplicate_skipped_count = sum(1 for item in items if item.duplicate_skipped)
+        return FolderImportEvidenceBatchDryRunResponse(
+            items=items,
+            total_items=len(items),
+            eligible_count=eligible_count,
+            would_create_count=would_create_count,
+            duplicate_skipped_count=duplicate_skipped_count,
+            skipped_count=len(items) - would_create_count,
+            dry_run=True,
+            creates_motion_evidence=False,
+            creates_events=False,
+            creates_visits=False,
+            creates_truth=False,
+            warnings=warnings,
+        )
+
+    def _folder_import_evidence_batch_dry_run_item(
+        self,
+        session: Session,
+        *,
+        media_asset_id: str,
+        asset_model: MediaAssetModel | None,
+        requested_source_id: str | None,
+        requested_stream_id: str | None,
+        requested_zone_id: str | None,
+        duplicate_policy: str,
+    ) -> FolderImportEvidenceBatchDryRunItem:
+        source_id = asset_model.source_id if asset_model else requested_source_id
+        stream_id = asset_model.stream_id if asset_model else requested_stream_id
+        file_name = (
+            asset_model.original_filename or asset_model.filename
+            if asset_model is not None
+            else None
+        )
+
+        def skipped(
+            skip_reason: str,
+            *,
+            item_source_id: str | None = source_id,
+            item_stream_id: str | None = stream_id,
+            item_zone_id: str | None = requested_zone_id,
+            item_warnings: list[str] | None = None,
+            duplicate_skipped: bool = False,
+            existing_motion_evidence_id: str | None = None,
+        ) -> FolderImportEvidenceBatchDryRunItem:
+            return FolderImportEvidenceBatchDryRunItem(
+                media_asset_id=media_asset_id,
+                source_id=item_source_id,
+                stream_id=item_stream_id,
+                zone_id=item_zone_id,
+                file_name=file_name,
+                eligible=False,
+                would_create_motion_evidence=False,
+                duplicate_skipped=duplicate_skipped,
+                existing_motion_evidence_id=existing_motion_evidence_id,
+                skip_reason=skip_reason,
+                warnings=item_warnings or [],
+            )
+
+        if asset_model is None:
+            return skipped(
+                "unknown_media_asset",
+                item_source_id=None,
+                item_stream_id=None,
+                item_zone_id=None,
+                item_warnings=["MediaAsset was not found."],
+            )
+        if not _is_folder_import_media_asset(asset_model):
+            return skipped(
+                "not_folder_import_media",
+                item_warnings=["MediaAsset was not created by folder import."],
+            )
+        if (
+            asset_model.media_type != "image"
+            or asset_model.content_type not in EXTERNAL_URL_PREVIEW_EXTENSIONS
+        ):
+            return skipped(
+                "unsupported_media_type",
+                item_warnings=["Only folder-imported still-image MediaAssets are eligible."],
+            )
+        if not Path(asset_model.local_path).is_file():
+            return skipped(
+                "missing_local_file",
+                item_warnings=["Local media file was not found."],
+            )
+
+        stream_id = requested_stream_id or asset_model.stream_id
+        if stream_id is None:
+            return skipped("missing_stream_context", item_stream_id=None)
+        stream_model = session.get(StreamModel, stream_id)
+        if stream_model is None:
+            return skipped("missing_stream_context", item_stream_id=stream_id)
+        if asset_model.stream_id != stream_model.id:
+            return skipped("stream_source_mismatch", item_stream_id=stream_model.id)
+
+        source_id = asset_model.source_id or stream_model.source_id
+        if requested_source_id is not None and source_id != requested_source_id:
+            return skipped("stream_source_mismatch", item_source_id=source_id)
+        if stream_model.source_id != source_id:
+            return skipped("stream_source_mismatch", item_source_id=source_id)
+
+        warnings: list[str] = []
+        if requested_zone_id is not None:
+            zone_model = session.get(ZoneModel, requested_zone_id)
+            if zone_model is None or zone_model.stream_id != stream_model.id:
+                return skipped(
+                    "invalid_zone",
+                    item_source_id=source_id,
+                    item_stream_id=stream_model.id,
+                    item_zone_id=requested_zone_id,
+                )
+            if zone_model.zone_type == ZoneType.privacy.value:
+                return skipped(
+                    "privacy_zone",
+                    item_source_id=source_id,
+                    item_stream_id=stream_model.id,
+                    item_zone_id=zone_model.id,
+                )
+            if zone_model.zone_type == ZoneType.ignore.value:
+                return skipped(
+                    "ignore_zone",
+                    item_source_id=source_id,
+                    item_stream_id=stream_model.id,
+                    item_zone_id=zone_model.id,
+                )
+        else:
+            zone_model = next(
+                (
+                    zone
+                    for zone in session.scalars(
+                        select(ZoneModel)
+                        .where(
+                            ZoneModel.stream_id == stream_model.id,
+                            ZoneModel.is_active.is_(True),
+                        )
+                        .order_by(ZoneModel.id)
+                    ).all()
+                    if zone.zone_type
+                    not in {
+                        ZoneType.privacy.value,
+                        ZoneType.ignore.value,
+                    }
+                ),
+                None,
+            )
+            if zone_model is None:
+                return skipped(
+                    "insufficient_context",
+                    item_source_id=source_id,
+                    item_stream_id=stream_model.id,
+                    item_zone_id=None,
+                )
+            warnings.append(
+                "No zone was supplied; MockingBird used the first active "
+                "reviewable zone for this stream."
+            )
+
+        existing_evidence = session.scalars(
+            select(MotionEvidenceModel)
+            .where(
+                MotionEvidenceModel.snapshot_media_asset_id == media_asset_id,
+                MotionEvidenceModel.status.in_(
+                    [
+                        MotionEvidenceStatus.pending.value,
+                        MotionEvidenceStatus.promoted.value,
+                        MotionEvidenceStatus.ignored.value,
+                    ]
+                ),
+            )
+            .order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
+        ).first()
+        if existing_evidence is not None:
+            if duplicate_policy == "skip_existing":
+                return skipped(
+                    "duplicate_evidence",
+                    item_source_id=source_id,
+                    item_stream_id=stream_model.id,
+                    item_zone_id=zone_model.id,
+                    item_warnings=[
+                        "Existing MotionEvidence already references this MediaAsset; "
+                        "no duplicate pending evidence would be created."
+                    ],
+                    duplicate_skipped=True,
+                    existing_motion_evidence_id=existing_evidence.id,
+                )
+            warnings.append(
+                "Existing MotionEvidence already references this MediaAsset; "
+                "duplicate creation would be allowed by policy."
+            )
+
+        return FolderImportEvidenceBatchDryRunItem(
+            media_asset_id=media_asset_id,
+            source_id=source_id,
+            stream_id=stream_model.id,
+            zone_id=zone_model.id,
+            file_name=file_name,
+            eligible=True,
+            would_create_motion_evidence=True,
+            duplicate_skipped=False,
+            existing_motion_evidence_id=(
+                existing_evidence.id if existing_evidence is not None else None
+            ),
+            skip_reason=None,
+            warnings=warnings,
+        )
 
     def create_motion_evidence(
         self,

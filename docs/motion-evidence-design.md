@@ -278,6 +278,13 @@ preserves Source/Stream/Zone context, skips duplicate evidence by default, and
 creates no Event, Visit, ReviewLabel, SpeciesSuggestion, DetectionProposal,
 DatasetExport, reviewed status, model output, or truth.
 
+## Phase 13H Status
+
+Phase 13H adds a batch dry-run/report for folder-imported MediaAssets before any
+batch evidence creation exists. It reports eligible items, duplicate skips,
+missing local media, privacy/ignore zone blocks, and context mismatches, while
+creating no MotionEvidence, Event, Visit, ReviewLabel, model output, or truth.
+
 ## Phase 12A Status
 
 Phase 12A adds source/stream smoke coverage around saved-preview-origin

@@ -698,6 +698,8 @@ button {
 .folder-import-preview-result,
 .folder-import-result-panel,
 .folder-import-list,
+.folder-evidence-dry-run-panel,
+.folder-evidence-dry-run-list,
 .folder-import-file-card {
   display: grid;
   gap: 10px;
@@ -788,6 +790,18 @@ button {
   border-radius: 8px;
   padding: 10px;
   background: #f4fbf5;
+}
+
+.folder-evidence-dry-run-panel {
+  border: 1px solid #c8d8e8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f5f9fd;
+}
+
+.folder-evidence-dry-run-list {
+  max-height: 420px;
+  overflow: auto;
 }
 
 .source-streams-panel {

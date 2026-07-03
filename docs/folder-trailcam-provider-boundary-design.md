@@ -33,14 +33,18 @@ remain media context, not evidence or truth. See
 Phase 13G implements the single-media version of that handoff: one explicit
 user action can create one pending MotionEvidence from one folder-imported
 MediaAsset. Folder import itself still creates MediaAssets only.
+Phase 13H adds a batch evidence handoff dry-run/report for already-imported
+folder MediaAssets. It creates no MotionEvidence, Events, Visits, labels, or
+truth, and it does not scan folders, import media, decode media, or call model
+runtimes.
 
 ## Product Flow
 
 folder/trail-cam Source setup -> explicit folder selection/config metadata ->
 explicit dry-run preview -> candidate/skipped file report -> explicit import ->
-MediaAssets -> optional explicit single-media pending MotionEvidence handoff ->
-explicit promotion -> review/correction -> analytics/exports/classifier
-readiness.
+MediaAssets -> optional batch evidence dry-run -> optional explicit
+single-media pending MotionEvidence handoff -> explicit promotion ->
+review/correction -> analytics/exports/classifier readiness.
 
 ## Provider Definition
 

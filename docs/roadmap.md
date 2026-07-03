@@ -498,8 +498,9 @@ Current work:
 - Phase 13F: folder-import-to-MotionEvidence handoff design.
 - Phase 13G: single folder-imported MediaAsset to pending MotionEvidence, no
   Event/Visit/truth.
-- Next likely phase: Phase 13H — batch folder media evidence handoff dry-run,
-  or Phase 13I — folder media review/promote UI polish.
+- Phase 13H: batch folder media evidence handoff dry-run/report, no creation.
+- Next likely phase: Phase 13I — batch folder media evidence creation, no
+  Event/Visit/truth, or Phase 13J — folder media review/promote UI polish.
 
 Validation:
 
@@ -520,6 +521,12 @@ Validation:
   Source/Stream/Zone context, and creating no Event, Visit, ReviewLabel,
   SpeciesSuggestion, DetectionProposal, DatasetExport, analytics/export truth,
   model output, or reviewed truth.
+- Phase 13H adds a batch evidence handoff dry-run for already-imported
+  folder MediaAssets. It reports eligible, duplicate, skipped, privacy/ignore,
+  missing-file, and context-mismatch cases without creating MotionEvidence,
+  Event, Visit, ReviewLabel, SpeciesSuggestion, DetectionProposal,
+  DatasetExport, analytics/export truth, model output, folder scan, import,
+  worker, or reviewed truth.
 - Recommended canonical provider key is `folder_import_future`, with display
   name Folder / trail-cam import.
 - `folder_path` is required sensitive metadata and must be redacted to
@@ -565,3 +572,7 @@ Validation:
   creation, ReviewLabel/truth creation, media deletion, decoding, worker,
   dependency, model/runtime behavior, or generated artifact is added in Phase
   13G.
+- No MotionEvidence creation, Event/Visit creation, ReviewLabel/truth creation,
+  media import/copy/delete, folder scan, decoding, worker, dependency,
+  model/runtime behavior, batch creation, or generated artifact is added in
+  Phase 13H.

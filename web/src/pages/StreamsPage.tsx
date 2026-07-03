@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
+  FolderImportEvidenceBatchDryRunResponse,
   FolderImportPreviewRequest,
   FolderImportPreviewResponse,
   FolderImportCreatedMediaAsset,
@@ -134,6 +135,8 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const [folderPreviewResult, setFolderPreviewResult] =
     useState<FolderImportPreviewResponse | null>(null);
   const [folderImportResult, setFolderImportResult] = useState<FolderImportResponse | null>(null);
+  const [folderEvidenceDryRunResult, setFolderEvidenceDryRunResult] =
+    useState<FolderImportEvidenceBatchDryRunResponse | null>(null);
   const [folderEvidenceResults, setFolderEvidenceResults] = useState<
     Record<string, SavedPreviewMotionEvidenceResponse>
   >({});
@@ -148,11 +151,13 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const [previewEvidenceError, setPreviewEvidenceError] = useState<string | null>(null);
   const [folderPreviewError, setFolderPreviewError] = useState<string | null>(null);
   const [folderImportError, setFolderImportError] = useState<string | null>(null);
+  const [folderEvidenceDryRunError, setFolderEvidenceDryRunError] = useState<string | null>(null);
   const [isFetchingPreview, setIsFetchingPreview] = useState(false);
   const [isSavingPreview, setIsSavingPreview] = useState(false);
   const [isCreatingPreviewEvidence, setIsCreatingPreviewEvidence] = useState(false);
   const [isPreviewingFolderImport, setIsPreviewingFolderImport] = useState(false);
   const [isImportingFolderMedia, setIsImportingFolderMedia] = useState(false);
+  const [isDryRunningFolderEvidence, setIsDryRunningFolderEvidence] = useState(false);
   const [folderEvidenceLoadingId, setFolderEvidenceLoadingId] = useState<string | null>(null);
   const [isSavingSetup, setIsSavingSetup] = useState(false);
 
@@ -251,8 +256,10 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setPreviewEvidenceError(null);
     setFolderPreviewResult(null);
     setFolderImportResult(null);
+    setFolderEvidenceDryRunResult(null);
     setFolderPreviewError(null);
     setFolderImportError(null);
+    setFolderEvidenceDryRunError(null);
     setFolderEvidenceResults({});
     setFolderEvidenceErrors({});
     setIsFetchingPreview(false);
@@ -260,6 +267,7 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setIsCreatingPreviewEvidence(false);
     setIsPreviewingFolderImport(false);
     setIsImportingFolderMedia(false);
+    setIsDryRunningFolderEvidence(false);
     setFolderEvidenceLoadingId(null);
   }, [selectedSourceId, selectedConfiguration?.provider_key]);
 
@@ -462,6 +470,8 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setFolderImportError(null);
     setFolderPreviewResult(null);
     setFolderImportResult(null);
+    setFolderEvidenceDryRunResult(null);
+    setFolderEvidenceDryRunError(null);
     setFolderEvidenceResults({});
     setFolderEvidenceErrors({});
     setFolderEvidenceLoadingId(null);
@@ -511,6 +521,8 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setIsImportingFolderMedia(true);
     setFolderImportError(null);
     setFolderImportResult(null);
+    setFolderEvidenceDryRunResult(null);
+    setFolderEvidenceDryRunError(null);
     setFolderEvidenceResults({});
     setFolderEvidenceErrors({});
     setFolderEvidenceLoadingId(null);
@@ -526,10 +538,37 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     }
   }
 
+  async function handleDryRunFolderEvidenceHandoff() {
+    if (!folderImportResult || folderImportResult.imported.length === 0) {
+      setFolderEvidenceDryRunError("Import folder media before dry-running evidence handoff.");
+      return;
+    }
+
+    setIsDryRunningFolderEvidence(true);
+    setFolderEvidenceDryRunError(null);
+    setFolderEvidenceDryRunResult(null);
+    try {
+      const result = await apiClient.dryRunFolderImportEvidence({
+        media_asset_ids: folderImportResult.imported.map((item) => item.media_asset_id),
+        duplicate_policy: "skip_existing",
+        max_items: folderImportResult.imported.length,
+      });
+      setFolderEvidenceDryRunResult(result);
+    } catch (caught) {
+      setFolderEvidenceDryRunError(
+        caught instanceof Error ? caught.message : "Could not dry-run evidence handoff.",
+      );
+    } finally {
+      setIsDryRunningFolderEvidence(false);
+    }
+  }
+
   async function handleCreateMotionEvidenceFromFolderImport(
     item: FolderImportCreatedMediaAsset,
   ) {
     setFolderEvidenceLoadingId(item.media_asset_id);
+    setFolderEvidenceDryRunResult(null);
+    setFolderEvidenceDryRunError(null);
     setFolderEvidenceErrors((current) => {
       const next = { ...current };
       delete next[item.media_asset_id];
@@ -926,8 +965,8 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                     only.
                   </p>
                   <p className="meta-text">
-                    Review/evidence handoff is a future explicit step. No Events, Visits, labels,
-                    or truth are created here.
+                    Evidence handoff stays explicit and review-only. No Events, Visits, labels, or
+                    truth are created here.
                   </p>
                   <div className="folder-import-control-grid">
                     <label className="checkbox-row">
@@ -1184,6 +1223,113 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                           {folderImportResult.warnings.map((warning) => (
                             <span key={warning}>{warning}</span>
                           ))}
+                        </div>
+                      ) : null}
+                      {folderImportResult.imported.length > 0 ? (
+                        <div className="folder-evidence-dry-run-panel">
+                          <div className="item-title-row">
+                            <strong>Evidence handoff dry-run</strong>
+                            {folderEvidenceDryRunResult ? (
+                              <StatusPill
+                                label={`${folderEvidenceDryRunResult.eligible_count} eligible`}
+                                tone={
+                                  folderEvidenceDryRunResult.eligible_count > 0
+                                    ? "good"
+                                    : "quiet"
+                                }
+                              />
+                            ) : null}
+                          </div>
+                          <div className="folder-evidence-action">
+                            <button
+                              className="secondary-action"
+                              disabled={isDryRunningFolderEvidence}
+                              onClick={() => void handleDryRunFolderEvidenceHandoff()}
+                              type="button"
+                            >
+                              {isDryRunningFolderEvidence
+                                ? "Dry-running evidence handoff..."
+                                : "Dry-run evidence handoff"}
+                            </button>
+                            <span className="meta-text">
+                              Dry run only. No MotionEvidence, Events, Visits, labels, or truth
+                              were created.
+                            </span>
+                          </div>
+                          {folderEvidenceDryRunError ? (
+                            <div className="zone-error">{folderEvidenceDryRunError}</div>
+                          ) : null}
+                          {folderEvidenceDryRunResult ? (
+                            <>
+                              <div className="folder-import-summary-grid">
+                                <div>
+                                  <span>Items checked</span>
+                                  <strong>{folderEvidenceDryRunResult.total_items}</strong>
+                                </div>
+                                <div>
+                                  <span>Would create</span>
+                                  <strong>{folderEvidenceDryRunResult.would_create_count}</strong>
+                                </div>
+                                <div>
+                                  <span>Duplicates skipped</span>
+                                  <strong>
+                                    {folderEvidenceDryRunResult.duplicate_skipped_count}
+                                  </strong>
+                                </div>
+                                <div>
+                                  <span>Skipped</span>
+                                  <strong>{folderEvidenceDryRunResult.skipped_count}</strong>
+                                </div>
+                              </div>
+                              {folderEvidenceDryRunResult.warnings.length > 0 ? (
+                                <div className="source-warning-list">
+                                  {folderEvidenceDryRunResult.warnings.map((warning) => (
+                                    <span key={warning}>{warning}</span>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <div className="folder-evidence-dry-run-list">
+                                {folderEvidenceDryRunResult.items.map((item) => (
+                                  <article
+                                    className="folder-import-file-card"
+                                    key={`${item.media_asset_id}-${item.skip_reason ?? "eligible"}`}
+                                  >
+                                    <div className="item-title-row">
+                                      <strong>{item.file_name ?? item.media_asset_id}</strong>
+                                      <StatusPill
+                                        label={
+                                          item.would_create_motion_evidence
+                                            ? "Would create"
+                                            : formatLabel(item.skip_reason ?? "Skipped")
+                                        }
+                                        tone={
+                                          item.would_create_motion_evidence ? "good" : "quiet"
+                                        }
+                                      />
+                                    </div>
+                                    <div className="source-connection-meta">
+                                      <span>{item.media_asset_id}</span>
+                                      {item.stream_id ? <span>Stream: {item.stream_id}</span> : null}
+                                      {item.zone_id ? <span>Zone: {item.zone_id}</span> : null}
+                                      {item.existing_motion_evidence_id ? (
+                                        <span>
+                                          Existing MotionEvidence:{" "}
+                                          {item.existing_motion_evidence_id}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    {item.warnings.length > 0 ? (
+                                      <div className="source-warning-list">
+                                        {item.warnings.map((warning) => (
+                                          <span key={warning}>{warning}</span>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </article>
+                                ))}
+                              </div>
+                            </>
+                          ) : null}
                         </div>
                       ) : null}
                       <div className="folder-import-list-grid">

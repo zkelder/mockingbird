@@ -121,7 +121,9 @@ MediaAssets without exposing the raw folder path.
 It still adds no watcher, polling, live playback, media decoding, or background
 import behavior. Folder-imported MediaAssets can now become pending
 MotionEvidence one at a time through explicit user action, but folder import
-itself still creates no MotionEvidence, Events, Visits, labels, or truth.
+itself still creates no MotionEvidence, Events, Visits, labels, or truth. A
+batch evidence handoff dry-run can report eligible/skipped imported MediaAssets
+without creating records.
 That handoff is documented in
 [docs/folder-import-evidence-handoff-design.md](docs/folder-import-evidence-handoff-design.md):
 promotion and correction remain separate.

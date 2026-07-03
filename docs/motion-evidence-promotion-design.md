@@ -136,6 +136,9 @@ Phase 13G implements the single-media pending evidence handoff. Folder-origin
 MotionEvidence continues to use this promotion route: privacy/ignore zones are
 rejected, promotion creates only unreviewed Event/Visit context, and ReviewLabel
 correction remains the truth boundary.
+Phase 13H adds a batch dry-run before any batch creation path. The dry-run can
+report which folder-imported MediaAssets would be eligible, but promotion still
+requires actual pending MotionEvidence and remains explicit.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

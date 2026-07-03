@@ -38,6 +38,8 @@ from mockingbird.api.schemas import (
     Event,
     EventDetail,
     FolderImportCreate,
+    FolderImportEvidenceBatchDryRunRequest,
+    FolderImportEvidenceBatchDryRunResponse,
     FolderImportPreview,
     FolderImportPreviewRequest,
     FolderImportResult,
@@ -619,6 +621,16 @@ def _saved_preview_motion_evidence_error(
 ) -> HTTPException:
     if str(error) == "missing_media_asset":
         return _not_found("Media asset", media_asset_id)
+    return _motion_evidence_error(error)
+
+
+def _folder_import_evidence_dry_run_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "batch_dry_run_requires_selection":
+        return HTTPException(
+            status_code=400,
+            detail="Choose MediaAssets, Source, or Stream for this folder evidence dry run.",
+        )
     return _motion_evidence_error(error)
 
 
@@ -1597,6 +1609,22 @@ async def saved_preview_cleanup_dry_run(
     return get_repository().saved_preview_cleanup_dry_run(
         payload or SavedMediaCleanupDryRunRequest(),
     )
+
+
+@app.post(
+    "/api/folder-import/evidence/dry-run",
+    response_model=FolderImportEvidenceBatchDryRunResponse,
+)
+async def dry_run_folder_import_evidence_batch(
+    payload: FolderImportEvidenceBatchDryRunRequest | None = None,
+) -> FolderImportEvidenceBatchDryRunResponse:
+    # Dry-run only: no MotionEvidence, Events, Visits, labels, or truth are created.
+    try:
+        return get_repository().dry_run_folder_import_evidence_batch(
+            payload or FolderImportEvidenceBatchDryRunRequest(),
+        )
+    except ValueError as error:
+        raise _folder_import_evidence_dry_run_error(error) from error
 
 
 @app.post("/api/media/{media_id}/cleanup-preview", response_model=SavedMediaCleanupResponse)

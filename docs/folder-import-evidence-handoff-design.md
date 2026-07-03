@@ -3,7 +3,9 @@
 ## Purpose
 
 Phase 13D imports folder/trail-cam files as local MediaAssets only. Phase 13E
-exposes explicit preview/import UI for those files.
+exposes explicit preview/import UI for those files. Phase 13G adds explicit
+single-media handoff to pending MotionEvidence. Phase 13H adds a batch dry-run
+report before any future batch creation.
 
 Folder-imported MediaAssets are local media context. They are not evidence,
 Events, Visits, labels, classifier examples, analytics truth, export truth, or
@@ -11,18 +13,19 @@ reviewed truth by themselves.
 
 Users can now review imported trail-cam media as possible outdoor activity by
 explicitly creating one pending MotionEvidence record from one folder-imported
-MediaAsset. This design records that handoff while keeping batch creation,
+MediaAsset. They can also dry-run a batch handoff report for imported
+MediaAssets. This design records those handoffs while keeping batch creation,
 promotion, correction, and truth separate.
 
 ## Product Flow
 
 folder_import_future Source setup -> folder import preview -> explicit import
-to MediaAssets -> user chooses one imported media item -> explicit "create
-pending evidence" -> pending MotionEvidence -> explicit ignore or promote ->
-Event/Visit review -> user correction -> ReviewLabel truth ->
+to MediaAssets -> optional batch evidence dry-run -> user chooses imported
+media -> explicit "create pending evidence" -> pending MotionEvidence ->
+explicit ignore or promote -> Event/Visit review -> user correction -> ReviewLabel truth ->
 analytics/exports/classifier readiness.
 
-## Current Behavior After Phase 13G
+## Current Behavior After Phase 13H
 
 - Folder preview is an explicit dry run.
 - Folder import is explicit.
@@ -31,6 +34,9 @@ analytics/exports/classifier readiness.
 - Folder import itself creates no MotionEvidence.
 - One folder-imported MediaAsset can become one pending MotionEvidence only
   through explicit user action.
+- Batch evidence handoff has a dry-run report only.
+- The batch dry-run can report eligible, duplicate, skipped, privacy/ignore,
+  missing-file, and context-mismatch cases.
 - No Event is created.
 - No Visit is created.
 - No ReviewLabel is created.
@@ -66,7 +72,7 @@ automatically, and mirrors the saved external URL preview handoff pattern.
 
 ## Implemented Explicit Action
 
-Implemented route:
+Implemented single-media route:
 
 ```text
 POST /api/media/{media_asset_id}/create-motion-evidence
@@ -88,6 +94,26 @@ instead of adding a folder-specific duplicate route. The action:
 - create no Event/Visit
 - create no ReviewLabel
 - create no truth
+
+Implemented batch dry-run route:
+
+```text
+POST /api/folder-import/evidence/dry-run
+```
+
+The dry-run action:
+
+- requires MediaAsset ids, Source, or Stream scope
+- reads existing folder-imported MediaAssets only
+- reports whether pending MotionEvidence would be created
+- skips duplicates by default
+- reports blocked Privacy Zone and Ignore Zone context
+- reports stale or missing local files when detectable
+- creates no MotionEvidence
+- creates no Event/Visit
+- creates no ReviewLabel
+- creates no truth
+- performs no folder scan, media import, decoding, or model runtime call
 
 ## Eligibility Policy
 
@@ -153,20 +179,28 @@ truth, or reviewed truth.
 
 ## Batch Handoff Design
 
-Folder imports can include many files, so future batch handoff should be a
-separate explicit workflow.
+Folder imports can include many files, so batch handoff remains a separate
+explicit workflow.
 
-Future batch options:
+Current Phase 13H behavior:
+
+- dry-run selected imported MediaAssets, a Source, or a Stream
+- report counts and skipped reasons
+- skip existing evidence by default
+- cap dry-run size
+- create no product records
+
+Future batch creation options:
 
 - create pending evidence for selected imported MediaAssets
-- dry-run batch evidence creation first
+- require dry-run review first
 - skip existing evidence by default
 - show counts and skipped reasons
 - create no Event/Visit automatically
 - create no labels automatically
 - include max batch size safeguards
 
-This phase does not implement batch handoff.
+Phase 13H does not implement batch creation.
 
 ## Duplicate Evidence Policy
 

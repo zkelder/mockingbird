@@ -111,6 +111,11 @@ The shared media evidence route can create pending MotionEvidence from imported
 folder media only after explicit user action, skips duplicates by default, and
 creates no Event, Visit, ReviewLabel, analytics/export truth, or classifier
 truth.
+Phase 13H adds a batch dry-run/report for the same folder-imported MediaAsset
+handoff. It evaluates already-imported media only, reports duplicate/skip/privacy
+outcomes, and creates no MotionEvidence, Event, Visit, ReviewLabel,
+analytics/export truth, model output, folder scan, import, worker, or runtime
+dependency.
 
 ## Explicit Non-Recommended First Adapters
 

@@ -70,6 +70,9 @@ Phase 13F designs folder-imported MediaAssets as an explicit source for
 `snapshot_media_asset_id` on pending MotionEvidence. Phase 13G implements the
 single-media handoff, which remains user-triggered and creates no Event, Visit,
 label, or truth.
+Phase 13H adds a batch dry-run/report for folder-imported MediaAssets. It
+reports possible evidence handoff outcomes without creating MotionEvidence,
+Events, Visits, labels, or truth.
 After explicit promotion, saved preview media can remain visible as review
 context on Event/Visit detail. It still does not confirm labels, reviewed status,
 export readiness, or dataset truth.
