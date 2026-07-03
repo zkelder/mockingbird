@@ -130,6 +130,10 @@ from mockingbird.api.schemas import (
     SavedPreviewMotionEvidenceRequest,
     SourceConnectionStatus,
     SourceConnectionStatusValue,
+    SourceFolderImportPreviewCandidate,
+    SourceFolderImportPreviewRequest,
+    SourceFolderImportPreviewResponse,
+    SourceFolderImportPreviewSkipped,
     SourceProviderConfiguration,
     SourceProviderConfigurationUpdate,
     SourceProviderDefinition,
@@ -156,6 +160,7 @@ from mockingbird.api.schemas import (
     ZoneType,
     ZoneUpdate,
 )
+from mockingbird.source_providers import folder_import_preview
 from mockingbird.storage.database import (
     DEFAULT_DB_URL,
     create_database_engine,
@@ -954,6 +959,74 @@ class ProductRepository:
                 stream_ids = self._stream_ids_for_source(session, source_id)
                 return _source_provider_configuration_from_model(source, model, stream_ids)
 
+    def preview_source_folder_import(
+        self,
+        source_id: str,
+        payload: SourceFolderImportPreviewRequest,
+    ) -> SourceFolderImportPreviewResponse | None:
+        with self.session_factory() as session:
+            source = session.get(CameraSourceModel, source_id)
+            if source is None:
+                return None
+
+            stream_ids = self._stream_ids_for_source(session, source_id)
+            model = session.get(SourceProviderConfigurationModel, source_id)
+            configuration = _source_provider_configuration_from_model(source, model, stream_ids)
+            if configuration.provider_key != "folder_import_future":
+                raise ValueError("folder_provider_required")
+
+            config = json.loads(model.config_json) if model is not None else {}
+            folder_path = (config.get("folder_path") or "").strip()
+            config_recursive = _source_provider_bool(config.get("recursive"))
+            config_allowed = _source_provider_list(config.get("allowed_extensions"))
+
+        recursive = payload.recursive if payload.recursive is not None else config_recursive
+        allowed_extensions = (
+            payload.allowed_extensions
+            if payload.allowed_extensions is not None
+            else config_allowed
+        )
+
+        if not folder_path or folder_path == "configured":
+            normalized_allowed, warnings = folder_import_preview.normalize_allowed_extensions(
+                allowed_extensions
+            )
+            return SourceFolderImportPreviewResponse(
+                source_id=source_id,
+                provider_key="folder_import_future",
+                folder_configured=False,
+                recursive=recursive,
+                allowed_extensions=normalized_allowed,
+                candidates=[],
+                skipped=[],
+                total_candidates=0,
+                total_skipped=0,
+                total_known_bytes=0,
+                unknown_size_count=0,
+                scanned_at=datetime.now(UTC),
+                dry_run=True,
+                creates_media_assets=False,
+                creates_events=False,
+                creates_visits=False,
+                creates_truth=False,
+                warnings=[
+                    "Folder path metadata is not configured; no folder was scanned.",
+                    *warnings,
+                ],
+            )
+
+        preview = folder_import_preview.preview_folder_import(
+            folder_path,
+            recursive=recursive,
+            allowed_extensions=allowed_extensions,
+            max_files=payload.max_files,
+            max_depth=payload.max_depth,
+        )
+        return _source_folder_import_preview_response(
+            source_id=source_id,
+            preview=preview,
+        )
+
     def get_source_connection_status(self, source_id: str) -> SourceConnectionStatus | None:
         with self.session_factory() as session:
             source = session.get(CameraSourceModel, source_id)
@@ -1000,13 +1073,12 @@ class ProductRepository:
             elif configuration.provider_key == "folder_import_future":
                 status = SourceConnectionStatusValue.configured
                 message = (
-                    "Folder/trail-cam metadata is configured for future import preview/import. "
-                    "MockingBird does not scan or import folders yet, and live playback is not "
-                    "expected for this provider."
+                    "Folder/trail-cam metadata is configured for explicit dry-run preview. "
+                    "MockingBird does not import folders, and live playback is not expected "
+                    "for this provider."
                 )
                 setup_hint = (
-                    "Future folder import preview implementation is required before importing "
-                    "folder media."
+                    "Run folder import preview explicitly before any future folder import."
                 )
             elif definition is not None and definition.status == SourceProviderDefinitionStatus.future_adapter:
                 status = SourceConnectionStatusValue.configured
@@ -1137,8 +1209,8 @@ class ProductRepository:
                         "This stream does not provide live playback."
                     )
                     setup_hint = (
-                        "Future folder import preview implementation is required before folder "
-                        "media can appear here; zone editing can continue."
+                        "Run folder import preview from Source setup; folder media still "
+                        "requires future import work before it can appear here."
                     )
                 return StreamPlaybackStatus(
                     stream_id=stream.id,
@@ -5749,7 +5821,10 @@ def _sanitize_source_provider_config(
         normalized = value.strip()
         if not normalized:
             continue
-        sanitized[key] = "configured" if field.secret else normalized
+        if definition.provider_key == "folder_import_future" and key == "folder_path":
+            sanitized[key] = normalized
+        else:
+            sanitized[key] = "configured" if field.secret else normalized
     return sanitized
 
 
@@ -5810,12 +5885,11 @@ def _source_provider_configuration_from_config(
             setup_hint = f"Add metadata for: {', '.join(missing_labels)}."
     elif definition.provider_key == "folder_import_future":
         message = (
-            "Folder/trail-cam setup metadata is saved. MockingBird does not scan or import "
-            "folders yet."
+            "Folder/trail-cam setup metadata is saved. Explicit dry-run preview is "
+            "available, but folder import is not implemented."
         )
         setup_hint = (
-            "Future folder import preview implementation is required before importing folder "
-            "media."
+            "Run folder import preview explicitly before any future folder import."
         )
     elif definition.status == SourceProviderDefinitionStatus.future_adapter:
         message = (
@@ -5915,11 +5989,12 @@ def _source_setup_review_from_contracts(
     elif configuration.provider_key == "folder_import_future":
         readiness_level = "future_adapter_required"
         summary = (
-            "Folder/trail-cam setup metadata is present, but MockingBird does not scan or "
-            "import folders yet."
+            "Folder/trail-cam setup metadata is present. Explicit dry-run preview is "
+            "available, but folder import and live playback are not implemented."
         )
         next_step = (
-            "Future folder import preview implementation required before importing folder media."
+            "Run folder import preview explicitly; future import work is required before "
+            "creating MediaAssets."
         )
     elif connection.provider_kind == SourceProviderKind.future_adapter or (
         definition is not None
@@ -5937,7 +6012,7 @@ def _source_setup_review_from_contracts(
     if configuration.missing_fields:
         warnings.append(f"Missing setup metadata: {', '.join(missing_labels)}.")
     if configuration.provider_key == "folder_import_future":
-        warnings.append("Folder scan/import is not implemented for this provider yet.")
+        warnings.append("Folder import is not implemented for this provider yet.")
         warnings.append("Live playback is not expected for this provider.")
     elif not supports_live_playback and configuration.provider_key != "manual_media":
         warnings.append("Live playback is not implemented for this provider yet.")
@@ -5976,10 +6051,10 @@ def _source_setup_review_from_contracts(
         else SourceSetupReviewStep(
             key="folder_import_preview",
             label="Folder import preview",
-            status="future",
+            status="available" if not configuration.missing_fields else "warning",
             message=(
-                "Folder preview/import is future work. Status does not scan folders, "
-                "import files, or create truth."
+                "Explicit dry-run preview scans only when requested and creates no media "
+                "or truth; folder import remains future work."
             ),
         )
         if configuration.provider_key == "folder_import_future"
@@ -6049,6 +6124,65 @@ def _field_labels(
         return field_keys
     fields_by_key = {field.key: field.label for field in definition.fields}
     return [fields_by_key.get(field_key, field_key) for field_key in field_keys]
+
+
+def _source_provider_bool(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _source_provider_list(value: str | None) -> list[str] | None:
+    if value is None:
+        return None
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    return parts or None
+
+
+def _source_folder_import_preview_response(
+    *,
+    source_id: str,
+    preview: folder_import_preview.FolderPreviewResult,
+) -> SourceFolderImportPreviewResponse:
+    candidates = [
+        SourceFolderImportPreviewCandidate(
+            relative_path=candidate.relative_path,
+            file_name=candidate.file_name,
+            extension=candidate.extension,
+            size_bytes=candidate.size_bytes,
+            modified_at=candidate.modified_at,
+            planned_media_kind=candidate.planned_media_kind,
+            warnings=candidate.warnings,
+        )
+        for candidate in preview.candidates
+    ]
+    skipped = [
+        SourceFolderImportPreviewSkipped(
+            relative_path=item.relative_path,
+            file_name=item.file_name,
+            reason=item.reason,
+            message=item.message,
+        )
+        for item in preview.skipped
+    ]
+    return SourceFolderImportPreviewResponse(
+        source_id=source_id,
+        provider_key="folder_import_future",
+        folder_configured=True,
+        recursive=preview.recursive,
+        allowed_extensions=preview.allowed_extensions,
+        candidates=candidates,
+        skipped=skipped,
+        total_candidates=len(candidates),
+        total_skipped=len(skipped),
+        total_known_bytes=preview.total_known_bytes,
+        unknown_size_count=preview.unknown_size_count,
+        scanned_at=preview.scanned_at,
+        dry_run=True,
+        creates_media_assets=False,
+        creates_events=False,
+        creates_visits=False,
+        creates_truth=False,
+        warnings=preview.warnings,
+    )
 
 
 def _source_from_model(source: CameraSourceModel) -> CameraSource:

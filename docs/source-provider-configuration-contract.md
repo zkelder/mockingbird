@@ -49,13 +49,14 @@ before it can become MotionEvidence, Event/Visit context, or correction truth.
 trail-cam import. It should store setup metadata such as sensitive
 `folder_path`, optional `display_name`, `recursive`, `allowed_extensions`,
 `default_stream_id`, `default_zone_id`, future `import_mode`, and `notes`.
-This metadata must not scan folders, validate paths by reading them, import
-media, create records, or imply a background watcher. See
+This metadata must not scan folders by itself, import media, create records, or
+imply a background watcher. Phase 13C uses the stored `folder_path` only when
+the explicit source-scoped preview route is called. See
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
-Phase 13B represents this provider in configuration/status contracts only:
-`folder_path` is required and redacted to configured/not-configured, while
-boolean/list-like fields are stored as metadata strings until a future parser is
-scoped.
+Phase 13B represents this provider in configuration/status contracts. Phase 13C
+adds explicit dry-run preview parsing for `recursive` and `allowed_extensions`.
+`folder_path` is required and redacted to configured/not-configured in normal
+API/UI responses.
 
 ## Provider Configuration Fields
 
@@ -74,13 +75,13 @@ details.
 
 ## Secret/Redaction Policy
 
-Secret fields are never returned raw. When a secret field is supplied,
-MockingBird stores and returns only a configured/not-configured marker. This
-phase does not store real credentials or validate them.
+Secret fields are never returned raw. When a secret field is supplied, API/UI
+responses return only a configured/not-configured marker. This phase does not
+store real credentials or validate them.
 
-For `folder_import_future`, `folder_path` is sensitive local data and follows
-the same marker policy. API responses and the Streams UI must not echo raw local
-folder paths.
+For `folder_import_future`, `folder_path` is sensitive local data. It may be
+used internally by the explicit preview route, but API responses, status routes,
+and the Streams UI must not echo raw local folder paths.
 
 ## Relationship To Source Connection Status
 
@@ -164,7 +165,9 @@ reviewable activity.
 - Source provider configuration returns safe status for known sources.
 - Unknown sources return 404.
 - Unknown provider keys are rejected.
-- Secret fields are never returned or stored raw.
+- Secret fields are never returned raw.
+- Folder preview can use stored `folder_path` only behind the explicit
+  source-scoped dry-run preview route.
 - Source connection status reflects configured and missing fields.
 - Stream playback remains honest and does not claim live playback.
 - Manual media setup points to explicit import/review, not live playback.

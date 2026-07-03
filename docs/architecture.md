@@ -127,6 +127,12 @@ Phase 13B adds the folder/trail-cam provider metadata/status layer:
 reports setup readiness, and keeps related Stream playback placeholder-only.
 It still adds no folder scan, import, copy/reference behavior, MediaAsset,
 MotionEvidence, Event/Visit, label, truth, worker, or dependency behavior.
+Phase 13C adds the explicit source-scoped folder import preview API. It uses the
+configured `folder_path` only when requested, returns relative candidate/skipped
+file reports, and creates no MediaAssets, MotionEvidence, Events, Visits,
+ReviewLabels, DatasetExports, SpeciesSuggestions, DetectionProposals, or truth.
+It adds no watcher, polling loop, media decoding, import/copy behavior, runtime
+dependency, or model behavior.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
@@ -146,9 +152,10 @@ from review/correction.
 Folder/trail-cam provider work is a future local media Source boundary for
 trail-camera dumps, NAS folders, and exported image batches. It should follow
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md)
-before any folder scan, import, copy/reference behavior, watcher, polling,
-record creation, or truth-affecting behavior is added.
-The current implementation layer for that provider is configuration/status only.
+before any folder import, copy/reference behavior, watcher, polling, record
+creation, or truth-affecting behavior is added.
+The current implementation layer for that provider is configuration/status plus
+explicit dry-run preview only.
 
 The Streams, Stream Detail, and Import Media surfaces present provider
 configuration, setup review, connection readiness, playback status, zone editing,

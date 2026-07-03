@@ -1413,6 +1413,52 @@ class FolderImportPreviewRequest(BaseModel):
     folder_path: str
 
 
+class SourceFolderImportPreviewRequest(BaseModel):
+    recursive: bool | None = None
+    allowed_extensions: list[str] | None = None
+    max_files: int | None = Field(default=500, ge=1)
+    max_depth: int | None = Field(default=1, ge=0)
+
+
+class SourceFolderImportPreviewCandidate(BaseModel):
+    relative_path: str
+    file_name: str
+    extension: str
+    size_bytes: int | None = Field(default=None, ge=0)
+    modified_at: datetime | None = None
+    planned_media_kind: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SourceFolderImportPreviewSkipped(BaseModel):
+    relative_path: str | None = None
+    file_name: str | None = None
+    reason: str
+    message: str
+
+
+class SourceFolderImportPreviewResponse(BaseModel):
+    # Source-scoped folder preview is an explicit dry run; it creates no truth.
+    source_id: str
+    provider_key: str
+    folder_configured: bool
+    recursive: bool
+    allowed_extensions: list[str]
+    candidates: list[SourceFolderImportPreviewCandidate] = Field(default_factory=list)
+    skipped: list[SourceFolderImportPreviewSkipped] = Field(default_factory=list)
+    total_candidates: int = Field(ge=0)
+    total_skipped: int = Field(ge=0)
+    total_known_bytes: int = Field(ge=0)
+    unknown_size_count: int = Field(ge=0)
+    scanned_at: datetime
+    dry_run: bool = True
+    creates_media_assets: bool = False
+    creates_events: bool = False
+    creates_visits: bool = False
+    creates_truth: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
 class FolderImportCandidate(BaseModel):
     filename: str
     path: str

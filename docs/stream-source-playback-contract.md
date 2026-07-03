@@ -67,9 +67,10 @@ For `folder_import_future` Sources, Stream playback should remain
 placeholder/media-context. Folder/trail-cam import can later create MediaAssets
 for review context, but it does not provide live playback, folder watching,
 polling, or continuous stream claims.
-Phase 13B keeps configured folder/trail-cam Sources on placeholder playback:
-no preview URL, no MediaAsset reference, no folder scan, and no live playback
-claim.
+Phase 13C keeps configured folder/trail-cam Sources on placeholder playback:
+the explicit folder preview route may report candidate files, but playback
+status still returns no preview URL, no MediaAsset reference, no folder scan,
+and no live playback claim.
 
 For `external_url` Sources, Phase 11C preview fetch is transient UI context.
 Playback status must not fetch URLs, store media, imply live playback, or persist
@@ -139,6 +140,8 @@ activity.
 - Demo streams are honest: demo panel, no real live playback claim.
 - Placeholder streams include setup guidance and still support zone editing.
 - Folder/trail-cam provider streams remain placeholder/media-context only.
+- Folder preview does not change Stream playback status or create playback
+  media references.
 - The route does not create evidence, review truth, exports, analytics truth,
   media files, model artifacts, or adapter runtime calls.
 

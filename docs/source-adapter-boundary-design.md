@@ -90,6 +90,10 @@ or truth creation. See
 Phase 13B represents `folder_import_future` in provider configuration, Source
 connection status, setup review, and placeholder Stream playback only. It adds
 no folder preview, scan, import, or media/evidence records.
+Phase 13C adds an explicit source-scoped folder import preview route. It scans
+configured folder metadata only on request, returns relative candidate/skipped
+file reports, and still adds no import, MediaAsset, MotionEvidence, Event/Visit,
+review label, truth, watcher, polling, decoding, or dependency behavior.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -233,6 +237,7 @@ Future implementation must test:
 - Phase 13A: folder/trail-cam import provider boundary design.
 - Phase 13B: folder/trail-cam provider configuration UI/status contract.
 - Phase 13C: folder import preview API, dry-run only.
+- Phase 13D: folder import implementation to MediaAssets only.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

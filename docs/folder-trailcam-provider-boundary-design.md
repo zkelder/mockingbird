@@ -15,16 +15,18 @@ The provider must not accidentally become a hidden watcher, background import
 loop, continuous poller, live playback path, model runner, or media deletion
 tool.
 
-Phase 13B adds only the provider configuration/status contract for
-`folder_import_future`. It stores safe setup intent and reports readiness; it
-still does not scan folders, import files, or create media/evidence/truth.
+Phase 13C adds the source-scoped folder import preview API for
+`folder_import_future`. It scans only when the explicit preview route is called,
+reports relative candidate/skipped paths, and still does not import files or
+create media/evidence/truth.
 
 ## Product Flow
 
 folder/trail-cam Source setup -> explicit folder selection/config metadata ->
-explicit preview/import planning -> explicit import action later -> MediaAssets
--> optional MotionEvidence or Event/Visit creation depending on future route ->
-review/correction -> analytics/exports/classifier readiness.
+explicit dry-run preview -> candidate/skipped file report -> explicit import
+action later -> MediaAssets -> optional MotionEvidence or Event/Visit creation
+depending on future route -> review/correction -> analytics/exports/classifier
+readiness.
 
 ## Provider Definition
 
@@ -57,15 +59,16 @@ Future metadata fields:
 - `notes`: optional local setup context.
 
 `folder_path` should be treated as sensitive local data and should not be
-casually exposed in API responses or UI. This phase does not scan folders,
-validate paths beyond metadata, read files, import media, or imply any
-background watcher.
+exposed in API responses or UI. It can be used internally by the explicit
+source-scoped preview route. Status/setup/playback routes must not scan folders,
+read files, import media, or imply any background watcher.
 
 In Phase 13B, the provider definition is represented in
 `GET /api/source-provider-definitions`. Because the current provider field
 schema is string-based, `recursive` and `allowed_extensions` are stored as
-metadata strings; parsing remains future work. `folder_path` is redacted to a
-configured/not-configured marker.
+metadata strings. Phase 13C parses those values only for explicit preview.
+`folder_path` is redacted to a configured/not-configured marker in normal
+responses.
 
 ## Source Connection Status Relationship
 
@@ -74,7 +77,8 @@ camera connectivity.
 
 - Missing `folder_path` reports `not_configured`.
 - Configured folder metadata reports metadata configured/future adapter required.
-- Status copy should say explicit folder import preview/import is future work.
+- Status copy should point to explicit preview/import planning without claiming
+  live playback or automatic import.
 - `supports_live_playback` remains `false`.
 - `supports_zone_editing` can remain `true` for related Stream context.
 
@@ -86,7 +90,7 @@ create records, or start any provider runtime.
 Folder/trail-cam import does not provide live playback. Stream playback remains
 placeholder or media-context only.
 
-Phase 13B keeps explicitly configured folder/trail-cam Streams on placeholder
+Phase 13C keeps explicitly configured folder/trail-cam Streams on placeholder
 playback with no preview URL, no MediaAsset reference, and no live playback
 claim.
 
@@ -97,7 +101,7 @@ zones. No status surface should claim a live stream for this provider.
 
 ## Import Planning Design
 
-Future preview route, not implemented in this phase:
+Phase 13C preview route:
 
 ```text
 POST /api/sources/{source_id}/folder-import/preview
@@ -108,16 +112,20 @@ under Source setup and Stream context. A generic `POST /api/folder-import/previe
 route can remain a later helper only if it still requires explicit Source
 context.
 
-Future behavior:
+Behavior:
 
 - explicit user-triggered action
 - scans only the configured folder within safe limits
-- reports candidate files and skipped files
+- request may override `recursive`, `allowed_extensions`, `max_files`, and
+  `max_depth`
+- reports candidate files and skipped files with relative paths only
 - estimates candidate count, skipped count, and known bytes
 - writes nothing
-- creates no records
+- creates no MediaAssets, MotionEvidence, Events, Visits, ReviewLabels,
+  DatasetExports, SpeciesSuggestions, DetectionProposals, or truth
 - performs no media decoding
 - does not recurse unless configured
+- skips symlink paths
 - does not start a watcher or background job
 
 ## Import Implementation Design
@@ -265,9 +273,9 @@ Future UI should provide:
 The UI should not imply live playback, continuous watching, automatic import, or
 camera-brand-specific behavior.
 
-## Testing Expectations For Future Implementation
+## Testing Expectations
 
-Future tests should prove:
+Preview tests should prove:
 
 - missing `folder_path` reports `not_configured`
 - preview scans only within the allowed folder
@@ -275,6 +283,11 @@ Future tests should prove:
 - `recursive=false` does not scan subfolders
 - unsupported extensions are skipped
 - preview writes no files or records
+- preview returns relative paths only and redacts the configured root path
+- status/setup/playback routes do not scan folders
+
+Future import tests should prove:
+
 - import creates MediaAssets only by default
 - no Events/Visits unless explicitly requested
 - no ReviewLabels or truth
@@ -311,11 +324,12 @@ initially, and must preserve retention, provenance, and truth boundaries.
 
 ## Explicit Non-Goals
 
-- No implementation in this phase.
-- No folder scan.
+- No import implementation in this phase.
 - No watcher.
 - No polling.
 - No media import.
+- No MediaAsset creation.
+- No MotionEvidence creation.
 - No media deletion.
 - No Event/Visit creation.
 - No ReviewLabel/truth.

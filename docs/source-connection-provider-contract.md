@@ -58,8 +58,9 @@ import metadata is present and an explicit import workflow may be available once
 implemented. It is not a camera connection, folder watcher, polling loop, or
 live playback claim.
 Phase 13B reports missing `folder_path` as `not_configured` and configured
-folder metadata as `configured`/future-provider-ready while still saying folder
-preview/import is future work.
+folder metadata as `configured`/future-provider-ready. Phase 13C adds an
+explicit dry-run preview route, but connection status itself still must not scan
+folders, validate paths, import files, or create records.
 
 For `external_url`, connection readiness remains metadata/status-only. A
 configured URL can point users to explicit still-image preview fetch, but
@@ -150,6 +151,7 @@ respect those zones when later phases create evidence or reviewable activity.
 - Related Stream ids are included.
 - Safe configured/missing field lists are present.
 - Folder/trail-cam status never exposes raw `folder_path`.
+- Folder/trail-cam status does not call the explicit folder preview scanner.
 - The route does not call provider runtimes, inspect media, create artifacts, or
   mutate product state.
 - Source connection status never creates evidence, review truth, exports, or

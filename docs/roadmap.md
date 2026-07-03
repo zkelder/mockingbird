@@ -492,7 +492,9 @@ Current work:
 
 - Phase 13A: folder/trail-cam import provider boundary design.
 - Phase 13B: folder/trail-cam provider configuration/status contract.
-- Next likely phase: Phase 13C — folder import preview API, dry-run only.
+- Phase 13C: folder import preview API, dry-run only.
+- Next likely phase: Phase 13D — folder import implementation to MediaAssets
+  only.
 
 Validation:
 
@@ -500,6 +502,8 @@ Validation:
 - Phase 13B adds `folder_import_future` to provider definitions, provider
   configuration, Source connection status, Source setup review, and placeholder
   Stream playback only.
+- Phase 13C adds `POST /api/sources/{source_id}/folder-import/preview` for
+  explicit dry-run preview only.
 - Recommended canonical provider key is `folder_import_future`, with display
   name Folder / trail-cam import.
 - `folder_path` is required sensitive metadata and must be redacted to
@@ -509,10 +513,13 @@ Validation:
 - Folder/trail-cam setup represents explicit local batch import readiness, not
   live playback, camera connection, watcher behavior, polling, or background
   indexing.
-- Configured folder/trail-cam metadata means future import readiness only; it
-  does not make import, preview, or live playback available.
-- Future preview/import behavior must be explicit, local-first, bounded, and
+- Configured folder/trail-cam metadata enables explicit preview planning only;
+  it does not make import or live playback available.
+- Preview/import behavior must be explicit, local-first, bounded, and
   review/truth-safe.
+- Preview responses return relative candidate/skipped paths only and create no
+  MediaAssets, MotionEvidence, Events, Visits, ReviewLabels, DatasetExports,
+  SpeciesSuggestions, DetectionProposals, or truth.
 - Folder import creates MediaAssets at most by default; MotionEvidence,
   Events/Visits, labels, analytics truth, exports, and classifier readiness
   require explicit future routes and reviewed correction semantics.
@@ -520,3 +527,6 @@ Validation:
   behavior, media deletion, decoding, worker, scheduler, dependency, generated
   artifact, MediaAsset, MotionEvidence, Event/Visit, ReviewLabel, export, or
   truth creation is added in Phase 13B.
+- No import, media copy/reference behavior, media deletion, decoding, worker,
+  scheduler, dependency, generated artifact, MediaAsset, MotionEvidence,
+  Event/Visit, ReviewLabel, export, or truth creation is added in Phase 13C.

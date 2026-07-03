@@ -83,6 +83,8 @@ from mockingbird.api.schemas import (
     SpeciesSuggestionStatusUpdateRequest,
     SourceConnectionStatus,
     SourceConnectionStatusResponse,
+    SourceFolderImportPreviewRequest,
+    SourceFolderImportPreviewResponse,
     SourceProviderConfiguration,
     SourceProviderConfigurationUpdate,
     SourceProviderDefinition,
@@ -331,6 +333,26 @@ def _folder_import_error(error: ValueError) -> HTTPException:
         return HTTPException(status_code=404, detail="Folder was not found.")
     if reason == "folder_not_directory":
         return HTTPException(status_code=400, detail="Folder path must be a directory.")
+    return _media_import_error(error)
+
+
+def _folder_import_preview_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "folder_provider_required":
+        return HTTPException(
+            status_code=400,
+            detail="Folder import preview requires a folder_import_future Source provider.",
+        )
+    if reason == "folder_required":
+        return HTTPException(status_code=400, detail="Folder path metadata is required.")
+    if reason == "folder_missing":
+        return HTTPException(status_code=404, detail="Configured folder was not found.")
+    if reason == "folder_not_directory":
+        return HTTPException(status_code=400, detail="Configured folder must be a directory.")
+    if reason == "folder_symlink":
+        return HTTPException(status_code=400, detail="Configured folder must not be a symlink.")
+    if reason == "folder_unavailable":
+        return HTTPException(status_code=400, detail="Configured folder is unavailable.")
     return _media_import_error(error)
 
 
@@ -1043,6 +1065,26 @@ async def update_source_provider_configuration(
     if configuration is None:
         raise _not_found("Source", source_id)
     return configuration
+
+
+@app.post(
+    "/api/sources/{source_id}/folder-import/preview",
+    response_model=SourceFolderImportPreviewResponse,
+)
+async def preview_source_folder_import(
+    source_id: str,
+    payload: SourceFolderImportPreviewRequest | None = None,
+) -> SourceFolderImportPreviewResponse:
+    try:
+        preview = get_repository().preview_source_folder_import(
+            source_id,
+            payload or SourceFolderImportPreviewRequest(),
+        )
+    except ValueError as error:
+        raise _folder_import_preview_error(error) from error
+    if preview is None:
+        raise _not_found("Source", source_id)
+    return preview
 
 
 @app.post(
