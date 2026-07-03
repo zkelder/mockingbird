@@ -58,6 +58,18 @@ The future policy/reporting layer for deciding how saved preview MediaAssets are
 kept, archived, or cleaned up without silently deleting reviewed truth or
 breaking MotionEvidence/Event/Visit provenance.
 
+## Retention Report
+
+A read-only saved media summary that lists saved preview MediaAssets, linkage,
+size metadata, warnings, and cleanup risk. It does not delete files, delete
+records, fetch URLs, create evidence, or mutate truth.
+
+## Cleanup Dry Run
+
+A read-only preview of what a future cleanup action might affect. It reports
+candidate files or records and protected skips, but deletes nothing and changes
+no review truth.
+
 ## Retention Risk Level
 
 A cleanup classification for saved media, such as low, medium, high, or

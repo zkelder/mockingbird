@@ -76,6 +76,9 @@ Saved preview media retention and cleanup risk policy is documented in
 [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
 Saved previews can accumulate; cleanup remains a separate future phase and must
 not silently remove reviewed truth or provenance.
+Phase 12D adds a read-only saved-preview retention report and cleanup dry-run
+planner for these MediaAssets. It classifies risk and reports linkage, but it
+does not delete files or records.
 
 ## Supported Content Policy
 

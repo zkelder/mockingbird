@@ -11,8 +11,10 @@ cleanup must preserve review provenance and truth boundaries. Deletion behavior
 needs a clear product policy before any implementation so MockingBird never
 silently deletes reviewed truth, breaks evidence context, or surprises users.
 
-This phase is design only. It adds no cleanup implementation, retention job,
-media storage behavior, API endpoint, UI, generated media, or deletion.
+Phase 12C was design only. Phase 12D implements the first read-only retention
+report and cleanup dry-run planning API. It still adds no cleanup
+implementation, retention job, UI, generated media, record deletion, file
+deletion, or truth mutation.
 
 ## Product Flow Covered
 
@@ -94,11 +96,11 @@ Future implementation can consider:
 - bulk cleanup only for low-risk/unlinked media
 - skip protected records by default
 
-Do not implement these actions in this phase.
+Do not implement destructive cleanup actions in Phase 12D.
 
-## Future API Design
+## Current Report API
 
-Design only:
+Implemented in Phase 12D:
 
 ```text
 GET /api/media/saved-preview-retention
@@ -113,36 +115,48 @@ Returns:
 - `content_type`
 - `size_bytes`
 - `created_at` or `fetched_at`
+- `provider_key`
 - `provenance`
 - `linked_motion_evidence_count`
 - `linked_event_count`
 - `linked_visit_count`
 - `reviewed_truth_count`
 - `risk_level`
+- `media_state`
 - `recommended_action`
 - `warnings`
 
-Design only:
+The report is read-only. It performs no URL fetch, media decoding, file
+deletion, record deletion, evidence creation, Event/Visit creation, ReviewLabel
+creation, export creation, or truth mutation.
+
+## Current Dry-Run API
+
+Implemented in Phase 12D:
 
 ```text
-POST /api/media/{media_asset_id}/cleanup-preview
+POST /api/media/saved-preview-retention/dry-run-cleanup
 ```
 
 Request:
 
+- `media_asset_ids`: optional list
+- `risk_levels`: optional list
+- `include_protected`: false by default
 - `mode`: `delete_file_only`, `delete_media_asset`, or `archive`
-- `confirm`: bool
-- `reason`: optional
 
 Response:
 
-- `status`
-- `media_asset_id`
-- `file_deleted`
-- `record_deleted`
-- `skipped_reason`
+- affected-item preview
+- file/record deletion counts that would apply in a future implementation
+- skipped/protected counts
 - `warnings`
 - `creates_truth`: false
+- `deletes_truth`: false
+
+If no filters are supplied, dry-run defaults to low-risk candidates only.
+Protected media is skipped unless explicitly included, and even then this route
+only reports what a future cleanup might affect.
 
 ## UI Design
 
@@ -163,12 +177,13 @@ hide truth implications.
 
 Cleanup should have dry-run first.
 
-Dry-run should:
+Phase 12D dry-run:
 
 - report files and records that would be affected
 - write nothing
 - delete nothing
 - skip protected reviewed truth by default
+- preserve ReviewLabel/Event/Visit truth
 - be the first implementation phase before actual delete behavior
 
 ## Protected Media Policy
@@ -228,19 +243,20 @@ media cleanup unless separately designed.
 Future tests should prove:
 
 - retention report classifies unlinked media as low risk
-- pending evidence media as medium risk
+- pending and ignored evidence media as medium risk
 - promoted Event/Visit media as high risk
 - reviewed correction media as protected
 - dry-run deletes nothing
-- cleanup skips protected media by default
-- delete unlinked media removes file only under allowed local path
-- no path traversal
+- dry-run skips protected media by default
 - stale/missing files are reported safely
 - no ReviewLabel/Event/Visit truth deletion
 - no DatasetExport deletion
 - no model/training dependencies
 - no URL fetch required for cleanup
 - no secret leakage
+
+Actual cleanup implementation remains future work and needs separate tests for
+path safety and deletion behavior.
 
 ## Recommended Future Phases
 
@@ -251,7 +267,7 @@ Future tests should prove:
 
 ## Explicit Non-Goals
 
-- No implementation in this phase.
+- No actual cleanup implementation in Phase 12D.
 - No media deletion.
 - No record deletion.
 - No background cleanup.

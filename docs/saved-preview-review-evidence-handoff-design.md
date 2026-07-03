@@ -217,6 +217,9 @@ Retention risk policy for saved preview media is documented in
 [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
 Media linked to pending, promoted, or reviewed evidence needs warnings before
 cleanup, and reviewed truth-linked media is protected by default.
+Phase 12D exposes that policy through a read-only report and dry-run planner:
+pending/ignored evidence is medium risk, promoted Event/Visit context is high
+risk, and reviewed correction context is protected.
 
 ## Testing Expectations For Future Implementation
 

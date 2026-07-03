@@ -384,6 +384,78 @@ class SavedPreviewMotionEvidenceResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class SavedMediaRetentionItem(BaseModel):
+    # Retention reporting is read-only; cleanup remains dry-run planning only.
+    media_asset_id: str
+    source_id: str | None = None
+    stream_id: str | None = None
+    file_name: str | None = None
+    content_type: str | None = None
+    size_bytes: int | None = Field(default=None, ge=0)
+    created_at: datetime | None = None
+    fetched_at: datetime | None = None
+    provider_key: str | None = None
+    provenance: str | None = None
+    linked_motion_evidence_count: int = Field(ge=0)
+    linked_event_count: int = Field(ge=0)
+    linked_visit_count: int = Field(ge=0)
+    reviewed_truth_count: int = Field(ge=0)
+    risk_level: str
+    media_state: str
+    recommended_action: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SavedMediaRetentionSummary(BaseModel):
+    total_items: int = Field(ge=0)
+    total_known_bytes: int = Field(ge=0)
+    unknown_size_count: int = Field(ge=0)
+    low_risk_count: int = Field(ge=0)
+    medium_risk_count: int = Field(ge=0)
+    high_risk_count: int = Field(ge=0)
+    protected_count: int = Field(ge=0)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SavedMediaRetentionReportResponse(BaseModel):
+    items: list[SavedMediaRetentionItem]
+    summary: SavedMediaRetentionSummary
+    generated_at: datetime
+    dry_run_only: bool = True
+
+
+class SavedMediaCleanupDryRunRequest(BaseModel):
+    media_asset_ids: list[str] | None = None
+    risk_levels: list[str] | None = None
+    include_protected: bool = False
+    mode: str = "delete_file_only"
+
+
+class SavedMediaCleanupDryRunItem(BaseModel):
+    media_asset_id: str
+    risk_level: str
+    would_delete_file: bool
+    would_delete_record: bool
+    would_skip: bool
+    skip_reason: str | None = None
+    file_name: str | None = None
+    size_bytes: int | None = Field(default=None, ge=0)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SavedMediaCleanupDryRunResponse(BaseModel):
+    items: list[SavedMediaCleanupDryRunItem]
+    total_would_delete_files: int = Field(ge=0)
+    total_would_delete_records: int = Field(ge=0)
+    total_known_bytes_to_delete: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    protected_skipped_count: int = Field(ge=0)
+    dry_run: bool = True
+    creates_truth: bool = False
+    deletes_truth: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
 class Point(BaseModel):
     x: float = Field(ge=0, le=1)
     y: float = Field(ge=0, le=1)

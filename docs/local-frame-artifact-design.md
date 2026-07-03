@@ -49,6 +49,9 @@ sampled-frame artifact and does not create truth.
 Phase 12C designs cleanup policy for saved external_url media separately from
 future local frame artifact cleanup:
 [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
+Phase 12D implements the saved external_url retention report and cleanup dry-run
+only for saved preview MediaAssets. Future local frame artifact retention still
+needs separate scope before implementation.
 
 ## Relationship To MediaAsset
 

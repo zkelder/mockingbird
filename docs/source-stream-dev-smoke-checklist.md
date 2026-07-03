@@ -165,6 +165,19 @@ curl -s -X POST http://127.0.0.1:8000/api/review-labels \
   -d '{"target_type": "visit", "target_id": "{visit_id}", "label": "Northern Cardinal"}'
 ```
 
+Optional retention report/dry-run checks after saving preview media:
+
+```sh
+curl -s http://127.0.0.1:8000/api/media/saved-preview-retention
+
+curl -s -X POST http://127.0.0.1:8000/api/media/saved-preview-retention/dry-run-cleanup \
+  -H "content-type: application/json" \
+  -d '{"media_asset_ids": ["{media_asset_id}"]}'
+```
+
+These retention routes are report/dry-run only. They must not delete files,
+delete records, create evidence, or mutate review truth.
+
 ## Truth-Boundary Checklist
 
 - [ ] Preview fetch creates no records.
@@ -231,12 +244,13 @@ curl -s -X POST http://127.0.0.1:8000/api/review-labels \
 
 ## Recommended Next Phase
 
-Recommended next: Phase 12C — external_url saved media cleanup/retention
-design. The explicit save path is now testable and manually checkable, so the
-next product-safe question is how local saved preview media should be retained,
-listed, and cleaned up without losing reviewed evidence.
+Recommended next: Phase 12E — saved media retention UI, dry-run only. Phase
+12D gives the backend a read-only report and dry-run planner, so the next
+product-safe step is making the same risk classification visible without adding
+destructive cleanup.
 
 Other reasonable follow-ups:
 
-- Phase 12D: source/stream developer diagnostics polish.
+- Phase 12F: low-risk unlinked saved media cleanup implementation, only after
+  separate scope and validation.
 - Phase 13A: next provider boundary design.

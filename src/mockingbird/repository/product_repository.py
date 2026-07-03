@@ -119,6 +119,12 @@ from mockingbird.api.schemas import (
     ReviewLabel,
     ReviewQueueItem,
     ReviewStatus,
+    SavedMediaCleanupDryRunItem,
+    SavedMediaCleanupDryRunRequest,
+    SavedMediaCleanupDryRunResponse,
+    SavedMediaRetentionItem,
+    SavedMediaRetentionReportResponse,
+    SavedMediaRetentionSummary,
     SavedPreviewMotionEvidenceRequest,
     SourceConnectionStatus,
     SourceConnectionStatusValue,
@@ -1194,6 +1200,323 @@ class ProductRepository:
         if asset is None:
             return None
         return Path(asset.local_path)
+
+    def saved_preview_retention_report(self) -> SavedMediaRetentionReportResponse:
+        with self.session_factory() as session:
+            asset_models = session.scalars(
+                select(MediaAssetModel).order_by(MediaAssetModel.created_at, MediaAssetModel.id)
+            ).all()
+            items = [
+                self._saved_preview_retention_item(session, asset_model)
+                for asset_model in asset_models
+                if _is_external_url_preview_media_asset(asset_model)
+            ]
+
+        risk_counts = Counter(item.risk_level for item in items)
+        summary_warnings: list[str] = []
+        if any(item.warnings for item in items):
+            summary_warnings.append(
+                "Some saved preview media has retention warnings; inspect item warnings."
+            )
+
+        return SavedMediaRetentionReportResponse(
+            items=items,
+            summary=SavedMediaRetentionSummary(
+                total_items=len(items),
+                total_known_bytes=sum(item.size_bytes or 0 for item in items),
+                unknown_size_count=sum(1 for item in items if item.size_bytes is None),
+                low_risk_count=risk_counts["low"],
+                medium_risk_count=risk_counts["medium"],
+                high_risk_count=risk_counts["high"],
+                protected_count=risk_counts["protected"],
+                warnings=summary_warnings,
+            ),
+            generated_at=datetime.now(UTC),
+            dry_run_only=True,
+        )
+
+    def saved_preview_cleanup_dry_run(
+        self,
+        payload: SavedMediaCleanupDryRunRequest,
+    ) -> SavedMediaCleanupDryRunResponse:
+        report = self.saved_preview_retention_report()
+        report_ids = {item.media_asset_id for item in report.items}
+        selected_ids = {
+            media_id.strip()
+            for media_id in payload.media_asset_ids or []
+            if media_id.strip()
+        }
+        selected_risk_levels = {
+            risk_level.strip().lower()
+            for risk_level in payload.risk_levels or []
+            if risk_level.strip()
+        }
+        if not selected_ids and not selected_risk_levels:
+            selected_risk_levels = {"low"}
+
+        valid_risk_levels = {"low", "medium", "high", "protected"}
+        unsupported_risk_levels = selected_risk_levels - valid_risk_levels
+        selected_risk_levels &= valid_risk_levels
+
+        warnings = ["Dry-run only; no files or records were deleted."]
+        for media_id in sorted(selected_ids - report_ids):
+            warnings.append(
+                f"MediaAsset {media_id} is not a saved external_url preview retention item."
+            )
+        for risk_level in sorted(unsupported_risk_levels):
+            warnings.append(f"Unsupported retention risk level ignored: {risk_level}.")
+
+        dry_run_items: list[SavedMediaCleanupDryRunItem] = []
+        for item in report.items:
+            if selected_ids and item.media_asset_id not in selected_ids:
+                continue
+            if selected_risk_levels and item.risk_level not in selected_risk_levels:
+                continue
+
+            dry_run_items.append(self._saved_preview_cleanup_dry_run_item(item, payload))
+
+        return SavedMediaCleanupDryRunResponse(
+            items=dry_run_items,
+            total_would_delete_files=sum(1 for item in dry_run_items if item.would_delete_file),
+            total_would_delete_records=sum(
+                1 for item in dry_run_items if item.would_delete_record
+            ),
+            total_known_bytes_to_delete=sum(
+                item.size_bytes or 0 for item in dry_run_items if item.would_delete_file
+            ),
+            skipped_count=sum(1 for item in dry_run_items if item.would_skip),
+            protected_skipped_count=sum(
+                1
+                for item in dry_run_items
+                if item.skip_reason == "protected_media_skipped"
+            ),
+            dry_run=True,
+            creates_truth=False,
+            deletes_truth=False,
+            warnings=warnings,
+        )
+
+    def _saved_preview_retention_item(
+        self,
+        session: Session,
+        asset_model: MediaAssetModel,
+    ) -> SavedMediaRetentionItem:
+        note_fields = _external_url_preview_note_fields(asset_model.notes)
+        warnings: list[str] = []
+        fetched_at = _parsed_note_datetime(note_fields.get("fetched_at"), warnings)
+        size_bytes, size_warnings = self._saved_preview_size_bytes(asset_model)
+        warnings.extend(size_warnings)
+
+        motion_evidence = session.scalars(
+            select(MotionEvidenceModel)
+            .where(MotionEvidenceModel.snapshot_media_asset_id == asset_model.id)
+            .order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
+        ).all()
+        linked_event_ids = {
+            evidence.promoted_event_id
+            for evidence in motion_evidence
+            if evidence.promoted_event_id is not None
+        }
+        linked_visit_ids = {
+            evidence.promoted_visit_id
+            for evidence in motion_evidence
+            if evidence.promoted_visit_id is not None
+        }
+
+        visit_models_by_id: dict[str, VisitModel] = {}
+        if asset_model.local_path:
+            for visit_model in session.scalars(
+                select(VisitModel).where(
+                    VisitModel.representative_media_path == asset_model.local_path
+                )
+            ).all():
+                linked_visit_ids.add(visit_model.id)
+                linked_event_ids.add(visit_model.event_id)
+                visit_models_by_id[visit_model.id] = visit_model
+
+        for visit_id in linked_visit_ids:
+            if visit_id not in visit_models_by_id:
+                visit_model = session.get(VisitModel, visit_id)
+                if visit_model is not None:
+                    visit_models_by_id[visit_id] = visit_model
+                else:
+                    warnings.append(
+                        f"Linked Visit {visit_id} was not found; classified conservatively."
+                    )
+
+        event_models_by_id: dict[str, EventModel] = {}
+        for event_id in linked_event_ids:
+            event_model = session.get(EventModel, event_id)
+            if event_model is not None:
+                event_models_by_id[event_id] = event_model
+            else:
+                warnings.append(
+                    f"Linked Event {event_id} was not found; classified conservatively."
+                )
+
+        reviewed_truth_refs: set[str] = set()
+        for visit_id, visit_model in visit_models_by_id.items():
+            if (
+                visit_model.review_status == ReviewStatus.reviewed.value
+                or visit_model.reviewed_label is not None
+            ):
+                reviewed_truth_refs.add(f"visit:{visit_id}")
+            for label_model in self._review_label_models_for_visit(session, visit_id):
+                reviewed_truth_refs.add(f"review-label:{label_model.id}")
+
+        for event_id, event_model in event_models_by_id.items():
+            if event_model.review_status == ReviewStatus.reviewed.value:
+                reviewed_truth_refs.add(f"event:{event_id}")
+            for label_model in self._review_label_models_for_event(session, event_id):
+                reviewed_truth_refs.add(f"review-label:{label_model.id}")
+
+        pending_count = sum(
+            1
+            for evidence in motion_evidence
+            if evidence.status == MotionEvidenceStatus.pending.value
+        )
+        ignored_count = sum(
+            1
+            for evidence in motion_evidence
+            if evidence.status == MotionEvidenceStatus.ignored.value
+        )
+        promoted_count = sum(
+            1
+            for evidence in motion_evidence
+            if evidence.status == MotionEvidenceStatus.promoted.value
+        )
+        known_statuses = {
+            MotionEvidenceStatus.pending.value,
+            MotionEvidenceStatus.ignored.value,
+            MotionEvidenceStatus.promoted.value,
+        }
+        if any(evidence.status not in known_statuses for evidence in motion_evidence):
+            warnings.append(
+                "Unknown MotionEvidence status encountered; classified conservatively."
+            )
+
+        reviewed_truth_count = len(reviewed_truth_refs)
+        if reviewed_truth_count > 0:
+            media_state = "reviewed_truth_context"
+            risk_level = "protected"
+            recommended_action = "Skip by default; media is linked to reviewed truth."
+        elif linked_event_ids or linked_visit_ids:
+            media_state = "linked_event_visit"
+            risk_level = "high"
+            recommended_action = "Keep by default; media supports Event/Visit review context."
+        elif promoted_count > 0:
+            media_state = "linked_promoted_evidence"
+            risk_level = "high"
+            recommended_action = "Keep by default; media is linked to promoted evidence."
+        elif pending_count > 0:
+            media_state = "linked_pending_evidence"
+            risk_level = "medium"
+            recommended_action = "Review pending MotionEvidence before cleanup."
+        elif ignored_count > 0:
+            media_state = "linked_ignored_evidence"
+            risk_level = "medium"
+            recommended_action = "Review ignored MotionEvidence before cleanup."
+        elif not motion_evidence:
+            media_state = "saved_unlinked"
+            risk_level = "low"
+            recommended_action = "Eligible for future low-risk cleanup dry run."
+        else:
+            media_state = "unknown"
+            risk_level = "high"
+            recommended_action = "Inspect manually before cleanup."
+            warnings.append("Insufficient linkage metadata; classified as high risk.")
+
+        return SavedMediaRetentionItem(
+            media_asset_id=asset_model.id,
+            source_id=asset_model.source_id,
+            stream_id=asset_model.stream_id,
+            file_name=asset_model.filename,
+            content_type=asset_model.content_type,
+            size_bytes=size_bytes,
+            created_at=_as_utc(asset_model.created_at),
+            fetched_at=fetched_at,
+            provider_key=note_fields.get("provider_key"),
+            provenance=_saved_preview_provenance(note_fields),
+            linked_motion_evidence_count=len(motion_evidence),
+            linked_event_count=len(linked_event_ids),
+            linked_visit_count=len(linked_visit_ids),
+            reviewed_truth_count=reviewed_truth_count,
+            risk_level=risk_level,
+            media_state=media_state,
+            recommended_action=recommended_action,
+            warnings=warnings,
+        )
+
+    def _saved_preview_size_bytes(
+        self,
+        asset_model: MediaAssetModel,
+    ) -> tuple[int | None, list[str]]:
+        warnings: list[str] = []
+        size_bytes = asset_model.file_size_bytes if asset_model.file_size_bytes >= 0 else None
+        media_root = self.media_root.resolve()
+        try:
+            media_path = Path(asset_model.local_path).resolve()
+        except OSError:
+            warnings.append("Local media path could not be resolved; filesystem metadata skipped.")
+            return size_bytes, warnings
+
+        if not media_path.is_relative_to(media_root):
+            warnings.append(
+                "Local media path is outside the configured media root; filesystem metadata skipped."
+            )
+            return size_bytes, warnings
+
+        if not media_path.exists():
+            warnings.append("Local media file is missing or stale; no file was opened.")
+            return size_bytes, warnings
+
+        if size_bytes is None:
+            try:
+                size_bytes = media_path.stat().st_size
+            except OSError:
+                warnings.append("Local media size could not be read from filesystem metadata.")
+        return size_bytes, warnings
+
+    def _saved_preview_cleanup_dry_run_item(
+        self,
+        item: SavedMediaRetentionItem,
+        payload: SavedMediaCleanupDryRunRequest,
+    ) -> SavedMediaCleanupDryRunItem:
+        warnings = list(item.warnings)
+        skip_reason: str | None = None
+        mode = payload.mode.strip() if payload.mode.strip() else "delete_file_only"
+
+        if item.risk_level == "protected" and not payload.include_protected:
+            skip_reason = "protected_media_skipped"
+        elif any("outside the configured media root" in warning for warning in warnings):
+            skip_reason = "unsafe_media_path"
+        elif any("missing or stale" in warning for warning in warnings):
+            skip_reason = "stale_media_reference"
+        elif mode not in {"delete_file_only", "delete_media_asset", "archive"}:
+            skip_reason = "unsupported_mode"
+            warnings.append(f"Unsupported cleanup mode ignored: {mode}.")
+
+        would_skip = skip_reason is not None
+        would_delete_file = False
+        would_delete_record = False
+        if not would_skip:
+            if mode == "delete_file_only":
+                would_delete_file = True
+            elif mode == "delete_media_asset":
+                would_delete_file = True
+                would_delete_record = True
+
+        return SavedMediaCleanupDryRunItem(
+            media_asset_id=item.media_asset_id,
+            risk_level=item.risk_level,
+            would_delete_file=would_delete_file,
+            would_delete_record=would_delete_record,
+            would_skip=would_skip,
+            skip_reason=skip_reason,
+            file_name=item.file_name,
+            size_bytes=item.size_bytes,
+            warnings=warnings,
+        )
 
     def create_external_url_preview_media_asset(
         self,
@@ -5965,6 +6288,54 @@ def _folder_path(folder_path: str) -> Path:
 
 def _media_type_for_path(path: Path) -> tuple[str, str] | None:
     return SUPPORTED_MEDIA_EXTENSIONS.get(path.suffix.lower())
+
+
+def _is_external_url_preview_media_asset(asset: MediaAssetModel) -> bool:
+    notes = asset.notes or ""
+    return (
+        "provider_key=external_url" in notes
+        and "Saved explicit external_url still-image preview." in notes
+    )
+
+
+def _external_url_preview_note_fields(notes: str | None) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in (notes or "").splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key:
+            fields[key] = value.strip()
+    return fields
+
+
+def _parsed_note_datetime(value: str | None, warnings: list[str]) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return _as_utc(datetime.fromisoformat(value))
+    except ValueError:
+        warnings.append("Saved preview fetched_at metadata could not be parsed.")
+        return None
+
+
+def _saved_preview_provenance(note_fields: dict[str, str]) -> str:
+    parts = ["external_url preview"]
+    provider_key = _safe_provenance_value(note_fields.get("provider_key"))
+    if provider_key is not None:
+        parts.append(f"provider_key={provider_key}")
+    url_host = _safe_provenance_value(note_fields.get("url_host"))
+    if url_host is not None:
+        parts.append(f"url_host={url_host}")
+    return "; ".join(parts)
+
+
+def _safe_provenance_value(value: str | None) -> str | None:
+    cleaned = _clean_optional_text(value)
+    if cleaned is None:
+        return None
+    return cleaned.replace("\n", " ").replace("\r", " ")[:160]
 
 
 def _merge_notes(existing_notes: str | None, new_notes: str) -> str:

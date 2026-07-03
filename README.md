@@ -103,7 +103,8 @@ The source/stream smoke-test hardening plan is documented in
 [docs/source-stream-smoke-test-hardening.md](docs/source-stream-smoke-test-hardening.md).
 For manual browser/API validation of that same explicit path, use
 [docs/source-stream-dev-smoke-checklist.md](docs/source-stream-dev-smoke-checklist.md).
-Saved external_url preview media retention is design-only; cleanup/delete work
+Saved external_url preview media now has a read-only retention report and
+cleanup dry-run planner. Cleanup/delete work still requires separate scope and
 must follow
 [docs/external-url-saved-media-retention-design.md](docs/external-url-saved-media-retention-design.md).
 

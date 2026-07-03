@@ -275,6 +275,13 @@ warn for pending/promoted evidence, protect reviewed truth by default, and avoid
 silently weakening provenance. See
 [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
 
+## Phase 12D Status
+
+Phase 12D implements the saved-preview retention report and cleanup dry-run
+planner. Pending and ignored MotionEvidence media is medium risk, promoted
+Event/Visit media is high risk, reviewed correction media is protected, and the
+routes delete nothing and create no truth.
+
 ## Phase 8S Status
 
 Phase 8S lets pending MotionEvidence be created with optional `snapshot_media_asset_id`.

@@ -118,6 +118,9 @@ correction boundary in the browser/API:
 Phase 12C classifies promoted saved-preview media as high risk for cleanup
 because deleting it can weaken Event/Visit review provenance. See
 [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
+Phase 12D exposes that classification in the retention report and dry-run
+planner. Promoted saved-preview media is high risk until reviewed correction
+makes it protected, and the dry-run route does not delete files or records.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 
@@ -198,6 +201,9 @@ those same steps.
 Phase 12C adds cleanup/retention design for promoted saved-preview media:
 promoted Event/Visit context is high risk, and reviewed correction context is
 protected by default.
+
+Phase 12D adds backend report/dry-run coverage for that policy without adding
+cleanup/delete behavior.
 
 ## Explicit Non-Goals
 

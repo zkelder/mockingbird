@@ -15,6 +15,9 @@ checklist in
 [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
 Phase 12C designs saved preview media retention and cleanup policy in
 [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
+Phase 12D implements a read-only retention report and cleanup dry-run planner;
+it remains separate from source/stream smoke behavior and does not delete files
+or mutate truth.
 
 ## Product Flow Covered
 
@@ -85,9 +88,8 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - No media decoding or frame extraction.
 - No model, detector, or classifier runtime.
 - No frontend behavior beyond existing API contracts.
-- No cleanup or retention implementation. Retention policy is designed
-  separately in
-  [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
+- No cleanup/delete implementation. Retention report and dry-run planning are
+  separate from this smoke path and create no product truth.
 
 ## Future Smoke-Test Expansions
 

@@ -69,6 +69,9 @@ from mockingbird.api.schemas import (
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
     ReviewQueueItem,
+    SavedMediaCleanupDryRunRequest,
+    SavedMediaCleanupDryRunResponse,
+    SavedMediaRetentionReportResponse,
     SavedPreviewMotionEvidenceRequest,
     SavedPreviewMotionEvidenceResponse,
     SpeciesSuggestionCreateRequest,
@@ -1438,6 +1441,23 @@ async def import_folder_media(payload: FolderImportCreate) -> FolderImportResult
         return get_repository().import_folder_media(payload)
     except ValueError as error:
         raise _folder_import_error(error) from error
+
+
+@app.get("/api/media/saved-preview-retention", response_model=SavedMediaRetentionReportResponse)
+async def saved_preview_retention_report() -> SavedMediaRetentionReportResponse:
+    return get_repository().saved_preview_retention_report()
+
+
+@app.post(
+    "/api/media/saved-preview-retention/dry-run-cleanup",
+    response_model=SavedMediaCleanupDryRunResponse,
+)
+async def saved_preview_cleanup_dry_run(
+    payload: SavedMediaCleanupDryRunRequest | None = None,
+) -> SavedMediaCleanupDryRunResponse:
+    return get_repository().saved_preview_cleanup_dry_run(
+        payload or SavedMediaCleanupDryRunRequest(),
+    )
 
 
 @app.get("/api/media/{media_id}", response_model=MediaAsset)

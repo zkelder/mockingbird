@@ -71,6 +71,9 @@ media needs warnings, promoted Event/Visit media is high risk, and reviewed
 truth-linked media should be protected by default. See
 [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md)
 for the saved external_url media policy.
+Phase 12D implements that policy for saved preview MediaAssets as a read-only
+report and dry-run planner. It does not apply cleanup to future frame artifacts
+or delete any media.
 
 When supported, promotion should carry or link the media context to created Event/Visit evidence while keeping those records unreviewed.
 

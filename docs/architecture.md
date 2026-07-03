@@ -107,6 +107,10 @@ implementation. Saved MediaAssets can accumulate, but cleanup must be
 user-controlled, dry-run first, and careful not to delete reviewed truth or
 break review provenance. See
 [external-url-saved-media-retention-design.md](external-url-saved-media-retention-design.md).
+Phase 12D implements the read-only saved-preview retention report and cleanup
+dry-run planner. It classifies low/medium/high/protected risk from current
+links to MotionEvidence, Event/Visit context, and reviewed correction truth, but
+does not delete files, delete records, fetch URLs, decode media, or mutate truth.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but
@@ -145,6 +149,7 @@ MockingBird should prefer local storage for media, labels, corrections, metadata
 
 Cloud services may be optional later, but they should not be required for the core product loop.
 
-Saved media retention is a storage boundary. Future cleanup work must separate
-file deletion from record deletion, protect reviewed truth by default, and report
-stale or missing media safely without decoding media.
+Saved media retention is a storage boundary. Current retention report/dry-run
+routes are read-only. Future cleanup work must separate file deletion from
+record deletion, protect reviewed truth by default, and report stale or missing
+media safely without decoding media.
