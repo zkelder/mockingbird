@@ -860,7 +860,9 @@ boundary.
 Deliverables:
 
 - Phase 17A: bulk MotionEvidence review actions.
-- Next likely phase: Phase 17B saved-media evidence review triage polish.
+- Phase 17B: bulk saved media to MotionEvidence triage.
+- Phase 17C: bulk Review Queue correction actions.
+- Next likely phase: Phase 17D source/stream smoke-test validation polish.
 
 Validation:
 
@@ -870,3 +872,12 @@ Validation:
   Event/Visit context only; corrections remain the first dataset/export truth.
   It adds no workers, scheduler, provider changes, media import/fetch/scan
   changes, model runtime, dependencies, or generated artifacts.
+- Phase 17B lets users select multiple eligible saved MediaAssets and create
+  pending MotionEvidence in bulk. It creates no Event, Visit, ReviewLabel,
+  reviewed truth, analytics/export truth, media import/fetch/scan behavior,
+  worker, scheduler, dependency, or generated artifact.
+- Phase 17C lets users select multiple eligible Review Queue items and apply
+  the same explicit correction in bulk. It creates ReviewLabels as user-selected
+  truth only, with no automatic labels, MediaAssets, MotionEvidence, new
+  Events/Visits, model runtime, worker, scheduler, provider change, dependency,
+  or generated artifact.

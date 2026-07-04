@@ -61,7 +61,11 @@ import type {
   MotionEvaluateSequenceResponse,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
+  ReviewQueueBulkCorrectionRequest,
+  ReviewQueueBulkCorrectionResponse,
   ReviewQueueItem,
+  SavedMediaBulkMotionEvidenceRequest,
+  SavedMediaBulkMotionEvidenceResponse,
   SavedMediaCleanupDryRunRequest,
   SavedMediaCleanupDryRunResponse,
   SavedMediaCleanupRequest,
@@ -269,6 +273,11 @@ export const apiClient = {
         body: JSON.stringify(payload),
       },
     ),
+  bulkCreateMotionEvidenceFromMedia: (payload: SavedMediaBulkMotionEvidenceRequest) =>
+    request<SavedMediaBulkMotionEvidenceResponse>("/api/media/bulk-create-motion-evidence", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   dryRunFolderImportEvidence: (payload: FolderImportEvidenceBatchDryRunRequest) =>
     request<FolderImportEvidenceBatchDryRunResponse>("/api/folder-import/evidence/dry-run", {
       method: "POST",
@@ -463,6 +472,11 @@ export const apiClient = {
     }),
   createReviewLabel: (payload: ReviewCorrectionCreate) =>
     request<ReviewCorrectionResult>("/api/review-labels", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  bulkCorrectReviewQueueItems: (payload: ReviewQueueBulkCorrectionRequest) =>
+    request<ReviewQueueBulkCorrectionResponse>("/api/review-queue/bulk-correct", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

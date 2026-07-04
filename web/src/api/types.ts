@@ -385,6 +385,27 @@ export interface SavedPreviewMotionEvidenceResponse {
   warnings: string[];
 }
 
+export interface SavedMediaBulkMotionEvidenceRequest {
+  media_asset_ids: string[];
+}
+
+export type SavedMediaBulkMotionEvidenceResultStatus = "succeeded" | "skipped" | "failed";
+
+export interface SavedMediaBulkMotionEvidenceResult {
+  media_asset_id: string;
+  status: SavedMediaBulkMotionEvidenceResultStatus;
+  message: string;
+  created_motion_evidence_id?: string | null;
+}
+
+export interface SavedMediaBulkMotionEvidenceResponse {
+  requested_count: number;
+  succeeded_count: number;
+  skipped_count: number;
+  failed_count: number;
+  results: SavedMediaBulkMotionEvidenceResult[];
+}
+
 export interface FolderImportEvidenceBatchDryRunRequest {
   media_asset_ids?: string[] | null;
   source_id?: string | null;
@@ -1331,6 +1352,31 @@ export interface ReviewCorrectionResult {
   event?: Event | null;
   review_queue_count: number;
   analytics: AnalyticsSummary;
+}
+
+export type ReviewQueueBulkCorrectionTargetType = "event" | "visit";
+export type ReviewQueueBulkCorrectionResultStatus = "succeeded" | "skipped" | "failed";
+
+export interface ReviewQueueBulkCorrectionRequest {
+  target_ids: string[];
+  target_type: ReviewQueueBulkCorrectionTargetType;
+  label: string;
+  notes?: string | null;
+}
+
+export interface ReviewQueueBulkCorrectionResult {
+  target_id: string;
+  status: ReviewQueueBulkCorrectionResultStatus;
+  message: string;
+  created_review_label_id?: string | null;
+}
+
+export interface ReviewQueueBulkCorrectionResponse {
+  requested_count: number;
+  succeeded_count: number;
+  skipped_count: number;
+  failed_count: number;
+  results: ReviewQueueBulkCorrectionResult[];
 }
 
 export interface EventDetail {

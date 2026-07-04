@@ -1094,6 +1094,64 @@ button {
   gap: 14px;
 }
 
+.review-bulk-panel,
+.review-bulk-form,
+.review-bulk-result {
+  display: grid;
+  gap: 12px;
+}
+
+.review-bulk-form {
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.4fr) auto;
+  align-items: end;
+}
+
+.review-bulk-form label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.review-bulk-form textarea {
+  min-height: 72px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: #18231d;
+  resize: vertical;
+}
+
+.review-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.review-bulk-select {
+  width: fit-content;
+  min-height: 40px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fbfdf9;
+  color: #34443a;
+  font-weight: 800;
+}
+
+.review-bulk-select:has(input:disabled) {
+  color: #758177;
+  background: #f2f5ef;
+}
+
+.review-bulk-result strong,
+.review-bulk-result span {
+  overflow-wrap: anywhere;
+}
+
 .species-state-grid,
 .species-export-summary {
   display: grid;
@@ -3410,6 +3468,8 @@ button {
 .retention-dry-run-result,
 .retention-cleanup-action,
 .retention-cleanup-result,
+.retention-evidence-action,
+.retention-evidence-result,
 .retention-item-list-panel,
 .retention-item-list,
 .retention-dry-run-items,
@@ -3544,8 +3604,52 @@ button {
   background: #fff7f4;
 }
 
+.retention-evidence-action {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border: 1px solid #cfdcc7;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbf4;
+}
+
+.retention-evidence-action div:first-child,
+.retention-evidence-result div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.retention-evidence-action strong,
+.retention-evidence-action span,
+.retention-evidence-result strong,
+.retention-evidence-result span {
+  overflow-wrap: anywhere;
+}
+
+.retention-evidence-action span,
+.retention-evidence-result span {
+  color: #4f5f55;
+}
+
+.retention-evidence-select {
+  width: fit-content;
+  min-height: 40px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fbfdf9;
+  color: #34443a;
+  font-weight: 800;
+}
+
+.retention-evidence-select:has(input:disabled) {
+  color: #758177;
+  background: #f2f5ef;
+}
+
 .retention-cleanup-action div,
-.retention-cleanup-result {
+.retention-cleanup-result,
+.retention-evidence-result {
   min-width: 0;
 }
 
@@ -3775,6 +3879,7 @@ button {
   .retention-linkage-grid,
   .retention-dry-run-form,
   .retention-dry-run-summary,
+  .review-bulk-form,
   .worker-status-grid,
   .worker-create-flag-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3868,6 +3973,8 @@ button {
   .motion-evidence-layout,
   .motion-review-context-grid,
   .motion-zone-filter,
+  .retention-evidence-action,
+  .review-bulk-form,
   .species-suggestion-form-grid,
   .species-suggestion-filter-grid,
   .species-suggestion-detail-grid,

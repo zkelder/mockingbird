@@ -75,7 +75,11 @@ from mockingbird.api.schemas import (
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
+    ReviewQueueBulkCorrectionRequest,
+    ReviewQueueBulkCorrectionResponse,
     ReviewQueueItem,
+    SavedMediaBulkMotionEvidenceRequest,
+    SavedMediaBulkMotionEvidenceResponse,
     SavedMediaCleanupDryRunRequest,
     SavedMediaCleanupDryRunResponse,
     SavedMediaCleanupRequest,
@@ -1718,6 +1722,17 @@ async def saved_preview_cleanup_dry_run(
 
 
 @app.post(
+    "/api/media/bulk-create-motion-evidence",
+    response_model=SavedMediaBulkMotionEvidenceResponse,
+)
+async def bulk_create_motion_evidence_from_saved_media(
+    payload: SavedMediaBulkMotionEvidenceRequest,
+) -> SavedMediaBulkMotionEvidenceResponse:
+    # Bulk media handoff creates pending evidence only.
+    return get_repository().bulk_create_motion_evidence_from_saved_media(payload)
+
+
+@app.post(
     "/api/folder-import/evidence/dry-run",
     response_model=FolderImportEvidenceBatchDryRunResponse,
 )
@@ -1966,6 +1981,21 @@ async def decide_detection_proposal(
 @app.get("/api/review-queue", response_model=list[ReviewQueueItem])
 async def list_review_queue() -> list[ReviewQueueItem]:
     return get_repository().review_queue_items()
+
+
+@app.post(
+    "/api/review-queue/bulk-correct",
+    response_model=ReviewQueueBulkCorrectionResponse,
+)
+async def bulk_correct_review_queue_items(
+    payload: ReviewQueueBulkCorrectionRequest,
+) -> ReviewQueueBulkCorrectionResponse:
+    try:
+        return get_repository().bulk_correct_review_queue_items(payload)
+    except ValueError as error:
+        if str(error) == "missing_review_label":
+            raise HTTPException(status_code=400, detail="A correction label is required.") from error
+        raise HTTPException(status_code=400, detail="Review Queue bulk correction failed.") from error
 
 
 @app.get("/api/review-labels", response_model=list[ReviewLabel])

@@ -131,8 +131,16 @@ from mockingbird.api.schemas import (
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
     ReviewLabel,
+    ReviewQueueBulkCorrectionRequest,
+    ReviewQueueBulkCorrectionResponse,
+    ReviewQueueBulkCorrectionResult,
+    ReviewQueueBulkCorrectionResultStatus,
+    ReviewQueueBulkCorrectionTargetType,
     ReviewQueueItem,
     ReviewStatus,
+    SavedMediaBulkMotionEvidenceRequest,
+    SavedMediaBulkMotionEvidenceResponse,
+    SavedMediaBulkMotionEvidenceResult,
     SavedMediaCleanupDryRunItem,
     SavedMediaCleanupDryRunRequest,
     SavedMediaCleanupDryRunResponse,
@@ -2942,6 +2950,99 @@ class ProductRepository:
                     provenance_kind=provenance_kind,
                 )
 
+    def bulk_create_motion_evidence_from_saved_media(
+        self,
+        payload: SavedMediaBulkMotionEvidenceRequest,
+    ) -> SavedMediaBulkMotionEvidenceResponse:
+        results: list[SavedMediaBulkMotionEvidenceResult] = []
+        seen_media_ids: set[str] = set()
+
+        for raw_media_id in payload.media_asset_ids:
+            media_id = raw_media_id.strip()
+            if not media_id:
+                results.append(
+                    SavedMediaBulkMotionEvidenceResult(
+                        media_asset_id=media_id,
+                        status=MotionEvidenceBulkActionResultStatus.skipped,
+                        message="MediaAsset id is required.",
+                    )
+                )
+                continue
+            if media_id in seen_media_ids:
+                results.append(
+                    SavedMediaBulkMotionEvidenceResult(
+                        media_asset_id=media_id,
+                        status=MotionEvidenceBulkActionResultStatus.skipped,
+                        message=(
+                            "Duplicate MediaAsset id in request; only the first "
+                            "occurrence was processed."
+                        ),
+                    )
+                )
+                continue
+            seen_media_ids.add(media_id)
+
+            try:
+                result = self.create_motion_evidence_from_saved_media(
+                    media_id,
+                    SavedPreviewMotionEvidenceRequest(),
+                )
+            except ValueError as error:
+                results.append(
+                    SavedMediaBulkMotionEvidenceResult(
+                        media_asset_id=media_id,
+                        status=MotionEvidenceBulkActionResultStatus.skipped,
+                        message=_saved_media_motion_evidence_skip_message(str(error)),
+                    )
+                )
+                continue
+
+            if result.duplicate_skipped:
+                results.append(
+                    SavedMediaBulkMotionEvidenceResult(
+                        media_asset_id=media_id,
+                        status=MotionEvidenceBulkActionResultStatus.skipped,
+                        message=(
+                            "Existing MotionEvidence already references this media. "
+                            "No duplicate evidence was created."
+                        ),
+                        created_motion_evidence_id=None,
+                    )
+                )
+                continue
+
+            results.append(
+                SavedMediaBulkMotionEvidenceResult(
+                    media_asset_id=media_id,
+                    status=MotionEvidenceBulkActionResultStatus.succeeded,
+                    message=(
+                        "Created pending MotionEvidence from media. "
+                        "No Events, Visits, labels, or truth were created."
+                    ),
+                    created_motion_evidence_id=result.evidence.id,
+                )
+            )
+
+        return SavedMediaBulkMotionEvidenceResponse(
+            requested_count=len(payload.media_asset_ids),
+            succeeded_count=sum(
+                1
+                for result in results
+                if result.status == MotionEvidenceBulkActionResultStatus.succeeded
+            ),
+            skipped_count=sum(
+                1
+                for result in results
+                if result.status == MotionEvidenceBulkActionResultStatus.skipped
+            ),
+            failed_count=sum(
+                1
+                for result in results
+                if result.status == MotionEvidenceBulkActionResultStatus.failed
+            ),
+            results=results,
+        )
+
     def dry_run_folder_import_evidence_batch(
         self,
         payload: FolderImportEvidenceBatchDryRunRequest,
@@ -4817,53 +4918,11 @@ class ProductRepository:
     ) -> ReviewCorrectionResult:
         with self.session_factory() as session:
             with session.begin():
-                normalized_label = self._normalize_label_from_session(session, payload.label)
-                label_model = ReviewLabelModel(
-                    id=self._next_id(session, ReviewLabelModel, "review-label"),
-                    target_type=payload.target_type,
-                    target_id=payload.target_id,
-                    label=normalized_label,
-                    notes=payload.notes,
-                    created_at=created_at or datetime.now(UTC),
+                review_label, visit, event = self._create_review_label_in_session(
+                    session,
+                    payload,
+                    created_at,
                 )
-
-                visit: Visit | None = None
-                event: Event | None = None
-
-                if payload.target_type == "visit":
-                    visit_model = session.get(VisitModel, payload.target_id)
-                    if visit_model is None:
-                        raise ValueError("missing_visit")
-
-                    session.add(label_model)
-                    visit_model.reviewed_label = normalized_label
-                    visit_model.review_status = ReviewStatus.reviewed.value
-
-                    event_model = session.get(EventModel, visit_model.event_id)
-                    if event_model is not None:
-                        child_visits = self._visit_models_for_event(session, event_model.id)
-                        if all(
-                            child_visit.review_status != ReviewStatus.needs_review.value
-                            for child_visit in child_visits
-                        ):
-                            event_model.review_status = ReviewStatus.reviewed.value
-                        event = self._event_from_model(session, event_model)
-
-                    visit = _visit_from_model(visit_model)
-
-                elif payload.target_type == "event":
-                    event_model = session.get(EventModel, payload.target_id)
-                    if event_model is None:
-                        raise ValueError("missing_event")
-
-                    session.add(label_model)
-                    event_model.review_status = ReviewStatus.reviewed.value
-                    event = self._event_from_model(session, event_model)
-                else:
-                    raise ValueError("unsupported_target")
-
-                session.flush()
-                review_label = _review_label_from_model(label_model)
                 return ReviewCorrectionResult(
                     review_label=review_label,
                     visit=visit,
@@ -4871,6 +4930,112 @@ class ProductRepository:
                     review_queue_count=len(self._review_queue_items(session)),
                     analytics=self._analytics_summary(session),
                 )
+
+    def bulk_correct_review_queue_items(
+        self,
+        payload: ReviewQueueBulkCorrectionRequest,
+    ) -> ReviewQueueBulkCorrectionResponse:
+        correction_label = _clean_optional_text(payload.label)
+        if correction_label is None:
+            raise ValueError("missing_review_label")
+
+        target_type = payload.target_type.value
+        notes = _clean_optional_text(payload.notes)
+        results: list[ReviewQueueBulkCorrectionResult] = []
+        seen_target_ids: set[str] = set()
+
+        with self.session_factory() as session:
+            with session.begin():
+                for raw_target_id in payload.target_ids:
+                    target_id = raw_target_id.strip()
+                    if not target_id:
+                        results.append(
+                            ReviewQueueBulkCorrectionResult(
+                                target_id=target_id,
+                                status=ReviewQueueBulkCorrectionResultStatus.skipped,
+                                message="Target id is required.",
+                            )
+                        )
+                        continue
+                    if target_id in seen_target_ids:
+                        results.append(
+                            ReviewQueueBulkCorrectionResult(
+                                target_id=target_id,
+                                status=ReviewQueueBulkCorrectionResultStatus.skipped,
+                                message=(
+                                    "Duplicate target id in request; only the first "
+                                    "occurrence was processed."
+                                ),
+                            )
+                        )
+                        continue
+                    seen_target_ids.add(target_id)
+
+                    skip_reason = self._review_queue_bulk_correction_skip_reason(
+                        session,
+                        payload.target_type,
+                        target_id,
+                    )
+                    if skip_reason is not None:
+                        results.append(
+                            ReviewQueueBulkCorrectionResult(
+                                target_id=target_id,
+                                status=ReviewQueueBulkCorrectionResultStatus.skipped,
+                                message=skip_reason,
+                            )
+                        )
+                        continue
+
+                    try:
+                        review_label, _, _ = self._create_review_label_in_session(
+                            session,
+                            ReviewCorrectionCreate(
+                                target_type=target_type,
+                                target_id=target_id,
+                                label=correction_label,
+                                notes=notes,
+                            ),
+                        )
+                    except ValueError as error:
+                        results.append(
+                            ReviewQueueBulkCorrectionResult(
+                                target_id=target_id,
+                                status=ReviewQueueBulkCorrectionResultStatus.failed,
+                                message=_review_queue_bulk_correction_failure_message(
+                                    str(error),
+                                ),
+                            )
+                        )
+                        continue
+
+                    results.append(
+                        ReviewQueueBulkCorrectionResult(
+                            target_id=target_id,
+                            status=ReviewQueueBulkCorrectionResultStatus.succeeded,
+                            message="Correction saved as ReviewLabel truth.",
+                            created_review_label_id=review_label.id,
+                        )
+                    )
+
+        return ReviewQueueBulkCorrectionResponse(
+            requested_count=len(payload.target_ids),
+            succeeded_count=sum(
+                1
+                for result in results
+                if result.status == ReviewQueueBulkCorrectionResultStatus.succeeded
+            ),
+            skipped_count=sum(
+                1
+                for result in results
+                if result.status == ReviewQueueBulkCorrectionResultStatus.skipped
+            ),
+            failed_count=sum(
+                1
+                for result in results
+                if result.status == ReviewQueueBulkCorrectionResultStatus.failed
+            ),
+            results=results,
+        )
 
     def review_queue_items(self) -> list[ReviewQueueItem]:
         with self.session_factory() as session:
@@ -5467,6 +5632,88 @@ class ProductRepository:
             _review_label_from_model(label)
             for label in self._review_label_models_for_visit(session, visit_id)
         ]
+
+    def _create_review_label_in_session(
+        self,
+        session: Session,
+        payload: ReviewCorrectionCreate,
+        created_at: datetime | None = None,
+    ) -> tuple[ReviewLabel, Visit | None, Event | None]:
+        normalized_label = self._normalize_label_from_session(session, payload.label)
+        label_model = ReviewLabelModel(
+            id=self._next_id(session, ReviewLabelModel, "review-label"),
+            target_type=payload.target_type,
+            target_id=payload.target_id,
+            label=normalized_label,
+            notes=payload.notes,
+            created_at=created_at or datetime.now(UTC),
+        )
+
+        visit: Visit | None = None
+        event: Event | None = None
+
+        if payload.target_type == "visit":
+            visit_model = session.get(VisitModel, payload.target_id)
+            if visit_model is None:
+                raise ValueError("missing_visit")
+
+            session.add(label_model)
+            visit_model.reviewed_label = normalized_label
+            visit_model.review_status = ReviewStatus.reviewed.value
+
+            event_model = session.get(EventModel, visit_model.event_id)
+            if event_model is not None:
+                child_visits = self._visit_models_for_event(session, event_model.id)
+                if all(
+                    child_visit.review_status != ReviewStatus.needs_review.value
+                    for child_visit in child_visits
+                ):
+                    event_model.review_status = ReviewStatus.reviewed.value
+                event = self._event_from_model(session, event_model)
+
+            visit = _visit_from_model(visit_model)
+
+        elif payload.target_type == "event":
+            event_model = session.get(EventModel, payload.target_id)
+            if event_model is None:
+                raise ValueError("missing_event")
+
+            session.add(label_model)
+            event_model.review_status = ReviewStatus.reviewed.value
+            event = self._event_from_model(session, event_model)
+        else:
+            raise ValueError("unsupported_target")
+
+        session.flush()
+        return _review_label_from_model(label_model), visit, event
+
+    def _review_queue_bulk_correction_skip_reason(
+        self,
+        session: Session,
+        target_type: ReviewQueueBulkCorrectionTargetType,
+        target_id: str,
+    ) -> str | None:
+        if target_type == ReviewQueueBulkCorrectionTargetType.visit:
+            visit_model = session.get(VisitModel, target_id)
+            if visit_model is None:
+                return "Visit was not found."
+            if visit_model.review_status != ReviewStatus.needs_review.value:
+                return "Visit is already reviewed or not eligible for Review Queue correction."
+            if session.get(EventModel, visit_model.event_id) is None:
+                return "Visit Event was not found."
+            return None
+
+        event_model = session.get(EventModel, target_id)
+        if event_model is None:
+            return "Event was not found."
+        if event_model.review_status != ReviewStatus.needs_review.value:
+            return "Event is already reviewed or not eligible for Review Queue correction."
+        if any(
+            visit.review_status == ReviewStatus.needs_review.value
+            for visit in self._visit_models_for_event(session, event_model.id)
+        ):
+            return "Event has reviewable Visits; correct Visits first."
+        return None
 
     def _event_from_model(self, session: Session, event: EventModel) -> Event:
         detections = session.scalars(
@@ -8418,6 +8665,44 @@ def _motion_evidence_bulk_failure_message(reason: str) -> str:
     if reason == "media_stream_mismatch":
         return "Motion evidence snapshot media must belong to the selected stream."
     return "Motion Evidence could not be processed."
+
+
+def _review_queue_bulk_correction_failure_message(reason: str) -> str:
+    if reason == "missing_visit":
+        return "Visit was not found."
+    if reason == "missing_event":
+        return "Event was not found."
+    if reason == "unsupported_target":
+        return "Review target type is not supported."
+    return "Review Queue item could not be corrected."
+
+
+def _saved_media_motion_evidence_skip_message(reason: str) -> str:
+    if reason == "missing_media_asset":
+        return "MediaAsset was not found."
+    if reason == "unsupported_motion_evidence_media_type":
+        return "MediaAsset is not eligible for Motion Evidence creation."
+    if reason == "missing_media_file":
+        return "Local media file was not found."
+    if reason == "missing_stream":
+        return "MediaAsset stream was not found."
+    if reason == "media_stream_mismatch":
+        return "MediaAsset stream does not match the selected stream."
+    if reason == "missing_source":
+        return "MediaAsset source was not found."
+    if reason == "stream_source_mismatch":
+        return "MediaAsset source does not match the selected stream."
+    if reason == "missing_zone":
+        return "Motion Evidence zone was not found."
+    if reason == "zone_stream_mismatch":
+        return "Motion Evidence zone does not belong to the selected stream."
+    if reason == "motion_evidence_creation_zone_blocked":
+        return "Motion Evidence cannot be created for privacy or ignore zones."
+    if reason == "missing_reviewable_zone":
+        return "No active reviewable zone is available for this MediaAsset stream."
+    if reason == "unsupported_duplicate_policy":
+        return "Unsupported duplicate policy."
+    return "MediaAsset was skipped by existing Motion Evidence eligibility rules."
 
 
 def _species_suggestion_from_model(

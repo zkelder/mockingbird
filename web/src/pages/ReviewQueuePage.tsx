@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
-import type { ReviewCorrectionResult, ReviewQueueItem, TaxonomyLabel } from "../api/types";
+import type {
+  ReviewCorrectionResult,
+  ReviewQueueBulkCorrectionResponse,
+  ReviewQueueBulkCorrectionTargetType,
+  ReviewQueueItem,
+  TaxonomyLabel,
+} from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
@@ -21,6 +27,14 @@ import { formatLabel } from "../utils";
 
 type ReviewFilter = "all" | "bird_species" | "unknown_animals" | "false_positives";
 
+function reviewQueueTargetType(item: ReviewQueueItem): ReviewQueueBulkCorrectionTargetType {
+  return item.visit_id ? "visit" : "event";
+}
+
+function reviewQueueTargetId(item: ReviewQueueItem): string {
+  return item.visit_id ?? item.event_id ?? item.id.replace(/^review-queue-/, "");
+}
+
 interface ReviewQueuePageProps {
   items: ReviewQueueItem[];
   onCreateCorrection: (
@@ -40,15 +54,20 @@ export function ReviewQueuePage({
   onOpenExports,
   onOpenVisit,
 }: ReviewQueuePageProps) {
+  const [queueItems, setQueueItems] = useState<ReviewQueueItem[]>(items);
   const [drafts, setDrafts] = useState<Record<string, { label: string; notes: string }>>({});
+  const [bulkDraft, setBulkDraft] = useState({ label: "", notes: "" });
+  const [bulkResult, setBulkResult] = useState<ReviewQueueBulkCorrectionResponse | null>(null);
+  const [selectedTargetIds, setSelectedTargetIds] = useState<string[]>([]);
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [isBulkSaving, setIsBulkSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const queueCounts = useMemo(
     () =>
-      items.reduce<Record<ReviewFilter, number>>(
+      queueItems.reduce<Record<ReviewFilter, number>>(
         (counts, item) => {
           counts.all += 1;
           if (isBirdReviewLabel(item.suggested_label, taxonomyLabels)) {
@@ -62,7 +81,7 @@ export function ReviewQueuePage({
         },
         { all: 0, bird_species: 0, unknown_animals: 0, false_positives: 0 },
       ),
-    [items, taxonomyLabels],
+    [queueItems, taxonomyLabels],
   );
 
   const reviewFilters: ReviewFilterOption<ReviewFilter>[] = [
@@ -74,7 +93,7 @@ export function ReviewQueuePage({
 
   const filteredItems = useMemo(
     () =>
-      items.filter((item) => {
+      queueItems.filter((item) => {
         if (reviewFilter === "all") {
           return true;
         }
@@ -86,8 +105,29 @@ export function ReviewQueuePage({
         }
         return isFalsePositiveLabel(item.suggested_label, taxonomyLabels);
       }),
-    [items, reviewFilter, taxonomyLabels],
+    [queueItems, reviewFilter, taxonomyLabels],
   );
+
+  const selectedItems = useMemo(
+    () =>
+      queueItems.filter((item) => selectedTargetIds.includes(reviewQueueTargetId(item))),
+    [queueItems, selectedTargetIds],
+  );
+
+  const selectedTargetType = selectedItems[0]
+    ? reviewQueueTargetType(selectedItems[0])
+    : null;
+
+  useEffect(() => {
+    setQueueItems(items);
+  }, [items]);
+
+  useEffect(() => {
+    const availableTargetIds = new Set(queueItems.map(reviewQueueTargetId));
+    setSelectedTargetIds((current) =>
+      current.filter((targetId) => availableTargetIds.has(targetId)),
+    );
+  }, [queueItems]);
 
   useEffect(() => {
     let isMounted = true;
@@ -111,6 +151,80 @@ export function ReviewQueuePage({
       isMounted = false;
     };
   }, []);
+
+  function canSelectForBulk(item: ReviewQueueItem): boolean {
+    return !selectedTargetType || reviewQueueTargetType(item) === selectedTargetType;
+  }
+
+  function toggleBulkSelection(item: ReviewQueueItem, selected: boolean) {
+    const targetId = reviewQueueTargetId(item);
+    setSelectedTargetIds((current) => {
+      if (selected) {
+        return current.includes(targetId) ? current : [...current, targetId];
+      }
+      return current.filter((selectedTargetId) => selectedTargetId !== targetId);
+    });
+  }
+
+  function selectVisibleBulkItems() {
+    const targetType =
+      selectedTargetType ?? (filteredItems[0] ? reviewQueueTargetType(filteredItems[0]) : null);
+    if (!targetType) {
+      return;
+    }
+    setSelectedTargetIds(
+      filteredItems
+        .filter((item) => reviewQueueTargetType(item) === targetType)
+        .map(reviewQueueTargetId),
+    );
+  }
+
+  async function saveBulkCorrection() {
+    const trimmedLabel = bulkDraft.label.trim();
+    if (!trimmedLabel) {
+      setMessage("Add a label before saving a bulk correction.");
+      return;
+    }
+    if (!selectedTargetType || selectedTargetIds.length === 0) {
+      setMessage("Select review items before saving a bulk correction.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Apply this correction to selected review items?\n\n" +
+        "Corrections are truth for analytics and exports.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsBulkSaving(true);
+    setMessage(null);
+    setBulkResult(null);
+    try {
+      const result = await apiClient.bulkCorrectReviewQueueItems({
+        target_type: selectedTargetType,
+        target_ids: selectedTargetIds,
+        label: trimmedLabel,
+        notes: bulkDraft.notes.trim() || undefined,
+      });
+      const refreshedQueue = await apiClient.getReviewQueue();
+      setQueueItems(refreshedQueue);
+      if (result.succeeded_count > 0) {
+        setSelectedTargetIds([]);
+      }
+      setBulkResult(result);
+      setMessage(
+        `${result.succeeded_count} correction${
+          result.succeeded_count === 1 ? "" : "s"
+        } saved as local dataset truth.`,
+      );
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Bulk correction could not be saved.");
+    } finally {
+      setIsBulkSaving(false);
+    }
+  }
 
   async function saveCorrection(item: ReviewQueueItem) {
     const draft = drafts[item.id] ?? { label: item.suggested_label ?? "", notes: "" };
@@ -148,7 +262,7 @@ export function ReviewQueuePage({
         }
       />
       {message ? <div className="notice-panel">{message}</div> : null}
-      {items.length === 0 ? (
+      {queueItems.length === 0 ? (
         <EmptyState
           title="No Visits need correction"
           description="The Review Queue contains Visits that need user correction. Promote MotionEvidence or import media to create reviewable Visits; corrections create analytics, export, and classifier truth."
@@ -159,7 +273,7 @@ export function ReviewQueuePage({
           }
         />
       ) : null}
-      {items.length > 0 ? (
+      {queueItems.length > 0 ? (
         <section className="panel species-review-panel">
           <div className="section-heading">
             <div>
@@ -178,6 +292,85 @@ export function ReviewQueuePage({
           />
         </section>
       ) : null}
+      {queueItems.length > 0 ? (
+        <section className="panel review-bulk-panel">
+          <div className="section-heading">
+            <div>
+              <h2>Bulk correction</h2>
+              <span className="meta-text">
+                Applies your correction to selected items. Corrections are truth for analytics and exports.
+              </span>
+            </div>
+            <EvidenceBadge
+              label={`${selectedTargetIds.length} selected`}
+              tone={selectedTargetIds.length > 0 ? "review" : "quiet"}
+            />
+          </div>
+          <div className="review-bulk-form">
+            <TaxonomyLabelInput
+              label="Bulk corrected label"
+              labels={taxonomyLabels}
+              value={bulkDraft.label}
+              placeholder="reviewed species, label, unknown, or false_positive"
+              onChange={(nextLabel) =>
+                setBulkDraft((current) => ({ ...current, label: nextLabel }))
+              }
+            />
+            <label>
+              Notes
+              <textarea
+                value={bulkDraft.notes}
+                onChange={(event) =>
+                  setBulkDraft((current) => ({ ...current, notes: event.target.value }))
+                }
+                placeholder="optional shared review note"
+              />
+            </label>
+            <div className="review-bulk-actions">
+              <button
+                className="secondary-action"
+                disabled={filteredItems.length === 0 || isBulkSaving}
+                onClick={selectVisibleBulkItems}
+                type="button"
+              >
+                Select visible
+              </button>
+              <button
+                className="secondary-action"
+                disabled={selectedTargetIds.length === 0 || isBulkSaving}
+                onClick={() => setSelectedTargetIds([])}
+                type="button"
+              >
+                Clear
+              </button>
+              <button
+                className="primary-action"
+                disabled={
+                  selectedTargetIds.length === 0 || !bulkDraft.label.trim() || isBulkSaving
+                }
+                onClick={() => void saveBulkCorrection()}
+                type="button"
+              >
+                {isBulkSaving ? "Applying..." : "Apply correction"}
+              </button>
+            </div>
+          </div>
+          {selectedTargetType ? (
+            <span className="meta-text">
+              Bulk action is limited to selected {selectedTargetType} items.
+            </span>
+          ) : null}
+          {bulkResult ? (
+            <div className="notice-panel review-bulk-result">
+              <strong>Bulk correction result</strong>
+              <span>
+                {bulkResult.succeeded_count} saved, {bulkResult.skipped_count} skipped,{" "}
+                {bulkResult.failed_count} failed.
+              </span>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
       <div className="queue-list">
         {filteredItems.map((item) => {
           const fromDetectionEvidence =
@@ -188,6 +381,9 @@ export function ReviewQueuePage({
           };
           const suggestedTaxonomy = findTaxonomyLabel(item.suggested_label, taxonomyLabels);
           const isSpeciesReview = isBirdReviewLabel(item.suggested_label, taxonomyLabels);
+          const targetId = reviewQueueTargetId(item);
+          const isSelected = selectedTargetIds.includes(targetId);
+          const isSelectable = canSelectForBulk(item);
           return (
             <article className="queue-card" key={item.id}>
               <div className="item-title-row">
@@ -208,6 +404,17 @@ export function ReviewQueuePage({
                   <StatusPill label={formatLabel(item.review_status)} tone="review" />
                 </div>
               </div>
+              <label className="checkbox-row review-bulk-select">
+                <input
+                  checked={isSelected}
+                  disabled={!isSelectable || isBulkSaving}
+                  onChange={(event) => toggleBulkSelection(item, event.target.checked)}
+                  type="checkbox"
+                />
+                {isSelectable
+                  ? "Select for bulk correction"
+                  : `Bulk selection currently expects ${selectedTargetType} items`}
+              </label>
               <p>
                 {item.reason} Detection evidence is only a suggestion; your correction becomes local
                 dataset truth.
@@ -273,7 +480,7 @@ export function ReviewQueuePage({
             </article>
           );
         })}
-        {items.length > 0 && filteredItems.length === 0 ? (
+        {queueItems.length > 0 && filteredItems.length === 0 ? (
           <EmptyState
             title="No review items in this filter"
             description="Switch filters to resolve species, unknown animals, or false positives."

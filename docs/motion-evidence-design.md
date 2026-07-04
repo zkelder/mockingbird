@@ -95,6 +95,9 @@ evidence metadata only.
 Phase 15A readiness overview may cue users toward pending evidence review and
 promotion, but it does not create MotionEvidence, ignore/promote evidence, or
 write reviewed truth.
+Phase 17B allows bulk creation of pending MotionEvidence from eligible saved
+MediaAssets, while still leaving Event/Visit creation, labels, and dataset truth
+to later review/correction.
 
 ## Status Lifecycle
 

@@ -97,6 +97,17 @@ class ReviewStatus(str, Enum):
     rejected = "rejected"
 
 
+class ReviewQueueBulkCorrectionTargetType(str, Enum):
+    event = "event"
+    visit = "visit"
+
+
+class ReviewQueueBulkCorrectionResultStatus(str, Enum):
+    succeeded = "succeeded"
+    skipped = "skipped"
+    failed = "failed"
+
+
 class ExportStatus(str, Enum):
     ready = "ready"
     building = "building"
@@ -547,6 +558,26 @@ class SavedPreviewMotionEvidenceResponse(BaseModel):
     existing_motion_evidence_id: str | None = None
     provenance_kind: str | None = None
     warnings: list[str] = Field(default_factory=list)
+
+
+class SavedMediaBulkMotionEvidenceRequest(BaseModel):
+    media_asset_ids: list[str]
+
+
+class SavedMediaBulkMotionEvidenceResult(BaseModel):
+    media_asset_id: str
+    status: MotionEvidenceBulkActionResultStatus
+    message: str
+    created_motion_evidence_id: str | None = None
+
+
+class SavedMediaBulkMotionEvidenceResponse(BaseModel):
+    # Bulk saved-media handoff still creates pending evidence only.
+    requested_count: int = Field(ge=0)
+    succeeded_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    results: list[SavedMediaBulkMotionEvidenceResult]
 
 
 class FolderImportEvidenceBatchDryRunRequest(BaseModel):
@@ -1310,6 +1341,29 @@ class ReviewCorrectionCreate(BaseModel):
     target_id: str
     label: str
     notes: str | None = None
+
+
+class ReviewQueueBulkCorrectionRequest(BaseModel):
+    target_ids: list[str]
+    target_type: ReviewQueueBulkCorrectionTargetType
+    label: str
+    notes: str | None = None
+
+
+class ReviewQueueBulkCorrectionResult(BaseModel):
+    target_id: str
+    status: ReviewQueueBulkCorrectionResultStatus
+    message: str
+    created_review_label_id: str | None = None
+
+
+class ReviewQueueBulkCorrectionResponse(BaseModel):
+    # Bulk correction writes user-selected ReviewLabel truth only.
+    requested_count: int = Field(ge=0)
+    succeeded_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    results: list[ReviewQueueBulkCorrectionResult]
 
 
 class DatasetExport(BaseModel):

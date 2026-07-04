@@ -194,6 +194,8 @@ Visit Detail UI without changing promotion behavior or creating labels.
 Phase 17A bulk promote uses the same explicit promotion boundary as single
 promote: pending MotionEvidence can become reviewable Event/Visit evidence, but
 ReviewLabel correction remains the first dataset/export truth.
+Phase 17C bulk correction can create ReviewLabels for selected Review Queue
+items only after explicit user confirmation.
 
 ## API
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
 import type {
+  SavedMediaBulkMotionEvidenceResponse,
   SavedMediaCleanupDryRunResponse,
   SavedMediaCleanupResponse,
   SavedMediaRetentionItem,
@@ -100,17 +101,36 @@ function isCleanupEligible(item: SavedMediaRetentionItem): boolean {
   return item.risk_level === "low" && item.media_state === "saved_unlinked";
 }
 
+function isEvidenceCreationEligible(item: SavedMediaRetentionItem): boolean {
+  return (
+    item.risk_level === "low" &&
+    item.media_state === "saved_unlinked" &&
+    item.linked_motion_evidence_count === 0 &&
+    item.linked_event_count === 0 &&
+    item.linked_visit_count === 0 &&
+    item.reviewed_truth_count === 0
+  );
+}
+
 function RetentionItemCard({
   item,
   cleanupConfirmed,
+  evidenceSelected,
   isCleaning,
+  isEvidenceCreating,
+  isEvidenceSelectable,
   onCleanupConfirmChange,
+  onEvidenceSelectionChange,
   onRunCleanup,
 }: {
   item: SavedMediaRetentionItem;
   cleanupConfirmed: boolean;
+  evidenceSelected: boolean;
   isCleaning: boolean;
+  isEvidenceCreating: boolean;
+  isEvidenceSelectable: boolean;
   onCleanupConfirmChange: (mediaAssetId: string, confirmed: boolean) => void;
+  onEvidenceSelectionChange: (mediaAssetId: string, selected: boolean) => void;
   onRunCleanup: (mediaAssetId: string) => void;
 }) {
   const canCleanFile = isCleanupEligible(item);
@@ -128,6 +148,20 @@ function RetentionItemCard({
       </div>
 
       <p className="retention-risk-copy">{riskDescription(item.risk_level)}</p>
+
+      <label className="checkbox-row retention-evidence-select">
+        <input
+          checked={evidenceSelected}
+          disabled={!isEvidenceSelectable || isEvidenceCreating}
+          onChange={(event) =>
+            onEvidenceSelectionChange(item.media_asset_id, event.target.checked)
+          }
+          type="checkbox"
+        />
+        {isEvidenceSelectable
+          ? "Select for pending evidence"
+          : "Already linked or not eligible for bulk evidence"}
+      </label>
 
       <div className="retention-detail-grid">
         <div>
@@ -215,16 +249,21 @@ export function SavedMediaRetentionPage() {
   const [report, setReport] = useState<SavedMediaRetentionReportResponse | null>(null);
   const [dryRunResult, setDryRunResult] = useState<SavedMediaCleanupDryRunResponse | null>(null);
   const [cleanupResult, setCleanupResult] = useState<SavedMediaCleanupResponse | null>(null);
+  const [bulkEvidenceResult, setBulkEvidenceResult] =
+    useState<SavedMediaBulkMotionEvidenceResponse | null>(null);
   const [cleanupConfirmedById, setCleanupConfirmedById] = useState<Record<string, boolean>>({});
+  const [selectedEvidenceMediaIds, setSelectedEvidenceMediaIds] = useState<string[]>([]);
   const [selectedRiskLevels, setSelectedRiskLevels] = useState<string[]>(["low"]);
   const [includeProtected, setIncludeProtected] = useState(false);
   const [mode, setMode] = useState("delete_file_only");
   const [isLoading, setIsLoading] = useState(true);
   const [isDryRunning, setIsDryRunning] = useState(false);
+  const [isCreatingEvidence, setIsCreatingEvidence] = useState(false);
   const [cleaningMediaId, setCleaningMediaId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dryRunError, setDryRunError] = useState<string | null>(null);
   const [cleanupError, setCleanupError] = useState<string | null>(null);
+  const [bulkEvidenceError, setBulkEvidenceError] = useState<string | null>(null);
 
   async function loadReport(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
@@ -259,12 +298,41 @@ export function SavedMediaRetentionPage() {
     });
   }, [report]);
 
+  const evidenceEligibleItems = useMemo(
+    () => sortedItems.filter(isEvidenceCreationEligible),
+    [sortedItems],
+  );
+
+  useEffect(() => {
+    const eligibleIds = new Set(evidenceEligibleItems.map((item) => item.media_asset_id));
+    setSelectedEvidenceMediaIds((current) =>
+      current.filter((mediaAssetId) => eligibleIds.has(mediaAssetId)),
+    );
+  }, [evidenceEligibleItems]);
+
   function toggleRiskLevel(riskLevel: string) {
     setSelectedRiskLevels((current) =>
       current.includes(riskLevel)
         ? current.filter((selected) => selected !== riskLevel)
         : [...current, riskLevel],
     );
+  }
+
+  function toggleEvidenceSelection(mediaAssetId: string, selected: boolean) {
+    setSelectedEvidenceMediaIds((current) => {
+      if (selected) {
+        return current.includes(mediaAssetId) ? current : [...current, mediaAssetId];
+      }
+      return current.filter((selectedMediaId) => selectedMediaId !== mediaAssetId);
+    });
+  }
+
+  function selectAllEvidenceEligible() {
+    setSelectedEvidenceMediaIds(evidenceEligibleItems.map((item) => item.media_asset_id));
+  }
+
+  function clearEvidenceSelection() {
+    setSelectedEvidenceMediaIds([]);
   }
 
   async function runDryRun() {
@@ -316,6 +384,39 @@ export function SavedMediaRetentionPage() {
       );
     } finally {
       setCleaningMediaId(null);
+    }
+  }
+
+  async function runBulkEvidenceCreation() {
+    if (selectedEvidenceMediaIds.length === 0) {
+      return;
+    }
+    const confirmed = window.confirm(
+      "Create pending evidence for selected saved media?\n\n" +
+        "Creates pending evidence only. Review and corrections happen later.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsCreatingEvidence(true);
+    setBulkEvidenceError(null);
+    setBulkEvidenceResult(null);
+    try {
+      const result = await apiClient.bulkCreateMotionEvidenceFromMedia({
+        media_asset_ids: selectedEvidenceMediaIds,
+      });
+      setBulkEvidenceResult(result);
+      if (result.succeeded_count > 0) {
+        setSelectedEvidenceMediaIds([]);
+      }
+      await loadReport({ showLoading: false });
+    } catch (caught) {
+      setBulkEvidenceError(
+        caught instanceof Error ? caught.message : "Could not create pending evidence.",
+      );
+    } finally {
+      setIsCreatingEvidence(false);
     }
   }
 
@@ -400,6 +501,45 @@ export function SavedMediaRetentionPage() {
             </div>
           </div>
           <RetentionWarningList warnings={cleanupResult.warnings} />
+        </section>
+      ) : null}
+
+      {bulkEvidenceError ? (
+        <section className="error-panel compact-error">
+          <strong>Pending evidence was not created.</strong>
+          <span>{bulkEvidenceError}</span>
+        </section>
+      ) : null}
+
+      {bulkEvidenceResult ? (
+        <section className="notice-panel retention-evidence-result">
+          <div>
+            <strong>Pending evidence result</strong>
+            <span>
+              {bulkEvidenceResult.succeeded_count} created,{" "}
+              {bulkEvidenceResult.skipped_count} skipped,{" "}
+              {bulkEvidenceResult.failed_count} failed. Open Motion Evidence to review or
+              promote created evidence.
+            </span>
+          </div>
+          <div className="retention-dry-run-summary">
+            <div>
+              <span>Requested</span>
+              <strong>{bulkEvidenceResult.requested_count}</strong>
+            </div>
+            <div>
+              <span>Created</span>
+              <strong>{bulkEvidenceResult.succeeded_count}</strong>
+            </div>
+            <div>
+              <span>Skipped</span>
+              <strong>{bulkEvidenceResult.skipped_count}</strong>
+            </div>
+            <div>
+              <span>Failed</span>
+              <strong>{bulkEvidenceResult.failed_count}</strong>
+            </div>
+          </div>
         </section>
       ) : null}
 
@@ -613,15 +753,55 @@ export function SavedMediaRetentionPage() {
           </div>
         </div>
 
+        <div className="retention-evidence-action">
+          <div>
+            <strong>Bulk pending evidence</strong>
+            <span>Creates pending evidence only. Review and corrections happen later.</span>
+            <span>
+              {selectedEvidenceMediaIds.length} selected of {evidenceEligibleItems.length} eligible.
+            </span>
+          </div>
+          <div className="detail-actions">
+            <button
+              className="secondary-action"
+              disabled={evidenceEligibleItems.length === 0 || isCreatingEvidence}
+              onClick={selectAllEvidenceEligible}
+              type="button"
+            >
+              Select eligible
+            </button>
+            <button
+              className="secondary-action"
+              disabled={selectedEvidenceMediaIds.length === 0 || isCreatingEvidence}
+              onClick={clearEvidenceSelection}
+              type="button"
+            >
+              Clear
+            </button>
+            <button
+              className="primary-action"
+              disabled={selectedEvidenceMediaIds.length === 0 || isCreatingEvidence}
+              onClick={() => void runBulkEvidenceCreation()}
+              type="button"
+            >
+              {isCreatingEvidence ? "Creating..." : "Create pending evidence"}
+            </button>
+          </div>
+        </div>
+
         {sortedItems.length > 0 ? (
           <div className="retention-item-list">
             {sortedItems.map((item) => (
               <RetentionItemCard
                 cleanupConfirmed={Boolean(cleanupConfirmedById[item.media_asset_id])}
+                evidenceSelected={selectedEvidenceMediaIds.includes(item.media_asset_id)}
                 isCleaning={cleaningMediaId === item.media_asset_id}
+                isEvidenceCreating={isCreatingEvidence}
+                isEvidenceSelectable={isEvidenceCreationEligible(item)}
                 item={item}
                 key={item.media_asset_id}
                 onCleanupConfirmChange={updateCleanupConfirmation}
+                onEvidenceSelectionChange={toggleEvidenceSelection}
                 onRunCleanup={(mediaAssetId) => void runCleanup(mediaAssetId)}
               />
             ))}
