@@ -499,6 +499,8 @@ export default function App() {
           onCreateCorrection={createCorrection}
           onInitialContextConsumed={() => setReviewQueueInitialContext(null)}
           onOpenEvent={openEvent}
+          onOpenAnalytics={() => setPage("analytics")}
+          onOpenClassifierReadiness={() => setPage("classifier-readiness")}
           onOpenExports={() => setPage("exports")}
           onOpenVisit={openVisit}
         />

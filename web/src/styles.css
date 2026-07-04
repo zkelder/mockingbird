@@ -1281,6 +1281,90 @@ button {
   gap: 5px;
 }
 
+.review-next-step-panel {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.review-next-step-panel div:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.review-evidence-context,
+.review-proposal-evidence-list,
+.review-proposal-evidence-card {
+  display: grid;
+  gap: 12px;
+}
+
+.review-evidence-context {
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f7faf3;
+}
+
+.review-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.review-evidence-grid .data-row,
+.review-evidence-grid strong,
+.review-evidence-grid small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.review-evidence-grid small {
+  color: #627168;
+  font-weight: 700;
+}
+
+.review-proposal-evidence-list {
+  border-top: 1px solid #dce3d8;
+  padding-top: 12px;
+}
+
+.review-proposal-evidence-card {
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.review-proposal-evidence-card h4,
+.review-proposal-evidence-card p {
+  margin: 0;
+}
+
+.review-proposal-evidence-card p {
+  color: #5c6a61;
+}
+
+.review-proposal-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.review-proposal-facts span,
+.review-correction-boundary {
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #edf2e9;
+  color: #34473b;
+  font-size: 0.85rem;
+  font-weight: 750;
+}
+
+.review-correction-boundary {
+  grid-column: 1 / -1;
+  width: fit-content;
+}
+
 .correction-audit-panel,
 .correction-audit-list,
 .correction-truth-panel,
@@ -4241,6 +4325,7 @@ button {
   .quality-metric-grid,
   .quality-secondary-grid,
   .import-context-grid,
+  .review-evidence-grid,
   .adapter-evaluation-grid,
   .adapter-config-grid,
   .model-readiness-grid,
@@ -4342,6 +4427,7 @@ button {
   .quality-secondary-grid,
   .import-context-grid,
   .import-smoke-result-grid,
+  .review-evidence-grid,
   .adapter-evaluation-grid,
   .model-readiness-grid,
   .adapter-result-grid,
@@ -4410,6 +4496,7 @@ button {
   .manifest-file-row,
   .manifest-example-row,
   .review-handoff-notice,
+  .review-next-step-panel,
   .retention-detail-grid,
   .retention-linkage-grid,
   .retention-dry-run-form,

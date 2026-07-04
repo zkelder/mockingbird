@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
 import type {
+  DetectionProposal,
+  DetectionRun,
   ReviewCorrectionResult,
   ReviewLabel,
   ReviewQueueBulkCorrectionResponse,
@@ -51,6 +53,18 @@ interface CorrectionHistoryGroup {
   targetId: string;
   latest: ReviewLabel;
   older: ReviewLabel[];
+}
+
+interface ReviewEvidenceProposal {
+  proposal: DetectionProposal;
+  relation: "linked" | "same_media";
+}
+
+interface LastCorrectionSummary {
+  count: number;
+  label: string;
+  remaining: number;
+  mode: "single" | "bulk";
 }
 
 function reviewQueueTargetType(item: ReviewQueueItem): ReviewQueueBulkCorrectionTargetType {
@@ -230,6 +244,54 @@ function reviewTargetKey(targetType: string, targetId: string): string {
   return `${targetType}:${targetId}`;
 }
 
+function proposalRelationForReviewItem(
+  item: ReviewQueueItem,
+  proposal: DetectionProposal,
+): ReviewEvidenceProposal["relation"] | null {
+  if (
+    (item.visit_id && proposal.visit_id === item.visit_id) ||
+    (item.event_id && proposal.event_id === item.event_id)
+  ) {
+    return "linked";
+  }
+
+  if (
+    item.media_asset?.id &&
+    proposal.media_asset_id === item.media_asset.id &&
+    !proposal.event_id &&
+    !proposal.visit_id
+  ) {
+    return "same_media";
+  }
+
+  return null;
+}
+
+function reviewEvidenceProposals(
+  item: ReviewQueueItem,
+  proposals: DetectionProposal[],
+): ReviewEvidenceProposal[] {
+  return proposals
+    .map((proposal) => {
+      const relation = proposalRelationForReviewItem(item, proposal);
+      return relation ? { proposal, relation } : null;
+    })
+    .filter((value): value is ReviewEvidenceProposal => value !== null)
+    .sort((first, second) => {
+      if (first.relation !== second.relation) {
+        return first.relation === "linked" ? -1 : 1;
+      }
+      return (
+        new Date(second.proposal.created_at).getTime() -
+        new Date(first.proposal.created_at).getTime()
+      );
+    });
+}
+
+function formatConfidence(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
 function reviewLabelsForQueueItem(
   item: ReviewQueueItem,
   reviewLabels: ReviewLabel[],
@@ -270,6 +332,8 @@ interface ReviewQueuePageProps {
   ) => Promise<ReviewCorrectionResult>;
   onInitialContextConsumed?: () => void;
   onOpenEvent: (eventId: string) => void;
+  onOpenAnalytics: () => void;
+  onOpenClassifierReadiness: () => void;
   onOpenExports: () => void;
   onOpenVisit: (visitId: string) => void;
 }
@@ -280,6 +344,8 @@ export function ReviewQueuePage({
   onCreateCorrection,
   onInitialContextConsumed,
   onOpenEvent,
+  onOpenAnalytics,
+  onOpenClassifierReadiness,
   onOpenExports,
   onOpenVisit,
 }: ReviewQueuePageProps) {
@@ -287,7 +353,11 @@ export function ReviewQueuePage({
   const [drafts, setDrafts] = useState<Record<string, { label: string; notes: string }>>({});
   const [bulkDraft, setBulkDraft] = useState({ label: "", notes: "" });
   const [bulkResult, setBulkResult] = useState<ReviewQueueBulkCorrectionResponse | null>(null);
+  const [lastCorrectionSummary, setLastCorrectionSummary] =
+    useState<LastCorrectionSummary | null>(null);
   const [selectedTargetIds, setSelectedTargetIds] = useState<string[]>([]);
+  const [detectionProposals, setDetectionProposals] = useState<DetectionProposal[]>([]);
+  const [detectionRuns, setDetectionRuns] = useState<DetectionRun[]>([]);
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [reviewLabels, setReviewLabels] = useState<ReviewLabel[]>([]);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
@@ -437,6 +507,11 @@ export function ReviewQueuePage({
     [reviewLabels],
   );
 
+  const detectionRunsById = useMemo(
+    () => new Map(detectionRuns.map((run) => [run.id, run])),
+    [detectionRuns],
+  );
+
   useEffect(() => {
     if (!initialContext) {
       return;
@@ -508,6 +583,34 @@ export function ReviewQueuePage({
     }
 
     void loadTaxonomy();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadDetectionEvidence() {
+      try {
+        const [nextProposals, nextRuns] = await Promise.all([
+          apiClient.getDetectionProposals(),
+          apiClient.getDetectionRuns(),
+        ]);
+        if (isMounted) {
+          setDetectionProposals(nextProposals);
+          setDetectionRuns(nextRuns);
+        }
+      } catch {
+        if (isMounted) {
+          setDetectionProposals([]);
+          setDetectionRuns([]);
+        }
+      }
+    }
+
+    void loadDetectionEvidence();
 
     return () => {
       isMounted = false;
@@ -614,6 +717,7 @@ export function ReviewQueuePage({
     setIsBulkSaving(true);
     setMessage(null);
     setBulkResult(null);
+    setLastCorrectionSummary(null);
     try {
       const result = await apiClient.bulkCorrectReviewQueueItems({
         target_type: selectedTargetType,
@@ -625,6 +729,12 @@ export function ReviewQueuePage({
       setQueueItems(refreshedQueue);
       if (result.succeeded_count > 0) {
         setSelectedTargetIds([]);
+        setLastCorrectionSummary({
+          count: result.succeeded_count,
+          label: trimmedLabel,
+          mode: "bulk",
+          remaining: refreshedQueue.filter(isBulkCorrectionEligible).length,
+        });
       }
       await refreshReviewLabels();
       setBulkResult(result);
@@ -649,9 +759,16 @@ export function ReviewQueuePage({
 
     setSavingId(item.id);
     setMessage(null);
+    setLastCorrectionSummary(null);
     try {
       const result = await onCreateCorrection(item, draft.label.trim(), draft.notes.trim());
       await refreshReviewLabels();
+      setLastCorrectionSummary({
+        count: 1,
+        label: result.review_label.label,
+        mode: "single",
+        remaining: result.review_queue_count,
+      });
       setMessage(
         `Correction saved as local dataset truth. ${result.review_queue_count} item${
           result.review_queue_count === 1 ? "" : "s"
@@ -677,6 +794,33 @@ export function ReviewQueuePage({
         }
       />
       {message ? <div className="notice-panel">{message}</div> : null}
+      {lastCorrectionSummary ? (
+        <section className="notice-panel review-next-step-panel">
+          <div>
+            <strong>
+              {lastCorrectionSummary.mode === "bulk" ? "Bulk correction saved" : "Correction saved"}
+            </strong>
+            <span>
+              {lastCorrectionSummary.count} correction
+              {lastCorrectionSummary.count === 1 ? "" : "s"} saved as ReviewLabel truth for{" "}
+              {displayTaxonomyLabel(lastCorrectionSummary.label, taxonomyLabels)}.{" "}
+              {lastCorrectionSummary.remaining} item
+              {lastCorrectionSummary.remaining === 1 ? "" : "s"} still need review.
+            </span>
+          </div>
+          <div className="detail-actions">
+            <button className="secondary-action" onClick={onOpenClassifierReadiness} type="button">
+              Classifier Readiness
+            </button>
+            <button className="secondary-action" onClick={onOpenExports} type="button">
+              Dataset Exports
+            </button>
+            <button className="secondary-action" onClick={onOpenAnalytics} type="button">
+              Analytics
+            </button>
+          </div>
+        </section>
+      ) : null}
       {readinessHandoffLabel ? (
         <section className="notice-panel review-handoff-notice">
           <div>
@@ -889,6 +1033,7 @@ export function ReviewQueuePage({
           const itemReviewLabels = reviewLabelsForQueueItem(item, reviewLabels);
           const latestItemCorrection = itemReviewLabels[0] ?? null;
           const previousItemCorrections = itemReviewLabels.slice(1);
+          const itemEvidenceProposals = reviewEvidenceProposals(item, detectionProposals);
           return (
             <article className="queue-card" key={item.id}>
               <div className="item-title-row">
@@ -945,11 +1090,86 @@ export function ReviewQueuePage({
                 {item.visit_id ? <span>Species suggestions: Visit detail</span> : null}
                 {item.media_asset ? <span>Imported media attached</span> : null}
               </div>
-              {item.media_asset ? (
-                <div className="queue-media-block">
-                  <MediaAssetPreview asset={item.media_asset} compact />
+              <div className="review-evidence-context">
+                <div className="section-heading">
+                  <div>
+                    <h3>Evidence context</h3>
+                    <span className="meta-text">
+                      Review source, media, and proposal evidence before saving correction truth.
+                    </span>
+                  </div>
+                  <StatusPill label={formatLabel(item.review_status)} tone="review" />
                 </div>
-              ) : null}
+                <div className="review-evidence-grid">
+                  <div className="data-row">
+                    <span>Media</span>
+                    <strong>
+                      {item.media_asset?.original_filename ?? item.media_asset?.filename ?? "No media attached"}
+                    </strong>
+                    {item.media_asset ? (
+                      <small>{formatLabel(item.media_asset.media_type)} / {item.media_asset.content_type}</small>
+                    ) : null}
+                  </div>
+                  <div className="data-row">
+                    <span>Stream / Zone</span>
+                    <strong>{item.stream_id}</strong>
+                    <small>{item.primary_zone_id ?? "No zone"}</small>
+                  </div>
+                  <div className="data-row">
+                    <span>Suggested label</span>
+                    <strong>{displayTaxonomyLabel(item.suggested_label ?? "unknown", taxonomyLabels)}</strong>
+                    <small>Still unreviewed until correction submit</small>
+                  </div>
+                </div>
+                {item.media_asset ? (
+                  <div className="queue-media-block">
+                    <MediaAssetPreview asset={item.media_asset} compact />
+                  </div>
+                ) : null}
+                {itemEvidenceProposals.length > 0 ? (
+                  <div className="review-proposal-evidence-list">
+                    {itemEvidenceProposals.slice(0, 3).map(({ proposal, relation }) => {
+                      const run = detectionRunsById.get(proposal.run_id) ?? null;
+                      return (
+                        <article className="review-proposal-evidence-card" key={proposal.id}>
+                          <div className="item-title-row">
+                            <div>
+                              <span className="meta-text">
+                                {relation === "linked" ? "Linked proposal" : "Same-media proposal"} -{" "}
+                                {run ? formatLabel(run.source) : "detection"} source
+                              </span>
+                              <h4>{displayTaxonomyLabel(proposal.label, taxonomyLabels)}</h4>
+                            </div>
+                            <StatusPill label={formatLabel(proposal.status)} tone="quiet" />
+                          </div>
+                          <div className="review-proposal-facts">
+                            <span>Confidence: {formatConfidence(proposal.confidence)}</span>
+                            <span>
+                              Suggested:{" "}
+                              {displayTaxonomyLabel(
+                                proposal.suggested_species ?? proposal.suggested_subject_label,
+                                taxonomyLabels,
+                              )}
+                            </span>
+                            <span>Proposal ID: {proposal.id}</span>
+                          </div>
+                          <p>Detection proposals remain evidence. The correction form creates truth.</p>
+                        </article>
+                      );
+                    })}
+                    {itemEvidenceProposals.length > 3 ? (
+                      <span className="meta-text">
+                        {itemEvidenceProposals.length - 3} more proposal evidence item
+                        {itemEvidenceProposals.length - 3 === 1 ? "" : "s"} available in Detection Proposals.
+                      </span>
+                    ) : null}
+                  </div>
+                ) : (
+                  <span className="meta-text">
+                    No DetectionProposal evidence is linked to this review item yet.
+                  </span>
+                )}
+              </div>
               {item.review_status === "reviewed" && latestItemCorrection ? (
                 <CorrectionTruthSummary
                   latest={latestItemCorrection}
@@ -985,6 +1205,9 @@ export function ReviewQueuePage({
                     }
                     taxonomyLabels={taxonomyLabels}
                   />
+                  <span className="review-correction-boundary">
+                    Corrections create ReviewLabel truth. Detection proposals remain evidence.
+                  </span>
                   <label>
                     Notes
                     <textarea
