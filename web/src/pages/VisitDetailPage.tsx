@@ -527,6 +527,14 @@ export function VisitDetailPage({
         </section>
       ) : null}
 
+      {detail.motion_evidence ? (
+        <SourceEvidenceTracePanel
+          mediaAsset={detail.media_asset}
+          motionEvidence={detail.motion_evidence}
+          onOpenEvent={onOpenEvent}
+        />
+      ) : null}
+
       {latestReviewLabel ? (
         <CorrectionTruthPanel
           latest={latestReviewLabel}
@@ -950,6 +958,74 @@ export function VisitDetailPage({
         </section>
       )}
     </div>
+  );
+}
+
+function SourceEvidenceTracePanel({
+  mediaAsset,
+  motionEvidence,
+  onOpenEvent,
+}: {
+  mediaAsset?: MediaAsset | null;
+  motionEvidence: MotionEvidence;
+  onOpenEvent: (eventId: string) => void;
+}) {
+  const webhookProvenance = getWebhookEvidenceProvenance(motionEvidence);
+
+  return (
+    <section className="panel source-evidence-trace-panel">
+      <div className="section-heading">
+        <div>
+          <h2>Source evidence trace</h2>
+          <span className="meta-text">
+            This Visit is linked back to the MotionEvidence that created review context.
+          </span>
+        </div>
+        <EvidenceBadge label="Evidence trace" tone="evidence" />
+      </div>
+      <div className="motion-review-context-grid">
+        <ContextItem
+          label="MotionEvidence"
+          value={motionEvidence.id}
+          detail={formatLabel(motionEvidence.status)}
+        />
+        <ContextItem
+          label="Promoted Event"
+          value={motionEvidence.promoted_event_id ?? "not linked"}
+        />
+        <ContextItem
+          label="Promoted Visit"
+          value={motionEvidence.promoted_visit_id ?? "not linked"}
+        />
+        <ContextItem
+          label="Source media"
+          value={motionEvidence.snapshot_media_asset_id ?? mediaAsset?.id ?? "none"}
+        />
+        <ContextItem label="Stream" value={motionEvidence.stream_id ?? "none"} />
+        <ContextItem label="Zone" value={motionEvidence.zone_id} />
+        {webhookProvenance.isWebhook ? (
+          <ContextItem
+            label="Provider"
+            value={webhookProvenance.providerKey ?? "webhook_future"}
+            detail="Evidence metadata only"
+          />
+        ) : null}
+      </div>
+      <div className="detail-actions">
+        {motionEvidence.promoted_event_id ? (
+          <button
+            className="secondary-action"
+            onClick={() => onOpenEvent(motionEvidence.promoted_event_id!)}
+            type="button"
+          >
+            Open Event
+          </button>
+        ) : null}
+        <span className="field-helper">
+          Use Motion Evidence Review to inspect this MotionEvidence ID. Correction remains truth.
+        </span>
+      </div>
+    </section>
   );
 }
 

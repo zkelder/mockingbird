@@ -5,6 +5,7 @@ import type {
   MediaAsset,
   MotionEvidence,
   MotionEvidenceBulkAction,
+  MotionEvidenceBulkActionResponse,
   MotionEvidenceCreateRequest,
   MotionEvidencePromoteResponse,
   MotionEvidenceStatus,
@@ -149,6 +150,8 @@ export function MotionEvidencePage({
   const [promotionNotes, setPromotionNotes] = useState("");
   const [attachMediaAssetId, setAttachMediaAssetId] = useState("");
   const [lastPromotion, setLastPromotion] = useState<MotionEvidencePromoteResponse | null>(null);
+  const [lastBulkPromotion, setLastBulkPromotion] =
+    useState<MotionEvidenceBulkActionResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [isEvaluatingSample, setIsEvaluatingSample] = useState(false);
@@ -349,6 +352,8 @@ export function MotionEvidencePage({
     };
 
     setIsCreating(true);
+    setLastPromotion(null);
+    setLastBulkPromotion(null);
     try {
       const created = await apiClient.createMotionEvidence(payload);
       setStatusFilter("pending");
@@ -451,6 +456,8 @@ export function MotionEvidencePage({
     setActionId(`${item.id}:ignore`);
     setError(null);
     setMessage(null);
+    setLastPromotion(null);
+    setLastBulkPromotion(null);
     try {
       const ignored = await apiClient.ignoreMotionEvidence(item.id);
       setSelectedEvidenceId(ignored.id);
@@ -485,6 +492,8 @@ export function MotionEvidencePage({
     setActionId(`${item.id}:attach-media`);
     setError(null);
     setMessage(null);
+    setLastPromotion(null);
+    setLastBulkPromotion(null);
     try {
       const updated = await apiClient.attachMotionEvidenceMedia(item.id, {
         snapshot_media_asset_id: mediaAssetId,
@@ -515,6 +524,7 @@ export function MotionEvidencePage({
     setError(null);
     setMessage(null);
     setLastPromotion(null);
+    setLastBulkPromotion(null);
     try {
       const result = await apiClient.promoteMotionEvidence(selectedEvidence.id, {
         event_title: eventTitle.trim() || undefined,
@@ -526,7 +536,7 @@ export function MotionEvidencePage({
       setLastPromotion(result);
       setSelectedEvidenceId(result.evidence.id);
       setMessage(
-        `${result.evidence.id} promoted to unreviewed Event/Visit evidence. Correct it before export.`,
+        `${result.evidence.id} promoted to reviewable Event/Visit evidence. Correction still creates truth.`,
       );
       await loadEvidence({ showLoading: false });
       await onEvidenceChanged();
@@ -579,12 +589,14 @@ export function MotionEvidencePage({
     setError(null);
     setMessage(null);
     setLastPromotion(null);
+    setLastBulkPromotion(null);
     try {
       const result = await apiClient.bulkMotionEvidenceAction({
         motion_evidence_ids: selectedPendingEvidenceIds,
         action,
       });
       setSelectedBulkEvidenceIds([]);
+      setLastBulkPromotion(action === "promote" ? result : null);
       const summary = `${formatLabel(actionLabel)} bulk action: ${result.succeeded_count} succeeded, ${result.skipped_count} skipped, ${result.failed_count} failed.`;
       const boundary =
         action === "promote"
@@ -639,6 +651,20 @@ export function MotionEvidencePage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
+      {lastPromotion ? (
+        <PromotionResultPanel
+          promotion={lastPromotion}
+          onOpenEvent={onOpenEvent}
+          onOpenVisit={onOpenVisit}
+        />
+      ) : null}
+      {lastBulkPromotion ? (
+        <BulkPromotionResultPanel
+          result={lastBulkPromotion}
+          onOpenEvent={onOpenEvent}
+          onOpenVisit={onOpenVisit}
+        />
+      ) : null}
 
       <section className="panel motion-create-panel">
         <div className="section-heading">
@@ -1245,6 +1271,30 @@ export function MotionEvidencePage({
                     {item.notes ? <p>{item.notes}</p> : null}
                   </button>
                 </div>
+                {item.status === "promoted" &&
+                (item.promoted_event_id || item.promoted_visit_id) ? (
+                  <div className="motion-evidence-row-links">
+                    <span>Promoted to review</span>
+                    {item.promoted_event_id ? (
+                      <button
+                        className="text-action"
+                        onClick={() => onOpenEvent(item.promoted_event_id!)}
+                        type="button"
+                      >
+                        Open Event
+                      </button>
+                    ) : null}
+                    {item.promoted_visit_id ? (
+                      <button
+                        className="text-action"
+                        onClick={() => onOpenVisit(item.promoted_visit_id!)}
+                        type="button"
+                      >
+                        Open Visit
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </article>
             ))}
           </section>
@@ -1698,8 +1748,7 @@ export function MotionEvidencePage({
                   <div className="notice-panel">
                     <strong>Created reviewable evidence</strong>
                     <span>
-                      Event {lastPromotion.event_id ?? "none"} · Visit{" "}
-                      {lastPromotion.visit_id ?? "none"}
+                      Promoted to reviewable Event/Visit evidence. Correction still creates truth.
                     </span>
                     <div className="detail-actions">
                       {lastPromotion.event_id ? (
@@ -1708,7 +1757,7 @@ export function MotionEvidencePage({
                           onClick={() => onOpenEvent(lastPromotion.event_id!)}
                           type="button"
                         >
-                          Open promoted Event
+                          Open Event
                         </button>
                       ) : null}
                       {lastPromotion.visit_id ? (
@@ -1717,7 +1766,7 @@ export function MotionEvidencePage({
                           onClick={() => onOpenVisit(lastPromotion.visit_id!)}
                           type="button"
                         >
-                          Open promoted Visit
+                          Open Visit
                         </button>
                       ) : null}
                     </div>
@@ -1729,6 +1778,117 @@ export function MotionEvidencePage({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function PromotionResultPanel({
+  promotion,
+  onOpenEvent,
+  onOpenVisit,
+}: {
+  promotion: MotionEvidencePromoteResponse;
+  onOpenEvent: (eventId: string) => void;
+  onOpenVisit: (visitId: string) => void;
+}) {
+  return (
+    <section className="notice-panel promotion-result-panel">
+      <div>
+        <strong>Promoted to reviewable Event/Visit</strong>
+        <span>Correction still creates truth.</span>
+      </div>
+      <div className="detail-actions">
+        {promotion.event_id ? (
+          <button
+            className="secondary-action"
+            onClick={() => onOpenEvent(promotion.event_id!)}
+            type="button"
+          >
+            Open Event
+          </button>
+        ) : null}
+        {promotion.visit_id ? (
+          <button
+            className="secondary-action"
+            onClick={() => onOpenVisit(promotion.visit_id!)}
+            type="button"
+          >
+            Open Visit
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function BulkPromotionResultPanel({
+  result,
+  onOpenEvent,
+  onOpenVisit,
+}: {
+  result: MotionEvidenceBulkActionResponse;
+  onOpenEvent: (eventId: string) => void;
+  onOpenVisit: (visitId: string) => void;
+}) {
+  const linkedResults = result.results.filter(
+    (item) => item.created_event_id || item.created_visit_id,
+  );
+  const otherResults = result.results.filter(
+    (item) => !item.created_event_id && !item.created_visit_id,
+  );
+
+  return (
+    <section className="notice-panel promotion-result-panel">
+      <div>
+        <strong>Bulk promote result</strong>
+        <span>
+          {result.succeeded_count} promoted, {result.skipped_count} skipped,{" "}
+          {result.failed_count} failed. Correction still creates truth.
+        </span>
+      </div>
+      {linkedResults.length > 0 ? (
+        <div className="promotion-result-list">
+          {linkedResults.map((item) => (
+            <div className="promotion-result-item" key={item.motion_evidence_id}>
+              <span>{item.motion_evidence_id}</span>
+              <div className="detail-actions">
+                {item.created_event_id ? (
+                  <button
+                    className="text-action"
+                    onClick={() => onOpenEvent(item.created_event_id!)}
+                    type="button"
+                  >
+                    Open Event
+                  </button>
+                ) : null}
+                {item.created_visit_id ? (
+                  <button
+                    className="text-action"
+                    onClick={() => onOpenVisit(item.created_visit_id!)}
+                    type="button"
+                  >
+                    Open Visit
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {otherResults.length > 0 ? (
+        <details className="promotion-result-details">
+          <summary>{otherResults.length} skipped or failed item{otherResults.length === 1 ? "" : "s"}</summary>
+          <div className="promotion-result-list">
+            {otherResults.map((item) => (
+              <div className="promotion-result-item" key={item.motion_evidence_id}>
+                <span>
+                  {item.motion_evidence_id}: {item.message}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </section>
   );
 }
 

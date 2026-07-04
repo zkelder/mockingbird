@@ -2436,6 +2436,43 @@ button {
   font-size: 0.9rem;
 }
 
+.promotion-result-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.promotion-result-panel > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.promotion-result-list {
+  display: grid;
+  gap: 8px;
+}
+
+.promotion-result-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+}
+
+.promotion-result-item span {
+  overflow-wrap: anywhere;
+}
+
+.promotion-result-details summary {
+  cursor: pointer;
+  color: #2d5f39;
+  font-weight: 850;
+}
+
 .motion-zone-filter label,
 .motion-create-form label,
 .motion-attachment-form label,
@@ -2638,6 +2675,21 @@ button {
   color: #5c6a61;
 }
 
+.motion-evidence-row-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid #dce3d8;
+  padding-top: 10px;
+}
+
+.motion-evidence-row-links span {
+  color: #536258;
+  font-size: 0.85rem;
+  font-weight: 850;
+}
+
 .motion-evidence-meta,
 .motion-evidence-links,
 .motion-config-list {
@@ -2685,6 +2737,11 @@ button {
 .motion-status-note {
   border-color: #c7d7e8;
   background: #f5f9fd;
+}
+
+.source-evidence-trace-panel {
+  display: grid;
+  gap: 12px;
 }
 
 .motion-review-context-grid {
