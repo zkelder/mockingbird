@@ -227,6 +227,8 @@ convert it to Event/Visit context, then open Review Queue. This adds no model
 runtime and creates no truth on its own. Submit an explicit Review Queue
 correction to create ReviewLabel truth, then check Classifier Readiness,
 Exports, or Analytics.
+After correction, create a reviewed-only Dataset Export to inspect local
+dataset records.
 
 ## Local detector spike
 

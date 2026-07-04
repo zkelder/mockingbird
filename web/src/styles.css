@@ -3498,6 +3498,12 @@ button {
   gap: 12px;
 }
 
+.export-settings-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .export-form label {
   display: grid;
   gap: 6px;
@@ -3538,16 +3544,18 @@ button {
 }
 
 .manifest-summary,
-.record-meta-grid {
+.record-meta-grid,
+.record-proof-grid {
   display: grid;
   gap: 10px;
 }
 
 .manifest-summary {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
-.manifest-summary div {
+.manifest-summary div,
+.record-proof-grid div {
   display: grid;
   gap: 4px;
   border: 1px solid #dce3d8;
@@ -3560,10 +3568,62 @@ button {
   margin: 4px 0 0;
 }
 
+.record-card p {
+  margin: 6px 0 0;
+  color: #536258;
+}
+
 .record-meta-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   color: #5c6a61;
   font-size: 0.9rem;
+}
+
+.record-proof-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.record-proof-grid span,
+.record-proof-grid small {
+  color: #627168;
+  font-size: 0.82rem;
+}
+
+.record-proof-grid strong,
+.record-proof-grid small {
+  overflow-wrap: anywhere;
+}
+
+.export-proof-note {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  border: 1px solid #c9d9d1;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f5fbf7;
+}
+
+.export-proof-note div {
+  display: grid;
+  gap: 4px;
+}
+
+.export-proof-note span {
+  color: #536258;
+}
+
+.skipped-reason-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.skipped-reason-list span {
+  border: 1px solid #dce3d8;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #ffffff;
 }
 
 .manifest-json {
@@ -4481,6 +4541,7 @@ button {
   .provider-workflow-grid,
   .onboarding-step-grid,
   .record-meta-grid,
+  .record-proof-grid,
   .source-field-summary,
   .source-connection-grid,
   .source-overview-grid,
@@ -4551,5 +4612,9 @@ button {
   .worker-create-flag-grid,
   .readiness-table-row {
     grid-template-columns: 1fr;
+  }
+
+  .export-proof-note {
+    flex-direction: column;
   }
 }
