@@ -250,7 +250,10 @@ async def test_provider_configuration_does_not_create_product_truth(
         f"/api/sources/{SOURCE_ID}/provider-configuration",
         json={
             "provider_key": "webhook_future",
-            "config": {"endpoint_label": "Garden gateway", "shared_secret": "redact-me"},
+            "config": {
+                "endpoint_name": "backyard-webhook",
+                "shared_secret_configured": "redact-me",
+            },
         },
     )
 

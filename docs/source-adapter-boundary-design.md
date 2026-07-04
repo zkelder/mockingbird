@@ -141,6 +141,11 @@ Phase 14D defines that generic webhook provider boundary. It is an evidence
 ingest design, not truth creation, live playback, Home Assistant/Frigate code,
 MQTT, media download, or provider implementation. See
 [generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md).
+Phase 14E represents `webhook_future` in provider configuration, Source
+connection status, setup review, and placeholder Stream playback only. It adds
+shared-secret configured markers and readiness copy, but no webhook route,
+payload parsing, media/evidence creation, live playback, auth/token generation,
+or ecosystem-specific adapter behavior.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -296,6 +301,7 @@ Future implementation must test:
   ingest design before implementation.
 - Phase 14D: generic webhook ingest provider boundary design.
 - Phase 14E: webhook provider configuration/status contract.
+- Phase 14F: webhook payload validation/dry-run endpoint, no records.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

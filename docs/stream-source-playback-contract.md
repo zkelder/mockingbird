@@ -90,10 +90,13 @@ Saved previews do not change live playback semantics. Phase 11G implements an
 explicit pending MotionEvidence handoff from saved media without changing
 playback status or live playback support.
 
-For future generic webhook Sources, playback may remain placeholder-only.
-Webhook ingest can feed media or event candidate context later without becoming
-live playback. Any MediaAsset or MotionEvidence creation must be separately
-scoped and must not change playback status into a live stream claim.
+For generic webhook Sources, playback remains placeholder/media-context only.
+Phase 14E lets configured webhook metadata appear in setup/status contracts, but
+it does not add live playback, preview URLs, MediaAssets, MotionEvidence, or
+payload ingest. Webhook ingest can feed media or event candidate context later
+without becoming live playback. Any MediaAsset or MotionEvidence creation must
+be separately scoped and must not change playback status into a live stream
+claim.
 Phase 14D documents this as a provider boundary in
 [generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md):
 webhook ingest is not a playback provider by default.
@@ -166,6 +169,8 @@ activity.
 - Folder import UI does not make folder/trail-cam Sources into live playback
   providers.
 - Folder-import evidence handoff does not change playback/live status.
+- Generic webhook provider streams remain placeholder/media-context only and do
+  not expose active ingest or live playback.
 - The route does not create evidence, review truth, exports, analytics truth,
   media files, model artifacts, or adapter runtime calls.
 

@@ -65,17 +65,19 @@ ReviewLabels, or truth.
 `folder_path` is required and redacted to configured/not-configured in normal
 API/UI responses.
 
-`webhook_future` is the recommended next provider boundary for future design
-only. Configuration should remain metadata-only until a separate webhook phase
-defines local auth, payload limits, provenance, dry-run behavior, evidence
-mapping, and truth guards. See
+`webhook_future` is now represented in provider configuration/status contracts
+as Generic webhook ingest. Configuration remains metadata-only until a separate
+webhook phase defines local auth, payload limits, provenance, dry-run behavior,
+evidence mapping, and truth guards. See
 [next-provider-boundary-decision.md](next-provider-boundary-decision.md).
 Phase 14D defines the design boundary in
 [generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md).
-Future metadata may include `endpoint_name`, a redacted shared-secret marker,
-external source filters, default Stream/Zone context, media-mode flags, and
-notes. This metadata must not generate tokens, expose secrets, accept webhook
-payloads, create media/evidence, or imply ingest is active.
+Phase 14E adds metadata fields for `endpoint_name`, sensitive
+`shared_secret_configured`, `allowed_source_name`, `default_stream_id`,
+`default_zone_id`, `accept_media_uploads`, `accept_media_urls`, and `notes`.
+Booleans are stored as metadata strings until parsing is explicitly scoped.
+This metadata must not generate tokens, expose secrets, accept webhook payloads,
+create media/evidence, or imply ingest is active.
 
 ## Provider Configuration Fields
 
@@ -101,6 +103,10 @@ store real credentials or validate them.
 For `folder_import_future`, `folder_path` is sensitive local data. It may be
 used internally by the explicit preview/import routes, but API responses, status
 routes, and the Streams UI must not echo raw local folder paths.
+
+For `webhook_future`, `shared_secret_configured` is sensitive. API responses,
+status routes, setup review, tests, and UI must return only
+configured/not-configured markers and must not echo raw secret text.
 
 ## Relationship To Source Connection Status
 

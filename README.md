@@ -143,8 +143,10 @@ next design-only Source adapter boundary before implementation; see
 [docs/next-provider-boundary-decision.md](docs/next-provider-boundary-decision.md).
 The generic webhook boundary is documented in
 [docs/generic-webhook-provider-boundary-design.md](docs/generic-webhook-provider-boundary-design.md):
-future inbound candidates remain evidence or media context until review and
-correction.
+`webhook_future` now appears as a Generic webhook ingest provider setup/status
+contract. Users can save redacted setup intent and see honest readiness, but no
+webhook endpoint exists yet, no payloads are accepted, and future inbound
+candidates remain evidence or media context until review and correction.
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 

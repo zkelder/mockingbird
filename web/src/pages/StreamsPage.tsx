@@ -696,6 +696,9 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const isFolderImportProvider =
     selectedSetupReview?.provider_key === "folder_import_future" ||
     selectedConfiguration?.provider_key === "folder_import_future";
+  const isWebhookProvider =
+    selectedSetupReview?.provider_key === "webhook_future" ||
+    selectedConfiguration?.provider_key === "webhook_future";
   const selectedFirstStream = selectedSourceStreams[0] ?? null;
   const canSavePreview =
     previewResult?.status === "available" && Boolean(previewResult.preview_data_url);
@@ -712,6 +715,11 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
         : isFolderImportProvider &&
             selectedSetupReview.readiness_level === "future_adapter_required"
           ? "Next: preview folder import explicitly."
+        : isWebhookProvider && selectedSetupReview.readiness_level === "needs_setup"
+          ? "Next: complete webhook shared secret metadata."
+        : isWebhookProvider &&
+            selectedSetupReview.readiness_level === "future_adapter_required"
+          ? "Next: future webhook ingest implementation required."
         : isExternalUrlProvider && selectedSetupReview.readiness_level === "metadata_ready"
           ? "Next: fetch still-image preview explicitly."
           : selectedSetupReview.readiness_level === "needs_setup"
@@ -721,7 +729,9 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
             : "Next: review Source setup status."
     : "Next: load Source setup status.";
   const nextActionDetail =
-    isFolderImportProvider && selectedSetupReview?.readiness_level === "future_adapter_required"
+    isWebhookProvider && selectedSetupReview?.readiness_level === "future_adapter_required"
+      ? "Webhook metadata is present, but no endpoint exists, no payloads are accepted, and no media, evidence, or truth is created."
+      : isFolderImportProvider && selectedSetupReview?.readiness_level === "future_adapter_required"
       ? "Use explicit preview, then import as MediaAssets. Pending evidence and correction remain separate actions."
       : selectedSetupReview?.next_step ?? selectedConnection?.setup_hint;
 

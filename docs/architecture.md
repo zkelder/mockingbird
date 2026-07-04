@@ -183,6 +183,11 @@ Phase 14D defines that boundary in
 [generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md).
 It keeps webhook ingest local-first, ecosystem-neutral, playback-free by
 default, and evidence-only until explicit review/correction.
+Phase 14E adds `webhook_future` to provider configuration, Source connection
+status, setup review, and placeholder Stream playback contracts. The metadata
+layer can show redacted shared-secret readiness and future ingest copy, but it
+does not expose webhook endpoints, accept payloads, create media/evidence,
+create Events/Visits, write truth, or claim live playback.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

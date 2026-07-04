@@ -507,27 +507,77 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="webhook_future",
-        display_name="Webhook future provider",
-        description="Future provider contract for external systems that send media events.",
+        display_name="Generic webhook ingest",
+        description=(
+            "Metadata for future signed webhook ingest; no endpoint accepts payloads yet."
+        ),
         status=SourceProviderDefinitionStatus.future_adapter,
         supports_live_playback=False,
         supports_zone_editing=True,
         fields=[
             SourceProviderField(
-                key="endpoint_label",
-                label="Endpoint label",
-                required=True,
+                key="endpoint_name",
+                label="Endpoint name",
+                required=False,
                 secret=False,
-                description="Human-readable label for the future endpoint.",
-                placeholder="Garden gateway",
+                description="Optional local label for the future webhook endpoint.",
+                placeholder="backyard-webhook",
             ),
             SourceProviderField(
-                key="shared_secret",
+                key="shared_secret_configured",
                 label="Shared secret",
-                required=False,
+                required=True,
                 secret=True,
-                description="Stored only as a configured/not-configured marker.",
-                placeholder="Not stored raw",
+                description="Marker for future signed webhook ingest.",
+                placeholder="configured later",
+            ),
+            SourceProviderField(
+                key="allowed_source_name",
+                label="Allowed source name",
+                required=False,
+                secret=False,
+                description="Optional external source name filter for future payload validation.",
+                placeholder="backyard-camera",
+            ),
+            SourceProviderField(
+                key="default_stream_id",
+                label="Default stream ID",
+                required=False,
+                secret=False,
+                description="Optional Stream context metadata for future webhook payloads.",
+                placeholder="stream-backyard-feeder",
+            ),
+            SourceProviderField(
+                key="default_zone_id",
+                label="Default zone ID",
+                required=False,
+                secret=False,
+                description="Optional Zone context metadata for future webhook payloads.",
+                placeholder="zone-feeder",
+            ),
+            SourceProviderField(
+                key="accept_media_uploads",
+                label="Accept media uploads",
+                required=False,
+                secret=False,
+                description="Metadata string only; parsing is future work.",
+                placeholder="false",
+            ),
+            SourceProviderField(
+                key="accept_media_urls",
+                label="Accept media URLs",
+                required=False,
+                secret=False,
+                description="Metadata string only; parsing is future work.",
+                placeholder="false",
+            ),
+            SourceProviderField(
+                key="notes",
+                label="Notes",
+                required=False,
+                secret=False,
+                description="Optional local setup context.",
+                placeholder="Future local webhook source for feeder alerts",
             ),
         ],
     ),
@@ -1268,6 +1318,15 @@ class ProductRepository:
                         "Add folder path metadata; MockingBird will not scan or import folders "
                         "from status."
                     )
+                elif configuration.provider_key == "webhook_future":
+                    message = (
+                        "This source needs shared secret metadata before future webhook "
+                        "validation or ingest can be implemented."
+                    )
+                    setup_hint = (
+                        "Add shared secret metadata; MockingBird does not accept webhook "
+                        "payloads yet."
+                    )
                 else:
                     message = (
                         "This source still needs provider metadata before a future provider can run."
@@ -1283,6 +1342,16 @@ class ProductRepository:
                 setup_hint = (
                     "Preview or import folder media explicitly; evidence/review handoff "
                     "requires future scope."
+                )
+            elif configuration.provider_key == "webhook_future":
+                status = SourceConnectionStatusValue.configured
+                message = (
+                    "Webhook metadata is configured for future signed ingest. "
+                    "No webhook endpoint accepts inbound payloads yet."
+                )
+                setup_hint = (
+                    "Future webhook ingest endpoint implementation is required before "
+                    "MockingBird can receive payloads."
                 )
             elif definition is not None and definition.status == SourceProviderDefinitionStatus.future_adapter:
                 status = SourceConnectionStatusValue.configured
@@ -1415,6 +1484,42 @@ class ProductRepository:
                     setup_hint = (
                         "Preview or import folder media from Source setup; imported media "
                         "remains MediaAsset context until a future evidence handoff."
+                    )
+                return StreamPlaybackStatus(
+                    stream_id=stream.id,
+                    source_id=stream.source_id,
+                    status=StreamPlaybackStatusValue.not_configured,
+                    playback_kind=StreamPlaybackKind.placeholder,
+                    display_title=stream.name,
+                    message=message,
+                    setup_hint=setup_hint,
+                    supports_zone_editing=True,
+                    supports_live_playback=False,
+                    adapter_key=configured_provider_key,
+                )
+            if configured_provider_key == "webhook_future":
+                configuration = _source_provider_configuration_from_model(
+                    source,
+                    model,
+                    [stream.id],
+                )
+                if configuration.missing_fields:
+                    message = (
+                        "This stream has webhook provider metadata pending. "
+                        "Playback remains placeholder/media-context only."
+                    )
+                    setup_hint = (
+                        "Add shared secret metadata before future webhook validation or "
+                        "ingest can be implemented."
+                    )
+                else:
+                    message = (
+                        "Webhook metadata is configured for future ingest context. "
+                        "This stream does not provide live playback."
+                    )
+                    setup_hint = (
+                        "Webhook endpoint implementation is future work; no payloads "
+                        "are accepted yet."
                     )
                 return StreamPlaybackStatus(
                     stream_id=stream.id,
@@ -6615,6 +6720,12 @@ def _source_provider_configuration_from_config(
         if definition.provider_key == "folder_import_future":
             message = "Folder/trail-cam setup metadata is incomplete."
             setup_hint = "Add folder path metadata before explicit preview/import can run."
+        elif definition.provider_key == "webhook_future":
+            message = "Webhook setup metadata is incomplete."
+            setup_hint = (
+                "Add shared secret metadata before future webhook validation or ingest "
+                "can be implemented."
+            )
         else:
             message = "Provider configuration metadata is incomplete."
             setup_hint = f"Add metadata for: {', '.join(missing_labels)}."
@@ -6626,6 +6737,15 @@ def _source_provider_configuration_from_config(
         setup_hint = (
             "Preview or import folder media explicitly; future handoff is required before "
             "evidence or review."
+        )
+    elif definition.provider_key == "webhook_future":
+        message = (
+            "Webhook setup metadata is saved. MockingBird does not accept inbound "
+            "webhook payloads yet."
+        )
+        setup_hint = (
+            "Future webhook ingest endpoint implementation is required before payloads "
+            "can be received."
         )
     elif definition.status == SourceProviderDefinitionStatus.future_adapter:
         message = (
@@ -6707,7 +6827,10 @@ def _source_setup_review_from_contracts(
     elif configuration.missing_fields:
         readiness_level = "needs_setup"
         summary = "Source setup metadata is incomplete."
-        next_step = f"Add setup metadata for: {', '.join(missing_labels)}."
+        if configuration.provider_key == "webhook_future":
+            next_step = "Complete webhook shared secret metadata."
+        else:
+            next_step = f"Add setup metadata for: {', '.join(missing_labels)}."
     elif configuration.provider_key == "manual_media":
         readiness_level = "metadata_ready"
         summary = (
@@ -6733,6 +6856,16 @@ def _source_setup_review_from_contracts(
             "Import folder media as MediaAssets explicitly; future evidence handoff is "
             "required before review."
         )
+    elif configuration.provider_key == "webhook_future":
+        readiness_level = "future_adapter_required"
+        summary = (
+            "Webhook metadata is present, but MockingBird does not accept webhook "
+            "payloads yet."
+        )
+        next_step = (
+            "Future webhook ingest endpoint implementation required before receiving "
+            "payloads."
+        )
     elif connection.provider_kind == SourceProviderKind.future_adapter or (
         definition is not None
         and definition.status == SourceProviderDefinitionStatus.future_adapter
@@ -6751,6 +6884,10 @@ def _source_setup_review_from_contracts(
     if configuration.provider_key == "folder_import_future":
         warnings.append("Folder import creates MediaAssets only; evidence handoff is future.")
         warnings.append("Live playback is not expected for this provider.")
+    elif configuration.provider_key == "webhook_future":
+        warnings.append("No webhook endpoint exists yet; no payloads are accepted.")
+        warnings.append("Webhook metadata creates no media, evidence, Events/Visits, or truth.")
+        warnings.append("Live playback is not expected for this provider.")
     elif not supports_live_playback and configuration.provider_key != "manual_media":
         warnings.append("Live playback is not implemented for this provider yet.")
     if not supports_zone_editing:
@@ -6758,7 +6895,7 @@ def _source_setup_review_from_contracts(
 
     playback_message = (
         "Live playback is not expected for this provider."
-        if configuration.provider_key in {"manual_media", "folder_import_future"}
+        if configuration.provider_key in {"manual_media", "folder_import_future", "webhook_future"}
         else (
             "Live playback is available."
             if supports_live_playback
@@ -6795,6 +6932,16 @@ def _source_setup_review_from_contracts(
             ),
         )
         if configuration.provider_key == "folder_import_future"
+        else SourceSetupReviewStep(
+            key="webhook_future_ingest",
+            label="Webhook ingest",
+            status="future",
+            message=(
+                "Configuration stores metadata only; no webhook endpoint exists, no "
+                "payloads are accepted, and no media, evidence, or truth is created."
+            ),
+        )
+        if configuration.provider_key == "webhook_future"
         else SourceSetupReviewStep(
             key="future_provider",
             label="Future provider work",

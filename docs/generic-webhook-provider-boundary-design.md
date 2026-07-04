@@ -13,7 +13,9 @@ context. External labels, detections, and event claims must remain evidence or
 suggestions, not reviewed truth. User review/correction remains the truth
 boundary for analytics, exports, and classifier readiness.
 
-This phase is design only. It adds no webhook route, token/auth code, media
+Phase 14D was design only. Phase 14E adds `webhook_future` to provider
+configuration, Source connection status, setup review, and placeholder Stream
+playback contracts. It still adds no webhook route, token/auth code, media
 upload, media download, MediaAsset creation, MotionEvidence creation,
 Event/Visit creation, ReviewLabel creation, provider implementation, dependency,
 worker, queue, polling, or integration-specific behavior.
@@ -57,10 +59,10 @@ ecosystem-specific mapping is designed.
 
 ## Configuration Fields
 
-Future provider configuration metadata:
+Current provider configuration metadata:
 
 - `endpoint_name`: optional display label.
-- `shared_secret_configured`: secret/sensitive configured marker.
+- `shared_secret_configured`: required secret/sensitive configured marker.
 - `allowed_source_name`: optional external source name filter.
 - `default_stream_id`: optional Stream context.
 - `default_zone_id`: optional Zone context.
@@ -84,9 +86,9 @@ camera connectivity or playback.
 
 Rules:
 
-- missing shared secret or endpoint setup means `not_configured`
-- configured metadata may mean `future_adapter_required` until an ingest
-  endpoint implementation exists
+- missing shared secret metadata means `not_configured`
+- configured shared secret metadata means setup metadata is ready, but an
+  ingest endpoint implementation is still future work
 - `supports_live_playback` is false
 - `supports_zone_editing` can be true where Stream context exists
 - setup/status views must not validate external webhook delivery
@@ -338,7 +340,7 @@ Future tests should prove:
 
 ## Explicit Non-Goals
 
-- no implementation in this phase
+- no webhook ingest implementation in this phase
 - no endpoint
 - no webhook ingest
 - no token/auth code

@@ -39,6 +39,10 @@ Source/Stream explicit-action spine.
 Phase 14D designs generic webhook ingest only. When implemented later, webhook
 will need its own smoke path that proves status/dry-run behavior is read-only
 and ingest creates no reviewed truth.
+Phase 14E adds webhook provider configuration/status only. It is not part of the
+current smoke-tested provider action paths yet because there is no webhook
+endpoint, payload validation, media handling, evidence creation, or reviewed
+truth behavior.
 
 ## Product Flow Covered
 
@@ -129,5 +133,6 @@ Visit/Event review state, dataset coverage, and analytics truth change.
   `folder_import_future`.
 - Phase 14C: next provider boundary decision before implementation.
 - Phase 14D: generic webhook ingest provider boundary design.
+- Phase 14E: generic webhook provider configuration/status contract, no ingest.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.
