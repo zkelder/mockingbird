@@ -7,6 +7,8 @@ from datetime import datetime
 
 from mockingbird.api.schemas import WorkerStatusItem
 
+EXTERNAL_URL_PREVIEW_WORKER_KEY = "external_url_preview_scheduler_future"
+
 
 @dataclass(frozen=True, slots=True)
 class WorkerDefinition:
@@ -22,7 +24,7 @@ class WorkerDefinition:
 
 WORKER_DEFINITIONS: tuple[WorkerDefinition, ...] = (
     WorkerDefinition(
-        worker_key="external_url_preview_scheduler_future",
+        worker_key=EXTERNAL_URL_PREVIEW_WORKER_KEY,
         display_name="External URL preview scheduler",
         category="provider",
         provider_key="external_url",
@@ -119,4 +121,9 @@ def list_worker_status_items(now: datetime | None = None) -> list[WorkerStatusIt
     ]
 
 
-__all__ = ["WORKER_DEFINITIONS", "WorkerDefinition", "list_worker_status_items"]
+__all__ = [
+    "EXTERNAL_URL_PREVIEW_WORKER_KEY",
+    "WORKER_DEFINITIONS",
+    "WorkerDefinition",
+    "list_worker_status_items",
+]

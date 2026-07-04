@@ -38,6 +38,11 @@ worker registry. The registry has no callbacks, start/run/enable methods,
 scheduling config, provider execution, media creation, evidence creation, or
 truth writes.
 
+Phase 16E adds a read-only external_url worker dry-run plan API. It inspects
+local Source/provider configuration and reports what a future scheduler would
+consider, but it does not run a worker, fetch URLs, create records, or create
+truth.
+
 ## Automation Candidates
 
 Future automation candidates include:
@@ -169,7 +174,9 @@ Future worker implementation must test:
 - Phase 16B: worker status schema/API contract, read-only/no workers.
 - Phase 16C: worker status UI, read-only/no workers.
 - Phase 16D: disabled no-op worker registry/status contract.
-- Phase 16E: first safe automation dry-run boundary.
+- Phase 16E: external_url worker dry-run plan API, no runtime/fetch/records.
+- Phase 16F: Worker Status UI link to dry-run plan.
+- Phase 16G: folder scan dry-run plan API.
 - Phase 17A: live/source automation decision, if the product should choose a
   broader automation direction before active workers.
 - Later: explicit worker implementation phases for scheduled previews, folder
@@ -182,4 +189,5 @@ These boundary phases add no runtime behavior.
 They do not add workers, schedulers, polling, watchers, queues, provider
 behavior, media writes, evidence creation, Event/Visit creation, labels, truth
 creation, dependencies, or generated artifacts. Phase 16C adds frontend status
-visibility only. Phase 16D adds disabled registry metadata only.
+visibility only. Phase 16D adds disabled registry metadata only. Phase 16E adds
+external_url dry-run planning only.

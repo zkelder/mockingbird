@@ -90,6 +90,9 @@ from mockingbird.api.schemas import (
     DetectionRunStatus,
     DetectionSource,
     Event,
+    ExternalUrlWorkerDryRunItem,
+    ExternalUrlWorkerDryRunResponse,
+    ExternalUrlWorkerDryRunSummary,
     ExportStatus,
     FolderImportCandidate,
     FolderImportCreate,
@@ -202,7 +205,10 @@ from mockingbird.storage.models import (
     VisitModel,
     ZoneModel,
 )
-from mockingbird.workers.registry import list_worker_status_items
+from mockingbird.workers.registry import (
+    EXTERNAL_URL_PREVIEW_WORKER_KEY,
+    list_worker_status_items,
+)
 
 SUPPORTED_MEDIA_CONTENT_TYPES = {
     "image/jpeg": "image",
@@ -760,6 +766,77 @@ class ProductRepository:
             summary=summary,
             generated_at=datetime.now(UTC),
             read_only=True,
+        )
+
+    def get_external_url_worker_dry_run_plan(self) -> ExternalUrlWorkerDryRunResponse:
+        with self.session_factory() as session:
+            items: list[ExternalUrlWorkerDryRunItem] = []
+            sources = session.scalars(select(CameraSourceModel).order_by(CameraSourceModel.id)).all()
+            for source in sources:
+                model = session.get(SourceProviderConfigurationModel, source.id)
+                stream_ids = self._stream_ids_for_source(session, source.id)
+                configuration = _source_provider_configuration_from_model(
+                    source,
+                    model,
+                    stream_ids,
+                )
+                if configuration.provider_key != "external_url":
+                    continue
+
+                has_url_configuration = (
+                    "url" in configuration.configured_fields
+                    and "url" not in configuration.missing_fields
+                )
+                reasons = [
+                    (
+                        "external_url provider configured"
+                        if has_url_configuration
+                        else "missing external URL configuration"
+                    ),
+                    "future scheduler disabled",
+                    "dry run only; no fetch performed",
+                ]
+                items.append(
+                    ExternalUrlWorkerDryRunItem(
+                        source_id=source.id,
+                        source_name=source.name,
+                        provider_key=configuration.provider_key,
+                        worker_key=EXTERNAL_URL_PREVIEW_WORKER_KEY,
+                        eligible=has_url_configuration,
+                        state="disabled",
+                        would_fetch=False,
+                        would_create_media_asset=False,
+                        would_create_motion_evidence=False,
+                        would_create_event=False,
+                        would_create_visit=False,
+                        would_create_review_label=False,
+                        would_create_truth=False,
+                        reasons=reasons,
+                        warnings=["Worker runtime is not implemented in this phase."],
+                    )
+                )
+
+        eligible_sources = sum(item.eligible for item in items)
+        summary = ExternalUrlWorkerDryRunSummary(
+            total_sources_considered=len(items),
+            eligible_sources=eligible_sources,
+            ineligible_sources=len(items) - eligible_sources,
+            would_fetch_count=sum(item.would_fetch for item in items),
+            would_create_media_asset_count=sum(item.would_create_media_asset for item in items),
+            would_create_motion_evidence_count=sum(
+                item.would_create_motion_evidence for item in items
+            ),
+            would_create_truth_count=sum(item.would_create_truth for item in items),
+            warnings=["Dry run only; no external URL fetch performed."],
+        )
+        return ExternalUrlWorkerDryRunResponse(
+            worker_key=EXTERNAL_URL_PREVIEW_WORKER_KEY,
+            provider_key="external_url",
+            read_only=True,
+            dry_run=True,
+            generated_at=datetime.now(UTC),
+            items=items,
+            summary=summary,
         )
 
     def _seed_session(self, session: Session) -> None:

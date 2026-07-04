@@ -327,6 +327,45 @@ class WorkerStatusResponse(BaseModel):
     read_only: bool = True
 
 
+class ExternalUrlWorkerDryRunItem(BaseModel):
+    source_id: str
+    source_name: str
+    provider_key: str
+    worker_key: str
+    eligible: bool
+    state: str
+    would_fetch: bool = False
+    would_create_media_asset: bool = False
+    would_create_motion_evidence: bool = False
+    would_create_event: bool = False
+    would_create_visit: bool = False
+    would_create_review_label: bool = False
+    would_create_truth: bool = False
+    reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ExternalUrlWorkerDryRunSummary(BaseModel):
+    total_sources_considered: int = Field(ge=0)
+    eligible_sources: int = Field(ge=0)
+    ineligible_sources: int = Field(ge=0)
+    would_fetch_count: int = Field(ge=0)
+    would_create_media_asset_count: int = Field(ge=0)
+    would_create_motion_evidence_count: int = Field(ge=0)
+    would_create_truth_count: int = Field(ge=0)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ExternalUrlWorkerDryRunResponse(BaseModel):
+    worker_key: str
+    provider_key: str
+    read_only: bool = True
+    dry_run: bool = True
+    generated_at: datetime
+    items: list[ExternalUrlWorkerDryRunItem] = Field(default_factory=list)
+    summary: ExternalUrlWorkerDryRunSummary
+
+
 class WebhookPayloadValidationRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     shared_secret_marker: str | None = None

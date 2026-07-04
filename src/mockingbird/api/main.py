@@ -31,6 +31,7 @@ from mockingbird.api.schemas import (
     DetectionProposalDecisionResult,
     DetectionRun,
     DetectionRunCreate,
+    ExternalUrlWorkerDryRunResponse,
     ExternalUrlPreviewRequest,
     ExternalUrlPreviewResponse,
     ExternalUrlPreviewSaveRequest,
@@ -811,6 +812,15 @@ async def health() -> dict[str, str]:
 async def get_worker_status() -> WorkerStatusResponse:
     # Read-only lifecycle contract: no workers, providers, media, or truth writes.
     return get_repository().get_worker_status()
+
+
+@app.get(
+    "/api/workers/external-url-preview/dry-run",
+    response_model=ExternalUrlWorkerDryRunResponse,
+)
+async def get_external_url_worker_dry_run_plan() -> ExternalUrlWorkerDryRunResponse:
+    # Planning only: no scheduler, fetch, media, evidence, or truth writes.
+    return get_repository().get_external_url_worker_dry_run_plan()
 
 
 @app.post("/api/motion/evaluate-frame", response_model=MotionFrameScoreResponse)

@@ -799,7 +799,9 @@ Current work:
 - Phase 16B: worker status schema/API contract, read-only/no workers.
 - Phase 16C: worker status UI, read-only/no workers.
 - Phase 16D: disabled no-op worker registry/status contract.
-- Next likely phase: Phase 16E first safe automation dry-run boundary.
+- Phase 16E: external_url worker dry-run plan API.
+- Next likely phase: Phase 16F Worker Status UI link to dry-run plan, or Phase
+  16G folder scan dry-run plan API.
 
 Design note: [worker-lifecycle-boundary-design.md](worker-lifecycle-boundary-design.md).
 
@@ -839,3 +841,9 @@ Validation:
   scheduler, polling, watcher, queue, background job, provider execution, media
   creation, evidence creation, Event/Visit, ReviewLabel/truth, dependency, or
   generated artifact.
+- Phase 16E adds `GET /api/workers/external-url-preview/dry-run` as an explicit
+  planning route over local Source/provider configuration. It considers
+  `external_url` Sources only and keeps every would-fetch/create/truth flag
+  false. It adds no worker runtime, scheduler, polling, background job, HTTP
+  request, provider execution, media creation, evidence creation, Event/Visit,
+  ReviewLabel/truth, dependency, or generated artifact.
