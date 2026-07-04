@@ -615,8 +615,9 @@ Current work:
 - Phase 14G: webhook metadata event to pending MotionEvidence, explicit/evidence
   only.
 - Phase 14H: webhook provider smoke-test hardening through correction truth.
-- Next likely phase: Phase 14I webhook review/promote UI polish, or Phase 14J
-  webhook media upload boundary design.
+- Phase 14I: webhook review/promote UI provenance polish.
+- Next likely phase: Phase 14J webhook media upload boundary design, or Phase
+  15A MVP source/provider readiness consolidation.
 
 Validation:
 
@@ -661,6 +662,10 @@ Validation:
   nothing, explicit webhook motion ingest creates pending MotionEvidence only,
   explicit promotion creates Event/Visit context only, and correction creates
   ReviewLabel truth.
+- Phase 14I surfaces webhook-origin MotionEvidence provenance in the frontend:
+  provider key, external event ID, untrusted label/confidence, and timestamp can
+  appear in Motion Evidence, Event Detail, and Visit Detail as evidence metadata
+  only. Promotion and correction behavior stay explicit.
 - MediaAssets remain media context, MotionEvidence remains evidence, and
   Event/Visit promotion remains unreviewed until correction.
 - No frontend feature, new provider, live playback, folder watcher, polling,
@@ -700,3 +705,7 @@ Validation:
   live playback, external network call, or generated artifact is added in Phase
   14H. Event/Visit and ReviewLabel changes appear only through existing promote
   and correction routes under smoke test.
+- No webhook media upload/download, automatic promotion, automatic labels,
+  ReviewLabel/truth creation, ecosystem-specific integration, worker, queue,
+  polling, dependency, model/runtime behavior, live playback, external network
+  call, or generated artifact is added in Phase 14I.

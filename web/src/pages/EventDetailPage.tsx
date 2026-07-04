@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
-import type { EventDetail, MediaAsset, TaxonomyLabel } from "../api/types";
+import type { EventDetail, MediaAsset, MotionEvidence, TaxonomyLabel } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
 import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEvidenceCard";
 import { EvidenceBadge } from "../components/EvidenceBadge";
@@ -107,15 +107,23 @@ export function EventDetailPage({
   );
   const reviewedSpeciesVisits = speciesVisits.filter((visit) => visit.reviewed_label);
   const isMotionEvidenceEvent = detail.event.event_type === "motion_evidence";
+  const webhookProvenance = detail.motion_evidence
+    ? getWebhookEvidenceProvenance(detail.motion_evidence)
+    : null;
+  const hasWebhookEvidence = Boolean(webhookProvenance?.isWebhook);
   const hasSavedPreviewMedia = isSavedPreviewMedia(detail.media_asset);
   const hasFolderImportMedia = isFolderImportMedia(detail.media_asset);
   const mediaProvenance = formatMediaProvenance(detail.media_asset);
-  const mediaContextTitle = hasFolderImportMedia
+  const mediaContextTitle = hasWebhookEvidence
+    ? "Webhook metadata evidence"
+    : hasFolderImportMedia
     ? "Folder-imported media"
     : hasSavedPreviewMedia
       ? "Saved preview media"
       : "Attached media";
-  const mediaContextBadge = hasFolderImportMedia
+  const mediaContextBadge = hasWebhookEvidence
+    ? "Generic webhook ingest"
+    : hasFolderImportMedia
     ? "Folder-imported media"
     : hasSavedPreviewMedia
       ? "Saved local media"
@@ -149,6 +157,9 @@ export function EventDetailPage({
           <strong>Promoted Motion Evidence</strong>
           <span>
             Created from promoted MotionEvidence.{" "}
+            {hasWebhookEvidence
+              ? "This Event came from evidence created from generic webhook metadata. "
+              : ""}
             {hasFolderImportMedia
               ? "This Event came from evidence linked to folder-imported local media. "
               : ""}
@@ -172,7 +183,9 @@ export function EventDetailPage({
             />
           </div>
           <p className="evidence-panel-copy">
-            {detail.media_asset
+            {hasWebhookEvidence
+              ? "This Event came from evidence created from generic webhook metadata."
+              : detail.media_asset
               ? mediaProvenance
               : "Created from promoted MotionEvidence without attached media."}{" "}
             {eventReviewBoundaryCopy}
@@ -190,11 +203,44 @@ export function EventDetailPage({
               detail={detail.primary_zone?.id}
             />
             <ContextItem label="Evidence source" value="Promoted MotionEvidence" />
+            {detail.motion_evidence ? (
+              <ContextItem
+                label="MotionEvidence"
+                value={detail.motion_evidence.id}
+                detail={formatLabel(detail.motion_evidence.status)}
+              />
+            ) : null}
             <ContextItem
               label={mediaContextTitle}
               value={detail.media_asset?.original_filename ?? "No attached media"}
               detail={detail.media_asset?.id}
             />
+            {hasWebhookEvidence && webhookProvenance ? (
+              <>
+                <ContextItem
+                  label="Provider"
+                  value={webhookProvenance.providerKey ?? "webhook_future"}
+                />
+                <ContextItem
+                  label="External event ID"
+                  value={formatWebhookValue(webhookProvenance.externalEventId)}
+                />
+                <ContextItem
+                  label="Untrusted external label"
+                  value={formatWebhookValue(webhookProvenance.externalLabel)}
+                  detail="Evidence metadata only"
+                />
+                <ContextItem
+                  label="Untrusted external confidence"
+                  value={formatWebhookValue(webhookProvenance.externalConfidence)}
+                  detail="Not review truth"
+                />
+                <ContextItem
+                  label="Webhook timestamp"
+                  value={formatWebhookValue(webhookProvenance.externalTimestamp)}
+                />
+              </>
+            ) : null}
             {hasFolderImportMedia ? (
               <>
                 <ContextItem label="Provider" value="folder_import_future" />
@@ -209,6 +255,17 @@ export function EventDetailPage({
               </>
             ) : null}
           </div>
+        </section>
+      ) : null}
+
+      {hasWebhookEvidence ? (
+        <section className="notice-panel">
+          <strong>Webhook metadata evidence</strong>
+          <span>
+            Generic webhook ingest provided safe provenance only. Untrusted external labels and
+            confidence are not confirmed labels; Visit correction remains the truth boundary for
+            analytics and exports.
+          </span>
         </section>
       ) : null}
 
@@ -518,6 +575,41 @@ function formatMediaProvenance(asset: MediaAsset | null | undefined): string {
     return "This review context is linked to saved local media from an external URL preview.";
   }
   return "This review context is linked to saved local media.";
+}
+
+interface WebhookEvidenceProvenance {
+  isWebhook: boolean;
+  providerKey: string | null;
+  externalEventId: string | null;
+  externalLabel: string | null;
+  externalConfidence: string | null;
+  externalTimestamp: string | null;
+}
+
+function getWebhookEvidenceProvenance(evidence: MotionEvidence): WebhookEvidenceProvenance {
+  const providerKey = formatOptionalConfigValue(evidence.scoring_config.provider_key);
+  const source = formatOptionalConfigValue(evidence.scoring_config.source);
+  return {
+    isWebhook: providerKey === "webhook_future" || source === "webhook_metadata_motion_event",
+    providerKey,
+    externalEventId: formatOptionalConfigValue(evidence.scoring_config.external_event_id),
+    externalLabel: formatOptionalConfigValue(evidence.scoring_config.external_label_untrusted),
+    externalConfidence: formatOptionalConfigValue(
+      evidence.scoring_config.external_confidence_untrusted,
+    ),
+    externalTimestamp: formatOptionalConfigValue(evidence.scoring_config.external_timestamp),
+  };
+}
+
+function formatOptionalConfigValue(value: string | number | boolean | undefined): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return String(value);
+}
+
+function formatWebhookValue(value: string | null): string {
+  return value && value.trim() ? value : "not provided";
 }
 
 function extractSafeNoteValue(notes: string, key: string): string | null {

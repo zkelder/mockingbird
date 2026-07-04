@@ -3318,6 +3318,24 @@ class ProductRepository:
             evidence_model = session.get(MotionEvidenceModel, evidence_id)
             return _motion_evidence_from_model(evidence_model) if evidence_model else None
 
+    def motion_evidence_for_event(self, event_id: str) -> MotionEvidenceResponse | None:
+        with self.session_factory() as session:
+            evidence_model = session.scalars(
+                select(MotionEvidenceModel)
+                .where(MotionEvidenceModel.promoted_event_id == event_id)
+                .order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
+            ).first()
+            return _motion_evidence_from_model(evidence_model) if evidence_model else None
+
+    def motion_evidence_for_visit(self, visit_id: str) -> MotionEvidenceResponse | None:
+        with self.session_factory() as session:
+            evidence_model = session.scalars(
+                select(MotionEvidenceModel)
+                .where(MotionEvidenceModel.promoted_visit_id == visit_id)
+                .order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
+            ).first()
+            return _motion_evidence_from_model(evidence_model) if evidence_model else None
+
     def ignore_motion_evidence(self, evidence_id: str) -> MotionEvidenceResponse | None:
         with self.session_factory() as session:
             with session.begin():

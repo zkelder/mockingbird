@@ -72,10 +72,22 @@ const motionWorkflowSteps = [
 
 const pendingEvidenceBoundaryCopy =
   "This is pending evidence. It is not an Event, Visit, label, or truth.";
+const pendingWebhookEvidenceBoundaryCopy =
+  "This is pending evidence from webhook metadata. It is not an Event, Visit, label, or truth.";
 const pendingFolderEvidenceBoundaryCopy =
   "This is pending evidence from imported local media. It is not an Event, Visit, label, or truth.";
 const promotedEvidenceBoundaryCopy =
   "Promoted evidence created a reviewable Event/Visit. Correction remains the truth boundary.";
+
+interface WebhookEvidenceProvenance {
+  isWebhook: boolean;
+  providerKey: string | null;
+  candidateType: string | null;
+  externalEventId: string | null;
+  externalLabel: string | null;
+  externalConfidence: string | null;
+  externalTimestamp: string | null;
+}
 
 interface MotionEvidencePageProps {
   streams: Stream[];
@@ -184,6 +196,9 @@ export function MotionEvidencePage({
   const selectedHasFolderImportMedia = selectedEvidence
     ? isFolderImportMediaEvidence(selectedEvidence, selectedMediaAsset)
     : false;
+  const selectedWebhookProvenance = selectedEvidence
+    ? getWebhookEvidenceProvenance(selectedEvidence)
+    : null;
   const attachedMediaTitle = selectedHasFolderImportMedia
     ? "Folder-imported media"
     : selectedHasSavedPreviewMedia
@@ -1068,6 +1083,9 @@ export function MotionEvidencePage({
                     <h2>{item.id}</h2>
                   </div>
                   <div className="record-status-stack">
+                    {getWebhookEvidenceProvenance(item).isWebhook ? (
+                      <EvidenceBadge label="Webhook metadata evidence" tone="evidence" />
+                    ) : null}
                     {item.snapshot_media_asset_id ? (
                       <EvidenceBadge
                         label={
@@ -1108,6 +1126,56 @@ export function MotionEvidencePage({
                   <strong>{formatLabel(selectedEvidence.status)} status</strong>
                   <span>{formatEvidenceStatusCopy(selectedEvidence, selectedMediaAsset)}</span>
                 </section>
+
+                {selectedWebhookProvenance?.isWebhook ? (
+                  <section className="motion-evidence-subsection webhook-evidence-panel">
+                    <div className="section-heading">
+                      <div>
+                        <h3>Webhook metadata evidence</h3>
+                        <span className="meta-text">
+                          Generic webhook ingest provenance is evidence metadata only.
+                        </span>
+                      </div>
+                      <EvidenceBadge label="Generic webhook ingest" tone="evidence" />
+                    </div>
+                    <p className="evidence-panel-copy">
+                      {selectedEvidence.status === "promoted"
+                        ? "Promoted evidence created a reviewable Event/Visit. Correction remains the truth boundary."
+                        : selectedEvidence.status === "ignored"
+                          ? "This webhook-origin evidence was ignored and remains non-truth evidence history."
+                          : pendingWebhookEvidenceBoundaryCopy}{" "}
+                      No label has been confirmed yet by webhook metadata.
+                    </p>
+                    <div className="motion-review-context-grid">
+                      <ContextItem
+                        label="Provider"
+                        value={selectedWebhookProvenance.providerKey ?? "webhook_future"}
+                      />
+                      <ContextItem
+                        label="Candidate type"
+                        value={formatWebhookValue(selectedWebhookProvenance.candidateType)}
+                      />
+                      <ContextItem
+                        label="External event ID"
+                        value={formatWebhookValue(selectedWebhookProvenance.externalEventId)}
+                      />
+                      <ContextItem
+                        label="Untrusted external label"
+                        value={formatWebhookValue(selectedWebhookProvenance.externalLabel)}
+                        detail="Evidence metadata only"
+                      />
+                      <ContextItem
+                        label="Untrusted external confidence"
+                        value={formatWebhookValue(selectedWebhookProvenance.externalConfidence)}
+                        detail="Not a reviewed confidence"
+                      />
+                      <ContextItem
+                        label="Webhook timestamp"
+                        value={formatWebhookValue(selectedWebhookProvenance.externalTimestamp)}
+                      />
+                    </div>
+                  </section>
+                ) : null}
 
                 <div className="motion-evidence-detail-grid">
                   <DetailItem label="Zone" value={selectedEvidence.zone_id} />
@@ -1559,7 +1627,11 @@ function ContextItem({
 }
 
 function formatEvidenceStatusCopy(evidence: MotionEvidence, asset: MediaAsset | null): string {
+  const webhookProvenance = getWebhookEvidenceProvenance(evidence);
   if (evidence.status === "pending") {
+    if (webhookProvenance.isWebhook) {
+      return pendingWebhookEvidenceBoundaryCopy;
+    }
     return formatPendingEvidenceBoundaryCopy(evidence, asset);
   }
   if (evidence.status === "promoted") {
@@ -1572,6 +1644,9 @@ function formatPendingEvidenceBoundaryCopy(
   evidence: MotionEvidence,
   asset: MediaAsset | null,
 ): string {
+  if (getWebhookEvidenceProvenance(evidence).isWebhook) {
+    return pendingWebhookEvidenceBoundaryCopy;
+  }
   return isFolderImportMediaEvidence(evidence, asset)
     ? pendingFolderEvidenceBoundaryCopy
     : pendingEvidenceBoundaryCopy;
@@ -1581,6 +1656,9 @@ function formatMotionEvidenceMediaBadge(
   evidence: MotionEvidence,
   asset: MediaAsset | null,
 ): string {
+  if (getWebhookEvidenceProvenance(evidence).isWebhook) {
+    return "Webhook metadata evidence";
+  }
   if (isFolderImportMediaEvidence(evidence, asset)) {
     return "Folder-imported media";
   }
@@ -1588,6 +1666,36 @@ function formatMotionEvidenceMediaBadge(
     return "Saved preview media";
   }
   return "Media attached";
+}
+
+function getWebhookEvidenceProvenance(evidence: MotionEvidence): WebhookEvidenceProvenance {
+  const providerKey = formatOptionalConfigValue(evidence.scoring_config.provider_key);
+  const source = formatOptionalConfigValue(evidence.scoring_config.source);
+  const isWebhook =
+    providerKey === "webhook_future" || source === "webhook_metadata_motion_event";
+
+  return {
+    isWebhook,
+    providerKey,
+    candidateType: formatOptionalConfigValue(evidence.scoring_config.candidate_type),
+    externalEventId: formatOptionalConfigValue(evidence.scoring_config.external_event_id),
+    externalLabel: formatOptionalConfigValue(evidence.scoring_config.external_label_untrusted),
+    externalConfidence: formatOptionalConfigValue(
+      evidence.scoring_config.external_confidence_untrusted,
+    ),
+    externalTimestamp: formatOptionalConfigValue(evidence.scoring_config.external_timestamp),
+  };
+}
+
+function formatOptionalConfigValue(value: string | number | boolean | undefined): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return String(value);
+}
+
+function formatWebhookValue(value: string | null): string {
+  return value && value.trim() ? value : "not provided";
 }
 
 function isSavedPreviewMediaEvidence(evidence: MotionEvidence, asset: MediaAsset | null): boolean {

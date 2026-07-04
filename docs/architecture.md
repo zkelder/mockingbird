@@ -202,6 +202,9 @@ webhook_future Source -> validation dry-run -> pending MotionEvidence ->
 explicit promote -> Event/Visit review -> correction truth. Read-only
 configuration/status/playback routes remain side-effect free, and webhook labels
 stay untrusted metadata until user correction.
+Phase 14I makes webhook-origin evidence understandable in the frontend review
+loop: Motion Evidence, Event Detail, and Visit Detail can show safe webhook
+provenance while correction remains the analytics/export truth boundary.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

@@ -125,8 +125,9 @@ payloads, and writes no reviewed truth.
 ## Webhook Motion Evidence
 
 Pending MotionEvidence created from an explicit confirmed metadata-only webhook
-motion payload. It preserves safe webhook provenance and Stream/Zone context,
-but creates no MediaAsset, Event, Visit, ReviewLabel, or reviewed truth.
+motion payload. It preserves safe webhook provenance, untrusted external
+label/confidence metadata, and Stream/Zone context, but creates no MediaAsset,
+Event, Visit, ReviewLabel, or reviewed truth.
 
 ## Webhook Provider Smoke Flow
 

@@ -185,6 +185,8 @@ User review/correction remains the only dataset/export truth source.
 Phase 14H smoke-tests webhook-origin MotionEvidence against this same boundary:
 metadata evidence must be explicitly promoted to Event/Visit context, and the
 existing correction route remains the first ReviewLabel truth write.
+Phase 14I makes that provenance visible in Motion Evidence, Event Detail, and
+Visit Detail UI without changing promotion behavior or creating labels.
 
 ## API
 

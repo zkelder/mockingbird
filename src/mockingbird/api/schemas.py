@@ -1708,6 +1708,7 @@ class EventDetail(BaseModel):
     stream: Stream
     primary_zone: Zone | None = None
     visits: list[Visit]
+    motion_evidence: MotionEvidenceResponse | None = None
     media_asset: MediaAsset | None = None
     detection_proposals: list[DetectionProposal] = Field(default_factory=list)
     detection_runs: list[DetectionRun] = Field(default_factory=list)
@@ -1722,6 +1723,7 @@ class VisitDetail(BaseModel):
     stream: Stream
     primary_zone: Zone | None = None
     detections: list[Detection]
+    motion_evidence: MotionEvidenceResponse | None = None
     media_asset: MediaAsset | None = None
     detection_proposals: list[DetectionProposal] = Field(default_factory=list)
     detection_runs: list[DetectionRun] = Field(default_factory=list)

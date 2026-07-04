@@ -113,6 +113,8 @@ exports, training media, or generated workspace files.
   creating pending MotionEvidence only.
 - Phase 14H folds that webhook metadata path into smoke coverage through
   explicit promotion and correction truth.
+- Phase 14I adds review/promote UI provenance for webhook-origin MotionEvidence
+  without changing provider behavior or truth boundaries.
 - Add live playback smoke coverage only after a separately designed playback
   lifecycle exists.
 - Add automation smoke coverage only after worker, privacy, retention, and truth

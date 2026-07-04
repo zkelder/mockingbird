@@ -1551,6 +1551,7 @@ async def get_event_detail(event_id: str) -> EventDetail:
             else None
         ),
         visits=visits,
+        motion_evidence=repository.motion_evidence_for_event(event.id),
         media_asset=media_asset,
         detection_proposals=detection_proposals,
         detection_runs=_detection_runs_for_proposals(repository, detection_proposals),
@@ -1609,6 +1610,7 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
             else None
         ),
         detections=event.detections,
+        motion_evidence=repository.motion_evidence_for_visit(visit.id),
         media_asset=repository.media_asset_for_path(visit.representative_media_path),
         detection_proposals=detection_proposals,
         detection_runs=_detection_runs_for_proposals(repository, detection_proposals),

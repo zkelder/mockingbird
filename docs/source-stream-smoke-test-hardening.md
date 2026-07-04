@@ -54,6 +54,8 @@ Phase 14H adds that webhook provider smoke coverage: setup/status and playback
 stay read-only, validation dry-run creates nothing, confirmed metadata motion
 ingest creates pending MotionEvidence only, explicit promotion creates
 Event/Visit context only, and correction remains the first truth write.
+Phase 14I surfaces webhook-origin evidence provenance in review/promote and
+Event/Visit detail UI while keeping it separate from live playback semantics.
 
 ## Product Flow Covered
 
@@ -148,5 +150,6 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - Phase 14F: webhook payload validation/dry-run endpoint, no records.
 - Phase 14G: webhook metadata motion payload to pending MotionEvidence only.
 - Phase 14H: webhook provider smoke-test hardening through correction truth.
+- Phase 14I: webhook review/promote UI provenance polish.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.

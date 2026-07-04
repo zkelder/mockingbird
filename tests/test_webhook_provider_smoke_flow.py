@@ -397,9 +397,31 @@ async def test_webhook_metadata_smoke_flow_preserves_truth_boundaries(
     event_detail = event_detail_response.json()
     visit_detail = visit_detail_response.json()
     assert event_detail["event"]["review_status"] == "needs_review"
+    assert event_detail["motion_evidence"]["id"] == evidence_id
+    assert event_detail["motion_evidence"]["status"] == "promoted"
+    assert event_detail["motion_evidence"]["scoring_config"]["provider_key"] == "webhook_future"
+    assert (
+        event_detail["motion_evidence"]["scoring_config"]["external_label_untrusted"]
+        == "northern_cardinal"
+    )
+    assert (
+        event_detail["motion_evidence"]["scoring_config"]["external_confidence_untrusted"]
+        == 0.84
+    )
     assert event_detail["review_labels"] == []
     assert event_detail["dataset_ready"] is False
     assert visit_detail["visit"]["review_status"] == "needs_review"
+    assert visit_detail["motion_evidence"]["id"] == evidence_id
+    assert visit_detail["motion_evidence"]["status"] == "promoted"
+    assert visit_detail["motion_evidence"]["scoring_config"]["provider_key"] == "webhook_future"
+    assert (
+        visit_detail["motion_evidence"]["scoring_config"]["external_label_untrusted"]
+        == "northern_cardinal"
+    )
+    assert (
+        visit_detail["motion_evidence"]["scoring_config"]["external_confidence_untrusted"]
+        == 0.84
+    )
     assert visit_detail["visit"]["reviewed_label"] is None
     assert visit_detail["review_labels"] == []
     assert visit_detail["dataset_ready"] is False

@@ -89,6 +89,9 @@ DetectionProposal, export, model output, or truth.
 Phase 14H smoke-tests that webhook metadata evidence remains pending evidence
 until explicit promotion, and that external label/confidence metadata does not
 affect analytics, export, classifier, or dataset truth before correction.
+Phase 14I surfaces webhook-origin MotionEvidence with safe provenance in the UI:
+provider key, external event ID, untrusted label/confidence, and timestamp are
+evidence metadata only.
 
 ## Status Lifecycle
 

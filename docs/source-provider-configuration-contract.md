@@ -89,6 +89,9 @@ Visits, labels, or truth.
 Phase 14H smoke-tests this configuration through the provider spine: read-only
 status, placeholder playback, dry-run validation, pending MotionEvidence,
 explicit promotion, and correction truth.
+Phase 14I uses the resulting MotionEvidence provenance in review UI only;
+configuration/status remains separate from evidence review and never creates
+records by itself.
 
 ## Provider Configuration Fields
 
@@ -221,6 +224,8 @@ reviewable activity.
   authenticate, fetch media, create Events/Visits, labels, or write truth.
 - Webhook provider configuration participates in smoke-tested provider flow
   without becoming the product center or creating records by itself.
+- Webhook review UI may show safe provenance from created evidence, but provider
+  configuration/status remains metadata-only.
 
 ## Explicit Non-Goals
 

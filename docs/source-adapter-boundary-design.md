@@ -158,6 +158,8 @@ Phase 14H smoke-tests that webhook provider path as evidence-only: status and
 playback stay read-only, validation creates nothing, motion ingest creates
 pending MotionEvidence only, promotion creates Event/Visit context only, and
 correction remains truth.
+Phase 14I surfaces webhook-origin evidence provenance in the review/promote UI
+and Event/Visit detail, still underneath explicit correction boundaries.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -317,6 +319,7 @@ Future implementation must test:
 - Phase 14G: webhook metadata event to pending MotionEvidence,
   explicit/evidence only.
 - Phase 14H: webhook provider smoke-test hardening through correction truth.
+- Phase 14I: webhook review/promote UI provenance polish.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

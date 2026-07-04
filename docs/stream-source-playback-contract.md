@@ -106,6 +106,8 @@ URLs, media references, or stream capture behavior.
 Phase 14H smoke-tests that playback remains placeholder-only during the webhook
 metadata flow. Validation, pending MotionEvidence creation, promotion, and
 correction do not change live playback semantics.
+Phase 14I may show webhook-origin evidence provenance in review/detail UI, but
+that evidence still does not make webhook Sources live playback providers.
 Phase 14D documents this as a provider boundary in
 [generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md):
 webhook ingest is not a playback provider by default.

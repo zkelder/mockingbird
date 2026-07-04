@@ -100,6 +100,9 @@ Phase 14H smoke-tests that read-only boundary: provider configuration reads,
 connection status, setup review, and Stream playback status do not validate
 payloads or create records; validation dry-run and explicit evidence handoff are
 separate actions.
+Phase 14I shows webhook-origin evidence provenance in review UI after evidence
+exists, but Source status still does not process payloads, create evidence,
+promote Events/Visits, or write truth.
 
 ## Provider Configuration Relationship
 

@@ -1233,6 +1233,7 @@ export interface EventDetail {
   stream: Stream;
   primary_zone?: Zone | null;
   visits: Visit[];
+  motion_evidence?: MotionEvidence | null;
   media_asset?: MediaAsset | null;
   detection_proposals: DetectionProposal[];
   detection_runs: DetectionRun[];
@@ -1247,6 +1248,7 @@ export interface VisitDetail {
   stream: Stream;
   primary_zone?: Zone | null;
   detections: Detection[];
+  motion_evidence?: MotionEvidence | null;
   media_asset?: MediaAsset | null;
   detection_proposals: DetectionProposal[];
   detection_runs: DetectionRun[];
