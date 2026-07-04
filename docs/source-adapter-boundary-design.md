@@ -150,6 +150,10 @@ Phase 14F adds the first explicit webhook behavior as a dry-run validation
 boundary under Source contracts. It classifies generic payloads and validates
 Source/Stream/Zone context, but creates no records, performs no auth, fetches no
 media, and does not become ingest.
+Phase 14G adds a narrow confirmed metadata motion route under that same
+boundary. It reuses validation and creates pending MotionEvidence only; it does
+not create MediaAssets, Events, Visits, labels, truth, workers, media handling,
+or ecosystem-specific adapter behavior.
 
 ## Explicit Non-Recommended First Adapters
 

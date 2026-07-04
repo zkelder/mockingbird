@@ -109,10 +109,10 @@ truth.
 A Source provider configuration/status contract for local systems that may
 submit media or event candidates into MockingBird later through
 `webhook_future`. The current layer stores metadata and redacted shared-secret
-readiness and supports explicit payload validation/dry-run only. It has no
-active ingest endpoint, accepts no payloads as records, creates no
-media/evidence/truth, and must not treat incoming labels, detections, or events
-as reviewed truth when implemented later.
+readiness, explicit payload validation/dry-run, and confirmed metadata motion
+payloads to pending MotionEvidence only. It has no media ingest endpoint, no
+real auth/token generation, creates no Events/Visits or truth, and must not
+treat incoming labels, detections, or events as reviewed truth.
 
 ## Webhook Payload Validation
 
@@ -121,6 +121,12 @@ shape and Source/Stream/Zone context. It can report candidate mappings such as
 heartbeat, motion event, object detection, species suggestion, or media
 reference, but it creates no records, fetches no media, authenticates no
 payloads, and writes no reviewed truth.
+
+## Webhook Motion Evidence
+
+Pending MotionEvidence created from an explicit confirmed metadata-only webhook
+motion payload. It preserves safe webhook provenance and Stream/Zone context,
+but creates no MediaAsset, Event, Visit, ReviewLabel, or reviewed truth.
 
 ## Still-image Preview
 

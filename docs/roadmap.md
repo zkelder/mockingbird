@@ -612,8 +612,10 @@ Current work:
 - Phase 14D: generic webhook ingest provider boundary design.
 - Phase 14E: webhook provider configuration/status contract.
 - Phase 14F: webhook payload validation/dry-run endpoint, no records.
-- Next likely phase: Phase 14G webhook metadata event to pending MotionEvidence,
-  explicit/evidence only, or Phase 14H webhook media upload to MediaAsset.
+- Phase 14G: webhook metadata event to pending MotionEvidence, explicit/evidence
+  only.
+- Next likely phase: Phase 14H webhook media upload to MediaAsset with no
+  evidence/truth, or Phase 14I webhook smoke-test hardening.
 
 Validation:
 
@@ -648,6 +650,11 @@ Validation:
   `POST /api/sources/{source_id}/webhook/validate`. It validates generic payload
   shape and Source/Stream/Zone context, reports candidate mappings, rejects
   privacy/ignore-zone candidates, and creates no records or truth.
+- Phase 14G adds explicit webhook metadata motion evidence creation at
+  `POST /api/sources/{source_id}/webhook/motion-evidence`. It requires
+  confirmation, accepts motion payloads only, creates pending MotionEvidence
+  only, skips duplicate `external_event_id` values by default, and creates no
+  MediaAssets, Events/Visits, labels, or truth.
 - MediaAssets remain media context, MotionEvidence remains evidence, and
   Event/Visit promotion remains unreviewed until correction.
 - No frontend feature, new provider, live playback, folder watcher, polling,
@@ -674,3 +681,9 @@ Validation:
   ReviewLabel/truth creation, ecosystem-specific integration, MQTT, worker,
   queue, polling, dependency, model/runtime behavior, live playback, external
   network call, or generated artifact is added in Phase 14F.
+- No general webhook ingest, real auth/token generation, media upload/download,
+  MediaAsset creation, Event/Visit creation, ReviewLabel/truth creation,
+  SpeciesSuggestion creation, DetectionProposal creation, ecosystem-specific
+  integration, MQTT, worker, queue, polling, dependency, model/runtime behavior,
+  live playback, external network call, or generated artifact is added in Phase
+  14G.

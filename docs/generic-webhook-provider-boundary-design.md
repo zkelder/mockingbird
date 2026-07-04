@@ -16,21 +16,20 @@ boundary for analytics, exports, and classifier readiness.
 Phase 14D was design only. Phase 14E adds `webhook_future` to provider
 configuration, Source connection status, setup review, and placeholder Stream
 playback contracts. Phase 14F adds an explicit payload validation/dry-run
-endpoint. It still adds no webhook ingest, token/auth code, media upload, media
-download, MediaAsset creation, MotionEvidence creation, Event/Visit creation,
-ReviewLabel creation, provider implementation, dependency, worker, queue,
-polling, or integration-specific behavior.
+endpoint. Phase 14G adds a confirmed, metadata-only motion payload route that
+can create pending MotionEvidence only. It still adds no token/auth code, media
+upload, media download, MediaAsset creation, Event/Visit creation, ReviewLabel
+creation, provider implementation, dependency, worker, queue, polling, or
+integration-specific behavior.
 
 ## Product Flow
 
 Future webhook work should preserve this flow:
 
 generic webhook Source setup -> webhook provider configuration -> explicit
-payload validation dry-run -> optional media reference or uploaded media
-candidate later -> optional MediaAsset creation later -> optional pending
-MotionEvidence creation later -> explicit promote to Event/Visit -> Visit
-review/correction -> ReviewLabel truth -> analytics/exports/classifier
-readiness.
+payload validation dry-run -> confirmed metadata motion payload -> pending
+MotionEvidence -> explicit promote to Event/Visit -> Visit review/correction ->
+ReviewLabel truth -> analytics/exports/classifier readiness.
 
 The webhook provider boundary sits below the product loop. It may provide
 evidence or media context later, but it must not create reviewed truth.
@@ -74,9 +73,10 @@ Current provider configuration metadata:
 Configuration rules:
 
 - no token generation in this phase
-- no webhook ingest endpoint in this phase
+- no general webhook/media ingest endpoint in this phase
 - secrets must be redacted to configured/not-configured markers
-- config/status must not imply webhook ingest is active yet
+- config/status must not imply media upload/download, real auth, or reviewed
+  truth is active
 - setup metadata must not accept payloads as ingest, write media, create
   evidence, or write truth
 
@@ -146,7 +146,9 @@ Phase 14F candidate types:
 - `unknown`
 
 Phase 14F only reports these mappings. It creates no records and does not
-authenticate, fetch media, upload media, or run models.
+authenticate, fetch media, upload media, or run models. Phase 14G can create
+pending MotionEvidence from `motion_event` candidates only when the request is
+explicitly confirmed and Stream/Zone context validates.
 
 ## Dry-run Validation Endpoint
 
@@ -173,6 +175,29 @@ It does not:
 - fetch media URLs
 - call model or detector runtimes
 
+## Metadata Motion Evidence Endpoint
+
+Phase 14G endpoint:
+
+```text
+POST /api/sources/{source_id}/webhook/motion-evidence
+```
+
+This endpoint reuses the validation boundary and accepts only `type: "motion"`
+payloads. `confirm=true` is required. On success it creates one pending
+MotionEvidence record with safe webhook provenance and no media attachment.
+
+It does not:
+
+- implement real auth or token generation
+- create MediaAssets
+- upload, download, fetch, decode, or store media
+- create Events/Visits
+- create ReviewLabels/truth
+- create SpeciesSuggestions or DetectionProposals
+- call model or detector runtimes
+- process non-motion payloads as records
+
 ## Future Webhook Endpoint Design
 
 Future endpoint option:
@@ -187,7 +212,7 @@ Alternative source-scoped option:
 POST /api/sources/{source_id}/webhook/ingest
 ```
 
-Phase 14F does not implement either ingest endpoint.
+Phase 14G still does not implement either general ingest endpoint.
 
 Future behavior should include:
 
@@ -234,8 +259,9 @@ Future mapping rules:
 - duplicate candidates should be detected or reported before record creation
 - provenance should record that the candidate came through webhook ingest
 
-MediaAsset creation, MotionEvidence creation, DetectionProposal creation, and
-SpeciesSuggestion creation each need explicit future scope.
+Phase 14G explicitly scopes metadata motion payloads to pending MotionEvidence
+only. MediaAsset creation, DetectionProposal creation, and SpeciesSuggestion
+creation each still need explicit future scope.
 
 ## Species/Label Policy
 
@@ -358,6 +384,7 @@ Future tests should prove:
 - zone validation works
 - privacy/ignore zone payloads are rejected or skipped
 - metadata-only validation creates no records
+- confirmed metadata motion payloads create pending MotionEvidence only
 - media upload creates MediaAsset only if explicitly scoped
 - event candidate creates pending MotionEvidence only if explicitly scoped
 - species label creates SpeciesSuggestion only if explicitly scoped
@@ -381,13 +408,11 @@ Future tests should prove:
 
 ## Explicit Non-Goals
 
-- no webhook ingest implementation in this phase
-- no ingest endpoint
-- no webhook ingest
+- no general webhook ingest implementation in this phase
+- no media ingest endpoint
 - no token/auth code
 - no media upload
 - no remote media download
-- no MotionEvidence creation
 - no Events/Visits
 - no ReviewLabels/truth
 - no ecosystem-specific integration

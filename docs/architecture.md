@@ -192,6 +192,11 @@ Phase 14F adds an explicit webhook payload validation/dry-run API under the
 same Source boundary. It classifies generic payloads, validates Source/Stream/Zone
 context, and reports candidate mappings while creating no records, fetching no
 media, authenticating no payloads, and writing no truth.
+Phase 14G adds a confirmed webhook metadata motion route:
+webhook motion candidate -> pending MotionEvidence only. It reuses validation,
+records safe provenance, and still creates no MediaAsset, Event, Visit,
+ReviewLabel, SpeciesSuggestion, DetectionProposal, media file, model output, or
+truth.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

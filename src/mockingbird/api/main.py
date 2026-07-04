@@ -101,6 +101,8 @@ from mockingbird.api.schemas import (
     TaxonomyLabel,
     Visit,
     VisitDetail,
+    WebhookMotionEvidenceRequest,
+    WebhookMotionEvidenceResponse,
     WebhookPayloadValidationRequest,
     WebhookPayloadValidationResponse,
     Zone,
@@ -625,6 +627,21 @@ def _saved_preview_motion_evidence_error(
 ) -> HTTPException:
     if str(error) == "missing_media_asset":
         return _not_found("Media asset", media_asset_id)
+    return _motion_evidence_error(error)
+
+
+def _webhook_motion_evidence_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "webhook_provider_required":
+        return HTTPException(
+            status_code=400,
+            detail="Webhook motion evidence requires a webhook_future Source provider.",
+        )
+    if reason == "webhook_motion_evidence_confirmation_required":
+        return HTTPException(
+            status_code=400,
+            detail="Confirm this webhook motion payload before creating pending MotionEvidence.",
+        )
     return _motion_evidence_error(error)
 
 
@@ -1169,6 +1186,23 @@ async def validate_source_webhook_payload(
                 detail="Webhook validation requires a webhook_future Source provider.",
             ) from error
         raise
+    if result is None:
+        raise _not_found("Source", source_id)
+    return result
+
+
+@app.post(
+    "/api/sources/{source_id}/webhook/motion-evidence",
+    response_model=WebhookMotionEvidenceResponse,
+)
+async def create_source_webhook_motion_evidence(
+    source_id: str,
+    payload: WebhookMotionEvidenceRequest,
+) -> WebhookMotionEvidenceResponse:
+    try:
+        result = get_repository().create_webhook_motion_evidence(source_id, payload)
+    except ValueError as error:
+        raise _webhook_motion_evidence_error(error) from error
     if result is None:
         raise _not_found("Source", source_id)
     return result

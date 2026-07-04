@@ -179,18 +179,20 @@ async def test_webhook_configured_secret_is_redacted_and_future_adapter_required
     assert connection["status"] == "configured"
     assert connection["supports_live_playback"] is False
     assert connection["supports_zone_editing"] is True
-    assert "No webhook ingest endpoint accepts inbound payloads yet" in connection["message"]
-    assert "Future webhook ingest endpoint implementation" in connection["setup_hint"]
+    assert "explicit motion-evidence ingest" in connection["message"]
+    assert "pending MotionEvidence only" in connection["setup_hint"]
 
     review_response = await client.get(f"/api/sources/{SOURCE_ID}/setup-review")
     assert review_response.status_code == 200
     review = review_response.json()
     assert review["readiness_level"] == "future_adapter_required"
     assert review["summary"] == (
-        "Webhook metadata is present, but MockingBird does not ingest webhook payloads yet."
+        "Webhook metadata is present. Explicit confirmed motion payloads can "
+        "create pending MotionEvidence only."
     )
     assert review["next_step"] == (
-        "Future webhook ingest endpoint implementation required before receiving payloads."
+        "Review pending MotionEvidence after explicit webhook metadata ingest; "
+        "media upload/download and reviewed truth remain future work."
     )
     assert review["supports_live_playback"] is False
     assert any(step["key"] == "webhook_future_ingest" for step in review["steps"])
@@ -220,7 +222,7 @@ async def test_webhook_stream_playback_remains_placeholder_only(
     assert playback["preview_media_asset_id"] is None
     assert playback["preview_url"] is None
     assert "does not provide live playback" in playback["message"]
-    assert "no payloads are accepted yet" in playback["setup_hint"]
+    assert "pending evidence" in playback["setup_hint"]
 
 
 async def test_webhook_provider_adds_no_webhook_ingest_routes() -> None:

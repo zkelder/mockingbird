@@ -158,6 +158,10 @@ unreviewed Event/Visit context only, and correction remains truth.
 Phase 14F webhook validation reports candidates only. A validated webhook
 `motion_event` cannot be promoted until a future phase explicitly creates
 pending MotionEvidence from that candidate.
+Phase 14G creates that pending MotionEvidence for confirmed metadata-only
+webhook motion payloads. Webhook-origin evidence uses this same promotion route:
+promotion creates unreviewed Event/Visit context only, and correction remains
+truth.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

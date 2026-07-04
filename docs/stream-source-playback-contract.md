@@ -99,6 +99,10 @@ live playback claims. Webhook ingest can feed media or event candidate context
 later without becoming live playback. Any MediaAsset or MotionEvidence creation
 must be separately scoped and must not change playback status into a live stream
 claim.
+Phase 14G adds that separate scope for confirmed metadata motion payloads:
+webhook motion events can create pending MotionEvidence only through the
+explicit source-scoped route. This still does not add live playback, preview
+URLs, media references, or stream capture behavior.
 Phase 14D documents this as a provider boundary in
 [generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md):
 webhook ingest is not a playback provider by default.
@@ -175,6 +179,8 @@ activity.
   not expose active ingest or live playback.
 - Webhook validation/dry-run does not change playback status or attach preview
   media.
+- Webhook motion evidence creation does not change playback status, attach
+  preview media, or claim live playback.
 - The route does not create evidence, review truth, exports, analytics truth,
   media files, model artifacts, or adapter runtime calls.
 

@@ -165,6 +165,8 @@ from mockingbird.api.schemas import (
     StreamPlaybackStatusValue,
     TaxonomyLabel,
     Visit,
+    WebhookMotionEvidenceRequest,
+    WebhookMotionEvidenceResponse,
     WebhookPayloadCandidate,
     WebhookPayloadValidationRequest,
     WebhookPayloadValidationResponse,
@@ -1350,12 +1352,12 @@ class ProductRepository:
             elif configuration.provider_key == "webhook_future":
                 status = SourceConnectionStatusValue.configured
                 message = (
-                    "Webhook metadata is configured for future signed ingest. "
-                    "No webhook ingest endpoint accepts inbound payloads yet."
+                    "Webhook metadata is configured for explicit motion-evidence ingest. "
+                    "General webhook media/event ingest remains future work."
                 )
                 setup_hint = (
-                    "Future webhook ingest endpoint implementation is required before "
-                    "MockingBird can receive payloads."
+                    "Confirmed motion metadata can create pending MotionEvidence only; "
+                    "media upload/download and reviewed truth remain future work."
                 )
             elif definition is not None and definition.status == SourceProviderDefinitionStatus.future_adapter:
                 status = SourceConnectionStatusValue.configured
@@ -1636,6 +1638,195 @@ class ProductRepository:
             warnings=warnings,
         )
 
+    def create_webhook_motion_evidence(
+        self,
+        source_id: str,
+        payload: WebhookMotionEvidenceRequest,
+    ) -> WebhookMotionEvidenceResponse | None:
+        if not payload.confirm:
+            raise ValueError("webhook_motion_evidence_confirmation_required")
+        duplicate_policy = _clean_optional_text(payload.duplicate_policy) or "skip_existing"
+        if duplicate_policy not in {"skip_existing", "allow_duplicate"}:
+            raise ValueError("unsupported_duplicate_policy")
+
+        validation = self.validate_webhook_payload(
+            source_id,
+            WebhookPayloadValidationRequest(
+                payload=payload.payload,
+                shared_secret_marker=payload.shared_secret_marker,
+                default_stream_id=payload.default_stream_id,
+                default_zone_id=payload.default_zone_id,
+            ),
+        )
+        if validation is None:
+            return None
+
+        candidate = validation.candidate
+        warnings = list(validation.warnings)
+
+        if not validation.valid or candidate is None:
+            return _webhook_motion_evidence_response(
+                source_id=source_id,
+                status="rejected",
+                candidate_type=candidate.candidate_type if candidate else None,
+                stream_id=candidate.stream_id if candidate else None,
+                zone_id=candidate.zone_id if candidate else None,
+                external_event_id=candidate.external_event_id if candidate else None,
+                message=validation.skipped_reason
+                or "Webhook payload did not validate for MotionEvidence creation.",
+                warnings=warnings,
+            )
+
+        if candidate.candidate_type != "motion_event":
+            return _webhook_motion_evidence_response(
+                source_id=source_id,
+                status="rejected",
+                candidate_type=candidate.candidate_type,
+                stream_id=candidate.stream_id,
+                zone_id=candidate.zone_id,
+                external_event_id=candidate.external_event_id,
+                message="Only motion webhook payloads can create MotionEvidence in this phase.",
+                warnings=warnings,
+            )
+
+        if candidate.stream_id is None:
+            return _webhook_motion_evidence_response(
+                source_id=source_id,
+                status="rejected",
+                candidate_type=candidate.candidate_type,
+                stream_id=None,
+                zone_id=candidate.zone_id,
+                external_event_id=candidate.external_event_id,
+                message="missing_stream_context",
+                warnings=warnings
+                + ["Choose a Stream or configure default_stream_id before creating MotionEvidence."],
+            )
+        if candidate.zone_id is None:
+            return _webhook_motion_evidence_response(
+                source_id=source_id,
+                status="rejected",
+                candidate_type=candidate.candidate_type,
+                stream_id=candidate.stream_id,
+                zone_id=None,
+                external_event_id=candidate.external_event_id,
+                message="missing_zone_context",
+                warnings=warnings
+                + ["Choose a Zone or configure default_zone_id before creating MotionEvidence."],
+            )
+
+        payload_data = dict(payload.payload)
+        external_event_id = candidate.external_event_id
+        if external_event_id is None:
+            warnings.append(
+                "external_event_id is missing; duplicate detection is limited for this payload."
+            )
+
+        with self.session_factory() as session:
+            with session.begin():
+                stream_model = session.get(StreamModel, candidate.stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+                if stream_model.source_id != source_id:
+                    raise ValueError("stream_source_mismatch")
+
+                zone_model = session.get(ZoneModel, candidate.zone_id)
+                if zone_model is None:
+                    raise ValueError("missing_zone")
+                if zone_model.stream_id != stream_model.id:
+                    raise ValueError("zone_stream_mismatch")
+                if zone_model.zone_type in {
+                    ZoneType.privacy.value,
+                    ZoneType.ignore.value,
+                }:
+                    raise ValueError("motion_evidence_creation_zone_blocked")
+
+                existing_evidence = (
+                    _existing_webhook_motion_evidence(
+                        session=session,
+                        source_id=source_id,
+                        external_event_id=external_event_id,
+                    )
+                    if external_event_id is not None
+                    else None
+                )
+                if existing_evidence is not None and duplicate_policy == "skip_existing":
+                    warnings.append(
+                        "Existing webhook MotionEvidence already uses this external_event_id; "
+                        "no duplicate pending evidence was created."
+                    )
+                    return _webhook_motion_evidence_response(
+                        source_id=source_id,
+                        status="skipped",
+                        motion_evidence_id=existing_evidence.id,
+                        candidate_type=candidate.candidate_type,
+                        stream_id=stream_model.id,
+                        zone_id=zone_model.id,
+                        external_event_id=external_event_id,
+                        duplicate_skipped=True,
+                        existing_motion_evidence_id=existing_evidence.id,
+                        message="Existing webhook MotionEvidence matched this external_event_id.",
+                        warnings=warnings,
+                    )
+                if existing_evidence is not None:
+                    warnings.append(
+                        "Existing webhook MotionEvidence already uses this external_event_id; "
+                        "duplicate creation was allowed by policy."
+                    )
+
+                scoring_config = _webhook_motion_evidence_scoring_config(
+                    source_id=source_id,
+                    stream_id=stream_model.id,
+                    zone_id=zone_model.id,
+                    external_event_id=external_event_id,
+                    external_label=candidate.external_label,
+                    external_confidence=candidate.external_confidence,
+                    timestamp=_webhook_payload_string(payload_data.get("timestamp")),
+                )
+                note_parts = _webhook_motion_evidence_notes(
+                    external_event_id=external_event_id,
+                    external_label=candidate.external_label,
+                    external_confidence=candidate.external_confidence,
+                    timestamp=_webhook_payload_string(payload_data.get("timestamp")),
+                    note=_clean_optional_text(payload.note),
+                    reason=_clean_optional_text(payload.reason),
+                )
+                evidence_model = MotionEvidenceModel(
+                    id=self._next_id(session, MotionEvidenceModel, "motion-evidence"),
+                    source_id=source_id,
+                    stream_id=stream_model.id,
+                    zone_id=zone_model.id,
+                    start_frame_index=None,
+                    end_frame_index=None,
+                    best_frame_index=None,
+                    start_time=_webhook_payload_string(payload_data.get("timestamp")),
+                    end_time=None,
+                    best_frame_time=None,
+                    peak_changed_ratio=0.0,
+                    triggered_frame_count=1,
+                    scoring_config_json=json.dumps(scoring_config, sort_keys=True),
+                    snapshot_media_asset_id=None,
+                    status=MotionEvidenceStatus.pending.value,
+                    promoted_event_id=None,
+                    promoted_visit_id=None,
+                    created_at=datetime.now(UTC),
+                    notes="\n".join(note_parts),
+                )
+                session.add(evidence_model)
+                session.flush()
+
+                return _webhook_motion_evidence_response(
+                    source_id=source_id,
+                    status="created",
+                    motion_evidence_id=evidence_model.id,
+                    candidate_type=candidate.candidate_type,
+                    stream_id=stream_model.id,
+                    zone_id=zone_model.id,
+                    external_event_id=external_event_id,
+                    message="Created pending MotionEvidence from webhook metadata.",
+                    warnings=warnings,
+                    creates_motion_evidence=True,
+                )
+
     def list_streams(self) -> list[Stream]:
         with self.session_factory() as session:
             streams = session.scalars(select(StreamModel).order_by(StreamModel.id)).all()
@@ -1721,12 +1912,12 @@ class ProductRepository:
                     )
                 else:
                     message = (
-                        "Webhook metadata is configured for future ingest context. "
+                        "Webhook metadata is configured for explicit motion-evidence context. "
                         "This stream does not provide live playback."
                     )
                     setup_hint = (
-                        "Webhook endpoint implementation is future work; no payloads "
-                        "are accepted yet."
+                        "Webhook motion metadata can create pending evidence through the "
+                        "explicit endpoint, but playback and media ingest remain future work."
                     )
                 return StreamPlaybackStatus(
                     stream_id=stream.id,
@@ -6850,6 +7041,137 @@ def _webhook_payload_validation_response(
     )
 
 
+def _webhook_motion_evidence_response(
+    *,
+    source_id: str,
+    status: str,
+    motion_evidence_id: str | None = None,
+    candidate_type: str | None = None,
+    stream_id: str | None = None,
+    zone_id: str | None = None,
+    external_event_id: str | None = None,
+    duplicate_skipped: bool = False,
+    existing_motion_evidence_id: str | None = None,
+    creates_motion_evidence: bool = False,
+    message: str,
+    warnings: list[str],
+) -> WebhookMotionEvidenceResponse:
+    return WebhookMotionEvidenceResponse(
+        source_id=source_id,
+        provider_key="webhook_future",
+        motion_evidence_id=motion_evidence_id,
+        status=status,
+        candidate_type=candidate_type,
+        stream_id=stream_id,
+        zone_id=zone_id,
+        external_event_id=external_event_id,
+        duplicate_skipped=duplicate_skipped,
+        existing_motion_evidence_id=existing_motion_evidence_id,
+        creates_motion_evidence=creates_motion_evidence,
+        creates_media_asset=False,
+        creates_event=False,
+        creates_visit=False,
+        creates_review_label=False,
+        creates_truth=False,
+        message=message,
+        warnings=warnings,
+    )
+
+
+def _existing_webhook_motion_evidence(
+    *,
+    session: Session,
+    source_id: str,
+    external_event_id: str,
+) -> MotionEvidenceModel | None:
+    evidence_models = session.scalars(
+        select(MotionEvidenceModel)
+        .where(
+            MotionEvidenceModel.source_id == source_id,
+            MotionEvidenceModel.status.in_(
+                [
+                    MotionEvidenceStatus.pending.value,
+                    MotionEvidenceStatus.promoted.value,
+                    MotionEvidenceStatus.ignored.value,
+                ]
+            ),
+        )
+        .order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
+    ).all()
+    for evidence in evidence_models:
+        try:
+            scoring_config = json.loads(evidence.scoring_config_json)
+        except json.JSONDecodeError:
+            continue
+        if (
+            scoring_config.get("provider_key") == "webhook_future"
+            and scoring_config.get("candidate_type") == "motion_event"
+            and scoring_config.get("external_event_id") == external_event_id
+        ):
+            return evidence
+    return None
+
+
+def _webhook_motion_evidence_scoring_config(
+    *,
+    source_id: str,
+    stream_id: str,
+    zone_id: str,
+    external_event_id: str | None,
+    external_label: str | None,
+    external_confidence: float | None,
+    timestamp: str | None,
+) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "source": "webhook_metadata_motion_event",
+        "provider_key": "webhook_future",
+        "candidate_type": "motion_event",
+        "source_id": source_id,
+        "stream_id": stream_id,
+        "zone_id": zone_id,
+        "motion_score_available": False,
+        "requires_review": True,
+    }
+    if external_event_id is not None:
+        config["external_event_id"] = external_event_id
+    if external_label is not None:
+        config["external_label_untrusted"] = external_label
+    if external_confidence is not None:
+        config["external_confidence_untrusted"] = external_confidence
+    if timestamp is not None:
+        config["external_timestamp"] = timestamp
+    return config
+
+
+def _webhook_motion_evidence_notes(
+    *,
+    external_event_id: str | None,
+    external_label: str | None,
+    external_confidence: float | None,
+    timestamp: str | None,
+    note: str | None,
+    reason: str | None,
+) -> list[str]:
+    note_parts = [
+        "Created from webhook metadata motion event by explicit confirmed action.",
+        "No MediaAssets, Events, Visits, ReviewLabels, or truth were created.",
+        "Provider: webhook_future.",
+    ]
+    if external_event_id is not None:
+        note_parts.append(f"External event ID: {external_event_id}")
+    if external_label is not None:
+        note_parts.append(f"External label (untrusted): {external_label}")
+    if external_confidence is not None:
+        note_parts.append(f"External confidence (untrusted): {external_confidence}")
+    if timestamp is not None:
+        note_parts.append(f"External timestamp: {timestamp}")
+    if reason is not None:
+        note_parts.append(f"Reason: {reason}")
+    if note is not None:
+        note_parts.append(f"Note: {note}")
+    return note_parts
+
+
 def _webhook_candidate_from_summary(
     *,
     source_id: str,
@@ -7012,12 +7334,12 @@ def _source_provider_configuration_from_config(
         )
     elif definition.provider_key == "webhook_future":
         message = (
-            "Webhook setup metadata is saved. MockingBird does not accept inbound "
-            "webhook payloads yet."
+            "Webhook setup metadata is saved. Explicit confirmed motion payloads "
+            "can become pending MotionEvidence only."
         )
         setup_hint = (
-            "Future webhook ingest endpoint implementation is required before payloads "
-            "can be received."
+            "Use webhook motion evidence only for confirmed metadata events; media "
+            "upload/download and reviewed truth remain future work."
         )
     elif definition.status == SourceProviderDefinitionStatus.future_adapter:
         message = (
@@ -7131,12 +7453,12 @@ def _source_setup_review_from_contracts(
     elif configuration.provider_key == "webhook_future":
         readiness_level = "future_adapter_required"
         summary = (
-            "Webhook metadata is present, but MockingBird does not ingest webhook "
-            "payloads yet."
+            "Webhook metadata is present. Explicit confirmed motion payloads can "
+            "create pending MotionEvidence only."
         )
         next_step = (
-            "Future webhook ingest endpoint implementation required before receiving "
-            "payloads."
+            "Review pending MotionEvidence after explicit webhook metadata ingest; "
+            "media upload/download and reviewed truth remain future work."
         )
     elif connection.provider_kind == SourceProviderKind.future_adapter or (
         definition is not None
@@ -7157,8 +7479,11 @@ def _source_setup_review_from_contracts(
         warnings.append("Folder import creates MediaAssets only; evidence handoff is future.")
         warnings.append("Live playback is not expected for this provider.")
     elif configuration.provider_key == "webhook_future":
-        warnings.append("No webhook ingest endpoint exists yet; no payloads are accepted as records.")
-        warnings.append("Webhook metadata creates no media, evidence, Events/Visits, or truth.")
+        warnings.append(
+            "Webhook motion metadata creates pending MotionEvidence only through "
+            "the explicit confirmed endpoint."
+        )
+        warnings.append("Webhook metadata creates no media, Events/Visits, labels, or truth.")
         warnings.append("Live playback is not expected for this provider.")
     elif not supports_live_playback and configuration.provider_key != "manual_media":
         warnings.append("Live playback is not implemented for this provider yet.")
@@ -7206,12 +7531,11 @@ def _source_setup_review_from_contracts(
         if configuration.provider_key == "folder_import_future"
         else SourceSetupReviewStep(
             key="webhook_future_ingest",
-            label="Webhook ingest",
-            status="future",
+            label="Webhook motion evidence",
+            status="available" if not configuration.missing_fields else "warning",
             message=(
-                "Configuration stores metadata only; no webhook ingest endpoint exists, "
-                "no payloads are accepted as records, and no media, evidence, or truth "
-                "is created."
+                "Explicit confirmed motion payloads can create pending MotionEvidence "
+                "only; media, Events/Visits, labels, and truth are separate."
             ),
         )
         if configuration.provider_key == "webhook_future"

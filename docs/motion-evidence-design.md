@@ -82,6 +82,10 @@ must not become reviewed truth.
 Phase 14F validates webhook motion payloads as candidates only. The dry-run
 endpoint can report a future `motion_event` mapping and privacy/ignore-zone
 skips, but it creates no MotionEvidence, Event, Visit, label, media, or truth.
+Phase 14G implements the next explicit boundary: confirmed metadata-only
+webhook motion payloads can create pending MotionEvidence with safe provenance.
+They still create no MediaAsset, Event, Visit, ReviewLabel, SpeciesSuggestion,
+DetectionProposal, export, model output, or truth.
 
 ## Status Lifecycle
 

@@ -324,6 +324,38 @@ class WebhookPayloadValidationResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class WebhookMotionEvidenceRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+    shared_secret_marker: str | None = None
+    default_stream_id: str | None = None
+    default_zone_id: str | None = None
+    note: str | None = None
+    reason: str | None = None
+    duplicate_policy: str = "skip_existing"
+    confirm: bool = False
+
+
+class WebhookMotionEvidenceResponse(BaseModel):
+    source_id: str
+    provider_key: str
+    motion_evidence_id: str | None = None
+    status: str
+    candidate_type: str | None = None
+    stream_id: str | None = None
+    zone_id: str | None = None
+    external_event_id: str | None = None
+    duplicate_skipped: bool
+    existing_motion_evidence_id: str | None = None
+    creates_motion_evidence: bool
+    creates_media_asset: bool = False
+    creates_event: bool = False
+    creates_visit: bool = False
+    creates_review_label: bool = False
+    creates_truth: bool = False
+    message: str
+    warnings: list[str] = Field(default_factory=list)
+
+
 class Stream(BaseModel):
     id: str
     source_id: str

@@ -101,6 +101,9 @@ exports, training media, or generated workspace files.
 - Phase 14F adds webhook validation/dry-run tests for generic payloads, context
   matching, privacy/ignore skips, and no record creation. It is not provider
   smoke coverage for ingest yet because no ingest behavior exists.
+- Phase 14G adds backend tests for confirmed webhook metadata motion payloads
+  creating pending MotionEvidence only. Broader provider smoke coverage can
+  follow once this path is folded into the full Source/Stream review loop.
 - Add live playback smoke coverage only after a separately designed playback
   lifecycle exists.
 - Add automation smoke coverage only after worker, privacy, retention, and truth

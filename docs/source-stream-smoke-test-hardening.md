@@ -47,6 +47,9 @@ Phase 14F adds a webhook payload validation/dry-run endpoint with its own
 backend tests. It validates generic payload shape and Source/Stream/Zone context
 without creating media, evidence, Events/Visits, labels, or truth, so it is
 still not part of the provider smoke path.
+Phase 14G adds a confirmed metadata motion route that can create pending
+MotionEvidence only. It has focused backend tests, but it is not folded into the
+external_url/folder smoke paths yet.
 
 ## Product Flow Covered
 
@@ -139,5 +142,6 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - Phase 14D: generic webhook ingest provider boundary design.
 - Phase 14E: generic webhook provider configuration/status contract, no ingest.
 - Phase 14F: webhook payload validation/dry-run endpoint, no records.
+- Phase 14G: webhook metadata motion payload to pending MotionEvidence only.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.
