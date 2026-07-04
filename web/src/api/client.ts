@@ -22,6 +22,7 @@ import type {
   DetectionRunCreate,
   Event,
   EventDetail,
+  ExternalUrlWorkerDryRunResponse,
   ExternalUrlPreviewRequest,
   ExternalUrlPreviewResponse,
   ExternalUrlPreviewSaveRequest,
@@ -200,6 +201,8 @@ export const apiClient = {
   getSourceProviderDefinitions: () =>
     request<SourceProviderDefinition[]>("/api/source-provider-definitions"),
   getWorkerStatus: () => request<WorkerStatusResponse>("/api/workers/status"),
+  getExternalUrlWorkerDryRunPlan: () =>
+    request<ExternalUrlWorkerDryRunResponse>("/api/workers/external-url-preview/dry-run"),
   getSourceConnectionStatus: (sourceId: string) =>
     request<SourceConnectionStatus>(`/api/sources/${sourceId}/connection`),
   getSourceSetupReview: (sourceId: string) =>

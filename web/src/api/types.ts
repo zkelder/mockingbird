@@ -252,6 +252,45 @@ export interface WorkerStatusResponse {
   read_only: boolean;
 }
 
+export interface ExternalUrlWorkerDryRunItem {
+  source_id: string;
+  source_name: string;
+  provider_key: string;
+  worker_key: string;
+  eligible: boolean;
+  state: string;
+  would_fetch: boolean;
+  would_create_media_asset: boolean;
+  would_create_motion_evidence: boolean;
+  would_create_event: boolean;
+  would_create_visit: boolean;
+  would_create_review_label: boolean;
+  would_create_truth: boolean;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface ExternalUrlWorkerDryRunSummary {
+  total_sources_considered: number;
+  eligible_sources: number;
+  ineligible_sources: number;
+  would_fetch_count: number;
+  would_create_media_asset_count: number;
+  would_create_motion_evidence_count: number;
+  would_create_truth_count: number;
+  warnings: string[];
+}
+
+export interface ExternalUrlWorkerDryRunResponse {
+  worker_key: string;
+  provider_key: string;
+  read_only: boolean;
+  dry_run: boolean;
+  generated_at: string;
+  items: ExternalUrlWorkerDryRunItem[];
+  summary: ExternalUrlWorkerDryRunSummary;
+}
+
 export interface Stream {
   id: string;
   source_id: string;

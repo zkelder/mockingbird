@@ -800,8 +800,8 @@ Current work:
 - Phase 16C: worker status UI, read-only/no workers.
 - Phase 16D: disabled no-op worker registry/status contract.
 - Phase 16E: external_url worker dry-run plan API.
-- Next likely phase: Phase 16F Worker Status UI link to dry-run plan, or Phase
-  16G folder scan dry-run plan API.
+- Phase 16F: Worker Status UI dry-run plan integration.
+- Next likely phase: Phase 16G folder import worker dry-run plan API.
 
 Design note: [worker-lifecycle-boundary-design.md](worker-lifecycle-boundary-design.md).
 
@@ -847,3 +847,7 @@ Validation:
   false. It adds no worker runtime, scheduler, polling, background job, HTTP
   request, provider execution, media creation, evidence creation, Event/Visit,
   ReviewLabel/truth, dependency, or generated artifact.
+- Phase 16F exposes the external_url dry-run plan in Worker Status UI. It adds
+  no worker runtime, scheduler, polling, background job, provider execution,
+  fetch, media creation, evidence creation, Event/Visit, ReviewLabel/truth,
+  dependency, or generated artifact.

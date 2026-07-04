@@ -528,7 +528,7 @@ export function DashboardPage({
         </div>
         <div className="notice-panel compact-notice">
           <strong>Worker Status</strong>
-          <span>Future automation is disabled/read-only.</span>
+          <span>Future automation is disabled/read-only. External URL dry-run plan available.</span>
           <button className="secondary-action" onClick={onOpenWorkerStatus} type="button">
             Worker Status
           </button>

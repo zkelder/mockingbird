@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
-import type { WorkerStatusItem, WorkerStatusResponse } from "../api/types";
+import type {
+  ExternalUrlWorkerDryRunItem,
+  ExternalUrlWorkerDryRunResponse,
+  WorkerStatusItem,
+  WorkerStatusResponse,
+} from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
@@ -22,6 +27,25 @@ const createFlagLabels: Array<[WorkerCreateFlagKey, string]> = [
   ["can_create_visits", "Visits"],
   ["can_create_review_labels", "ReviewLabels"],
   ["can_create_truth", "Truth"],
+];
+
+type DryRunFlagKey =
+  | "would_fetch"
+  | "would_create_media_asset"
+  | "would_create_motion_evidence"
+  | "would_create_event"
+  | "would_create_visit"
+  | "would_create_review_label"
+  | "would_create_truth";
+
+const dryRunFlagLabels: Array<[DryRunFlagKey, string]> = [
+  ["would_fetch", "Fetch"],
+  ["would_create_media_asset", "MediaAsset"],
+  ["would_create_motion_evidence", "MotionEvidence"],
+  ["would_create_event", "Event"],
+  ["would_create_visit", "Visit"],
+  ["would_create_review_label", "ReviewLabel"],
+  ["would_create_truth", "Truth"],
 ];
 
 function yesNo(value: boolean): string {
@@ -109,10 +133,174 @@ function WorkerStatusCard({ worker }: { worker: WorkerStatusItem }) {
   );
 }
 
+function WorkerDryRunPlanItem({ item }: { item: ExternalUrlWorkerDryRunItem }) {
+  return (
+    <article className="worker-dry-run-card">
+      <div className="section-heading">
+        <div>
+          <h3>{item.source_name}</h3>
+          <span className="meta-text">{item.source_id}</span>
+        </div>
+        <StatusPill label={item.eligible ? "Eligible" : "Ineligible"} tone={item.eligible ? "good" : "quiet"} />
+      </div>
+
+      <div className="worker-status-grid">
+        <div>
+          <span>State</span>
+          <strong>{formatLabel(item.state)}</strong>
+        </div>
+        <div>
+          <span>Provider</span>
+          <strong>{item.provider_key}</strong>
+        </div>
+        <div>
+          <span>Worker</span>
+          <strong>{item.worker_key}</strong>
+        </div>
+        <div>
+          <span>Eligible</span>
+          <strong>{yesNo(item.eligible)}</strong>
+        </div>
+      </div>
+
+      <div className="worker-create-flag-grid">
+        {dryRunFlagLabels.map(([key, label]) => (
+          <div key={key}>
+            <span>{label}</span>
+            <strong>{yesNo(Boolean(item[key]))}</strong>
+          </div>
+        ))}
+      </div>
+
+      <WorkerWarnings warnings={item.reasons} />
+      <WorkerWarnings warnings={item.warnings} />
+    </article>
+  );
+}
+
+function ExternalUrlDryRunPlanSection({
+  dryRunPlan,
+  error,
+  isLoading,
+  onRetry,
+}: {
+  dryRunPlan: ExternalUrlWorkerDryRunResponse | null;
+  error: string | null;
+  isLoading: boolean;
+  onRetry: () => void;
+}) {
+  if (isLoading) {
+    return <section className="panel worker-status-summary">Loading external URL dry-run plan...</section>;
+  }
+
+  if (error) {
+    return (
+      <section className="error-panel">
+        <strong>External URL dry-run plan is unavailable.</strong>
+        <span>{error}</span>
+        <button className="secondary-action" onClick={onRetry} type="button">
+          Retry dry-run plan
+        </button>
+      </section>
+    );
+  }
+
+  if (!dryRunPlan) {
+    return <section className="panel worker-status-summary">External URL dry-run plan is unavailable.</section>;
+  }
+
+  return (
+    <section className="panel worker-dry-run-panel">
+      <div className="section-heading">
+        <div>
+          <h2>External URL dry-run plan</h2>
+          <span className="meta-text">Generated {formatDateTime(dryRunPlan.generated_at)}</span>
+        </div>
+        <StatusPill
+          label={dryRunPlan.read_only && dryRunPlan.dry_run ? "Dry run" : "Check status"}
+          tone="good"
+        />
+      </div>
+
+      <div className="notice-panel compact-notice worker-truth-note">
+        <strong>Dry run only</strong>
+        <span>No fetches or records are created. Future scheduler is disabled.</span>
+      </div>
+
+      <div className="worker-status-grid">
+        <div>
+          <span>Worker</span>
+          <strong>{dryRunPlan.worker_key}</strong>
+        </div>
+        <div>
+          <span>Provider</span>
+          <strong>{dryRunPlan.provider_key}</strong>
+        </div>
+        <div>
+          <span>Read-only</span>
+          <strong>{yesNo(dryRunPlan.read_only)}</strong>
+        </div>
+        <div>
+          <span>Dry run</span>
+          <strong>{yesNo(dryRunPlan.dry_run)}</strong>
+        </div>
+      </div>
+
+      <section className="metric-grid">
+        <MetricCard
+          label="Sources"
+          value={dryRunPlan.summary.total_sources_considered}
+          detail="external_url"
+        />
+        <MetricCard label="Eligible" value={dryRunPlan.summary.eligible_sources} detail="configured" />
+        <MetricCard label="Ineligible" value={dryRunPlan.summary.ineligible_sources} detail="needs config" />
+        <MetricCard label="Would fetch" value={dryRunPlan.summary.would_fetch_count} detail="must stay zero" />
+      </section>
+
+      <section className="metric-grid">
+        <MetricCard
+          label="MediaAssets"
+          value={dryRunPlan.summary.would_create_media_asset_count}
+          detail="would create"
+        />
+        <MetricCard
+          label="MotionEvidence"
+          value={dryRunPlan.summary.would_create_motion_evidence_count}
+          detail="would create"
+        />
+        <MetricCard
+          label="Truth"
+          value={dryRunPlan.summary.would_create_truth_count}
+          detail="would create"
+        />
+        <MetricCard label="Read-only" value={yesNo(dryRunPlan.read_only)} detail="plan route" />
+      </section>
+
+      <WorkerWarnings warnings={dryRunPlan.summary.warnings} />
+
+      <div className="worker-dry-run-list">
+        {dryRunPlan.items.length > 0 ? (
+          dryRunPlan.items.map((item) => (
+            <WorkerDryRunPlanItem key={`${item.worker_key}:${item.source_id}`} item={item} />
+          ))
+        ) : (
+          <EmptyState
+            title="No external URL sources"
+            description="The dry-run plan considers external_url Sources only."
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function WorkerStatusPage() {
   const [status, setStatus] = useState<WorkerStatusResponse | null>(null);
+  const [dryRunPlan, setDryRunPlan] = useState<ExternalUrlWorkerDryRunResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDryRunLoading, setIsDryRunLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dryRunError, setDryRunError] = useState<string | null>(null);
 
   async function loadStatus(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
@@ -131,8 +319,26 @@ export function WorkerStatusPage() {
     }
   }
 
+  async function loadDryRunPlan(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
+      setIsDryRunLoading(true);
+    }
+    setDryRunError(null);
+    try {
+      setDryRunPlan(await apiClient.getExternalUrlWorkerDryRunPlan());
+    } catch (caught) {
+      setDryRunError(caught instanceof Error ? caught.message : "Could not load dry-run plan.");
+    } finally {
+      if (showLoading) {
+        setIsDryRunLoading(false);
+      }
+    }
+  }
+
   useEffect(() => {
     void loadStatus();
+    void loadDryRunPlan();
   }, []);
 
   const allCreateFlagsFalse = useMemo(() => {
@@ -173,7 +379,10 @@ export function WorkerStatusPage() {
         actions={
           <button
             className="secondary-action"
-            onClick={() => void loadStatus({ showLoading: false })}
+            onClick={() => {
+              void loadStatus({ showLoading: false });
+              void loadDryRunPlan({ showLoading: false });
+            }}
             type="button"
           >
             Refresh status
@@ -218,6 +427,13 @@ export function WorkerStatusPage() {
         </div>
         <WorkerWarnings warnings={status.summary.warnings} />
       </section>
+
+      <ExternalUrlDryRunPlanSection
+        dryRunPlan={dryRunPlan}
+        error={dryRunError}
+        isLoading={isDryRunLoading}
+        onRetry={() => void loadDryRunPlan()}
+      />
 
       <section className="worker-status-list">
         {status.workers.length > 0 ? (

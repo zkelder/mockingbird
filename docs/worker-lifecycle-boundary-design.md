@@ -43,6 +43,10 @@ local Source/provider configuration and reports what a future scheduler would
 consider, but it does not run a worker, fetch URLs, create records, or create
 truth.
 
+Phase 16F exposes that external_url dry-run plan in the Worker Status UI. The UI
+can refresh/read the plan, but it cannot start workers, fetch provider media,
+create records, or create truth.
+
 ## Automation Candidates
 
 Future automation candidates include:
@@ -175,7 +179,7 @@ Future worker implementation must test:
 - Phase 16C: worker status UI, read-only/no workers.
 - Phase 16D: disabled no-op worker registry/status contract.
 - Phase 16E: external_url worker dry-run plan API, no runtime/fetch/records.
-- Phase 16F: Worker Status UI link to dry-run plan.
+- Phase 16F: Worker Status UI dry-run plan integration.
 - Phase 16G: folder scan dry-run plan API.
 - Phase 17A: live/source automation decision, if the product should choose a
   broader automation direction before active workers.
@@ -190,4 +194,5 @@ They do not add workers, schedulers, polling, watchers, queues, provider
 behavior, media writes, evidence creation, Event/Visit creation, labels, truth
 creation, dependencies, or generated artifacts. Phase 16C adds frontend status
 visibility only. Phase 16D adds disabled registry metadata only. Phase 16E adds
-external_url dry-run planning only.
+external_url dry-run planning only. Phase 16F adds read-only UI visibility for
+that plan.

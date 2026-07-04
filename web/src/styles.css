@@ -3576,19 +3576,24 @@ button {
 
 .worker-status-summary,
 .worker-status-list,
+.worker-dry-run-panel,
+.worker-dry-run-list,
+.worker-dry-run-card,
 .worker-status-card {
   display: grid;
   gap: 12px;
 }
 
-.worker-status-card {
+.worker-status-card,
+.worker-dry-run-card {
   border: 1px solid #dce3d8;
   border-radius: 8px;
   padding: 14px;
   background: #ffffff;
 }
 
-.worker-status-card p {
+.worker-status-card p,
+.worker-dry-run-card p {
   margin: 0;
   color: #4f5f55;
   line-height: 1.45;
