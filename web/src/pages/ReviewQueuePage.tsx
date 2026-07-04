@@ -60,12 +60,27 @@ interface ReviewEvidenceProposal {
   relation: "linked" | "same_media";
 }
 
-interface LastCorrectionSummary {
-  count: number;
-  label: string;
-  remaining: number;
-  mode: "single" | "bulk";
-}
+type LastCorrectionSummary =
+  | {
+      mode: "single";
+      targetType: string;
+      targetId: string;
+      label: string;
+      reviewLabelId: string;
+      remaining: number;
+    }
+  | {
+      mode: "bulk";
+      targetType: ReviewQueueBulkCorrectionTargetType;
+      requestedCount: number;
+      succeededCount: number;
+      skippedCount: number;
+      failedCount: number;
+      label: string;
+      reviewLabelIds: string[];
+      correctedTargetIds: string[];
+      remaining: number;
+    };
 
 function reviewQueueTargetType(item: ReviewQueueItem): ReviewQueueBulkCorrectionTargetType {
   return item.visit_id ? "visit" : "event";
@@ -290,6 +305,16 @@ function reviewEvidenceProposals(
 
 function formatConfidence(value: number): string {
   return `${Math.round(value * 100)}%`;
+}
+
+function compactIdList(ids: string[], emptyLabel: string): string {
+  if (ids.length === 0) {
+    return emptyLabel;
+  }
+  if (ids.length <= 3) {
+    return ids.join(", ");
+  }
+  return `${ids.slice(0, 3).join(", ")} +${ids.length - 3} more`;
 }
 
 function reviewLabelsForQueueItem(
@@ -730,10 +755,20 @@ export function ReviewQueuePage({
       if (result.succeeded_count > 0) {
         setSelectedTargetIds([]);
         setLastCorrectionSummary({
-          count: result.succeeded_count,
+          correctedTargetIds: result.results
+            .filter((item) => item.status === "succeeded")
+            .map((item) => item.target_id),
+          failedCount: result.failed_count,
           label: trimmedLabel,
           mode: "bulk",
+          requestedCount: result.requested_count,
+          reviewLabelIds: result.results
+            .map((item) => item.created_review_label_id)
+            .filter((id): id is string => Boolean(id)),
           remaining: refreshedQueue.filter(isBulkCorrectionEligible).length,
+          skippedCount: result.skipped_count,
+          succeededCount: result.succeeded_count,
+          targetType: selectedTargetType,
         });
       }
       await refreshReviewLabels();
@@ -764,10 +799,12 @@ export function ReviewQueuePage({
       const result = await onCreateCorrection(item, draft.label.trim(), draft.notes.trim());
       await refreshReviewLabels();
       setLastCorrectionSummary({
-        count: 1,
         label: result.review_label.label,
         mode: "single",
         remaining: result.review_queue_count,
+        reviewLabelId: result.review_label.id,
+        targetId: result.review_label.target_id,
+        targetType: result.review_label.target_type,
       });
       setMessage(
         `Correction saved as local dataset truth. ${result.review_queue_count} item${
@@ -795,31 +832,14 @@ export function ReviewQueuePage({
       />
       {message ? <div className="notice-panel">{message}</div> : null}
       {lastCorrectionSummary ? (
-        <section className="notice-panel review-next-step-panel">
-          <div>
-            <strong>
-              {lastCorrectionSummary.mode === "bulk" ? "Bulk correction saved" : "Correction saved"}
-            </strong>
-            <span>
-              {lastCorrectionSummary.count} correction
-              {lastCorrectionSummary.count === 1 ? "" : "s"} saved as ReviewLabel truth for{" "}
-              {displayTaxonomyLabel(lastCorrectionSummary.label, taxonomyLabels)}.{" "}
-              {lastCorrectionSummary.remaining} item
-              {lastCorrectionSummary.remaining === 1 ? "" : "s"} still need review.
-            </span>
-          </div>
-          <div className="detail-actions">
-            <button className="secondary-action" onClick={onOpenClassifierReadiness} type="button">
-              Classifier Readiness
-            </button>
-            <button className="secondary-action" onClick={onOpenExports} type="button">
-              Dataset Exports
-            </button>
-            <button className="secondary-action" onClick={onOpenAnalytics} type="button">
-              Analytics
-            </button>
-          </div>
-        </section>
+        <CorrectionSuccessPanel
+          onContinueReview={() => setLastCorrectionSummary(null)}
+          onOpenAnalytics={onOpenAnalytics}
+          onOpenClassifierReadiness={onOpenClassifierReadiness}
+          onOpenExports={onOpenExports}
+          summary={lastCorrectionSummary}
+          taxonomyLabels={taxonomyLabels}
+        />
       ) : null}
       {readinessHandoffLabel ? (
         <section className="notice-panel review-handoff-notice">
@@ -1258,6 +1278,115 @@ export function ReviewQueuePage({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function CorrectionSuccessPanel({
+  onContinueReview,
+  onOpenAnalytics,
+  onOpenClassifierReadiness,
+  onOpenExports,
+  summary,
+  taxonomyLabels,
+}: {
+  onContinueReview: () => void;
+  onOpenAnalytics: () => void;
+  onOpenClassifierReadiness: () => void;
+  onOpenExports: () => void;
+  summary: LastCorrectionSummary;
+  taxonomyLabels: TaxonomyLabel[];
+}) {
+  const isBulk = summary.mode === "bulk";
+  const appliedLabel = displayTaxonomyLabel(summary.label, taxonomyLabels);
+  const reviewLabelIds =
+    summary.mode === "single" ? [summary.reviewLabelId] : summary.reviewLabelIds;
+
+  return (
+    <section className="notice-panel correction-success-panel">
+      <div className="correction-success-header">
+        <div>
+          <EvidenceBadge label="ReviewLabel truth" tone="truth" />
+          <h2>{isBulk ? "Bulk correction saved" : "Correction saved"}</h2>
+          <p>
+            {isBulk
+              ? `${summary.succeededCount} ReviewLabel${
+                  summary.succeededCount === 1 ? "" : "s"
+                } created explicitly for ${appliedLabel}.`
+              : `ReviewLabel ${summary.reviewLabelId} created explicitly for ${appliedLabel}.`}
+          </p>
+        </div>
+        <StatusPill
+          label={`${summary.remaining} still need review`}
+          tone={summary.remaining > 0 ? "review" : "good"}
+        />
+      </div>
+      <div className="correction-success-grid">
+        {summary.mode === "single" ? (
+          <>
+            <div className="data-row">
+              <span>Corrected target</span>
+              <strong>{formatLabel(summary.targetType)}</strong>
+              <small>{summary.targetId}</small>
+            </div>
+            <div className="data-row">
+              <span>Applied label</span>
+              <strong>{appliedLabel}</strong>
+              <small>{summary.label}</small>
+            </div>
+            <div className="data-row">
+              <span>ReviewLabel ID</span>
+              <strong>{summary.reviewLabelId}</strong>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="data-row">
+              <span>Bulk target</span>
+              <strong>{formatLabel(summary.targetType)}</strong>
+              <small>{compactIdList(summary.correctedTargetIds, "No corrected targets")}</small>
+            </div>
+            <div className="data-row">
+              <span>Applied label</span>
+              <strong>{appliedLabel}</strong>
+              <small>{summary.label}</small>
+            </div>
+            <div className="data-row">
+              <span>Requested / saved / skipped / failed</span>
+              <strong>
+                {summary.requestedCount} / {summary.succeededCount} / {summary.skippedCount} /{" "}
+                {summary.failedCount}
+              </strong>
+            </div>
+            <div className="data-row">
+              <span>ReviewLabel IDs</span>
+              <strong>{compactIdList(reviewLabelIds, "No ReviewLabel IDs returned")}</strong>
+              <small>{reviewLabelIds.length} created</small>
+            </div>
+          </>
+        )}
+      </div>
+      <div className="correction-success-boundary">
+        <strong>This ReviewLabel is local dataset truth.</strong>
+        <span>
+          Detection proposals and media stay evidence. This correction now counts toward dataset
+          coverage, classifier readiness, exports, and analytics.
+        </span>
+      </div>
+      <div className="detail-actions correction-success-actions">
+        <button className="secondary-action" onClick={onOpenClassifierReadiness} type="button">
+          Classifier Readiness
+        </button>
+        <button className="secondary-action" onClick={onOpenExports} type="button">
+          Dataset Exports
+        </button>
+        <button className="secondary-action" onClick={onOpenAnalytics} type="button">
+          Analytics
+        </button>
+        <button className="secondary-action" onClick={onContinueReview} type="button">
+          Continue Review Queue
+        </button>
+      </div>
+    </section>
   );
 }
 

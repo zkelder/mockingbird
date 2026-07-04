@@ -224,7 +224,9 @@ truth.
 The browser uses the same boundary: start the API and frontend, open Import
 Media, import an image, click Create demo proposal, optionally create and
 convert it to Event/Visit context, then open Review Queue. This adds no model
-runtime and creates no truth on its own.
+runtime and creates no truth on its own. Submit an explicit Review Queue
+correction to create ReviewLabel truth, then check Classifier Readiness,
+Exports, or Analytics.
 
 ## Local detector spike
 

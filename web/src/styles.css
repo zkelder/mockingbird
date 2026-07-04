@@ -1281,14 +1281,56 @@ button {
   gap: 5px;
 }
 
-.review-next-step-panel {
+.correction-success-panel,
+.correction-success-header,
+.correction-success-boundary {
+  display: grid;
+  gap: 12px;
+}
+
+.correction-success-header {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
 }
 
-.review-next-step-panel div:first-child {
+.correction-success-header h2,
+.correction-success-header p {
+  margin: 6px 0 0;
+}
+
+.correction-success-header p,
+.correction-success-boundary span {
+  color: #4f5f55;
+}
+
+.correction-success-grid {
   display: grid;
-  gap: 5px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.correction-success-grid .data-row,
+.correction-success-grid strong,
+.correction-success-grid small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.correction-success-grid small {
+  color: #627168;
+  font-weight: 700;
+}
+
+.correction-success-boundary {
+  border: 1px solid #bfd8b8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f3fbef;
+  color: #24382d;
+}
+
+.correction-success-actions {
+  justify-content: flex-start;
 }
 
 .review-evidence-context,
@@ -4325,6 +4367,7 @@ button {
   .quality-metric-grid,
   .quality-secondary-grid,
   .import-context-grid,
+  .correction-success-grid,
   .review-evidence-grid,
   .adapter-evaluation-grid,
   .adapter-config-grid,
@@ -4427,6 +4470,7 @@ button {
   .quality-secondary-grid,
   .import-context-grid,
   .import-smoke-result-grid,
+  .correction-success-grid,
   .review-evidence-grid,
   .adapter-evaluation-grid,
   .model-readiness-grid,
@@ -4496,7 +4540,7 @@ button {
   .manifest-file-row,
   .manifest-example-row,
   .review-handoff-notice,
-  .review-next-step-panel,
+  .correction-success-header,
   .retention-detail-grid,
   .retention-linkage-grid,
   .retention-dry-run-form,
