@@ -140,6 +140,9 @@ walkthrough across Dashboard, provider workflows, review/correction, retention,
 analytics, exports, and classifier readiness.
 Use [onboarding-empty-state-polish.md](onboarding-empty-state-polish.md) for the
 read-only first-run and sparse-data copy rules.
+Use [local-mvp-readiness-checklist.md](local-mvp-readiness-checklist.md) as the
+local demo/dev readiness gate before selecting riskier provider, worker, or
+playback work.
 
 ## Explicit Non-goals
 

@@ -10,6 +10,9 @@ correction truth -> analytics, exports, and classifier readiness.
 Phase 15C onboarding and empty states guide the same path when the local app has
 little or no data.
 
+Use [local-mvp-readiness-checklist.md](local-mvp-readiness-checklist.md) as the
+demo-readiness gate before treating this walkthrough as local MVP-ready.
+
 It does not demonstrate live playback, automation, model runtime, training, or
 production provider infrastructure.
 
@@ -255,7 +258,8 @@ is not truth. Corrections create the dataset. Live playback is future work.
 
 ## Recommended Next Phases
 
-- Phase 15C - onboarding/empty-state polish.
 - Phase 15D - local MVP release/readiness checklist.
+- Phase 15E - UI copy reduction/pass if onboarding text feels too heavy.
 - Phase 16A - worker/lifecycle boundary design.
+- Phase 16B - live/source automation boundary design.
 - Phase 17A - live provider decision/design.

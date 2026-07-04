@@ -221,6 +221,9 @@ MotionEvidence review, Visit correction, analytics, exports, classifier
 readiness, and retention, but they must not run providers, fetch media, scan
 folders, process webhook payloads, create evidence, promote Events/Visits, or
 write reviewed truth.
+Phase 15D adds a local MVP readiness checklist. It is a documentation gate over
+validation, demo flow, known limitations, artifact safety, and truth boundaries;
+it adds no runtime behavior.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

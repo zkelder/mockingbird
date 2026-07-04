@@ -719,12 +719,16 @@ Current work:
 - Phase 15A: MVP source/provider readiness consolidation.
 - Phase 15B: MVP demo script/checklist.
 - Phase 15C: onboarding and empty-state polish.
-- Next likely phase: Phase 15D local MVP release/readiness checklist.
+- Phase 15D: local MVP release/readiness checklist.
+- Next likely phase: Phase 15E UI copy reduction pass or Phase 16A
+  worker/lifecycle boundary design.
 
 Design note: [mvp-readiness-consolidation.md](mvp-readiness-consolidation.md).
 Demo script: [mvp-demo-script.md](mvp-demo-script.md).
 Onboarding/empty states:
 [onboarding-empty-state-polish.md](onboarding-empty-state-polish.md).
+Local MVP readiness checklist:
+[local-mvp-readiness-checklist.md](local-mvp-readiness-checklist.md).
 
 Validation:
 
@@ -768,3 +772,13 @@ Validation:
 - Phase 15D should turn the current MVP spine into a local release/readiness
   checklist after onboarding copy, demo flow, and validation expectations are
   clean.
+- Phase 15D is documentation/checklist only. It defines local demo/dev
+  readiness, known limitations, validation commands, provider smoke-test gates,
+  artifact safety, and the truth boundary without adding runtime behavior.
+- Local MVP demo-ready means the required validation passes and
+  [mvp-demo-script.md](mvp-demo-script.md) can be completed. It is not a
+  public/product release claim.
+- Follow-on work should come from known gaps: reduce UI copy if it feels heavy,
+  design worker/lifecycle boundaries before background behavior, design
+  live/source automation before source automation, and select live provider work
+  through an explicit decision phase.

@@ -50,4 +50,8 @@ For first-run and sparse-data copy, use
 surfaces are read-only guidance and must not run provider actions or create
 truth.
 
+Before treating the current app as local MVP demo-ready, use
+[local-mvp-readiness-checklist.md](local-mvp-readiness-checklist.md). It is a
+local demo/dev gate, not a production release claim.
+
 Keep docs practical and concise. Link to [README.md](../README.md), [docs/product-doctrine.md](product-doctrine.md), [docs/roadmap.md](roadmap.md), [docs/glossary.md](glossary.md), and [docs/architecture.md](architecture.md) instead of duplicating the full doctrine in every file.
