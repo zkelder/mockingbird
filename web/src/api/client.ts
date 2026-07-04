@@ -61,6 +61,7 @@ import type {
   MotionEvaluateSequenceResponse,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
+  ReviewLabel,
   ReviewQueueBulkCorrectionRequest,
   ReviewQueueBulkCorrectionResponse,
   ReviewQueueItem,
@@ -450,6 +451,7 @@ export const apiClient = {
       body: JSON.stringify(payload),
     }),
   getReviewQueue: () => request<ReviewQueueItem[]>("/api/review-queue"),
+  getReviewLabels: () => request<ReviewLabel[]>("/api/review-labels"),
   getDatasetExports: () => request<DatasetExport[]>("/api/dataset-exports"),
   getDatasetExport: (exportId: string) =>
     request<DatasetExportDetail>(`/api/dataset-exports/${exportId}`),

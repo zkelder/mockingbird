@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
 import type {
   ReviewCorrectionResult,
+  ReviewLabel,
   ReviewQueueBulkCorrectionResponse,
   ReviewQueueBulkCorrectionTargetType,
   ReviewQueueItem,
@@ -22,12 +23,18 @@ import {
   isFalsePositiveLabel,
   isUnknownAnimalLabel,
   isUnknownBirdLabel,
+  taxonomyKey,
 } from "../components/taxonomy";
 import { formatLabel } from "../utils";
 
 type ReviewFilter = "all" | "bird_species" | "unknown_animals" | "false_positives";
 type ReviewTargetFilter = "all" | "event" | "visit";
 type ReviewStatusFilter = "unreviewed" | "reviewed" | "all";
+
+interface LabelHelperGroup {
+  title: string;
+  labels: string[];
+}
 
 function reviewQueueTargetType(item: ReviewQueueItem): ReviewQueueBulkCorrectionTargetType {
   return item.visit_id ? "visit" : "event";
@@ -79,6 +86,81 @@ function reviewQueueSearchText(item: ReviewQueueItem, taxonomyLabels: TaxonomyLa
     .toLowerCase();
 }
 
+function uniqueLabelValues(values: Array<string | null | undefined>): string[] {
+  const seenKeys = new Set<string>();
+  const uniqueValues: string[] = [];
+
+  for (const value of values) {
+    const cleaned = value?.trim();
+    if (!cleaned) {
+      continue;
+    }
+    const key = taxonomyKey(cleaned);
+    if (!key || seenKeys.has(key)) {
+      continue;
+    }
+    seenKeys.add(key);
+    uniqueValues.push(cleaned);
+  }
+
+  return uniqueValues;
+}
+
+function recentReviewLabelValues(reviewLabels: ReviewLabel[]): string[] {
+  return uniqueLabelValues(
+    [...reviewLabels]
+      .sort(
+        (first, second) =>
+          new Date(second.created_at).getTime() - new Date(first.created_at).getTime(),
+      )
+      .map((label) => label.label),
+  );
+}
+
+function taxonomyHelperValues(taxonomyLabels: TaxonomyLabel[]): string[] {
+  return uniqueLabelValues(
+    taxonomyLabels
+      .filter((label) => label.is_reviewable)
+      .sort((first, second) => {
+        const firstOrder = first.sort_order ?? Number.MAX_SAFE_INTEGER;
+        const secondOrder = second.sort_order ?? Number.MAX_SAFE_INTEGER;
+        return firstOrder === secondOrder
+          ? first.display_name.localeCompare(second.display_name)
+          : firstOrder - secondOrder;
+      })
+      .map((label) => label.label),
+  );
+}
+
+function labelHelperGroups(
+  suggestedLabels: string[],
+  recentLabels: string[],
+  taxonomyLabels: string[],
+): LabelHelperGroup[] {
+  const usedKeys = new Set<string>();
+  const takeUnique = (values: string[], limit: number) => {
+    const selected: string[] = [];
+    for (const value of values) {
+      const key = taxonomyKey(value);
+      if (!key || usedKeys.has(key)) {
+        continue;
+      }
+      usedKeys.add(key);
+      selected.push(value);
+      if (selected.length >= limit) {
+        break;
+      }
+    }
+    return selected;
+  };
+
+  return [
+    { title: "Suggested", labels: takeUnique(suggestedLabels, 3) },
+    { title: "Recent", labels: takeUnique(recentLabels, 4) },
+    { title: "Taxonomy", labels: takeUnique(taxonomyLabels, 5) },
+  ].filter((group) => group.labels.length > 0);
+}
+
 interface ReviewQueuePageProps {
   items: ReviewQueueItem[];
   onCreateCorrection: (
@@ -104,6 +186,7 @@ export function ReviewQueuePage({
   const [bulkResult, setBulkResult] = useState<ReviewQueueBulkCorrectionResponse | null>(null);
   const [selectedTargetIds, setSelectedTargetIds] = useState<string[]>([]);
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
+  const [reviewLabels, setReviewLabels] = useState<ReviewLabel[]>([]);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [textSearch, setTextSearch] = useState("");
   const [targetTypeFilter, setTargetTypeFilter] = useState<ReviewTargetFilter>("all");
@@ -205,6 +288,35 @@ export function ReviewQueuePage({
     [filteredItems],
   );
 
+  const recentLabelValues = useMemo(
+    () => recentReviewLabelValues(reviewLabels),
+    [reviewLabels],
+  );
+
+  const taxonomyLabelValues = useMemo(
+    () => taxonomyHelperValues(taxonomyLabels),
+    [taxonomyLabels],
+  );
+
+  const visibleSuggestedLabelValues = useMemo(
+    () => uniqueLabelValues(filteredItems.map((item) => item.suggested_label)),
+    [filteredItems],
+  );
+
+  const bulkSuggestedLabelValues = useMemo(
+    () =>
+      uniqueLabelValues([
+        ...selectedItems.map((item) => item.suggested_label),
+        ...visibleEligibleItems.map((item) => item.suggested_label),
+      ]),
+    [selectedItems, visibleEligibleItems],
+  );
+
+  const bulkLabelHelperGroups = useMemo(
+    () => labelHelperGroups(bulkSuggestedLabelValues, recentLabelValues, taxonomyLabelValues),
+    [bulkSuggestedLabelValues, recentLabelValues, taxonomyLabelValues],
+  );
+
   useEffect(() => {
     setQueueItems(items);
   }, [items]);
@@ -252,6 +364,37 @@ export function ReviewQueuePage({
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadReviewLabels() {
+      try {
+        const labels = await apiClient.getReviewLabels();
+        if (isMounted) {
+          setReviewLabels(labels);
+        }
+      } catch {
+        if (isMounted) {
+          setReviewLabels([]);
+        }
+      }
+    }
+
+    void loadReviewLabels();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  async function refreshReviewLabels() {
+    try {
+      setReviewLabels(await apiClient.getReviewLabels());
+    } catch {
+      // Recent helpers are convenience only; correction truth is handled by submit.
+    }
+  }
 
   function canSelectForBulk(item: ReviewQueueItem): boolean {
     return (
@@ -327,6 +470,7 @@ export function ReviewQueuePage({
       if (result.succeeded_count > 0) {
         setSelectedTargetIds([]);
       }
+      await refreshReviewLabels();
       setBulkResult(result);
       setMessage(
         `${result.succeeded_count} correction${
@@ -351,6 +495,7 @@ export function ReviewQueuePage({
     setMessage(null);
     try {
       const result = await onCreateCorrection(item, draft.label.trim(), draft.notes.trim());
+      await refreshReviewLabels();
       setMessage(
         `Correction saved as local dataset truth. ${result.review_queue_count} item${
           result.review_queue_count === 1 ? "" : "s"
@@ -474,6 +619,13 @@ export function ReviewQueuePage({
                 setBulkDraft((current) => ({ ...current, label: nextLabel }))
               }
             />
+            <LabelHelperChips
+              groups={bulkLabelHelperGroups}
+              onSelect={(nextLabel) =>
+                setBulkDraft((current) => ({ ...current, label: nextLabel }))
+              }
+              taxonomyLabels={taxonomyLabels}
+            />
             <label>
               Notes
               <textarea
@@ -542,6 +694,11 @@ export function ReviewQueuePage({
           const targetId = reviewQueueTargetId(item);
           const isSelected = selectedTargetIds.includes(targetId);
           const isSelectable = canSelectForBulk(item);
+          const itemHelperGroups = labelHelperGroups(
+            uniqueLabelValues([item.suggested_label, ...visibleSuggestedLabelValues]),
+            recentLabelValues,
+            taxonomyLabelValues,
+          );
           return (
             <article className="queue-card" key={item.id}>
               <div className="item-title-row">
@@ -618,6 +775,16 @@ export function ReviewQueuePage({
                     }))
                   }
                 />
+                <LabelHelperChips
+                  groups={itemHelperGroups}
+                  onSelect={(nextLabel) =>
+                    setDrafts((current) => ({
+                      ...current,
+                      [item.id]: { ...draft, label: nextLabel },
+                    }))
+                  }
+                  taxonomyLabels={taxonomyLabels}
+                />
                 <label>
                   Notes
                   <textarea
@@ -649,6 +816,46 @@ export function ReviewQueuePage({
           />
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function LabelHelperChips({
+  groups,
+  onSelect,
+  taxonomyLabels,
+}: {
+  groups: LabelHelperGroup[];
+  onSelect: (label: string) => void;
+  taxonomyLabels: TaxonomyLabel[];
+}) {
+  if (groups.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="label-helper-panel">
+      <div className="label-helper-heading">
+        <strong>Label helpers</strong>
+        <span>Click to fill; submit still required.</span>
+      </div>
+      {groups.map((group) => (
+        <div className="label-helper-group" key={group.title}>
+          <span>{group.title}</span>
+          <div className="label-helper-chips">
+            {group.labels.map((label) => (
+              <button
+                key={`${group.title}-${taxonomyKey(label)}`}
+                onClick={() => onSelect(label)}
+                type="button"
+              >
+                {displayTaxonomyLabel(label, taxonomyLabels)}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+      <span className="field-helper">Corrections are truth after you apply them.</span>
     </div>
   );
 }

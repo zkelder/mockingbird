@@ -1088,6 +1088,53 @@ button {
   font-weight: 800;
 }
 
+.label-helper-panel {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 10px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfdf9;
+}
+
+.label-helper-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  color: #34443a;
+}
+
+.label-helper-heading span,
+.label-helper-group > span {
+  color: #627168;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.label-helper-group {
+  display: grid;
+  gap: 6px;
+}
+
+.label-helper-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.label-helper-chips button {
+  min-height: 30px;
+  border: 1px solid #b9c8b4;
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: #ffffff;
+  color: #263a2e;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
 .species-review-panel,
 .species-coverage-card {
   display: grid;

@@ -863,7 +863,8 @@ Deliverables:
 - Phase 17B: bulk saved media to MotionEvidence triage.
 - Phase 17C: bulk Review Queue correction actions.
 - Phase 17D: Review Queue filters and bulk selection safety.
-- Next likely phase: Phase 17E source/stream smoke-test validation polish.
+- Phase 17E: Review correction label helpers.
+- Next likely phase: Phase 17F source/stream smoke-test validation polish.
 
 Validation:
 
@@ -887,3 +888,7 @@ Validation:
   Filter changes clear selection and previous bulk result summaries. It adds no
   backend filters, automatic labels, new truth path, worker, provider behavior,
   dependency, or generated artifact.
+- Phase 17E adds compact label helper chips in the Review Queue from existing
+  taxonomy labels, recent ReviewLabels, and current suggested labels. Helpers
+  fill correction fields only; explicit single or bulk correction submit remains
+  required before ReviewLabel truth exists.
