@@ -117,6 +117,11 @@ from mockingbird.api.schemas import (
     ModelAdapterRunRequest,
     ModelAdapterRunResult,
     ModelAdapterStatus,
+    MotionEvidenceBulkAction,
+    MotionEvidenceBulkActionRequest,
+    MotionEvidenceBulkActionResponse,
+    MotionEvidenceBulkActionResult,
+    MotionEvidenceBulkActionResultStatus,
     MotionEvidenceCreateRequest,
     MotionEvidencePromoteRequest,
     MotionEvidencePromoteResponse,
@@ -3441,12 +3446,19 @@ class ProductRepository:
                 evidence_model = session.get(MotionEvidenceModel, evidence_id)
                 if evidence_model is None:
                     return None
-                if evidence_model.status != MotionEvidenceStatus.pending.value:
-                    raise ValueError("motion_evidence_not_pending")
+                return self._ignore_motion_evidence_model(session, evidence_model)
 
-                evidence_model.status = MotionEvidenceStatus.ignored.value
-                session.flush()
-                return _motion_evidence_from_model(evidence_model)
+    def _ignore_motion_evidence_model(
+        self,
+        session: Session,
+        evidence_model: MotionEvidenceModel,
+    ) -> MotionEvidenceResponse:
+        if evidence_model.status != MotionEvidenceStatus.pending.value:
+            raise ValueError("motion_evidence_not_pending")
+
+        evidence_model.status = MotionEvidenceStatus.ignored.value
+        session.flush()
+        return _motion_evidence_from_model(evidence_model)
 
     def attach_motion_evidence_media(
         self,
@@ -3491,104 +3503,259 @@ class ProductRepository:
                 evidence_model = session.get(MotionEvidenceModel, evidence_id)
                 if evidence_model is None:
                     return None
-                if evidence_model.status == MotionEvidenceStatus.ignored.value:
-                    raise ValueError("motion_evidence_ignored")
-                if evidence_model.status == MotionEvidenceStatus.promoted.value:
-                    raise ValueError("motion_evidence_already_promoted")
-                if evidence_model.status != MotionEvidenceStatus.pending.value:
-                    raise ValueError("motion_evidence_promote_not_pending")
-                if not payload.create_event and not payload.create_visit:
-                    raise ValueError("motion_evidence_promote_empty")
-                if payload.create_visit and not payload.create_event:
-                    raise ValueError("motion_evidence_visit_requires_event")
+                return self._promote_motion_evidence_model(session, evidence_model, payload)
 
-                zone_model = session.get(ZoneModel, evidence_model.zone_id)
-                if zone_model is None:
-                    raise ValueError("missing_zone")
-                if zone_model.zone_type in {
-                    ZoneType.privacy.value,
-                    ZoneType.ignore.value,
-                }:
-                    raise ValueError("motion_evidence_zone_blocked")
+    def _promote_motion_evidence_model(
+        self,
+        session: Session,
+        evidence_model: MotionEvidenceModel,
+        payload: MotionEvidencePromoteRequest,
+    ) -> MotionEvidencePromoteResponse:
+        if evidence_model.status == MotionEvidenceStatus.ignored.value:
+            raise ValueError("motion_evidence_ignored")
+        if evidence_model.status == MotionEvidenceStatus.promoted.value:
+            raise ValueError("motion_evidence_already_promoted")
+        if evidence_model.status != MotionEvidenceStatus.pending.value:
+            raise ValueError("motion_evidence_promote_not_pending")
+        if not payload.create_event and not payload.create_visit:
+            raise ValueError("motion_evidence_promote_empty")
+        if payload.create_visit and not payload.create_event:
+            raise ValueError("motion_evidence_visit_requires_event")
 
-                stream_model = session.get(StreamModel, evidence_model.stream_id)
-                if stream_model is None:
-                    raise ValueError("missing_stream")
+        zone_model = session.get(ZoneModel, evidence_model.zone_id)
+        if zone_model is None:
+            raise ValueError("missing_zone")
+        if zone_model.zone_type in {
+            ZoneType.privacy.value,
+            ZoneType.ignore.value,
+        }:
+            raise ValueError("motion_evidence_zone_blocked")
 
-                snapshot_media_asset_id = (
-                    payload.attach_snapshot_media_asset_id
-                    or evidence_model.snapshot_media_asset_id
-                )
-                asset_model: MediaAssetModel | None = None
-                if snapshot_media_asset_id is not None:
-                    asset_model = session.get(MediaAssetModel, snapshot_media_asset_id)
-                    if asset_model is None:
-                        raise ValueError("missing_media_asset")
-                    if asset_model.stream_id != stream_model.id:
-                        raise ValueError("media_stream_mismatch")
-                    evidence_model.snapshot_media_asset_id = snapshot_media_asset_id
+        stream_model = session.get(StreamModel, evidence_model.stream_id)
+        if stream_model is None:
+            raise ValueError("missing_stream")
 
-                created_at = datetime.now(UTC)
-                event_id: str | None = None
-                visit_id: str | None = None
+        snapshot_media_asset_id = (
+            payload.attach_snapshot_media_asset_id
+            or evidence_model.snapshot_media_asset_id
+        )
+        asset_model: MediaAssetModel | None = None
+        if snapshot_media_asset_id is not None:
+            asset_model = session.get(MediaAssetModel, snapshot_media_asset_id)
+            if asset_model is None:
+                raise ValueError("missing_media_asset")
+            if asset_model.stream_id != stream_model.id:
+                raise ValueError("media_stream_mismatch")
+            evidence_model.snapshot_media_asset_id = snapshot_media_asset_id
 
-                if payload.create_event:
-                    event_id = self._next_id(session, EventModel, "event-motion")
-                    event_title = (
-                        payload.event_title.strip()
-                        if payload.event_title and payload.event_title.strip()
-                        else f"Motion evidence in {zone_model.name}"
-                    )
-                    event_model = EventModel(
-                        id=event_id,
-                        stream_id=stream_model.id,
-                        title=event_title,
-                        event_type="motion_evidence",
-                        started_at=created_at,
-                        ended_at=created_at,
-                        primary_zone_id=zone_model.id,
-                        review_status=ReviewStatus.needs_review.value,
-                    )
-                    session.add(event_model)
+        created_at = datetime.now(UTC)
+        event_id: str | None = None
+        visit_id: str | None = None
 
-                if payload.create_visit:
-                    visit_id = self._next_id(session, VisitModel, "visit-motion")
-                    visit_label = (
-                        payload.visit_label_hint.strip()
-                        if payload.visit_label_hint and payload.visit_label_hint.strip()
-                        else "unknown_animal"
-                    )
-                    visit_model = VisitModel(
-                        id=visit_id,
-                        event_id=event_id,
-                        subject_label=visit_label,
-                        species_guess=None,
-                        confidence=None,
-                        reviewed_label=None,
-                        review_status=ReviewStatus.needs_review.value,
-                        representative_media_path=(
-                            asset_model.local_path if asset_model is not None else None
-                        ),
-                    )
-                    session.add(visit_model)
+        if payload.create_event:
+            event_id = self._next_id(session, EventModel, "event-motion")
+            event_title = (
+                payload.event_title.strip()
+                if payload.event_title and payload.event_title.strip()
+                else f"Motion evidence in {zone_model.name}"
+            )
+            event_model = EventModel(
+                id=event_id,
+                stream_id=stream_model.id,
+                title=event_title,
+                event_type="motion_evidence",
+                started_at=created_at,
+                ended_at=created_at,
+                primary_zone_id=zone_model.id,
+                review_status=ReviewStatus.needs_review.value,
+            )
+            session.add(event_model)
 
-                if payload.notes and payload.notes.strip():
-                    promotion_note = payload.notes.strip()
-                    evidence_model.notes = (
-                        f"{evidence_model.notes}\nPromotion note: {promotion_note}"
-                        if evidence_model.notes
-                        else promotion_note
-                    )
-                evidence_model.status = MotionEvidenceStatus.promoted.value
-                evidence_model.promoted_event_id = event_id
-                evidence_model.promoted_visit_id = visit_id
-                session.flush()
+        if payload.create_visit:
+            visit_id = self._next_id(session, VisitModel, "visit-motion")
+            visit_label = (
+                payload.visit_label_hint.strip()
+                if payload.visit_label_hint and payload.visit_label_hint.strip()
+                else "unknown_animal"
+            )
+            visit_model = VisitModel(
+                id=visit_id,
+                event_id=event_id,
+                subject_label=visit_label,
+                species_guess=None,
+                confidence=None,
+                reviewed_label=None,
+                review_status=ReviewStatus.needs_review.value,
+                representative_media_path=(
+                    asset_model.local_path if asset_model is not None else None
+                ),
+            )
+            session.add(visit_model)
 
-                return MotionEvidencePromoteResponse(
-                    evidence=_motion_evidence_from_model(evidence_model),
-                    event_id=event_id,
-                    visit_id=visit_id,
-                )
+        if payload.notes and payload.notes.strip():
+            promotion_note = payload.notes.strip()
+            evidence_model.notes = (
+                f"{evidence_model.notes}\nPromotion note: {promotion_note}"
+                if evidence_model.notes
+                else promotion_note
+            )
+        evidence_model.status = MotionEvidenceStatus.promoted.value
+        evidence_model.promoted_event_id = event_id
+        evidence_model.promoted_visit_id = visit_id
+        session.flush()
+
+        return MotionEvidencePromoteResponse(
+            evidence=_motion_evidence_from_model(evidence_model),
+            event_id=event_id,
+            visit_id=visit_id,
+        )
+
+    def bulk_motion_evidence_action(
+        self,
+        payload: MotionEvidenceBulkActionRequest,
+    ) -> MotionEvidenceBulkActionResponse:
+        results: list[MotionEvidenceBulkActionResult] = []
+        seen_ids: set[str] = set()
+
+        with self.session_factory() as session:
+            with session.begin():
+                for raw_id in payload.motion_evidence_ids:
+                    evidence_id = raw_id.strip()
+                    if not evidence_id:
+                        results.append(
+                            _motion_evidence_bulk_result(
+                                evidence_id=raw_id,
+                                status=MotionEvidenceBulkActionResultStatus.skipped,
+                                message="Blank Motion Evidence ID skipped.",
+                            )
+                        )
+                        continue
+                    if evidence_id in seen_ids:
+                        results.append(
+                            _motion_evidence_bulk_result(
+                                evidence_id=evidence_id,
+                                status=MotionEvidenceBulkActionResultStatus.skipped,
+                                message="Duplicate Motion Evidence ID skipped.",
+                            )
+                        )
+                        continue
+                    seen_ids.add(evidence_id)
+
+                    evidence_model = session.get(MotionEvidenceModel, evidence_id)
+                    if evidence_model is None:
+                        results.append(
+                            _motion_evidence_bulk_result(
+                                evidence_id=evidence_id,
+                                status=MotionEvidenceBulkActionResultStatus.skipped,
+                                message="Motion Evidence not found.",
+                            )
+                        )
+                        continue
+
+                    if payload.action == MotionEvidenceBulkAction.ignore:
+                        result = self._bulk_ignore_motion_evidence(session, evidence_model)
+                    else:
+                        result = self._bulk_promote_motion_evidence(session, evidence_model)
+                    results.append(result)
+
+        return MotionEvidenceBulkActionResponse(
+            action=payload.action,
+            requested_count=len(payload.motion_evidence_ids),
+            succeeded_count=sum(
+                1
+                for result in results
+                if result.status == MotionEvidenceBulkActionResultStatus.succeeded
+            ),
+            skipped_count=sum(
+                1
+                for result in results
+                if result.status == MotionEvidenceBulkActionResultStatus.skipped
+            ),
+            failed_count=sum(
+                1
+                for result in results
+                if result.status == MotionEvidenceBulkActionResultStatus.failed
+            ),
+            results=results,
+        )
+
+    def _bulk_ignore_motion_evidence(
+        self,
+        session: Session,
+        evidence_model: MotionEvidenceModel,
+    ) -> MotionEvidenceBulkActionResult:
+        if evidence_model.status == MotionEvidenceStatus.ignored.value:
+            return _motion_evidence_bulk_result(
+                evidence_id=evidence_model.id,
+                status=MotionEvidenceBulkActionResultStatus.skipped,
+                message="Motion Evidence is already ignored.",
+            )
+        if evidence_model.status == MotionEvidenceStatus.promoted.value:
+            return _motion_evidence_bulk_result(
+                evidence_id=evidence_model.id,
+                status=MotionEvidenceBulkActionResultStatus.skipped,
+                message="Promoted Motion Evidence cannot be ignored.",
+            )
+        if evidence_model.status != MotionEvidenceStatus.pending.value:
+            return _motion_evidence_bulk_result(
+                evidence_id=evidence_model.id,
+                status=MotionEvidenceBulkActionResultStatus.skipped,
+                message="Only pending Motion Evidence can be ignored.",
+            )
+
+        ignored = self._ignore_motion_evidence_model(session, evidence_model)
+        return _motion_evidence_bulk_result(
+            evidence_id=ignored.id,
+            status=MotionEvidenceBulkActionResultStatus.succeeded,
+            message="Motion Evidence ignored. No Event, Visit, or truth was created.",
+        )
+
+    def _bulk_promote_motion_evidence(
+        self,
+        session: Session,
+        evidence_model: MotionEvidenceModel,
+    ) -> MotionEvidenceBulkActionResult:
+        if evidence_model.status == MotionEvidenceStatus.promoted.value:
+            return _motion_evidence_bulk_result(
+                evidence_id=evidence_model.id,
+                status=MotionEvidenceBulkActionResultStatus.skipped,
+                message="Motion Evidence has already been promoted.",
+                created_event_id=evidence_model.promoted_event_id,
+                created_visit_id=evidence_model.promoted_visit_id,
+            )
+        if evidence_model.status == MotionEvidenceStatus.ignored.value:
+            return _motion_evidence_bulk_result(
+                evidence_id=evidence_model.id,
+                status=MotionEvidenceBulkActionResultStatus.skipped,
+                message="Ignored Motion Evidence cannot be promoted.",
+            )
+        if evidence_model.status != MotionEvidenceStatus.pending.value:
+            return _motion_evidence_bulk_result(
+                evidence_id=evidence_model.id,
+                status=MotionEvidenceBulkActionResultStatus.skipped,
+                message="Only pending Motion Evidence can be promoted.",
+            )
+
+        try:
+            promoted = self._promote_motion_evidence_model(
+                session,
+                evidence_model,
+                MotionEvidencePromoteRequest(),
+            )
+        except ValueError as error:
+            return _motion_evidence_bulk_result(
+                evidence_id=evidence_model.id,
+                status=MotionEvidenceBulkActionResultStatus.failed,
+                message=_motion_evidence_bulk_failure_message(str(error)),
+            )
+
+        return _motion_evidence_bulk_result(
+            evidence_id=promoted.evidence.id,
+            status=MotionEvidenceBulkActionResultStatus.succeeded,
+            message="Motion Evidence promoted to reviewable Event/Visit evidence, not truth.",
+            created_event_id=promoted.event_id,
+            created_visit_id=promoted.visit_id,
+        )
 
     def create_species_suggestion(
         self,
@@ -8220,6 +8387,37 @@ def _motion_evidence_from_model(evidence: MotionEvidenceModel) -> MotionEvidence
         created_at=_as_utc(evidence.created_at),
         notes=evidence.notes,
     )
+
+
+def _motion_evidence_bulk_result(
+    *,
+    evidence_id: str,
+    status: MotionEvidenceBulkActionResultStatus,
+    message: str,
+    created_event_id: str | None = None,
+    created_visit_id: str | None = None,
+) -> MotionEvidenceBulkActionResult:
+    return MotionEvidenceBulkActionResult(
+        motion_evidence_id=evidence_id,
+        status=status,
+        message=message,
+        created_event_id=created_event_id,
+        created_visit_id=created_visit_id,
+    )
+
+
+def _motion_evidence_bulk_failure_message(reason: str) -> str:
+    if reason == "motion_evidence_zone_blocked":
+        return "Motion Evidence in privacy or ignore zones cannot be promoted."
+    if reason == "missing_zone":
+        return "Motion Evidence zone was not found."
+    if reason == "missing_stream":
+        return "Motion Evidence stream was not found."
+    if reason == "missing_media_asset":
+        return "Motion Evidence snapshot media was not found."
+    if reason == "media_stream_mismatch":
+        return "Motion evidence snapshot media must belong to the selected stream."
+    return "Motion Evidence could not be processed."
 
 
 def _species_suggestion_from_model(

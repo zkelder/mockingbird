@@ -2171,6 +2171,7 @@ button {
 .motion-evidence-subsection,
 .sampled-frame-results,
 .sampled-frame-result-list,
+.motion-bulk-actions,
 .motion-evidence-list {
   display: grid;
   gap: 12px;
@@ -2181,6 +2182,27 @@ button {
   grid-template-columns: minmax(220px, 1fr) auto auto;
   gap: 10px;
   align-items: end;
+}
+
+.motion-bulk-actions {
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f7faf6;
+}
+
+.motion-bulk-actions > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.motion-bulk-actions strong {
+  color: #18231d;
+}
+
+.motion-bulk-actions span {
+  color: #536258;
+  font-size: 0.9rem;
 }
 
 .motion-zone-filter label,
@@ -2343,6 +2365,41 @@ button {
 .motion-evidence-row.selected {
   border-color: #2e6f5e;
   background: #eef7ee;
+}
+
+.motion-evidence-row-top {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.motion-evidence-select {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  min-width: 54px;
+  color: #536258;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.motion-evidence-select input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.motion-evidence-row-main {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .motion-evidence-row p {

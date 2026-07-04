@@ -191,6 +191,10 @@ existing correction route remains the first ReviewLabel truth write.
 Phase 14I makes that provenance visible in Motion Evidence, Event Detail, and
 Visit Detail UI without changing promotion behavior or creating labels.
 
+Phase 17A bulk promote uses the same explicit promotion boundary as single
+promote: pending MotionEvidence can become reviewable Event/Visit evidence, but
+ReviewLabel correction remains the first dataset/export truth.
+
 ## API
 
 Phase 8F endpoint:

@@ -851,3 +851,22 @@ Validation:
   no worker runtime, scheduler, polling, background job, provider execution,
   fetch, media creation, evidence creation, Event/Visit, ReviewLabel/truth,
   dependency, or generated artifact.
+
+## Phase 17 — Evidence review efficiency
+
+Goal: make explicit evidence review faster while preserving the correction truth
+boundary.
+
+Deliverables:
+
+- Phase 17A: bulk MotionEvidence review actions.
+- Next likely phase: Phase 17B saved-media evidence review triage polish.
+
+Validation:
+
+- Phase 17A adds pending-only bulk ignore/promote actions for MotionEvidence.
+  Bulk ignore creates no Event, Visit, ReviewLabel, export, analytics, or truth.
+  Bulk promote reuses explicit promotion semantics to create reviewable
+  Event/Visit context only; corrections remain the first dataset/export truth.
+  It adds no workers, scheduler, provider changes, media import/fetch/scan
+  changes, model runtime, dependencies, or generated artifacts.

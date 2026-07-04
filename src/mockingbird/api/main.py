@@ -56,6 +56,8 @@ from mockingbird.api.schemas import (
     MockSpeciesSuggestionRequest,
     MotionCandidateResponse,
     MotionEvidenceAttachMediaRequest,
+    MotionEvidenceBulkActionRequest,
+    MotionEvidenceBulkActionResponse,
     MotionEvidenceCreateRequest,
     MotionEvidenceListResponse,
     MotionEvidencePromoteRequest,
@@ -942,6 +944,16 @@ async def list_motion_evidence(
             zone_id=zone_id,
         )
     )
+
+
+@app.post(
+    "/api/motion-evidence/bulk-action",
+    response_model=MotionEvidenceBulkActionResponse,
+)
+async def bulk_motion_evidence_action(
+    payload: MotionEvidenceBulkActionRequest,
+) -> MotionEvidenceBulkActionResponse:
+    return get_repository().bulk_motion_evidence_action(payload)
 
 
 @app.get("/api/motion/evidence/{evidence_id}", response_model=MotionEvidenceResponse)

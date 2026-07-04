@@ -50,6 +50,8 @@ import type {
   ModelAdapterRunResult,
   MotionEvidence,
   MotionEvidenceAttachMediaRequest,
+  MotionEvidenceBulkActionRequest,
+  MotionEvidenceBulkActionResponse,
   MotionEvidenceCreateRequest,
   MotionEvidenceListResponse,
   MotionEvidencePromoteRequest,
@@ -376,8 +378,13 @@ export const apiClient = {
         body: JSON.stringify(payload),
       },
     ),
+  bulkMotionEvidenceAction: (payload: MotionEvidenceBulkActionRequest) =>
+    request<MotionEvidenceBulkActionResponse>("/api/motion-evidence/bulk-action", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   listSpeciesSuggestions: (
-    params: {
+	    params: {
       status?: SpeciesSuggestionStatus | "all";
       visit_id?: string;
       event_id?: string;

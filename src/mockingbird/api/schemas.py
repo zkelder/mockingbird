@@ -151,6 +151,17 @@ class MotionEvidenceStatus(str, Enum):
     ignored = "ignored"
 
 
+class MotionEvidenceBulkAction(str, Enum):
+    ignore = "ignore"
+    promote = "promote"
+
+
+class MotionEvidenceBulkActionResultStatus(str, Enum):
+    succeeded = "succeeded"
+    skipped = "skipped"
+    failed = "failed"
+
+
 class SpeciesSuggestionStatus(str, Enum):
     pending = "pending"
     accepted = "accepted"
@@ -1094,6 +1105,28 @@ class MotionEvidencePromoteResponse(BaseModel):
     evidence: MotionEvidenceResponse
     event_id: str | None
     visit_id: str | None
+
+
+class MotionEvidenceBulkActionRequest(BaseModel):
+    motion_evidence_ids: list[str] = Field(min_length=1)
+    action: MotionEvidenceBulkAction
+
+
+class MotionEvidenceBulkActionResult(BaseModel):
+    motion_evidence_id: str
+    status: MotionEvidenceBulkActionResultStatus
+    message: str
+    created_event_id: str | None = None
+    created_visit_id: str | None = None
+
+
+class MotionEvidenceBulkActionResponse(BaseModel):
+    action: MotionEvidenceBulkAction
+    requested_count: int = Field(ge=0)
+    succeeded_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    results: list[MotionEvidenceBulkActionResult]
 
 
 class SpeciesSuggestionCreateRequest(BaseModel):

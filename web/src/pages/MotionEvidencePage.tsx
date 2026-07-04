@@ -4,6 +4,7 @@ import type {
   CameraSource,
   MediaAsset,
   MotionEvidence,
+  MotionEvidenceBulkAction,
   MotionEvidenceCreateRequest,
   MotionEvidencePromoteResponse,
   MotionEvidenceStatus,
@@ -109,6 +110,7 @@ export function MotionEvidencePage({
   const [evidence, setEvidence] = useState<MotionEvidence[]>([]);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null);
+  const [selectedBulkEvidenceIds, setSelectedBulkEvidenceIds] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<MotionEvidenceFilter>("pending");
   const [zoneFilter, setZoneFilter] = useState("");
   const [manualZoneId, setManualZoneId] = useState("zone-feeder");
@@ -156,6 +158,7 @@ export function MotionEvidencePage({
 
   const sourceById = useMemo(() => new Map(sources.map((source) => [source.id, source])), [sources]);
   const streamById = useMemo(() => new Map(streams.map((stream) => [stream.id, stream])), [streams]);
+  const evidenceById = useMemo(() => new Map(evidence.map((item) => [item.id, item])), [evidence]);
   const mediaById = useMemo(
     () => new Map(mediaAssets.map((asset) => [asset.id, asset])),
     [mediaAssets],
@@ -179,6 +182,18 @@ export function MotionEvidencePage({
         new Date(right.created_at).getTime() - new Date(left.created_at).getTime(),
     );
   }, [statusFilter, zoneFilteredEvidence]);
+  const selectablePendingEvidence = useMemo(
+    () => sortedEvidence.filter((item) => item.status === "pending"),
+    [sortedEvidence],
+  );
+  const selectedPendingEvidenceIds = useMemo(
+    () =>
+      selectedBulkEvidenceIds.filter(
+        (id) => evidenceById.get(id)?.status === "pending",
+      ),
+    [evidenceById, selectedBulkEvidenceIds],
+  );
+  const selectedPendingCount = selectedPendingEvidenceIds.length;
   const selectedEvidence =
     sortedEvidence.find((item) => item.id === selectedEvidenceId) ?? sortedEvidence[0] ?? null;
   const selectedMediaAsset = selectedEvidence?.snapshot_media_asset_id
@@ -263,6 +278,12 @@ export function MotionEvidencePage({
   useEffect(() => {
     void loadEvidence();
   }, []);
+
+  useEffect(() => {
+    setSelectedBulkEvidenceIds((current) =>
+      current.filter((id) => evidenceById.get(id)?.status === "pending"),
+    );
+  }, [evidenceById]);
 
   useEffect(() => {
     setEventTitle(
@@ -516,7 +537,75 @@ export function MotionEvidencePage({
     }
   }
 
+  function toggleBulkSelection(item: MotionEvidence, checked: boolean) {
+    if (item.status !== "pending") {
+      return;
+    }
+    setSelectedBulkEvidenceIds((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(item.id);
+      } else {
+        next.delete(item.id);
+      }
+      return [...next];
+    });
+  }
+
+  function selectAllPendingInView() {
+    setSelectedBulkEvidenceIds((current) => {
+      const next = new Set(current);
+      selectablePendingEvidence.forEach((item) => next.add(item.id));
+      return [...next];
+    });
+  }
+
+  async function applyBulkAction(action: MotionEvidenceBulkAction) {
+    if (selectedPendingEvidenceIds.length === 0) {
+      return;
+    }
+
+    const actionLabel = action === "promote" ? "promote" : "ignore";
+    const noun = selectedPendingEvidenceIds.length === 1 ? "item" : "items";
+    const confirmation =
+      action === "promote"
+        ? `Promote ${selectedPendingEvidenceIds.length} pending Motion Evidence ${noun}? Promotion creates reviewable visits/events, not truth.`
+        : `Ignore ${selectedPendingEvidenceIds.length} pending Motion Evidence ${noun}? Ignored evidence creates no Event, Visit, label, or truth.`;
+    if (!window.confirm(confirmation)) {
+      return;
+    }
+
+    setActionId(`bulk:${action}`);
+    setError(null);
+    setMessage(null);
+    setLastPromotion(null);
+    try {
+      const result = await apiClient.bulkMotionEvidenceAction({
+        motion_evidence_ids: selectedPendingEvidenceIds,
+        action,
+      });
+      setSelectedBulkEvidenceIds([]);
+      const summary = `${formatLabel(actionLabel)} bulk action: ${result.succeeded_count} succeeded, ${result.skipped_count} skipped, ${result.failed_count} failed.`;
+      const boundary =
+        action === "promote"
+          ? "Promote creates reviewable visits/events, not truth. Corrections still drive analytics and exports."
+          : "Ignored Motion Evidence remains non-truth evidence history.";
+      setMessage(`${summary} ${boundary}`);
+      const firstSucceeded = result.results.find((item) => item.status === "succeeded");
+      await loadEvidence({
+        showLoading: false,
+        selectEvidenceId: firstSucceeded?.motion_evidence_id,
+      });
+      await onEvidenceChanged();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Bulk Motion Evidence action failed.");
+    } finally {
+      setActionId(null);
+    }
+  }
+
   const hasFilters = statusFilter !== "all" || zoneFilter.trim().length > 0;
+  const isBulkActionRunning = actionId === "bulk:ignore" || actionId === "bulk:promote";
 
   return (
     <div className="page-stack">
@@ -1041,6 +1130,47 @@ export function MotionEvidencePage({
             </button>
           ) : null}
         </form>
+        <div className="motion-bulk-actions">
+          <div>
+            <strong>{selectedPendingCount} pending selected</strong>
+            <span>Promote creates reviewable visits/events, not truth.</span>
+            <span>Corrections still drive analytics and exports.</span>
+          </div>
+          <div className="detail-actions">
+            <button
+              className="secondary-action"
+              disabled={selectablePendingEvidence.length === 0 || isBulkActionRunning}
+              onClick={selectAllPendingInView}
+              type="button"
+            >
+              Select pending in view
+            </button>
+            <button
+              className="text-action"
+              disabled={selectedPendingCount === 0 || isBulkActionRunning}
+              onClick={() => setSelectedBulkEvidenceIds([])}
+              type="button"
+            >
+              Clear
+            </button>
+            <button
+              className="secondary-action"
+              disabled={selectedPendingCount === 0 || isBulkActionRunning}
+              onClick={() => void applyBulkAction("ignore")}
+              type="button"
+            >
+              {actionId === "bulk:ignore" ? "Ignoring..." : "Bulk ignore"}
+            </button>
+            <button
+              className="primary-action"
+              disabled={selectedPendingCount === 0 || isBulkActionRunning}
+              onClick={() => void applyBulkAction("promote")}
+              type="button"
+            >
+              {actionId === "bulk:promote" ? "Promoting..." : "Bulk promote"}
+            </button>
+          </div>
+        </div>
       </section>
 
       {isLoading ? <div className="panel">Loading Motion Evidence...</div> : null}
@@ -1060,47 +1190,62 @@ export function MotionEvidencePage({
         <div className="motion-evidence-layout">
           <section className="motion-evidence-list" aria-label="Motion Evidence list">
             {sortedEvidence.map((item) => (
-              <button
+              <article
                 className={
                   selectedEvidence?.id === item.id
                     ? "motion-evidence-row selected"
                     : "motion-evidence-row"
                 }
                 key={item.id}
-                onClick={() => setSelectedEvidenceId(item.id)}
-                type="button"
               >
-                <div className="item-title-row">
-                  <div>
-                    <span className="meta-text">{item.zone_id}</span>
-                    <h2>{item.id}</h2>
-                  </div>
-                  <div className="record-status-stack">
-                    {getWebhookEvidenceProvenance(item).isWebhook ? (
-                      <EvidenceBadge label="Webhook metadata evidence" tone="evidence" />
-                    ) : null}
-                    {item.snapshot_media_asset_id ? (
-                      <EvidenceBadge
-                        label={
-                          formatMotionEvidenceMediaBadge(
-                            item,
-                            mediaById.get(item.snapshot_media_asset_id) ?? null,
-                          )
-                        }
-                        tone="evidence"
-                      />
-                    ) : null}
-                    <MotionEvidenceStatusPill status={item.status} />
-                  </div>
+                <div className="motion-evidence-row-top">
+                  <label className="motion-evidence-select">
+                    <input
+                      checked={selectedPendingEvidenceIds.includes(item.id)}
+                      disabled={item.status !== "pending" || isBulkActionRunning}
+                      onChange={(event) => toggleBulkSelection(item, event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span>{item.status === "pending" ? "Select" : "Locked"}</span>
+                  </label>
+                  <button
+                    className="motion-evidence-row-main"
+                    onClick={() => setSelectedEvidenceId(item.id)}
+                    type="button"
+                  >
+                    <div className="item-title-row">
+                      <div>
+                        <span className="meta-text">{item.zone_id}</span>
+                        <h2>{item.id}</h2>
+                      </div>
+                      <div className="record-status-stack">
+                        {getWebhookEvidenceProvenance(item).isWebhook ? (
+                          <EvidenceBadge label="Webhook metadata evidence" tone="evidence" />
+                        ) : null}
+                        {item.snapshot_media_asset_id ? (
+                          <EvidenceBadge
+                            label={
+                              formatMotionEvidenceMediaBadge(
+                                item,
+                                mediaById.get(item.snapshot_media_asset_id) ?? null,
+                              )
+                            }
+                            tone="evidence"
+                          />
+                        ) : null}
+                        <MotionEvidenceStatusPill status={item.status} />
+                      </div>
+                    </div>
+                    <div className="motion-evidence-meta">
+                      <span>{formatPercent(item.peak_changed_ratio)} peak change</span>
+                      <span>{item.triggered_frame_count} triggered frames</span>
+                      <span>{formatRange(item)}</span>
+                      <span>{formatDateTime(item.created_at)}</span>
+                    </div>
+                    {item.notes ? <p>{item.notes}</p> : null}
+                  </button>
                 </div>
-                <div className="motion-evidence-meta">
-                  <span>{formatPercent(item.peak_changed_ratio)} peak change</span>
-                  <span>{item.triggered_frame_count} triggered frames</span>
-                  <span>{formatRange(item)}</span>
-                  <span>{formatDateTime(item.created_at)}</span>
-                </div>
-                {item.notes ? <p>{item.notes}</p> : null}
-              </button>
+              </article>
             ))}
           </section>
 

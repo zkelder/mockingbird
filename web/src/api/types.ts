@@ -1065,6 +1065,32 @@ export interface MotionEvidencePromoteResponse {
   visit_id?: string | null;
 }
 
+export type MotionEvidenceBulkAction = "ignore" | "promote";
+
+export type MotionEvidenceBulkActionResultStatus = "succeeded" | "skipped" | "failed";
+
+export interface MotionEvidenceBulkActionRequest {
+  motion_evidence_ids: string[];
+  action: MotionEvidenceBulkAction;
+}
+
+export interface MotionEvidenceBulkActionResult {
+  motion_evidence_id: string;
+  status: MotionEvidenceBulkActionResultStatus;
+  message: string;
+  created_event_id?: string | null;
+  created_visit_id?: string | null;
+}
+
+export interface MotionEvidenceBulkActionResponse {
+  action: MotionEvidenceBulkAction;
+  requested_count: number;
+  succeeded_count: number;
+  skipped_count: number;
+  failed_count: number;
+  results: MotionEvidenceBulkActionResult[];
+}
+
 export interface SpeciesSuggestion {
   id: string;
   source_id?: string | null;
