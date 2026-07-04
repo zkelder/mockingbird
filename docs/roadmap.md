@@ -864,7 +864,8 @@ Deliverables:
 - Phase 17C: bulk Review Queue correction actions.
 - Phase 17D: Review Queue filters and bulk selection safety.
 - Phase 17E: Review correction label helpers.
-- Next likely phase: Phase 17F source/stream smoke-test validation polish.
+- Phase 17F: Review correction label validation.
+- Next likely phase: Phase 17G source/stream smoke-test validation polish.
 
 Validation:
 
@@ -892,3 +893,6 @@ Validation:
   taxonomy labels, recent ReviewLabels, and current suggested labels. Helpers
   fill correction fields only; explicit single or bulk correction submit remains
   required before ReviewLabel truth exists.
+- Phase 17F shows compact validation feedback for Review Queue correction
+  labels, distinguishing suggested, recent, taxonomy, and custom labels without
+  blocking custom local labels or creating truth before explicit submit.

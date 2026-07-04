@@ -1113,6 +1113,37 @@ button {
   font-weight: 800;
 }
 
+.label-validation-line {
+  display: inline-flex;
+  width: fit-content;
+  grid-column: 1 / -1;
+  border: 1px solid #dce3d8;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #ffffff;
+  color: #536258;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.label-validation-suggested,
+.label-validation-recent,
+.label-validation-taxonomy {
+  border-color: #b8d4b0;
+  background: #edf7e9;
+  color: #245436;
+}
+
+.label-validation-custom {
+  border-color: #e5c993;
+  background: #fff6df;
+  color: #795313;
+}
+
+.label-validation-empty {
+  color: #627168;
+}
+
 .label-helper-group {
   display: grid;
   gap: 6px;

@@ -30,6 +30,7 @@ import { formatLabel } from "../utils";
 type ReviewFilter = "all" | "bird_species" | "unknown_animals" | "false_positives";
 type ReviewTargetFilter = "all" | "event" | "visit";
 type ReviewStatusFilter = "unreviewed" | "reviewed" | "all";
+type LabelValidationStatus = "empty" | "suggested" | "recent" | "taxonomy" | "custom";
 
 interface LabelHelperGroup {
   title: string;
@@ -159,6 +160,44 @@ function labelHelperGroups(
     { title: "Recent", labels: takeUnique(recentLabels, 4) },
     { title: "Taxonomy", labels: takeUnique(taxonomyLabels, 5) },
   ].filter((group) => group.labels.length > 0);
+}
+
+function labelMatchesHelperValue(value: string, helperLabels: string[]): boolean {
+  const key = taxonomyKey(value);
+  return helperLabels.some((label) => taxonomyKey(label) === key);
+}
+
+function classifyCorrectionLabel(
+  value: string,
+  {
+    recentLabels,
+    suggestedLabels,
+    taxonomyLabelValues,
+    taxonomyLabels,
+  }: {
+    recentLabels: string[];
+    suggestedLabels: string[];
+    taxonomyLabelValues: string[];
+    taxonomyLabels: TaxonomyLabel[];
+  },
+): LabelValidationStatus {
+  const cleaned = value.trim();
+  if (!cleaned) {
+    return "empty";
+  }
+  if (labelMatchesHelperValue(cleaned, suggestedLabels)) {
+    return "suggested";
+  }
+  if (labelMatchesHelperValue(cleaned, recentLabels)) {
+    return "recent";
+  }
+  if (
+    labelMatchesHelperValue(cleaned, taxonomyLabelValues) ||
+    findTaxonomyLabel(cleaned, taxonomyLabels)
+  ) {
+    return "taxonomy";
+  }
+  return "custom";
 }
 
 interface ReviewQueuePageProps {
@@ -315,6 +354,17 @@ export function ReviewQueuePage({
   const bulkLabelHelperGroups = useMemo(
     () => labelHelperGroups(bulkSuggestedLabelValues, recentLabelValues, taxonomyLabelValues),
     [bulkSuggestedLabelValues, recentLabelValues, taxonomyLabelValues],
+  );
+
+  const bulkLabelValidation = useMemo(
+    () =>
+      classifyCorrectionLabel(bulkDraft.label, {
+        recentLabels: recentLabelValues,
+        suggestedLabels: bulkSuggestedLabelValues,
+        taxonomyLabelValues,
+        taxonomyLabels,
+      }),
+    [bulkDraft.label, bulkSuggestedLabelValues, recentLabelValues, taxonomyLabelValues, taxonomyLabels],
   );
 
   useEffect(() => {
@@ -619,6 +669,7 @@ export function ReviewQueuePage({
                 setBulkDraft((current) => ({ ...current, label: nextLabel }))
               }
             />
+            <LabelValidationLine status={bulkLabelValidation} />
             <LabelHelperChips
               groups={bulkLabelHelperGroups}
               onSelect={(nextLabel) =>
@@ -699,6 +750,16 @@ export function ReviewQueuePage({
             recentLabelValues,
             taxonomyLabelValues,
           );
+          const itemSuggestedLabelValues = uniqueLabelValues([
+            item.suggested_label,
+            ...visibleSuggestedLabelValues,
+          ]);
+          const itemLabelValidation = classifyCorrectionLabel(draft.label, {
+            recentLabels: recentLabelValues,
+            suggestedLabels: itemSuggestedLabelValues,
+            taxonomyLabelValues,
+            taxonomyLabels,
+          });
           return (
             <article className="queue-card" key={item.id}>
               <div className="item-title-row">
@@ -775,6 +836,7 @@ export function ReviewQueuePage({
                     }))
                   }
                 />
+                <LabelValidationLine status={itemLabelValidation} />
                 <LabelHelperChips
                   groups={itemHelperGroups}
                   onSelect={(nextLabel) =>
@@ -817,6 +879,22 @@ export function ReviewQueuePage({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function LabelValidationLine({ status }: { status: LabelValidationStatus }) {
+  const validationCopy: Record<LabelValidationStatus, string> = {
+    empty: "Choose or type a label.",
+    suggested: "Matches suggested label.",
+    recent: "Matches recent correction.",
+    taxonomy: "Matches taxonomy.",
+    custom: "Custom label. Saved only after you apply it.",
+  };
+
+  return (
+    <span className={`label-validation-line label-validation-${status}`}>
+      {validationCopy[status]}
+    </span>
   );
 }
 
