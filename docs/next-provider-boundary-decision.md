@@ -214,6 +214,10 @@ This boundary should start as design only. Any later implementation should treat
 incoming media/events/detections as MediaAssets, MotionEvidence, or proposal
 evidence until user review/correction.
 
+Phase 14D follows this recommendation with the design-only generic webhook
+provider boundary:
+[generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md).
+
 ## Candidate: Home Assistant / Frigate Integration Boundary
 
 Home Assistant and Frigate have strong ecosystem value. They may already know
@@ -269,6 +273,9 @@ No watcher, polling, or background import should be added yet.
 Recommended next provider boundary:
 
 Phase 14D - Generic webhook ingest provider boundary design.
+
+This is the chosen next provider design direction after Phase 14C. It remains a
+design boundary, not an implementation.
 
 Rationale:
 

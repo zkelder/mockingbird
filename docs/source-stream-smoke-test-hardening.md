@@ -36,6 +36,9 @@ Motion Evidence, Retention, and Review.
 Phase 14C selects the next provider boundary before implementation. Any new
 provider work should extend smoke coverage rather than weakening the
 Source/Stream explicit-action spine.
+Phase 14D designs generic webhook ingest only. When implemented later, webhook
+will need its own smoke path that proves status/dry-run behavior is read-only
+and ingest creates no reviewed truth.
 
 ## Product Flow Covered
 
@@ -125,5 +128,6 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - Phase 14A: combined provider smoke coverage for `external_url` and
   `folder_import_future`.
 - Phase 14C: next provider boundary decision before implementation.
+- Phase 14D: generic webhook ingest provider boundary design.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.

@@ -609,7 +609,8 @@ Current work:
   workflow readiness and next-action cues.
 - Phase 14C: next provider boundary decision after `external_url` and
   `folder_import_future`.
-- Next likely phase: Phase 14D generic webhook ingest provider boundary design.
+- Phase 14D: generic webhook ingest provider boundary design.
+- Next likely phase: Phase 14E webhook provider configuration/status contract.
 
 Validation:
 
@@ -633,6 +634,9 @@ Validation:
   source-expansion path.
 - Future webhook work must keep incoming media/events/detections as
   MediaAsset/MotionEvidence/proposal evidence until user review/correction.
+- Phase 14D defines the generic webhook ingest boundary: `webhook_future`,
+  metadata-only setup, future authenticated validation, future MediaAsset or
+  MotionEvidence mapping only when explicitly scoped, and no reviewed truth.
 - MediaAssets remain media context, MotionEvidence remains evidence, and
   Event/Visit promotion remains unreviewed until correction.
 - No frontend feature, new provider, live playback, folder watcher, polling,
@@ -644,3 +648,8 @@ Validation:
 - No backend code, frontend code, tests, endpoint, database model, provider
   implementation, dependency, live playback, worker, polling, media decoding,
   automatic evidence, truth write, or generated artifact is added in Phase 14C.
+- No backend code, frontend code, tests, endpoint, webhook ingest, auth/token
+  code, media upload, media download, MediaAsset creation, MotionEvidence
+  creation, Event/Visit creation, ReviewLabel/truth creation,
+  ecosystem-specific integration, MQTT, worker, queue, polling, dependency,
+  model/runtime behavior, or generated artifact is added in Phase 14D.

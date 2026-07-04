@@ -94,6 +94,9 @@ For future generic webhook Sources, playback may remain placeholder-only.
 Webhook ingest can feed media or event candidate context later without becoming
 live playback. Any MediaAsset or MotionEvidence creation must be separately
 scoped and must not change playback status into a live stream claim.
+Phase 14D documents this as a provider boundary in
+[generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md):
+webhook ingest is not a playback provider by default.
 
 ## What This Phase Does
 

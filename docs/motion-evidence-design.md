@@ -75,6 +75,10 @@ external previews and folder imports remains evidence only until explicit
 promotion and later correction.
 Phase 14B dashboard/source status may cue pending evidence review, but it does
 not create MotionEvidence, promote evidence, or write reviewed truth.
+Phase 14D designs generic webhook ingest as a future source of candidate
+evidence only. Webhook motion/event candidates may become pending
+MotionEvidence only in a separately scoped phase; inbound labels or event claims
+must not become reviewed truth.
 
 ## Status Lifecycle
 

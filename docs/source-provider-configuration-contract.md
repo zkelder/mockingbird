@@ -70,6 +70,12 @@ only. Configuration should remain metadata-only until a separate webhook phase
 defines local auth, payload limits, provenance, dry-run behavior, evidence
 mapping, and truth guards. See
 [next-provider-boundary-decision.md](next-provider-boundary-decision.md).
+Phase 14D defines the design boundary in
+[generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md).
+Future metadata may include `endpoint_name`, a redacted shared-secret marker,
+external source filters, default Stream/Zone context, media-mode flags, and
+notes. This metadata must not generate tokens, expose secrets, accept webhook
+payloads, create media/evidence, or imply ingest is active.
 
 ## Provider Configuration Fields
 

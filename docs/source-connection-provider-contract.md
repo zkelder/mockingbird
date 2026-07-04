@@ -81,6 +81,11 @@ status/evidence-oriented. A configured webhook Source may report local ingest
 readiness later, but status must not accept payloads, create MediaAssets,
 create MotionEvidence, promote Events/Visits, or treat incoming labels as truth.
 See [next-provider-boundary-decision.md](next-provider-boundary-decision.md).
+Phase 14D defines the webhook boundary in
+[generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md).
+Webhook Source status is ingest readiness, not live connection, playback, or
+reviewed truth. Until implementation exists, configured metadata should still
+surface as future-adapter-required.
 
 ## Provider Configuration Relationship
 

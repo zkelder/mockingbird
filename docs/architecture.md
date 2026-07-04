@@ -179,6 +179,10 @@ sit below Source provider configuration/status contracts, and map future
 incoming media or event candidates into MediaAsset/MotionEvidence evidence
 without creating reviewed truth. See
 [next-provider-boundary-decision.md](next-provider-boundary-decision.md).
+Phase 14D defines that boundary in
+[generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md).
+It keeps webhook ingest local-first, ecosystem-neutral, playback-free by
+default, and evidence-only until explicit review/correction.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

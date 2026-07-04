@@ -137,6 +137,10 @@ Phase 14C chooses the next provider boundary before implementation:
 [next-provider-boundary-decision.md](next-provider-boundary-decision.md)
 recommends generic webhook ingest as the next design boundary, with incoming
 media/events treated as evidence or media context until review/correction.
+Phase 14D defines that generic webhook provider boundary. It is an evidence
+ingest design, not truth creation, live playback, Home Assistant/Frigate code,
+MQTT, media download, or provider implementation. See
+[generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md).
 
 ## Explicit Non-Recommended First Adapters
 
@@ -291,6 +295,7 @@ Future implementation must test:
 - Phase 14C: next provider boundary decision, recommending generic webhook
   ingest design before implementation.
 - Phase 14D: generic webhook ingest provider boundary design.
+- Phase 14E: webhook provider configuration/status contract.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

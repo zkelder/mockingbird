@@ -1,0 +1,353 @@
+# Generic Webhook Provider Boundary Design
+
+## Purpose
+
+The generic webhook provider exists because external systems may already detect
+motion, objects, media, or event candidates before MockingBird sees them.
+MockingBird should be able to accept those candidates later without coupling the
+core product to Home Assistant, Frigate, Blue Iris, Scrypted, MQTT, or any other
+single ecosystem first.
+
+Webhooks can eventually feed Source, Stream, MediaAsset, and MotionEvidence
+context. External labels, detections, and event claims must remain evidence or
+suggestions, not reviewed truth. User review/correction remains the truth
+boundary for analytics, exports, and classifier readiness.
+
+This phase is design only. It adds no webhook route, token/auth code, media
+upload, media download, MediaAsset creation, MotionEvidence creation,
+Event/Visit creation, ReviewLabel creation, provider implementation, dependency,
+worker, queue, polling, or integration-specific behavior.
+
+## Product Flow
+
+Future webhook work should preserve this flow:
+
+generic webhook Source setup -> webhook provider configuration -> future
+inbound webhook validation -> optional media reference or uploaded media
+candidate -> optional MediaAsset creation later -> optional pending
+MotionEvidence creation later -> explicit promote to Event/Visit -> Visit
+review/correction -> ReviewLabel truth -> analytics/exports/classifier
+readiness.
+
+The webhook provider boundary sits below the product loop. It may provide
+evidence or media context later, but it must not create reviewed truth.
+
+## Provider Definition
+
+Future provider key:
+
+- `webhook_future`
+
+Recommended display name:
+
+- Generic webhook ingest
+
+Meaning:
+
+- local-first by default
+- integration boundary for external systems
+- not Home Assistant-specific
+- not Frigate-specific
+- not MQTT
+- not a cloud webhook by default
+- not a truth-producing provider
+
+The provider should represent generic inbound evidence/media intent before any
+ecosystem-specific mapping is designed.
+
+## Configuration Fields
+
+Future provider configuration metadata:
+
+- `endpoint_name`: optional display label.
+- `shared_secret_configured`: secret/sensitive configured marker.
+- `allowed_source_name`: optional external source name filter.
+- `default_stream_id`: optional Stream context.
+- `default_zone_id`: optional Zone context.
+- `accept_media_uploads`: optional future boolean metadata.
+- `accept_media_urls`: optional future boolean metadata.
+- `notes`: optional local setup notes.
+
+Configuration rules:
+
+- no token generation in this phase
+- no webhook endpoint in this phase
+- secrets must be redacted to configured/not-configured markers
+- config/status must not imply webhook ingest is active yet
+- setup metadata must not accept payloads, write media, create evidence, or
+  write truth
+
+## Source Connection Status Relationship
+
+Future Source status for `webhook_future` should report ingest readiness, not
+camera connectivity or playback.
+
+Rules:
+
+- missing shared secret or endpoint setup means `not_configured`
+- configured metadata may mean `future_adapter_required` until an ingest
+  endpoint implementation exists
+- `supports_live_playback` is false
+- `supports_zone_editing` can be true where Stream context exists
+- setup/status views must not validate external webhook delivery
+- setup/status views must not accept payloads or create records
+
+Source connection status remains read-only and product-level.
+
+## Stream Playback Relationship
+
+The webhook provider usually does not provide live playback. Stream playback
+should remain placeholder/media/evidence context unless a separate playback
+provider exists.
+
+Future webhook ingest may attach media or evidence to Stream context, but it
+must not:
+
+- claim live playback by default
+- provide a preview URL by default
+- alter Stream playback status when media/evidence is created
+- bypass Zone editing, MotionEvidence review, promotion, or correction
+
+## Inbound Payload Categories
+
+Future webhook payload categories:
+
+- media reference candidate
+- media upload candidate
+- motion/event candidate
+- object/detection candidate
+- species/label suggestion candidate
+- heartbeat/status candidate
+
+Policy:
+
+- heartbeat/status is provider health, not activity evidence
+- detection labels are not truth
+- species labels become SpeciesSuggestion at most, if later implemented
+- object/person/vehicle labels become DetectionProposal or evidence metadata at
+  most, if later implemented
+- event candidates become pending MotionEvidence at most unless explicitly
+  promoted later
+- all payloads remain untrusted until validated
+
+## Future Webhook Endpoint Design
+
+Future endpoint option:
+
+```text
+POST /api/webhooks/{source_id}/ingest
+```
+
+Alternative source-scoped option:
+
+```text
+POST /api/sources/{source_id}/webhook/ingest
+```
+
+This phase does not implement either endpoint.
+
+Future behavior should include:
+
+- authentication with shared secret or signed header
+- bounded payload size
+- structured validation
+- no automatic truth
+- no ReviewLabel creation
+- no direct reviewed Visit state
+- no model runtime
+- no file write unless media upload is explicitly scoped
+- no remote media download unless separately scoped
+- safe response messages that do not echo secrets
+
+## Media Handling Policy
+
+Future media modes:
+
+- JSON metadata only
+- multipart upload
+- local URL/reference
+- remote URL fetch
+
+Recommended first implementation path:
+
+1. Metadata-only dry-run/validation endpoint first.
+2. Media upload to MediaAsset only if needed and explicitly scoped.
+3. Remote media URL fetch deferred until SSRF/security guardrails are designed.
+
+Remote media URL fetch overlaps with the `external_url` guardrails and should
+not be smuggled into webhook ingest. Local URL/reference handling should also
+avoid trusting source-provided file paths.
+
+## Evidence Mapping Policy
+
+Future mapping rules:
+
+- external event/motion payloads should map to pending MotionEvidence only
+- external detections should map to DetectionProposal or SpeciesSuggestion, not
+  truth
+- external labels must not become ReviewLabel automatically
+- source, stream, and zone context should be validated
+- privacy and ignore zones should block or skip evidence creation by default
+- duplicate candidates should be detected or reported before record creation
+- provenance should record that the candidate came through webhook ingest
+
+MediaAsset creation, MotionEvidence creation, DetectionProposal creation, and
+SpeciesSuggestion creation each need explicit future scope.
+
+## Species/Label Policy
+
+Webhook-provided species or object labels are untrusted suggestions.
+
+Policy:
+
+- species labels should become SpeciesSuggestion only if later implemented
+- object, person, or vehicle labels can become DetectionProposal or evidence
+  metadata only
+- incoming labels must not create ReviewLabel records
+- incoming labels must not mark Event/Visit reviewed
+- user correction remains truth
+- classifier/export readiness uses reviewed corrections only
+
+## Security Policy
+
+Future implementation must define security before accepting payloads.
+
+Requirements:
+
+- shared secret or signature design before implementation
+- no anonymous ingest by default
+- consider rate limiting
+- require payload size limits
+- no raw secrets in logs, responses, UI, docs, or tests
+- no trusting source-provided file paths
+- no remote URL fetching without SSRF guardrails
+- no cloud upload by default
+- local-network use preferred initially
+- reject unknown Source ids
+- reject payloads that do not match configured Source/Stream/Zone policy
+
+## Privacy/Ignore Policy
+
+Webhook payloads may describe sensitive outdoor activity. External systems may
+not know MockingBird privacy or ignore zones, so MockingBird policy wins.
+
+Rules:
+
+- privacy and ignore zones must be respected before evidence creation
+- if zone context is privacy or ignore, skip or reject by default
+- missing zone context should be treated conservatively when policy requires it
+- external detections cannot override MockingBird zone policy
+- no cloud forwarding is implied
+
+## Storage/Retention Policy
+
+Storage policy:
+
+- metadata-only validation writes nothing
+- media uploads, if later implemented, must write under ignored local media
+  paths
+- webhook-created MediaAssets need retention policy
+- webhook-created evidence should use the existing MotionEvidence lifecycle
+- no unbounded ingest without lifecycle design
+- no background queues without lifecycle design
+- no generated media, datasets, model artifacts, or classifier workspaces in
+  this phase
+
+Webhook-origin media should be treated like other local media context: useful
+for review, but not truth by itself.
+
+## Relationship To Home Assistant / Frigate / Blue Iris / Scrypted
+
+Generic webhook should come first.
+
+Ecosystem-specific adapters can later wrap or format payloads into the generic
+webhook boundary. Home Assistant, Frigate, Blue Iris, or Scrypted detections are
+evidence only until MockingBird review/correction creates truth.
+
+Future ecosystem phases should handle:
+
+- system-specific auth/config
+- payload mapping
+- external camera/source identity matching
+- duplicate behavior
+- provenance
+- error handling
+
+Core MockingBird should not be coupled to one ecosystem first.
+
+## Relationship To MQTT
+
+MQTT is useful later but introduces broker, topic, subscription, lifecycle,
+delivery, and deployment complexity.
+
+Generic webhook is simpler first because it can be request/response, local, and
+bounded. Future MQTT payloads should follow the same evidence-not-truth policy:
+external messages can become validated candidates, not reviewed truth.
+
+No MQTT behavior is implemented in this phase.
+
+## Relationship To `external_url` And `folder_import_future`
+
+`external_url` pulls one still image explicitly.
+
+`folder_import_future` imports local files explicitly.
+
+Webhook receives pushed candidates later.
+
+All paths should preserve the same spine:
+
+- Source setup/status first
+- explicit provider action or validated ingest boundary
+- MediaAsset and/or MotionEvidence before Event/Visit review
+- explicit promotion when applicable
+- user correction as truth
+
+Webhook must not become a shortcut around review/correction.
+
+## Testing Expectations For Future Implementation
+
+Future tests should prove:
+
+- missing or invalid secret is rejected
+- payload size limits are enforced
+- unknown Source is rejected
+- stream validation works
+- zone validation works
+- privacy/ignore zone payloads are rejected or skipped
+- metadata-only validation creates no records
+- media upload creates MediaAsset only if explicitly scoped
+- event candidate creates pending MotionEvidence only if explicitly scoped
+- species label creates SpeciesSuggestion only if explicitly scoped
+- no ReviewLabel/truth is created
+- no DatasetExport is created
+- no model/detector runtime is called
+- no remote URL fetch happens without guardrails
+- no secret leakage occurs
+- source-provided file paths are not trusted
+- status/setup/playback routes remain read-only
+
+## Recommended Future Phases
+
+- Phase 14E: webhook provider configuration/status contract.
+- Phase 14F: webhook payload validation/dry-run endpoint, no records.
+- Phase 14G: webhook metadata event to pending MotionEvidence,
+  explicit/evidence only.
+- Phase 14H: webhook media upload to MediaAsset, no evidence/truth.
+- Phase 14I: Home Assistant/Frigate mapping design.
+- Later: MQTT boundary design.
+
+## Explicit Non-Goals
+
+- no implementation in this phase
+- no endpoint
+- no webhook ingest
+- no token/auth code
+- no media upload
+- no remote media download
+- no MotionEvidence creation
+- no Events/Visits
+- no ReviewLabels/truth
+- no ecosystem-specific integration
+- no MQTT
+- no workers/queues/polling
+- no model/training work

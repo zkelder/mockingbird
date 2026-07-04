@@ -90,6 +90,10 @@ exports, training media, or generated workspace files.
   `folder_import_future` pattern: status routes are read-only, provider actions
   are explicit, MediaAssets/MotionEvidence are not truth, and ReviewLabel
   correction is the first reviewed truth write.
+- Future webhook smoke tests should follow
+  [generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md):
+  metadata/status stays read-only, validation/dry-run creates no records, and
+  any later ingest creates evidence/media context only when explicitly scoped.
 - Add live playback smoke coverage only after a separately designed playback
   lifecycle exists.
 - Add automation smoke coverage only after worker, privacy, retention, and truth

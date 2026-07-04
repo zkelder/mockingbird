@@ -126,6 +126,10 @@ Every future implementation task must restate:
 - New provider work must start from a boundary/design task, preserve provider
   smoke-test expectations, and treat incoming media/events/detections as
   evidence until user review/correction creates truth.
+- Webhook provider work must follow
+  [docs/generic-webhook-provider-boundary-design.md](docs/generic-webhook-provider-boundary-design.md)
+  and must not create truth, accept anonymous ingest, download media, or couple
+  core product behavior to one external ecosystem without explicit scope.
 - Folder/trail-cam provider work must follow
   [docs/folder-trailcam-provider-boundary-design.md](docs/folder-trailcam-provider-boundary-design.md)
   and explicit phase scope. The source-scoped folder preview route is dry-run

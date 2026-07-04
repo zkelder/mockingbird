@@ -107,9 +107,9 @@ truth.
 ## Generic Webhook Provider
 
 A future Source provider boundary for local systems to submit media or event
-candidates into MockingBird. It should start as design-only, local-first,
-evidence-oriented ingest and must not treat incoming labels, detections, or
-events as reviewed truth.
+candidates into MockingBird through `webhook_future`. It starts as design-only,
+local-first, ecosystem-neutral, evidence-oriented ingest and must not treat
+incoming labels, detections, or events as reviewed truth.
 
 ## Still-image Preview
 

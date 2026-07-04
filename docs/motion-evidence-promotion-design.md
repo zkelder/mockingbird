@@ -152,6 +152,9 @@ correction remains the first dataset/export truth write.
 Phase 14B dashboard/source status may link to Motion Evidence review and
 promotion surfaces, but it must not promote evidence automatically or create
 reviewed truth.
+Phase 14D generic webhook-origin candidates, if later mapped to
+MotionEvidence, must use the same explicit promotion semantics: promotion creates
+unreviewed Event/Visit context only, and correction remains truth.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 
