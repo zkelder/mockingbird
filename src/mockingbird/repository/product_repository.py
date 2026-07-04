@@ -170,7 +170,6 @@ from mockingbird.api.schemas import (
     WebhookPayloadCandidate,
     WebhookPayloadValidationRequest,
     WebhookPayloadValidationResponse,
-    WorkerStatusItem,
     WorkerStatusResponse,
     WorkerStatusSummary,
     Zone,
@@ -203,6 +202,7 @@ from mockingbird.storage.models import (
     VisitModel,
     ZoneModel,
 )
+from mockingbird.workers.registry import list_worker_status_items
 
 SUPPORTED_MEDIA_CONTENT_TYPES = {
     "image/jpeg": "image",
@@ -592,80 +592,6 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
 )
 
-WORKER_STATUS_PLACEHOLDERS: tuple[WorkerStatusItem, ...] = (
-    WorkerStatusItem(
-        worker_key="external_url_preview_scheduler_future",
-        display_name="External URL preview scheduler",
-        category="provider",
-        state="disabled",
-        enabled=False,
-        implemented=False,
-        provider_key="external_url",
-        message=(
-            "Future scheduled preview visibility only; no external URL fetch, "
-            "media creation, evidence creation, or truth creation exists."
-        ),
-        warnings=["Worker runtime is not implemented in this phase."],
-    ),
-    WorkerStatusItem(
-        worker_key="folder_import_scan_future",
-        display_name="Folder import scan",
-        category="provider",
-        state="disabled",
-        enabled=False,
-        implemented=False,
-        provider_key="folder_import_future",
-        message=(
-            "Future folder scan visibility only; no watcher, polling, folder "
-            "scan, media creation, evidence creation, or truth creation exists."
-        ),
-        warnings=["Worker runtime is not implemented in this phase."],
-    ),
-    WorkerStatusItem(
-        worker_key="webhook_ingest_queue_future",
-        display_name="Webhook ingest queue",
-        category="provider_ingest",
-        state="disabled",
-        enabled=False,
-        implemented=False,
-        provider_key="webhook_future",
-        message=(
-            "Future webhook queue visibility only; no async queue, payload "
-            "processing, media creation, evidence creation, or truth creation exists."
-        ),
-        warnings=["Worker runtime is not implemented in this phase."],
-    ),
-    WorkerStatusItem(
-        worker_key="saved_media_retention_future",
-        display_name="Saved media retention",
-        category="retention",
-        state="disabled",
-        enabled=False,
-        implemented=False,
-        provider_key=None,
-        message=(
-            "Future retention job visibility only; no background cleanup, "
-            "record deletion, media deletion, or truth mutation exists."
-        ),
-        warnings=["Worker runtime is not implemented in this phase."],
-    ),
-    WorkerStatusItem(
-        worker_key="model_suggestion_job_future",
-        display_name="Model suggestion job",
-        category="model_suggestion",
-        state="disabled",
-        enabled=False,
-        implemented=False,
-        provider_key=None,
-        message=(
-            "Future suggestion job visibility only; no model runtime, "
-            "DetectionProposal, SpeciesSuggestion, media, or truth creation exists."
-        ),
-        warnings=["Worker runtime is not implemented in this phase."],
-    ),
-)
-
-
 @dataclass
 class _CoverageAccumulator:
     label: str
@@ -817,7 +743,7 @@ class ProductRepository:
             return self._local_data_status(session)
 
     def get_worker_status(self) -> WorkerStatusResponse:
-        workers = [worker.model_copy(deep=True) for worker in WORKER_STATUS_PLACEHOLDERS]
+        workers = list_worker_status_items()
         summary = WorkerStatusSummary(
             total_workers=len(workers),
             implemented_workers=sum(worker.implemented for worker in workers),

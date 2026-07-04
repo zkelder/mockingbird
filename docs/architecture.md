@@ -236,6 +236,10 @@ Phase 16C adds the Worker Status frontend page and Dashboard link as a read-only
 visibility layer over that API. The UI shows future worker placeholders,
 summary counts, and false create/truth flags without controls to start, enable,
 run, or delete worker behavior.
+Phase 16D moves future worker placeholders into a disabled metadata-only worker
+registry beneath provider actions. The registry is an attachment point for
+status only; it has no executable worker behavior and cannot call providers,
+create records, or write truth.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

@@ -798,8 +798,8 @@ Current work:
 - Phase 16A: worker/lifecycle boundary design.
 - Phase 16B: worker status schema/API contract, read-only/no workers.
 - Phase 16C: worker status UI, read-only/no workers.
-- Next likely phase: Phase 16D disabled no-op worker registry/status contract,
-  or Phase 17A live/source automation decision.
+- Phase 16D: disabled no-op worker registry/status contract.
+- Next likely phase: Phase 16E first safe automation dry-run boundary.
 
 Design note: [worker-lifecycle-boundary-design.md](worker-lifecycle-boundary-design.md).
 
@@ -830,6 +830,12 @@ Validation:
   generated artifact.
 - Phase 16C adds a frontend Worker Status page and Dashboard link over the
   read-only status route. It adds no backend behavior, worker runtime,
+  scheduler, polling, watcher, queue, background job, provider execution, media
+  creation, evidence creation, Event/Visit, ReviewLabel/truth, dependency, or
+  generated artifact.
+- Phase 16D moves future worker placeholders into a metadata-only registry so
+  future automation has one disabled status attachment point. It adds no
+  callbacks, start/run/enable methods, scheduling config, worker runtime,
   scheduler, polling, watcher, queue, background job, provider execution, media
   creation, evidence creation, Event/Visit, ReviewLabel/truth, dependency, or
   generated artifact.

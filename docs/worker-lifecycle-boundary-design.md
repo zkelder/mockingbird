@@ -33,6 +33,11 @@ Phase 16C adds the frontend Worker Status page over that route. It is read-only
 visibility only: no workers, schedulers, polling, provider execution, media
 creation, evidence creation, or truth writes exist.
 
+Phase 16D moves those placeholder definitions into a metadata-only disabled
+worker registry. The registry has no callbacks, start/run/enable methods,
+scheduling config, provider execution, media creation, evidence creation, or
+truth writes.
+
 ## Automation Candidates
 
 Future automation candidates include:
@@ -163,10 +168,10 @@ Future worker implementation must test:
 
 - Phase 16B: worker status schema/API contract, read-only/no workers.
 - Phase 16C: worker status UI, read-only/no workers.
-- Phase 16D: disabled no-op worker registry/status contract, if useful before
-  any active worker implementation.
+- Phase 16D: disabled no-op worker registry/status contract.
+- Phase 16E: first safe automation dry-run boundary.
 - Phase 17A: live/source automation decision, if the product should choose a
-  broader automation direction first.
+  broader automation direction before active workers.
 - Later: explicit worker implementation phases for scheduled previews, folder
   scan dry-runs, queues, or cleanup.
 
@@ -177,4 +182,4 @@ These boundary phases add no runtime behavior.
 They do not add workers, schedulers, polling, watchers, queues, provider
 behavior, media writes, evidence creation, Event/Visit creation, labels, truth
 creation, dependencies, or generated artifacts. Phase 16C adds frontend status
-visibility only.
+visibility only. Phase 16D adds disabled registry metadata only.
