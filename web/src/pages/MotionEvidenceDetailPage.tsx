@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
-import type { CameraSource, MediaAsset, MotionEvidence, Stream } from "../api/types";
+import type {
+  CameraSource,
+  MediaAsset,
+  MotionEvidence,
+  MotionEvidencePromoteResponse,
+  Stream,
+} from "../api/types";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
@@ -37,42 +43,99 @@ export function MotionEvidenceDetailPage({
   const [evidence, setEvidence] = useState<MotionEvidence | null>(null);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [promotionResult, setPromotionResult] = useState<MotionEvidencePromoteResponse | null>(
+    null,
+  );
+  const [actionId, setActionId] = useState<"promote" | "ignore" | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadDetail() {
+  async function loadDetail(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
       setIsLoading(true);
-      setError(null);
-      try {
-        const [nextEvidence, nextMediaAssets] = await Promise.all([
-          apiClient.getMotionEvidence(motionEvidenceId),
-          apiClient.getMediaAssets().catch(() => []),
-        ]);
-        if (isMounted) {
-          setEvidence(nextEvidence);
-          setMediaAssets(nextMediaAssets);
-        }
-      } catch (caught) {
-        if (isMounted) {
-          setError(
-            caught instanceof Error ? caught.message : "Could not load MotionEvidence detail.",
-          );
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+    }
+    setError(null);
+    try {
+      const [nextEvidence, nextMediaAssets] = await Promise.all([
+        apiClient.getMotionEvidence(motionEvidenceId),
+        apiClient.getMediaAssets().catch(() => []),
+      ]);
+      setEvidence(nextEvidence);
+      setMediaAssets(nextMediaAssets);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not load MotionEvidence detail.");
+    } finally {
+      if (showLoading) {
+        setIsLoading(false);
       }
     }
+  }
 
+  useEffect(() => {
     void loadDetail();
-
-    return () => {
-      isMounted = false;
-    };
   }, [motionEvidenceId]);
+
+  async function promoteEvidence() {
+    if (!evidence || evidence.status !== "pending") {
+      return;
+    }
+    const confirmed = window.confirm(
+      "Promote this pending MotionEvidence? Promotion creates reviewable Event/Visit context, not truth.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setActionId("promote");
+    setActionError(null);
+    setActionMessage(null);
+    setPromotionResult(null);
+    try {
+      const result = await apiClient.promoteMotionEvidence(evidence.id, {
+        create_event: true,
+        create_visit: true,
+      });
+      setPromotionResult(result);
+      setEvidence(result.evidence);
+      setActionMessage("Promoted to reviewable Event/Visit. Correction still creates truth.");
+      await loadDetail({ showLoading: false });
+    } catch (caught) {
+      setActionError(
+        caught instanceof Error ? caught.message : "MotionEvidence could not be promoted.",
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function ignoreEvidence() {
+    if (!evidence || evidence.status !== "pending") {
+      return;
+    }
+    const confirmed = window.confirm(
+      "Ignore this pending MotionEvidence? Ignored evidence creates no Event, Visit, label, or truth.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setActionId("ignore");
+    setActionError(null);
+    setActionMessage(null);
+    setPromotionResult(null);
+    try {
+      const ignored = await apiClient.ignoreMotionEvidence(evidence.id);
+      setEvidence(ignored);
+      setActionMessage(`${ignored.id} ignored. No Event, Visit, ReviewLabel, or truth was created.`);
+      await loadDetail({ showLoading: false });
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "MotionEvidence could not be ignored.");
+    } finally {
+      setActionId(null);
+    }
+  }
 
   const sourceById = useMemo(() => new Map(sources.map((source) => [source.id, source])), [sources]);
   const streamById = useMemo(() => new Map(streams.map((stream) => [stream.id, stream])), [streams]);
@@ -133,6 +196,116 @@ export function MotionEvidenceDetailPage({
         </div>
         <StatusPill label={formatLabel(evidence.status)} tone={statusTone(evidence.status)} />
       </section>
+
+      {actionMessage ? (
+        <section className="notice-panel promotion-result-panel">
+          <div>
+            <strong>{actionMessage}</strong>
+            <span>Review/correction remains the only analytics and export truth path.</span>
+          </div>
+          {promotionResult ? (
+            <div className="detail-actions">
+              {promotionResult.event_id ? (
+                <button
+                  className="secondary-action"
+                  onClick={() => onOpenEvent(promotionResult.event_id!)}
+                  type="button"
+                >
+                  Open Event
+                </button>
+              ) : null}
+              {promotionResult.visit_id ? (
+                <button
+                  className="secondary-action"
+                  onClick={() => onOpenVisit(promotionResult.visit_id!)}
+                  type="button"
+                >
+                  Open Visit
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {actionError ? (
+        <section className="error-panel">
+          <strong>MotionEvidence action failed.</strong>
+          <span>{actionError}</span>
+        </section>
+      ) : null}
+
+      {evidence.status === "pending" ? (
+        <section className="panel motion-detail-actions-panel">
+          <div className="section-heading">
+            <div>
+              <h2>Pending evidence actions</h2>
+              <span className="meta-text">
+                Promote useful evidence to review, or ignore noise. Neither action creates
+                reviewed truth.
+              </span>
+            </div>
+            <EvidenceBadge label="Explicit action required" tone="review" />
+          </div>
+          <div className="detail-actions">
+            <button
+              className="primary-action"
+              disabled={actionId !== null}
+              onClick={() => void promoteEvidence()}
+              type="button"
+            >
+              {actionId === "promote" ? "Promoting..." : "Promote"}
+            </button>
+            <button
+              className="secondary-action"
+              disabled={actionId !== null}
+              onClick={() => void ignoreEvidence()}
+              type="button"
+            >
+              {actionId === "ignore" ? "Ignoring..." : "Ignore"}
+            </button>
+          </div>
+          <p className="media-readonly-note">
+            Promote creates reviewable Event/Visit context only. Ignore preserves evidence history
+            without creating Event, Visit, ReviewLabel, analytics truth, or export truth.
+          </p>
+        </section>
+      ) : evidence.status === "promoted" ? (
+        <section className="notice-panel promotion-result-panel">
+          <div>
+            <strong>Promoted evidence</strong>
+            <span>Open the linked Event/Visit and correct labels before export.</span>
+          </div>
+          <div className="detail-actions">
+            {evidence.promoted_event_id ? (
+              <button
+                className="secondary-action"
+                onClick={() => onOpenEvent(evidence.promoted_event_id!)}
+                type="button"
+              >
+                Open Event
+              </button>
+            ) : null}
+            {evidence.promoted_visit_id ? (
+              <button
+                className="secondary-action"
+                onClick={() => onOpenVisit(evidence.promoted_visit_id!)}
+                type="button"
+              >
+                Open Visit
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : (
+        <section className="notice-panel">
+          <strong>Ignored evidence</strong>
+          <span>
+            This MotionEvidence was ignored as non-truth evidence history. No Event, Visit,
+            ReviewLabel, analytics truth, or export truth was created by ignoring it.
+          </span>
+        </section>
+      )}
 
       <section className="panel motion-evidence-detail">
         <div className="section-heading">

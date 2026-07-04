@@ -396,6 +396,13 @@ and Visit Detail. It uses existing MotionEvidence detail data to make source
 evidence inspectable without creating Events, Visits, ReviewLabels, exports,
 analytics truth, provider behavior, workers, or model output.
 
+## Phase 17J Status
+
+Phase 17J lets the MotionEvidence detail page promote or ignore pending
+evidence through the existing explicit action APIs. Promotion still creates only
+reviewable Event/Visit context, ignore creates no review records, and
+ReviewLabel correction remains the first dataset/export truth path.
+
 ## Test Plan
 
 Implementation tests should prove:
