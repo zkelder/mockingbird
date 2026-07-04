@@ -1903,6 +1903,15 @@ button {
   font-weight: 700;
 }
 
+.tag-button {
+  cursor: pointer;
+}
+
+.tag-button.selected {
+  background: #2e6f5e;
+  color: #ffffff;
+}
+
 .visit-strip button:hover {
   background: #dcefd4;
 }
@@ -3506,6 +3515,10 @@ button {
   padding: 12px;
 }
 
+.readiness-table-row-selected {
+  background: #eef7ee;
+}
+
 .readiness-table-row:first-child {
   border-top: 0;
 }
@@ -3521,6 +3534,56 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.readiness-label-cell,
+.classifier-example-list,
+.classifier-example-card {
+  display: grid;
+  gap: 10px;
+}
+
+.readiness-label-cell {
+  justify-items: start;
+}
+
+.classifier-example-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.classifier-example-summary div,
+.classifier-example-card {
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.classifier-example-summary span,
+.classifier-example-meta {
+  color: #627168;
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.classifier-example-summary strong,
+.classifier-example-card h3,
+.classifier-example-card p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.classifier-example-gap {
+  border-color: #d6bb7a;
+  background: #fff9e9;
+}
+
+.classifier-example-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .readiness-warning {
@@ -4250,6 +4313,7 @@ button {
   }
 
   .classifier-readiness-status,
+  .classifier-example-summary,
   .manifest-preview-status,
   .manifest-export-form,
   .manifest-export-grid,

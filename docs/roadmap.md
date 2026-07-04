@@ -916,3 +916,21 @@ Validation:
   the detail view using the existing single-action APIs. Promote still creates
   reviewable Event/Visit context only, ignore creates no review records, and
   ReviewLabel correction remains the first dataset/export truth path.
+
+## Phase 18 — Classifier readiness drill-down
+
+Goal: make classifier readiness auditable from reviewed correction examples
+without adding training or model runtime behavior.
+
+Deliverables:
+
+- Phase 18A: classifier readiness drill-down examples.
+- Next likely phase: Phase 18B classifier readiness gap action polish.
+
+Validation:
+
+- Phase 18A lets users select a readiness label/species and inspect matching
+  ReviewLabel examples with Event/Visit detail links where target ids allow.
+  It uses existing read-only ReviewLabel data, creates no ReviewLabels, runs no
+  training/model code, changes no export format, and preserves correction as
+  classifier truth.

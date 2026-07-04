@@ -1,29 +1,45 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
-import type { ClassifierReadinessReport } from "../api/types";
+import type {
+  ClassifierReadinessReport,
+  ClassifierReadinessSpeciesSummary,
+  ReviewLabel,
+} from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatLabel } from "../utils";
+import { formatDateTime, formatLabel } from "../utils";
 
 interface ClassifierReadinessPageProps {
   onOpenAnalytics: () => void;
   onOpenClassifierManifest: () => void;
   onOpenExports: () => void;
+  onOpenEvent: (eventId: string) => void;
   onOpenReview: () => void;
+  onOpenVisit: (visitId: string) => void;
   onOpenSpeciesSuggestions: () => void;
+}
+
+function compareReviewLabelsNewestFirst(first: ReviewLabel, second: ReviewLabel): number {
+  const timeDelta =
+    new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
+  return timeDelta !== 0 ? timeDelta : second.id.localeCompare(first.id);
 }
 
 export function ClassifierReadinessPage({
   onOpenAnalytics,
   onOpenClassifierManifest,
   onOpenExports,
+  onOpenEvent,
   onOpenReview,
+  onOpenVisit,
   onOpenSpeciesSuggestions,
 }: ClassifierReadinessPageProps) {
   const [report, setReport] = useState<ClassifierReadinessReport | null>(null);
+  const [reviewLabels, setReviewLabels] = useState<ReviewLabel[]>([]);
+  const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,7 +47,16 @@ export function ClassifierReadinessPage({
     setIsLoading(true);
     setError(null);
     try {
-      setReport(await apiClient.getClassifierReadiness());
+      const [nextReport, nextReviewLabels] = await Promise.all([
+        apiClient.getClassifierReadiness(),
+        apiClient.getReviewLabels(),
+      ]);
+      setReport(nextReport);
+      setReviewLabels(nextReviewLabels);
+      setSelectedLabel(
+        (current) =>
+          current ?? nextReport.species[0]?.label ?? nextReport.missing_target_labels[0] ?? null,
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load classifier readiness.");
     } finally {
@@ -47,6 +72,25 @@ export function ClassifierReadinessPage({
     () => report?.missing_target_labels.slice(0, 24) ?? [],
     [report],
   );
+  const missingTargetSet = useMemo(
+    () => new Set(report?.missing_target_labels ?? []),
+    [report],
+  );
+  const selectedSpeciesSummary = useMemo(
+    () => report?.species.find((species) => species.label === selectedLabel) ?? null,
+    [report, selectedLabel],
+  );
+  const selectedExamples = useMemo(
+    () =>
+      reviewLabels
+        .filter((reviewLabel) => reviewLabel.label === selectedLabel)
+        .sort(compareReviewLabelsNewestFirst),
+    [reviewLabels, selectedLabel],
+  );
+  const selectedNeedsMoreExamples =
+    selectedLabel !== null &&
+    (missingTargetSet.has(selectedLabel) ||
+      (selectedSpeciesSummary !== null && selectedSpeciesSummary.warnings.length > 0));
 
   if (isLoading) {
     return <div className="panel">Loading classifier readiness...</div>;
@@ -178,8 +222,25 @@ export function ClassifierReadinessPage({
               <span role="columnheader">Warnings</span>
             </div>
             {report.species.map((species) => (
-              <div className="readiness-table-row" key={species.label} role="row">
-                <strong role="cell">{formatLabel(species.label)}</strong>
+              <div
+                className={
+                  selectedLabel === species.label
+                    ? "readiness-table-row readiness-table-row-selected"
+                    : "readiness-table-row"
+                }
+                key={species.label}
+                role="row"
+              >
+                <div className="readiness-label-cell" role="cell">
+                  <strong>{formatLabel(species.label)}</strong>
+                  <button
+                    className="text-action"
+                    onClick={() => setSelectedLabel(species.label)}
+                    type="button"
+                  >
+                    View examples
+                  </button>
+                </div>
                 <span role="cell">{species.reviewed_examples}</span>
                 <span role="cell">{species.media_backed_examples}</span>
                 <span role="cell">{species.export_ready_examples}</span>
@@ -206,6 +267,55 @@ export function ClassifierReadinessPage({
         )}
       </section>
 
+      <section className="panel classifier-readiness-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Reviewed examples</h2>
+            <span className="meta-text">
+              {selectedLabel ? `${formatLabel(selectedLabel)} · ${selectedExamples.length} shown` : "Select a label"}
+            </span>
+          </div>
+          <EvidenceBadge label="ReviewLabel truth" tone="truth" />
+        </div>
+        {selectedLabel ? (
+          <>
+            <ClassifierExampleSummary
+              label={selectedLabel}
+              summary={selectedSpeciesSummary}
+              exampleCount={selectedExamples.length}
+              needsMoreExamples={selectedNeedsMoreExamples}
+            />
+            {selectedExamples.length > 0 ? (
+              <div className="classifier-example-list">
+                {selectedExamples.map((reviewLabel) => (
+                  <ReviewLabelExampleCard
+                    key={reviewLabel.id}
+                    reviewLabel={reviewLabel}
+                    onOpenEvent={onOpenEvent}
+                    onOpenVisit={onOpenVisit}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                title="No reviewed examples yet."
+                description="Need more reviewed corrections for this label."
+                action={
+                  <button className="secondary-action" onClick={onOpenReview}>
+                    Open Review Queue
+                  </button>
+                }
+              />
+            )}
+          </>
+        ) : (
+          <EmptyState
+            title="Select a readiness label"
+            description="Choose a species or missing target label to inspect reviewed correction examples."
+          />
+        )}
+      </section>
+
       <section className="split-grid">
         <div className="panel classifier-readiness-panel">
           <div className="section-heading">
@@ -218,9 +328,14 @@ export function ClassifierReadinessPage({
             <>
               <div className="tag-row">
                 {missingTargetPreview.map((label) => (
-                  <span className="tag" key={label}>
+                  <button
+                    className={selectedLabel === label ? "tag tag-button selected" : "tag tag-button"}
+                    key={label}
+                    onClick={() => setSelectedLabel(label)}
+                    type="button"
+                  >
                     {formatLabel(label)}
-                  </span>
+                  </button>
                 ))}
               </div>
               {report.missing_target_labels.length > missingTargetPreview.length ? (
@@ -289,5 +404,95 @@ export function ClassifierReadinessPage({
         )}
       </section>
     </div>
+  );
+}
+
+function ClassifierExampleSummary({
+  label,
+  summary,
+  exampleCount,
+  needsMoreExamples,
+}: {
+  label: string;
+  summary: ClassifierReadinessSpeciesSummary | null;
+  exampleCount: number;
+  needsMoreExamples: boolean;
+}) {
+  return (
+    <div className="classifier-example-summary">
+      <div>
+        <span>Selected label</span>
+        <strong>{formatLabel(label)}</strong>
+      </div>
+      <div>
+        <span>Reviewed</span>
+        <strong>{summary?.reviewed_examples ?? exampleCount}</strong>
+      </div>
+      <div>
+        <span>Media-backed</span>
+        <strong>{summary?.media_backed_examples ?? 0}</strong>
+      </div>
+      <div>
+        <span>Export-ready</span>
+        <strong>{summary?.export_ready_examples ?? 0}</strong>
+      </div>
+      {needsMoreExamples ? (
+        <div className="classifier-example-gap">
+          <span>Gap</span>
+          <strong>Need more reviewed corrections for this label.</strong>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ReviewLabelExampleCard({
+  reviewLabel,
+  onOpenEvent,
+  onOpenVisit,
+}: {
+  reviewLabel: ReviewLabel;
+  onOpenEvent: (eventId: string) => void;
+  onOpenVisit: (visitId: string) => void;
+}) {
+  const isVisit = reviewLabel.target_type === "visit";
+  const isEvent = reviewLabel.target_type === "event";
+
+  return (
+    <article className="classifier-example-card">
+      <div className="section-heading">
+        <div>
+          <span className="meta-text">{formatLabel(reviewLabel.target_type)} correction</span>
+          <h3>{formatLabel(reviewLabel.label)}</h3>
+        </div>
+        <EvidenceBadge label="ReviewLabel truth" tone="truth" />
+      </div>
+      <div className="classifier-example-meta">
+        <span>ID: {reviewLabel.id}</span>
+        <span>Target: {reviewLabel.target_id}</span>
+        <span>Created: {formatDateTime(reviewLabel.created_at)}</span>
+      </div>
+      {reviewLabel.notes ? <p>{reviewLabel.notes}</p> : <p>No correction notes.</p>}
+      <div className="detail-actions">
+        {isEvent ? (
+          <button
+            className="secondary-action"
+            onClick={() => onOpenEvent(reviewLabel.target_id)}
+            type="button"
+          >
+            Open Event
+          </button>
+        ) : null}
+        {isVisit ? (
+          <button
+            className="secondary-action"
+            onClick={() => onOpenVisit(reviewLabel.target_id)}
+            type="button"
+          >
+            Open Visit
+          </button>
+        ) : null}
+      </div>
+    </article>
   );
 }

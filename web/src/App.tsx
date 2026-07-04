@@ -402,7 +402,9 @@ export default function App() {
         <ClassifierReadinessPage
           onOpenAnalytics={() => setPage("analytics")}
           onOpenExports={() => setPage("exports")}
+          onOpenEvent={openEvent}
           onOpenReview={() => setPage("review")}
+          onOpenVisit={openVisit}
           onOpenSpeciesSuggestions={() => setPage("species-suggestions")}
           onOpenClassifierManifest={() => setPage("classifier-manifest")}
         />
