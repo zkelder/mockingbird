@@ -718,10 +718,13 @@ Current work:
 
 - Phase 15A: MVP source/provider readiness consolidation.
 - Phase 15B: MVP demo script/checklist.
-- Next likely phase: Phase 15C onboarding/empty-state polish.
+- Phase 15C: onboarding and empty-state polish.
+- Next likely phase: Phase 15D local MVP release/readiness checklist.
 
 Design note: [mvp-readiness-consolidation.md](mvp-readiness-consolidation.md).
 Demo script: [mvp-demo-script.md](mvp-demo-script.md).
+Onboarding/empty states:
+[onboarding-empty-state-polish.md](onboarding-empty-state-polish.md).
 
 Validation:
 
@@ -755,3 +758,13 @@ Validation:
   tests, endpoints, database models, scripts, generated media, seed assets,
   dependencies, provider behavior, live playback, workers, polling, watchers,
   automation, model runtime, training behavior, or generated artifacts.
+- Phase 15C makes sparse/fresh local app states explain the product path:
+  Source setup, explicit provider action, MediaAsset/MotionEvidence evidence,
+  promotion, Visit correction, and analytics/export/classifier readiness.
+- Phase 15C frontend surfaces remain read-only guidance. They do not fetch
+  provider media, scan folders, process webhook payloads, create MediaAssets,
+  create MotionEvidence, create Events/Visits, create ReviewLabels, run models,
+  or generate artifacts.
+- Phase 15D should turn the current MVP spine into a local release/readiness
+  checklist after onboarding copy, demo flow, and validation expectations are
+  clean.

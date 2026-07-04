@@ -150,11 +150,11 @@ export function ReviewQueuePage({
       {message ? <div className="notice-panel">{message}</div> : null}
       {items.length === 0 ? (
         <EmptyState
-          title="All demo visits and events are reviewed."
-          description="Corrections are available as local dataset-grade labels for exports and analytics."
+          title="No Visits need correction"
+          description="The Review Queue contains Visits that need user correction. Promote MotionEvidence or import media to create reviewable Visits; corrections create analytics, export, and classifier truth."
           action={
             <button className="primary-action" onClick={onOpenExports}>
-              Generate dataset export
+              Open Dataset Exports
             </button>
           }
         />

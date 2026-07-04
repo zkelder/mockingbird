@@ -437,7 +437,7 @@ export function ClassifierManifestPage({
           ) : (
             <EmptyState
               title="No included labels"
-              description="Review media-backed visits with target bird species labels before future training."
+              description="Review media-backed Visits with target bird species labels before future training. Raw media, MotionEvidence, suggestions, and unreviewed Visits are not manifest truth."
             />
           )}
         </div>
@@ -461,7 +461,7 @@ export function ClassifierManifestPage({
           ) : (
             <EmptyState
               title="No split assignments"
-              description="The manifest preview has no included examples yet."
+              description="The manifest preview has no included reviewed examples yet, so there are no deterministic train/validation/test assignments."
             />
           )}
         </div>

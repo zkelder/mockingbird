@@ -241,6 +241,14 @@ export function ManualImportPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
+      <section className="notice-panel onboarding-provider-note">
+        <strong>Explicit local ingest</strong>
+        <span>
+          Manual import can create local MediaAssets and reviewable Events/Visits for the selected
+          Source, Stream, and Zone context. Imported media and suggested labels are not export truth;
+          review correction is the truth boundary.
+        </span>
+      </section>
 
       {selectedStream && selectedSource ? (
         <section className="panel import-context-panel">
@@ -450,7 +458,7 @@ export function ManualImportPage({
             {!isLoadingMedia && mediaAssets.length === 0 ? (
               <EmptyState
                 title="No imported media yet"
-                description="Choose a local image or video to create the first reviewable imported observation."
+                description="Choose a local image or video to create the first reviewable imported observation. The import is explicit local ingest; correction is still required before analytics/export truth."
               />
             ) : null}
           </div>

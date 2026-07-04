@@ -1058,7 +1058,7 @@ export function MotionEvidencePage({
           description={
             hasFilters
               ? "Try another status or zone, or review explicit media handoff results."
-              : "Current records can come from explicit media handoff, manual creation, or sampled-frame evaluation."
+              : "MotionEvidence is pending activity evidence from saved external_url media, folder-imported media, manual/dev creation, or sampled-frame evaluation. It is not an Event, Visit, label, or truth until explicit promotion and later correction."
           }
         />
       ) : null}

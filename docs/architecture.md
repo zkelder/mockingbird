@@ -215,6 +215,12 @@ Dashboard readiness -> provider workflows -> MotionEvidence review/promote ->
 Event/Visit correction -> analytics/export/classifier readiness -> saved media
 retention. The script validates the product spine without adding runtime
 behavior.
+Phase 15C adds read-only onboarding and empty-state polish for sparse local app
+states. These surfaces may guide users toward explicit provider actions,
+MotionEvidence review, Visit correction, analytics, exports, classifier
+readiness, and retention, but they must not run providers, fetch media, scan
+folders, process webhook payloads, create evidence, promote Events/Visits, or
+write reviewed truth.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

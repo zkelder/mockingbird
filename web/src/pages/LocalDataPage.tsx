@@ -95,6 +95,14 @@ export function LocalDataPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
+      <section className="notice-panel">
+        <strong>Local demo/dev state</strong>
+        <span>
+          This page is for local-first MVP visibility and reset during demos or development. Reset
+          restores seeded product metadata; reviewed corrections are local truth until you
+          intentionally reset that local state.
+        </span>
+      </section>
 
       {isLoading ? <div className="panel">Loading local data status...</div> : null}
 
@@ -200,7 +208,8 @@ export function LocalDataPage({
             </div>
             <p>
               Reset restores the seeded source, stream, zones, events, visits, review label, and
-              dataset export manifest. It does not delete media files or write export archives.
+              dataset export manifest for local demo/dev use. It does not delete media files or
+              write export archives.
             </p>
             {isConfirmingReset ? (
               <div className="notice-panel">

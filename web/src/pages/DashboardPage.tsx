@@ -79,6 +79,52 @@ interface MvpProviderWorkflow {
   action: MvpReadinessAction;
 }
 
+interface MvpStartStep {
+  title: string;
+  detail: string;
+  actionLabel: string;
+  action: MvpReadinessAction;
+}
+
+const mvpStartSteps: MvpStartStep[] = [
+  {
+    title: "Configure Sources",
+    detail: "Use Streams to save setup metadata and confirm provider status before any provider action.",
+    actionLabel: "Open Streams",
+    action: "streams",
+  },
+  {
+    title: "Try External URL preview",
+    detail: "Fetch a still image explicitly, save it as a MediaAsset, then hand it to pending evidence.",
+    actionLabel: "Open Streams",
+    action: "streams",
+  },
+  {
+    title: "Try Folder / trail-cam import",
+    detail: "Preview a folder explicitly, import selected files as MediaAssets, then create pending evidence.",
+    actionLabel: "Open Streams",
+    action: "streams",
+  },
+  {
+    title: "Try Manual Import",
+    detail: "Import local media into Source and Stream context to create a reviewable Visit.",
+    actionLabel: "Import Media",
+    action: "import",
+  },
+  {
+    title: "Review pending MotionEvidence",
+    detail: "Inspect evidence, ignore noise, or promote useful activity into unreviewed Event/Visit context.",
+    actionLabel: "Motion Evidence",
+    action: "motion-evidence",
+  },
+  {
+    title: "Correct Visits",
+    detail: "Save reviewed labels and species so analytics, exports, and classifier readiness have truth.",
+    actionLabel: "Review Queue",
+    action: "review",
+  },
+];
+
 const mvpProviderWorkflows: MvpProviderWorkflow[] = [
   {
     name: "External URL / HTTP still-image",
@@ -433,6 +479,43 @@ export function DashboardPage({
         <MetricCard label="Reviewed species" value={reviewedSpeciesCount} detail="local truth" />
         <MetricCard label="Unknown birds" value={unknownBirdCount} detail="needs species detail" />
         <MetricCard label="Unknown animals" value={unknownAnimalCount} detail="needs label review" />
+      </section>
+
+      <section className="panel onboarding-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Start here</h2>
+            <span className="meta-text">
+              Fresh local MVP path from setup to reviewed truth
+            </span>
+          </div>
+          <StatusPill label="Read-only guidance" tone="good" />
+        </div>
+        <div className="notice-panel compact-notice truth-boundary-callout">
+          <strong>MVP path</strong>
+          <span>
+            Source setup -&gt; provider action -&gt; MediaAsset/MotionEvidence -&gt; promote -&gt;
+            Visit correction -&gt; analytics/export readiness. Live playback is future work.
+            Evidence is not truth. Corrections create analytics/export/classifier truth.
+          </span>
+        </div>
+        <div className="onboarding-step-grid">
+          {mvpStartSteps.map((step) => (
+            <article className="onboarding-step-card" key={step.title}>
+              <div>
+                <h3>{step.title}</h3>
+                <p>{step.detail}</p>
+              </div>
+              <button
+                className="secondary-action"
+                onClick={() => handleMvpReadinessAction(step.action)}
+                type="button"
+              >
+                {step.actionLabel}
+              </button>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="panel mvp-readiness-panel">

@@ -45,4 +45,9 @@ Motion Evidence, review/correction, analytics, exports, classifier readiness,
 and saved media retention, use
 [mvp-demo-script.md](mvp-demo-script.md).
 
+For first-run and sparse-data copy, use
+[onboarding-empty-state-polish.md](onboarding-empty-state-polish.md). These
+surfaces are read-only guidance and must not run provider actions or create
+truth.
+
 Keep docs practical and concise. Link to [README.md](../README.md), [docs/product-doctrine.md](product-doctrine.md), [docs/roadmap.md](roadmap.md), [docs/glossary.md](glossary.md), and [docs/architecture.md](architecture.md) instead of duplicating the full doctrine in every file.

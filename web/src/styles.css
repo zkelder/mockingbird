@@ -536,6 +536,48 @@ button {
   gap: 14px;
 }
 
+.onboarding-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.truth-boundary-callout {
+  border-left: 4px solid #6e9567;
+}
+
+.onboarding-provider-note {
+  border-left: 4px solid #6e9567;
+}
+
+.onboarding-step-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.onboarding-step-card {
+  display: grid;
+  align-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.onboarding-step-card h3,
+.onboarding-step-card p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.onboarding-step-card p {
+  color: #4f5f55;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
 .mvp-readiness-actions {
   justify-content: flex-start;
 }
@@ -3660,6 +3702,7 @@ button {
   .playback-status-grid,
   .provider-field-grid,
   .provider-workflow-grid,
+  .onboarding-step-grid,
   .record-meta-grid,
   .source-field-summary,
   .source-connection-grid,

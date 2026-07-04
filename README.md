@@ -164,6 +164,10 @@ Use [docs/mvp-demo-script.md](docs/mvp-demo-script.md) for a repeatable local
 walkthrough of the MVP spine from Dashboard readiness through provider
 workflows, Motion Evidence, correction truth, analytics/exports, classifier
 readiness, and saved media retention.
+Use
+[docs/onboarding-empty-state-polish.md](docs/onboarding-empty-state-polish.md)
+for first-run and sparse-data copy rules that keep onboarding read-only and
+truth-safe.
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 

@@ -9,6 +9,7 @@ import type {
 import { DatasetCoveragePanel } from "../components/DatasetCoveragePanel";
 import { DatasetQualityPanel } from "../components/DatasetQualityPanel";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
+import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
@@ -147,6 +148,13 @@ export function ExportsPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
+      <section className="notice-panel">
+        <strong>Reviewed corrections export as truth</strong>
+        <span>
+          Raw MediaAssets, MotionEvidence, DetectionProposal evidence, and unreviewed Visits are
+          context only. Review corrections decide what counts in local dataset exports.
+        </span>
+      </section>
 
       <DatasetQualityPanel
         quality={datasetQuality}
@@ -226,7 +234,10 @@ export function ExportsPage({
               </button>
             ))}
             {localExports.length === 0 ? (
-              <span className="meta-text">No dataset exports yet.</span>
+              <EmptyState
+                title="No dataset exports yet"
+                description="Correct Visits in the Review Queue first, then generate a reviewed local dataset. Evidence and unreviewed Visits are not export truth."
+              />
             ) : null}
           </div>
         </div>

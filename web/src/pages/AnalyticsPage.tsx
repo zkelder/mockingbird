@@ -100,8 +100,8 @@ export function AnalyticsPage({
         <span>
           Manual media imports become events and visits, then corrected labels roll into these local
           summaries and dataset manifests. Corrected species is local dataset truth; detection
-          proposals only count here after they become reviewable visits or events and receive corrected
-          labels.
+          proposals, raw MediaAssets, and MotionEvidence only count here after they become
+          reviewable visits or events and receive corrected labels.
         </span>
       </section>
       <DatasetCoveragePanel
@@ -162,7 +162,7 @@ export function AnalyticsPage({
             ) : (
               <EmptyState
                 title="No labels counted yet"
-                description="Corrections will become dataset-grade labels and appear here."
+                description="Reviewed corrections will become dataset-grade labels and appear here. Raw MediaAssets, MotionEvidence, and unreviewed Visits are not analytics truth."
                 action={
                   <button className="secondary-action" onClick={onOpenReview}>
                     Open Review Queue
@@ -190,7 +190,7 @@ export function AnalyticsPage({
             ) : (
               <EmptyState
                 title="No zone activity counted"
-                description="Draw zones on a stream to make future outdoor activity easier to understand."
+                description="Draw zones on a stream, create reviewable activity, then correct Visits before zone activity becomes useful analytics."
                 action={
                   onOpenStream ? (
                     <button className="secondary-action" onClick={onOpenStream}>

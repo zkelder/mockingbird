@@ -105,6 +105,19 @@ safe action, live playback status, evidence/review state, and correction/export
 readiness. It does not fetch URLs, scan folders, process webhook payloads,
 create media, create evidence, promote Events/Visits, or create reviewed truth.
 
+## Onboarding Surface
+
+A read-only first-run or sparse-data UI surface that explains the next safe
+MockingBird action. It can point to Streams, Import Media, Motion Evidence,
+Review Queue, Analytics, Exports, Classifier Readiness, or Retention, but it
+does not run providers, create evidence, promote review context, or write truth.
+
+## Empty State
+
+Copy shown when a list or report has no current records. In MockingBird, empty
+states should explain the product path and truth boundary instead of treating
+missing data as an error.
+
 ## External URL Still-image Provider
 
 An `external_url` Source provider contract for explicit HTTP still-image

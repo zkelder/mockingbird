@@ -7,6 +7,9 @@ Source/provider setup -> explicit provider workflow -> MediaAsset or
 MotionEvidence evidence -> explicit promotion -> Event/Visit review -> user
 correction truth -> analytics, exports, and classifier readiness.
 
+Phase 15C onboarding and empty states guide the same path when the local app has
+little or no data.
+
 It does not demonstrate live playback, automation, model runtime, training, or
 production provider infrastructure.
 
@@ -99,6 +102,7 @@ Visit these surfaces during the walkthrough:
 ## Step 1 - Dashboard MVP Readiness
 
 - [ ] Open Dashboard.
+- [ ] Confirm the Start here/MVP path explains first actions for a sparse local app.
 - [ ] Find the MVP readiness/provider workflow section.
 - [ ] Confirm provider cards for `external_url`, folder/trail-cam, webhook, and
       manual media.

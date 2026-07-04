@@ -742,6 +742,15 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
         title="Streams"
         description="Connect Sources, inspect Streams, configure setup metadata, then draw Zones and review activity."
       />
+      <section className="notice-panel onboarding-provider-note">
+        <strong>Provider setup is metadata/status first</strong>
+        <span>
+          external_url uses explicit preview/save/evidence. folder_import_future uses explicit
+          preview/import/evidence. webhook_future uses API validation and metadata evidence; UI
+          ingest controls are future. manual_media uses explicit Import Media. Live playback is
+          future work.
+        </span>
+      </section>
       {connectionError ? <div className="error-panel">{connectionError}</div> : null}
       {selectedSource ? (
         <section className="panel source-setup-panel source-workflow-panel">
@@ -1832,7 +1841,7 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
               ) : (
                 <EmptyState
                   title="No Streams for this Source"
-                  description="Streams will become the center of Zones and review once this Source has Stream metadata."
+                  description="Add Stream metadata before this Source can carry Zones, provider evidence, reviewable Visits, corrections, analytics, or exports."
                 />
               )}
             </div>
@@ -1841,7 +1850,7 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
       ) : (
         <EmptyState
           title="No Sources available"
-          description="Sources and Streams will become the center of setup, Zones, and review."
+          description="Create a Source before provider setup can guide explicit preview/import/evidence actions. Source setup alone does not fetch media, create evidence, or create truth."
         />
       )}
     </div>

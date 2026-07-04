@@ -6,6 +6,9 @@ Phase 15A makes the Dashboard a read-only overview of current provider workflow
 readiness. It tells users what works now, what remains future, and where the
 next explicit action lives.
 
+Phase 15C adds onboarding and empty-state polish that reinforces the same
+readiness and truth-boundary story throughout sparse local app states.
+
 This does not add provider behavior, live playback, model runtime, media
 decoding, generated artifacts, or truth writes.
 
@@ -135,6 +138,8 @@ for the external URL Source/Stream path.
 Use [mvp-demo-script.md](mvp-demo-script.md) for the higher-level local
 walkthrough across Dashboard, provider workflows, review/correction, retention,
 analytics, exports, and classifier readiness.
+Use [onboarding-empty-state-polish.md](onboarding-empty-state-polish.md) for the
+read-only first-run and sparse-data copy rules.
 
 ## Explicit Non-goals
 

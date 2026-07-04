@@ -355,8 +355,9 @@ export function SavedMediaRetentionPage() {
       <section className="notice-panel retention-boundary-panel">
         <strong>File-only cleanup boundary</strong>
         <span>
-          Low-risk cleanup can delete a confirmed local file only. No MediaAsset records,
-          evidence, Events, Visits, labels, exports, or truth are deleted.
+          Retention tracks saved external_url preview media in local storage. Low-risk cleanup can
+          delete a confirmed local file only. No MediaAsset records, evidence, Events, Visits,
+          labels, exports, or truth are deleted.
         </span>
       </section>
 
@@ -635,7 +636,7 @@ export function SavedMediaRetentionPage() {
         ) : (
           <EmptyState
             title="No saved preview media"
-            description="Saved external_url previews will appear here after an explicit save action."
+            description="Saved external_url previews will appear here after an explicit save action. Folder-import retention is separate future policy; dry-runs and file-only cleanup do not delete records or truth."
           />
         )}
       </section>
