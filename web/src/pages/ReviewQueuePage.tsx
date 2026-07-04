@@ -29,8 +29,16 @@ import { formatDateTime, formatLabel } from "../utils";
 
 type ReviewFilter = "all" | "bird_species" | "unknown_animals" | "false_positives";
 type ReviewTargetFilter = "all" | "event" | "visit";
-type ReviewStatusFilter = "unreviewed" | "reviewed" | "all";
+export type ReviewStatusFilter = "unreviewed" | "reviewed" | "all";
 type LabelValidationStatus = "empty" | "suggested" | "recent" | "taxonomy" | "custom";
+
+export interface ReviewQueueInitialContext {
+  source?: "classifier-readiness";
+  sourceLabel?: string | null;
+  search?: string | null;
+  correctionLabel?: string | null;
+  status?: ReviewStatusFilter | null;
+}
 
 interface LabelHelperGroup {
   title: string;
@@ -254,11 +262,13 @@ function correctionHistoryGroups(reviewLabels: ReviewLabel[]): CorrectionHistory
 
 interface ReviewQueuePageProps {
   items: ReviewQueueItem[];
+  initialContext?: ReviewQueueInitialContext | null;
   onCreateCorrection: (
     item: ReviewQueueItem,
     label: string,
     notes: string,
   ) => Promise<ReviewCorrectionResult>;
+  onInitialContextConsumed?: () => void;
   onOpenEvent: (eventId: string) => void;
   onOpenExports: () => void;
   onOpenVisit: (visitId: string) => void;
@@ -266,7 +276,9 @@ interface ReviewQueuePageProps {
 
 export function ReviewQueuePage({
   items,
+  initialContext,
   onCreateCorrection,
+  onInitialContextConsumed,
   onOpenEvent,
   onOpenExports,
   onOpenVisit,
@@ -283,6 +295,7 @@ export function ReviewQueuePage({
   const [targetTypeFilter, setTargetTypeFilter] = useState<ReviewTargetFilter>("all");
   const [reviewStatusFilter, setReviewStatusFilter] =
     useState<ReviewStatusFilter>("unreviewed");
+  const [readinessHandoffLabel, setReadinessHandoffLabel] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [isBulkSaving, setIsBulkSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -425,6 +438,35 @@ export function ReviewQueuePage({
   );
 
   useEffect(() => {
+    if (!initialContext) {
+      return;
+    }
+
+    const nextSearch = initialContext.search?.trim() ?? "";
+    const nextCorrectionLabel = initialContext.correctionLabel?.trim() ?? "";
+    const nextSourceLabel =
+      initialContext.sourceLabel?.trim() || nextSearch || nextCorrectionLabel || null;
+
+    if (nextSearch) {
+      setTextSearch(nextSearch);
+    }
+    if (initialContext.status) {
+      setReviewStatusFilter(initialContext.status);
+    }
+    if (nextCorrectionLabel) {
+      setBulkDraft((current) =>
+        current.label.trim() ? current : { ...current, label: nextCorrectionLabel },
+      );
+    }
+    setSelectedTargetIds([]);
+    setBulkResult(null);
+    setReadinessHandoffLabel(
+      initialContext.source === "classifier-readiness" ? nextSourceLabel : null,
+    );
+    onInitialContextConsumed?.();
+  }, [initialContext, onInitialContextConsumed]);
+
+  useEffect(() => {
     setQueueItems(items);
   }, [items]);
 
@@ -543,6 +585,13 @@ export function ReviewQueuePage({
     setBulkResult(null);
   }
 
+  function clearReadinessSearch() {
+    setTextSearch("");
+    setReadinessHandoffLabel(null);
+    setSelectedTargetIds([]);
+    setBulkResult(null);
+  }
+
   async function saveBulkCorrection() {
     const trimmedLabel = bulkDraft.label.trim();
     if (!trimmedLabel) {
@@ -628,6 +677,20 @@ export function ReviewQueuePage({
         }
       />
       {message ? <div className="notice-panel">{message}</div> : null}
+      {readinessHandoffLabel ? (
+        <section className="notice-panel review-handoff-notice">
+          <div>
+            <strong>Classifier readiness gap: {formatLabel(readinessHandoffLabel)}</strong>
+            <span>
+              Search and bulk label were prefilled. Select review items and apply a correction
+              explicitly to create truth.
+            </span>
+          </div>
+          <button className="text-action" onClick={clearReadinessSearch} type="button">
+            Clear search
+          </button>
+        </section>
+      ) : null}
       {queueItems.length === 0 ? (
         <EmptyState
           title="No Visits need correction"
@@ -953,8 +1016,21 @@ export function ReviewQueuePage({
         })}
         {queueItems.length > 0 && filteredItems.length === 0 ? (
           <EmptyState
-            title="No review items in this filter"
-            description="Switch filters to resolve species, unknown animals, or false positives."
+            title={
+              readinessHandoffLabel ? "No matching review items found" : "No review items in this filter"
+            }
+            description={
+              readinessHandoffLabel
+                ? "No matching review items found. Clear search to review other items."
+                : "Switch filters to resolve species, unknown animals, or false positives."
+            }
+            action={
+              readinessHandoffLabel ? (
+                <button className="secondary-action" onClick={clearReadinessSearch} type="button">
+                  Clear search
+                </button>
+              ) : undefined
+            }
           />
         ) : null}
       </div>

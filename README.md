@@ -198,6 +198,29 @@ npm run dev
 
 The frontend defaults to http://127.0.0.1:8000 for the API. Set `VITE_API_BASE_URL` to point at a different local API.
 
+## Local image smoke path
+
+With the API running, a developer can import one local image and create demo
+DetectionProposal evidence without installing detector dependencies:
+
+```sh
+python scripts/run_local_image_smoke.py --file /path/to/local-image.jpg
+```
+
+To also convert the first proposal into a reviewable Event/Visit:
+
+```sh
+python scripts/run_local_image_smoke.py --file /path/to/local-image.jpg --convert
+```
+
+The script prints the MediaAsset, DetectionRun, DetectionProposal, and optional
+Event/Visit IDs, plus API hints for `/api/media/{id}`,
+`/api/detection-runs/{id}/proposals`, `/api/detection-proposals`, and
+`/api/review-queue`. This is a synthetic demo detector path: no model inspects
+the media, no ReviewLabel truth is created, and review/correction remains
+required before exports, analytics, or classifier readiness treat the label as
+truth.
+
 ## Local detector spike
 
 The Local Image Detector adapter is optional, evidence-only, and disabled until configured with a local model file. No model files are committed or downloaded automatically.

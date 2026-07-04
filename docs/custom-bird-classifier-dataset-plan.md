@@ -63,6 +63,8 @@ as documentation only; it does not implement training.
 Phase 15A may point users from the Dashboard readiness overview to classifier
 readiness, but that readiness is based on reviewed corrections, not raw media
 or provider evidence.
+Phase 18B lets readiness gaps jump to Review Queue with label context so users
+can explicitly correct more examples; it does not auto-create labels or truth.
 
 ## Product Flow
 

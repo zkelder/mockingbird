@@ -26,7 +26,10 @@ import { ManualImportPage } from "./pages/ManualImportPage";
 import { ModelAdaptersPage } from "./pages/ModelAdaptersPage";
 import { MotionEvidenceDetailPage } from "./pages/MotionEvidenceDetailPage";
 import { MotionEvidencePage } from "./pages/MotionEvidencePage";
-import { ReviewQueuePage } from "./pages/ReviewQueuePage";
+import {
+  ReviewQueuePage,
+  type ReviewQueueInitialContext,
+} from "./pages/ReviewQueuePage";
 import { SavedMediaRetentionPage } from "./pages/SavedMediaRetentionPage";
 import { SpeciesSuggestionsPage } from "./pages/SpeciesSuggestionsPage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
@@ -113,6 +116,8 @@ export default function App() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [selectedVisitId, setSelectedVisitId] = useState<string | null>(null);
   const [selectedMotionEvidenceId, setSelectedMotionEvidenceId] = useState<string | null>(null);
+  const [reviewQueueInitialContext, setReviewQueueInitialContext] =
+    useState<ReviewQueueInitialContext | null>(null);
   const [visitCorrectionPrefill, setVisitCorrectionPrefill] =
     useState<VisitCorrectionPrefill | null>(null);
   const [data, setData] = useState<AppData>(initialData);
@@ -199,6 +204,26 @@ export default function App() {
     setPage("motion-evidence-detail");
   }
 
+  function openReviewQueue(context?: ReviewQueueInitialContext | null) {
+    setReviewQueueInitialContext(context ?? null);
+    setPage("review");
+  }
+
+  function openReviewQueueForClassifierLabel(label: string) {
+    const trimmedLabel = label.trim();
+    if (!trimmedLabel) {
+      openReviewQueue();
+      return;
+    }
+    openReviewQueue({
+      source: "classifier-readiness",
+      sourceLabel: trimmedLabel,
+      search: trimmedLabel,
+      correctionLabel: trimmedLabel,
+      status: "unreviewed",
+    });
+  }
+
   function useSpeciesSuggestionAsCorrection(suggestion: SpeciesSuggestion) {
     if (!suggestion.visit_id) {
       return;
@@ -279,7 +304,7 @@ export default function App() {
           onOpenClassifierReadiness={() => setPage("classifier-readiness")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenWorkerStatus={() => setPage("worker-status")}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
           onOpenExports={() => setPage("exports")}
         />
       );
@@ -320,7 +345,7 @@ export default function App() {
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
           onOpenStream={openStream}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
           onOpenExports={() => setPage("exports")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onImportComplete={() => loadAppData({ showLoading: false })}
@@ -337,7 +362,7 @@ export default function App() {
           onOpenModelAdapters={() => setPage("model-adapters")}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
           onOpenExports={() => setPage("exports")}
           onProposalChanged={() => loadAppData({ showLoading: false })}
         />
@@ -351,7 +376,7 @@ export default function App() {
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
           onOpenExports={() => setPage("exports")}
           onProposalChanged={() => loadAppData({ showLoading: false })}
           modelReadiness={data.modelReadiness}
@@ -367,7 +392,7 @@ export default function App() {
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
           onOpenMotionEvidence={openMotionEvidence}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
           onEvidenceChanged={() => loadAppData({ showLoading: false })}
         />
       );
@@ -391,7 +416,7 @@ export default function App() {
         <SpeciesSuggestionsPage
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
           onUseAsCorrection={useSpeciesSuggestionAsCorrection}
         />
       );
@@ -403,7 +428,8 @@ export default function App() {
           onOpenAnalytics={() => setPage("analytics")}
           onOpenExports={() => setPage("exports")}
           onOpenEvent={openEvent}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
+          onOpenReviewForLabel={openReviewQueueForClassifierLabel}
           onOpenVisit={openVisit}
           onOpenSpeciesSuggestions={() => setPage("species-suggestions")}
           onOpenClassifierManifest={() => setPage("classifier-manifest")}
@@ -416,7 +442,7 @@ export default function App() {
         <ClassifierManifestPage
           onOpenClassifierReadiness={() => setPage("classifier-readiness")}
           onOpenExports={() => setPage("exports")}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
         />
       );
     }
@@ -430,7 +456,7 @@ export default function App() {
           onOpenVisit={openVisit}
           onOpenImport={() => setPage("import")}
           onOpenExports={() => setPage("exports")}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
         />
       );
     }
@@ -442,7 +468,7 @@ export default function App() {
           onOpenStream={openStream}
           onOpenVisit={openVisit}
           onOpenExports={() => setPage("exports")}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenMotionEvidence={openMotionEvidence}
         />
@@ -468,7 +494,9 @@ export default function App() {
       return (
         <ReviewQueuePage
           items={data.reviewQueue}
+          initialContext={reviewQueueInitialContext}
           onCreateCorrection={createCorrection}
+          onInitialContextConsumed={() => setReviewQueueInitialContext(null)}
           onOpenEvent={openEvent}
           onOpenExports={() => setPage("exports")}
           onOpenVisit={openVisit}
@@ -483,7 +511,7 @@ export default function App() {
           datasetCoverage={data.datasetCoverage}
           datasetQuality={data.datasetQuality}
           onOpenExports={() => setPage("exports")}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
@@ -498,7 +526,7 @@ export default function App() {
           exports={data.exports}
           datasetCoverage={data.datasetCoverage}
           datasetQuality={data.datasetQuality}
-          onOpenReview={() => setPage("review")}
+          onOpenReview={() => openReviewQueue()}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
@@ -520,7 +548,7 @@ export default function App() {
         onOpenDashboard={() => setPage("dashboard")}
         onOpenImport={() => setPage("import")}
         onOpenStreams={() => setPage("streams")}
-        onOpenReview={() => setPage("review")}
+        onOpenReview={() => openReviewQueue()}
         onOpenExports={() => setPage("exports")}
         onOpenDetectionProposals={() => setPage("detection-proposals")}
         onResetComplete={refreshAfterLocalReset}

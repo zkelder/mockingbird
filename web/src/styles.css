@@ -1271,6 +1271,16 @@ button {
   overflow-wrap: anywhere;
 }
 
+.review-handoff-notice {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.review-handoff-notice div {
+  display: grid;
+  gap: 5px;
+}
+
 .correction-audit-panel,
 .correction-audit-list,
 .correction-truth-panel,
@@ -3576,14 +3586,36 @@ button {
 }
 
 .classifier-example-gap {
+  display: grid;
+  gap: 6px;
   border-color: #d6bb7a;
   background: #fff9e9;
+}
+
+.classifier-example-gap .text-action {
+  justify-self: start;
 }
 
 .classifier-example-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.readiness-gap-callout {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  border: 1px solid #d6bb7a;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff9e9;
+}
+
+.readiness-gap-callout span {
+  color: #5f5027;
+  font-size: 0.9rem;
+  font-weight: 750;
 }
 
 .readiness-warning {
@@ -4319,6 +4351,7 @@ button {
   .manifest-export-grid,
   .manifest-file-row,
   .manifest-example-row,
+  .review-handoff-notice,
   .retention-detail-grid,
   .retention-linkage-grid,
   .retention-dry-run-form,

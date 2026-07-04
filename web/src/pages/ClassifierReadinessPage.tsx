@@ -18,6 +18,7 @@ interface ClassifierReadinessPageProps {
   onOpenExports: () => void;
   onOpenEvent: (eventId: string) => void;
   onOpenReview: () => void;
+  onOpenReviewForLabel: (label: string) => void;
   onOpenVisit: (visitId: string) => void;
   onOpenSpeciesSuggestions: () => void;
 }
@@ -34,6 +35,7 @@ export function ClassifierReadinessPage({
   onOpenExports,
   onOpenEvent,
   onOpenReview,
+  onOpenReviewForLabel,
   onOpenVisit,
   onOpenSpeciesSuggestions,
 }: ClassifierReadinessPageProps) {
@@ -240,6 +242,13 @@ export function ClassifierReadinessPage({
                   >
                     View examples
                   </button>
+                  <button
+                    className="text-action"
+                    onClick={() => onOpenReviewForLabel(species.label)}
+                    type="button"
+                  >
+                    Find review candidates
+                  </button>
                 </div>
                 <span role="cell">{species.reviewed_examples}</span>
                 <span role="cell">{species.media_backed_examples}</span>
@@ -275,7 +284,18 @@ export function ClassifierReadinessPage({
               {selectedLabel ? `${formatLabel(selectedLabel)} · ${selectedExamples.length} shown` : "Select a label"}
             </span>
           </div>
-          <EvidenceBadge label="ReviewLabel truth" tone="truth" />
+          <div className="detail-actions">
+            {selectedLabel ? (
+              <button
+                className="secondary-action"
+                onClick={() => onOpenReviewForLabel(selectedLabel)}
+                type="button"
+              >
+                Find review candidates
+              </button>
+            ) : null}
+            <EvidenceBadge label="ReviewLabel truth" tone="truth" />
+          </div>
         </div>
         {selectedLabel ? (
           <>
@@ -284,6 +304,7 @@ export function ClassifierReadinessPage({
               summary={selectedSpeciesSummary}
               exampleCount={selectedExamples.length}
               needsMoreExamples={selectedNeedsMoreExamples}
+              onOpenReviewForLabel={onOpenReviewForLabel}
             />
             {selectedExamples.length > 0 ? (
               <div className="classifier-example-list">
@@ -299,10 +320,14 @@ export function ClassifierReadinessPage({
             ) : (
               <EmptyState
                 title="No reviewed examples yet."
-                description="Need more reviewed corrections for this label."
+                description="No reviewed examples yet. Find items to correct."
                 action={
-                  <button className="secondary-action" onClick={onOpenReview}>
-                    Open Review Queue
+                  <button
+                    className="secondary-action"
+                    onClick={() => onOpenReviewForLabel(selectedLabel)}
+                    type="button"
+                  >
+                    Find review candidates
                   </button>
                 }
               />
@@ -343,6 +368,18 @@ export function ClassifierReadinessPage({
                   {report.missing_target_labels.length - missingTargetPreview.length} more target
                   labels need reviewed media-backed examples.
                 </span>
+              ) : null}
+              {selectedLabel && missingTargetSet.has(selectedLabel) ? (
+                <div className="readiness-gap-callout">
+                  <span>No reviewed examples yet. Find items to correct.</span>
+                  <button
+                    className="text-action"
+                    onClick={() => onOpenReviewForLabel(selectedLabel)}
+                    type="button"
+                  >
+                    Find review candidates
+                  </button>
+                </div>
               ) : null}
             </>
           ) : (
@@ -412,11 +449,13 @@ function ClassifierExampleSummary({
   summary,
   exampleCount,
   needsMoreExamples,
+  onOpenReviewForLabel,
 }: {
   label: string;
   summary: ClassifierReadinessSpeciesSummary | null;
   exampleCount: number;
   needsMoreExamples: boolean;
+  onOpenReviewForLabel: (label: string) => void;
 }) {
   return (
     <div className="classifier-example-summary">
@@ -439,7 +478,14 @@ function ClassifierExampleSummary({
       {needsMoreExamples ? (
         <div className="classifier-example-gap">
           <span>Gap</span>
-          <strong>Need more reviewed corrections for this label.</strong>
+          <strong>Needs more reviewed corrections.</strong>
+          <button
+            className="text-action"
+            onClick={() => onOpenReviewForLabel(label)}
+            type="button"
+          >
+            Find review candidates
+          </button>
         </div>
       ) : null}
     </div>

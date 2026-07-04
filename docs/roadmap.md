@@ -925,7 +925,8 @@ without adding training or model runtime behavior.
 Deliverables:
 
 - Phase 18A: classifier readiness drill-down examples.
-- Next likely phase: Phase 18B classifier readiness gap action polish.
+- Phase 18B: classifier readiness gap actions into Review Queue.
+- Next likely phase: Phase 18C classifier readiness gap coverage polish.
 
 Validation:
 
@@ -934,3 +935,7 @@ Validation:
   It uses existing read-only ReviewLabel data, creates no ReviewLabels, runs no
   training/model code, changes no export format, and preserves correction as
   classifier truth.
+- Phase 18B lets readiness gaps open Review Queue with label/search context and
+  an editable bulk correction label. It auto-selects nothing, auto-submits
+  nothing, and still creates classifier/export truth only through explicit
+  ReviewLabel correction.

@@ -224,6 +224,86 @@ async def test_demo_detection_run_can_convert_and_export_corrected_truth(
     assert record["detections"][0]["label"] == "bird"
 
 
+async def test_local_image_smoke_path_creates_proposal_and_optional_conversion_without_truth(
+    client: httpx.AsyncClient,
+) -> None:
+    initial_review_labels = (await client.get("/api/review-labels")).json()
+
+    import_response = await import_image(client)
+
+    assert import_response.status_code == 201
+    import_result = import_response.json()
+    media_asset = import_result["media_asset"]
+    imported_event = import_result["event"]
+    imported_visit = import_result["visit"]
+    assert media_asset["id"]
+    assert imported_event["review_status"] == "needs_review"
+    assert imported_visit["review_status"] == "needs_review"
+
+    demo_response = await create_demo_run(
+        client,
+        media_asset["id"],
+        {
+            "zone_id": FEEDER_ZONE_ID,
+            "label": "bird",
+            "confidence": 0.72,
+            "suggested_subject_label": "unknown_bird",
+            "suggested_species": "unknown_bird",
+            "notes": (
+                "Local image smoke demo detector evidence only. No model inspected "
+                "the media and no reviewed truth was created."
+            ),
+        },
+    )
+
+    assert demo_response.status_code == 201
+    demo_result = demo_response.json()
+    detection_run = demo_result["detection_run"]
+    proposal = demo_result["proposals"][0]
+    media_lookup = await client.get(f"/api/media/{media_asset['id']}")
+    run_lookup = await client.get(f"/api/detection-runs/{detection_run['id']}")
+    run_proposals = await client.get(f"/api/detection-runs/{detection_run['id']}/proposals")
+
+    assert media_lookup.status_code == 200
+    assert media_lookup.json()["id"] == media_asset["id"]
+    assert run_lookup.status_code == 200
+    assert run_lookup.json()["id"] == detection_run["id"]
+    assert run_lookup.json()["status"] == "completed"
+    assert run_proposals.status_code == 200
+    assert [item["id"] for item in run_proposals.json()] == [proposal["id"]]
+    assert proposal["media_asset_id"] == media_asset["id"]
+    assert proposal["zone_id"] == FEEDER_ZONE_ID
+    assert proposal["status"] == "proposed"
+    assert proposal["event_id"] is None
+    assert proposal["visit_id"] is None
+    assert proposal["label"] == "bird"
+    assert proposal["suggested_subject_label"] == "unknown_bird"
+    assert proposal["suggested_species"] == "unknown_bird"
+    assert len((await client.get("/api/review-labels")).json()) == len(initial_review_labels)
+
+    decision_response = await client.post(
+        f"/api/detection-proposals/{proposal['id']}/decision",
+        json={
+            "decision": "convert_to_event",
+            "event_title": "Local smoke review",
+            "subject_label": "unknown_bird",
+            "species_guess": "unknown_bird",
+            "notes": "Optional smoke conversion still requires explicit correction.",
+        },
+    )
+
+    assert decision_response.status_code == 200
+    decision = decision_response.json()
+    converted_event = decision["event"]
+    converted_visit = decision["visit"]
+    assert converted_event["review_status"] == "needs_review"
+    assert converted_visit["review_status"] == "needs_review"
+    assert decision["proposal"]["status"] == "converted"
+    assert decision["proposal"]["event_id"] == converted_event["id"]
+    assert decision["proposal"]["visit_id"] == converted_visit["id"]
+    assert len((await client.get("/api/review-labels")).json()) == len(initial_review_labels)
+
+
 async def test_detection_proposal_can_be_created_and_listed_for_media(
     client: httpx.AsyncClient,
 ) -> None:
