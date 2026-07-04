@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
+  DemoDetectionRunCreate,
+  DemoDetectionRunResult,
+  DetectionProposalDecisionResult,
   MediaAsset,
   MediaImportResult,
   SourceSetupReviewResponse,
@@ -23,7 +26,15 @@ interface ManualImportPageProps {
   onOpenStreams: () => void;
   onOpenFolderImport: () => void;
   onOpenDetectionProposals: () => void;
+  onOpenReview: () => void;
   onImportComplete: () => Promise<void>;
+}
+
+interface LastImportContext {
+  title: string;
+  subjectLabel: string;
+  speciesGuess: string;
+  zoneId: string | null;
 }
 
 export function ManualImportPage({
@@ -35,6 +46,7 @@ export function ManualImportPage({
   onOpenStreams,
   onOpenFolderImport,
   onOpenDetectionProposals,
+  onOpenReview,
   onImportComplete,
 }: ManualImportPageProps) {
   const [selectedStreamId, setSelectedStreamId] = useState(streams[0]?.id ?? "");
@@ -49,11 +61,19 @@ export function ManualImportPage({
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [setupReviews, setSetupReviews] = useState<Record<string, SourceSetupReviewResponse>>({});
   const [result, setResult] = useState<MediaImportResult | null>(null);
+  const [lastImportContext, setLastImportContext] = useState<LastImportContext | null>(null);
+  const [demoResult, setDemoResult] = useState<DemoDetectionRunResult | null>(null);
+  const [demoDecisionResult, setDemoDecisionResult] =
+    useState<DetectionProposalDecisionResult | null>(null);
   const [isLoadingMedia, setIsLoadingMedia] = useState(true);
   const [isLoadingZones, setIsLoadingZones] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCreatingDemoProposal, setIsCreatingDemoProposal] = useState(false);
+  const [isConvertingDemoProposal, setIsConvertingDemoProposal] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [demoMessage, setDemoMessage] = useState<string | null>(null);
+  const [demoError, setDemoError] = useState<string | null>(null);
 
   const sourceNames = useMemo(
     () => new Map(sources.map((source) => [source.id, source.name])),
@@ -68,6 +88,23 @@ export function ManualImportPage({
   const isManualMediaReady =
     selectedSetupReview?.provider_key === "manual_media" &&
     selectedSetupReview.readiness_level === "metadata_ready";
+  const demoSubjectLabel =
+    lastImportContext?.subjectLabel ||
+    result?.visit?.subject_label ||
+    subjectLabel.trim() ||
+    "unknown_bird";
+  const demoSpeciesGuess =
+    lastImportContext?.speciesGuess ||
+    result?.visit?.species_guess ||
+    speciesGuess.trim() ||
+    "unknown_bird";
+  const demoEventTitle =
+    lastImportContext?.title ||
+    result?.event.title ||
+    (result ? `Local smoke import: ${result.media_asset.original_filename}` : "Local smoke import");
+  const demoZoneId =
+    lastImportContext?.zoneId || result?.event.primary_zone_id || selectedZoneId || undefined;
+  const firstDemoProposal = demoResult?.proposals[0] ?? null;
 
   useEffect(() => {
     setSelectedStreamId((current) =>
@@ -196,12 +233,24 @@ export function ManualImportPage({
       payload.append("notes", notes.trim());
     }
 
+    const nextImportContext = {
+      title: title.trim() || `Local smoke import: ${file.name}`,
+      subjectLabel: subjectLabel.trim() || "unknown_bird",
+      speciesGuess: speciesGuess.trim() || "unknown_bird",
+      zoneId: selectedZoneId || null,
+    };
+
     setIsSubmitting(true);
     setError(null);
     setMessage(null);
+    setDemoMessage(null);
+    setDemoError(null);
     try {
       const nextResult = await apiClient.importMedia(payload);
       setResult(nextResult);
+      setLastImportContext(nextImportContext);
+      setDemoResult(null);
+      setDemoDecisionResult(null);
       setMessage("Imported media created a reviewable event and visit.");
       setFile(null);
       setFileInputKey((current) => current + 1);
@@ -214,6 +263,94 @@ export function ManualImportPage({
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function buildDemoProposalPayload(): DemoDetectionRunCreate | null {
+    if (!result) {
+      return null;
+    }
+
+    return {
+      media_asset_id: result.media_asset.id,
+      zone_id: demoZoneId,
+      label: "bird",
+      confidence: 0.72,
+      suggested_subject_label: demoSubjectLabel,
+      suggested_species: demoSpeciesGuess,
+      notes:
+        "Browser local smoke path demo detector evidence only. No model inspected the media " +
+        "and no reviewed truth was created.",
+    };
+  }
+
+  async function createDemoProposal() {
+    const payload = buildDemoProposalPayload();
+    if (!payload) {
+      setDemoError("Import local media before creating demo proposal evidence.");
+      return null;
+    }
+
+    setIsCreatingDemoProposal(true);
+    setDemoError(null);
+    setDemoMessage(null);
+    setDemoDecisionResult(null);
+    try {
+      const nextDemoResult = await apiClient.createDemoDetectionRun(payload);
+      setDemoResult(nextDemoResult);
+      setDemoMessage(
+        nextDemoResult.proposals.length > 0
+          ? "Synthetic proposal evidence was created. Review correction still creates truth."
+          : "Demo run completed without proposal evidence.",
+      );
+      await onImportComplete();
+      return nextDemoResult;
+    } catch (caught) {
+      setDemoError(caught instanceof Error ? caught.message : "Demo proposal could not be created.");
+      return null;
+    } finally {
+      setIsCreatingDemoProposal(false);
+    }
+  }
+
+  async function convertDemoProposal(sourceResult: DemoDetectionRunResult | null = demoResult) {
+    const proposal = sourceResult?.proposals[0] ?? null;
+    if (!proposal) {
+      setDemoError("Create demo proposal evidence before converting it to Event/Visit context.");
+      return null;
+    }
+
+    setIsConvertingDemoProposal(true);
+    setDemoError(null);
+    setDemoMessage(null);
+    try {
+      const nextDecisionResult = await apiClient.decideDetectionProposal(proposal.id, {
+        decision: "convert_to_event",
+        event_title: demoEventTitle,
+        subject_label: demoSubjectLabel,
+        species_guess: demoSpeciesGuess,
+        notes: "Converted from explicit browser smoke action; still needs review/correction.",
+      });
+      setDemoDecisionResult(nextDecisionResult);
+      setDemoMessage(
+        "Converted proposal into needs-review Event/Visit context. No ReviewLabel truth was created.",
+      );
+      await onImportComplete();
+      return nextDecisionResult;
+    } catch (caught) {
+      setDemoError(caught instanceof Error ? caught.message : "Demo proposal could not be converted.");
+      return null;
+    } finally {
+      setIsConvertingDemoProposal(false);
+    }
+  }
+
+  async function createAndConvertDemoProposal() {
+    setIsConvertingDemoProposal(true);
+    const nextDemoResult = await createDemoProposal();
+    if (nextDemoResult) {
+      await convertDemoProposal(nextDemoResult);
+    }
+    setIsConvertingDemoProposal(false);
   }
 
   return (
@@ -323,12 +460,135 @@ export function ManualImportPage({
                 Visit detail
               </button>
             ) : null}
-            <button className="secondary-action" onClick={onOpenDetectionProposals}>
-              Generate demo proposal
+            <button className="secondary-action" onClick={onOpenReview}>
+              Review Queue
             </button>
             <StatusPill label={`${result.review_queue_count} needs review`} tone="review" />
           </div>
           <MediaAssetPreview asset={result.media_asset} compact />
+          <div className="import-smoke-panel">
+            <div className="section-heading">
+              <div>
+                <span className="meta-text">Browser local smoke path</span>
+                <h3>Create review evidence</h3>
+              </div>
+              <StatusPill label="Synthetic evidence" tone="quiet" />
+            </div>
+            <p>
+              Create synthetic demo proposal evidence for local smoke testing. No model inspects the media and
+              no reviewed truth is created.
+            </p>
+            <div className="import-flow-strip">
+              <span>MediaAsset</span>
+              <span>DetectionProposal evidence</span>
+              <span>Needs-review Event/Visit</span>
+              <span>Review correction truth</span>
+            </div>
+            {demoMessage ? <div className="notice-panel compact-notice">{demoMessage}</div> : null}
+            {demoError ? <div className="error-panel compact-error">{demoError}</div> : null}
+            <div className="detail-actions">
+              <button
+                className="primary-action"
+                disabled={isCreatingDemoProposal || isConvertingDemoProposal}
+                onClick={() => void createDemoProposal()}
+                type="button"
+              >
+                {isCreatingDemoProposal && !isConvertingDemoProposal ? "Creating..." : "Create demo proposal"}
+              </button>
+              <button
+                className="secondary-action"
+                disabled={isCreatingDemoProposal || isConvertingDemoProposal}
+                onClick={() => void createAndConvertDemoProposal()}
+                type="button"
+              >
+                {isConvertingDemoProposal ? "Creating..." : "Create and convert to Event/Visit"}
+              </button>
+              {firstDemoProposal && !demoDecisionResult ? (
+                <button
+                  className="secondary-action"
+                  disabled={isConvertingDemoProposal}
+                  onClick={() => void convertDemoProposal()}
+                  type="button"
+                >
+                  {isConvertingDemoProposal ? "Converting..." : "Convert first proposal to Event/Visit"}
+                </button>
+              ) : null}
+              <button className="secondary-action" onClick={onOpenReview} type="button">
+                Open Review Queue
+              </button>
+              <button className="secondary-action" onClick={onOpenDetectionProposals} type="button">
+                Open Detection Proposals
+              </button>
+            </div>
+            {demoResult ? (
+              <div className="import-smoke-result-grid">
+                <div className="data-row">
+                  <span>DetectionRun ID</span>
+                  <strong>{demoResult.detection_run.id}</strong>
+                </div>
+                <div className="data-row">
+                  <span>Proposal IDs</span>
+                  <strong>
+                    {demoResult.proposals.length > 0
+                      ? demoResult.proposals.map((proposal) => proposal.id).join(", ")
+                      : "none"}
+                  </strong>
+                </div>
+                <div className="data-row">
+                  <span>Review Queue</span>
+                  <strong>{demoResult.review_queue_count} needs review</strong>
+                </div>
+              </div>
+            ) : null}
+            {demoDecisionResult ? (
+              <div className="import-smoke-result-grid">
+                <div className="data-row">
+                  <span>Converted proposal</span>
+                  <strong>{demoDecisionResult.proposal.id}</strong>
+                </div>
+                <div className="data-row">
+                  <span>Event</span>
+                  {demoDecisionResult.event ? (
+                    <button
+                      className="inline-link-button"
+                      onClick={() => onOpenEvent(demoDecisionResult.event!.id)}
+                      type="button"
+                    >
+                      {demoDecisionResult.event.id}
+                    </button>
+                  ) : (
+                    <strong>not created</strong>
+                  )}
+                </div>
+                <div className="data-row">
+                  <span>Visit</span>
+                  {demoDecisionResult.visit ? (
+                    <button
+                      className="inline-link-button"
+                      onClick={() => onOpenVisit(demoDecisionResult.visit!.id)}
+                      type="button"
+                    >
+                      {demoDecisionResult.visit.id}
+                    </button>
+                  ) : (
+                    <strong>not created</strong>
+                  )}
+                </div>
+              </div>
+            ) : null}
+            <div className="notice-panel compact-notice import-smoke-boundary">
+              <strong>Truth boundary</strong>
+              <ul>
+                <li>Demo proposal is synthetic evidence.</li>
+                <li>No model inspected the media.</li>
+                <li>No ReviewLabel truth was created.</li>
+                <li>
+                  Event/Visit still requires explicit review/correction before exports, analytics, or classifier
+                  truth.
+                </li>
+              </ul>
+            </div>
+          </div>
         </section>
       ) : null}
 

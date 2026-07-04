@@ -332,6 +332,7 @@ export default function App() {
           onOpenStreams={() => setPage("streams")}
           onOpenFolderImport={() => setPage("folder-import")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
+          onOpenReview={() => openReviewQueue()}
           onImportComplete={() => loadAppData({ showLoading: false })}
         />
       );

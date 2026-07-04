@@ -2358,6 +2358,63 @@ button {
   grid-column: 1 / -1;
 }
 
+.import-smoke-panel {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 12px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f7faf3;
+}
+
+.import-smoke-panel p {
+  margin: 0;
+  color: #5c6a61;
+}
+
+.import-smoke-result-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.import-smoke-result-grid .data-row,
+.import-smoke-result-grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.import-smoke-boundary {
+  display: grid;
+  gap: 6px;
+}
+
+.import-smoke-boundary ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #5c6a61;
+  font-weight: 650;
+}
+
+.import-smoke-boundary li {
+  margin: 3px 0;
+}
+
+.inline-link-button {
+  width: fit-content;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #2f6f4f;
+  font: inherit;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .media-list-item {
   border: 1px solid #dce3d8;
   border-radius: 8px;
@@ -4284,6 +4341,7 @@ button {
   .quality-metric-grid,
   .quality-secondary-grid,
   .import-context-grid,
+  .import-smoke-result-grid,
   .adapter-evaluation-grid,
   .model-readiness-grid,
   .adapter-result-grid,

@@ -221,6 +221,11 @@ the media, no ReviewLabel truth is created, and review/correction remains
 required before exports, analytics, or classifier readiness treat the label as
 truth.
 
+The browser uses the same boundary: start the API and frontend, open Import
+Media, import an image, click Create demo proposal, optionally create and
+convert it to Event/Visit context, then open Review Queue. This adds no model
+runtime and creates no truth on its own.
+
 ## Local detector spike
 
 The Local Image Detector adapter is optional, evidence-only, and disabled until configured with a local model file. No model files are committed or downloaded automatically.
