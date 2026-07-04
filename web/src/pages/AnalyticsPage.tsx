@@ -96,13 +96,8 @@ export function AnalyticsPage({
         <MetricCard label="False positives" value={falsePositiveCount} detail="reviewed out" />
       </section>
       <section className="notice-panel">
-        <strong>Reviewed imports count here</strong>
-        <span>
-          Manual media imports become events and visits, then corrected labels roll into these local
-          summaries and dataset manifests. Corrected species is local dataset truth; detection
-          proposals, raw MediaAssets, and MotionEvidence only count here after they become
-          reviewable visits or events and receive corrected labels.
-        </span>
+        <strong>Corrections drive analytics</strong>
+        <span>Raw evidence appears here only after review and correction.</span>
       </section>
       <DatasetCoveragePanel
         coverage={datasetCoverage}
@@ -162,7 +157,7 @@ export function AnalyticsPage({
             ) : (
               <EmptyState
                 title="No labels counted yet"
-                description="Reviewed corrections will become dataset-grade labels and appear here. Raw MediaAssets, MotionEvidence, and unreviewed Visits are not analytics truth."
+                description="Reviewed corrections will appear here."
                 action={
                   <button className="secondary-action" onClick={onOpenReview}>
                     Open Review Queue

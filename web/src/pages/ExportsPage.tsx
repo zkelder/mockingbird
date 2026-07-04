@@ -148,13 +148,6 @@ export function ExportsPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
-      <section className="notice-panel">
-        <strong>Reviewed corrections export as truth</strong>
-        <span>
-          Raw MediaAssets, MotionEvidence, DetectionProposal evidence, and unreviewed Visits are
-          context only. Review corrections decide what counts in local dataset exports.
-        </span>
-      </section>
 
       <DatasetQualityPanel
         quality={datasetQuality}
@@ -236,7 +229,7 @@ export function ExportsPage({
             {localExports.length === 0 ? (
               <EmptyState
                 title="No dataset exports yet"
-                description="Correct Visits in the Review Queue first, then generate a reviewed local dataset. Evidence and unreviewed Visits are not export truth."
+                description="Correct Visits first, then generate a reviewed local dataset."
               />
             ) : null}
           </div>

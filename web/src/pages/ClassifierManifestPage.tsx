@@ -216,12 +216,8 @@ export function ClassifierManifestPage({
       {error ? <div className="error-panel">{error}</div> : null}
 
       <section className="notice-panel">
-        <strong>Reviewed corrections are the only training truth</strong>
-        <span>
-          SpeciesSuggestion status is not training truth. MotionEvidence and DetectionProposal
-          records are evidence only. Metadata export creation does not change review state, dataset
-          coverage truth, model state, or analytics truth. Training remains external and future.
-        </span>
+        <strong>Reviewed corrections are training truth</strong>
+        <span>Metadata export does not review Visits, train models, or create truth.</span>
       </section>
 
       <section className="metric-grid">
@@ -284,11 +280,7 @@ export function ClassifierManifestPage({
 
         <div className="notice-panel manifest-truth-boundary">
           <strong>Export boundary</strong>
-          <span>
-            Uses reviewed corrections only. SpeciesSuggestion, MotionEvidence, and
-            DetectionProposal remain evidence. Export creation does not mark Visits reviewed, update
-            dataset coverage truth, or create model artifacts.
-          </span>
+          <span>Uses reviewed corrections only. Suggestions and evidence stay evidence.</span>
         </div>
 
         <div className="detail-actions">
@@ -437,7 +429,7 @@ export function ClassifierManifestPage({
           ) : (
             <EmptyState
               title="No included labels"
-              description="Review media-backed Visits with target bird species labels before future training. Raw media, MotionEvidence, suggestions, and unreviewed Visits are not manifest truth."
+              description="Review media-backed Visits with target bird labels first."
             />
           )}
         </div>
@@ -461,7 +453,7 @@ export function ClassifierManifestPage({
           ) : (
             <EmptyState
               title="No split assignments"
-              description="The manifest preview has no included reviewed examples yet, so there are no deterministic train/validation/test assignments."
+              description="No reviewed examples are included yet."
             />
           )}
         </div>

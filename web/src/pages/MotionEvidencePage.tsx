@@ -523,7 +523,7 @@ export function MotionEvidencePage({
       <PageHeader
         eyebrow="Motion-triggered evidence"
         title="Motion Evidence Review"
-        description="Motion evidence records moments where zone-aware motion scoring found activity. It is not a species label or reviewed truth."
+        description="Review pending motion evidence before it becomes Event/Visit context."
         actions={
           <button className="secondary-action" onClick={onOpenReview}>
             Review Queue
@@ -533,20 +533,13 @@ export function MotionEvidencePage({
 
       <section className="notice-panel">
         <strong>Evidence before truth</strong>
-        <span>
-          Promote pending evidence only when it should become unreviewed Event/Visit context.
-          User correction remains the dataset/export truth source.
-        </span>
+        <span>Promote useful evidence; correct Visits for truth.</span>
       </section>
 
       <section className="panel motion-workflow-panel">
         <div>
           <h2>Workflow</h2>
-          <p>
-            Create or evaluate motion evidence, attach existing local media if available, promote
-            useful evidence into unreviewed Event/Visit records, then correct labels during review.
-            Only review/correction creates dataset truth.
-          </p>
+          <p>Create, attach media, promote, then correct.</p>
         </div>
         <div className="motion-workflow-steps" aria-label="Motion Evidence workflow">
           {motionWorkflowSteps.map((step) => (
@@ -1058,7 +1051,7 @@ export function MotionEvidencePage({
           description={
             hasFilters
               ? "Try another status or zone, or review explicit media handoff results."
-              : "MotionEvidence is pending activity evidence from saved external_url media, folder-imported media, manual/dev creation, or sampled-frame evaluation. It is not an Event, Visit, label, or truth until explicit promotion and later correction."
+              : "Create evidence from saved media, folder imports, manual/dev tools, or sampled frames."
           }
         />
       ) : null}

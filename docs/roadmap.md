@@ -720,8 +720,8 @@ Current work:
 - Phase 15B: MVP demo script/checklist.
 - Phase 15C: onboarding and empty-state polish.
 - Phase 15D: local MVP release/readiness checklist.
-- Next likely phase: Phase 15E UI copy reduction pass or Phase 16A
-  worker/lifecycle boundary design.
+- Phase 15E: UI copy reduction pass.
+- Next likely phase: Phase 16A worker/lifecycle boundary design.
 
 Design note: [mvp-readiness-consolidation.md](mvp-readiness-consolidation.md).
 Demo script: [mvp-demo-script.md](mvp-demo-script.md).
@@ -782,3 +782,8 @@ Validation:
   design worker/lifecycle boundaries before background behavior, design
   live/source automation before source automation, and select live provider work
   through an explicit decision phase.
+- Phase 15E reduces repetitive explanatory UI copy from Phase 15C while keeping
+  concise next actions, truth-boundary cues, cleanup warnings, and detailed
+  guardrails in docs.
+- Phase 15E adds no behavior, provider work, backend/frontend data contract,
+  tests, dependencies, generated artifacts, or release claim.

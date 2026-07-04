@@ -90,13 +90,8 @@ export function ClassifierReadinessPage({
       />
 
       <section className="notice-panel">
-        <strong>Reviewed corrections are the only training truth</strong>
-        <span>
-          SpeciesSuggestion status is review evidence, not training truth. MotionEvidence and
-          DetectionProposal records are evidence only. Raw MediaAssets and unreviewed Visits are not
-          enough. Metadata export lives on the manifest page; copied media, generated image
-          datasets, and classifier training remain future work.
-        </span>
+        <strong>Reviewed corrections are training truth</strong>
+        <span>Evidence and suggestions are not enough. Training remains future work.</span>
       </section>
 
       <section className="panel classifier-readiness-status">
@@ -201,7 +196,7 @@ export function ClassifierReadinessPage({
         ) : (
           <EmptyState
             title="No classifier-ready species yet"
-            description="Review media-backed Visits with taxonomy species labels before future manifest export. Only reviewed corrections count as classifier readiness truth."
+            description="Review media-backed Visits before manifest export."
             action={
               <button className="secondary-action" onClick={onOpenReview}>
                 Open Review Queue

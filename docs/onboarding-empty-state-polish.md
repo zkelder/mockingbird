@@ -7,6 +7,10 @@ database. It adds read-only onboarding and empty-state copy across existing app
 surfaces without adding provider behavior, backend routes, dependencies,
 generated artifacts, or truth writes.
 
+Phase 15E reduces UI verbosity while preserving these docs and guardrails. The
+app should keep concise next-action and truth-boundary cues; detailed rationale
+belongs here and in related design/checklist docs.
+
 ## Product flow explained by onboarding
 
 The app should guide users through:

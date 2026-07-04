@@ -89,37 +89,37 @@ interface MvpStartStep {
 const mvpStartSteps: MvpStartStep[] = [
   {
     title: "Configure Sources",
-    detail: "Use Streams to save setup metadata and confirm provider status before any provider action.",
+    detail: "Save setup metadata and check provider status.",
     actionLabel: "Open Streams",
     action: "streams",
   },
   {
     title: "Try External URL preview",
-    detail: "Fetch a still image explicitly, save it as a MediaAsset, then hand it to pending evidence.",
+    detail: "Fetch, save, and hand off a still image.",
     actionLabel: "Open Streams",
     action: "streams",
   },
   {
     title: "Try Folder / trail-cam import",
-    detail: "Preview a folder explicitly, import selected files as MediaAssets, then create pending evidence.",
+    detail: "Preview a folder, import media, then create evidence.",
     actionLabel: "Open Streams",
     action: "streams",
   },
   {
     title: "Try Manual Import",
-    detail: "Import local media into Source and Stream context to create a reviewable Visit.",
+    detail: "Create a reviewable Visit from local media.",
     actionLabel: "Import Media",
     action: "import",
   },
   {
     title: "Review pending MotionEvidence",
-    detail: "Inspect evidence, ignore noise, or promote useful activity into unreviewed Event/Visit context.",
+    detail: "Ignore noise or promote useful activity.",
     actionLabel: "Motion Evidence",
     action: "motion-evidence",
   },
   {
     title: "Correct Visits",
-    detail: "Save reviewed labels and species so analytics, exports, and classifier readiness have truth.",
+    detail: "Corrections drive analytics and exports.",
     actionLabel: "Review Queue",
     action: "review",
   },
@@ -128,31 +128,31 @@ const mvpStartSteps: MvpStartStep[] = [
 const mvpProviderWorkflows: MvpProviderWorkflow[] = [
   {
     name: "External URL / HTTP still-image",
-    supportLevel: "Explicit still-image preview, save as MediaAsset, and pending evidence handoff",
-    nextAction: "Open Streams and fetch still-image preview.",
-    creates: "MediaAssets after explicit save; pending evidence after explicit handoff.",
-    doesNotCreate: "Live playback, background refresh, automatic labels, or truth.",
-    livePlayback: "Live playback not implemented.",
+    supportLevel: "Preview, save, and evidence handoff",
+    nextAction: "Fetch still-image preview.",
+    creates: "MediaAsset and pending evidence after explicit actions.",
+    doesNotCreate: "Live playback, automatic labels, or truth.",
+    livePlayback: "Future work.",
     actionLabel: "Open Streams",
     action: "streams",
   },
   {
     name: "Folder / trail-cam import",
-    supportLevel: "Explicit folder preview, MediaAsset import, and single or batch evidence handoff",
-    nextAction: "Open Streams and preview folder import explicitly.",
-    creates: "MediaAssets after explicit import; pending evidence after explicit handoff.",
-    doesNotCreate: "Live playback, background import, automatic Visits, labels, or truth.",
-    livePlayback: "Live playback not implemented.",
+    supportLevel: "Preview, import, and evidence handoff",
+    nextAction: "Preview folder import.",
+    creates: "MediaAssets and pending evidence after explicit actions.",
+    doesNotCreate: "Live playback, background import, labels, or truth.",
+    livePlayback: "Future work.",
     actionLabel: "Open Streams",
     action: "streams",
   },
   {
     name: "Generic webhook ingest",
-    supportLevel: "API dry-run validation and explicit metadata motion evidence creation",
-    nextAction: "Use the API validation/motion evidence route; UI ingest controls are future.",
+    supportLevel: "API dry-run and metadata evidence",
+    nextAction: "Use API validation/evidence route.",
     creates: "Pending MotionEvidence from explicit metadata motion payloads.",
-    doesNotCreate: "Media upload/download, external labels as truth, or ecosystem-specific mapping.",
-    livePlayback: "Live playback not implemented.",
+    doesNotCreate: "Media upload/download or external labels as truth.",
+    livePlayback: "Future work.",
     actionLabel: "Review Motion Evidence",
     action: "motion-evidence",
   },
@@ -160,9 +160,9 @@ const mvpProviderWorkflows: MvpProviderWorkflow[] = [
     name: "Manual media",
     supportLevel: "Explicit local import and review flow",
     nextAction: "Open Import Media.",
-    creates: "Reviewable Events/Visits from explicit import; correction creates truth.",
-    doesNotCreate: "Live stream behavior, camera automation, or automatic provider evidence.",
-    livePlayback: "Live playback not implemented.",
+    creates: "Reviewable Events/Visits.",
+    doesNotCreate: "Live stream behavior or camera automation.",
+    livePlayback: "Future work.",
     actionLabel: "Import Media",
     action: "import",
   },
@@ -485,19 +485,13 @@ export function DashboardPage({
         <div className="section-heading">
           <div>
             <h2>Start here</h2>
-            <span className="meta-text">
-              Fresh local MVP path from setup to reviewed truth
-            </span>
+            <span className="meta-text">Setup to reviewed truth</span>
           </div>
-          <StatusPill label="Read-only guidance" tone="good" />
+          <StatusPill label="Guidance" tone="good" />
         </div>
         <div className="notice-panel compact-notice truth-boundary-callout">
           <strong>MVP path</strong>
-          <span>
-            Source setup -&gt; provider action -&gt; MediaAsset/MotionEvidence -&gt; promote -&gt;
-            Visit correction -&gt; analytics/export readiness. Live playback is future work.
-            Evidence is not truth. Corrections create analytics/export/classifier truth.
-          </span>
+          <span>Setup -&gt; evidence -&gt; review -&gt; correction -&gt; analytics/export readiness.</span>
         </div>
         <div className="onboarding-step-grid">
           {mvpStartSteps.map((step) => (
@@ -522,18 +516,13 @@ export function DashboardPage({
         <div className="section-heading">
           <div>
             <h2>MVP readiness</h2>
-            <span className="meta-text">
-              Provider workflow support, explicit next actions, and future boundaries
-            </span>
+            <span className="meta-text">Provider support and next actions</span>
           </div>
           <StatusPill label="Read-only overview" tone="good" />
         </div>
         <div className="notice-panel compact-notice">
           <strong>Correction remains truth</strong>
-          <span>
-            Media and evidence are not truth. Review corrections create truth for analytics,
-            exports, and classifier readiness.
-          </span>
+          <span>Evidence needs review. Corrections drive analytics and exports.</span>
         </div>
         <div className="provider-workflow-grid">
           {mvpProviderWorkflows.map((workflow) => (
@@ -544,10 +533,6 @@ export function DashboardPage({
               </div>
               <div className="source-overview-grid provider-workflow-facts">
                 <div>
-                  <span>Current support</span>
-                  <strong>{workflow.supportLevel}</strong>
-                </div>
-                <div>
                   <span>Live playback</span>
                   <strong>{workflow.livePlayback}</strong>
                 </div>
@@ -556,7 +541,7 @@ export function DashboardPage({
                   <strong>{workflow.creates}</strong>
                 </div>
                 <div>
-                  <span>Does not create</span>
+                  <span>Doesn't create</span>
                   <strong>{workflow.doesNotCreate}</strong>
                 </div>
               </div>
@@ -564,7 +549,7 @@ export function DashboardPage({
                 <div>
                   <span>Next action</span>
                   <strong>{workflow.nextAction}</strong>
-                  <small>Provider status stays read-only until the user takes an explicit action.</small>
+                  <small>Provider actions are explicit.</small>
                 </div>
                 <button
                   className="secondary-action"
@@ -600,10 +585,7 @@ export function DashboardPage({
             Dataset Exports
           </button>
         </div>
-        <p className="meta-text">
-          This overview does not fetch URLs, scan folders, process webhook payloads, create
-          MediaAssets, create MotionEvidence, promote Events/Visits, or create review truth.
-        </p>
+        <p className="meta-text">Overview only. Actions happen in the linked pages.</p>
       </section>
 
       <section className="panel source-provider-status-panel">

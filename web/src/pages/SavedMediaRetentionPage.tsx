@@ -344,7 +344,7 @@ export function SavedMediaRetentionPage() {
       <PageHeader
         eyebrow="Local storage visibility"
         title="Saved Media Retention"
-        description="Review saved external_url preview media, risk level, dry-run planning, and confirmed low-risk local file cleanup without deleting records or changing reviewed truth."
+        description="Review saved preview media, risk, dry-run planning, and low-risk file cleanup."
         actions={
           <button className="secondary-action" onClick={() => void loadReport({ showLoading: false })}>
             Refresh report
@@ -354,11 +354,7 @@ export function SavedMediaRetentionPage() {
 
       <section className="notice-panel retention-boundary-panel">
         <strong>File-only cleanup boundary</strong>
-        <span>
-          Retention tracks saved external_url preview media in local storage. Low-risk cleanup can
-          delete a confirmed local file only. No MediaAsset records, evidence, Events, Visits,
-          labels, exports, or truth are deleted.
-        </span>
+        <span>Low-risk cleanup deletes a confirmed local file only. Records and truth remain.</span>
       </section>
 
       <section className="panel retention-report-status">
@@ -497,10 +493,7 @@ export function SavedMediaRetentionPage() {
 
         <div className="notice-panel compact-notice">
           <strong>Dry run only. No files or records were deleted.</strong>
-          <span>
-            Protected media is skipped unless included here, and this page still performs only a
-            dry-run cleanup preview.
-          </span>
+          <span>Protected media is skipped unless included.</span>
         </div>
 
         <div className="detail-actions">
@@ -636,7 +629,7 @@ export function SavedMediaRetentionPage() {
         ) : (
           <EmptyState
             title="No saved preview media"
-            description="Saved external_url previews will appear here after an explicit save action. Folder-import retention is separate future policy; dry-runs and file-only cleanup do not delete records or truth."
+            description="Saved external_url previews appear here after explicit save."
           />
         )}
       </section>

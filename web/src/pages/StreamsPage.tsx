@@ -730,9 +730,9 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     : "Next: load Source setup status.";
   const nextActionDetail =
     isWebhookProvider && selectedSetupReview?.readiness_level === "future_adapter_required"
-      ? "Webhook metadata is present, but no endpoint exists, no payloads are accepted, and no media, evidence, or truth is created."
+      ? "Webhook UI ingest is future work."
       : isFolderImportProvider && selectedSetupReview?.readiness_level === "future_adapter_required"
-      ? "Use explicit preview, then import as MediaAssets. Pending evidence and correction remain separate actions."
+      ? "Preview first, then import as MediaAssets."
       : selectedSetupReview?.next_step ?? selectedConnection?.setup_hint;
 
   return (
@@ -743,13 +743,8 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
         description="Connect Sources, inspect Streams, configure setup metadata, then draw Zones and review activity."
       />
       <section className="notice-panel onboarding-provider-note">
-        <strong>Provider setup is metadata/status first</strong>
-        <span>
-          external_url uses explicit preview/save/evidence. folder_import_future uses explicit
-          preview/import/evidence. webhook_future uses API validation and metadata evidence; UI
-          ingest controls are future. manual_media uses explicit Import Media. Live playback is
-          future work.
-        </span>
+        <strong>Provider setup is metadata first</strong>
+        <span>Use explicit preview, import, or evidence actions below. Live playback is future work.</span>
       </section>
       {connectionError ? <div className="error-panel">{connectionError}</div> : null}
       {selectedSource ? (
@@ -1841,7 +1836,7 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
               ) : (
                 <EmptyState
                   title="No Streams for this Source"
-                  description="Add Stream metadata before this Source can carry Zones, provider evidence, reviewable Visits, corrections, analytics, or exports."
+                  description="Add Stream metadata before drawing Zones or reviewing activity."
                 />
               )}
             </div>
@@ -1850,7 +1845,7 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
       ) : (
         <EmptyState
           title="No Sources available"
-          description="Create a Source before provider setup can guide explicit preview/import/evidence actions. Source setup alone does not fetch media, create evidence, or create truth."
+          description="Create a Source before configuring provider actions."
         />
       )}
     </div>

@@ -243,11 +243,7 @@ export function ManualImportPage({
       {error ? <div className="error-panel">{error}</div> : null}
       <section className="notice-panel onboarding-provider-note">
         <strong>Explicit local ingest</strong>
-        <span>
-          Manual import can create local MediaAssets and reviewable Events/Visits for the selected
-          Source, Stream, and Zone context. Imported media and suggested labels are not export truth;
-          review correction is the truth boundary.
-        </span>
+        <span>Import creates review work. Corrections create truth.</span>
       </section>
 
       {selectedStream && selectedSource ? (
@@ -287,10 +283,7 @@ export function ManualImportPage({
           </div>
           <div className="import-context-copy">
             {isManualMediaReady ? (
-              <p>
-                Next: choose local media for this Source/Stream. Imported media can create
-                reviewable Events/Visits; corrections remain the source of truth.
-              </p>
+              <p>Next: choose local media for this Source/Stream.</p>
             ) : selectedSetupReview?.provider_key === "manual_media" ? (
               <p>{selectedSetupReview.next_step}</p>
             ) : (
@@ -299,7 +292,7 @@ export function ManualImportPage({
                 Stream. Live playback is not implied.
               </p>
             )}
-            <p>Imported media stays local and enters review before it becomes export truth.</p>
+            <p>Imported media stays local and needs review.</p>
           </div>
           <div className="detail-actions">
             <button className="secondary-action" onClick={onOpenStreams} type="button">
@@ -458,7 +451,7 @@ export function ManualImportPage({
             {!isLoadingMedia && mediaAssets.length === 0 ? (
               <EmptyState
                 title="No imported media yet"
-                description="Choose a local image or video to create the first reviewable imported observation. The import is explicit local ingest; correction is still required before analytics/export truth."
+                description="Choose local media to create the first reviewable observation."
               />
             ) : null}
           </div>
