@@ -164,6 +164,11 @@ Phase 13J polishes folder-origin evidence review and promotion UI. Motion
 Evidence can show folder-imported media, safe relative provenance, and
 pending/ignored/promoted state; promoted Event/Visit detail can show the same
 review context while correction remains the truth boundary.
+Phase 14A adds a validation boundary over both implemented provider paths:
+`external_url` and `folder_import_future` now share smoke coverage from
+Source/status through explicit MediaAsset/evidence/promote/correction flow. It
+adds no live playback, automation, worker, watcher, polling, model runtime,
+media decoding, or new provider behavior.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

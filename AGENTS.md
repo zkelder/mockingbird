@@ -121,6 +121,8 @@ Every future implementation task must restate:
   [docs/source-adapter-boundary-design.md](docs/source-adapter-boundary-design.md)
   and explicit task scope. Do not add capture, decoding, workers, network calls,
   dependencies, generated media, or truth creation by accident.
+- New provider work must preserve provider smoke flows: status routes stay
+  read-only, provider actions stay explicit, and correction remains truth.
 - Folder/trail-cam provider work must follow
   [docs/folder-trailcam-provider-boundary-design.md](docs/folder-trailcam-provider-boundary-design.md)
   and explicit phase scope. The source-scoped folder preview route is dry-run

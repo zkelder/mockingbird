@@ -11,12 +11,12 @@ This checklist documents validation only. It does not add provider behavior,
 live playback, automatic evidence creation, automatic Event/Visit creation,
 runtime dependencies, or model/training work.
 
-Folder / trail-cam import is a future provider boundary documented in
+Folder / trail-cam import is documented in
 [folder-trailcam-provider-boundary-design.md](folder-trailcam-provider-boundary-design.md).
-Folder preview/import and the Phase 13F evidence handoff design are not part of
-this external_url smoke checklist. Folder-imported media should receive a
-separate future checklist when its explicit MotionEvidence handoff is
-implemented.
+Phase 14A adds automated backend smoke coverage for both `external_url` and
+`folder_import_future`; see
+[source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardening.md).
+This checklist remains the manual browser/API path for the external_url flow.
 
 ## Product Flow Covered
 
@@ -64,6 +64,7 @@ Run the focused smoke test:
 
 ```sh
 .venv/bin/python -m pytest tests/test_source_stream_smoke_flow.py
+.venv/bin/python -m pytest tests/test_source_provider_smoke_flows.py
 ```
 
 Run the full backend suite before committing related work:

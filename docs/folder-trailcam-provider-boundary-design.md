@@ -44,6 +44,11 @@ runtimes.
 Phase 13J polishes the review/promote UI so folder-imported media evidence has
 clear provenance, attached media context, status, and correction truth
 boundaries.
+Phase 14A adds automated smoke coverage for the implemented folder path:
+configured Source/status, explicit preview, explicit MediaAsset-only import,
+single and batch pending MotionEvidence handoff, explicit promotion, and
+correction truth. See
+[source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardening.md).
 
 ## Product Flow
 
@@ -374,8 +379,9 @@ initially, and must preserve retention, provenance, and truth boundaries.
 - Phase 13H: batch folder media evidence handoff dry-run.
 - Phase 13I: batch folder media evidence creation, pending MotionEvidence only.
 - Phase 13J: folder media review/promote UI polish.
-- Next likely: Phase 13K folder import retention/report design, or Phase 14A
-  source/provider consolidation and smoke-test expansion.
+- Phase 14A: consolidated provider smoke coverage with `external_url`.
+- Next likely: Phase 13K folder import retention/report design, Phase 14B
+  source/provider status polish, or Phase 14C next provider boundary decision.
 
 ## Explicit Non-Goals
 

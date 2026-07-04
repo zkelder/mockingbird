@@ -70,6 +70,9 @@ handoff in
 [folder-import-evidence-handoff-design.md](folder-import-evidence-handoff-design.md).
 Phase 13G implements the single-media handoff while keeping folder media as
 local context until that action creates pending MotionEvidence.
+Phase 14A smoke tests verify that provider-origin MotionEvidence from saved
+external previews and folder imports remains evidence only until explicit
+promotion and later correction.
 
 ## Status Lifecycle
 

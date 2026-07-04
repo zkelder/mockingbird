@@ -27,8 +27,9 @@ Phase 13A is a separate docs-only boundary for future Folder / trail-cam import.
 Phase 13B adds folder/trail-cam provider configuration/status only.
 Phase 13F designs the future folder-imported MediaAsset -> pending
 MotionEvidence handoff only; it adds no implementation or smoke-test runtime.
-The current proven smoke path remains external_url; folder/trail-cam import
-needs its own future smoke path when the handoff is implemented.
+Phase 14A consolidates the implemented `external_url` and
+`folder_import_future` provider paths under shared smoke-test guarantees; see
+[source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardening.md).
 
 ## Product Flow Covered
 
@@ -115,7 +116,7 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - Phase 13A: folder/trail-cam import provider boundary design.
 - Phase 13B: folder/trail-cam provider configuration/status contract.
 - Phase 13F: folder-imported MediaAsset -> MotionEvidence handoff design.
-- Phase 13G: add focused smoke coverage only if the single-media handoff is
-  implemented.
+- Phase 14A: combined provider smoke coverage for `external_url` and
+  `folder_import_future`.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.

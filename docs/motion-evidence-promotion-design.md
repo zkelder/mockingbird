@@ -146,6 +146,9 @@ batch creation itself.
 Phase 13J keeps promoted folder-origin evidence understandable in Event/Visit
 detail. Safe folder provenance and attached media can remain visible after
 promotion, while correction remains the only analytics/export truth boundary.
+Phase 14A smoke tests verify that both saved-preview-origin and folder-origin
+promotion create only unreviewed Event/Visit context, and that ReviewLabel
+correction remains the first dataset/export truth write.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

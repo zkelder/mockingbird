@@ -124,6 +124,11 @@ or runtime dependency.
 Phase 13J polishes the folder-origin evidence UI without adding adapter
 runtime behavior: Motion Evidence, Event Detail, and Visit Detail can show safe
 folder provenance and attached media context while correction remains truth.
+Phase 14A smoke-tests both implemented provider paths under the same
+Source/Stream contract: `external_url` and `folder_import_future` require
+explicit user actions, create no truth before correction, and do not claim live
+playback. See
+[source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardening.md).
 
 ## Explicit Non-Recommended First Adapters
 

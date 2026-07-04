@@ -501,8 +501,8 @@ Current work:
 - Phase 13H: batch folder media evidence handoff dry-run/report, no creation.
 - Phase 13I: batch folder media evidence creation, pending MotionEvidence only.
 - Phase 13J: folder media review/promote UI polish.
-- Next likely phase: Phase 13K — folder import retention/report design, or
-  Phase 14A source/provider consolidation and smoke-test expansion.
+- Next likely phase: Phase 14A source/provider consolidation and smoke-test
+  expansion.
 
 Validation:
 
@@ -595,3 +595,35 @@ Validation:
   ReviewLabel/truth creation, folder watcher, polling, media import/copy/delete,
   decoding, worker, dependency, model/runtime behavior, or generated artifact is
   added in Phase 13J.
+
+## Phase 14 — Source/provider flow consolidation
+
+Goal: harden implemented provider paths under one Source/Stream validation
+spine before adding another provider or runtime behavior.
+
+Current work:
+
+- Phase 14A: source/provider flow consolidation and smoke-test expansion for
+  `external_url` and `folder_import_future`.
+- Next likely phase: Phase 14B source/provider dashboard/status polish, or
+  Phase 14C next provider boundary decision.
+
+Validation:
+
+- Phase 14A adds consolidated backend smoke coverage for both implemented
+  provider paths.
+- `external_url` is validated from provider configuration through explicit
+  preview, explicit MediaAsset save, explicit pending MotionEvidence handoff,
+  explicit promotion, and explicit ReviewLabel correction.
+- `folder_import_future` is validated from provider configuration through
+  explicit folder preview, explicit MediaAsset import, explicit single and batch
+  pending MotionEvidence handoff, explicit promotion, and explicit ReviewLabel
+  correction.
+- Source setup review, Source connection status, and Stream playback status are
+  read-only and must not fetch URLs, scan folders, create media, create
+  evidence, or claim live playback.
+- MediaAssets remain media context, MotionEvidence remains evidence, and
+  Event/Visit promotion remains unreviewed until correction.
+- No frontend feature, new provider, live playback, folder watcher, polling,
+  worker, media decoding, model runtime, dependency, automatic evidence, or
+  generated artifact is added in Phase 14A.

@@ -91,6 +91,8 @@ The preview route remains transient and unsaved.
 Manual browser/API validation for preview, save, evidence handoff, promotion,
 and correction is documented in
 [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
+The combined provider smoke plan is documented in
+[source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardening.md).
 
 ## Explicit Save Request
 
@@ -218,6 +220,8 @@ Implementation tests cover:
 - Setup review, connection status, and playback status do not fetch URLs.
 - Timeout/error returns safe `unavailable` status.
 - No secret leakage.
+- Phase 14A smoke coverage proves the explicit preview -> save -> evidence ->
+  promote -> correction path does not create truth before correction.
 - Unsafe URL is blocked or rejected according to the security policy.
 - Unsupported content type is rejected safely.
 - No Events, Visits, ReviewLabels, or MotionEvidence are created.

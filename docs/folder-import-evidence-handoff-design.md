@@ -49,6 +49,9 @@ analytics/exports/classifier readiness.
   media context without exposing raw absolute folder paths.
 - Promoted Event/Visit detail can show folder-imported media context while
   correction remains truth.
+- Phase 14A smoke coverage proves single and batch handoff create pending
+  MotionEvidence only, while promotion and correction remain explicit later
+  actions.
 - No Event is created.
 - No Visit is created.
 - No ReviewLabel is created.
@@ -339,8 +342,9 @@ behavior.
 - Phase 13H: batch folder media evidence handoff dry-run.
 - Phase 13I: batch folder media evidence creation, no Event/Visit/truth.
 - Phase 13J: folder media review/promote UI polish.
-- Next likely: Phase 13K folder import retention/report design, or Phase 14A
-  source/provider consolidation and smoke-test expansion.
+- Phase 14A: consolidated provider smoke coverage with `external_url`.
+- Next likely: Phase 13K folder import retention/report design, Phase 14B
+  source/provider status polish, or Phase 14C next provider boundary decision.
 - Later: automated folder scoring/design, if ever.
 
 ## Explicit Non-Goals

@@ -79,6 +79,13 @@ The design boundary that keeps real provider code underneath Source connection
 and Stream playback contracts. It prevents adapters from creating truth,
 skipping review, leaking secrets, or redefining the product flow.
 
+## Provider Smoke Flow
+
+Automated backend validation that an implemented provider path stays under the
+Source/Stream contract: status routes are read-only, provider work requires
+explicit user action, MediaAssets and MotionEvidence are evidence/context only,
+and ReviewLabel correction is the first reviewed truth write.
+
 ## External URL Still-image Provider
 
 An `external_url` Source provider contract for explicit HTTP still-image
