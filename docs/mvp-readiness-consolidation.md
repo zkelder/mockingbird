@@ -132,6 +132,9 @@ See [source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardeni
 for backend smoke expectations and
 [source-stream-smoke-test-hardening.md](source-stream-smoke-test-hardening.md)
 for the external URL Source/Stream path.
+Use [mvp-demo-script.md](mvp-demo-script.md) for the higher-level local
+walkthrough across Dashboard, provider workflows, review/correction, retention,
+analytics, exports, and classifier readiness.
 
 ## Explicit Non-goals
 

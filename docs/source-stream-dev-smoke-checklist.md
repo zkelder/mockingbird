@@ -19,6 +19,9 @@ Phase 14A adds automated backend smoke coverage for both `external_url` and
 This checklist remains the manual browser/API path for the external_url flow.
 Phase 14B adds a Dashboard/Source status cue: it should summarize provider
 readiness and link to explicit workflows without running provider actions.
+Phase 15B adds [mvp-demo-script.md](mvp-demo-script.md) as the higher-level
+local walkthrough. This checklist remains the lower-level external_url
+browser/API validation companion.
 
 ## Product Flow Covered
 

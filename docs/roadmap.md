@@ -717,10 +717,11 @@ runtime behavior.
 Current work:
 
 - Phase 15A: MVP source/provider readiness consolidation.
-- Next likely phase: Phase 15B MVP demo script/checklist, or Phase 15C
-  onboarding/empty-state polish.
+- Phase 15B: MVP demo script/checklist.
+- Next likely phase: Phase 15C onboarding/empty-state polish.
 
 Design note: [mvp-readiness-consolidation.md](mvp-readiness-consolidation.md).
+Demo script: [mvp-demo-script.md](mvp-demo-script.md).
 
 Validation:
 
@@ -746,3 +747,11 @@ Validation:
   dependency, model runtime, training behavior, automatic evidence, automatic
   Event/Visit creation, automatic truth creation, or generated artifact is
   added in Phase 15A.
+- Phase 15B provides one repeatable local walkthrough for the current MVP spine:
+  fresh local app, provider readiness, explicit provider actions,
+  MotionEvidence review/promote, correction truth, analytics/export/classifier
+  readiness, saved media retention, and artifact safety.
+- Phase 15B is documentation only. It adds no backend code, frontend code,
+  tests, endpoints, database models, scripts, generated media, seed assets,
+  dependencies, provider behavior, live playback, workers, polling, watchers,
+  automation, model runtime, training behavior, or generated artifacts.

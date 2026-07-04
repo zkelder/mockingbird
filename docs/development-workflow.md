@@ -40,4 +40,9 @@ For source/stream work around the current external_url path, use
 [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md)
 as the manual browser/API validation companion to the automated smoke test.
 
+For a full local MVP walkthrough across Dashboard readiness, provider workflows,
+Motion Evidence, review/correction, analytics, exports, classifier readiness,
+and saved media retention, use
+[mvp-demo-script.md](mvp-demo-script.md).
+
 Keep docs practical and concise. Link to [README.md](../README.md), [docs/product-doctrine.md](product-doctrine.md), [docs/roadmap.md](roadmap.md), [docs/glossary.md](glossary.md), and [docs/architecture.md](architecture.md) instead of duplicating the full doctrine in every file.

@@ -210,6 +210,11 @@ implemented provider workflows. It summarizes current support, explicit next
 actions, live playback status, and truth boundaries without fetching provider
 media, scanning folders, processing webhook payloads, creating evidence,
 promoting Events/Visits, or writing review truth.
+Phase 15B documents the local MVP demo script:
+Dashboard readiness -> provider workflows -> MotionEvidence review/promote ->
+Event/Visit correction -> analytics/export/classifier readiness -> saved media
+retention. The script validates the product spine without adding runtime
+behavior.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

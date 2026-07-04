@@ -16,6 +16,9 @@ routes users to explicit preview/import/evidence/review workflows.
 Phase 15A builds on that by giving Dashboard an MVP readiness overview for
 `external_url`, `folder_import_future`, `webhook_future`, and `manual_media`.
 The overview summarizes smoke-tested provider paths and remains read-only.
+Phase 15B adds [mvp-demo-script.md](mvp-demo-script.md), a local walkthrough
+that mirrors these smoke-tested provider paths from setup through correction
+truth without adding provider behavior.
 
 ## Product Flows Covered
 
@@ -120,6 +123,8 @@ exports, training media, or generated workspace files.
   without changing provider behavior or truth boundaries.
 - Phase 15A adds a Dashboard MVP readiness overview that points to these
   smoke-tested provider workflows without running providers or creating records.
+- Phase 15B adds an MVP demo script/checklist that mirrors these paths for
+  manual local validation without adding implementation.
 - Add live playback smoke coverage only after a separately designed playback
   lifecycle exists.
 - Add automation smoke coverage only after worker, privacy, retention, and truth
