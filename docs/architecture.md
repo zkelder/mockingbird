@@ -229,6 +229,9 @@ Workers are future optional infrastructure below explicit provider actions; they
 must be disabled by default initially, observable, bounded, and unable to create
 ReviewLabels, reviewed Visits, analytics truth, or export truth. See
 [worker-lifecycle-boundary-design.md](worker-lifecycle-boundary-design.md).
+Phase 16B adds `GET /api/workers/status` as a read-only visibility layer for
+future automation. The status API returns disabled, unimplemented placeholders
+only and must not start workers, call providers, create records, or write truth.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

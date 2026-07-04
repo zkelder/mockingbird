@@ -105,6 +105,7 @@ from mockingbird.api.schemas import (
     WebhookMotionEvidenceResponse,
     WebhookPayloadValidationRequest,
     WebhookPayloadValidationResponse,
+    WorkerStatusResponse,
     Zone,
     ZoneCreate,
     ZoneMutationResult,
@@ -804,6 +805,12 @@ def _detection_runs_for_proposals(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/workers/status", response_model=WorkerStatusResponse)
+async def get_worker_status() -> WorkerStatusResponse:
+    # Read-only lifecycle contract: no workers, providers, media, or truth writes.
+    return get_repository().get_worker_status()
 
 
 @app.post("/api/motion/evaluate-frame", response_model=MotionFrameScoreResponse)

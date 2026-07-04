@@ -170,6 +170,9 @@ from mockingbird.api.schemas import (
     WebhookPayloadCandidate,
     WebhookPayloadValidationRequest,
     WebhookPayloadValidationResponse,
+    WorkerStatusItem,
+    WorkerStatusResponse,
+    WorkerStatusSummary,
     Zone,
     ZoneCreate,
     ZoneType,
@@ -589,6 +592,79 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
 )
 
+WORKER_STATUS_PLACEHOLDERS: tuple[WorkerStatusItem, ...] = (
+    WorkerStatusItem(
+        worker_key="external_url_preview_scheduler_future",
+        display_name="External URL preview scheduler",
+        category="provider",
+        state="disabled",
+        enabled=False,
+        implemented=False,
+        provider_key="external_url",
+        message=(
+            "Future scheduled preview visibility only; no external URL fetch, "
+            "media creation, evidence creation, or truth creation exists."
+        ),
+        warnings=["Worker runtime is not implemented in this phase."],
+    ),
+    WorkerStatusItem(
+        worker_key="folder_import_scan_future",
+        display_name="Folder import scan",
+        category="provider",
+        state="disabled",
+        enabled=False,
+        implemented=False,
+        provider_key="folder_import_future",
+        message=(
+            "Future folder scan visibility only; no watcher, polling, folder "
+            "scan, media creation, evidence creation, or truth creation exists."
+        ),
+        warnings=["Worker runtime is not implemented in this phase."],
+    ),
+    WorkerStatusItem(
+        worker_key="webhook_ingest_queue_future",
+        display_name="Webhook ingest queue",
+        category="provider_ingest",
+        state="disabled",
+        enabled=False,
+        implemented=False,
+        provider_key="webhook_future",
+        message=(
+            "Future webhook queue visibility only; no async queue, payload "
+            "processing, media creation, evidence creation, or truth creation exists."
+        ),
+        warnings=["Worker runtime is not implemented in this phase."],
+    ),
+    WorkerStatusItem(
+        worker_key="saved_media_retention_future",
+        display_name="Saved media retention",
+        category="retention",
+        state="disabled",
+        enabled=False,
+        implemented=False,
+        provider_key=None,
+        message=(
+            "Future retention job visibility only; no background cleanup, "
+            "record deletion, media deletion, or truth mutation exists."
+        ),
+        warnings=["Worker runtime is not implemented in this phase."],
+    ),
+    WorkerStatusItem(
+        worker_key="model_suggestion_job_future",
+        display_name="Model suggestion job",
+        category="model_suggestion",
+        state="disabled",
+        enabled=False,
+        implemented=False,
+        provider_key=None,
+        message=(
+            "Future suggestion job visibility only; no model runtime, "
+            "DetectionProposal, SpeciesSuggestion, media, or truth creation exists."
+        ),
+        warnings=["Worker runtime is not implemented in this phase."],
+    ),
+)
+
 
 @dataclass
 class _CoverageAccumulator:
@@ -739,6 +815,26 @@ class ProductRepository:
     def local_data_status(self) -> LocalDataStatus:
         with self.session_factory() as session:
             return self._local_data_status(session)
+
+    def get_worker_status(self) -> WorkerStatusResponse:
+        workers = [worker.model_copy(deep=True) for worker in WORKER_STATUS_PLACEHOLDERS]
+        summary = WorkerStatusSummary(
+            total_workers=len(workers),
+            implemented_workers=sum(worker.implemented for worker in workers),
+            enabled_workers=sum(worker.enabled for worker in workers),
+            running_workers=sum(worker.state == "running" for worker in workers),
+            failed_workers=sum(worker.state == "failed" for worker in workers),
+            truth_creating_workers=sum(worker.can_create_truth for worker in workers),
+            warnings=[
+                "Worker status is read-only placeholder data; no worker runtime exists yet."
+            ],
+        )
+        return WorkerStatusResponse(
+            workers=workers,
+            summary=summary,
+            generated_at=datetime.now(UTC),
+            read_only=True,
+        )
 
     def _seed_session(self, session: Session) -> None:
         (

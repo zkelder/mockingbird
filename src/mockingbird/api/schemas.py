@@ -286,6 +286,47 @@ class SourceSetupReviewResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class WorkerStatusItem(BaseModel):
+    # Worker status is future lifecycle visibility only; it must not create truth.
+    worker_key: str
+    display_name: str
+    category: str
+    state: str
+    enabled: bool
+    implemented: bool
+    provider_key: str | None = None
+    source_id: str | None = None
+    stream_id: str | None = None
+    last_run_at: datetime | None = None
+    next_run_at: datetime | None = None
+    last_error: str | None = None
+    message: str
+    can_create_media_assets: bool = False
+    can_create_motion_evidence: bool = False
+    can_create_events: bool = False
+    can_create_visits: bool = False
+    can_create_review_labels: bool = False
+    can_create_truth: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class WorkerStatusSummary(BaseModel):
+    total_workers: int = Field(ge=0)
+    implemented_workers: int = Field(ge=0)
+    enabled_workers: int = Field(ge=0)
+    running_workers: int = Field(ge=0)
+    failed_workers: int = Field(ge=0)
+    truth_creating_workers: int = Field(ge=0)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class WorkerStatusResponse(BaseModel):
+    workers: list[WorkerStatusItem]
+    summary: WorkerStatusSummary
+    generated_at: datetime
+    read_only: bool = True
+
+
 class WebhookPayloadValidationRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     shared_secret_marker: str | None = None

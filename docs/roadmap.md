@@ -796,8 +796,8 @@ added.
 Current work:
 
 - Phase 16A: worker/lifecycle boundary design.
-- Next likely phase: Phase 16B worker status schema/API contract, read-only/no
-  workers.
+- Phase 16B: worker status schema/API contract, read-only/no workers.
+- Next likely phase: Phase 16C worker status UI, read-only/no workers.
 
 Design note: [worker-lifecycle-boundary-design.md](worker-lifecycle-boundary-design.md).
 
@@ -818,3 +818,11 @@ Validation:
   fetch/import/generation behavior.
 - Follow-on implementation must start with read-only status contracts before any
   active background work.
+- Phase 16B adds `GET /api/workers/status` as a read-only future worker
+  visibility contract. It returns disabled, unimplemented placeholder workers
+  with all create/truth flags false and no provider execution.
+- Phase 16B adds backend schema/API/tests only. It adds no frontend, worker
+  runtime, scheduler, polling, watcher, queue, background job, provider
+  execution, external URL fetch, folder scan, webhook processing, MediaAsset,
+  MotionEvidence, Event/Visit, ReviewLabel/truth, model runtime, dependency, or
+  generated artifact.

@@ -23,6 +23,12 @@ background automation:
 Status and readiness surfaces are read-only unless a user invokes a specific
 action.
 
+Phase 16B adds the first worker status API contract:
+`GET /api/workers/status`. It returns read-only future worker placeholders and
+summary fields only. No runtime workers exist yet, and the route does not start
+workers, run providers, fetch URLs, scan folders, process webhooks, create
+records, or create truth.
+
 ## Automation Candidates
 
 Future automation candidates include:
@@ -152,7 +158,7 @@ Future worker implementation must test:
 ## Recommended Future Phases
 
 - Phase 16B: worker status schema/API contract, read-only/no workers.
-- Phase 16C: disabled no-op worker registry/status UI.
+- Phase 16C: worker status UI, read-only/no workers.
 - Phase 16D: `external_url` scheduled preview dry-run design or implementation.
 - Phase 16E: folder scan dry-run worker design.
 - Later: live/source automation decision.
