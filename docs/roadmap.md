@@ -867,7 +867,8 @@ Deliverables:
 - Phase 17F: Review correction label validation.
 - Phase 17G: Review correction history and latest-truth visibility.
 - Phase 17H: Promotion result links and evidence traceability.
-- Next likely phase: Phase 17I source/stream smoke-test validation polish.
+- Phase 17I: MotionEvidence detail route and trace links.
+- Next likely phase: Phase 17J source/stream smoke-test validation polish.
 
 Validation:
 
@@ -906,3 +907,7 @@ Validation:
   promotion results, shows promoted target links on promoted evidence, and makes
   source MotionEvidence/media traceability visible on Event and Visit detail
   pages without changing promotion or correction truth semantics.
+- Phase 17I adds a focused read-only MotionEvidence detail view using the
+  existing detail API and links to it from promote results, promoted evidence
+  rows, Event Detail, and Visit Detail. It changes no backend behavior,
+  promotion semantics, correction semantics, or truth creation path.

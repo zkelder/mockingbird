@@ -24,6 +24,7 @@ import { FolderImportPage } from "./pages/FolderImportPage";
 import { LocalDataPage } from "./pages/LocalDataPage";
 import { ManualImportPage } from "./pages/ManualImportPage";
 import { ModelAdaptersPage } from "./pages/ModelAdaptersPage";
+import { MotionEvidenceDetailPage } from "./pages/MotionEvidenceDetailPage";
 import { MotionEvidencePage } from "./pages/MotionEvidencePage";
 import { ReviewQueuePage } from "./pages/ReviewQueuePage";
 import { SavedMediaRetentionPage } from "./pages/SavedMediaRetentionPage";
@@ -41,6 +42,7 @@ type Page =
   | "model-adapters"
   | "detection-proposals"
   | "motion-evidence"
+  | "motion-evidence-detail"
   | "species-suggestions"
   | "classifier-readiness"
   | "classifier-manifest"
@@ -110,6 +112,7 @@ export default function App() {
   const [selectedStreamId, setSelectedStreamId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [selectedVisitId, setSelectedVisitId] = useState<string | null>(null);
+  const [selectedMotionEvidenceId, setSelectedMotionEvidenceId] = useState<string | null>(null);
   const [visitCorrectionPrefill, setVisitCorrectionPrefill] =
     useState<VisitCorrectionPrefill | null>(null);
   const [data, setData] = useState<AppData>(initialData);
@@ -191,6 +194,11 @@ export default function App() {
     setPage("visit-detail");
   }
 
+  function openMotionEvidence(motionEvidenceId: string) {
+    setSelectedMotionEvidenceId(motionEvidenceId);
+    setPage("motion-evidence-detail");
+  }
+
   function useSpeciesSuggestionAsCorrection(suggestion: SpeciesSuggestion) {
     if (!suggestion.visit_id) {
       return;
@@ -222,6 +230,7 @@ export default function App() {
   async function refreshAfterLocalReset() {
     setSelectedEventId(null);
     setSelectedVisitId(null);
+    setSelectedMotionEvidenceId(null);
     setVisitCorrectionPrefill(null);
     await loadAppData({ showLoading: false });
   }
@@ -357,8 +366,22 @@ export default function App() {
           sources={data.sources}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
+          onOpenMotionEvidence={openMotionEvidence}
           onOpenReview={() => setPage("review")}
           onEvidenceChanged={() => loadAppData({ showLoading: false })}
+        />
+      );
+    }
+
+    if (page === "motion-evidence-detail" && selectedMotionEvidenceId) {
+      return (
+        <MotionEvidenceDetailPage
+          motionEvidenceId={selectedMotionEvidenceId}
+          sources={data.sources}
+          streams={data.streams}
+          onOpenMotionEvidence={() => setPage("motion-evidence")}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
         />
       );
     }
@@ -419,6 +442,7 @@ export default function App() {
           onOpenExports={() => setPage("exports")}
           onOpenReview={() => setPage("review")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
+          onOpenMotionEvidence={openMotionEvidence}
         />
       );
     }
@@ -431,6 +455,7 @@ export default function App() {
           onOpenEvent={openEvent}
           onOpenExports={() => setPage("exports")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
+          onOpenMotionEvidence={openMotionEvidence}
           onCorrectionSaved={refreshAfterVisitCorrection}
           correctionPrefill={visitCorrectionPrefill}
         />

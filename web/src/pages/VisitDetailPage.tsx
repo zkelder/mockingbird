@@ -24,6 +24,7 @@ interface VisitDetailPageProps {
   onOpenEvent: (eventId: string) => void;
   onOpenExports: () => void;
   onOpenDetectionProposals: () => void;
+  onOpenMotionEvidence: (motionEvidenceId: string) => void;
   onCorrectionSaved: () => Promise<void>;
   correctionPrefill?: VisitCorrectionPrefill | null;
 }
@@ -54,6 +55,7 @@ export function VisitDetailPage({
   onOpenEvent,
   onOpenExports,
   onOpenDetectionProposals,
+  onOpenMotionEvidence,
   onCorrectionSaved,
   correctionPrefill,
 }: VisitDetailPageProps) {
@@ -532,6 +534,7 @@ export function VisitDetailPage({
           mediaAsset={detail.media_asset}
           motionEvidence={detail.motion_evidence}
           onOpenEvent={onOpenEvent}
+          onOpenMotionEvidence={onOpenMotionEvidence}
         />
       ) : null}
 
@@ -965,10 +968,12 @@ function SourceEvidenceTracePanel({
   mediaAsset,
   motionEvidence,
   onOpenEvent,
+  onOpenMotionEvidence,
 }: {
   mediaAsset?: MediaAsset | null;
   motionEvidence: MotionEvidence;
   onOpenEvent: (eventId: string) => void;
+  onOpenMotionEvidence: (motionEvidenceId: string) => void;
 }) {
   const webhookProvenance = getWebhookEvidenceProvenance(motionEvidence);
 
@@ -1012,6 +1017,13 @@ function SourceEvidenceTracePanel({
         ) : null}
       </div>
       <div className="detail-actions">
+        <button
+          className="secondary-action"
+          onClick={() => onOpenMotionEvidence(motionEvidence.id)}
+          type="button"
+        >
+          Open evidence
+        </button>
         {motionEvidence.promoted_event_id ? (
           <button
             className="secondary-action"
@@ -1022,7 +1034,7 @@ function SourceEvidenceTracePanel({
           </button>
         ) : null}
         <span className="field-helper">
-          Use Motion Evidence Review to inspect this MotionEvidence ID. Correction remains truth.
+          Correction remains truth after inspecting source evidence.
         </span>
       </div>
     </section>

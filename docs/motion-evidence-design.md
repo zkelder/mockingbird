@@ -388,6 +388,14 @@ Phase 8T polishes the local media-backed MotionEvidence demo loop.
 
 The Motion Evidence page now makes the workflow clearer: create or evaluate evidence, optionally attach existing imported media, preview that media, promote useful evidence into unreviewed Event/Visit records, then correct labels during review. Event and Visit detail pages identify promoted Motion Evidence using existing product fields. No stream capture, media decoding, thumbnail generation, source adapter, model call, ReviewLabel, export, dataset coverage truth, or species truth is created by this polish.
 
+## Phase 17I Status
+
+Phase 17I adds a focused read-only MotionEvidence detail page and trace links
+from Motion Evidence promotion results, promoted evidence rows, Event Detail,
+and Visit Detail. It uses existing MotionEvidence detail data to make source
+evidence inspectable without creating Events, Visits, ReviewLabels, exports,
+analytics truth, provider behavior, workers, or model output.
+
 ## Test Plan
 
 Implementation tests should prove:

@@ -96,6 +96,7 @@ interface MotionEvidencePageProps {
   sources: CameraSource[];
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
+  onOpenMotionEvidence: (motionEvidenceId: string) => void;
   onOpenReview: () => void;
   onEvidenceChanged: () => Promise<void>;
 }
@@ -105,6 +106,7 @@ export function MotionEvidencePage({
   sources,
   onOpenEvent,
   onOpenVisit,
+  onOpenMotionEvidence,
   onOpenReview,
   onEvidenceChanged,
 }: MotionEvidencePageProps) {
@@ -654,6 +656,7 @@ export function MotionEvidencePage({
       {lastPromotion ? (
         <PromotionResultPanel
           promotion={lastPromotion}
+          onOpenMotionEvidence={onOpenMotionEvidence}
           onOpenEvent={onOpenEvent}
           onOpenVisit={onOpenVisit}
         />
@@ -661,6 +664,7 @@ export function MotionEvidencePage({
       {lastBulkPromotion ? (
         <BulkPromotionResultPanel
           result={lastBulkPromotion}
+          onOpenMotionEvidence={onOpenMotionEvidence}
           onOpenEvent={onOpenEvent}
           onOpenVisit={onOpenVisit}
         />
@@ -1275,6 +1279,13 @@ export function MotionEvidencePage({
                 (item.promoted_event_id || item.promoted_visit_id) ? (
                   <div className="motion-evidence-row-links">
                     <span>Promoted to review</span>
+                    <button
+                      className="text-action"
+                      onClick={() => onOpenMotionEvidence(item.id)}
+                      type="button"
+                    >
+                      Open evidence
+                    </button>
                     {item.promoted_event_id ? (
                       <button
                         className="text-action"
@@ -1442,6 +1453,13 @@ export function MotionEvidencePage({
                     <span>Promoted Visit: {selectedEvidence.promoted_visit_id ?? "none"}</span>
                   </div>
                   <div className="detail-actions">
+                    <button
+                      className="text-action"
+                      onClick={() => onOpenMotionEvidence(selectedEvidence.id)}
+                      type="button"
+                    >
+                      Open evidence detail
+                    </button>
                     {selectedEvidence.snapshot_media_asset_id ? (
                       <a
                         className="text-action"
@@ -1713,6 +1731,13 @@ export function MotionEvidencePage({
                         : ""}
                     </span>
                     <div className="detail-actions">
+                      <button
+                        className="secondary-action"
+                        onClick={() => onOpenMotionEvidence(selectedEvidence.id)}
+                        type="button"
+                      >
+                        Open evidence detail
+                      </button>
                       {selectedEvidence.promoted_event_id ? (
                         <button
                           className="secondary-action"
@@ -1751,6 +1776,13 @@ export function MotionEvidencePage({
                       Promoted to reviewable Event/Visit evidence. Correction still creates truth.
                     </span>
                     <div className="detail-actions">
+                      <button
+                        className="secondary-action"
+                        onClick={() => onOpenMotionEvidence(lastPromotion.evidence.id)}
+                        type="button"
+                      >
+                        Open evidence
+                      </button>
                       {lastPromotion.event_id ? (
                         <button
                           className="secondary-action"
@@ -1783,10 +1815,12 @@ export function MotionEvidencePage({
 
 function PromotionResultPanel({
   promotion,
+  onOpenMotionEvidence,
   onOpenEvent,
   onOpenVisit,
 }: {
   promotion: MotionEvidencePromoteResponse;
+  onOpenMotionEvidence: (motionEvidenceId: string) => void;
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
 }) {
@@ -1797,6 +1831,13 @@ function PromotionResultPanel({
         <span>Correction still creates truth.</span>
       </div>
       <div className="detail-actions">
+        <button
+          className="secondary-action"
+          onClick={() => onOpenMotionEvidence(promotion.evidence.id)}
+          type="button"
+        >
+          Open evidence
+        </button>
         {promotion.event_id ? (
           <button
             className="secondary-action"
@@ -1822,10 +1863,12 @@ function PromotionResultPanel({
 
 function BulkPromotionResultPanel({
   result,
+  onOpenMotionEvidence,
   onOpenEvent,
   onOpenVisit,
 }: {
   result: MotionEvidenceBulkActionResponse;
+  onOpenMotionEvidence: (motionEvidenceId: string) => void;
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
 }) {
@@ -1851,6 +1894,13 @@ function BulkPromotionResultPanel({
             <div className="promotion-result-item" key={item.motion_evidence_id}>
               <span>{item.motion_evidence_id}</span>
               <div className="detail-actions">
+                <button
+                  className="text-action"
+                  onClick={() => onOpenMotionEvidence(item.motion_evidence_id)}
+                  type="button"
+                >
+                  Open evidence
+                </button>
                 {item.created_event_id ? (
                   <button
                     className="text-action"
@@ -1883,6 +1933,13 @@ function BulkPromotionResultPanel({
                 <span>
                   {item.motion_evidence_id}: {item.message}
                 </span>
+                <button
+                  className="text-action"
+                  onClick={() => onOpenMotionEvidence(item.motion_evidence_id)}
+                  type="button"
+                >
+                  Open evidence
+                </button>
               </div>
             ))}
           </div>

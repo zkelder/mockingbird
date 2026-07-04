@@ -17,6 +17,7 @@ interface EventDetailPageProps {
   onOpenExports: () => void;
   onOpenReview: () => void;
   onOpenDetectionProposals: () => void;
+  onOpenMotionEvidence: (motionEvidenceId: string) => void;
 }
 
 const eventReviewBoundaryCopy =
@@ -39,6 +40,7 @@ export function EventDetailPage({
   onOpenExports,
   onOpenReview,
   onOpenDetectionProposals,
+  onOpenMotionEvidence,
 }: EventDetailPageProps) {
   const [detail, setDetail] = useState<EventDetail | null>(null);
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
@@ -286,6 +288,7 @@ export function EventDetailPage({
         <SourceEvidenceTracePanel
           mediaAsset={detail.media_asset}
           motionEvidence={detail.motion_evidence}
+          onOpenMotionEvidence={onOpenMotionEvidence}
           onOpenVisit={onOpenVisit}
         />
       ) : null}
@@ -552,10 +555,12 @@ export function EventDetailPage({
 function SourceEvidenceTracePanel({
   mediaAsset,
   motionEvidence,
+  onOpenMotionEvidence,
   onOpenVisit,
 }: {
   mediaAsset?: MediaAsset | null;
   motionEvidence: MotionEvidence;
+  onOpenMotionEvidence: (motionEvidenceId: string) => void;
   onOpenVisit: (visitId: string) => void;
 }) {
   const webhookProvenance = getWebhookEvidenceProvenance(motionEvidence);
@@ -600,6 +605,13 @@ function SourceEvidenceTracePanel({
         ) : null}
       </div>
       <div className="detail-actions">
+        <button
+          className="secondary-action"
+          onClick={() => onOpenMotionEvidence(motionEvidence.id)}
+          type="button"
+        >
+          Open evidence
+        </button>
         {motionEvidence.promoted_visit_id ? (
           <button
             className="secondary-action"
@@ -610,7 +622,7 @@ function SourceEvidenceTracePanel({
           </button>
         ) : null}
         <span className="field-helper">
-          Use Motion Evidence Review to inspect this MotionEvidence ID. Correction remains truth.
+          Correction remains truth after inspecting source evidence.
         </span>
       </div>
     </section>
