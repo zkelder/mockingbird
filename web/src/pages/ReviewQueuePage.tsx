@@ -25,7 +25,7 @@ import {
   isUnknownBirdLabel,
   taxonomyKey,
 } from "../components/taxonomy";
-import { formatLabel } from "../utils";
+import { formatDateTime, formatLabel } from "../utils";
 
 type ReviewFilter = "all" | "bird_species" | "unknown_animals" | "false_positives";
 type ReviewTargetFilter = "all" | "event" | "visit";
@@ -35,6 +35,14 @@ type LabelValidationStatus = "empty" | "suggested" | "recent" | "taxonomy" | "cu
 interface LabelHelperGroup {
   title: string;
   labels: string[];
+}
+
+interface CorrectionHistoryGroup {
+  key: string;
+  targetType: string;
+  targetId: string;
+  latest: ReviewLabel;
+  older: ReviewLabel[];
 }
 
 function reviewQueueTargetType(item: ReviewQueueItem): ReviewQueueBulkCorrectionTargetType {
@@ -198,6 +206,50 @@ function classifyCorrectionLabel(
     return "taxonomy";
   }
   return "custom";
+}
+
+function compareReviewLabelsNewestFirst(first: ReviewLabel, second: ReviewLabel): number {
+  const timeDelta =
+    new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
+  return timeDelta !== 0 ? timeDelta : second.id.localeCompare(first.id);
+}
+
+function sortReviewLabelsNewestFirst(labels: ReviewLabel[]): ReviewLabel[] {
+  return [...labels].sort(compareReviewLabelsNewestFirst);
+}
+
+function reviewTargetKey(targetType: string, targetId: string): string {
+  return `${targetType}:${targetId}`;
+}
+
+function reviewLabelsForQueueItem(
+  item: ReviewQueueItem,
+  reviewLabels: ReviewLabel[],
+): ReviewLabel[] {
+  const targetType = reviewQueueTargetType(item);
+  const targetId = reviewQueueTargetId(item);
+  return sortReviewLabelsNewestFirst(
+    reviewLabels.filter(
+      (label) => label.target_type === targetType && label.target_id === targetId,
+    ),
+  );
+}
+
+function correctionHistoryGroups(reviewLabels: ReviewLabel[]): CorrectionHistoryGroup[] {
+  const groups = new Map<string, ReviewLabel[]>();
+
+  for (const reviewLabel of sortReviewLabelsNewestFirst(reviewLabels)) {
+    const key = reviewTargetKey(reviewLabel.target_type, reviewLabel.target_id);
+    groups.set(key, [...(groups.get(key) ?? []), reviewLabel]);
+  }
+
+  return Array.from(groups.entries()).map(([key, labels]) => ({
+    key,
+    targetType: labels[0]?.target_type ?? "target",
+    targetId: labels[0]?.target_id ?? key,
+    latest: labels[0],
+    older: labels.slice(1),
+  }));
 }
 
 interface ReviewQueuePageProps {
@@ -365,6 +417,11 @@ export function ReviewQueuePage({
         taxonomyLabels,
       }),
     [bulkDraft.label, bulkSuggestedLabelValues, recentLabelValues, taxonomyLabelValues, taxonomyLabels],
+  );
+
+  const correctionAuditGroups = useMemo(
+    () => correctionHistoryGroups(reviewLabels),
+    [reviewLabels],
   );
 
   useEffect(() => {
@@ -732,6 +789,12 @@ export function ReviewQueuePage({
           ) : null}
         </section>
       ) : null}
+      <CorrectionAuditPanel
+        groups={correctionAuditGroups}
+        onOpenEvent={onOpenEvent}
+        onOpenVisit={onOpenVisit}
+        taxonomyLabels={taxonomyLabels}
+      />
       <div className="queue-list">
         {filteredItems.map((item) => {
           const fromDetectionEvidence =
@@ -760,6 +823,9 @@ export function ReviewQueuePage({
             taxonomyLabelValues,
             taxonomyLabels,
           });
+          const itemReviewLabels = reviewLabelsForQueueItem(item, reviewLabels);
+          const latestItemCorrection = itemReviewLabels[0] ?? null;
+          const previousItemCorrections = itemReviewLabels.slice(1);
           return (
             <article className="queue-card" key={item.id}>
               <div className="item-title-row">
@@ -821,53 +887,67 @@ export function ReviewQueuePage({
                   <MediaAssetPreview asset={item.media_asset} compact />
                 </div>
               ) : null}
-              <div className="correction-form">
-                <TaxonomyLabelInput
-                  label={isSpeciesReview ? "Species correction" : "Corrected label"}
-                  labels={taxonomyLabels}
-                  value={draft.label}
-                  placeholder={
-                    isSpeciesReview ? "reviewed species, unknown_bird, or false_positive" : "reviewed label"
-                  }
-                  onChange={(nextLabel) =>
-                    setDrafts((current) => ({
-                      ...current,
-                      [item.id]: { ...draft, label: nextLabel },
-                    }))
-                  }
-                />
-                <LabelValidationLine status={itemLabelValidation} />
-                <LabelHelperChips
-                  groups={itemHelperGroups}
-                  onSelect={(nextLabel) =>
-                    setDrafts((current) => ({
-                      ...current,
-                      [item.id]: { ...draft, label: nextLabel },
-                    }))
-                  }
+              {item.review_status === "reviewed" && latestItemCorrection ? (
+                <CorrectionTruthSummary
+                  latest={latestItemCorrection}
+                  older={previousItemCorrections}
                   taxonomyLabels={taxonomyLabels}
                 />
-                <label>
-                  Notes
-                  <textarea
-                    value={draft.notes}
-                    onChange={(event) =>
+              ) : (
+                <div className="correction-form">
+                  <TaxonomyLabelInput
+                    label={isSpeciesReview ? "Species correction" : "Corrected label"}
+                    labels={taxonomyLabels}
+                    value={draft.label}
+                    placeholder={
+                      isSpeciesReview
+                        ? "reviewed species, unknown_bird, or false_positive"
+                        : "reviewed label"
+                    }
+                    onChange={(nextLabel) =>
                       setDrafts((current) => ({
                         ...current,
-                        [item.id]: { ...draft, notes: event.target.value },
+                        [item.id]: { ...draft, label: nextLabel },
                       }))
                     }
-                    placeholder="optional review note"
                   />
-                </label>
-                <button
-                  className="primary-action"
-                  disabled={savingId === item.id}
-                  onClick={() => void saveCorrection(item)}
-                >
-                  {savingId === item.id ? "Saving..." : isSpeciesReview ? "Resolve species" : "Save correction"}
-                </button>
-              </div>
+                  <LabelValidationLine status={itemLabelValidation} />
+                  <LabelHelperChips
+                    groups={itemHelperGroups}
+                    onSelect={(nextLabel) =>
+                      setDrafts((current) => ({
+                        ...current,
+                        [item.id]: { ...draft, label: nextLabel },
+                      }))
+                    }
+                    taxonomyLabels={taxonomyLabels}
+                  />
+                  <label>
+                    Notes
+                    <textarea
+                      value={draft.notes}
+                      onChange={(event) =>
+                        setDrafts((current) => ({
+                          ...current,
+                          [item.id]: { ...draft, notes: event.target.value },
+                        }))
+                      }
+                      placeholder="optional review note"
+                    />
+                  </label>
+                  <button
+                    className="primary-action"
+                    disabled={savingId === item.id}
+                    onClick={() => void saveCorrection(item)}
+                  >
+                    {savingId === item.id
+                      ? "Saving..."
+                      : isSpeciesReview
+                        ? "Resolve species"
+                        : "Save correction"}
+                  </button>
+                </div>
+              )}
             </article>
           );
         })}
@@ -878,6 +958,142 @@ export function ReviewQueuePage({
           />
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function CorrectionAuditPanel({
+  groups,
+  onOpenEvent,
+  onOpenVisit,
+  taxonomyLabels,
+}: {
+  groups: CorrectionHistoryGroup[];
+  onOpenEvent: (eventId: string) => void;
+  onOpenVisit: (visitId: string) => void;
+  taxonomyLabels: TaxonomyLabel[];
+}) {
+  if (groups.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="panel correction-audit-panel">
+      <div className="section-heading">
+        <div>
+          <h2>Reviewed correction audit</h2>
+          <span className="meta-text">
+            Latest ReviewLabel truth stays visible after items leave the active queue.
+          </span>
+        </div>
+        <EvidenceBadge
+          label={`${groups.length} reviewed target${groups.length === 1 ? "" : "s"}`}
+          tone="truth"
+        />
+      </div>
+      <div className="correction-audit-list">
+        {groups.map((group) => (
+          <article className="history-item correction-audit-item" key={group.key}>
+            <div className="item-title-row">
+              <div>
+                <span className="meta-text">Correction truth</span>
+                <strong>{displayTaxonomyLabel(group.latest.label, taxonomyLabels)}</strong>
+              </div>
+              {group.targetType === "visit" ? (
+                <button
+                  className="text-action"
+                  onClick={() => onOpenVisit(group.targetId)}
+                  type="button"
+                >
+                  Visit detail
+                </button>
+              ) : group.targetType === "event" ? (
+                <button
+                  className="text-action"
+                  onClick={() => onOpenEvent(group.targetId)}
+                  type="button"
+                >
+                  Event detail
+                </button>
+              ) : null}
+            </div>
+            <span>
+              Latest {formatLabel(group.targetType)} correction -{" "}
+              {formatDateTime(group.latest.created_at)}
+            </span>
+            <span className="meta-text">Target: {group.targetId}</span>
+            {group.latest.notes ? <p>{group.latest.notes}</p> : null}
+            {group.older.length > 0 ? (
+              <details className="correction-history-details">
+                <summary>
+                  {group.older.length} older correction{group.older.length === 1 ? "" : "s"}
+                </summary>
+                <div className="history-list">
+                  {group.older.map((label) => (
+                    <ReviewLabelHistoryItem
+                      key={label.id}
+                      reviewLabel={label}
+                      taxonomyLabels={taxonomyLabels}
+                    />
+                  ))}
+                </div>
+              </details>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CorrectionTruthSummary({
+  latest,
+  older,
+  taxonomyLabels,
+}: {
+  latest: ReviewLabel;
+  older: ReviewLabel[];
+  taxonomyLabels: TaxonomyLabel[];
+}) {
+  return (
+    <div className="correction-truth-summary">
+      <EvidenceBadge label="Correction truth" tone="truth" />
+      <strong>{displayTaxonomyLabel(latest.label, taxonomyLabels)}</strong>
+      <span>Latest correction - {formatDateTime(latest.created_at)}</span>
+      {latest.notes ? <p>{latest.notes}</p> : null}
+      {older.length > 0 ? (
+        <details className="correction-history-details">
+          <summary>{older.length} older correction{older.length === 1 ? "" : "s"}</summary>
+          <div className="history-list">
+            {older.map((label) => (
+              <ReviewLabelHistoryItem
+                key={label.id}
+                reviewLabel={label}
+                taxonomyLabels={taxonomyLabels}
+              />
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function ReviewLabelHistoryItem({
+  reviewLabel,
+  taxonomyLabels,
+}: {
+  reviewLabel: ReviewLabel;
+  taxonomyLabels: TaxonomyLabel[];
+}) {
+  return (
+    <div className="history-item">
+      <strong>{displayTaxonomyLabel(reviewLabel.label, taxonomyLabels)}</strong>
+      <span>
+        {formatLabel(reviewLabel.target_type)} correction -{" "}
+        {formatDateTime(reviewLabel.created_at)}
+      </span>
+      {reviewLabel.notes ? <p>{reviewLabel.notes}</p> : null}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import type {
   MediaAsset,
   MotionEvidence,
+  ReviewLabel,
   SpeciesSuggestion,
   TaxonomyLabel,
   VisitDetail,
@@ -36,6 +37,16 @@ interface VisitCorrectionPrefill {
 }
 
 const visitCorrectionTruthCopy = "Corrections are the source of truth for analytics and exports.";
+
+function compareReviewLabelsNewestFirst(first: ReviewLabel, second: ReviewLabel): number {
+  const timeDelta =
+    new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
+  return timeDelta !== 0 ? timeDelta : second.id.localeCompare(first.id);
+}
+
+function sortReviewLabelsNewestFirst(labels: ReviewLabel[]): ReviewLabel[] {
+  return [...labels].sort(compareReviewLabelsNewestFirst);
+}
 
 export function VisitDetailPage({
   visitId,
@@ -304,6 +315,9 @@ export function VisitDetailPage({
 
   const visitLabel = detail.visit.reviewed_label ?? detail.visit.species_guess ?? detail.visit.subject_label;
   const runById = new Map(detail.detection_runs.map((run) => [run.id, run]));
+  const reviewLabelsNewestFirst = sortReviewLabelsNewestFirst(detail.review_labels);
+  const latestReviewLabel = reviewLabelsNewestFirst[0] ?? null;
+  const olderReviewLabels = reviewLabelsNewestFirst.slice(1);
   const subjectTaxonomy = findTaxonomyLabel(detail.visit.subject_label, taxonomyLabels);
   const speciesGuessTaxonomy = findTaxonomyLabel(detail.visit.species_guess, taxonomyLabels);
   const reviewedTaxonomy = findTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels);
@@ -513,6 +527,14 @@ export function VisitDetailPage({
         </section>
       ) : null}
 
+      {latestReviewLabel ? (
+        <CorrectionTruthPanel
+          latest={latestReviewLabel}
+          older={olderReviewLabels}
+          taxonomyLabels={taxonomyLabels}
+        />
+      ) : null}
+
       <section className="case-summary-grid">
         <div className="panel case-summary-card">
           <span className="meta-text">Subject</span>
@@ -719,17 +741,14 @@ export function VisitDetailPage({
             <h2>Correction history</h2>
           </div>
           <div className="history-list">
-            {detail.review_labels.map((reviewLabel) => (
-              <div className="history-item" key={reviewLabel.id}>
-                <strong>{displayTaxonomyLabel(reviewLabel.label, taxonomyLabels)}</strong>
-                <span>
-                  {formatLabel(reviewLabel.target_type)} correction -{" "}
-                  {formatDateTime(reviewLabel.created_at)}
-                </span>
-                {reviewLabel.notes ? <p>{reviewLabel.notes}</p> : null}
-              </div>
+            {reviewLabelsNewestFirst.map((reviewLabel) => (
+              <ReviewLabelHistoryItem
+                key={reviewLabel.id}
+                reviewLabel={reviewLabel}
+                taxonomyLabels={taxonomyLabels}
+              />
             ))}
-            {detail.review_labels.length === 0 ? (
+            {reviewLabelsNewestFirst.length === 0 ? (
               <span className="meta-text">No correction history yet.</span>
             ) : null}
           </div>
@@ -930,6 +949,70 @@ export function VisitDetailPage({
           ) : null}
         </section>
       )}
+    </div>
+  );
+}
+
+function CorrectionTruthPanel({
+  latest,
+  older,
+  taxonomyLabels,
+}: {
+  latest: ReviewLabel;
+  older: ReviewLabel[];
+  taxonomyLabels: TaxonomyLabel[];
+}) {
+  return (
+    <section className="panel correction-truth-panel">
+      <div className="section-heading">
+        <div>
+          <h2>Latest correction truth</h2>
+          <span className="meta-text">
+            ReviewLabel history is the audit trail for analytics and exports.
+          </span>
+        </div>
+        <EvidenceBadge label="Correction truth" tone="truth" />
+      </div>
+      <div className="correction-truth-latest">
+        <strong>{displayTaxonomyLabel(latest.label, taxonomyLabels)}</strong>
+        <span>
+          {formatLabel(latest.target_type)} correction - {formatDateTime(latest.created_at)}
+        </span>
+        {latest.notes ? <p>{latest.notes}</p> : null}
+      </div>
+      {older.length > 0 ? (
+        <details className="correction-history-details">
+          <summary>{older.length} older correction{older.length === 1 ? "" : "s"}</summary>
+          <div className="history-list">
+            {older.map((label) => (
+              <ReviewLabelHistoryItem
+                key={label.id}
+                reviewLabel={label}
+                taxonomyLabels={taxonomyLabels}
+              />
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+function ReviewLabelHistoryItem({
+  reviewLabel,
+  taxonomyLabels,
+}: {
+  reviewLabel: ReviewLabel;
+  taxonomyLabels: TaxonomyLabel[];
+}) {
+  return (
+    <div className="history-item">
+      <strong>{displayTaxonomyLabel(reviewLabel.label, taxonomyLabels)}</strong>
+      <span>
+        {formatLabel(reviewLabel.target_type)} correction -{" "}
+        {formatDateTime(reviewLabel.created_at)}
+      </span>
+      {reviewLabel.notes ? <p>{reviewLabel.notes}</p> : null}
     </div>
   );
 }
