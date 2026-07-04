@@ -1094,6 +1094,47 @@ button {
   gap: 14px;
 }
 
+.review-narrow-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.review-narrow-controls label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.review-narrow-controls input,
+.review-narrow-controls select {
+  min-height: 40px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.review-filter-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.review-filter-summary span {
+  border: 1px solid #dce3d8;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #fbfdf9;
+  color: #34443a;
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
 .review-bulk-panel,
 .review-bulk-form,
 .review-bulk-result {
@@ -3879,6 +3920,7 @@ button {
   .retention-linkage-grid,
   .retention-dry-run-form,
   .retention-dry-run-summary,
+  .review-narrow-controls,
   .review-bulk-form,
   .worker-status-grid,
   .worker-create-flag-grid {
@@ -3974,6 +4016,7 @@ button {
   .motion-review-context-grid,
   .motion-zone-filter,
   .retention-evidence-action,
+  .review-narrow-controls,
   .review-bulk-form,
   .species-suggestion-form-grid,
   .species-suggestion-filter-grid,

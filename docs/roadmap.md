@@ -862,7 +862,8 @@ Deliverables:
 - Phase 17A: bulk MotionEvidence review actions.
 - Phase 17B: bulk saved media to MotionEvidence triage.
 - Phase 17C: bulk Review Queue correction actions.
-- Next likely phase: Phase 17D source/stream smoke-test validation polish.
+- Phase 17D: Review Queue filters and bulk selection safety.
+- Next likely phase: Phase 17E source/stream smoke-test validation polish.
 
 Validation:
 
@@ -881,3 +882,8 @@ Validation:
   truth only, with no automatic labels, MediaAssets, MotionEvidence, new
   Events/Visits, model runtime, worker, scheduler, provider change, dependency,
   or generated artifact.
+- Phase 17D lets users narrow the Review Queue with client-side search, target,
+  and review-status filters before selecting visible eligible unreviewed items.
+  Filter changes clear selection and previous bulk result summaries. It adds no
+  backend filters, automatic labels, new truth path, worker, provider behavior,
+  dependency, or generated artifact.

@@ -26,6 +26,8 @@ import {
 import { formatLabel } from "../utils";
 
 type ReviewFilter = "all" | "bird_species" | "unknown_animals" | "false_positives";
+type ReviewTargetFilter = "all" | "event" | "visit";
+type ReviewStatusFilter = "unreviewed" | "reviewed" | "all";
 
 function reviewQueueTargetType(item: ReviewQueueItem): ReviewQueueBulkCorrectionTargetType {
   return item.visit_id ? "visit" : "event";
@@ -33,6 +35,48 @@ function reviewQueueTargetType(item: ReviewQueueItem): ReviewQueueBulkCorrection
 
 function reviewQueueTargetId(item: ReviewQueueItem): string {
   return item.visit_id ?? item.event_id ?? item.id.replace(/^review-queue-/, "");
+}
+
+function isBulkCorrectionEligible(item: ReviewQueueItem): boolean {
+  return item.review_status === "needs_review";
+}
+
+function matchesTargetFilter(item: ReviewQueueItem, targetFilter: ReviewTargetFilter): boolean {
+  return targetFilter === "all" || reviewQueueTargetType(item) === targetFilter;
+}
+
+function matchesStatusFilter(item: ReviewQueueItem, statusFilter: ReviewStatusFilter): boolean {
+  if (statusFilter === "all") {
+    return true;
+  }
+  if (statusFilter === "reviewed") {
+    return item.review_status === "reviewed";
+  }
+  return item.review_status === "needs_review";
+}
+
+function reviewQueueSearchText(item: ReviewQueueItem, taxonomyLabels: TaxonomyLabel[]): string {
+  const suggestedLabel = item.suggested_label ?? "";
+  const media = item.media_asset;
+
+  return [
+    item.id,
+    item.item_type,
+    item.title,
+    item.stream_id,
+    item.event_id ?? "",
+    item.visit_id ?? "",
+    item.primary_zone_id ?? "",
+    suggestedLabel,
+    displayTaxonomyLabel(suggestedLabel || "unknown", taxonomyLabels),
+    item.reason,
+    media?.id ?? "",
+    media?.filename ?? "",
+    media?.original_filename ?? "",
+    media?.notes ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
 }
 
 interface ReviewQueuePageProps {
@@ -61,6 +105,10 @@ export function ReviewQueuePage({
   const [selectedTargetIds, setSelectedTargetIds] = useState<string[]>([]);
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
+  const [textSearch, setTextSearch] = useState("");
+  const [targetTypeFilter, setTargetTypeFilter] = useState<ReviewTargetFilter>("all");
+  const [reviewStatusFilter, setReviewStatusFilter] =
+    useState<ReviewStatusFilter>("unreviewed");
   const [savingId, setSavingId] = useState<string | null>(null);
   const [isBulkSaving, setIsBulkSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -92,20 +140,46 @@ export function ReviewQueuePage({
   ];
 
   const filteredItems = useMemo(
-    () =>
-      queueItems.filter((item) => {
-        if (reviewFilter === "all") {
-          return true;
+    () => {
+      const normalizedSearch = textSearch.trim().toLowerCase();
+
+      return queueItems.filter((item) => {
+        if (
+          reviewFilter === "bird_species" &&
+          !isBirdReviewLabel(item.suggested_label, taxonomyLabels)
+        ) {
+          return false;
         }
-        if (reviewFilter === "bird_species") {
-          return isBirdReviewLabel(item.suggested_label, taxonomyLabels);
+        if (
+          reviewFilter === "unknown_animals" &&
+          !isUnknownAnimalLabel(item.suggested_label, taxonomyLabels)
+        ) {
+          return false;
         }
-        if (reviewFilter === "unknown_animals") {
-          return isUnknownAnimalLabel(item.suggested_label, taxonomyLabels);
+        if (
+          reviewFilter === "false_positives" &&
+          !isFalsePositiveLabel(item.suggested_label, taxonomyLabels)
+        ) {
+          return false;
         }
-        return isFalsePositiveLabel(item.suggested_label, taxonomyLabels);
-      }),
-    [queueItems, reviewFilter, taxonomyLabels],
+
+        if (!matchesTargetFilter(item, targetTypeFilter)) {
+          return false;
+        }
+        if (!matchesStatusFilter(item, reviewStatusFilter)) {
+          return false;
+        }
+        if (
+          normalizedSearch &&
+          !reviewQueueSearchText(item, taxonomyLabels).includes(normalizedSearch)
+        ) {
+          return false;
+        }
+
+        return true;
+      });
+    },
+    [queueItems, reviewFilter, reviewStatusFilter, targetTypeFilter, textSearch, taxonomyLabels],
   );
 
   const selectedItems = useMemo(
@@ -114,20 +188,47 @@ export function ReviewQueuePage({
     [queueItems, selectedTargetIds],
   );
 
+  const selectedEligibleItems = useMemo(
+    () => selectedItems.filter(isBulkCorrectionEligible),
+    [selectedItems],
+  );
+
+  const hasEligibleBulkSelection =
+    selectedTargetIds.length > 0 && selectedEligibleItems.length === selectedTargetIds.length;
+
   const selectedTargetType = selectedItems[0]
     ? reviewQueueTargetType(selectedItems[0])
     : null;
+
+  const visibleEligibleItems = useMemo(
+    () => filteredItems.filter(isBulkCorrectionEligible),
+    [filteredItems],
+  );
 
   useEffect(() => {
     setQueueItems(items);
   }, [items]);
 
   useEffect(() => {
-    const availableTargetIds = new Set(queueItems.map(reviewQueueTargetId));
+    setSelectedTargetIds([]);
+    setBulkResult(null);
+  }, [reviewFilter, reviewStatusFilter, targetTypeFilter, textSearch]);
+
+  useEffect(() => {
+    const availableTargetIds = new Set(
+      queueItems.filter(isBulkCorrectionEligible).map(reviewQueueTargetId),
+    );
     setSelectedTargetIds((current) =>
       current.filter((targetId) => availableTargetIds.has(targetId)),
     );
   }, [queueItems]);
+
+  useEffect(() => {
+    const visibleEligibleTargetIds = new Set(visibleEligibleItems.map(reviewQueueTargetId));
+    setSelectedTargetIds((current) =>
+      current.filter((targetId) => visibleEligibleTargetIds.has(targetId)),
+    );
+  }, [visibleEligibleItems]);
 
   useEffect(() => {
     let isMounted = true;
@@ -153,7 +254,10 @@ export function ReviewQueuePage({
   }, []);
 
   function canSelectForBulk(item: ReviewQueueItem): boolean {
-    return !selectedTargetType || reviewQueueTargetType(item) === selectedTargetType;
+    return (
+      isBulkCorrectionEligible(item) &&
+      (!selectedTargetType || reviewQueueTargetType(item) === selectedTargetType)
+    );
   }
 
   function toggleBulkSelection(item: ReviewQueueItem, selected: boolean) {
@@ -168,15 +272,25 @@ export function ReviewQueuePage({
 
   function selectVisibleBulkItems() {
     const targetType =
-      selectedTargetType ?? (filteredItems[0] ? reviewQueueTargetType(filteredItems[0]) : null);
+      selectedTargetType ??
+      (targetTypeFilter === "event" || targetTypeFilter === "visit"
+        ? targetTypeFilter
+        : visibleEligibleItems[0]
+          ? reviewQueueTargetType(visibleEligibleItems[0])
+          : null);
     if (!targetType) {
       return;
     }
     setSelectedTargetIds(
-      filteredItems
+      visibleEligibleItems
         .filter((item) => reviewQueueTargetType(item) === targetType)
         .map(reviewQueueTargetId),
     );
+  }
+
+  function clearBulkSelection() {
+    setSelectedTargetIds([]);
+    setBulkResult(null);
   }
 
   async function saveBulkCorrection() {
@@ -185,7 +299,7 @@ export function ReviewQueuePage({
       setMessage("Add a label before saving a bulk correction.");
       return;
     }
-    if (!selectedTargetType || selectedTargetIds.length === 0) {
+    if (!selectedTargetType || !hasEligibleBulkSelection) {
       setMessage("Select review items before saving a bulk correction.");
       return;
     }
@@ -290,6 +404,47 @@ export function ReviewQueuePage({
             label="Review queue filters"
             onChange={setReviewFilter}
           />
+          <div className="review-narrow-controls">
+            <label>
+              Search
+              <input
+                onChange={(event) => setTextSearch(event.target.value)}
+                placeholder="label, id, stream, note"
+                type="search"
+                value={textSearch}
+              />
+            </label>
+            <label>
+              Target
+              <select
+                onChange={(event) =>
+                  setTargetTypeFilter(event.target.value as ReviewTargetFilter)
+                }
+                value={targetTypeFilter}
+              >
+                <option value="all">All targets</option>
+                <option value="visit">Visits</option>
+                <option value="event">Events</option>
+              </select>
+            </label>
+            <label>
+              Status
+              <select
+                onChange={(event) =>
+                  setReviewStatusFilter(event.target.value as ReviewStatusFilter)
+                }
+                value={reviewStatusFilter}
+              >
+                <option value="unreviewed">Unreviewed</option>
+                <option value="reviewed">Reviewed</option>
+                <option value="all">All statuses</option>
+              </select>
+            </label>
+          </div>
+          <div className="review-filter-summary">
+            <span>{filteredItems.length} visible</span>
+            <span>{visibleEligibleItems.length} visible eligible</span>
+          </div>
         </section>
       ) : null}
       {queueItems.length > 0 ? (
@@ -302,10 +457,13 @@ export function ReviewQueuePage({
               </span>
             </div>
             <EvidenceBadge
-              label={`${selectedTargetIds.length} selected`}
+              label={`${selectedTargetIds.length} selected / ${visibleEligibleItems.length} visible eligible`}
               tone={selectedTargetIds.length > 0 ? "review" : "quiet"}
             />
           </div>
+          <span className="meta-text">
+            Bulk correction applies only to selected unreviewed items.
+          </span>
           <div className="review-bulk-form">
             <TaxonomyLabelInput
               label="Bulk corrected label"
@@ -329,24 +487,24 @@ export function ReviewQueuePage({
             <div className="review-bulk-actions">
               <button
                 className="secondary-action"
-                disabled={filteredItems.length === 0 || isBulkSaving}
+                disabled={visibleEligibleItems.length === 0 || isBulkSaving}
                 onClick={selectVisibleBulkItems}
                 type="button"
               >
-                Select visible
+                Select visible eligible
               </button>
               <button
                 className="secondary-action"
                 disabled={selectedTargetIds.length === 0 || isBulkSaving}
-                onClick={() => setSelectedTargetIds([])}
+                onClick={clearBulkSelection}
                 type="button"
               >
-                Clear
+                Clear selection
               </button>
               <button
                 className="primary-action"
                 disabled={
-                  selectedTargetIds.length === 0 || !bulkDraft.label.trim() || isBulkSaving
+                  !hasEligibleBulkSelection || !bulkDraft.label.trim() || isBulkSaving
                 }
                 onClick={() => void saveBulkCorrection()}
                 type="button"
@@ -413,7 +571,11 @@ export function ReviewQueuePage({
                 />
                 {isSelectable
                   ? "Select for bulk correction"
-                  : `Bulk selection currently expects ${selectedTargetType} items`}
+                  : !isBulkCorrectionEligible(item)
+                    ? "Only unreviewed items are eligible for bulk correction"
+                    : selectedTargetType
+                      ? `Bulk selection currently expects ${selectedTargetType} items`
+                      : "Bulk selection is unavailable for this item"}
               </label>
               <p>
                 {item.reason} Detection evidence is only a suggestion; your correction becomes local
