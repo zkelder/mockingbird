@@ -31,6 +31,7 @@ import { SpeciesSuggestionsPage } from "./pages/SpeciesSuggestionsPage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
 import { VisitDetailPage } from "./pages/VisitDetailPage";
+import { WorkerStatusPage } from "./pages/WorkerStatusPage";
 
 type Page =
   | "dashboard"
@@ -50,6 +51,7 @@ type Page =
   | "analytics"
   | "exports"
   | "saved-media-retention"
+  | "worker-status"
   | "settings";
 
 interface AppData {
@@ -99,6 +101,7 @@ const navItems: Array<{ page: Page; label: string }> = [
   { page: "analytics", label: "Analytics" },
   { page: "exports", label: "Exports" },
   { page: "saved-media-retention", label: "Saved Media Retention" },
+  { page: "worker-status", label: "Worker Status" },
   { page: "settings", label: "Local Data" },
 ];
 
@@ -266,6 +269,7 @@ export default function App() {
           onOpenModelAdapters={() => setPage("model-adapters")}
           onOpenClassifierReadiness={() => setPage("classifier-readiness")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
+          onOpenWorkerStatus={() => setPage("worker-status")}
           onOpenReview={() => setPage("review")}
           onOpenExports={() => setPage("exports")}
         />
@@ -478,6 +482,10 @@ export default function App() {
 
     if (page === "saved-media-retention") {
       return <SavedMediaRetentionPage />;
+    }
+
+    if (page === "worker-status") {
+      return <WorkerStatusPage />;
     }
 
     return (

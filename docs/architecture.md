@@ -232,6 +232,10 @@ ReviewLabels, reviewed Visits, analytics truth, or export truth. See
 Phase 16B adds `GET /api/workers/status` as a read-only visibility layer for
 future automation. The status API returns disabled, unimplemented placeholders
 only and must not start workers, call providers, create records, or write truth.
+Phase 16C adds the Worker Status frontend page and Dashboard link as a read-only
+visibility layer over that API. The UI shows future worker placeholders,
+summary counts, and false create/truth flags without controls to start, enable,
+run, or delete worker behavior.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

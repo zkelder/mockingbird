@@ -81,6 +81,7 @@ import type {
   TaxonomyLabel,
   Visit,
   VisitDetail,
+  WorkerStatusResponse,
   Zone,
   ZoneCreate,
   ZoneMutationResult,
@@ -198,6 +199,7 @@ export const apiClient = {
   getSources: () => request<CameraSource[]>("/api/sources"),
   getSourceProviderDefinitions: () =>
     request<SourceProviderDefinition[]>("/api/source-provider-definitions"),
+  getWorkerStatus: () => request<WorkerStatusResponse>("/api/workers/status"),
   getSourceConnectionStatus: (sourceId: string) =>
     request<SourceConnectionStatus>(`/api/sources/${sourceId}/connection`),
   getSourceSetupReview: (sourceId: string) =>

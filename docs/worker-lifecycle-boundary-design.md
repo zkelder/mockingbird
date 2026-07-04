@@ -29,6 +29,10 @@ summary fields only. No runtime workers exist yet, and the route does not start
 workers, run providers, fetch URLs, scan folders, process webhooks, create
 records, or create truth.
 
+Phase 16C adds the frontend Worker Status page over that route. It is read-only
+visibility only: no workers, schedulers, polling, provider execution, media
+creation, evidence creation, or truth writes exist.
+
 ## Automation Candidates
 
 Future automation candidates include:
@@ -159,15 +163,18 @@ Future worker implementation must test:
 
 - Phase 16B: worker status schema/API contract, read-only/no workers.
 - Phase 16C: worker status UI, read-only/no workers.
-- Phase 16D: `external_url` scheduled preview dry-run design or implementation.
-- Phase 16E: folder scan dry-run worker design.
-- Later: live/source automation decision.
+- Phase 16D: disabled no-op worker registry/status contract, if useful before
+  any active worker implementation.
+- Phase 17A: live/source automation decision, if the product should choose a
+  broader automation direction first.
+- Later: explicit worker implementation phases for scheduled previews, folder
+  scan dry-runs, queues, or cleanup.
 
 ## Explicit Non-goals
 
-This phase adds no runtime behavior.
+These boundary phases add no runtime behavior.
 
-It does not add backend code, frontend code, tests, API endpoints, workers,
-schedulers, polling, watchers, queues, provider behavior, media writes,
-evidence creation, Event/Visit creation, labels, truth creation, dependencies,
-or generated artifacts.
+They do not add workers, schedulers, polling, watchers, queues, provider
+behavior, media writes, evidence creation, Event/Visit creation, labels, truth
+creation, dependencies, or generated artifacts. Phase 16C adds frontend status
+visibility only.

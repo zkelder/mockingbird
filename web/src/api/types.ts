@@ -212,6 +212,46 @@ export interface SourceSetupReviewResponse {
   warnings: string[];
 }
 
+export interface WorkerStatusItem {
+  worker_key: string;
+  display_name: string;
+  category: string;
+  state: string;
+  enabled: boolean;
+  implemented: boolean;
+  provider_key?: string | null;
+  source_id?: string | null;
+  stream_id?: string | null;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+  last_error?: string | null;
+  message: string;
+  can_create_media_assets: boolean;
+  can_create_motion_evidence: boolean;
+  can_create_events: boolean;
+  can_create_visits: boolean;
+  can_create_review_labels: boolean;
+  can_create_truth: boolean;
+  warnings: string[];
+}
+
+export interface WorkerStatusSummary {
+  total_workers: number;
+  implemented_workers: number;
+  enabled_workers: number;
+  running_workers: number;
+  failed_workers: number;
+  truth_creating_workers: number;
+  warnings: string[];
+}
+
+export interface WorkerStatusResponse {
+  workers: WorkerStatusItem[];
+  summary: WorkerStatusSummary;
+  generated_at: string;
+  read_only: boolean;
+}
+
 export interface Stream {
   id: string;
   source_id: string;

@@ -40,6 +40,7 @@ interface DashboardPageProps {
   onOpenDetectionProposals: () => void;
   onOpenModelAdapters: () => void;
   onOpenClassifierReadiness: () => void;
+  onOpenWorkerStatus: () => void;
 }
 
 type SourceWorkflowRoute = "import" | "stream-detail" | "streams";
@@ -284,6 +285,7 @@ export function DashboardPage({
   onOpenDetectionProposals,
   onOpenModelAdapters,
   onOpenClassifierReadiness,
+  onOpenWorkerStatus,
 }: DashboardPageProps) {
   const [sourceSetupReviews, setSourceSetupReviews] = useState<
     Record<string, SourceSetupReviewResponse>
@@ -523,6 +525,13 @@ export function DashboardPage({
         <div className="notice-panel compact-notice">
           <strong>Correction remains truth</strong>
           <span>Evidence needs review. Corrections drive analytics and exports.</span>
+        </div>
+        <div className="notice-panel compact-notice">
+          <strong>Worker Status</strong>
+          <span>Future automation is disabled/read-only.</span>
+          <button className="secondary-action" onClick={onOpenWorkerStatus} type="button">
+            Worker Status
+          </button>
         </div>
         <div className="provider-workflow-grid">
           {mvpProviderWorkflows.map((workflow) => (
