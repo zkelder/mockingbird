@@ -188,6 +188,10 @@ status, setup review, and placeholder Stream playback contracts. The metadata
 layer can show redacted shared-secret readiness and future ingest copy, but it
 does not expose webhook endpoints, accept payloads, create media/evidence,
 create Events/Visits, write truth, or claim live playback.
+Phase 14F adds an explicit webhook payload validation/dry-run API under the
+same Source boundary. It classifies generic payloads, validates Source/Stream/Zone
+context, and reports candidate mappings while creating no records, fetching no
+media, authenticating no payloads, and writing no truth.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

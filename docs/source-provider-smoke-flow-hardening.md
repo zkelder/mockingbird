@@ -98,6 +98,9 @@ exports, training media, or generated workspace files.
   smoke coverage should begin with setup metadata, redacted shared-secret
   markers, setup review, placeholder playback, no active endpoint, and no
   product records.
+- Phase 14F adds webhook validation/dry-run tests for generic payloads, context
+  matching, privacy/ignore skips, and no record creation. It is not provider
+  smoke coverage for ingest yet because no ingest behavior exists.
 - Add live playback smoke coverage only after a separately designed playback
   lifecycle exists.
 - Add automation smoke coverage only after worker, privacy, retention, and truth

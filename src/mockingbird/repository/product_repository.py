@@ -165,12 +165,16 @@ from mockingbird.api.schemas import (
     StreamPlaybackStatusValue,
     TaxonomyLabel,
     Visit,
+    WebhookPayloadCandidate,
+    WebhookPayloadValidationRequest,
+    WebhookPayloadValidationResponse,
     Zone,
     ZoneCreate,
     ZoneType,
     ZoneUpdate,
 )
 from mockingbird.source_providers import folder_import_preview
+from mockingbird.source_providers.webhook_validation import classify_webhook_payload
 from mockingbird.storage.database import (
     DEFAULT_DB_URL,
     create_database_engine,
@@ -1347,7 +1351,7 @@ class ProductRepository:
                 status = SourceConnectionStatusValue.configured
                 message = (
                     "Webhook metadata is configured for future signed ingest. "
-                    "No webhook endpoint accepts inbound payloads yet."
+                    "No webhook ingest endpoint accepts inbound payloads yet."
                 )
                 setup_hint = (
                     "Future webhook ingest endpoint implementation is required before "
@@ -1427,6 +1431,209 @@ class ProductRepository:
             provider_display_name=provider_display_name,
             definition=definition,
             streams=streams,
+        )
+
+    def validate_webhook_payload(
+        self,
+        source_id: str,
+        payload: WebhookPayloadValidationRequest,
+    ) -> WebhookPayloadValidationResponse | None:
+        source = self.get_source(source_id)
+        if source is None:
+            return None
+
+        configuration = self.get_source_provider_configuration(source_id)
+        if configuration is None:
+            return None
+        if configuration.provider_key != "webhook_future":
+            raise ValueError("webhook_provider_required")
+
+        warnings = [
+            "Webhook authentication is not implemented; this validation is dry-run only."
+        ]
+        if payload.shared_secret_marker:
+            warnings.append("shared_secret_marker was treated as a dry-run marker only.")
+
+        if (
+            "shared_secret_configured" in configuration.missing_fields
+            or configuration.safe_config_preview.get("shared_secret_configured") != "configured"
+        ):
+            return _webhook_payload_validation_response(
+                source_id=source_id,
+                valid=False,
+                candidate=None,
+                skipped_reason="not_configured",
+                warnings=warnings
+                + [
+                    "Configure shared_secret_configured metadata before webhook validation can run."
+                ],
+            )
+
+        payload_data = dict(payload.payload)
+        candidate_summary = classify_webhook_payload(payload_data)
+        warnings.extend(candidate_summary.warnings)
+
+        allowed_source_name = _webhook_config_value(configuration, "allowed_source_name")
+        payload_source_name = _webhook_payload_string(payload_data.get("source_name"))
+        if allowed_source_name:
+            if payload_source_name and payload_source_name != allowed_source_name:
+                candidate = _webhook_candidate_from_summary(
+                    source_id=source_id,
+                    stream_id=None,
+                    zone_id=None,
+                    summary=candidate_summary,
+                )
+                return _webhook_payload_validation_response(
+                    source_id=source_id,
+                    valid=False,
+                    candidate=candidate,
+                    skipped_reason="source_name_not_allowed",
+                    warnings=warnings
+                    + ["Payload source_name does not match the configured allowlist."],
+                )
+            if payload_source_name is None:
+                warnings.append(
+                    "Payload source_name is missing; configured allowed_source_name was not checked."
+                )
+
+        stream_id = (
+            _webhook_payload_string(payload_data.get("stream_id"))
+            or payload.default_stream_id
+            or _webhook_config_value(configuration, "default_stream_id")
+        )
+        selected_stream_id: str | None = None
+        if stream_id:
+            stream = self.get_stream(stream_id)
+            if stream is None:
+                candidate = _webhook_candidate_from_summary(
+                    source_id=source_id,
+                    stream_id=stream_id,
+                    zone_id=None,
+                    summary=candidate_summary,
+                )
+                return _webhook_payload_validation_response(
+                    source_id=source_id,
+                    valid=False,
+                    candidate=candidate,
+                    skipped_reason="stream_not_found",
+                    warnings=warnings + ["Webhook payload stream_id was not found."],
+                )
+            if stream.source_id != source_id:
+                candidate = _webhook_candidate_from_summary(
+                    source_id=source_id,
+                    stream_id=stream_id,
+                    zone_id=None,
+                    summary=candidate_summary,
+                )
+                return _webhook_payload_validation_response(
+                    source_id=source_id,
+                    valid=False,
+                    candidate=candidate,
+                    skipped_reason="stream_source_mismatch",
+                    warnings=warnings + ["Webhook payload stream_id does not belong to this Source."],
+                )
+            selected_stream_id = stream.id
+
+        zone_id = (
+            _webhook_payload_string(payload_data.get("zone_id"))
+            or payload.default_zone_id
+            or _webhook_config_value(configuration, "default_zone_id")
+        )
+        selected_zone_id: str | None = None
+        if zone_id:
+            zone = self.get_zone(zone_id)
+            if zone is None:
+                candidate = _webhook_candidate_from_summary(
+                    source_id=source_id,
+                    stream_id=selected_stream_id,
+                    zone_id=zone_id,
+                    summary=candidate_summary,
+                )
+                return _webhook_payload_validation_response(
+                    source_id=source_id,
+                    valid=False,
+                    candidate=candidate,
+                    skipped_reason="zone_not_found",
+                    warnings=warnings + ["Webhook payload zone_id was not found."],
+                )
+
+            if selected_stream_id is None:
+                zone_stream = self.get_stream(zone.stream_id)
+                if zone_stream is None or zone_stream.source_id != source_id:
+                    candidate = _webhook_candidate_from_summary(
+                        source_id=source_id,
+                        stream_id=zone.stream_id,
+                        zone_id=zone.id,
+                        summary=candidate_summary,
+                    )
+                    return _webhook_payload_validation_response(
+                        source_id=source_id,
+                        valid=False,
+                        candidate=candidate,
+                        skipped_reason="zone_source_mismatch",
+                        warnings=warnings + ["Webhook payload zone_id does not belong to this Source."],
+                    )
+                selected_stream_id = zone_stream.id
+            elif zone.stream_id != selected_stream_id:
+                candidate = _webhook_candidate_from_summary(
+                    source_id=source_id,
+                    stream_id=selected_stream_id,
+                    zone_id=zone.id,
+                    summary=candidate_summary,
+                )
+                return _webhook_payload_validation_response(
+                    source_id=source_id,
+                    valid=False,
+                    candidate=candidate,
+                    skipped_reason="zone_stream_mismatch",
+                    warnings=warnings + ["Webhook payload zone_id does not belong to the selected Stream."],
+                )
+
+            selected_zone_id = zone.id
+            if zone.zone_type == ZoneType.privacy:
+                candidate = _webhook_candidate_from_summary(
+                    source_id=source_id,
+                    stream_id=selected_stream_id,
+                    zone_id=selected_zone_id,
+                    summary=candidate_summary,
+                )
+                return _webhook_payload_validation_response(
+                    source_id=source_id,
+                    valid=False,
+                    candidate=candidate,
+                    skipped_reason="privacy_zone",
+                    warnings=warnings + ["Webhook payload targets a privacy zone."],
+                )
+            if zone.zone_type == ZoneType.ignore:
+                candidate = _webhook_candidate_from_summary(
+                    source_id=source_id,
+                    stream_id=selected_stream_id,
+                    zone_id=selected_zone_id,
+                    summary=candidate_summary,
+                )
+                return _webhook_payload_validation_response(
+                    source_id=source_id,
+                    valid=False,
+                    candidate=candidate,
+                    skipped_reason="ignore_zone",
+                    warnings=warnings + ["Webhook payload targets an ignore zone."],
+                )
+
+        if selected_stream_id is None and candidate_summary.candidate_type != "heartbeat":
+            warnings.append("No Stream context was supplied; candidate remains unanchored.")
+
+        candidate = _webhook_candidate_from_summary(
+            source_id=source_id,
+            stream_id=selected_stream_id,
+            zone_id=selected_zone_id,
+            summary=candidate_summary,
+        )
+        return _webhook_payload_validation_response(
+            source_id=source_id,
+            valid=candidate_summary.valid,
+            candidate=candidate,
+            skipped_reason=candidate_summary.skipped_reason,
+            warnings=warnings,
         )
 
     def list_streams(self) -> list[Stream]:
@@ -6616,6 +6823,71 @@ def _source_provider_definition(provider_key: str) -> SourceProviderDefinition |
     )
 
 
+def _webhook_payload_validation_response(
+    *,
+    source_id: str,
+    valid: bool,
+    candidate: WebhookPayloadCandidate | None,
+    skipped_reason: str | None,
+    warnings: list[str],
+) -> WebhookPayloadValidationResponse:
+    return WebhookPayloadValidationResponse(
+        source_id=source_id,
+        provider_key="webhook_future",
+        valid=valid,
+        dry_run=True,
+        would_create_media_asset=False,
+        would_create_motion_evidence=False,
+        would_create_event=False,
+        would_create_visit=False,
+        would_create_review_label=False,
+        would_create_species_suggestion=False,
+        would_create_detection_proposal=False,
+        would_create_truth=False,
+        candidate=candidate,
+        skipped_reason=skipped_reason,
+        warnings=warnings,
+    )
+
+
+def _webhook_candidate_from_summary(
+    *,
+    source_id: str,
+    stream_id: str | None,
+    zone_id: str | None,
+    summary,
+) -> WebhookPayloadCandidate:
+    return WebhookPayloadCandidate(
+        candidate_type=summary.candidate_type,
+        source_id=source_id,
+        stream_id=stream_id,
+        zone_id=zone_id,
+        external_event_id=summary.external_event_id,
+        external_label=summary.external_label,
+        external_confidence=summary.external_confidence,
+        media_reference=summary.media_reference,
+        message=summary.message,
+        warnings=summary.warnings,
+    )
+
+
+def _webhook_payload_string(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _webhook_config_value(
+    configuration: SourceProviderConfiguration,
+    key: str,
+) -> str | None:
+    value = configuration.safe_config_preview.get(key)
+    if value is None or value == "not_configured":
+        return None
+    return value
+
+
 def _default_source_provider_key(source: CameraSourceModel) -> str:
     if source.kind == SourceKind.demo.value:
         return "demo"
@@ -6859,7 +7131,7 @@ def _source_setup_review_from_contracts(
     elif configuration.provider_key == "webhook_future":
         readiness_level = "future_adapter_required"
         summary = (
-            "Webhook metadata is present, but MockingBird does not accept webhook "
+            "Webhook metadata is present, but MockingBird does not ingest webhook "
             "payloads yet."
         )
         next_step = (
@@ -6885,7 +7157,7 @@ def _source_setup_review_from_contracts(
         warnings.append("Folder import creates MediaAssets only; evidence handoff is future.")
         warnings.append("Live playback is not expected for this provider.")
     elif configuration.provider_key == "webhook_future":
-        warnings.append("No webhook endpoint exists yet; no payloads are accepted.")
+        warnings.append("No webhook ingest endpoint exists yet; no payloads are accepted as records.")
         warnings.append("Webhook metadata creates no media, evidence, Events/Visits, or truth.")
         warnings.append("Live playback is not expected for this provider.")
     elif not supports_live_playback and configuration.provider_key != "manual_media":
@@ -6937,8 +7209,9 @@ def _source_setup_review_from_contracts(
             label="Webhook ingest",
             status="future",
             message=(
-                "Configuration stores metadata only; no webhook endpoint exists, no "
-                "payloads are accepted, and no media, evidence, or truth is created."
+                "Configuration stores metadata only; no webhook ingest endpoint exists, "
+                "no payloads are accepted as records, and no media, evidence, or truth "
+                "is created."
             ),
         )
         if configuration.provider_key == "webhook_future"

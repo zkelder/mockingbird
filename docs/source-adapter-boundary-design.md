@@ -146,6 +146,10 @@ connection status, setup review, and placeholder Stream playback only. It adds
 shared-secret configured markers and readiness copy, but no webhook route,
 payload parsing, media/evidence creation, live playback, auth/token generation,
 or ecosystem-specific adapter behavior.
+Phase 14F adds the first explicit webhook behavior as a dry-run validation
+boundary under Source contracts. It classifies generic payloads and validates
+Source/Stream/Zone context, but creates no records, performs no auth, fetches no
+media, and does not become ingest.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -302,6 +306,8 @@ Future implementation must test:
 - Phase 14D: generic webhook ingest provider boundary design.
 - Phase 14E: webhook provider configuration/status contract.
 - Phase 14F: webhook payload validation/dry-run endpoint, no records.
+- Phase 14G: webhook metadata event to pending MotionEvidence,
+  explicit/evidence only.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

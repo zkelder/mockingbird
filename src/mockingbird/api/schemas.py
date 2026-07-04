@@ -286,6 +286,44 @@ class SourceSetupReviewResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class WebhookPayloadValidationRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+    shared_secret_marker: str | None = None
+    default_stream_id: str | None = None
+    default_zone_id: str | None = None
+
+
+class WebhookPayloadCandidate(BaseModel):
+    candidate_type: str
+    source_id: str
+    stream_id: str | None = None
+    zone_id: str | None = None
+    external_event_id: str | None = None
+    external_label: str | None = None
+    external_confidence: float | None = None
+    media_reference: str | None = None
+    message: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class WebhookPayloadValidationResponse(BaseModel):
+    source_id: str
+    provider_key: str
+    valid: bool
+    dry_run: bool
+    would_create_media_asset: bool
+    would_create_motion_evidence: bool
+    would_create_event: bool
+    would_create_visit: bool
+    would_create_review_label: bool
+    would_create_species_suggestion: bool
+    would_create_detection_proposal: bool
+    would_create_truth: bool
+    candidate: WebhookPayloadCandidate | None = None
+    skipped_reason: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
 class Stream(BaseModel):
     id: str
     source_id: str

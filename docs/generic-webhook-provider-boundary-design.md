@@ -15,18 +15,19 @@ boundary for analytics, exports, and classifier readiness.
 
 Phase 14D was design only. Phase 14E adds `webhook_future` to provider
 configuration, Source connection status, setup review, and placeholder Stream
-playback contracts. It still adds no webhook route, token/auth code, media
-upload, media download, MediaAsset creation, MotionEvidence creation,
-Event/Visit creation, ReviewLabel creation, provider implementation, dependency,
-worker, queue, polling, or integration-specific behavior.
+playback contracts. Phase 14F adds an explicit payload validation/dry-run
+endpoint. It still adds no webhook ingest, token/auth code, media upload, media
+download, MediaAsset creation, MotionEvidence creation, Event/Visit creation,
+ReviewLabel creation, provider implementation, dependency, worker, queue,
+polling, or integration-specific behavior.
 
 ## Product Flow
 
 Future webhook work should preserve this flow:
 
-generic webhook Source setup -> webhook provider configuration -> future
-inbound webhook validation -> optional media reference or uploaded media
-candidate -> optional MediaAsset creation later -> optional pending
+generic webhook Source setup -> webhook provider configuration -> explicit
+payload validation dry-run -> optional media reference or uploaded media
+candidate later -> optional MediaAsset creation later -> optional pending
 MotionEvidence creation later -> explicit promote to Event/Visit -> Visit
 review/correction -> ReviewLabel truth -> analytics/exports/classifier
 readiness.
@@ -73,11 +74,11 @@ Current provider configuration metadata:
 Configuration rules:
 
 - no token generation in this phase
-- no webhook endpoint in this phase
+- no webhook ingest endpoint in this phase
 - secrets must be redacted to configured/not-configured markers
 - config/status must not imply webhook ingest is active yet
-- setup metadata must not accept payloads, write media, create evidence, or
-  write truth
+- setup metadata must not accept payloads as ingest, write media, create
+  evidence, or write truth
 
 ## Source Connection Status Relationship
 
@@ -112,8 +113,9 @@ must not:
 
 ## Inbound Payload Categories
 
-Future webhook payload categories:
+Dry-run webhook payload categories:
 
+- metadata-only validation candidate
 - media reference candidate
 - media upload candidate
 - motion/event candidate
@@ -132,6 +134,45 @@ Policy:
   promoted later
 - all payloads remain untrusted until validated
 
+Phase 14F candidate types:
+
+- `metadata_only`
+- `media_reference`
+- `media_upload`
+- `motion_event`
+- `object_detection`
+- `species_suggestion`
+- `heartbeat`
+- `unknown`
+
+Phase 14F only reports these mappings. It creates no records and does not
+authenticate, fetch media, upload media, or run models.
+
+## Dry-run Validation Endpoint
+
+Phase 14F endpoint:
+
+```text
+POST /api/sources/{source_id}/webhook/validate
+```
+
+This endpoint validates generic payload shape and Source/Stream/Zone context. It
+returns `dry_run=true`, all `would_create_*` fields as false, and a candidate
+mapping report when possible.
+
+It does not:
+
+- authenticate payloads
+- compare raw secrets
+- accept payloads as ingest
+- write files
+- create MediaAssets
+- create MotionEvidence
+- create Events/Visits
+- create ReviewLabels/truth
+- fetch media URLs
+- call model or detector runtimes
+
 ## Future Webhook Endpoint Design
 
 Future endpoint option:
@@ -146,7 +187,7 @@ Alternative source-scoped option:
 POST /api/sources/{source_id}/webhook/ingest
 ```
 
-This phase does not implement either endpoint.
+Phase 14F does not implement either ingest endpoint.
 
 Future behavior should include:
 
@@ -341,7 +382,7 @@ Future tests should prove:
 ## Explicit Non-Goals
 
 - no webhook ingest implementation in this phase
-- no endpoint
+- no ingest endpoint
 - no webhook ingest
 - no token/auth code
 - no media upload

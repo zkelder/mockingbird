@@ -79,6 +79,9 @@ Phase 14D designs generic webhook ingest as a future source of candidate
 evidence only. Webhook motion/event candidates may become pending
 MotionEvidence only in a separately scoped phase; inbound labels or event claims
 must not become reviewed truth.
+Phase 14F validates webhook motion payloads as candidates only. The dry-run
+endpoint can report a future `motion_event` mapping and privacy/ignore-zone
+skips, but it creates no MotionEvidence, Event, Visit, label, media, or truth.
 
 ## Status Lifecycle
 

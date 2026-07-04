@@ -78,6 +78,10 @@ Phase 14E adds metadata fields for `endpoint_name`, sensitive
 Booleans are stored as metadata strings until parsing is explicitly scoped.
 This metadata must not generate tokens, expose secrets, accept webhook payloads,
 create media/evidence, or imply ingest is active.
+Phase 14F lets this configuration feed the explicit webhook payload
+validation/dry-run endpoint. That endpoint requires the redacted shared-secret
+marker to be configured, but it still does not implement real authentication,
+accept payloads as ingest, create media/evidence, or write truth.
 
 ## Provider Configuration Fields
 
@@ -205,6 +209,9 @@ reviewable activity.
 - Manual media setup points to explicit import/review, not live playback.
 - Provider configuration does not create evidence, review truth, exports, media
   files, model artifacts, or runtime calls.
+- Webhook provider configuration can feed explicit dry-run validation only; it
+  does not authenticate, ingest payloads, fetch media, create records, or write
+  truth.
 
 ## Explicit Non-Goals
 

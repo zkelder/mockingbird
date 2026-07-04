@@ -611,8 +611,9 @@ Current work:
   `folder_import_future`.
 - Phase 14D: generic webhook ingest provider boundary design.
 - Phase 14E: webhook provider configuration/status contract.
-- Next likely phase: Phase 14F webhook payload validation/dry-run endpoint, no
-  records.
+- Phase 14F: webhook payload validation/dry-run endpoint, no records.
+- Next likely phase: Phase 14G webhook metadata event to pending MotionEvidence,
+  explicit/evidence only, or Phase 14H webhook media upload to MediaAsset.
 
 Validation:
 
@@ -643,6 +644,10 @@ Validation:
   configuration, Source connection status, setup review, and placeholder Stream
   playback. Missing shared-secret metadata stays `not_configured`; configured
   metadata stays future-adapter-required because no endpoint accepts payloads.
+- Phase 14F adds explicit webhook payload validation/dry-run at
+  `POST /api/sources/{source_id}/webhook/validate`. It validates generic payload
+  shape and Source/Stream/Zone context, reports candidate mappings, rejects
+  privacy/ignore-zone candidates, and creates no records or truth.
 - MediaAssets remain media context, MotionEvidence remains evidence, and
   Event/Visit promotion remains unreviewed until correction.
 - No frontend feature, new provider, live playback, folder watcher, polling,
@@ -659,8 +664,13 @@ Validation:
   creation, Event/Visit creation, ReviewLabel/truth creation,
   ecosystem-specific integration, MQTT, worker, queue, polling, dependency,
   model/runtime behavior, or generated artifact is added in Phase 14D.
-- No webhook endpoint, auth/token generation, payload parsing, media
+- No webhook ingest endpoint, auth/token generation, payload parsing, media
   upload/download behavior, MediaAsset creation, MotionEvidence creation,
   Event/Visit creation, ReviewLabel/truth creation, ecosystem-specific
   integration, MQTT, worker, queue, polling, dependency, model/runtime behavior,
   live playback, or generated artifact is added in Phase 14E.
+- No webhook ingest, real auth/token generation, media upload/download,
+  MediaAsset creation, MotionEvidence creation, Event/Visit creation,
+  ReviewLabel/truth creation, ecosystem-specific integration, MQTT, worker,
+  queue, polling, dependency, model/runtime behavior, live playback, external
+  network call, or generated artifact is added in Phase 14F.

@@ -93,9 +93,11 @@ playback status or live playback support.
 For generic webhook Sources, playback remains placeholder/media-context only.
 Phase 14E lets configured webhook metadata appear in setup/status contracts, but
 it does not add live playback, preview URLs, MediaAssets, MotionEvidence, or
-payload ingest. Webhook ingest can feed media or event candidate context later
-without becoming live playback. Any MediaAsset or MotionEvidence creation must
-be separately scoped and must not change playback status into a live stream
+payload ingest. Phase 14F adds explicit webhook payload validation/dry-run, but
+validation does not affect playback status, preview URLs, media references, or
+live playback claims. Webhook ingest can feed media or event candidate context
+later without becoming live playback. Any MediaAsset or MotionEvidence creation
+must be separately scoped and must not change playback status into a live stream
 claim.
 Phase 14D documents this as a provider boundary in
 [generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md):
@@ -171,6 +173,8 @@ activity.
 - Folder-import evidence handoff does not change playback/live status.
 - Generic webhook provider streams remain placeholder/media-context only and do
   not expose active ingest or live playback.
+- Webhook validation/dry-run does not change playback status or attach preview
+  media.
 - The route does not create evidence, review truth, exports, analytics truth,
   media files, model artifacts, or adapter runtime calls.
 

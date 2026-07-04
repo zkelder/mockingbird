@@ -179,7 +179,7 @@ async def test_webhook_configured_secret_is_redacted_and_future_adapter_required
     assert connection["status"] == "configured"
     assert connection["supports_live_playback"] is False
     assert connection["supports_zone_editing"] is True
-    assert "No webhook endpoint accepts inbound payloads yet" in connection["message"]
+    assert "No webhook ingest endpoint accepts inbound payloads yet" in connection["message"]
     assert "Future webhook ingest endpoint implementation" in connection["setup_hint"]
 
     review_response = await client.get(f"/api/sources/{SOURCE_ID}/setup-review")
@@ -187,7 +187,7 @@ async def test_webhook_configured_secret_is_redacted_and_future_adapter_required
     review = review_response.json()
     assert review["readiness_level"] == "future_adapter_required"
     assert review["summary"] == (
-        "Webhook metadata is present, but MockingBird does not accept webhook payloads yet."
+        "Webhook metadata is present, but MockingBird does not ingest webhook payloads yet."
     )
     assert review["next_step"] == (
         "Future webhook ingest endpoint implementation required before receiving payloads."
@@ -223,14 +223,16 @@ async def test_webhook_stream_playback_remains_placeholder_only(
     assert "no payloads are accepted yet" in playback["setup_hint"]
 
 
-async def test_webhook_phase_adds_no_webhook_ingest_routes() -> None:
-    webhook_routes = [
+async def test_webhook_provider_adds_no_webhook_ingest_routes() -> None:
+    webhook_ingest_routes = [
         route.path
         for route in app.routes
-        if getattr(route, "path", None) and "webhook" in route.path.lower()
+        if getattr(route, "path", None)
+        and "webhook" in route.path.lower()
+        and "ingest" in route.path.lower()
     ]
 
-    assert webhook_routes == []
+    assert webhook_ingest_routes == []
 
 
 async def test_webhook_configuration_and_status_create_no_product_records(

@@ -88,6 +88,10 @@ Phase 14D defines the webhook boundary in
 Webhook Source status is ingest readiness, not live connection, playback, or
 reviewed truth. Until implementation exists, configured metadata still surfaces
 as future-adapter-required in setup review.
+Phase 14F adds an explicit webhook payload validation/dry-run endpoint, but
+Source connection status remains readiness only. Status routes do not parse
+webhook payloads, authenticate, fetch media, create records, or update provider
+state.
 
 ## Provider Configuration Relationship
 
@@ -175,6 +179,7 @@ respect those zones when later phases create evidence or reviewable activity.
 - Safe configured/missing field lists are present.
 - Folder/trail-cam status never exposes raw `folder_path`.
 - Generic webhook status never exposes raw shared secret text.
+- Generic webhook status does not call the webhook payload validator.
 - Folder/trail-cam status does not call the explicit folder preview scanner.
 - Folder/trail-cam status does not import folder media or create MediaAssets.
 - The route does not call provider runtimes, inspect media, create artifacts, or

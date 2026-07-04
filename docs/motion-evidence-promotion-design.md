@@ -155,6 +155,9 @@ reviewed truth.
 Phase 14D generic webhook-origin candidates, if later mapped to
 MotionEvidence, must use the same explicit promotion semantics: promotion creates
 unreviewed Event/Visit context only, and correction remains truth.
+Phase 14F webhook validation reports candidates only. A validated webhook
+`motion_event` cannot be promoted until a future phase explicitly creates
+pending MotionEvidence from that candidate.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

@@ -101,6 +101,8 @@ from mockingbird.api.schemas import (
     TaxonomyLabel,
     Visit,
     VisitDetail,
+    WebhookPayloadValidationRequest,
+    WebhookPayloadValidationResponse,
     Zone,
     ZoneCreate,
     ZoneMutationResult,
@@ -1148,6 +1150,28 @@ async def update_source_provider_configuration(
     if configuration is None:
         raise _not_found("Source", source_id)
     return configuration
+
+
+@app.post(
+    "/api/sources/{source_id}/webhook/validate",
+    response_model=WebhookPayloadValidationResponse,
+)
+async def validate_source_webhook_payload(
+    source_id: str,
+    payload: WebhookPayloadValidationRequest,
+) -> WebhookPayloadValidationResponse:
+    try:
+        result = get_repository().validate_webhook_payload(source_id, payload)
+    except ValueError as error:
+        if str(error) == "webhook_provider_required":
+            raise HTTPException(
+                status_code=400,
+                detail="Webhook validation requires a webhook_future Source provider.",
+            ) from error
+        raise
+    if result is None:
+        raise _not_found("Source", source_id)
+    return result
 
 
 @app.post(
