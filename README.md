@@ -172,6 +172,11 @@ Use
 [docs/local-mvp-readiness-checklist.md](docs/local-mvp-readiness-checklist.md)
 as the local demo/dev readiness gate before selecting riskier provider,
 worker, or playback work.
+Background workers and live automation are future work. The current lifecycle
+boundary is documented in
+[docs/worker-lifecycle-boundary-design.md](docs/worker-lifecycle-boundary-design.md):
+workers must be explicitly enabled, observable, bounded, and unable to create
+review truth.
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 

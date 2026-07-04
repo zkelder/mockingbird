@@ -169,6 +169,12 @@ Every future implementation task must restate:
 - Dashboard/status views may summarize provider readiness and next actions, but
   they must not fetch provider media, scan folders, run providers/models, create
   evidence, promote Events/Visits, or write reviewed truth.
+- Worker, scheduler, polling, watcher, queue, or background cleanup work must
+  follow
+  [docs/worker-lifecycle-boundary-design.md](docs/worker-lifecycle-boundary-design.md)
+  and explicit phase scope. Workers must be disabled by default initially,
+  observable, bounded, local-first, and unable to create ReviewLabels, mark
+  Visits reviewed, or create analytics/export truth.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.

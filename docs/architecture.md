@@ -224,6 +224,11 @@ write reviewed truth.
 Phase 15D adds a local MVP readiness checklist. It is a documentation gate over
 validation, demo flow, known limitations, artifact safety, and truth boundaries;
 it adds no runtime behavior.
+Phase 16A defines the worker/lifecycle boundary before background behavior.
+Workers are future optional infrastructure below explicit provider actions; they
+must be disabled by default initially, observable, bounded, and unable to create
+ReviewLabels, reviewed Visits, analytics truth, or export truth. See
+[worker-lifecycle-boundary-design.md](worker-lifecycle-boundary-design.md).
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

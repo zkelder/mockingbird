@@ -721,7 +721,7 @@ Current work:
 - Phase 15C: onboarding and empty-state polish.
 - Phase 15D: local MVP release/readiness checklist.
 - Phase 15E: UI copy reduction pass.
-- Next likely phase: Phase 16A worker/lifecycle boundary design.
+- Follow-on phase: Phase 16A worker/lifecycle boundary design.
 
 Design note: [mvp-readiness-consolidation.md](mvp-readiness-consolidation.md).
 Demo script: [mvp-demo-script.md](mvp-demo-script.md).
@@ -787,3 +787,34 @@ Validation:
   guardrails in docs.
 - Phase 15E adds no behavior, provider work, backend/frontend data contract,
   tests, dependencies, generated artifacts, or release claim.
+
+## Phase 16 — Worker and lifecycle boundaries
+
+Goal: define optional worker lifecycle rules before any background behavior is
+added.
+
+Current work:
+
+- Phase 16A: worker/lifecycle boundary design.
+- Next likely phase: Phase 16B worker status schema/API contract, read-only/no
+  workers.
+
+Design note: [worker-lifecycle-boundary-design.md](worker-lifecycle-boundary-design.md).
+
+Validation:
+
+- Phase 16A keeps provider flows explicit and documents future automation
+  candidates without implementing workers, schedulers, polling, watchers,
+  queues, provider behavior, media writes, evidence creation, Event/Visit
+  creation, label/truth creation, dependencies, or generated artifacts.
+- Workers are optional, local-first, disabled by default initially, observable,
+  bounded, and safely stoppable.
+- Worker status is lifecycle metadata only and must not create evidence or
+  truth.
+- Future worker output can become pending MotionEvidence, DetectionProposal, or
+  SpeciesSuggestion at most; ReviewLabel correction remains truth.
+- Privacy and ignore zones must block or skip automated evidence creation.
+- Storage estimates and retention rules are required before repeated
+  fetch/import/generation behavior.
+- Follow-on implementation must start with read-only status contracts before any
+  active background work.
