@@ -7,6 +7,10 @@ Source/provider setup -> explicit provider workflow -> MediaAsset or
 MotionEvidence evidence -> explicit promotion -> Event/Visit review -> user
 correction truth -> analytics, exports, and classifier readiness.
 
+The current short proof loop is:
+browser import -> demo proposal evidence -> Review Queue context -> explicit
+correction -> reviewed-only Dataset Export proof.
+
 Phase 15C onboarding and empty states guide the same path when the local app has
 little or no data.
 
@@ -22,10 +26,13 @@ production provider infrastructure.
 - The `external_url` still-image preview/save/evidence path works.
 - The `folder_import_future` preview/import/evidence path works.
 - The `webhook_future` metadata validation/evidence path works.
+- Browser media import can create demo DetectionProposal evidence.
+- Review Queue exposes evidence context before correction.
 - MediaAssets are not truth.
 - MotionEvidence is not truth.
 - Event/Visit review is not truth until correction.
-- Corrections drive analytics, export, and classifier readiness.
+- Corrections drive analytics, export proof, and classifier readiness.
+- Reviewed-only exports include corrected truth and skip unreviewed candidates.
 - Saved media retention and cleanup are explicit and safe.
 - Live playback is not implemented yet.
 
@@ -48,8 +55,10 @@ production provider infrastructure.
 - Backend dependencies are installed.
 - Frontend dependencies are installed.
 - Local database can be seeded or reset.
+- Demo streams and zones exist. If not, reset or seed local data before the demo.
 - A safe test HTTP image URL is available for `external_url`.
 - A temporary local folder with tiny test images is available for folder import.
+- A local test image is available for Import Media and CLI smoke fallback.
 - No real camera is required.
 - No cloud service is required.
 
@@ -59,25 +68,38 @@ Backend:
 
 ```sh
 cd ~/projects/mockingbird
-pyenv shell 3.11.9
-source .venv/bin/activate
-python -m uvicorn mockingbird.api.main:app --host 0.0.0.0 --port 8000 --reload
+.venv/bin/python -m uvicorn mockingbird.api.main:app --reload
 ```
 
 Frontend:
 
 ```sh
-cd ~/projects/mockingbird/web
-npm run dev -- --host 127.0.0.1 --port 5173
+cd web && npm run dev
 ```
 
 Vite may use `5174` if `5173` is busy. Use the URL Vite prints.
 
+## Read-Only API Smoke Check
+
+With the API running, confirm the local demo spine has the required read-only
+basics:
+
+```sh
+.venv/bin/python scripts/check_mvp_smoke.py
+```
+
+This checks health, Streams, Zones, Review Queue, Detection Proposals, Dataset
+Exports, Analytics, and Classifier Readiness. It creates no media, proposals,
+corrections, exports, or truth. It exits nonzero only for hard blockers: API
+unreachable, `/health` not ok, no Streams, or no Zones.
+
 ## Validation Commands Before Demo
 
 ```sh
+.venv/bin/python scripts/check_mvp_smoke.py --help
 .venv/bin/python -m pytest tests/test_source_provider_smoke_flows.py
 .venv/bin/python -m pytest tests/test_webhook_provider_smoke_flow.py
+.venv/bin/python -m pytest tests/test_detection_interface.py -q
 .venv/bin/python -m pytest
 cd web
 npm run typecheck
@@ -101,6 +123,38 @@ Visit these surfaces during the walkthrough:
 - Classifier Manifest
 - Saved Media Retention
 - Local Data / Settings if available
+
+## Short Import-To-Export Proof Loop
+
+- [ ] Start the API and frontend with the commands above.
+- [ ] If demo Streams/Zones are missing, use Local Data reset/seed behavior and
+      rerun the read-only smoke check.
+- [ ] Open Import Media.
+- [ ] Select a local image, Stream, and optional Zone.
+- [ ] Import the image.
+- [ ] Click `Create demo proposal`.
+- [ ] Optionally click `Create + convert for review` to create Event/Visit
+      context.
+- [ ] Open Review Queue.
+- [ ] Confirm media/proposal evidence is visible.
+- [ ] Submit an explicit correction.
+- [ ] Confirm the correction panel names ReviewLabel truth.
+- [ ] Open Dataset Exports.
+- [ ] Create a reviewed-only export with detections and zone context included.
+- [ ] Inspect the manifest proof records.
+- [ ] Confirm the corrected label appears in the export record while proposal
+      detections remain evidence.
+- [ ] Confirm skipped reasons explain any unreviewed candidates.
+
+CLI fallback for the same evidence path:
+
+```sh
+.venv/bin/python scripts/run_local_image_smoke.py --file /path/to/image.jpg --convert
+```
+
+The CLI fallback imports media and creates synthetic demo proposal evidence. It
+does not create ReviewLabel truth; finish the loop through Review Queue and
+Dataset Exports.
 
 ## Step 1 - Dashboard MVP Readiness
 
@@ -179,7 +233,9 @@ For exact webhook API examples, refer to
 
 - [ ] Open Review Queue.
 - [ ] Confirm unreviewed Visits appear before correction.
+- [ ] Confirm evidence context is visible for imported/demo proposal records.
 - [ ] Submit or view corrections.
+- [ ] Confirm the saved correction is shown as ReviewLabel truth.
 - [ ] Confirm corrected Visit state.
 - [ ] Confirm raw evidence/provider labels are not truth.
 
@@ -187,6 +243,9 @@ For exact webhook API examples, refer to
 
 - [ ] Open Analytics.
 - [ ] Open Dataset Exports.
+- [ ] Create a reviewed-only export.
+- [ ] Inspect manifest records, Event/Visit IDs, Source/Stream/Zone context,
+      media references, skipped reasons, and detection evidence.
 - [ ] Open Classifier Readiness.
 - [ ] Open Classifier Manifest.
 - [ ] Confirm readiness/training/export surfaces depend on reviewed
@@ -221,8 +280,10 @@ For exact webhook API examples, refer to
 - MotionEvidence is evidence only.
 - Promote creates Event/Visit only.
 - Correction creates ReviewLabel truth.
+- Dataset exports are explicit user/developer actions.
 - Analytics/export/classifier readiness derive from corrections.
 - External labels/confidence are untrusted evidence metadata.
+- Demo proposals are evidence; no model inspects browser/CLI smoke media.
 
 ## Artifact Safety Checklist
 
@@ -249,6 +310,14 @@ For exact webhook API examples, refer to
 - Duplicate evidence skipped: expected when existing evidence already references
   the same source item.
 - No review truth until correction: expected.
+- API unavailable: start the backend command and rerun
+  `.venv/bin/python scripts/check_mvp_smoke.py`.
+- No Streams or Zones: reset or seed demo data before the browser proof loop.
+- No media file: choose an existing local image for Import Media or CLI smoke.
+- No Review Queue items: import and convert evidence first, or check whether all
+  items were already corrected.
+- Export has skipped records: inspect skipped reasons; reviewed-only exports
+  intentionally exclude unreviewed candidates.
 
 ## Demo Narrative / Talk Track
 

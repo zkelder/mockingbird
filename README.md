@@ -198,6 +198,22 @@ npm run dev
 
 The frontend defaults to http://127.0.0.1:8000 for the API. Set `VITE_API_BASE_URL` to point at a different local API.
 
+## MVP local demo and smoke check
+
+Use [docs/mvp-demo-script.md](docs/mvp-demo-script.md) for the browser demo
+loop from import evidence through ReviewLabel correction and Dataset Export
+proof.
+
+```sh
+.venv/bin/python -m uvicorn mockingbird.api.main:app --reload
+cd web && npm run dev
+.venv/bin/python scripts/check_mvp_smoke.py
+.venv/bin/python scripts/run_local_image_smoke.py --file /path/to/local-image.jpg --convert
+```
+
+The smoke check is read-only. It creates no media, proposals, corrections,
+exports, or truth.
+
 ## Local image smoke path
 
 With the API running, a developer can import one local image and create demo
