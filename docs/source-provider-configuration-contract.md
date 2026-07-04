@@ -86,6 +86,9 @@ Phase 14G lets the same configured marker and default Stream/Zone metadata feed
 an explicit confirmed motion payload route that creates pending MotionEvidence
 only. It still does not implement real auth, media upload/download, Events,
 Visits, labels, or truth.
+Phase 14H smoke-tests this configuration through the provider spine: read-only
+status, placeholder playback, dry-run validation, pending MotionEvidence,
+explicit promotion, and correction truth.
 
 ## Provider Configuration Fields
 
@@ -216,6 +219,8 @@ reviewable activity.
 - Webhook provider configuration can feed explicit dry-run validation and the
   confirmed metadata motion-to-MotionEvidence route only. It does not
   authenticate, fetch media, create Events/Visits, labels, or write truth.
+- Webhook provider configuration participates in smoke-tested provider flow
+  without becoming the product center or creating records by itself.
 
 ## Explicit Non-Goals
 

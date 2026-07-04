@@ -50,6 +50,10 @@ still not part of the provider smoke path.
 Phase 14G adds a confirmed metadata motion route that can create pending
 MotionEvidence only. It has focused backend tests, but it is not folded into the
 external_url/folder smoke paths yet.
+Phase 14H adds that webhook provider smoke coverage: setup/status and playback
+stay read-only, validation dry-run creates nothing, confirmed metadata motion
+ingest creates pending MotionEvidence only, explicit promotion creates
+Event/Visit context only, and correction remains the first truth write.
 
 ## Product Flow Covered
 
@@ -143,5 +147,6 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - Phase 14E: generic webhook provider configuration/status contract, no ingest.
 - Phase 14F: webhook payload validation/dry-run endpoint, no records.
 - Phase 14G: webhook metadata motion payload to pending MotionEvidence only.
+- Phase 14H: webhook provider smoke-test hardening through correction truth.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.

@@ -614,8 +614,9 @@ Current work:
 - Phase 14F: webhook payload validation/dry-run endpoint, no records.
 - Phase 14G: webhook metadata event to pending MotionEvidence, explicit/evidence
   only.
-- Next likely phase: Phase 14H webhook media upload to MediaAsset with no
-  evidence/truth, or Phase 14I webhook smoke-test hardening.
+- Phase 14H: webhook provider smoke-test hardening through correction truth.
+- Next likely phase: Phase 14I webhook review/promote UI polish, or Phase 14J
+  webhook media upload boundary design.
 
 Validation:
 
@@ -655,6 +656,11 @@ Validation:
   confirmation, accepts motion payloads only, creates pending MotionEvidence
   only, skips duplicate `external_event_id` values by default, and creates no
   MediaAssets, Events/Visits, labels, or truth.
+- Phase 14H adds backend smoke coverage for the complete metadata webhook path:
+  setup/status and Stream playback stay read-only, validation dry-run creates
+  nothing, explicit webhook motion ingest creates pending MotionEvidence only,
+  explicit promotion creates Event/Visit context only, and correction creates
+  ReviewLabel truth.
 - MediaAssets remain media context, MotionEvidence remains evidence, and
   Event/Visit promotion remains unreviewed until correction.
 - No frontend feature, new provider, live playback, folder watcher, polling,
@@ -687,3 +693,10 @@ Validation:
   integration, MQTT, worker, queue, polling, dependency, model/runtime behavior,
   live playback, external network call, or generated artifact is added in Phase
   14G.
+- No frontend feature, backend behavior change, general webhook ingest, real
+  auth/token generation, media upload/download, MediaAsset creation,
+  SpeciesSuggestion creation, DetectionProposal creation, ecosystem-specific
+  integration, MQTT, worker, queue, polling, dependency, model/runtime behavior,
+  live playback, external network call, or generated artifact is added in Phase
+  14H. Event/Visit and ReviewLabel changes appear only through existing promote
+  and correction routes under smoke test.

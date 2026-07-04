@@ -86,6 +86,9 @@ Phase 14G implements the next explicit boundary: confirmed metadata-only
 webhook motion payloads can create pending MotionEvidence with safe provenance.
 They still create no MediaAsset, Event, Visit, ReviewLabel, SpeciesSuggestion,
 DetectionProposal, export, model output, or truth.
+Phase 14H smoke-tests that webhook metadata evidence remains pending evidence
+until explicit promotion, and that external label/confidence metadata does not
+affect analytics, export, classifier, or dataset truth before correction.
 
 ## Status Lifecycle
 

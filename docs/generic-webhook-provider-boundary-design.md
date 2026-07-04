@@ -21,6 +21,10 @@ can create pending MotionEvidence only. It still adds no token/auth code, media
 upload, media download, MediaAsset creation, Event/Visit creation, ReviewLabel
 creation, provider implementation, dependency, worker, queue, polling, or
 integration-specific behavior.
+Phase 14H adds provider smoke-test hardening for the metadata webhook path:
+setup/status and playback stay read-only, validation dry-run creates nothing,
+explicit motion ingest creates pending MotionEvidence only, promotion creates
+Event/Visit context only, and correction is the first truth write.
 
 ## Product Flow
 
@@ -385,6 +389,8 @@ Future tests should prove:
 - privacy/ignore zone payloads are rejected or skipped
 - metadata-only validation creates no records
 - confirmed metadata motion payloads create pending MotionEvidence only
+- metadata webhook smoke flow reaches correction truth only through the existing
+  promote and correction routes
 - media upload creates MediaAsset only if explicitly scoped
 - event candidate creates pending MotionEvidence only if explicitly scoped
 - species label creates SpeciesSuggestion only if explicitly scoped
@@ -402,8 +408,9 @@ Future tests should prove:
 - Phase 14F: webhook payload validation/dry-run endpoint, no records.
 - Phase 14G: webhook metadata event to pending MotionEvidence,
   explicit/evidence only.
-- Phase 14H: webhook media upload to MediaAsset, no evidence/truth.
-- Phase 14I: Home Assistant/Frigate mapping design.
+- Phase 14H: webhook provider smoke-test hardening through correction truth.
+- Phase 14I: webhook review/promote UI polish, or Phase 14J webhook media
+  upload boundary design.
 - Later: MQTT boundary design.
 
 ## Explicit Non-Goals

@@ -128,6 +128,14 @@ Pending MotionEvidence created from an explicit confirmed metadata-only webhook
 motion payload. It preserves safe webhook provenance and Stream/Zone context,
 but creates no MediaAsset, Event, Visit, ReviewLabel, or reviewed truth.
 
+## Webhook Provider Smoke Flow
+
+Backend smoke coverage for the metadata-only `webhook_future` path:
+configuration/status and playback stay read-only, validation dry-run creates no
+records, confirmed motion ingest creates pending MotionEvidence only, explicit
+promotion creates Event/Visit context only, and correction creates reviewed
+truth.
+
 ## Still-image Preview
 
 A transient, explicit image preview fetched from an `external_url` Source. It is

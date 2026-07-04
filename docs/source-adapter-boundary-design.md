@@ -154,6 +154,10 @@ Phase 14G adds a narrow confirmed metadata motion route under that same
 boundary. It reuses validation and creates pending MotionEvidence only; it does
 not create MediaAssets, Events, Visits, labels, truth, workers, media handling,
 or ecosystem-specific adapter behavior.
+Phase 14H smoke-tests that webhook provider path as evidence-only: status and
+playback stay read-only, validation creates nothing, motion ingest creates
+pending MotionEvidence only, promotion creates Event/Visit context only, and
+correction remains truth.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -312,6 +316,7 @@ Future implementation must test:
 - Phase 14F: webhook payload validation/dry-run endpoint, no records.
 - Phase 14G: webhook metadata event to pending MotionEvidence,
   explicit/evidence only.
+- Phase 14H: webhook provider smoke-test hardening through correction truth.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

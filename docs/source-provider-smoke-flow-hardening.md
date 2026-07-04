@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Phase 14A adds consolidated backend smoke coverage for the two implemented
-provider paths: `external_url` and `folder_import_future`.
+Phase 14A adds consolidated backend smoke coverage for the first two implemented
+provider paths: `external_url` and `folder_import_future`. Phase 14H extends
+that smoke coverage to the metadata-only `webhook_future` path.
 
 This is test and documentation hardening only. It adds no provider behavior,
 live playback, workers, watchers, polling, automation, model runtime,
@@ -21,6 +22,9 @@ routes users to explicit preview/import/evidence/review workflows.
 - `folder_import_future`: configure Source -> setup/status -> explicit folder
   preview -> explicit MediaAsset import -> explicit single or batch pending
   MotionEvidence -> explicit promote -> review/correction truth.
+- `webhook_future`: configure Source -> setup/status -> placeholder playback ->
+  validation dry-run -> explicit pending MotionEvidence -> explicit promote ->
+  review/correction truth.
 
 ## external_url Smoke Path
 
@@ -37,10 +41,19 @@ only, single and batch handoff create pending MotionEvidence only, promotion
 creates unreviewed Event/Visit context only, and ReviewLabel correction is the
 first truth write.
 
+## webhook_future Smoke Path
+
+The smoke path uses local metadata payloads only. It proves provider
+configuration/status and Stream playback stay read-only, validation dry-run
+creates no records, confirmed motion ingest creates pending MotionEvidence only,
+duplicate `external_event_id` values skip by default, context/privacy/ignore
+guards reject unsafe payloads, explicit promotion creates Event/Visit context
+only, and ReviewLabel correction is the first truth write.
+
 ## Shared Truth-Boundary Assertions
 
-Both paths assert that provider setup, preview/import, MediaAssets, and
-MotionEvidence do not create reviewed truth. No SpeciesSuggestion,
+These paths assert that provider setup, preview/import, validation, MediaAssets,
+and MotionEvidence do not create reviewed truth. No SpeciesSuggestion,
 DetectionProposal, DatasetExport, analytics truth, or dataset coverage truth is
 created before explicit correction.
 
@@ -82,28 +95,24 @@ exports, training media, or generated workspace files.
 - No automatic Event/Visit creation.
 - No model runtime, training, or dependency behavior.
 
-## Future Smoke-Test Expansions
+## Smoke-Test History And Future Expansions
 
 - Add provider smoke coverage when another provider reaches explicit
   user-action behavior under the Source/Stream contract.
 - Future provider smoke tests should follow the `external_url` and
-  `folder_import_future` pattern: status routes are read-only, provider actions
-  are explicit, MediaAssets/MotionEvidence are not truth, and ReviewLabel
-  correction is the first reviewed truth write.
-- Future webhook smoke tests should follow
-  [generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md):
-  metadata/status stays read-only, validation/dry-run creates no records, and
-  any later ingest creates evidence/media context only when explicitly scoped.
-- Phase 14E covers `webhook_future` configuration/status only. Later webhook
-  smoke coverage should begin with setup metadata, redacted shared-secret
-  markers, setup review, placeholder playback, no active endpoint, and no
-  product records.
+  `folder_import_future`/`webhook_future` pattern: status routes are
+  read-only, provider actions are explicit, MediaAssets/MotionEvidence are not
+  truth, and ReviewLabel correction is the first reviewed truth write.
+- Phase 14E covers `webhook_future` configuration/status only: setup metadata,
+  redacted shared-secret markers, setup review, placeholder playback, no active
+  endpoint, and no product records.
 - Phase 14F adds webhook validation/dry-run tests for generic payloads, context
   matching, privacy/ignore skips, and no record creation. It is not provider
   smoke coverage for ingest yet because no ingest behavior exists.
 - Phase 14G adds backend tests for confirmed webhook metadata motion payloads
-  creating pending MotionEvidence only. Broader provider smoke coverage can
-  follow once this path is folded into the full Source/Stream review loop.
+  creating pending MotionEvidence only.
+- Phase 14H folds that webhook metadata path into smoke coverage through
+  explicit promotion and correction truth.
 - Add live playback smoke coverage only after a separately designed playback
   lifecycle exists.
 - Add automation smoke coverage only after worker, privacy, retention, and truth

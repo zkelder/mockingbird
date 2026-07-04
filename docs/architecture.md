@@ -197,6 +197,11 @@ webhook motion candidate -> pending MotionEvidence only. It reuses validation,
 records safe provenance, and still creates no MediaAsset, Event, Visit,
 ReviewLabel, SpeciesSuggestion, DetectionProposal, media file, model output, or
 truth.
+Phase 14H adds smoke-test coverage for that complete metadata path:
+webhook_future Source -> validation dry-run -> pending MotionEvidence ->
+explicit promote -> Event/Visit review -> correction truth. Read-only
+configuration/status/playback routes remain side-effect free, and webhook labels
+stay untrusted metadata until user correction.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

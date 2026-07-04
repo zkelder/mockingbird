@@ -103,6 +103,9 @@ Phase 14G adds that separate scope for confirmed metadata motion payloads:
 webhook motion events can create pending MotionEvidence only through the
 explicit source-scoped route. This still does not add live playback, preview
 URLs, media references, or stream capture behavior.
+Phase 14H smoke-tests that playback remains placeholder-only during the webhook
+metadata flow. Validation, pending MotionEvidence creation, promotion, and
+correction do not change live playback semantics.
 Phase 14D documents this as a provider boundary in
 [generic-webhook-provider-boundary-design.md](generic-webhook-provider-boundary-design.md):
 webhook ingest is not a playback provider by default.
