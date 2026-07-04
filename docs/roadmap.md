@@ -616,8 +616,7 @@ Current work:
   only.
 - Phase 14H: webhook provider smoke-test hardening through correction truth.
 - Phase 14I: webhook review/promote UI provenance polish.
-- Next likely phase: Phase 14J webhook media upload boundary design, or Phase
-  15A MVP source/provider readiness consolidation.
+- Follow-on phase: Phase 15A MVP source/provider readiness consolidation.
 
 Validation:
 
@@ -709,3 +708,41 @@ Validation:
   ReviewLabel/truth creation, ecosystem-specific integration, worker, queue,
   polling, dependency, model/runtime behavior, live playback, external network
   call, or generated artifact is added in Phase 14I.
+
+## Phase 15 — MVP readiness and onboarding consolidation
+
+Goal: make the current stream/source MVP understandable without adding provider
+runtime behavior.
+
+Current work:
+
+- Phase 15A: MVP source/provider readiness consolidation.
+- Next likely phase: Phase 15B MVP demo script/checklist, or Phase 15C
+  onboarding/empty-state polish.
+
+Design note: [mvp-readiness-consolidation.md](mvp-readiness-consolidation.md).
+
+Validation:
+
+- Dashboard/source overview explains current provider workflow readiness,
+  explicit next actions, review/evidence status, correction truth, and
+  export/classifier readiness without claiming live playback.
+- `external_url` is presented as explicit preview -> MediaAsset -> pending
+  MotionEvidence -> explicit promotion -> correction truth.
+- `folder_import_future` is presented as explicit folder preview/import ->
+  MediaAsset -> pending MotionEvidence -> explicit promotion -> correction
+  truth.
+- `webhook_future` is presented as API validation/metadata motion evidence ->
+  pending MotionEvidence -> explicit promotion -> correction truth, with UI
+  ingest controls still future.
+- `manual_media` is presented as explicit local import -> review/correction
+  truth.
+- Readiness/dashboard surfaces remain read-only and do not fetch URLs, scan
+  folders, process webhook payloads, create MediaAssets, create MotionEvidence,
+  create Events/Visits, create ReviewLabels, run models, or generate artifacts.
+- Media and evidence are not truth; reviewed corrections remain the source for
+  analytics, exports, and classifier readiness.
+- No new provider behavior, new backend endpoint, live playback, media decoding,
+  dependency, model runtime, training behavior, automatic evidence, automatic
+  Event/Visit creation, automatic truth creation, or generated artifact is
+  added in Phase 15A.

@@ -531,6 +531,15 @@ button {
   gap: 14px;
 }
 
+.mvp-readiness-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.mvp-readiness-actions {
+  justify-content: flex-start;
+}
+
 .provider-workflow-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

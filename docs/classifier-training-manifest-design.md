@@ -66,6 +66,9 @@ training externally.
 Phase 9Z adds the external workspace template. It is documentation only and
 does not create folders, datasets, model files, training scripts, or runtime
 behavior.
+Phase 15A Dashboard readiness may point users to classifier readiness from
+reviewed corrections. It must not treat raw media, MotionEvidence, provider
+payloads, or suggestion evidence as training truth.
 
 ## Manifest File Formats
 
@@ -290,6 +293,8 @@ creates no export truth.
 Phase 9Y documents workspace preparation without adding generated datasets,
 training dependencies, model files, or runtime behavior.
 Phase 9Z documents the recommended external directory tree without creating it.
+Phase 15A folds classifier readiness into the MVP overview as a downstream
+status from reviewed correction truth, not raw evidence.
 
 ## Relationship To Existing Dataset And Export Features
 

@@ -95,6 +95,9 @@ The combined provider smoke plan is documented in
 [source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardening.md).
 Dashboard/source status may point users to this explicit preview path, but it
 must not present `external_url` as live playback or fetch URL media by itself.
+The Phase 15A MVP readiness overview summarizes `external_url` as explicit
+preview -> MediaAsset -> pending evidence -> review/correction truth. It is a
+read-only cue and does not run preview or save actions.
 
 ## Explicit Save Request
 

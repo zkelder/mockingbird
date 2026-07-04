@@ -13,6 +13,9 @@ dependencies, media decoding, or frontend work.
 Phase 14B uses these smoke-tested paths for dashboard/source status polish only:
 the UI can show provider workflow readiness and next actions, but it still
 routes users to explicit preview/import/evidence/review workflows.
+Phase 15A builds on that by giving Dashboard an MVP readiness overview for
+`external_url`, `folder_import_future`, `webhook_future`, and `manual_media`.
+The overview summarizes smoke-tested provider paths and remains read-only.
 
 ## Product Flows Covered
 
@@ -115,6 +118,8 @@ exports, training media, or generated workspace files.
   explicit promotion and correction truth.
 - Phase 14I adds review/promote UI provenance for webhook-origin MotionEvidence
   without changing provider behavior or truth boundaries.
+- Phase 15A adds a Dashboard MVP readiness overview that points to these
+  smoke-tested provider workflows without running providers or creating records.
 - Add live playback smoke coverage only after a separately designed playback
   lifecycle exists.
 - Add automation smoke coverage only after worker, privacy, retention, and truth

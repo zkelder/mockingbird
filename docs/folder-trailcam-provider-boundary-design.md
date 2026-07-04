@@ -52,6 +52,9 @@ correction truth. See
 Phase 14B lets dashboard/source status point configured folder Sources toward
 explicit folder preview/import. It must not imply live playback, a watcher,
 polling, background import, or automatic evidence/truth creation.
+Phase 15A includes Folder / trail-cam import in the MVP readiness overview as
+explicit preview/import -> MediaAsset -> pending evidence -> review/correction
+truth. The overview does not scan folders or create media/evidence.
 
 ## Product Flow
 

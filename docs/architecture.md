@@ -205,6 +205,11 @@ stay untrusted metadata until user correction.
 Phase 14I makes webhook-origin evidence understandable in the frontend review
 loop: Motion Evidence, Event Detail, and Visit Detail can show safe webhook
 provenance while correction remains the analytics/export truth boundary.
+Phase 15A adds the MVP readiness Dashboard overview as a read-only layer over
+implemented provider workflows. It summarizes current support, explicit next
+actions, live playback status, and truth boundaries without fetching provider
+media, scanning folders, processing webhook payloads, creating evidence,
+promoting Events/Visits, or writing review truth.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

@@ -162,6 +162,9 @@ Phase 14G creates that pending MotionEvidence for confirmed metadata-only
 webhook motion payloads. Webhook-origin evidence uses this same promotion route:
 promotion creates unreviewed Event/Visit context only, and correction remains
 truth.
+Phase 15A readiness overview may link users to Motion Evidence review/promote
+surfaces, but it does not promote evidence automatically or create reviewed
+truth.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

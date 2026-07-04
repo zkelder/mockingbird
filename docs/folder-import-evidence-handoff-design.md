@@ -12,6 +12,9 @@ pending/ignored/promoted state, and truth boundaries stay visible.
 Phase 14B can surface folder-provider next actions on the dashboard/source
 overview, but those cues still require explicit preview, import, evidence
 handoff, promotion, and correction steps.
+Phase 15A makes that cue part of the Dashboard MVP readiness overview. It may
+point users to folder preview/import and Motion Evidence review, but it does not
+create pending evidence or promote records automatically.
 
 Folder-imported MediaAssets are local media context. They are not evidence,
 Events, Visits, labels, classifier examples, analytics truth, export truth, or

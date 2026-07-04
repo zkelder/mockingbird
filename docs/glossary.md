@@ -98,6 +98,13 @@ A read-only UI prompt that sends the user to an explicit workflow such as
 Streams, Import Media, Motion Evidence, Retention, or Review. It does not run
 providers, create evidence, or create reviewed truth.
 
+## MVP Readiness Overview
+
+A read-only Dashboard summary of current provider workflows, support level, next
+safe action, live playback status, evidence/review state, and correction/export
+readiness. It does not fetch URLs, scan folders, process webhook payloads,
+create media, create evidence, promote Events/Visits, or create reviewed truth.
+
 ## External URL Still-image Provider
 
 An `external_url` Source provider contract for explicit HTTP still-image

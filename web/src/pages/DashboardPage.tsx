@@ -43,6 +43,14 @@ interface DashboardPageProps {
 }
 
 type SourceWorkflowRoute = "import" | "stream-detail" | "streams";
+type MvpReadinessAction =
+  | "streams"
+  | "import"
+  | "motion-evidence"
+  | "review"
+  | "retention"
+  | "classifier"
+  | "exports";
 
 interface SourceWorkflow {
   source: CameraSource;
@@ -59,6 +67,60 @@ interface SourceWorkflow {
   actionRoute: SourceWorkflowRoute;
   streamId?: string;
 }
+
+interface MvpProviderWorkflow {
+  name: string;
+  supportLevel: string;
+  nextAction: string;
+  creates: string;
+  doesNotCreate: string;
+  livePlayback: string;
+  actionLabel: string;
+  action: MvpReadinessAction;
+}
+
+const mvpProviderWorkflows: MvpProviderWorkflow[] = [
+  {
+    name: "External URL / HTTP still-image",
+    supportLevel: "Explicit still-image preview, save as MediaAsset, and pending evidence handoff",
+    nextAction: "Open Streams and fetch still-image preview.",
+    creates: "MediaAssets after explicit save; pending evidence after explicit handoff.",
+    doesNotCreate: "Live playback, background refresh, automatic labels, or truth.",
+    livePlayback: "Live playback not implemented.",
+    actionLabel: "Open Streams",
+    action: "streams",
+  },
+  {
+    name: "Folder / trail-cam import",
+    supportLevel: "Explicit folder preview, MediaAsset import, and single or batch evidence handoff",
+    nextAction: "Open Streams and preview folder import explicitly.",
+    creates: "MediaAssets after explicit import; pending evidence after explicit handoff.",
+    doesNotCreate: "Live playback, background import, automatic Visits, labels, or truth.",
+    livePlayback: "Live playback not implemented.",
+    actionLabel: "Open Streams",
+    action: "streams",
+  },
+  {
+    name: "Generic webhook ingest",
+    supportLevel: "API dry-run validation and explicit metadata motion evidence creation",
+    nextAction: "Use the API validation/motion evidence route; UI ingest controls are future.",
+    creates: "Pending MotionEvidence from explicit metadata motion payloads.",
+    doesNotCreate: "Media upload/download, external labels as truth, or ecosystem-specific mapping.",
+    livePlayback: "Live playback not implemented.",
+    actionLabel: "Review Motion Evidence",
+    action: "motion-evidence",
+  },
+  {
+    name: "Manual media",
+    supportLevel: "Explicit local import and review flow",
+    nextAction: "Open Import Media.",
+    creates: "Reviewable Events/Visits from explicit import; correction creates truth.",
+    doesNotCreate: "Live stream behavior, camera automation, or automatic provider evidence.",
+    livePlayback: "Live playback not implemented.",
+    actionLabel: "Import Media",
+    action: "import",
+  },
+];
 
 function readinessTone(
   readinessLevel?: SourceSetupReviewResponse["readiness_level"],
@@ -274,6 +336,34 @@ export function DashboardPage({
     onOpenStreams();
   }
 
+  function handleMvpReadinessAction(action: MvpReadinessAction) {
+    if (action === "import") {
+      onOpenImport();
+      return;
+    }
+    if (action === "motion-evidence") {
+      onOpenMotionEvidence();
+      return;
+    }
+    if (action === "review") {
+      onOpenReview();
+      return;
+    }
+    if (action === "retention") {
+      onOpenSavedMediaRetention();
+      return;
+    }
+    if (action === "classifier") {
+      onOpenClassifierReadiness();
+      return;
+    }
+    if (action === "exports") {
+      onOpenExports();
+      return;
+    }
+    onOpenStreams();
+  }
+
   return (
     <div className="page-stack">
       <section className="dashboard-hero">
@@ -343,6 +433,94 @@ export function DashboardPage({
         <MetricCard label="Reviewed species" value={reviewedSpeciesCount} detail="local truth" />
         <MetricCard label="Unknown birds" value={unknownBirdCount} detail="needs species detail" />
         <MetricCard label="Unknown animals" value={unknownAnimalCount} detail="needs label review" />
+      </section>
+
+      <section className="panel mvp-readiness-panel">
+        <div className="section-heading">
+          <div>
+            <h2>MVP readiness</h2>
+            <span className="meta-text">
+              Provider workflow support, explicit next actions, and future boundaries
+            </span>
+          </div>
+          <StatusPill label="Read-only overview" tone="good" />
+        </div>
+        <div className="notice-panel compact-notice">
+          <strong>Correction remains truth</strong>
+          <span>
+            Media and evidence are not truth. Review corrections create truth for analytics,
+            exports, and classifier readiness.
+          </span>
+        </div>
+        <div className="provider-workflow-grid">
+          {mvpProviderWorkflows.map((workflow) => (
+            <article className="provider-workflow-card mvp-readiness-card" key={workflow.name}>
+              <div className="provider-workflow-summary">
+                <h3>{workflow.name}</h3>
+                <span>{workflow.supportLevel}</span>
+              </div>
+              <div className="source-overview-grid provider-workflow-facts">
+                <div>
+                  <span>Current support</span>
+                  <strong>{workflow.supportLevel}</strong>
+                </div>
+                <div>
+                  <span>Live playback</span>
+                  <strong>{workflow.livePlayback}</strong>
+                </div>
+                <div>
+                  <span>Creates</span>
+                  <strong>{workflow.creates}</strong>
+                </div>
+                <div>
+                  <span>Does not create</span>
+                  <strong>{workflow.doesNotCreate}</strong>
+                </div>
+              </div>
+              <div className="provider-workflow-next">
+                <div>
+                  <span>Next action</span>
+                  <strong>{workflow.nextAction}</strong>
+                  <small>Provider status stays read-only until the user takes an explicit action.</small>
+                </div>
+                <button
+                  className="secondary-action"
+                  onClick={() => handleMvpReadinessAction(workflow.action)}
+                  type="button"
+                >
+                  {workflow.actionLabel}
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="detail-actions mvp-readiness-actions">
+          <button className="secondary-action" onClick={onOpenStreams} type="button">
+            Streams
+          </button>
+          <button className="secondary-action" onClick={onOpenImport} type="button">
+            Import Media
+          </button>
+          <button className="secondary-action" onClick={onOpenMotionEvidence} type="button">
+            Motion Evidence
+          </button>
+          <button className="secondary-action" onClick={onOpenReview} type="button">
+            Review Queue
+          </button>
+          <button className="secondary-action" onClick={onOpenSavedMediaRetention} type="button">
+            Saved Media Retention
+          </button>
+          <button className="secondary-action" onClick={onOpenClassifierReadiness} type="button">
+            Classifier Readiness
+          </button>
+          <button className="secondary-action" onClick={onOpenExports} type="button">
+            Dataset Exports
+          </button>
+        </div>
+        <p className="meta-text">
+          This overview does not fetch URLs, scan folders, process webhook payloads, create
+          MediaAssets, create MotionEvidence, promote Events/Visits, or create review truth.
+        </p>
       </section>
 
       <section className="panel source-provider-status-panel">

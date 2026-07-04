@@ -160,6 +160,11 @@ pending MotionEvidence only, promotion creates Event/Visit context only, and
 correction remains truth.
 Phase 14I surfaces webhook-origin evidence provenance in the review/promote UI
 and Event/Visit detail, still underneath explicit correction boundaries.
+Phase 15A consolidates these provider paths in the Dashboard MVP readiness
+overview. Readiness summaries must stay product-level and read-only: they can
+show support level, live playback status, and next actions, but they must not
+run adapters, fetch provider media, scan folders, process webhook payloads,
+create evidence, promote Events/Visits, or write truth.
 
 ## Explicit Non-Recommended First Adapters
 

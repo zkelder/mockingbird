@@ -56,6 +56,10 @@ ingest creates pending MotionEvidence only, explicit promotion creates
 Event/Visit context only, and correction remains the first truth write.
 Phase 14I surfaces webhook-origin evidence provenance in review/promote and
 Event/Visit detail UI while keeping it separate from live playback semantics.
+Phase 15A adds a Dashboard MVP readiness overview. It may summarize these
+Source/Stream paths and route users to explicit actions, but it does not fetch
+provider media, scan folders, process webhook payloads, create evidence, or
+write truth.
 
 ## Product Flow Covered
 
@@ -151,5 +155,6 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - Phase 14G: webhook metadata motion payload to pending MotionEvidence only.
 - Phase 14H: webhook provider smoke-test hardening through correction truth.
 - Phase 14I: webhook review/promote UI provenance polish.
+- Phase 15A: MVP readiness overview that does not run providers.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.

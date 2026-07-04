@@ -28,6 +28,10 @@ Event/Visit context only, and correction is the first truth write.
 Phase 14I polishes the review/promote UI for webhook-origin evidence so
 external event IDs, labels, and confidence remain visible as untrusted evidence
 metadata, not reviewed truth.
+Phase 15A includes Generic webhook ingest in the MVP readiness overview as API
+validation/metadata motion evidence -> pending evidence -> explicit promotion ->
+correction truth. The Dashboard cue does not process webhook payloads or create
+records.
 
 ## Product Flow
 
@@ -413,8 +417,9 @@ Future tests should prove:
   explicit/evidence only.
 - Phase 14H: webhook provider smoke-test hardening through correction truth.
 - Phase 14I: webhook review/promote UI polish.
-- Phase 14J: webhook media upload boundary design, or Phase 15A MVP
-  source/provider readiness consolidation.
+- Phase 15A: MVP source/provider readiness consolidation.
+- Next likely: Phase 14J webhook media upload boundary design, Phase 15B MVP
+  demo script/checklist, or Phase 15C onboarding/empty-state polish.
 - Later: MQTT boundary design.
 
 ## Explicit Non-Goals

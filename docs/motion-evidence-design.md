@@ -92,6 +92,9 @@ affect analytics, export, classifier, or dataset truth before correction.
 Phase 14I surfaces webhook-origin MotionEvidence with safe provenance in the UI:
 provider key, external event ID, untrusted label/confidence, and timestamp are
 evidence metadata only.
+Phase 15A readiness overview may cue users toward pending evidence review and
+promotion, but it does not create MotionEvidence, ignore/promote evidence, or
+write reviewed truth.
 
 ## Status Lifecycle
 

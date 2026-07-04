@@ -60,6 +60,9 @@ before media-copy or training implementation.
 Phase 9Z adds
 [external-training-workspace-template.md](external-training-workspace-template.md)
 as documentation only; it does not implement training.
+Phase 15A may point users from the Dashboard readiness overview to classifier
+readiness, but that readiness is based on reviewed corrections, not raw media
+or provider evidence.
 
 ## Product Flow
 
@@ -169,6 +172,8 @@ Phase 9Y documents external workspace readiness without creating datasets,
 copying media, training, or adding runtime behavior.
 Phase 9Z documents a recommended external workspace layout without creating
 folders, datasets, media bundles, model files, or training behavior.
+Phase 15A keeps classifier readiness as a downstream product signal from
+reviewed truth rather than a model/training action.
 
 ## Export Format Plan
 
