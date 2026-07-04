@@ -90,6 +90,11 @@ Saved previews do not change live playback semantics. Phase 11G implements an
 explicit pending MotionEvidence handoff from saved media without changing
 playback status or live playback support.
 
+For future generic webhook Sources, playback may remain placeholder-only.
+Webhook ingest can feed media or event candidate context later without becoming
+live playback. Any MediaAsset or MotionEvidence creation must be separately
+scoped and must not change playback status into a live stream claim.
+
 ## What This Phase Does
 
 - Adds a read-only playback status route for streams.

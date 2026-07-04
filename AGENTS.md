@@ -123,6 +123,9 @@ Every future implementation task must restate:
   dependencies, generated media, or truth creation by accident.
 - New provider work must preserve provider smoke flows: status routes stay
   read-only, provider actions stay explicit, and correction remains truth.
+- New provider work must start from a boundary/design task, preserve provider
+  smoke-test expectations, and treat incoming media/events/detections as
+  evidence until user review/correction creates truth.
 - Folder/trail-cam provider work must follow
   [docs/folder-trailcam-provider-boundary-design.md](docs/folder-trailcam-provider-boundary-design.md)
   and explicit phase scope. The source-scoped folder preview route is dry-run

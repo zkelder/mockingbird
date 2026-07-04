@@ -138,6 +138,9 @@ preserve correction as the truth boundary.
 The Dashboard can summarize those provider workflows and next actions, but it
 only routes users to explicit Streams, Motion Evidence, Retention, and Review
 surfaces.
+The next provider boundary decision recommends generic webhook ingest as the
+next design-only Source adapter boundary before implementation; see
+[docs/next-provider-boundary-decision.md](docs/next-provider-boundary-decision.md).
 
 Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
 

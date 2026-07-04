@@ -607,8 +607,9 @@ Current work:
   `external_url` and `folder_import_future`.
 - Phase 14B: source/provider dashboard/status polish for read-only provider
   workflow readiness and next-action cues.
-- Next likely phase: Phase 14C next provider boundary decision, or Phase 14D
-  provider status development checklist.
+- Phase 14C: next provider boundary decision after `external_url` and
+  `folder_import_future`.
+- Next likely phase: Phase 14D generic webhook ingest provider boundary design.
 
 Validation:
 
@@ -627,6 +628,11 @@ Validation:
 - Dashboard/source overview may summarize provider readiness and route users to
   explicit Streams, Motion Evidence, Retention, and Review workflows, but it
   must not run providers, create media/evidence, or create truth.
+- Phase 14C recommends generic webhook ingest as the next provider boundary to
+  design before implementation, with HTTP/MJPEG design as the alternate visual
+  source-expansion path.
+- Future webhook work must keep incoming media/events/detections as
+  MediaAsset/MotionEvidence/proposal evidence until user review/correction.
 - MediaAssets remain media context, MotionEvidence remains evidence, and
   Event/Visit promotion remains unreviewed until correction.
 - No frontend feature, new provider, live playback, folder watcher, polling,
@@ -635,3 +641,6 @@ Validation:
 - No new provider behavior, live playback, folder watcher, polling, worker,
   media decoding, model runtime, dependency, automatic evidence, truth write, or
   generated artifact is added in Phase 14B.
+- No backend code, frontend code, tests, endpoint, database model, provider
+  implementation, dependency, live playback, worker, polling, media decoding,
+  automatic evidence, truth write, or generated artifact is added in Phase 14C.

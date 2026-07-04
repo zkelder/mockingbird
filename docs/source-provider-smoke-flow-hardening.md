@@ -86,6 +86,10 @@ exports, training media, or generated workspace files.
 
 - Add provider smoke coverage when another provider reaches explicit
   user-action behavior under the Source/Stream contract.
+- Future provider smoke tests should follow the `external_url` and
+  `folder_import_future` pattern: status routes are read-only, provider actions
+  are explicit, MediaAssets/MotionEvidence are not truth, and ReviewLabel
+  correction is the first reviewed truth write.
 - Add live playback smoke coverage only after a separately designed playback
   lifecycle exists.
 - Add automation smoke coverage only after worker, privacy, retention, and truth

@@ -33,6 +33,9 @@ Phase 14A consolidates the implemented `external_url` and
 Phase 14B lets Dashboard/Source status reflect those smoke-tested provider
 paths as read-only workflow cues, while explicit actions remain in Streams,
 Motion Evidence, Retention, and Review.
+Phase 14C selects the next provider boundary before implementation. Any new
+provider work should extend smoke coverage rather than weakening the
+Source/Stream explicit-action spine.
 
 ## Product Flow Covered
 
@@ -121,5 +124,6 @@ Visit/Event review state, dataset coverage, and analytics truth change.
 - Phase 13F: folder-imported MediaAsset -> MotionEvidence handoff design.
 - Phase 14A: combined provider smoke coverage for `external_url` and
   `folder_import_future`.
+- Phase 14C: next provider boundary decision before implementation.
 - Later: add smoke coverage for future real provider implementations only after
   their contracts are designed.

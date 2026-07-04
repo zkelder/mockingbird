@@ -133,6 +133,10 @@ Phase 14B lets dashboard/source overview summarize provider readiness and next
 actions from the same read-only contracts. Those summaries remain product-level
 status cues; they do not run providers, fetch media, scan folders, or create
 evidence/truth.
+Phase 14C chooses the next provider boundary before implementation:
+[next-provider-boundary-decision.md](next-provider-boundary-decision.md)
+recommends generic webhook ingest as the next design boundary, with incoming
+media/events treated as evidence or media context until review/correction.
 
 ## Explicit Non-Recommended First Adapters
 
@@ -284,6 +288,9 @@ Future implementation must test:
 - Phase 13H: batch folder media evidence handoff dry-run/report.
 - Phase 13I: batch folder media evidence creation, pending MotionEvidence only.
 - Phase 13J: folder media review/promote UI polish.
+- Phase 14C: next provider boundary decision, recommending generic webhook
+  ingest design before implementation.
+- Phase 14D: generic webhook ingest provider boundary design.
 - Later: RTSP, USB/local camera, ESP32-CAM, and browser adapter designs
   separately.
 

@@ -65,6 +65,12 @@ ReviewLabels, or truth.
 `folder_path` is required and redacted to configured/not-configured in normal
 API/UI responses.
 
+`webhook_future` is the recommended next provider boundary for future design
+only. Configuration should remain metadata-only until a separate webhook phase
+defines local auth, payload limits, provenance, dry-run behavior, evidence
+mapping, and truth guards. See
+[next-provider-boundary-decision.md](next-provider-boundary-decision.md).
+
 ## Provider Configuration Fields
 
 Each provider definition can expose fields with:

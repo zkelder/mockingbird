@@ -173,6 +173,12 @@ Phase 14B lets dashboard/source overview summarize provider readiness and next
 actions from read-only status contracts. It routes users to explicit workflows
 without fetching provider media, scanning folders, creating evidence, promoting
 events/visits, or writing review truth.
+Phase 14C chooses generic webhook ingest as the likely next Source adapter
+boundary before implementation. The webhook layer should start as design only,
+sit below Source provider configuration/status contracts, and map future
+incoming media or event candidates into MediaAsset/MotionEvidence evidence
+without creating reviewed truth. See
+[next-provider-boundary-decision.md](next-provider-boundary-decision.md).
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

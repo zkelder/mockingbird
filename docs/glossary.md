@@ -104,6 +104,13 @@ An `external_url` Source provider contract for explicit HTTP still-image
 preview/status. It is not RTSP, continuous video, a worker, evidence, or reviewed
 truth.
 
+## Generic Webhook Provider
+
+A future Source provider boundary for local systems to submit media or event
+candidates into MockingBird. It should start as design-only, local-first,
+evidence-oriented ingest and must not treat incoming labels, detections, or
+events as reviewed truth.
+
 ## Still-image Preview
 
 A transient, explicit image preview fetched from an `external_url` Source. It is

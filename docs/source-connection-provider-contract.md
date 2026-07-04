@@ -76,6 +76,12 @@ connection status itself must not trigger network calls or claim live playback.
 Source connection status also must not persist preview media or imply saved
 media exists; saved preview files belong behind the explicit MediaAsset handoff.
 
+For future generic webhook ingest, connection readiness should remain
+status/evidence-oriented. A configured webhook Source may report local ingest
+readiness later, but status must not accept payloads, create MediaAssets,
+create MotionEvidence, promote Events/Visits, or treat incoming labels as truth.
+See [next-provider-boundary-decision.md](next-provider-boundary-decision.md).
+
 ## Provider Configuration Relationship
 
 Source provider configuration is the metadata layer underneath connection
