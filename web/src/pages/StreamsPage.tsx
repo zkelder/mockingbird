@@ -711,16 +711,19 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
           ? "Next: complete folder path metadata."
         : isFolderImportProvider &&
             selectedSetupReview.readiness_level === "future_adapter_required"
-          ? "Next: future folder import preview required."
+          ? "Next: preview folder import explicitly."
         : isExternalUrlProvider && selectedSetupReview.readiness_level === "metadata_ready"
           ? "Next: fetch still-image preview explicitly."
           : selectedSetupReview.readiness_level === "needs_setup"
           ? "Next: complete setup metadata."
           : selectedSetupReview.readiness_level === "future_adapter_required"
-            ? "Next: future provider implementation required before live playback."
+            ? "Next: review explicit provider workflow before live playback."
             : "Next: review Source setup status."
     : "Next: load Source setup status.";
-  const nextActionDetail = selectedSetupReview?.next_step ?? selectedConnection?.setup_hint;
+  const nextActionDetail =
+    isFolderImportProvider && selectedSetupReview?.readiness_level === "future_adapter_required"
+      ? "Use explicit preview, then import as MediaAssets. Pending evidence and correction remain separate actions."
+      : selectedSetupReview?.next_step ?? selectedConnection?.setup_hint;
 
   return (
     <div className="page-stack">

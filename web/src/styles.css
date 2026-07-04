@@ -526,6 +526,81 @@ button {
   justify-content: flex-end;
 }
 
+.source-provider-status-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.provider-workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.provider-workflow-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.provider-workflow-summary {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.provider-workflow-summary h3,
+.provider-workflow-summary span {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.provider-workflow-summary span {
+  color: #4f5f55;
+  font-size: 0.9rem;
+}
+
+.provider-workflow-facts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.provider-workflow-next {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border-left: 4px solid #6e9567;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fffdf5;
+}
+
+.provider-workflow-next div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.provider-workflow-next span {
+  color: #627168;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.provider-workflow-next strong,
+.provider-workflow-next small {
+  overflow-wrap: anywhere;
+}
+
+.provider-workflow-next small {
+  color: #4f5f55;
+  line-height: 1.35;
+}
+
 .source-setup-layout {
   display: grid;
   grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.2fr);
@@ -3575,6 +3650,7 @@ button {
   .detection-proposal-meta,
   .playback-status-grid,
   .provider-field-grid,
+  .provider-workflow-grid,
   .record-meta-grid,
   .source-field-summary,
   .source-connection-grid,
@@ -3607,6 +3683,7 @@ button {
   }
 
   .source-next-action,
+  .provider-workflow-next,
   .stream-source-context {
     grid-template-columns: 1fr;
   }

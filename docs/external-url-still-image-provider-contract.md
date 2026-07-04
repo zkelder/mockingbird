@@ -93,6 +93,8 @@ and correction is documented in
 [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md).
 The combined provider smoke plan is documented in
 [source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardening.md).
+Dashboard/source status may point users to this explicit preview path, but it
+must not present `external_url` as live playback or fetch URL media by itself.
 
 ## Explicit Save Request
 

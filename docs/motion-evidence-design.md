@@ -73,6 +73,8 @@ local context until that action creates pending MotionEvidence.
 Phase 14A smoke tests verify that provider-origin MotionEvidence from saved
 external previews and folder imports remains evidence only until explicit
 promotion and later correction.
+Phase 14B dashboard/source status may cue pending evidence review, but it does
+not create MotionEvidence, promote evidence, or write reviewed truth.
 
 ## Status Lifecycle
 

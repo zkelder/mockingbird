@@ -605,8 +605,10 @@ Current work:
 
 - Phase 14A: source/provider flow consolidation and smoke-test expansion for
   `external_url` and `folder_import_future`.
-- Next likely phase: Phase 14B source/provider dashboard/status polish, or
-  Phase 14C next provider boundary decision.
+- Phase 14B: source/provider dashboard/status polish for read-only provider
+  workflow readiness and next-action cues.
+- Next likely phase: Phase 14C next provider boundary decision, or Phase 14D
+  provider status development checklist.
 
 Validation:
 
@@ -622,8 +624,14 @@ Validation:
 - Source setup review, Source connection status, and Stream playback status are
   read-only and must not fetch URLs, scan folders, create media, create
   evidence, or claim live playback.
+- Dashboard/source overview may summarize provider readiness and route users to
+  explicit Streams, Motion Evidence, Retention, and Review workflows, but it
+  must not run providers, create media/evidence, or create truth.
 - MediaAssets remain media context, MotionEvidence remains evidence, and
   Event/Visit promotion remains unreviewed until correction.
 - No frontend feature, new provider, live playback, folder watcher, polling,
   worker, media decoding, model runtime, dependency, automatic evidence, or
   generated artifact is added in Phase 14A.
+- No new provider behavior, live playback, folder watcher, polling, worker,
+  media decoding, model runtime, dependency, automatic evidence, truth write, or
+  generated artifact is added in Phase 14B.

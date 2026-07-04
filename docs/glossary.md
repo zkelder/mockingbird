@@ -86,6 +86,18 @@ Source/Stream contract: status routes are read-only, provider work requires
 explicit user action, MediaAssets and MotionEvidence are evidence/context only,
 and ReviewLabel correction is the first reviewed truth write.
 
+## Provider Workflow
+
+A Source/provider path shown as setup readiness, playback honesty, zone-editing
+availability, and the next explicit user action. It is product status, not
+provider execution.
+
+## Next Action Cue
+
+A read-only UI prompt that sends the user to an explicit workflow such as
+Streams, Import Media, Motion Evidence, Retention, or Review. It does not run
+providers, create evidence, or create reviewed truth.
+
 ## External URL Still-image Provider
 
 An `external_url` Source provider contract for explicit HTTP still-image

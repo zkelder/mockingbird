@@ -169,6 +169,10 @@ Phase 14A adds a validation boundary over both implemented provider paths:
 Source/status through explicit MediaAsset/evidence/promote/correction flow. It
 adds no live playback, automation, worker, watcher, polling, model runtime,
 media decoding, or new provider behavior.
+Phase 14B lets dashboard/source overview summarize provider readiness and next
+actions from read-only status contracts. It routes users to explicit workflows
+without fetching provider media, scanning folders, creating evidence, promoting
+events/visits, or writing review truth.
 
 Source provider configuration is the metadata boundary for intended provider
 setup. It may store safe setup fields and configured/not-configured markers, but

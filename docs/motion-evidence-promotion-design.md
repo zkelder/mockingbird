@@ -149,6 +149,9 @@ promotion, while correction remains the only analytics/export truth boundary.
 Phase 14A smoke tests verify that both saved-preview-origin and folder-origin
 promotion create only unreviewed Event/Visit context, and that ReviewLabel
 correction remains the first dataset/export truth write.
+Phase 14B dashboard/source status may link to Motion Evidence review and
+promotion surfaces, but it must not promote evidence automatically or create
+reviewed truth.
 
 Event-only promotion does not have a direct Event media field yet, so direct Event media propagation remains future work. Promotion itself does not decode media, create thumbnails, or create truth.
 

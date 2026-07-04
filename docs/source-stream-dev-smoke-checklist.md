@@ -17,6 +17,8 @@ Phase 14A adds automated backend smoke coverage for both `external_url` and
 `folder_import_future`; see
 [source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardening.md).
 This checklist remains the manual browser/API path for the external_url flow.
+Phase 14B adds a Dashboard/Source status cue: it should summarize provider
+readiness and link to explicit workflows without running provider actions.
 
 ## Product Flow Covered
 

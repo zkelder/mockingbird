@@ -30,6 +30,9 @@ MotionEvidence handoff only; it adds no implementation or smoke-test runtime.
 Phase 14A consolidates the implemented `external_url` and
 `folder_import_future` provider paths under shared smoke-test guarantees; see
 [source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardening.md).
+Phase 14B lets Dashboard/Source status reflect those smoke-tested provider
+paths as read-only workflow cues, while explicit actions remain in Streams,
+Motion Evidence, Retention, and Review.
 
 ## Product Flow Covered
 

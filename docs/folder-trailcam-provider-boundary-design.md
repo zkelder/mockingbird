@@ -49,6 +49,9 @@ configured Source/status, explicit preview, explicit MediaAsset-only import,
 single and batch pending MotionEvidence handoff, explicit promotion, and
 correction truth. See
 [source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardening.md).
+Phase 14B lets dashboard/source status point configured folder Sources toward
+explicit folder preview/import. It must not imply live playback, a watcher,
+polling, background import, or automatic evidence/truth creation.
 
 ## Product Flow
 

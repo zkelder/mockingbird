@@ -9,6 +9,9 @@ report before any future batch creation. Phase 13I adds confirmed batch
 creation of pending MotionEvidence for eligible folder-imported MediaAssets.
 Phase 13J polishes the review/promote UI so folder provenance, attached media,
 pending/ignored/promoted state, and truth boundaries stay visible.
+Phase 14B can surface folder-provider next actions on the dashboard/source
+overview, but those cues still require explicit preview, import, evidence
+handoff, promotion, and correction steps.
 
 Folder-imported MediaAssets are local media context. They are not evidence,
 Events, Visits, labels, classifier examples, analytics truth, export truth, or

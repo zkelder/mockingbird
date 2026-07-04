@@ -9,6 +9,10 @@ This is test and documentation hardening only. It adds no provider behavior,
 live playback, workers, watchers, polling, automation, model runtime,
 dependencies, media decoding, or frontend work.
 
+Phase 14B uses these smoke-tested paths for dashboard/source status polish only:
+the UI can show provider workflow readiness and next actions, but it still
+routes users to explicit preview/import/evidence/review workflows.
+
 ## Product Flows Covered
 
 - `external_url`: configure Source -> setup/status -> explicit preview ->
@@ -63,6 +67,8 @@ exports, training media, or generated workspace files.
 - MotionEvidence is evidence, not truth.
 - Events/Visits created by promotion still need review.
 - ReviewLabel correction remains the dataset/export/analytics truth boundary.
+- Dashboard/source status can reflect these paths without running providers or
+  creating media, evidence, Events/Visits, labels, exports, or truth.
 
 ## What This Phase Does Not Prove
 

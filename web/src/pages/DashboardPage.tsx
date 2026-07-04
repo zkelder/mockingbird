@@ -1,11 +1,15 @@
+import { useEffect, useMemo, useState } from "react";
+import { apiClient } from "../api/client";
 import type {
   AnalyticsSummary,
+  CameraSource,
   DatasetCoverageSummary,
   DatasetExport,
   DatasetQualitySummary,
   HealthStatus,
   ModelReadinessSummary,
   ReviewQueueItem,
+  SourceSetupReviewResponse,
   Stream,
 } from "../api/types";
 import { DatasetCoveragePanel } from "../components/DatasetCoveragePanel";
@@ -18,6 +22,7 @@ import { formatLabel, sortedEntries } from "../utils";
 
 interface DashboardPageProps {
   health: HealthStatus | null;
+  sources: CameraSource[];
   streams: Stream[];
   analytics: AnalyticsSummary | null;
   datasetCoverage: DatasetCoverageSummary | null;
@@ -26,16 +31,134 @@ interface DashboardPageProps {
   reviewQueue: ReviewQueueItem[];
   exports: DatasetExport[];
   onOpenStream: (streamId: string) => void;
+  onOpenStreams: () => void;
   onOpenReview: () => void;
   onOpenExports: () => void;
   onOpenImport: () => void;
+  onOpenMotionEvidence: () => void;
+  onOpenSavedMediaRetention: () => void;
   onOpenDetectionProposals: () => void;
   onOpenModelAdapters: () => void;
   onOpenClassifierReadiness: () => void;
 }
 
+type SourceWorkflowRoute = "import" | "stream-detail" | "streams";
+
+interface SourceWorkflow {
+  source: CameraSource;
+  providerLabel: string;
+  readinessLabel: string;
+  readinessTone: "good" | "review" | "quiet";
+  summary: string;
+  streamCount: number;
+  livePlaybackLabel: string;
+  zoneEditingLabel: string;
+  nextActionLabel: string;
+  nextActionDetail: string;
+  actionLabel: string;
+  actionRoute: SourceWorkflowRoute;
+  streamId?: string;
+}
+
+function readinessTone(
+  readinessLevel?: SourceSetupReviewResponse["readiness_level"],
+): "good" | "review" | "quiet" {
+  if (readinessLevel === "demo_ready" || readinessLevel === "metadata_ready") {
+    return "good";
+  }
+  if (readinessLevel === "needs_setup" || readinessLevel === "unavailable") {
+    return "review";
+  }
+  return "quiet";
+}
+
+function providerFallbackLabel(source: CameraSource): string {
+  if (source.kind === "demo") {
+    return "Demo";
+  }
+  if (source.kind === "manual_upload") {
+    return "Manual media";
+  }
+  if (source.kind === "local_folder") {
+    return "Folder / trail-cam import";
+  }
+  return "Demo/future";
+}
+
+function buildSourceWorkflow(
+  source: CameraSource,
+  review: SourceSetupReviewResponse | undefined,
+  sourceStreams: Stream[],
+): SourceWorkflow {
+  const providerKey = review?.provider_key ?? source.kind;
+  const sourceStream = sourceStreams[0] ?? null;
+  const readinessLabel = review ? formatLabel(review.readiness_level) : "Loading";
+  const streamCount = review?.stream_count ?? sourceStreams.length;
+  const livePlaybackLabel = review
+    ? providerKey === "external_url" || providerKey === "folder_import_future"
+      ? "Live playback not implemented for this provider"
+      : review.supports_live_playback
+        ? "Available"
+        : "Not implemented"
+    : "Loading";
+  const zoneEditingLabel = review
+    ? review.supports_zone_editing
+      ? "Available"
+      : "Unavailable"
+    : "Loading";
+  let nextActionLabel = "Review Source setup";
+  let nextActionDetail = "Load provider workflow status before taking provider action.";
+  let actionLabel = "Open Streams";
+  let actionRoute: SourceWorkflowRoute = "streams";
+  let streamId: string | undefined;
+
+  if (review?.readiness_level === "needs_setup") {
+    nextActionLabel = "Complete Source setup";
+    nextActionDetail = "Open Streams to finish provider metadata before any provider workflow.";
+  } else if (providerKey === "external_url" && review) {
+    nextActionLabel = "Explicit preview";
+    nextActionDetail =
+      "Open Streams to fetch still-image preview, save as MediaAsset, then create Pending evidence when useful.";
+  } else if (providerKey === "folder_import_future" && review) {
+    nextActionLabel = "Import as MediaAssets";
+    nextActionDetail =
+      "Open Streams to preview folder import explicitly, then import selected files as MediaAssets. Correction remains truth.";
+  } else if (providerKey === "manual_media" && review) {
+    nextActionLabel = "Import media";
+    nextActionDetail =
+      "Use Import Media for explicit local media import. Correction remains truth.";
+    actionLabel = "Import Media";
+    actionRoute = "import";
+  } else if (review?.readiness_level === "demo_ready") {
+    nextActionLabel = "Open Stream Detail";
+    nextActionDetail = "Open Stream Detail and draw Zones before reviewing activity.";
+    actionLabel = sourceStream ? "Open Stream Detail" : "Open Streams";
+    actionRoute = sourceStream ? "stream-detail" : "streams";
+    streamId = sourceStream?.id;
+  } else if (review) {
+    nextActionDetail = review.next_step || "Open Streams to review provider workflow.";
+  }
+
+  return {
+    source,
+    providerLabel: review?.provider_display_name ?? providerFallbackLabel(source),
+    readinessLabel,
+    readinessTone: readinessTone(review?.readiness_level),
+    summary: review?.summary ?? source.description,
+    streamCount,
+    livePlaybackLabel,
+    zoneEditingLabel,
+    nextActionLabel,
+    nextActionDetail,
+    actionLabel,
+    actionRoute,
+    streamId,
+  };
+}
+
 export function DashboardPage({
   health,
+  sources,
   streams,
   analytics,
   datasetCoverage,
@@ -44,13 +167,20 @@ export function DashboardPage({
   reviewQueue,
   exports,
   onOpenStream,
+  onOpenStreams,
   onOpenReview,
   onOpenExports,
   onOpenImport,
+  onOpenMotionEvidence,
+  onOpenSavedMediaRetention,
   onOpenDetectionProposals,
   onOpenModelAdapters,
   onOpenClassifierReadiness,
 }: DashboardPageProps) {
+  const [sourceSetupReviews, setSourceSetupReviews] = useState<
+    Record<string, SourceSetupReviewResponse>
+  >({});
+  const [sourceSetupError, setSourceSetupError] = useState<string | null>(null);
   const mainStream = streams[0];
   const latestExport = exports[exports.length - 1];
   const topSpecies = analytics ? sortedEntries(analytics.species_counts).slice(0, 4) : [];
@@ -74,6 +204,75 @@ export function DashboardPage({
     const label = taxonomyKey(item.suggested_label ?? "");
     return label === "bird" || label === "unknown_bird" || Boolean(analytics?.species_label_ids.includes(label));
   }).length;
+  const streamsBySource = useMemo(() => {
+    const next = new Map<string, Stream[]>();
+    for (const stream of streams) {
+      const sourceStreams = next.get(stream.source_id) ?? [];
+      sourceStreams.push(stream);
+      next.set(stream.source_id, sourceStreams);
+    }
+    return next;
+  }, [streams]);
+  const sourceWorkflows = useMemo(
+    () =>
+      sources.map((source) =>
+        buildSourceWorkflow(
+          source,
+          sourceSetupReviews[source.id],
+          streamsBySource.get(source.id) ?? [],
+        ),
+      ),
+    [sources, sourceSetupReviews, streamsBySource],
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadSourceSetupReviews() {
+      if (sources.length === 0) {
+        setSourceSetupReviews({});
+        setSourceSetupError(null);
+        return;
+      }
+
+      setSourceSetupError(null);
+      try {
+        const entries = await Promise.all(
+          sources.map(async (source) => [
+            source.id,
+            await apiClient.getSourceSetupReview(source.id),
+          ] as const),
+        );
+        if (isMounted) {
+          setSourceSetupReviews(Object.fromEntries(entries));
+        }
+      } catch (caught) {
+        if (isMounted) {
+          setSourceSetupError(
+            caught instanceof Error ? caught.message : "Could not load provider workflow status.",
+          );
+        }
+      }
+    }
+
+    void loadSourceSetupReviews();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [sources]);
+
+  function handleWorkflowAction(workflow: SourceWorkflow) {
+    if (workflow.actionRoute === "import") {
+      onOpenImport();
+      return;
+    }
+    if (workflow.actionRoute === "stream-detail" && workflow.streamId) {
+      onOpenStream(workflow.streamId);
+      return;
+    }
+    onOpenStreams();
+  }
 
   return (
     <div className="page-stack">
@@ -144,6 +343,97 @@ export function DashboardPage({
         <MetricCard label="Reviewed species" value={reviewedSpeciesCount} detail="local truth" />
         <MetricCard label="Unknown birds" value={unknownBirdCount} detail="needs species detail" />
         <MetricCard label="Unknown animals" value={unknownAnimalCount} detail="needs label review" />
+      </section>
+
+      <section className="panel source-provider-status-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Source provider status</h2>
+            <span className="meta-text">
+              Provider workflow readiness, live playback status, and next safe actions
+            </span>
+          </div>
+          <StatusPill
+            label={`${sources.length} Source${sources.length === 1 ? "" : "s"}`}
+            tone={sources.length > 0 ? "good" : "review"}
+          />
+        </div>
+        {sourceSetupError ? <div className="error-panel compact-error">{sourceSetupError}</div> : null}
+        {sourceWorkflows.length > 0 ? (
+          <div className="provider-workflow-grid">
+            {sourceWorkflows.map((workflow) => (
+              <article className="provider-workflow-card" key={workflow.source.id}>
+                <div className="item-title-row">
+                  <div className="provider-workflow-summary">
+                    <h3>{workflow.source.name}</h3>
+                    <span>{workflow.summary}</span>
+                  </div>
+                  <StatusPill label={workflow.readinessLabel} tone={workflow.readinessTone} />
+                </div>
+                <div className="source-overview-grid provider-workflow-facts">
+                  <div>
+                    <span>Provider workflow</span>
+                    <strong>{workflow.providerLabel}</strong>
+                  </div>
+                  <div>
+                    <span>Streams</span>
+                    <strong>{workflow.streamCount}</strong>
+                  </div>
+                  <div>
+                    <span>Live playback</span>
+                    <strong>{workflow.livePlaybackLabel}</strong>
+                  </div>
+                  <div>
+                    <span>Zone editing</span>
+                    <strong>{workflow.zoneEditingLabel}</strong>
+                  </div>
+                </div>
+                <div className="provider-workflow-next">
+                  <div>
+                    <span>Next action</span>
+                    <strong>{workflow.nextActionLabel}</strong>
+                    <small>{workflow.nextActionDetail}</small>
+                  </div>
+                  <button
+                    className="secondary-action"
+                    onClick={() => handleWorkflowAction(workflow)}
+                    type="button"
+                  >
+                    {workflow.actionLabel}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            title="No Sources configured"
+            description="Open Streams to review Source setup before provider workflows."
+            action={
+              <button className="secondary-action" onClick={onOpenStreams} type="button">
+                Open Streams
+              </button>
+            }
+          />
+        )}
+        <div className="detail-actions">
+          <button className="secondary-action" onClick={onOpenStreams} type="button">
+            Streams
+          </button>
+          <button className="secondary-action" onClick={onOpenMotionEvidence} type="button">
+            Motion Evidence
+          </button>
+          <button className="secondary-action" onClick={onOpenSavedMediaRetention} type="button">
+            Saved Media Retention
+          </button>
+          <button className="secondary-action" onClick={onOpenReview} type="button">
+            Review Queue
+          </button>
+        </div>
+        <p className="meta-text">
+          Dashboard uses read-only Source setup review. It does not fetch URLs, scan folders,
+          create media, create evidence, or create truth.
+        </p>
       </section>
 
       <DatasetCoveragePanel

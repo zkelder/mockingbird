@@ -129,6 +129,10 @@ Source/Stream contract: `external_url` and `folder_import_future` require
 explicit user actions, create no truth before correction, and do not claim live
 playback. See
 [source-provider-smoke-flow-hardening.md](source-provider-smoke-flow-hardening.md).
+Phase 14B lets dashboard/source overview summarize provider readiness and next
+actions from the same read-only contracts. Those summaries remain product-level
+status cues; they do not run providers, fetch media, scan folders, or create
+evidence/truth.
 
 ## Explicit Non-Recommended First Adapters
 

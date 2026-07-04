@@ -250,6 +250,7 @@ export default function App() {
       return (
         <DashboardPage
           health={data.health}
+          sources={data.sources}
           streams={data.streams}
           analytics={data.analytics}
           datasetCoverage={data.datasetCoverage}
@@ -258,7 +259,10 @@ export default function App() {
           reviewQueue={data.reviewQueue}
           exports={data.exports}
           onOpenStream={openStream}
+          onOpenStreams={() => setPage("streams")}
           onOpenImport={() => setPage("import")}
+          onOpenMotionEvidence={() => setPage("motion-evidence")}
+          onOpenSavedMediaRetention={() => setPage("saved-media-retention")}
           onOpenModelAdapters={() => setPage("model-adapters")}
           onOpenClassifierReadiness={() => setPage("classifier-readiness")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}

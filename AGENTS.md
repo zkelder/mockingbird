@@ -159,6 +159,9 @@ Every future implementation task must restate:
   from record deletion, and protect reviewed truth/export context by default.
 - Source setup review/status work must remain read-only and must not connect to
   sources, capture/decode media, run adapters/models, or create evidence/truth.
+- Dashboard/status views may summarize provider readiness and next actions, but
+  they must not fetch provider media, scan folders, run providers/models, create
+  evidence, promote Events/Visits, or write reviewed truth.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.
