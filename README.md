@@ -112,6 +112,9 @@ image media. Optional `MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH` may point to a
 local labels file when supported. Detector runs create `DetectionProposal`
 evidence only; use the demo proposal action when the local detector is not
 configured.
+The Model Adapters page shows the Local Detector setup/readiness panel with
+the exact local env vars, supported image media types, runtime readiness, and a
+link back to Streams. Model files are not bundled or downloaded.
 The source/stream smoke-test hardening plan is documented in
 [docs/source-stream-smoke-test-hardening.md](docs/source-stream-smoke-test-hardening.md).
 For manual browser/API validation of that same explicit path, use
@@ -274,6 +277,7 @@ The Local Image Detector adapter is optional, evidence-only, and disabled until 
 ```sh
 export MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH=/path/to/local-detector.onnx
 export MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH=/path/to/labels.txt # optional
+export MOCKINGBIRD_LOCAL_DETECTOR_CONFIDENCE_THRESHOLD=0.5 # optional
 ```
 
 Detector outputs create detection proposals only. Users still convert, review, and correct proposals before exports or analytics treat labels as truth.

@@ -380,6 +380,7 @@ export default function App() {
       return (
         <ModelAdaptersPage
           onOpenImport={() => setPage("import")}
+          onOpenStreams={() => setPage("streams")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}

@@ -18,11 +18,28 @@ import { ProposalStatusBadge } from "../components/ProposalStatusBadge";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
 
+const LOCAL_IMAGE_DETECTOR_ADAPTER_ID = "local_image_detector";
+const LOCAL_DETECTOR_ENV_VARS = [
+  {
+    name: "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH",
+    description: "Required local model file path. MockingBird does not bundle or download it.",
+  },
+  {
+    name: "MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH",
+    description: "Optional newline-delimited labels file when the local detector needs one.",
+  },
+  {
+    name: "MOCKINGBIRD_LOCAL_DETECTOR_CONFIDENCE_THRESHOLD",
+    description: "Optional confidence threshold; the backend defaults safely when unset.",
+  },
+];
+
 interface ModelAdaptersPageProps {
   onOpenDetectionProposals: () => void;
   onOpenEvent: (eventId: string) => void;
   onOpenExports: () => void;
   onOpenImport: () => void;
+  onOpenStreams: () => void;
   onOpenReview: () => void;
   onOpenVisit: (visitId: string) => void;
   onProposalChanged: () => Promise<void>;
@@ -34,6 +51,7 @@ export function ModelAdaptersPage({
   onOpenEvent,
   onOpenExports,
   onOpenImport,
+  onOpenStreams,
   onOpenReview,
   onOpenVisit,
   onProposalChanged,
@@ -66,6 +84,8 @@ export function ModelAdaptersPage({
   const selectedAdapterAvailable = selectedAdapter?.status === "available";
   const selectedAdapterSupportsMedia =
     selectedAdapter && selectedMedia ? adapterSupportsMedia(selectedAdapter, selectedMedia) : false;
+  const localDetectorAdapter =
+    adapters.find((adapter) => adapter.id === LOCAL_IMAGE_DETECTOR_ADAPTER_ID) ?? null;
 
   async function loadPageData(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
@@ -184,6 +204,12 @@ export function ModelAdaptersPage({
           species truth stays in review and correction.
         </span>
       </section>
+
+      <LocalDetectorSetupPanel
+        adapter={localDetectorAdapter}
+        isLoading={isLoading}
+        onOpenStreams={onOpenStreams}
+      />
 
       {modelReadiness ? (
         <section className="panel model-readiness-panel">
@@ -494,6 +520,160 @@ export function ModelAdaptersPage({
   );
 }
 
+function LocalDetectorSetupPanel({
+  adapter,
+  isLoading,
+  onOpenStreams,
+}: {
+  adapter: ModelAdapter | null;
+  isLoading: boolean;
+  onOpenStreams: () => void;
+}) {
+  const configuration = adapter?.configuration_status ?? null;
+  const statusLabel = isLoading
+    ? "Loading"
+    : adapter
+      ? formatLabel(adapter.status)
+      : "Unavailable";
+  const supportedMediaTypes =
+    configuration?.supported_media_types ?? adapter?.supported_media_types ?? [];
+
+  return (
+    <section className="panel local-detector-setup-panel">
+      <div className="section-heading">
+        <div>
+          <h2>Local Detector setup</h2>
+          <span className="meta-text">
+            Configure local files yourself, then run the detector explicitly from saved media.
+          </span>
+        </div>
+        <StatusPill label={statusLabel} tone={adapterStatusTone(adapter?.status)} />
+      </div>
+
+      {!adapter && !isLoading ? (
+        <div className="error-panel">
+          <strong>Local detector adapter status is unavailable.</strong>
+          <span>
+            The app remains usable. Demo proposal evidence is still available for smoke testing.
+          </span>
+        </div>
+      ) : null}
+
+      <div className="local-detector-setup-grid">
+        <SetupStatusRow
+          label="Adapter"
+          value={adapter ? `${adapter.name} (${adapter.id})` : LOCAL_IMAGE_DETECTOR_ADAPTER_ID}
+          ready={Boolean(adapter)}
+        />
+        <SetupStatusRow
+          label="Model path"
+          value={yesNo(configuration?.model_path_configured ?? false)}
+          ready={Boolean(configuration?.model_path_configured)}
+        />
+        <SetupStatusRow
+          label="Labels path"
+          value={yesNo(configuration?.labels_path_configured ?? false)}
+          ready={Boolean(configuration?.labels_path_configured)}
+          optional
+        />
+        <SetupStatusRow
+          label="Runtime"
+          value={yesNo(configuration?.runtime_available ?? false)}
+          ready={Boolean(configuration?.runtime_available)}
+        />
+        <SetupStatusRow
+          label="Can run"
+          value={yesNo(configuration?.can_run ?? false)}
+          ready={Boolean(configuration?.can_run)}
+        />
+        <SetupStatusRow
+          label="Local only"
+          value={yesNo(configuration?.local_only ?? adapter?.local_only ?? true)}
+          ready={configuration?.local_only ?? adapter?.local_only ?? true}
+        />
+        <SetupStatusRow
+          label="Creates truth"
+          value={yesNo(configuration?.creates_review_truth ?? adapter?.creates_review_truth ?? false)}
+          ready={!(configuration?.creates_review_truth ?? adapter?.creates_review_truth ?? false)}
+          inverted
+        />
+        <SetupStatusRow
+          label="Supported media"
+          value={supportedMediaTypes.length > 0 ? supportedMediaTypes.join(", ") : "Unknown"}
+          ready={supportedMediaTypes.length > 0}
+        />
+      </div>
+
+      <div className="local-detector-setup-copy">
+        <div>
+          <strong>Status reason</strong>
+          <span>{configuration?.status_reason ?? adapter?.notes ?? "Adapter status is loading."}</span>
+        </div>
+        <div>
+          <strong>Setup hint</strong>
+          <span>
+            {configuration?.setup_hint ??
+              "Set a local model path before running this optional detector."}
+          </span>
+        </div>
+      </div>
+
+      <div className="local-detector-env-list" aria-label="Local detector environment variables">
+        {LOCAL_DETECTOR_ENV_VARS.map((item) => (
+          <div className="local-detector-env-row" key={item.name}>
+            <code>{item.name}</code>
+            <span>{item.description}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="notice-panel local-detector-boundary">
+        <strong>Local-first detector boundary</strong>
+        <span>
+          Model files are not bundled. MockingBird does not download models. Configure a
+          local model path yourself. Outputs become DetectionProposal evidence only;
+          ReviewLabel correction remains truth. Demo proposal remains available for smoke
+          testing when the detector is not configured.
+        </span>
+      </div>
+
+      <div className="detail-actions">
+        <button className="primary-action" onClick={onOpenStreams} type="button">
+          Open Streams
+        </button>
+        <span className="meta-text">
+          Use the saved media timeline to run the detector explicitly on image media.
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function SetupStatusRow({
+  inverted = false,
+  label,
+  optional = false,
+  ready,
+  value,
+}: {
+  inverted?: boolean;
+  label: string;
+  optional?: boolean;
+  ready: boolean;
+  value: string;
+}) {
+  return (
+    <div className="local-detector-setup-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <EvidenceBadge
+        label={optional ? "Optional" : ready ? (inverted ? "Safe" : "Ready") : "Needs setup"}
+        tone={optional || ready ? "truth" : "review"}
+      />
+    </div>
+  );
+}
+
 function ReadinessChecklistItem({ item }: { item: ModelReadinessChecklistItem }) {
   return (
     <article className="readiness-checklist-item">
@@ -607,6 +787,16 @@ function adapterSupportsMedia(adapter: ModelAdapter, media: MediaAsset): boolean
 
 function yesNo(value: boolean): string {
   return value ? "Yes" : "No";
+}
+
+function adapterStatusTone(status?: ModelAdapter["status"]): "good" | "review" | "quiet" {
+  if (status === "available") {
+    return "good";
+  }
+  if (status === "not_configured" || status === "unavailable") {
+    return "review";
+  }
+  return "quiet";
 }
 
 function evaluationTone(item: AdapterEvaluationItem): "quiet" | "review" | "truth" {

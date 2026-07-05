@@ -163,6 +163,14 @@ Dataset Exports.
 
 - [ ] Start the API.
 - [ ] Start the frontend.
+- [ ] Open Model Adapters.
+- [ ] Confirm the Local Detector setup panel shows
+      `MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH`,
+      `MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH`, and
+      `MOCKINGBIRD_LOCAL_DETECTOR_CONFIDENCE_THRESHOLD`.
+- [ ] Confirm the setup panel says model files are not bundled or downloaded,
+      detector output is DetectionProposal evidence, and ReviewLabel correction
+      remains truth.
 - [ ] Open Streams and configure or select an `external_url` Source.
 - [ ] Fetch a still-image snapshot preview.
 - [ ] Save the snapshot as a local MediaAsset.
@@ -190,8 +198,9 @@ Preview, save, evidence creation, and promotion also do not create truth. It is
 not live video. Saved timeline media can be reused later for proposal evidence
 or MotionEvidence, and the timeline shows duplicate-safe lifecycle status, but
 reuse is still user-triggered and evidence-only.
-Optional local detector runs require an explicit local model path, do not
-download models, and create proposal evidence only.
+Optional local detector runs require an explicit local model path, can use an
+optional labels path and confidence threshold, do not download models, and
+create proposal evidence only.
 
 ## Step 1 - Dashboard MVP Readiness
 
@@ -203,6 +212,8 @@ download models, and create proposal evidence only.
 - [ ] Confirm live playback is not claimed.
 - [ ] Confirm next action links exist.
 - [ ] Confirm truth-boundary copy is visible.
+- [ ] Open Model Adapters and confirm Local Detector setup guidance is visible
+      without configuring or running a model.
 
 ## Step 2 - external_url Provider Path
 

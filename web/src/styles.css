@@ -1717,6 +1717,7 @@ button {
 .adapter-result-panel,
 .adapter-evaluation-panel,
 .model-readiness-panel,
+.local-detector-setup-panel,
 .adapter-list,
 .adapter-proposal-list,
 .adapter-evaluation-list,
@@ -1828,6 +1829,62 @@ button {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+
+.local-detector-setup-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.local-detector-setup-row {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.local-detector-setup-row span,
+.local-detector-env-row span {
+  color: #627168;
+  font-size: 0.84rem;
+}
+
+.local-detector-setup-row strong,
+.local-detector-env-row code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.local-detector-setup-copy,
+.local-detector-env-list {
+  display: grid;
+  gap: 8px;
+}
+
+.local-detector-setup-copy div,
+.local-detector-env-row {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fbf4;
+}
+
+.local-detector-env-row code {
+  color: #24382d;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.local-detector-boundary {
+  background: #f8fbf4;
 }
 
 .adapter-result-grid div,
@@ -4543,6 +4600,7 @@ button {
   .adapter-evaluation-grid,
   .adapter-config-grid,
   .model-readiness-grid,
+  .local-detector-setup-grid,
   .adapter-result-grid,
   .detection-proposal-meta,
   .provider-field-grid,
@@ -4648,6 +4706,7 @@ button {
   .review-evidence-grid,
   .adapter-evaluation-grid,
   .model-readiness-grid,
+  .local-detector-setup-grid,
   .adapter-result-grid,
   .detection-proposal-meta,
   .playback-status-grid,
