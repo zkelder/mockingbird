@@ -35,6 +35,8 @@ production provider infrastructure.
 - Reviewed-only exports include corrected truth and skip unreviewed candidates.
 - Saved media retention and cleanup are explicit and safe.
 - Stream saved-media timeline reuse is explicit and evidence-only.
+- Optional local detector runs from saved image media are explicit and
+  evidence-only when configured.
 - Live playback is not implemented yet.
 
 ## What This Demo Does Not Prove
@@ -165,6 +167,12 @@ Dataset Exports.
 - [ ] Fetch a still-image snapshot preview.
 - [ ] Save the snapshot as a local MediaAsset.
 - [ ] Confirm the saved MediaAsset appears in the Stream saved-media timeline.
+- [ ] Confirm lifecycle status shows whether proposal evidence, MotionEvidence,
+      promoted review context, or ReviewLabel truth already exists.
+- [ ] Confirm local detector readiness is visible for saved image media.
+- [ ] If not configured, confirm setup guidance and demo proposal fallback.
+- [ ] If configured with `MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH`, run the local
+      detector explicitly and confirm DetectionRun/DetectionProposal evidence.
 - [ ] Optionally create synthetic demo DetectionProposal evidence from the
       saved timeline media.
 - [ ] Choose an active reviewable Zone and create pending MotionEvidence.
@@ -172,13 +180,18 @@ Dataset Exports.
 - [ ] Optionally promote that evidence to reviewable Event/Visit records.
 - [ ] Open Review Queue.
 - [ ] Submit an explicit correction.
+- [ ] Return to the Stream saved-media timeline and confirm truth/export status
+      appears when inferable from existing review labels.
 - [ ] Create a reviewed-only Dataset Export and inspect the proof record.
 
 This path uses existing explicit browser actions only. Demo proposal creation is
 synthetic evidence, runs no model, and does not create ReviewLabel truth.
 Preview, save, evidence creation, and promotion also do not create truth. It is
 not live video. Saved timeline media can be reused later for proposal evidence
-or MotionEvidence, but reuse is still user-triggered and evidence-only.
+or MotionEvidence, and the timeline shows duplicate-safe lifecycle status, but
+reuse is still user-triggered and evidence-only.
+Optional local detector runs require an explicit local model path, do not
+download models, and create proposal evidence only.
 
 ## Step 1 - Dashboard MVP Readiness
 
@@ -204,6 +217,8 @@ or MotionEvidence, but reuse is still user-triggered and evidence-only.
 - [ ] Save preview as a local MediaAsset.
 - [ ] Confirm a MediaAsset ID appears.
 - [ ] Confirm the saved media appears in the selected Stream timeline.
+- [ ] Confirm lifecycle status is visible before creating more evidence.
+- [ ] Confirm local detector readiness and run the detector only if configured.
 - [ ] Optionally create synthetic demo DetectionProposal evidence from the
       timeline item.
 - [ ] Create pending MotionEvidence from saved media.

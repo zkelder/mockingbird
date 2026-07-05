@@ -102,8 +102,16 @@ context visible while correction remains the analytics/export truth boundary.
 The Streams page also shows recent saved media for each selected Stream so
 external_url saved previews or other local image MediaAssets can be explicitly
 reused later for synthetic DetectionProposal evidence or pending MotionEvidence.
-This timeline does not run models, poll sources, create Events/Visits
+This timeline now summarizes existing proposal evidence, MotionEvidence,
+promoted Event/Visit context, inferable ReviewLabel truth, and the next safe
+review/export step. It does not run models, poll sources, create Events/Visits
 automatically, or create ReviewLabel truth.
+If `MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH` is set to a local model file, the
+same timeline can explicitly run the optional Local Image Detector on saved
+image media. Optional `MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH` may point to a
+local labels file when supported. Detector runs create `DetectionProposal`
+evidence only; use the demo proposal action when the local detector is not
+configured.
 The source/stream smoke-test hardening plan is documented in
 [docs/source-stream-smoke-test-hardening.md](docs/source-stream-smoke-test-hardening.md).
 For manual browser/API validation of that same explicit path, use
@@ -211,9 +219,11 @@ proof.
 It also includes the explicit `external_url` snapshot capture-to-review path:
 configure/select Source, fetch preview, save MediaAsset, create pending
 MotionEvidence, optionally create synthetic demo DetectionProposal evidence,
-reuse saved Stream media from the timeline, optionally promote to Event/Visit,
-correct in Review Queue, and inspect a reviewed-only export proof record. The
-proposal path runs no model, creates no truth, and this path is not live video.
+reuse saved Stream media from the timeline, inspect lifecycle status, optionally
+run an explicitly configured local detector, promote to Event/Visit, correct in
+Review Queue, and inspect a reviewed-only export proof record. Detector and
+proposal paths create evidence only, create no truth, and this path is not live
+video.
 
 ```sh
 .venv/bin/python -m uvicorn mockingbird.api.main:app --reload

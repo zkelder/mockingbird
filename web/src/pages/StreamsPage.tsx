@@ -12,11 +12,17 @@ import type {
   FolderImportResponse,
   DemoDetectionRunCreate,
   DemoDetectionRunResult,
+  DetectionProposal,
   DetectionProposalDecisionResult,
+  DetectionRun,
   ExternalUrlPreviewResponse,
   ExternalUrlPreviewSaveResponse,
   MediaAsset,
+  ModelAdapter,
+  ModelAdapterRunResult,
+  MotionEvidence,
   MotionEvidencePromoteResponse,
+  ReviewLabel,
   SavedPreviewMotionEvidenceResponse,
   SourceConnectionStatus,
   SourceProviderConfiguration,
@@ -161,13 +167,210 @@ interface TimelineMediaActionState {
   evidenceError?: string | null;
   promotionResult?: MotionEvidencePromoteResponse | null;
   promotionError?: string | null;
+  localDetectorResult?: ModelAdapterRunResult | null;
+  localDetectorError?: string | null;
   isCreatingProposal?: boolean;
   isConvertingProposal?: boolean;
   isCreatingEvidence?: boolean;
   isPromotingEvidence?: boolean;
+  isRunningLocalDetector?: boolean;
+}
+
+interface MediaLifecycleSummary {
+  detectionRuns: DetectionRun[];
+  proposals: DetectionProposal[];
+  motionEvidence: MotionEvidence[];
+  eventIds: string[];
+  visitIds: string[];
+  reviewLabels: ReviewLabel[];
+  truthLabels: string[];
+  proposalStatusText: string;
+  detectionRunText: string;
+  motionEvidenceText: string;
+  promotedText: string;
+  reviewTruthText: string;
+  exportReadinessText: string;
+  nextStep: string;
+  hasPendingMotionEvidence: boolean;
+  hasPromotedMotionEvidence: boolean;
 }
 
 const MEDIA_TIMELINE_LIMIT = 10;
+const LOCAL_IMAGE_DETECTOR_ADAPTER_ID = "local_image_detector";
+
+function uniquePresent(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+function summarizeCounts(values: string[]): string {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([value, count]) => `${count} ${formatLabel(value)}`)
+    .join(", ");
+}
+
+function sortNewestFirst<T extends { created_at: string }>(items: T[]): T[] {
+  return [...items].sort(
+    (left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime(),
+  );
+}
+
+function buildMediaLifecycleSummary(
+  asset: MediaAsset,
+  detectionRuns: DetectionRun[],
+  detectionProposals: DetectionProposal[],
+  motionEvidence: MotionEvidence[],
+  reviewLabels: ReviewLabel[],
+): MediaLifecycleSummary {
+  const proposals = sortNewestFirst(
+    detectionProposals.filter((proposal) => proposal.media_asset_id === asset.id),
+  );
+  const runs = sortNewestFirst(detectionRuns.filter((run) => run.media_asset_id === asset.id));
+  const evidence = sortNewestFirst(
+    motionEvidence.filter((item) => item.snapshot_media_asset_id === asset.id),
+  );
+  const eventIds = uniquePresent([
+    ...proposals.map((proposal) => proposal.event_id),
+    ...evidence.map((item) => item.promoted_event_id),
+  ]);
+  const visitIds = uniquePresent([
+    ...proposals.map((proposal) => proposal.visit_id),
+    ...evidence.map((item) => item.promoted_visit_id),
+  ]);
+  const labels = sortNewestFirst(
+    reviewLabels.filter(
+      (label) =>
+        (label.target_type === "event" && eventIds.includes(label.target_id)) ||
+        (label.target_type === "visit" && visitIds.includes(label.target_id)),
+    ),
+  );
+  const truthLabels = uniquePresent(labels.map((label) => label.label));
+  const proposalStatusText =
+    proposals.length > 0 ? summarizeCounts(proposals.map((proposal) => proposal.status)) : "None";
+  const detectionRunText =
+    runs.length > 0 ? summarizeCounts(runs.map((run) => run.status)) : "None";
+  const motionEvidenceText =
+    evidence.length > 0 ? summarizeCounts(evidence.map((item) => item.status)) : "None";
+  const promotedText =
+    eventIds.length > 0 || visitIds.length > 0
+      ? [
+          eventIds.length > 0 ? `Event ${eventIds.join(", ")}` : null,
+          visitIds.length > 0 ? `Visit ${visitIds.join(", ")}` : null,
+        ]
+          .filter(Boolean)
+          .join(" / ")
+      : "Not promoted";
+  const reviewTruthText = truthLabels.length > 0 ? truthLabels.join(", ") : "None inferable";
+  const hasPendingMotionEvidence = evidence.some((item) => item.status === "pending");
+  const hasPromotedMotionEvidence = evidence.some((item) => item.status === "promoted");
+  const exportReadinessText =
+    truthLabels.length > 0
+      ? "Likely export-ready after reviewed-only export"
+      : eventIds.length > 0 || visitIds.length > 0
+        ? "Needs Review Queue correction"
+        : proposals.length > 0 || evidence.length > 0
+          ? "Needs review context"
+          : "No evidence yet";
+  const nextStep =
+    truthLabels.length > 0
+      ? "Create reviewed-only export"
+      : eventIds.length > 0 || visitIds.length > 0
+        ? "Correct in Review Queue"
+        : hasPendingMotionEvidence
+          ? "Promote MotionEvidence"
+          : proposals.length > 0
+            ? "Convert proposal or create MotionEvidence"
+            : isImageMedia(asset)
+              ? "Create proposal evidence or MotionEvidence"
+              : "Use as media context only";
+
+  return {
+    detectionRuns: runs,
+    proposals,
+    motionEvidence: evidence,
+    eventIds,
+    visitIds,
+    reviewLabels: labels,
+    truthLabels,
+    proposalStatusText,
+    detectionRunText,
+    motionEvidenceText,
+    promotedText,
+    reviewTruthText,
+    exportReadinessText,
+    nextStep,
+    hasPendingMotionEvidence,
+    hasPromotedMotionEvidence,
+  };
+}
+
+function lifecycleTone(summary: MediaLifecycleSummary): "good" | "review" | "quiet" {
+  if (summary.truthLabels.length > 0) {
+    return "good";
+  }
+  if (
+    summary.eventIds.length > 0 ||
+    summary.visitIds.length > 0 ||
+    summary.hasPendingMotionEvidence ||
+    summary.proposals.length > 0
+  ) {
+    return "review";
+  }
+  return "quiet";
+}
+
+function lifecycleLabel(summary: MediaLifecycleSummary): string {
+  if (summary.truthLabels.length > 0) {
+    return "Truth exists";
+  }
+  if (summary.eventIds.length > 0 || summary.visitIds.length > 0) {
+    return "Needs correction";
+  }
+  if (summary.hasPendingMotionEvidence) {
+    return "Pending evidence";
+  }
+  if (summary.proposals.length > 0) {
+    return "Proposal evidence";
+  }
+  return "No evidence";
+}
+
+function modelAdapterTone(status?: ModelAdapter["status"]): "good" | "review" | "quiet" {
+  if (status === "available") {
+    return "good";
+  }
+  if (status === "not_configured" || status === "unavailable") {
+    return "review";
+  }
+  return "quiet";
+}
+
+function canRunModelAdapter(adapter: ModelAdapter | null): boolean {
+  return Boolean(adapter?.configuration_status?.can_run);
+}
+
+function modelAdapterSupportsMedia(adapter: ModelAdapter | null, asset: MediaAsset): boolean {
+  const supportedTypes =
+    adapter?.configuration_status?.supported_media_types ?? adapter?.supported_media_types ?? [];
+  return supportedTypes.includes(asset.content_type) || supportedTypes.includes(asset.media_type);
+}
+
+function localDetectorReadinessCopy(adapter: ModelAdapter | null): string {
+  if (!adapter) {
+    return "Local detector readiness is unavailable. Demo proposal evidence remains available.";
+  }
+  if (canRunModelAdapter(adapter)) {
+    return "Ready for explicit local image detector runs. Outputs remain proposal evidence only.";
+  }
+  return (
+    adapter.configuration_status?.setup_hint ??
+    adapter.notes ??
+    "Configure a local detector model path before running this adapter."
+  );
+}
 
 export function StreamsPage({
   streams,
@@ -207,6 +410,13 @@ export function StreamsPage({
   const [snapshotProposalDecisionResult, setSnapshotProposalDecisionResult] =
     useState<DetectionProposalDecisionResult | null>(null);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  const [timelineDetectionRuns, setTimelineDetectionRuns] = useState<DetectionRun[]>([]);
+  const [timelineDetectionProposals, setTimelineDetectionProposals] = useState<
+    DetectionProposal[]
+  >([]);
+  const [timelineMotionEvidence, setTimelineMotionEvidence] = useState<MotionEvidence[]>([]);
+  const [timelineReviewLabels, setTimelineReviewLabels] = useState<ReviewLabel[]>([]);
+  const [localDetectorAdapter, setLocalDetectorAdapter] = useState<ModelAdapter | null>(null);
   const [previewZones, setPreviewZones] = useState<Zone[]>([]);
   const [selectedPreviewZoneId, setSelectedPreviewZoneId] = useState("");
   const [timelineZonesByStream, setTimelineZonesByStream] = useState<Record<string, Zone[]>>({});
@@ -243,6 +453,8 @@ export function StreamsPage({
   const [snapshotProposalMessage, setSnapshotProposalMessage] = useState<string | null>(null);
   const [previewZonesError, setPreviewZonesError] = useState<string | null>(null);
   const [mediaAssetsError, setMediaAssetsError] = useState<string | null>(null);
+  const [timelineLifecycleError, setTimelineLifecycleError] = useState<string | null>(null);
+  const [localDetectorAdapterError, setLocalDetectorAdapterError] = useState<string | null>(null);
   const [folderPreviewError, setFolderPreviewError] = useState<string | null>(null);
   const [folderImportError, setFolderImportError] = useState<string | null>(null);
   const [folderEvidenceDryRunError, setFolderEvidenceDryRunError] = useState<string | null>(null);
@@ -256,6 +468,8 @@ export function StreamsPage({
   const [isCreatingSnapshotProposal, setIsCreatingSnapshotProposal] = useState(false);
   const [isConvertingSnapshotProposal, setIsConvertingSnapshotProposal] = useState(false);
   const [isLoadingMediaAssets, setIsLoadingMediaAssets] = useState(false);
+  const [isLoadingTimelineLifecycle, setIsLoadingTimelineLifecycle] = useState(false);
+  const [isLoadingLocalDetectorAdapter, setIsLoadingLocalDetectorAdapter] = useState(false);
   const [isPreviewingFolderImport, setIsPreviewingFolderImport] = useState(false);
   const [isImportingFolderMedia, setIsImportingFolderMedia] = useState(false);
   const [isDryRunningFolderEvidence, setIsDryRunningFolderEvidence] = useState(false);
@@ -407,6 +621,14 @@ export function StreamsPage({
     void loadMediaAssets();
   }, []);
 
+  useEffect(() => {
+    void loadTimelineLifecycleData();
+  }, []);
+
+  useEffect(() => {
+    void loadLocalDetectorAdapter();
+  }, []);
+
   function handleProviderChange(nextProviderKey: string) {
     const definition = providerDefinitions.find((item) => item.provider_key === nextProviderKey);
     const matchingConfiguration =
@@ -481,6 +703,58 @@ export function StreamsPage({
     } finally {
       if (showLoading) {
         setIsLoadingMediaAssets(false);
+      }
+    }
+  }
+
+  async function loadTimelineLifecycleData(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
+      setIsLoadingTimelineLifecycle(true);
+    }
+    setTimelineLifecycleError(null);
+    try {
+      const [runs, proposals, evidenceResponse, labels] = await Promise.all([
+        apiClient.getDetectionRuns(),
+        apiClient.getDetectionProposals(),
+        apiClient.listMotionEvidence({ status: "all" }),
+        apiClient.getReviewLabels(),
+      ]);
+      setTimelineDetectionRuns(runs);
+      setTimelineDetectionProposals(proposals);
+      setTimelineMotionEvidence(evidenceResponse.motion_evidence);
+      setTimelineReviewLabels(labels);
+    } catch (caught) {
+      setTimelineLifecycleError(
+        caught instanceof Error ? caught.message : "Could not load saved media lifecycle status.",
+      );
+    } finally {
+      if (showLoading) {
+        setIsLoadingTimelineLifecycle(false);
+      }
+    }
+  }
+
+  async function loadLocalDetectorAdapter(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
+      setIsLoadingLocalDetectorAdapter(true);
+    }
+    setLocalDetectorAdapterError(null);
+    try {
+      setLocalDetectorAdapter(
+        await apiClient.getModelAdapter(LOCAL_IMAGE_DETECTOR_ADAPTER_ID),
+      );
+    } catch (caught) {
+      setLocalDetectorAdapter(null);
+      setLocalDetectorAdapterError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not load local detector readiness.",
+      );
+    } finally {
+      if (showLoading) {
+        setIsLoadingLocalDetectorAdapter(false);
       }
     }
   }
@@ -608,6 +882,7 @@ export function StreamsPage({
           ? "Synthetic snapshot proposal evidence was created. Review correction still creates truth."
           : "Demo run completed without proposal evidence.",
       );
+      await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       setSnapshotProposalError(
         caught instanceof Error ? caught.message : "Snapshot proposal evidence could not be created.",
@@ -641,6 +916,7 @@ export function StreamsPage({
       setSnapshotProposalMessage(
         "Converted proposal into needs-review Event/Visit context. No ReviewLabel truth was created.",
       );
+      await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       setSnapshotProposalError(
         caught instanceof Error
@@ -678,6 +954,7 @@ export function StreamsPage({
         },
       );
       setPreviewEvidenceResult(result);
+      await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       setPreviewEvidenceError(
         caught instanceof Error ? caught.message : "Could not create pending evidence.",
@@ -716,6 +993,7 @@ export function StreamsPage({
             }
           : current,
       );
+      await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       setPreviewPromotionError(
         caught instanceof Error
@@ -778,6 +1056,7 @@ export function StreamsPage({
             ? "Synthetic timeline proposal evidence was created. Review correction still creates truth."
             : "Demo run completed without proposal evidence.",
       });
+      await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         proposalError:
@@ -815,6 +1094,7 @@ export function StreamsPage({
         proposalMessage:
           "Converted proposal into needs-review Event/Visit context. No ReviewLabel truth was created.",
       });
+      await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         proposalError:
@@ -822,6 +1102,54 @@ export function StreamsPage({
       });
     } finally {
       updateTimelineActionState(asset.id, { isConvertingProposal: false });
+    }
+  }
+
+  async function handleRunLocalDetector(asset: MediaAsset) {
+    if (!localDetectorAdapter) {
+      updateTimelineActionState(asset.id, {
+        localDetectorError:
+          "Local detector readiness is unavailable. Use demo proposal for smoke testing.",
+      });
+      return;
+    }
+    if (!canRunModelAdapter(localDetectorAdapter)) {
+      updateTimelineActionState(asset.id, {
+        localDetectorError: localDetectorReadinessCopy(localDetectorAdapter),
+      });
+      return;
+    }
+    if (!modelAdapterSupportsMedia(localDetectorAdapter, asset)) {
+      updateTimelineActionState(asset.id, {
+        localDetectorError: "Local detector supports saved image media only.",
+      });
+      return;
+    }
+
+    updateTimelineActionState(asset.id, {
+      isRunningLocalDetector: true,
+      localDetectorError: null,
+      localDetectorResult: null,
+    });
+    try {
+      const selectedZoneId = timelineSelectedZoneId(asset);
+      const result = await apiClient.runModelAdapter(LOCAL_IMAGE_DETECTOR_ADAPTER_ID, {
+        adapter_id: LOCAL_IMAGE_DETECTOR_ADAPTER_ID,
+        media_asset_id: asset.id,
+        zone_ids: selectedZoneId ? [selectedZoneId] : null,
+        notes:
+          "Explicit local detector run from Stream saved media timeline. " +
+          "Outputs are proposal evidence only; no reviewed truth was created.",
+      });
+      updateTimelineActionState(asset.id, { localDetectorResult: result });
+      await loadTimelineLifecycleData({ showLoading: false });
+    } catch (caught) {
+      updateTimelineActionState(asset.id, {
+        localDetectorError:
+          caught instanceof Error ? caught.message : "Local detector run failed.",
+      });
+    } finally {
+      updateTimelineActionState(asset.id, { isRunningLocalDetector: false });
     }
   }
 
@@ -855,6 +1183,7 @@ export function StreamsPage({
         duplicate_policy: "skip_existing",
       });
       updateTimelineActionState(asset.id, { evidenceResult: result });
+      await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         evidenceError:
@@ -865,9 +1194,9 @@ export function StreamsPage({
     }
   }
 
-  async function handlePromoteTimelineEvidence(asset: MediaAsset) {
+  async function handlePromoteTimelineEvidence(asset: MediaAsset, evidenceIdOverride?: string) {
     const currentEvidence = timelineActionState[asset.id]?.evidenceResult ?? null;
-    const evidenceId = currentEvidence?.motion_evidence_id;
+    const evidenceId = evidenceIdOverride ?? currentEvidence?.motion_evidence_id;
     if (!evidenceId) {
       return;
     }
@@ -895,6 +1224,7 @@ export function StreamsPage({
             }
           : currentEvidence,
       });
+      await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         promotionError:
@@ -1074,6 +1404,7 @@ export function StreamsPage({
       });
       setFolderEvidenceBatchCreateResult(result);
       setFolderEvidenceBatchConfirmed(false);
+      await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       setFolderEvidenceBatchCreateError(
         caught instanceof Error ? caught.message : "Could not create pending evidence batch.",
@@ -1109,6 +1440,7 @@ export function StreamsPage({
         ...current,
         [item.media_asset_id]: result,
       }));
+      await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       setFolderEvidenceErrors((current) => ({
         ...current,
@@ -2779,11 +3111,45 @@ export function StreamsPage({
                               {streamMediaAssets.map((asset) => {
                                 const actionState = timelineActionState[asset.id] ?? {};
                                 const eligibleImage = isImageMedia(asset);
-                                const proposal = actionState.proposalResult?.proposals[0] ?? null;
+                                const lifecycleSummary = buildMediaLifecycleSummary(
+                                  asset,
+                                  timelineDetectionRuns,
+                                  timelineDetectionProposals,
+                                  timelineMotionEvidence,
+                                  timelineReviewLabels,
+                                );
+                                const proposal =
+                                  actionState.proposalResult?.proposals[0] ??
+                                  lifecycleSummary.proposals.find(
+                                    (item) => item.status === "proposed",
+                                  ) ??
+                                  null;
                                 const canConvertProposal =
                                   Boolean(proposal) && !actionState.proposalDecisionResult;
-                                const canPromoteEvidence =
-                                  actionState.evidenceResult?.status === "pending";
+                                const pendingLifecycleEvidence =
+                                  lifecycleSummary.motionEvidence.find(
+                                    (item) => item.status === "pending",
+                                  ) ?? null;
+                                const promotableEvidenceId =
+                                  actionState.evidenceResult?.status === "pending"
+                                    ? actionState.evidenceResult.motion_evidence_id
+                                    : pendingLifecycleEvidence?.id;
+                                const canPromoteEvidence = Boolean(promotableEvidenceId);
+                                const blocksNewMotionEvidence =
+                                  lifecycleSummary.hasPendingMotionEvidence ||
+                                  lifecycleSummary.hasPromotedMotionEvidence;
+                                const latestProposal = lifecycleSummary.proposals[0] ?? null;
+                                const latestRun = lifecycleSummary.detectionRuns[0] ?? null;
+                                const latestEvidence = lifecycleSummary.motionEvidence[0] ?? null;
+                                const showLocalDetectorPanel =
+                                  eligibleImage &&
+                                  (Boolean(localDetectorAdapter) ||
+                                    Boolean(localDetectorAdapterError) ||
+                                    isLoadingLocalDetectorAdapter);
+                                const localDetectorCanRun =
+                                  canRunModelAdapter(localDetectorAdapter);
+                                const localDetectorSupportsAsset =
+                                  modelAdapterSupportsMedia(localDetectorAdapter, asset);
                                 return (
                                   <section className="timeline-media-item" key={asset.id}>
                                     <div className="item-title-row">
@@ -2810,6 +3176,337 @@ export function StreamsPage({
                                     {asset.notes ? (
                                       <p className="meta-text">{asset.notes}</p>
                                     ) : null}
+                                    <div className="timeline-lifecycle-panel">
+                                      <div className="item-title-row">
+                                        <strong>Lifecycle</strong>
+                                        <StatusPill
+                                          label={
+                                            isLoadingTimelineLifecycle
+                                              ? "Loading"
+                                              : lifecycleLabel(lifecycleSummary)
+                                          }
+                                          tone={lifecycleTone(lifecycleSummary)}
+                                        />
+                                      </div>
+                                      {timelineLifecycleError ? (
+                                        <div className="zone-error">
+                                          {timelineLifecycleError}
+                                        </div>
+                                      ) : null}
+                                      <div className="timeline-lifecycle-grid">
+                                        <div className="data-row">
+                                          <span>Proposal evidence</span>
+                                          <strong>{lifecycleSummary.proposalStatusText}</strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>DetectionRun</span>
+                                          <strong>{lifecycleSummary.detectionRunText}</strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>MotionEvidence</span>
+                                          <strong>{lifecycleSummary.motionEvidenceText}</strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Promoted</span>
+                                          <strong>{lifecycleSummary.promotedText}</strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>ReviewLabel truth</span>
+                                          <strong>{lifecycleSummary.reviewTruthText}</strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Export readiness</span>
+                                          <strong>{lifecycleSummary.exportReadinessText}</strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Next</span>
+                                          <strong>{lifecycleSummary.nextStep}</strong>
+                                        </div>
+                                        {latestProposal ? (
+                                          <div className="data-row">
+                                            <span>Latest proposal</span>
+                                            <strong>
+                                              {latestProposal.id} · {latestProposal.label} ·{" "}
+                                              {Math.round(latestProposal.confidence * 100)}% ·{" "}
+                                              {formatLabel(latestProposal.status)}
+                                            </strong>
+                                          </div>
+                                        ) : null}
+                                        {latestRun ? (
+                                          <div className="data-row">
+                                            <span>Latest run</span>
+                                            <strong>
+                                              {latestRun.id} · {formatLabel(latestRun.source)} ·{" "}
+                                              {formatLabel(latestRun.status)}
+                                            </strong>
+                                          </div>
+                                        ) : null}
+                                        {latestEvidence ? (
+                                          <div className="data-row">
+                                            <span>Latest MotionEvidence</span>
+                                            <strong>
+                                              {latestEvidence.id} ·{" "}
+                                              {formatLabel(latestEvidence.status)}
+                                            </strong>
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                      <div className="detail-actions timeline-lifecycle-actions">
+                                        {latestProposal ? (
+                                          <button
+                                            className="secondary-action"
+                                            onClick={onOpenDetectionProposals}
+                                            type="button"
+                                          >
+                                            Open proposals
+                                          </button>
+                                        ) : null}
+                                        {latestEvidence ? (
+                                          <button
+                                            className="secondary-action"
+                                            onClick={() => onOpenMotionEvidence(latestEvidence.id)}
+                                            type="button"
+                                          >
+                                            Open MotionEvidence
+                                          </button>
+                                        ) : null}
+                                        {lifecycleSummary.eventIds.slice(0, 2).map((eventId) => (
+                                          <button
+                                            className="inline-link-button"
+                                            key={eventId}
+                                            onClick={() => onOpenEvent(eventId)}
+                                            type="button"
+                                          >
+                                            Event {eventId}
+                                          </button>
+                                        ))}
+                                        {lifecycleSummary.visitIds.slice(0, 2).map((visitId) => (
+                                          <button
+                                            className="inline-link-button"
+                                            key={visitId}
+                                            onClick={() => onOpenVisit(visitId)}
+                                            type="button"
+                                          >
+                                            Visit {visitId}
+                                          </button>
+                                        ))}
+                                        {lifecycleSummary.eventIds.length > 0 ||
+                                        lifecycleSummary.visitIds.length > 0 ? (
+                                          <button
+                                            className="secondary-action"
+                                            onClick={onOpenReview}
+                                            type="button"
+                                          >
+                                            Review Queue
+                                          </button>
+                                        ) : null}
+                                        {lifecycleSummary.truthLabels.length > 0 ? (
+                                          <button
+                                            className="secondary-action"
+                                            onClick={onOpenExports}
+                                            type="button"
+                                          >
+                                            Dataset Exports
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                    {showLocalDetectorPanel ? (
+                                      <div className="timeline-detector-panel">
+                                        <div className="item-title-row">
+                                          <div>
+                                            <strong>Local detector</strong>
+                                            <p className="meta-text">
+                                              Detector outputs are proposal evidence only.
+                                              ReviewLabel correction remains truth.
+                                            </p>
+                                          </div>
+                                          <StatusPill
+                                            label={
+                                              isLoadingLocalDetectorAdapter
+                                                ? "Loading"
+                                                : localDetectorAdapter
+                                                  ? formatLabel(localDetectorAdapter.status)
+                                                  : "Unavailable"
+                                            }
+                                            tone={modelAdapterTone(localDetectorAdapter?.status)}
+                                          />
+                                        </div>
+                                        {localDetectorAdapterError && !localDetectorAdapter ? (
+                                          <div className="zone-error">
+                                            Local detector readiness could not be loaded:{" "}
+                                            {localDetectorAdapterError}. Demo proposal evidence
+                                            remains available.
+                                          </div>
+                                        ) : null}
+                                        {localDetectorAdapter ? (
+                                          <>
+                                            <div className="timeline-detector-grid">
+                                              <div className="data-row">
+                                                <span>Adapter</span>
+                                                <strong>
+                                                  {localDetectorAdapter.name} (
+                                                  {localDetectorAdapter.id})
+                                                </strong>
+                                              </div>
+                                              <div className="data-row">
+                                                <span>Can run</span>
+                                                <strong>
+                                                  {localDetectorCanRun ? "Yes" : "No"}
+                                                </strong>
+                                              </div>
+                                              <div className="data-row">
+                                                <span>Local only</span>
+                                                <strong>
+                                                  {localDetectorAdapter.local_only ? "Yes" : "No"}
+                                                </strong>
+                                              </div>
+                                              <div className="data-row">
+                                                <span>Creates truth</span>
+                                                <strong>
+                                                  {localDetectorAdapter.creates_review_truth
+                                                    ? "Yes"
+                                                    : "No"}
+                                                </strong>
+                                              </div>
+                                              <div className="data-row">
+                                                <span>Model path</span>
+                                                <strong>
+                                                  {localDetectorAdapter.configuration_status
+                                                    ?.model_path_configured
+                                                    ? "Configured"
+                                                    : "Not configured"}
+                                                </strong>
+                                              </div>
+                                              <div className="data-row">
+                                                <span>Runtime</span>
+                                                <strong>
+                                                  {localDetectorAdapter.configuration_status
+                                                    ?.runtime_available
+                                                    ? "Available"
+                                                    : "Unavailable"}
+                                                </strong>
+                                              </div>
+                                              <div className="data-row">
+                                                <span>Media support</span>
+                                                <strong>
+                                                  {localDetectorSupportsAsset
+                                                    ? "This image is supported"
+                                                    : "Unsupported media"}
+                                                </strong>
+                                              </div>
+                                            </div>
+                                            <span className="meta-text">
+                                              {localDetectorReadinessCopy(localDetectorAdapter)}
+                                            </span>
+                                            {!localDetectorCanRun ? (
+                                              <span className="meta-text">
+                                                Use demo proposal for smoke testing, or configure
+                                                the local detector model path to run real local
+                                                detector evidence.
+                                              </span>
+                                            ) : null}
+                                            <div className="detail-actions">
+                                              <button
+                                                className="primary-action"
+                                                disabled={
+                                                  actionState.isRunningLocalDetector ||
+                                                  !localDetectorCanRun ||
+                                                  !localDetectorSupportsAsset
+                                                }
+                                                onClick={() => void handleRunLocalDetector(asset)}
+                                                type="button"
+                                              >
+                                                {actionState.isRunningLocalDetector
+                                                  ? "Running..."
+                                                  : "Run local detector"}
+                                              </button>
+                                              <button
+                                                className="secondary-action"
+                                                onClick={onOpenDetectionProposals}
+                                                type="button"
+                                              >
+                                                Detection Proposals
+                                              </button>
+                                              <button
+                                                className="secondary-action"
+                                                onClick={onOpenReview}
+                                                type="button"
+                                              >
+                                                Review Queue
+                                              </button>
+                                            </div>
+                                          </>
+                                        ) : null}
+                                        {actionState.localDetectorError ? (
+                                          <div className="zone-error">
+                                            {actionState.localDetectorError}
+                                          </div>
+                                        ) : null}
+                                        {actionState.localDetectorResult ? (
+                                          <div className="timeline-result-grid">
+                                            <div className="data-row">
+                                              <span>DetectionRun</span>
+                                              <strong>
+                                                {
+                                                  actionState.localDetectorResult.detection_run
+                                                    .id
+                                                }
+                                              </strong>
+                                            </div>
+                                            <div className="data-row">
+                                              <span>Adapter</span>
+                                              <strong>
+                                                {actionState.localDetectorResult.adapter.name} (
+                                                {actionState.localDetectorResult.adapter.id})
+                                              </strong>
+                                            </div>
+                                            <div className="data-row">
+                                              <span>Proposals</span>
+                                              <strong>
+                                                {actionState.localDetectorResult.proposals.length >
+                                                0
+                                                  ? actionState.localDetectorResult.proposals
+                                                      .map((item) => item.id)
+                                                      .join(", ")
+                                                  : "none"}
+                                              </strong>
+                                            </div>
+                                            <div className="data-row">
+                                              <span>Review Queue</span>
+                                              <strong>
+                                                {
+                                                  actionState.localDetectorResult
+                                                    .review_queue_count
+                                                }{" "}
+                                                needs review
+                                              </strong>
+                                            </div>
+                                            {actionState.localDetectorResult.proposals.map(
+                                              (item) => (
+                                                <div className="data-row" key={item.id}>
+                                                  <span>{item.id}</span>
+                                                  <strong>
+                                                    {item.label} /{" "}
+                                                    {Math.round(item.confidence * 100)}% /{" "}
+                                                    {formatLabel(item.status)}
+                                                  </strong>
+                                                </div>
+                                              ),
+                                            )}
+                                            <div className="data-row">
+                                              <span>Local note</span>
+                                              <strong>
+                                                {
+                                                  actionState.localDetectorResult
+                                                    .local_first_note
+                                                }
+                                              </strong>
+                                            </div>
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
                                     <div className="detail-actions">
                                       <a
                                         className="inline-link"
@@ -2831,7 +3528,9 @@ export function StreamsPage({
                                       >
                                         {actionState.isCreatingProposal
                                           ? "Creating..."
-                                          : "Create demo proposal"}
+                                          : lifecycleSummary.proposals.length > 0
+                                            ? "Create another demo proposal"
+                                            : "Create demo proposal"}
                                       </button>
                                       {canConvertProposal ? (
                                         <button
@@ -2850,14 +3549,19 @@ export function StreamsPage({
                                         disabled={
                                           !eligibleImage ||
                                           !selectedTimelineZoneId ||
-                                          actionState.isCreatingEvidence
+                                          actionState.isCreatingEvidence ||
+                                          blocksNewMotionEvidence
                                         }
                                         onClick={() => void handleCreateTimelineEvidence(asset)}
                                         type="button"
                                       >
                                         {actionState.isCreatingEvidence
                                           ? "Creating..."
-                                          : "Create MotionEvidence"}
+                                          : lifecycleSummary.hasPendingMotionEvidence
+                                            ? "Pending MotionEvidence exists"
+                                            : lifecycleSummary.hasPromotedMotionEvidence
+                                              ? "MotionEvidence promoted"
+                                              : "Create MotionEvidence"}
                                       </button>
                                       <button
                                         className="secondary-action"
@@ -3012,7 +3716,12 @@ export function StreamsPage({
                                         <button
                                           className="primary-action"
                                           disabled={actionState.isPromotingEvidence}
-                                          onClick={() => void handlePromoteTimelineEvidence(asset)}
+                                          onClick={() =>
+                                            void handlePromoteTimelineEvidence(
+                                              asset,
+                                              promotableEvidenceId,
+                                            )
+                                          }
                                           type="button"
                                         >
                                           {actionState.isPromotingEvidence

@@ -1024,6 +1024,52 @@ button {
   font-weight: 650;
 }
 
+.timeline-lifecycle-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7e3ec;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f7fbfd;
+}
+
+.timeline-lifecycle-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.timeline-lifecycle-grid .data-row,
+.timeline-lifecycle-grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.timeline-lifecycle-actions {
+  align-items: center;
+}
+
+.timeline-detector-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d8e2cf;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f7faf3;
+}
+
+.timeline-detector-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.timeline-detector-grid .data-row,
+.timeline-detector-grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .import-context-panel,
 .import-context-copy {
   display: grid;
@@ -4596,6 +4642,8 @@ button {
   .import-context-grid,
   .import-smoke-result-grid,
   .timeline-result-grid,
+  .timeline-lifecycle-grid,
+  .timeline-detector-grid,
   .correction-success-grid,
   .review-evidence-grid,
   .adapter-evaluation-grid,
