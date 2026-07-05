@@ -87,12 +87,12 @@ Already built or partially built:
 - motion sequence evaluation for caller-provided frames
 - MotionEvidence schema/API/review/promote bridge
 - MediaAsset attachment to MotionEvidence
+- saved-snapshot Check motion with automatic activity areas when no user Zones exist
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
 
 - real repeated frame/snapshot motion bridge from source media
-- plug-and-play auto-region scoring when no user zones exist
 - activity sessionization / anti-flood grouping
 - best full snapshot + focused crop creation
 - source health and capture status sufficient for automatic/repeated capture
@@ -138,9 +138,12 @@ whole image -> grid/auto regions -> motion clusters -> candidate activity area
 Rules:
 
 - user zones override/refine auto regions when present
-- privacy/ignore zones suppress activity when configured
+- privacy/ignore zones suppress automatic activity cells when configured
 - no requirement to draw feeder zones before first useful result
 - user-facing copy should say `Activity area`, not internal region IDs
+- Auto Regions 1 status: saved-snapshot Check motion scores a medium adaptive
+  grid, merges active neighboring cells into up to three Activity areas, and
+  keeps automatic-area results evidence-only until a later persistence phase.
 
 ### 3. Activity Sessionization / Anti-Flood Logic
 
@@ -222,6 +225,9 @@ Future optional detector role:
 Future classifier role:
 
 - suggest species/activity labels from the best snapshot/crop
+- never run classifier/model inference per auto-region cell
+- run future classifier/model enrichment only on the best snapshot/crop for a
+  finalized activity session
 - remain evidence only until user correction
 
 The shared activity/session layer must be trigger-agnostic so future inputs can

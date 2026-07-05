@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import sys
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -55,6 +56,7 @@ from mockingbird.api.schemas import (
     ModelAdapterRunResult,
     MockSpeciesSuggestionRequest,
     MotionCandidateResponse,
+    MotionActivityAreaResponse,
     MotionEvidenceAttachMediaRequest,
     MotionEvidenceBulkActionRequest,
     MotionEvidenceBulkActionResponse,
@@ -839,6 +841,349 @@ def _motion_zone_from_zone(zone: Zone) -> MotionZoneInput:
     )
 
 
+@dataclass(frozen=True)
+class _AutoMotionCell:
+    region_id: str
+    row: int
+    column: int
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+
+@dataclass(frozen=True)
+class _AutoMotionCluster:
+    cells: list[_AutoMotionCell]
+    start_frame_index: int
+    end_frame_index: int
+    best_frame_index: int
+    peak_changed_ratio: float
+    triggered_frame_count: int
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+
+def _motion_zone_from_bounds(
+    *,
+    zone_id: str,
+    left: float,
+    top: float,
+    right: float,
+    bottom: float,
+) -> MotionZoneInput:
+    return MotionZoneInput(
+        zone_id=zone_id,
+        left=left,
+        top=top,
+        right=right,
+        bottom=bottom,
+    )
+
+
+def _activity_area_from_zone(zone: Zone) -> MotionActivityAreaResponse:
+    bounds = _motion_zone_from_zone(zone)
+    return MotionActivityAreaResponse(
+        area_id=zone.id,
+        label=zone.name,
+        source="user_zone",
+        left=bounds.left,
+        top=bounds.top,
+        right=bounds.right,
+        bottom=bounds.bottom,
+        zone_id=zone.id,
+    )
+
+
+def _activity_area_zone_input(area: MotionActivityAreaResponse) -> MotionZoneInput:
+    return _motion_zone_from_bounds(
+        zone_id=area.area_id,
+        left=area.left,
+        top=area.top,
+        right=area.right,
+        bottom=area.bottom,
+    )
+
+
+def _auto_motion_cells(
+    frame: list[list[int | float]],
+    blocked_zones: list[Zone],
+) -> tuple[list[_AutoMotionCell], int]:
+    height = len(frame)
+    width = len(frame[0]) if height else 0
+    columns, rows = _auto_region_grid_size(width=width, height=height)
+    blocked_bounds = [_motion_zone_from_zone(zone) for zone in blocked_zones]
+
+    cells: list[_AutoMotionCell] = []
+    suppressed_count = 0
+    for row in range(rows):
+        for column in range(columns):
+            left = column / columns
+            top = row / rows
+            right = (column + 1) / columns
+            bottom = (row + 1) / rows
+            candidate = _motion_zone_from_bounds(
+                zone_id=f"auto-cell-r{row + 1}c{column + 1}",
+                left=left,
+                top=top,
+                right=right,
+                bottom=bottom,
+            )
+            if any(_auto_cell_blocked(candidate, blocked) for blocked in blocked_bounds):
+                suppressed_count += 1
+                continue
+            cells.append(
+                _AutoMotionCell(
+                    region_id=candidate.zone_id,
+                    row=row,
+                    column=column,
+                    left=left,
+                    top=top,
+                    right=right,
+                    bottom=bottom,
+                )
+            )
+    return cells, suppressed_count
+
+
+def _auto_region_grid_size(*, width: int, height: int) -> tuple[int, int]:
+    target_columns, target_rows = (8, 6) if width >= 32 and height >= 24 else (6, 4)
+    return max(1, min(width, target_columns)), max(1, min(height, target_rows))
+
+
+def _auto_cell_blocked(cell: MotionZoneInput, blocked: MotionZoneInput) -> bool:
+    center_x = (cell.left + cell.right) / 2
+    center_y = (cell.top + cell.bottom) / 2
+    if blocked.left <= center_x <= blocked.right and blocked.top <= center_y <= blocked.bottom:
+        return True
+
+    overlap_left = max(cell.left, blocked.left)
+    overlap_top = max(cell.top, blocked.top)
+    overlap_right = min(cell.right, blocked.right)
+    overlap_bottom = min(cell.bottom, blocked.bottom)
+    if overlap_right <= overlap_left or overlap_bottom <= overlap_top:
+        return False
+
+    cell_area = (cell.right - cell.left) * (cell.bottom - cell.top)
+    overlap_area = (overlap_right - overlap_left) * (overlap_bottom - overlap_top)
+    return cell_area > 0 and overlap_area / cell_area >= 0.25
+
+
+def _motion_zone_from_auto_cell(cell: _AutoMotionCell) -> MotionZoneInput:
+    return _motion_zone_from_bounds(
+        zone_id=cell.region_id,
+        left=cell.left,
+        top=cell.top,
+        right=cell.right,
+        bottom=cell.bottom,
+    )
+
+
+def _auto_activity_clusters(
+    frame_scores: list[MotionFrameScoreResponse],
+    cells: list[_AutoMotionCell],
+    config: SamplerConfig,
+    *,
+    max_areas: int = 3,
+) -> tuple[list[MotionCandidate], list[MotionActivityAreaResponse]]:
+    cell_by_id = {cell.region_id: cell for cell in cells}
+    cell_at = {(cell.row, cell.column): cell.region_id for cell in cells}
+    triggered_by_cell: dict[str, list[tuple[int, float, int]]] = {}
+    for frame_score in frame_scores:
+        for score in frame_score.scores:
+            if score.zone_id not in cell_by_id or not score.triggered:
+                continue
+            triggered_by_cell.setdefault(score.zone_id, []).append(
+                (frame_score.frame_index, score.changed_ratio, score.changed_pixels)
+            )
+
+    active_ids = set(triggered_by_cell)
+    visited: set[str] = set()
+    clusters: list[_AutoMotionCluster] = []
+    for cell_id in sorted(
+        active_ids,
+        key=lambda active_id: (
+            cell_by_id[active_id].row,
+            cell_by_id[active_id].column,
+        ),
+    ):
+        if cell_id in visited:
+            continue
+        stack = [cell_id]
+        cluster_ids: set[str] = set()
+        while stack:
+            current_id = stack.pop()
+            if current_id in visited:
+                continue
+            visited.add(current_id)
+            cluster_ids.add(current_id)
+            current = cell_by_id[current_id]
+            for row_offset, column_offset in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                neighbor_id = cell_at.get(
+                    (current.row + row_offset, current.column + column_offset)
+                )
+                if neighbor_id in active_ids and neighbor_id not in visited:
+                    stack.append(neighbor_id)
+
+        cluster = _auto_motion_cluster(cluster_ids, cell_by_id, triggered_by_cell, config)
+        if cluster is not None:
+            clusters.append(cluster)
+
+    strongest_clusters = sorted(
+        clusters,
+        key=lambda cluster: (
+            cluster.peak_changed_ratio,
+            len(cluster.cells),
+            -cluster.start_frame_index,
+        ),
+        reverse=True,
+    )[:max_areas]
+
+    candidates: list[MotionCandidate] = []
+    areas: list[MotionActivityAreaResponse] = []
+    used_labels: set[str] = set()
+    for index, cluster in enumerate(strongest_clusters, start=1):
+        area_id = f"auto-area-{index}"
+        label = _auto_activity_area_label(
+            left=cluster.left,
+            top=cluster.top,
+            right=cluster.right,
+            bottom=cluster.bottom,
+            index=index,
+            used_labels=used_labels,
+        )
+        used_labels.add(label)
+        candidates.append(
+            MotionCandidate(
+                zone_id=area_id,
+                start_frame_index=cluster.start_frame_index,
+                end_frame_index=cluster.end_frame_index,
+                best_frame_index=cluster.best_frame_index,
+                peak_changed_ratio=cluster.peak_changed_ratio,
+                triggered_frame_count=cluster.triggered_frame_count,
+            )
+        )
+        areas.append(
+            MotionActivityAreaResponse(
+                area_id=area_id,
+                label=label,
+                source="auto_region",
+                left=cluster.left,
+                top=cluster.top,
+                right=cluster.right,
+                bottom=cluster.bottom,
+                cell_ids=[cell.region_id for cell in sorted(
+                    cluster.cells,
+                    key=lambda cell: (cell.row, cell.column),
+                )],
+            )
+        )
+    return candidates, areas
+
+
+def _auto_motion_cluster(
+    cluster_ids: set[str],
+    cell_by_id: dict[str, _AutoMotionCell],
+    triggered_by_cell: dict[str, list[tuple[int, float, int]]],
+    config: SamplerConfig,
+) -> _AutoMotionCluster | None:
+    events: list[tuple[int, float, int]] = []
+    cells = [cell_by_id[cell_id] for cell_id in cluster_ids]
+    for cell_id in cluster_ids:
+        events.extend(triggered_by_cell[cell_id])
+
+    frame_groups = _auto_frame_groups(
+        sorted({frame_index for frame_index, _ratio, _pixels in events}),
+        max_gap_frames=config.max_gap_frames,
+    )
+    ready_groups = [
+        group for group in frame_groups if len(group) >= config.min_triggered_frames
+    ]
+    if not ready_groups:
+        return None
+
+    def group_peak(group: list[int]) -> float:
+        group_frames = set(group)
+        return max(
+            ratio for frame_index, ratio, _pixels in events if frame_index in group_frames
+        )
+
+    best_group = max(ready_groups, key=group_peak)
+    best_group_frames = set(best_group)
+    best_frame_index, peak_changed_ratio, _changed_pixels = max(
+        (event for event in events if event[0] in best_group_frames),
+        key=lambda event: event[1],
+    )
+    if (
+        len(cells) == 1
+        and peak_changed_ratio < _auto_isolated_cell_min_ratio(config.min_changed_ratio)
+    ):
+        return None
+
+    return _AutoMotionCluster(
+        cells=cells,
+        start_frame_index=min(best_group),
+        end_frame_index=max(best_group),
+        best_frame_index=best_frame_index,
+        peak_changed_ratio=peak_changed_ratio,
+        triggered_frame_count=len(best_group),
+        left=min(cell.left for cell in cells),
+        top=min(cell.top for cell in cells),
+        right=max(cell.right for cell in cells),
+        bottom=max(cell.bottom for cell in cells),
+    )
+
+
+def _auto_frame_groups(
+    frame_indices: list[int],
+    *,
+    max_gap_frames: int,
+) -> list[list[int]]:
+    groups: list[list[int]] = []
+    current: list[int] = []
+    for frame_index in frame_indices:
+        if not current:
+            current = [frame_index]
+            continue
+        if frame_index - current[-1] - 1 <= max_gap_frames:
+            current.append(frame_index)
+            continue
+        groups.append(current)
+        current = [frame_index]
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _auto_isolated_cell_min_ratio(min_changed_ratio: float) -> float:
+    return max(0.06, min(1.0, min_changed_ratio * 2.0))
+
+
+def _auto_activity_area_label(
+    *,
+    left: float,
+    top: float,
+    right: float,
+    bottom: float,
+    index: int,
+    used_labels: set[str],
+) -> str:
+    center_x = (left + right) / 2
+    center_y = (top + bottom) / 2
+    vertical = "Upper" if center_y < 1 / 3 else "Lower" if center_y > 2 / 3 else "Center"
+    horizontal = "left" if center_x < 1 / 3 else "right" if center_x > 2 / 3 else "center"
+    label = (
+        "Center activity area"
+        if vertical == "Center" and horizontal == "center"
+        else f"{vertical} {horizontal} activity area"
+    )
+    if label in used_labels:
+        return f"Auto area {index}"
+    return label
+
+
 def _frame_asset_index(frame_index: int | None, frame_index_start: int) -> int | None:
     if frame_index is None:
         return None
@@ -1098,13 +1443,41 @@ async def evaluate_saved_media_motion(
             continue
         reviewable_zones.append(zone)
 
-    if not reviewable_zones:
-        raise HTTPException(
-            status_code=400,
-            detail="Add an active non-privacy/non-ignore Zone before checking motion.",
-        )
+    blocked_zones = [
+        zone
+        for zone in all_zones
+        if zone.is_active and zone.zone_type.value in {"privacy", "ignore"}
+    ]
+    uses_auto_regions = not reviewable_zones
+    region_source = "auto_regions" if uses_auto_regions else "user_zones"
+    suppressed_auto_region_count = 0
+    debug_cell_zones: list[MotionZoneInput] = []
+    auto_cells: list[_AutoMotionCell] = []
+    activity_areas: list[MotionActivityAreaResponse] = [
+        _activity_area_from_zone(zone) for zone in reviewable_zones
+    ]
 
-    motion_zones = [_motion_zone_from_zone(zone) for zone in reviewable_zones]
+    if uses_auto_regions:
+        warnings.append(
+            "No active reviewable Zones found; automatic activity areas were used."
+        )
+        # Auto cells are motion-only; future model runs belong on a finalized session best snapshot/crop.
+        auto_cells, suppressed_auto_region_count = _auto_motion_cells(
+            frames[0].frame,
+            blocked_zones,
+        )
+        if suppressed_auto_region_count > 0:
+            warnings.append("Privacy/ignore areas were skipped.")
+        if not auto_cells:
+            raise HTTPException(
+                status_code=400,
+                detail="Privacy/ignore Zones leave no automatic activity areas to check.",
+            )
+        motion_zones = [_motion_zone_from_auto_cell(cell) for cell in auto_cells]
+        debug_cell_zones = motion_zones
+    else:
+        motion_zones = [_motion_zone_from_zone(zone) for zone in reviewable_zones]
+
     sampler_config = SamplerConfig(
         pixel_delta_threshold=payload.pixel_delta_threshold,
         min_changed_ratio=payload.min_changed_ratio,
@@ -1126,13 +1499,29 @@ async def evaluate_saved_media_motion(
         _motion_frame_score_response(frame_score)
         for frame_score in sampler_result.frame_scores
     ]
+    motion_candidates = sampler_result.candidates
+    creation_skipped_reason: str | None = None
+    if uses_auto_regions:
+        motion_candidates, activity_areas = _auto_activity_clusters(
+            frame_score_responses,
+            auto_cells,
+            sampler_config,
+        )
+        motion_zones = [_activity_area_zone_input(area) for area in activity_areas]
+
     candidate_responses = [
         _motion_candidate_response(candidate)
-        for candidate in sampler_result.candidates
+        for candidate in motion_candidates
     ]
     created_evidence: list[MotionEvidenceResponse] = []
-    if payload.create_motion_evidence and sampler_result.candidates:
-        for candidate in sampler_result.candidates:
+    can_create_review_activity = not uses_auto_regions
+    if payload.create_motion_evidence and motion_candidates and uses_auto_regions:
+        creation_skipped_reason = "auto_region_review_activity_requires_user_zone"
+        warnings.append(
+            "Automatic activity areas are result-only in this phase; no review activity was created."
+        )
+    if payload.create_motion_evidence and motion_candidates and not uses_auto_regions:
+        for candidate in motion_candidates:
             best_media_asset_id = (
                 _media_asset_id_for_frame(
                     payload.media_asset_ids,
@@ -1188,10 +1577,20 @@ async def evaluate_saved_media_motion(
             except ValueError as error:
                 raise _motion_evidence_error(error) from error
 
-    strongest_zone_id, strongest_changed_ratio = _strongest_motion_summary(
+    raw_strongest_zone_id, raw_strongest_changed_ratio = _strongest_motion_summary(
         frame_score_responses,
     )
-    best_candidate = _best_motion_candidate(sampler_result.candidates)
+    best_candidate = _best_motion_candidate(motion_candidates)
+    if uses_auto_regions:
+        strongest_zone_id = best_candidate.zone_id if best_candidate else None
+        strongest_changed_ratio = (
+            best_candidate.peak_changed_ratio
+            if best_candidate
+            else raw_strongest_changed_ratio
+        )
+    else:
+        strongest_zone_id = raw_strongest_zone_id
+        strongest_changed_ratio = raw_strongest_changed_ratio
     best_media_asset_id = (
         _media_asset_id_for_frame(
             payload.media_asset_ids,
@@ -1201,24 +1600,41 @@ async def evaluate_saved_media_motion(
         if best_candidate
         else None
     )
+    activity_area_by_id = {area.area_id: area for area in activity_areas}
+    strongest_activity_area = (
+        activity_area_by_id.get(strongest_zone_id) if strongest_zone_id else None
+    )
     return MotionEvaluateSavedMediaResponse(
         stream_id=stream.id,
         source_id=stream.source_id,
         media_asset_ids=payload.media_asset_ids,
         zones=motion_zones,
+        activity_areas=activity_areas,
+        region_source=region_source,
+        uses_auto_regions=uses_auto_regions,
+        strongest_activity_area_id=(
+            strongest_activity_area.area_id if strongest_activity_area else None
+        ),
+        strongest_activity_area_label=(
+            strongest_activity_area.label if strongest_activity_area else None
+        ),
+        suppressed_auto_region_count=suppressed_auto_region_count,
+        can_create_review_activity=can_create_review_activity,
+        review_activity_created=bool(created_evidence),
+        creation_skipped_reason=creation_skipped_reason,
+        debug_cell_zones=debug_cell_zones,
         frames=frame_summaries,
         frame_scores=frame_score_responses,
         candidates=candidate_responses,
         created_evidence=created_evidence,
-        activity_detected=bool(sampler_result.candidates),
+        activity_detected=bool(motion_candidates),
         strongest_zone_id=strongest_zone_id,
         strongest_changed_ratio=strongest_changed_ratio,
         best_media_asset_id=best_media_asset_id,
         warnings=warnings,
         local_first_note=(
-            "Check motion used already-saved local snapshots. It creates pending "
-            "review activity only when explicitly requested, and never creates "
-            "reviewed labels or exports."
+            "Check motion used already-saved local snapshots and creates reviewed "
+            "labels or exports only after explicit review/correction."
         ),
     )
 
