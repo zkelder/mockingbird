@@ -104,6 +104,11 @@ When monitoring detects user-zone-backed activity, the Streams page can offer an
 explicit `Create review activity` handoff to pending review activity. Automatic
 activity areas remain result-only until a named Zone is available, and
 correction/export truth stays user-confirmed.
+Users can explicitly mark a useful automatic activity area as a named Zone such
+as feeder, birdbath, ground, yard, driveway, ignore, or privacy. That creates a
+real stream Zone from the activity bounds so future checks can use the normal
+Zone-backed review path. Privacy and ignore Zones suppress future activity in
+those areas; no fake Zones, review truth, or exports are created automatically.
 The same Stream cards now show Storage guardrails: saved image counts, storage
 warnings, and reviewed/export-linked media protection before and during
 monitoring. Snapshot watch remains an advanced bounded page-local test harness.

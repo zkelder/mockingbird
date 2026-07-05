@@ -201,6 +201,15 @@ Dataset Exports.
       context without creating reviewed truth.
 - [ ] If automatic activity areas appear without a named Zone, confirm the UI
       explains that review activity creation needs a named Zone in this build.
+- [ ] Choose Feeder, Birdbath, Ground, Yard, Driveway, Ignore, Privacy, or
+      Other, optionally rename the area, and click `Mark this area`.
+- [ ] Confirm a real Zone is saved and the UI says to run `Check motion` again
+      or continue monitoring.
+- [ ] For Feeder, Birdbath, Ground, Yard, Driveway, or Other, rerun `Check
+      motion` or continue monitoring and confirm future user-zone-backed
+      activity can offer `Create review activity`.
+- [ ] For Ignore or Privacy, confirm the area is saved as a skip/suppression
+      Zone and no reviewed truth or export is created automatically.
 - [ ] Click `Stop monitoring`.
 - [ ] Confirm monitoring stops and does not create reviewed truth or exports.
 - [ ] Click `Start watch`.

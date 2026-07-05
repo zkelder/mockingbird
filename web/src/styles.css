@@ -1133,6 +1133,33 @@ button {
   background: #f7fbfd;
 }
 
+.mark-activity-area-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #cfdcc8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfdf7;
+}
+
+.mark-activity-area-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mark-activity-area-grid label {
+  display: grid;
+  gap: 6px;
+  color: #28352f;
+  font-weight: 700;
+}
+
+.mark-activity-area-grid input,
+.mark-activity-area-grid select {
+  width: 100%;
+}
+
 .motion-snapshot-picker {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -5052,6 +5079,7 @@ button {
   .source-setup-layout,
   .source-health-grid,
   .camera-monitor-grid,
+  .mark-activity-area-grid,
   .snapshot-watch-controls,
   .snapshot-watch-grid,
   .source-storage-grid,

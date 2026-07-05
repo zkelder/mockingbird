@@ -952,8 +952,10 @@ Current work:
   Monitor status for `external_url` Streams.
 - Monitoring Review Candidate 1: monitored user-zone activity can be explicitly
   turned into pending review activity from Cameras/Streams.
+- Named Zone Fast Path 1: automatic activity areas can be explicitly marked as
+  real named Zones so future motion can use the normal Zone-backed review path.
 - Next likely phase: Camera Monitoring Core 2 — browser/API smoke validation
-  polish for the monitoring-to-review handoff.
+  polish for the named-Zone and monitoring-to-review handoff.
 
 Validation:
 
@@ -971,3 +973,5 @@ Validation:
 - Monitoring review handoff creates pending review activity only after explicit
   user action, reuses existing activity for duplicates, and leaves automatic
   activity areas result-only until a named Zone is available.
+- Automatic activity areas become Zones only after explicit user action; privacy
+  and ignore Zones keep future activity suppressed in those areas.

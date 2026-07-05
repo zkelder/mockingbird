@@ -20,10 +20,12 @@ import type {
   MediaAsset,
   ModelAdapter,
   ModelAdapterRunResult,
+  MotionActivityArea,
   MotionCropPlan,
   MotionEvidence,
   MotionEvaluateSavedMediaResponse,
   MotionEvidencePromoteResponse,
+  Point,
   ReviewLabel,
   SavedMediaRetentionItem,
   SavedMediaRetentionReportResponse,
@@ -35,6 +37,7 @@ import type {
   SourceSetupReviewResponse,
   Stream,
   Zone,
+  ZoneType,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
@@ -140,6 +143,132 @@ function parseAllowedExtensions(value: string): string[] | null {
 
 function isReviewableZone(zone: Zone): boolean {
   return zone.is_active && zone.zone_type !== "privacy" && zone.zone_type !== "ignore";
+}
+
+function persistedZoneType(choice: MarkActivityAreaZoneChoice): ZoneType {
+  return choice === "other" ? "yard" : choice;
+}
+
+function activityAreaZoneOption(
+  choice: MarkActivityAreaZoneChoice,
+): (typeof ACTIVITY_AREA_ZONE_OPTIONS)[number] {
+  return (
+    ACTIVITY_AREA_ZONE_OPTIONS.find((option) => option.value === choice) ??
+    ACTIVITY_AREA_ZONE_OPTIONS[0]
+  );
+}
+
+function defaultActivityAreaZoneName(choice: MarkActivityAreaZoneChoice): string {
+  return activityAreaZoneOption(choice).defaultName;
+}
+
+function activityAreaZoneChoiceLabel(choice: MarkActivityAreaZoneChoice): string {
+  return activityAreaZoneOption(choice).label;
+}
+
+function isReviewableZoneChoice(choice: MarkActivityAreaZoneChoice): boolean {
+  const zoneType = persistedZoneType(choice);
+  return zoneType !== "privacy" && zoneType !== "ignore";
+}
+
+function activityAreaDraftKey(
+  streamId: string,
+  source: MarkActivityAreaSource,
+  areaId: string,
+): string {
+  return `${streamId}:${source}:${areaId}`;
+}
+
+function validActivityAreaBounds(bounds: ActivityAreaBounds): boolean {
+  return (
+    Number.isFinite(bounds.left) &&
+    Number.isFinite(bounds.top) &&
+    Number.isFinite(bounds.right) &&
+    Number.isFinite(bounds.bottom) &&
+    bounds.left >= 0 &&
+    bounds.top >= 0 &&
+    bounds.right <= 1 &&
+    bounds.bottom <= 1 &&
+    bounds.left < bounds.right &&
+    bounds.top < bounds.bottom
+  );
+}
+
+function polygonFromActivityAreaBounds(bounds: ActivityAreaBounds): Point[] {
+  return [
+    { x: bounds.left, y: bounds.top },
+    { x: bounds.right, y: bounds.top },
+    { x: bounds.right, y: bounds.bottom },
+    { x: bounds.left, y: bounds.bottom },
+  ];
+}
+
+function parseActivityAreaNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function markableActivityAreaFromMotionResult(
+  result?: MotionEvaluateSavedMediaResponse | null,
+): MarkableActivityArea | null {
+  if (!result?.activity_detected || !result.uses_auto_regions || result.can_create_review_activity) {
+    return null;
+  }
+  const area =
+    result.activity_areas.find(
+      (item) => item.area_id === result.strongest_activity_area_id,
+    ) ?? result.activity_areas.find((item) => item.source === "auto_region");
+  if (!area || area.source !== "auto_region") {
+    return null;
+  }
+  return markableActivityAreaFromMotionArea(area);
+}
+
+function markableActivityAreaFromMotionArea(
+  area: MotionActivityArea,
+): MarkableActivityArea | null {
+  const bounds = {
+    left: area.left,
+    top: area.top,
+    right: area.right,
+    bottom: area.bottom,
+  };
+  if (!validActivityAreaBounds(bounds)) {
+    return null;
+  }
+  return {
+    areaId: area.area_id,
+    label: area.label || "Activity area",
+    bounds,
+  };
+}
+
+function markableActivityAreaFromMonitorStatus(
+  status?: SourceMonitorStatusResponse | null,
+): MarkableActivityArea | null {
+  if (
+    status?.last_activity_detected !== true ||
+    status.review_activity_unavailable_reason !== "auto_region_requires_named_zone"
+  ) {
+    return null;
+  }
+  const area = status.last_activity_area;
+  if (!area || area.source !== "auto_region") {
+    return null;
+  }
+  const left = parseActivityAreaNumber(area.left);
+  const top = parseActivityAreaNumber(area.top);
+  const right = parseActivityAreaNumber(area.right);
+  const bottom = parseActivityAreaNumber(area.bottom);
+  if (left === null || top === null || right === null || bottom === null) {
+    return null;
+  }
+  const bounds = { left, top, right, bottom };
+  if (!validActivityAreaBounds(bounds)) {
+    return null;
+  }
+  const areaId = typeof area.area_id === "string" && area.area_id ? area.area_id : "monitor-area";
+  const label = typeof area.label === "string" && area.label ? area.label : "Activity area";
+  return { areaId, label, bounds };
 }
 
 function isImageMedia(asset: MediaAsset): boolean {
@@ -265,6 +394,38 @@ interface SnapshotWatchState {
   lastActivityResult?: string | null;
 }
 
+type MarkActivityAreaSource = "motion" | "monitor";
+type MarkActivityAreaZoneChoice =
+  | "feeder"
+  | "birdbath"
+  | "ground"
+  | "yard"
+  | "driveway"
+  | "ignore"
+  | "privacy"
+  | "other";
+
+interface ActivityAreaBounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+interface MarkableActivityArea {
+  areaId: string;
+  label: string;
+  bounds: ActivityAreaBounds;
+}
+
+interface ActivityAreaZoneDraft {
+  zoneChoice: MarkActivityAreaZoneChoice;
+  name: string;
+  isSaving: boolean;
+  message?: string | null;
+  error?: string | null;
+}
+
 interface MediaLifecycleSummary {
   detectionRuns: DetectionRun[];
   proposals: DetectionProposal[];
@@ -293,6 +454,21 @@ const DEFAULT_SNAPSHOT_WATCH_INTERVAL_SECONDS = 10;
 const DEFAULT_SNAPSHOT_WATCH_MAX_CAPTURES = 3;
 const MIN_SNAPSHOT_WATCH_INTERVAL_SECONDS = 5;
 const SNAPSHOT_WATCH_STORAGE_BLOCK_COUNT = 100;
+const DEFAULT_ACTIVITY_AREA_ZONE_CHOICE: MarkActivityAreaZoneChoice = "feeder";
+const ACTIVITY_AREA_ZONE_OPTIONS: Array<{
+  value: MarkActivityAreaZoneChoice;
+  label: string;
+  defaultName: string;
+}> = [
+  { value: "feeder", label: "Feeder", defaultName: "Feeder area" },
+  { value: "birdbath", label: "Birdbath", defaultName: "Birdbath area" },
+  { value: "ground", label: "Ground", defaultName: "Ground area" },
+  { value: "yard", label: "Yard", defaultName: "Yard area" },
+  { value: "driveway", label: "Driveway", defaultName: "Driveway area" },
+  { value: "ignore", label: "Ignore", defaultName: "Ignore area" },
+  { value: "privacy", label: "Privacy", defaultName: "Privacy area" },
+  { value: "other", label: "Other", defaultName: "Activity area" },
+];
 
 function uniquePresent(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
@@ -462,6 +638,13 @@ function sourceHealthNextAction(
     motionResult.should_create_review_activity
   ) {
     return "Create review activity.";
+  }
+  if (
+    motionResult?.activity_detected &&
+    motionResult.uses_auto_regions &&
+    !motionResult.can_create_review_activity
+  ) {
+    return "Mark activity area.";
   }
   if (motionResult?.activity_detected && !motionResult.should_create_review_activity) {
     return "Ready for manual checks.";
@@ -776,6 +959,13 @@ function snapshotWatchNextAction(
 ): string {
   if (createdEvidence) {
     return "Review activity";
+  }
+  if (
+    motionResult?.activity_detected &&
+    motionResult.uses_auto_regions &&
+    !motionResult.can_create_review_activity
+  ) {
+    return "Mark activity area";
   }
   if (motionResult?.activity_detected) {
     return motionResult.can_create_review_activity ? "Review activity" : "Check motion";
@@ -1135,6 +1325,9 @@ export function StreamsPage({
   const [streamMonitorLoading, setStreamMonitorLoading] = useState<Record<string, boolean>>({});
   const [streamMonitorReviewLoading, setStreamMonitorReviewLoading] = useState<
     Record<string, boolean>
+  >({});
+  const [activityAreaZoneDrafts, setActivityAreaZoneDrafts] = useState<
+    Record<string, ActivityAreaZoneDraft>
   >({});
   const [folderPreviewResult, setFolderPreviewResult] =
     useState<FolderImportPreviewResponse | null>(null);
@@ -1964,6 +2157,194 @@ export function StreamsPage({
         ...patch,
       },
     }));
+  }
+
+  function updateActivityAreaZoneDraft(
+    key: string,
+    patch: Partial<ActivityAreaZoneDraft>,
+  ) {
+    setActivityAreaZoneDrafts((current) => {
+      const existing = current[key] ?? {
+        zoneChoice: DEFAULT_ACTIVITY_AREA_ZONE_CHOICE,
+        name: defaultActivityAreaZoneName(DEFAULT_ACTIVITY_AREA_ZONE_CHOICE),
+        isSaving: false,
+      };
+      return {
+        ...current,
+        [key]: {
+          ...existing,
+          ...patch,
+        },
+      };
+    });
+  }
+
+  async function handleMarkActivityAreaAsZone(
+    stream: Stream,
+    source: MarkActivityAreaSource,
+    area: MarkableActivityArea,
+  ) {
+    const key = activityAreaDraftKey(stream.id, source, area.areaId);
+    const draft = activityAreaZoneDrafts[key] ?? {
+      zoneChoice: DEFAULT_ACTIVITY_AREA_ZONE_CHOICE,
+      name: defaultActivityAreaZoneName(DEFAULT_ACTIVITY_AREA_ZONE_CHOICE),
+      isSaving: false,
+    };
+    if (!validActivityAreaBounds(area.bounds)) {
+      updateActivityAreaZoneDraft(key, {
+        error: "This activity area does not have usable bounds.",
+      });
+      return;
+    }
+
+    const zoneChoice = draft.zoneChoice;
+    const zoneType = persistedZoneType(zoneChoice);
+    const zoneName =
+      draft.name.trim() || defaultActivityAreaZoneName(zoneChoice);
+
+    updateActivityAreaZoneDraft(key, {
+      isSaving: true,
+      error: null,
+      message: null,
+    });
+    try {
+      const result = await apiClient.createZone({
+        stream_id: stream.id,
+        name: zoneName,
+        zone_type: zoneType,
+        polygon: polygonFromActivityAreaBounds(area.bounds),
+        is_active: true,
+      });
+      setTimelineZonesByStream((current) => ({
+        ...current,
+        [stream.id]: result.zones,
+      }));
+      if (stream.id === selectedFirstStream?.id) {
+        setPreviewZones(result.zones);
+      }
+      if (isReviewableZone(result.zone)) {
+        setTimelineSelectedZoneByStream((current) => ({
+          ...current,
+          [stream.id]: result.zone.id,
+        }));
+        if (stream.id === selectedFirstStream?.id) {
+          setSelectedPreviewZoneId(result.zone.id);
+        }
+      }
+      updateActivityAreaZoneDraft(key, {
+        isSaving: false,
+        error: null,
+        message: isReviewableZoneChoice(zoneChoice)
+          ? `Area marked as ${activityAreaZoneChoiceLabel(zoneChoice)}. Future activity here can be reviewed. Zone saved. Run Check motion again or continue monitoring.`
+          : "This area will be skipped for future activity detection. Zone saved. Run Check motion again or continue monitoring.",
+      });
+    } catch (caught) {
+      updateActivityAreaZoneDraft(key, {
+        isSaving: false,
+        error: caught instanceof Error ? caught.message : "Could not mark this area.",
+      });
+    }
+  }
+
+  function renderMarkActivityAreaPanel(
+    stream: Stream,
+    source: MarkActivityAreaSource,
+    area: MarkableActivityArea | null,
+  ) {
+    if (!area) {
+      return null;
+    }
+    const key = activityAreaDraftKey(stream.id, source, area.areaId);
+    const draft = activityAreaZoneDrafts[key] ?? {
+      zoneChoice: DEFAULT_ACTIVITY_AREA_ZONE_CHOICE,
+      name: defaultActivityAreaZoneName(DEFAULT_ACTIVITY_AREA_ZONE_CHOICE),
+      isSaving: false,
+    };
+    const zoneChoice = draft.zoneChoice;
+    return (
+      <div className="mark-activity-area-panel">
+        <div>
+          <strong>Mark this area</strong>
+          <p className="meta-text">
+            Activity detected in an automatic area. Mark this area as a Zone so
+            future monitoring can create review activity.
+          </p>
+        </div>
+        <div className="mark-activity-area-grid">
+          <label>
+            Zone type
+            <select
+              disabled={draft.isSaving}
+              onChange={(event) => {
+                const nextChoice = event.target.value as MarkActivityAreaZoneChoice;
+                const previousDefault = defaultActivityAreaZoneName(zoneChoice);
+                const nextDefault = defaultActivityAreaZoneName(nextChoice);
+                updateActivityAreaZoneDraft(key, {
+                  zoneChoice: nextChoice,
+                  name:
+                    !draft.name.trim() || draft.name === previousDefault
+                      ? nextDefault
+                      : draft.name,
+                  message: null,
+                  error: null,
+                });
+              }}
+              value={zoneChoice}
+            >
+              {ACTIVITY_AREA_ZONE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Name
+            <input
+              disabled={draft.isSaving}
+              onChange={(event) =>
+                updateActivityAreaZoneDraft(key, {
+                  name: event.target.value,
+                  message: null,
+                  error: null,
+                })
+              }
+              placeholder={defaultActivityAreaZoneName(zoneChoice)}
+              type="text"
+              value={draft.name}
+            />
+          </label>
+        </div>
+        <div className="detail-actions">
+          <button
+            className="primary-action"
+            disabled={draft.isSaving}
+            onClick={() => void handleMarkActivityAreaAsZone(stream, source, area)}
+            type="button"
+          >
+            {draft.isSaving ? "Saving..." : "Mark this area"}
+          </button>
+        </div>
+        <span className="meta-text">
+          {isReviewableZoneChoice(zoneChoice)
+            ? "Zone saved from this area will improve future review activity handoff."
+            : "This area will be skipped for future activity detection."}
+        </span>
+        {draft.message ? <div className="zone-message">{draft.message}</div> : null}
+        {draft.error ? <div className="zone-error">{draft.error}</div> : null}
+        <details className="advanced-details">
+          <summary>Advanced details</summary>
+          <div className="source-connection-meta">
+            <span>Activity area: {area.label}</span>
+            <span>
+              Bounds: {area.bounds.left.toFixed(3)},{area.bounds.top.toFixed(3)}
+              -{area.bounds.right.toFixed(3)},{area.bounds.bottom.toFixed(3)}
+            </span>
+            <span>Saved Zone type: {formatLabel(persistedZoneType(zoneChoice))}</span>
+          </div>
+        </details>
+      </div>
+    );
   }
 
   function selectedMotionMediaIds(streamId: string, assets: MediaAsset[]): string[] {
@@ -4490,6 +4871,8 @@ export function StreamsPage({
                   );
                   const motionCropPlan = motionResult?.crop_plan ?? null;
                   const usesAutomaticActivityAreas = motionResult?.uses_auto_regions ?? false;
+                  const motionMarkableActivityArea =
+                    markableActivityAreaFromMotionResult(motionResult);
                   const bestMotionAssetId =
                     motionResult?.best_snapshot_media_asset_id ??
                     motionResult?.best_media_asset_id ??
@@ -4534,6 +4917,8 @@ export function StreamsPage({
                   const isMonitoring = monitorIsActive(monitorStatus);
                   const monitorReviewActivityEvidenceId =
                     monitorStatus?.review_activity_motion_evidence_id ?? null;
+                  const monitorMarkableActivityArea =
+                    markableActivityAreaFromMonitorStatus(monitorStatus);
                   const monitorStartBlockReason = !isExternalUrlProvider
                     ? "Monitoring is available for external snapshot sources."
                     : sourceNeedsSetup(selectedConnection, selectedSetupReview)
@@ -4842,6 +5227,11 @@ export function StreamsPage({
                           {monitorStatus?.message ? (
                             <span className="meta-text">{monitorStatus.message}</span>
                           ) : null}
+                          {renderMarkActivityAreaPanel(
+                            stream,
+                            "monitor",
+                            monitorMarkableActivityArea,
+                          )}
                           <span className="meta-text">
                             Monitoring is in-memory for this API run. Review activity, correction,
                             Bird Log, and Export remain explicit actions.
@@ -5262,10 +5652,17 @@ export function StreamsPage({
                                 ) : null}
                                 {motionResult?.activity_detected &&
                                 !canCreateMotionReviewActivity ? (
-                                  <span className="meta-text">
-                                    Automatic activity areas can detect motion now; review activity
-                                    creation still requires a named Zone in this build.
-                                  </span>
+                                  <>
+                                    <span className="meta-text">
+                                      Automatic activity areas can detect motion now; review activity
+                                      creation still requires a named Zone in this build.
+                                    </span>
+                                    {renderMarkActivityAreaPanel(
+                                      stream,
+                                      "motion",
+                                      motionMarkableActivityArea,
+                                    )}
+                                  </>
                                 ) : null}
                                 {motionResult?.activity_detected &&
                                 canCreateMotionReviewActivity &&

@@ -99,6 +99,9 @@ Already built or partially built:
 - explicit monitoring review handoff: monitored user-zone activity can offer
   `Create review activity`, while automatic activity areas remain result-only
   until a named Zone is available
+- named Zone fast path: automatic activity areas can be explicitly marked as
+  real stream Zones for feeder, birdbath, ground, yard, driveway, ignore, or
+  privacy follow-up behavior
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
@@ -278,6 +281,12 @@ session checks reuse the existing review item, automatic activity areas stay
 result-only until a named Zone exists, and ReviewLabel correction/export remain
 separate explicit actions.
 
+Named Zone Fast Path 1 status: Check motion and Camera Monitoring can let the
+user explicitly mark an automatic activity area as a real named Zone. Reviewable
+Zone types unlock the future user-zone review activity path; privacy/ignore
+Zones suppress future activity in that area. No fake Zones, automatic review
+truth, exports, or model runs are created.
+
 It adds no RTSP, USB, Pi, cellular, live video, model runtime, automatic truth,
 or automatic export behavior.
 
@@ -352,6 +361,12 @@ activity candidate -> Review -> ReviewLabel truth -> Bird Log -> export
      saved-media motion checks until Stop monitoring, max runtime, max
      snapshots, repeated failures, or storage guardrails.
    - Do not expand the browser Snapshot watch harness as the final architecture.
+
+9. **Named Zone Fast Path 1**
+   - Status: automatic activity areas can become real named Zones only after
+     explicit user action.
+   - Use those Zones on the next Check motion or monitoring pass before review
+     activity handoff.
 
 ## Guardrails
 
