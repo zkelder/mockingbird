@@ -12,7 +12,6 @@ from mockingbird.playback.rtsp_bridge import MJPEG_BOUNDARY, iter_multipart_mjpe
 
 LOCAL_USB_STREAM_TYPE = "local_usb"
 DEFAULT_CAMERA_FORMAT = "v4l2"
-DEFAULT_VIDEO_SIZE = "640x480"
 
 _LINUX_VIDEO_DEVICE_PATTERN = re.compile(r"^/dev/video\d+$")
 
@@ -55,9 +54,10 @@ def build_local_camera_mjpeg_command(
     device: str,
     *,
     camera_format: str | None = None,
+    input_format: str | None = None,
     ffmpeg_binary: str = "ffmpeg",
-    video_size: str = DEFAULT_VIDEO_SIZE,
-    input_frame_rate: int = 10,
+    video_size: str | None = None,
+    input_frame_rate: int | None = None,
     output_frame_rate: int = 5,
     quality: int = 5,
 ) -> list[str]:
@@ -65,30 +65,36 @@ def build_local_camera_mjpeg_command(
         raise ValueError("unsupported_local_camera_format")
     if not validate_local_camera_device(device):
         raise ValueError("invalid_local_camera_device")
-    return [
+    command = [
         ffmpeg_binary,
         "-hide_banner",
         "-loglevel",
         "error",
         "-f",
         DEFAULT_CAMERA_FORMAT,
-        "-input_format",
-        "mjpeg",
-        "-video_size",
-        video_size,
-        "-framerate",
-        str(input_frame_rate),
-        "-i",
-        device.strip(),
-        "-an",
-        "-f",
-        "mjpeg",
-        "-q:v",
-        str(quality),
-        "-r",
-        str(output_frame_rate),
-        "pipe:1",
     ]
+    normalized_input_format = (input_format or "").strip()
+    if normalized_input_format:
+        command.extend(["-input_format", normalized_input_format])
+    if video_size:
+        command.extend(["-video_size", video_size])
+    if input_frame_rate:
+        command.extend(["-framerate", str(input_frame_rate)])
+    command.extend(
+        [
+            "-i",
+            device.strip(),
+            "-an",
+            "-f",
+            "mjpeg",
+            "-q:v",
+            str(quality),
+            "-r",
+            str(output_frame_rate),
+            "pipe:1",
+        ]
+    )
+    return command
 
 
 PopenFactory = Callable[..., subprocess.Popen[bytes]]

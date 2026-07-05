@@ -147,22 +147,6 @@ function draftFromConfiguration(
   );
 }
 
-function playbackStatusTone(status?: StreamPlaybackStatus | null): "good" | "review" | "quiet" {
-  if (status?.status === "live_ready") {
-    return "good";
-  }
-  if (
-    status?.status === "needs_stream_url" ||
-    status?.status === "unsupported_rtsp_bridge_required" ||
-    status?.status === "unsupported_stream_type" ||
-    status?.status === "playback_error" ||
-    status?.status === "unknown"
-  ) {
-    return "review";
-  }
-  return "quiet";
-}
-
 function isBrowserPlayablePlayback(status?: StreamPlaybackStatus | null): boolean {
   return (
     status?.status === "live_ready" &&
@@ -185,32 +169,6 @@ function isLocalCameraBridgePlayback(status?: StreamPlaybackStatus | null): bool
     status.playback_kind === "local_usb" &&
     Boolean(status.local_camera_bridge_available)
   );
-}
-
-function livePlaybackFailureMessage(status?: StreamPlaybackStatus | null): string {
-  if (status?.playback_kind === "local_usb") {
-    return "Local camera playback failed. Check ffmpeg, camera device, and host permissions.";
-  }
-  if (status?.playback_kind === "rtsp") {
-    return "RTSP live view failed to load. Check stream URL, ffmpeg, network, and credentials.";
-  }
-  return "Live view failed to load. Check stream URL, network, credentials, and browser support.";
-}
-
-function liveViewFallbackMessage(status?: StreamPlaybackStatus | null): string {
-  if (!status) {
-    return "Loading live view status...";
-  }
-  if (status.status === "needs_stream_url") {
-    return "No live stream URL configured.";
-  }
-  if (status.status === "unsupported_rtsp_bridge_required") {
-    return status.message;
-  }
-  if (status.status === "unsupported_stream_type") {
-    return status.message;
-  }
-  return status.message;
 }
 
 function formatBytes(bytes?: number | null): string {
@@ -1766,9 +1724,6 @@ export function StreamsPage({
     Record<string, StreamPlaybackStatus>
   >({});
   const [streamPlaybackErrors, setStreamPlaybackErrors] = useState<Record<string, string>>({});
-  const [livePlaybackErrors, setLivePlaybackErrors] = useState<Record<string, string>>({});
-  const [openLiveViewByStream, setOpenLiveViewByStream] = useState<Record<string, boolean>>({});
-  const [liveViewReloadTokens, setLiveViewReloadTokens] = useState<Record<string, number>>({});
   const [streamMonitorStatuses, setStreamMonitorStatuses] = useState<
     Record<string, SourceMonitorStatusResponse>
   >({});
@@ -1977,20 +1932,6 @@ export function StreamsPage({
         ...current,
         [streamId]: "",
       }));
-      setLivePlaybackErrors((current) => ({
-        ...current,
-        [streamId]: "",
-      }));
-      if (!isLocalCameraBridgePlayback(status)) {
-        setOpenLiveViewByStream((current) => {
-          if (!current[streamId]) {
-            return current;
-          }
-          const next = { ...current };
-          delete next[streamId];
-          return next;
-        });
-      }
       return status;
     } catch (caught) {
       setStreamPlaybackErrors((current) => ({
@@ -2001,43 +1942,6 @@ export function StreamsPage({
     }
   }
 
-  function refreshLiveStream(streamId: string): void {
-    setLivePlaybackErrors((current) => ({
-      ...current,
-      [streamId]: "",
-    }));
-    setLiveViewReloadTokens((current) => ({
-      ...current,
-      [streamId]: (current[streamId] ?? 0) + 1,
-    }));
-  }
-
-  function openLiveView(streamId: string): void {
-    setOpenLiveViewByStream((current) => ({
-      ...current,
-      [streamId]: true,
-    }));
-    refreshLiveStream(streamId);
-  }
-
-  function stopLiveView(streamId: string): void {
-    setOpenLiveViewByStream((current) => ({
-      ...current,
-      [streamId]: false,
-    }));
-    setLivePlaybackErrors((current) => ({
-      ...current,
-      [streamId]: "",
-    }));
-  }
-
-  function streamUrlWithReloadToken(url: string, token: number): string {
-    if (token <= 0) {
-      return url;
-    }
-    return `${url}${url.includes("?") ? "&" : "?"}reload=${token}`;
-  }
-
   useEffect(() => {
     let isMounted = true;
 
@@ -2045,9 +1949,6 @@ export function StreamsPage({
       if (selectedSourceStreams.length === 0) {
         setStreamPlaybackStatuses({});
         setStreamPlaybackErrors({});
-        setLivePlaybackErrors({});
-        setOpenLiveViewByStream({});
-        setLiveViewReloadTokens({});
         return;
       }
       const entries: Array<readonly [string, StreamPlaybackStatus]> = [];
@@ -2069,9 +1970,6 @@ export function StreamsPage({
       }
       setStreamPlaybackStatuses(Object.fromEntries(entries));
       setStreamPlaybackErrors(Object.fromEntries(errors));
-      setLivePlaybackErrors({});
-      setOpenLiveViewByStream({});
-      setLiveViewReloadTokens({});
     }
 
     void loadSelectedPlaybackStatuses();
@@ -5429,23 +5327,11 @@ export function StreamsPage({
                   const reviewStream = selectedReviewStreams.get(stream.id);
                   const playbackStatus = streamPlaybackStatuses[stream.id] ?? null;
                   const playbackError = streamPlaybackErrors[stream.id] || null;
-                  const livePlaybackError = livePlaybackErrors[stream.id] || null;
                   const canRenderBrowserLiveView = isBrowserPlayablePlayback(playbackStatus);
                   const canRenderRtspBridge = isRtspBridgePlayback(playbackStatus);
                   const canRenderLocalCameraBridge = isLocalCameraBridgePlayback(playbackStatus);
                   const hasRealLivePlayback =
                     canRenderBrowserLiveView || canRenderRtspBridge || canRenderLocalCameraBridge;
-                  const localCameraLiveViewOpen = Boolean(openLiveViewByStream[stream.id]);
-                  const liveViewReloadToken = liveViewReloadTokens[stream.id] ?? 0;
-                  const rtspBridgeUrl = canRenderRtspBridge
-                    ? apiClient.rtspMjpegBridgeUrl(stream.id)
-                    : null;
-                  const localCameraBridgeBaseUrl = canRenderLocalCameraBridge
-                    ? apiClient.localCameraMjpegBridgeUrl(stream.id)
-                    : null;
-                  const localCameraBridgeUrl = localCameraBridgeBaseUrl
-                    ? streamUrlWithReloadToken(localCameraBridgeBaseUrl, liveViewReloadToken)
-                    : null;
                   const playbackLabel = hasRealLivePlayback
                     ? "Live camera"
                     : reviewStream
@@ -5593,12 +5479,7 @@ export function StreamsPage({
                     exportCount: datasetExports.length,
                   });
                   return (
-                    <section
-                      className={`source-stream-card ${
-                        hasRealLivePlayback ? "has-primary-live-stream" : ""
-                      }`}
-                      key={stream.id}
-                    >
+                    <section className="source-stream-card" key={stream.id}>
                       <div className="item-title-row">
                         <h4>{stream.name}</h4>
                         <StatusPill
@@ -5609,209 +5490,6 @@ export function StreamsPage({
                               : "quiet"
                           }
                         />
-                      </div>
-                      <div
-                        className={`live-view-panel ${
-                          hasRealLivePlayback ? "primary-stream-surface" : ""
-                        }`}
-                      >
-                        <div className="item-title-row">
-                          <div>
-                            <strong>
-                              {hasRealLivePlayback ? "Live camera view" : "Stream preview"}
-                            </strong>
-                            <p className="meta-text">
-                              {hasRealLivePlayback
-                                ? "Live camera playback is the primary stream surface. Zone controls stay nearby; real-video overlay alignment is a later step."
-                                : "Demo and placeholder visuals appear only when real live playback is unavailable."}
-                            </p>
-                          </div>
-                          <StatusPill
-                            label={
-                              playbackStatus
-                                ? formatLabel(playbackStatus.status)
-                                : playbackError
-                                  ? "Unavailable"
-                                  : "Loading"
-                            }
-                            tone={playbackStatusTone(playbackStatus)}
-                          />
-                        </div>
-                        <div
-                          className={`live-view-frame ${
-                            hasRealLivePlayback ? "is-primary-stream" : ""
-                          }`}
-                        >
-                          {canRenderLocalCameraBridge && localCameraBridgeUrl ? (
-                            localCameraLiveViewOpen ? (
-                              <img
-                                alt="Local camera live stream"
-                                key={localCameraBridgeUrl}
-                                onError={() =>
-                                  setLivePlaybackErrors((current) => ({
-                                    ...current,
-                                    [stream.id]: livePlaybackFailureMessage(playbackStatus),
-                                  }))
-                                }
-                                onLoad={() =>
-                                  setLivePlaybackErrors((current) => ({
-                                    ...current,
-                                    [stream.id]: "",
-                                  }))
-                                }
-                                src={localCameraBridgeUrl}
-                              />
-                            ) : (
-                              <div className="live-view-placeholder">
-                                <strong>Local USB camera ready</strong>
-                                <span>
-                                  Open Live view to start the local bridge request for this
-                                  stream.
-                                </span>
-                                <button
-                                  className="primary-action"
-                                  onClick={() => openLiveView(stream.id)}
-                                  type="button"
-                                >
-                                  Open Live view
-                                </button>
-                              </div>
-                            )
-                          ) : canRenderRtspBridge && rtspBridgeUrl ? (
-                            <img
-                              alt="RTSP bridge live camera stream"
-                              key={rtspBridgeUrl}
-                              onError={() =>
-                                setLivePlaybackErrors((current) => ({
-                                  ...current,
-                                  [stream.id]: livePlaybackFailureMessage(playbackStatus),
-                                }))
-                              }
-                              onLoad={() =>
-                                setLivePlaybackErrors((current) => ({
-                                  ...current,
-                                  [stream.id]: "",
-                                }))
-                              }
-                              src={rtspBridgeUrl}
-                            />
-                          ) : canRenderBrowserLiveView && playbackStatus?.preview_url ? (
-                            playbackStatus.playback_kind === "mjpeg" ? (
-                              <img
-                                alt="Live camera stream"
-                                key={playbackStatus.preview_url}
-                                onError={() =>
-                                  setLivePlaybackErrors((current) => ({
-                                    ...current,
-                                    [stream.id]: livePlaybackFailureMessage(playbackStatus),
-                                  }))
-                                }
-                                onLoad={() =>
-                                  setLivePlaybackErrors((current) => ({
-                                    ...current,
-                                    [stream.id]: "",
-                                  }))
-                                }
-                                src={playbackStatus.preview_url}
-                              />
-                            ) : (
-                              <video
-                                controls
-                                key={playbackStatus.preview_url}
-                                muted
-                                onCanPlay={() =>
-                                  setLivePlaybackErrors((current) => ({
-                                    ...current,
-                                    [stream.id]: "",
-                                  }))
-                                }
-                                onError={() =>
-                                  setLivePlaybackErrors((current) => ({
-                                    ...current,
-                                    [stream.id]: livePlaybackFailureMessage(playbackStatus),
-                                  }))
-                                }
-                                playsInline
-                                src={playbackStatus.preview_url}
-                              />
-                            )
-                          ) : (
-                            <div className="live-view-placeholder">
-                              <strong>{playbackError ?? liveViewFallbackMessage(playbackStatus)}</strong>
-                              {playbackStatus?.setup_hint ? (
-                                <span>{playbackStatus.setup_hint}</span>
-                              ) : null}
-                            </div>
-                          )}
-                        </div>
-                        {canRenderLocalCameraBridge ? (
-                          <span className="live-view-hint">
-                            If direct ffmpeg tests report "Device or resource busy," stop Live
-                            view first.
-                          </span>
-                        ) : null}
-                        <div className="live-view-meta">
-                          <span>
-                            Type:{" "}
-                            {playbackStatus?.live_stream_type
-                              ? formatLabel(playbackStatus.live_stream_type)
-                              : "Unknown"}
-                          </span>
-                          {playbackStatus?.rtsp_bridge_required ? (
-                            <span>
-                              RTSP bridge:{" "}
-                              {playbackStatus.rtsp_bridge_status
-                                ? formatLabel(playbackStatus.rtsp_bridge_status)
-                                : "Unknown"}
-                            </span>
-                          ) : null}
-                          {playbackStatus?.local_camera_status ? (
-                            <span>
-                              Local camera:{" "}
-                              {formatLabel(playbackStatus.local_camera_status)}
-                            </span>
-                          ) : null}
-                          {playbackStatus?.local_camera_device_display ? (
-                            <span>Device: {playbackStatus.local_camera_device_display}</span>
-                          ) : null}
-                          {playbackStatus?.playback_kind !== "local_usb" ? (
-                            <span>
-                              Stream URL:{" "}
-                              {playbackStatus?.live_stream_url_display ?? "Not configured"}
-                            </span>
-                          ) : null}
-                        </div>
-                        {livePlaybackError ? (
-                          <div className="zone-error">{livePlaybackError}</div>
-                        ) : null}
-                        {playbackError ? <div className="zone-error">{playbackError}</div> : null}
-                        <div className="detail-actions">
-                          {canRenderLocalCameraBridge && localCameraLiveViewOpen ? (
-                            <>
-                              <button
-                                className="secondary-action"
-                                onClick={() => stopLiveView(stream.id)}
-                                type="button"
-                              >
-                                Stop Live view
-                              </button>
-                              <button
-                                className="secondary-action"
-                                onClick={() => refreshLiveStream(stream.id)}
-                                type="button"
-                              >
-                                Refresh stream
-                              </button>
-                            </>
-                          ) : null}
-                          <button
-                            className="secondary-action"
-                            onClick={() => void refreshStreamPlaybackStatus(stream.id)}
-                            type="button"
-                          >
-                            Refresh status
-                          </button>
-                        </div>
                       </div>
                       <p>{reviewStream?.message ?? stream.description}</p>
                       <div className="source-connection-meta">
@@ -5835,6 +5513,26 @@ export function StreamsPage({
                               : "Unavailable"
                             : "Available nearby"}
                         </span>
+                        {playbackStatus?.local_camera_device_display ? (
+                          <span>Device: {playbackStatus.local_camera_device_display}</span>
+                        ) : null}
+                      </div>
+                      {playbackError ? <div className="zone-error">{playbackError}</div> : null}
+                      <div className="detail-actions">
+                        <button
+                          className="primary-action"
+                          onClick={() => onOpenStream(stream.id)}
+                          type="button"
+                        >
+                          Open Stream Detail
+                        </button>
+                        <button
+                          className="secondary-action"
+                          onClick={() => void refreshStreamPlaybackStatus(stream.id)}
+                          type="button"
+                        >
+                          Refresh status
+                        </button>
                       </div>
                       <div className="source-health-panel">
                         <div className="item-title-row">

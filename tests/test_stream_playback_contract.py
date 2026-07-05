@@ -495,6 +495,17 @@ def test_local_camera_multipart_generator_emits_two_frames_and_stops_process() -
     assert fake_process.killed is False
 
 
+def test_local_camera_multipart_generator_cleans_up_when_no_frames_arrive() -> None:
+    fake_process = FakeFfmpegProcess([b"not-a-jpeg-frame"])
+
+    chunks = list(local_camera_bridge.iter_multipart_mjpeg(fake_process))
+
+    assert chunks == []
+    assert fake_process.terminated is True
+    assert fake_process.waited is True
+    assert fake_process.killed is False
+
+
 async def test_local_usb_playback_reports_not_configured_without_device(
     client: httpx.AsyncClient,
 ) -> None:
@@ -689,22 +700,19 @@ async def test_playback_status_does_not_start_local_camera_bridge_process(
 def test_local_camera_command_uses_list_args_and_safe_device_validation() -> None:
     command = local_camera_bridge.build_local_camera_mjpeg_command("/dev/video0")
 
-    assert command[:13] == [
+    assert command[:6] == [
         "ffmpeg",
         "-hide_banner",
         "-loglevel",
         "error",
         "-f",
         "v4l2",
-        "-input_format",
-        "mjpeg",
-        "-video_size",
-        "640x480",
-        "-framerate",
-        "10",
-        "-i",
     ]
+    assert "-i" in command
     assert "/dev/video0" in command
+    assert "-input_format" not in command
+    assert "-video_size" not in command
+    assert "-framerate" not in command
     assert "shell=True" not in command
     assert local_camera_bridge.validate_local_camera_device("/dev/video0") is True
     assert local_camera_bridge.validate_local_camera_device("/dev/video12") is True
@@ -717,6 +725,20 @@ def test_local_camera_command_uses_list_args_and_safe_device_validation() -> Non
         )
         == "unsupported_platform"
     )
+
+
+def test_local_camera_command_allows_explicit_input_options() -> None:
+    command = local_camera_bridge.build_local_camera_mjpeg_command(
+        "/dev/video1",
+        input_format="mjpeg",
+        video_size="640x480",
+        input_frame_rate=10,
+    )
+
+    assert command[command.index("-input_format") + 1] == "mjpeg"
+    assert command[command.index("-video_size") + 1] == "640x480"
+    assert command[command.index("-framerate") + 1] == "10"
+    assert "/dev/video1" in command
 
 
 async def test_external_url_unknown_live_stream_type_reports_unsupported(

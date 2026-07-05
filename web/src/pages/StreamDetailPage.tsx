@@ -51,14 +51,75 @@ interface ZoneDraft {
   is_active: boolean;
 }
 
+type LiveViewState = "idle" | "opening" | "streaming" | "failed" | "no_frames";
+
 function playbackTone(status: StreamPlaybackStatus["status"]): "good" | "review" | "quiet" {
-  if (status === "demo") {
+  if (status === "demo" || status === "live_ready") {
     return "good";
   }
-  if (status === "not_configured" || status === "unavailable") {
+  if (
+    status === "not_configured" ||
+    status === "unavailable" ||
+    status === "playback_error" ||
+    status === "unsupported_rtsp_bridge_required" ||
+    status === "unsupported_stream_type"
+  ) {
     return "review";
   }
   return "quiet";
+}
+
+function isBrowserPlayablePlayback(status?: StreamPlaybackStatus | null): boolean {
+  return (
+    status?.status === "live_ready" &&
+    Boolean(status.preview_url) &&
+    ["mjpeg", "browser_video", "hls"].includes(status.playback_kind)
+  );
+}
+
+function isRtspBridgePlayback(status?: StreamPlaybackStatus | null): boolean {
+  return (
+    status?.status === "live_ready" &&
+    status.playback_kind === "rtsp" &&
+    Boolean(status.rtsp_bridge_available)
+  );
+}
+
+function isLocalCameraBridgePlayback(status?: StreamPlaybackStatus | null): boolean {
+  return (
+    status?.status === "live_ready" &&
+    status.playback_kind === "local_usb" &&
+    Boolean(status.local_camera_bridge_available)
+  );
+}
+
+function hasRealLivePlayback(status?: StreamPlaybackStatus | null): boolean {
+  return (
+    isBrowserPlayablePlayback(status) ||
+    isRtspBridgePlayback(status) ||
+    isLocalCameraBridgePlayback(status)
+  );
+}
+
+function liveStreamUrl(playback: StreamPlaybackStatus, streamId: string): string | null {
+  if (isLocalCameraBridgePlayback(playback)) {
+    return apiClient.localCameraMjpegBridgeUrl(streamId);
+  }
+  if (isRtspBridgePlayback(playback)) {
+    return apiClient.rtspMjpegBridgeUrl(streamId);
+  }
+  if (isBrowserPlayablePlayback(playback)) {
+    return playback.preview_url ?? null;
+  }
+  return null;
+}
+
+function localTroubleshootingText(playback: StreamPlaybackStatus): string {
+  const device = playback.local_camera_device_display ?? "/dev/video0";
+  return (
+    `Stop other camera apps, check ${device}, try /dev/video1 in Source setup if needed, ` +
+    "and stop Live view before direct ffmpeg tests."
+  );
 }
 
 function rectanglePolygon(start: Point, end: Point): Point[] {
@@ -98,6 +159,10 @@ export function StreamDetailPage({
   const [zoneMessage, setZoneMessage] = useState<string | null>(null);
   const [zoneError, setZoneError] = useState<string | null>(null);
   const [isSavingZone, setIsSavingZone] = useState(false);
+  const [liveViewOpen, setLiveViewOpen] = useState(false);
+  const [liveViewState, setLiveViewState] = useState<LiveViewState>("idle");
+  const [liveViewReloadToken, setLiveViewReloadToken] = useState(0);
+  const [liveViewError, setLiveViewError] = useState<string | null>(null);
 
   const selectedZone = detail?.zones.find((zone) => zone.id === selectedZoneId) ?? null;
 
@@ -112,6 +177,10 @@ export function StreamDetailPage({
       setDrawMode(false);
       setDraftPolygon(null);
       setDrawStart(null);
+      setLiveViewOpen(false);
+      setLiveViewState("idle");
+      setLiveViewReloadToken(0);
+      setLiveViewError(null);
       try {
         const stream = await apiClient.getStream(streamId);
         const [playback, setupReview, zones, events] = await Promise.all([
@@ -152,6 +221,26 @@ export function StreamDetailPage({
   }, [streamId]);
 
   useEffect(() => {
+    if (!detail || hasRealLivePlayback(detail.playback)) {
+      return;
+    }
+    setLiveViewOpen(false);
+    setLiveViewState("idle");
+    setLiveViewError(null);
+  }, [detail]);
+
+  useEffect(() => {
+    if (!liveViewOpen || liveViewState !== "opening") {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setLiveViewState((current) => (current === "opening" ? "no_frames" : current));
+      setLiveViewError("Camera opened but no frames received.");
+    }, 7000);
+    return () => window.clearTimeout(timeout);
+  }, [liveViewOpen, liveViewReloadToken, liveViewState]);
+
+  useEffect(() => {
     if (!detail) {
       return;
     }
@@ -181,6 +270,29 @@ export function StreamDetailPage({
 
   function replaceZones(zones: Zone[]) {
     setDetail((current) => (current ? { ...current, zones } : current));
+  }
+
+  function openLiveView() {
+    setLiveViewOpen(true);
+    setLiveViewState("opening");
+    setLiveViewError(null);
+    setLiveViewReloadToken((current) => current + 1);
+  }
+
+  function stopLiveView() {
+    setLiveViewOpen(false);
+    setLiveViewState("idle");
+    setLiveViewError(null);
+  }
+
+  function refreshLiveView() {
+    if (!liveViewOpen) {
+      openLiveView();
+      return;
+    }
+    setLiveViewState("opening");
+    setLiveViewError(null);
+    setLiveViewReloadToken((current) => current + 1);
   }
 
   async function handleSaveSelectedZone(event: FormEvent<HTMLFormElement>) {
@@ -313,6 +425,26 @@ export function StreamDetailPage({
   const isManualMediaStream =
     detail.setupReview?.provider_key === "manual_media" &&
     detail.setupReview.readiness_level === "metadata_ready";
+  const realLivePlayback = hasRealLivePlayback(detail.playback);
+  const liveUrl = liveStreamUrl(detail.playback, detail.stream.id);
+  const liveElementKey = `${liveUrl ?? "no-live-url"}-${liveViewReloadToken}`;
+  const liveViewStatusLabel =
+    liveViewState === "streaming"
+      ? "Streaming"
+      : liveViewState === "opening"
+        ? "Opening"
+        : liveViewState === "failed"
+          ? "Failed"
+          : liveViewState === "no_frames"
+            ? "No frames"
+            : "Ready";
+  const liveViewTone =
+    liveViewState === "failed" || liveViewState === "no_frames"
+      ? "review"
+      : liveViewState === "streaming"
+        ? "good"
+        : "quiet";
+  const sourceDisplay = detail.setupReview?.provider_display_name ?? "Source";
 
   return (
     <div className="page-stack">
@@ -345,81 +477,168 @@ export function StreamDetailPage({
         </div>
       </div>
 
-      <StreamPanel
-        stream={detail.stream}
-        zones={detail.zones}
-        events={detail.events}
-        selectedZoneId={selectedZoneId}
-        drawMode={drawMode}
-        draftPolygon={draftPolygon}
-        onSelectZone={setSelectedZoneId}
-        onDrawStart={handleDrawStart}
-        onDrawMove={handleDrawMove}
-        onDrawEnd={handleDrawEnd}
-      />
-
-      <section className="panel playback-status-panel">
-        <div className="section-heading">
-          <div>
-            <h2>Playback and Source context</h2>
-            <span className="meta-text">{detail.playback.message}</span>
-          </div>
-          <StatusPill
-            label={formatLabel(detail.playback.playback_kind)}
-            tone={playbackTone(detail.playback.status)}
-          />
-        </div>
-        <div className="playback-status-grid">
-          <div>
-            <span>Status</span>
-            <strong>{formatLabel(detail.playback.status)}</strong>
-          </div>
-          <div>
-            <span>Live playback</span>
-            <strong>{detail.playback.supports_live_playback ? "Supported" : "Not available"}</strong>
-          </div>
-          <div>
-            <span>Zone editing</span>
-            <strong>{detail.playback.supports_zone_editing ? "Available" : "Unavailable"}</strong>
-          </div>
-          <div>
-            <span>Source adapter</span>
-            <strong>{detail.playback.adapter_key ? formatLabel(detail.playback.adapter_key) : "None"}</strong>
-          </div>
-          {detail.setupReview ? (
+      {realLivePlayback ? (
+        <section className="stream-live-hero" aria-label={`${detail.stream.name} live stream`}>
+          <div className="stream-live-toolbar">
             <div>
-              <span>Source setup</span>
-              <strong>{formatLabel(detail.setupReview.readiness_level)}</strong>
-            </div>
-          ) : null}
-        </div>
-        {detail.setupReview ? (
-          <div className="stream-source-context">
-            <div>
-              <strong>{detail.setupReview.provider_display_name}</strong>
+              <strong>Live camera stream</strong>
               <span>
-                {isManualMediaStream
-                  ? "This Stream can be used as context for manual media imports and zone review."
-                  : detail.setupReview.next_step}
+                {detail.playback.message} Zones remain below until real-video overlay alignment is
+                implemented.
               </span>
             </div>
-            {isManualMediaStream ? (
-              <button className="secondary-action" onClick={onOpenImport} type="button">
-                Import media
-              </button>
-            ) : null}
+            <div className="stream-live-badges">
+              <StatusPill label={formatLabel(detail.playback.status)} tone="good" />
+              <StatusPill label={formatLabel(detail.playback.playback_kind)} tone="quiet" />
+              {detail.playback.local_camera_device_display ? (
+                <StatusPill label={detail.playback.local_camera_device_display} tone="quiet" />
+              ) : null}
+              <StatusPill label={liveViewStatusLabel} tone={liveViewTone} />
+            </div>
           </div>
-        ) : detail.playback.setup_hint ? (
-          <p className="playback-setup-hint">{detail.playback.setup_hint}</p>
+          <div className="stream-live-frame">
+            {liveViewOpen && liveUrl ? (
+              detail.playback.playback_kind === "browser_video" ||
+              detail.playback.playback_kind === "hls" ? (
+                <video
+                  controls
+                  key={liveElementKey}
+                  muted
+                  onCanPlay={() => {
+                    setLiveViewState("streaming");
+                    setLiveViewError(null);
+                  }}
+                  onError={() => {
+                    setLiveViewState("failed");
+                    setLiveViewError("Live camera failed to load.");
+                  }}
+                  playsInline
+                  src={liveUrl}
+                />
+              ) : (
+                <img
+                  alt={`${detail.stream.name} live camera stream`}
+                  key={liveElementKey}
+                  onError={() => {
+                    setLiveViewState("failed");
+                    setLiveViewError("Live camera failed to load.");
+                  }}
+                  onLoad={() => {
+                    setLiveViewState("streaming");
+                    setLiveViewError(null);
+                  }}
+                  src={
+                    detail.playback.playback_kind === "local_usb" ||
+                    detail.playback.playback_kind === "rtsp"
+                      ? `${liveUrl}${liveUrl.includes("?") ? "&" : "?"}reload=${liveViewReloadToken}`
+                      : liveUrl
+                  }
+                />
+              )
+            ) : (
+              <div className="stream-live-placeholder">
+                <strong>{liveUrl ? "Live camera ready" : "Live camera unavailable"}</strong>
+                <span>
+                  {liveUrl
+                    ? "Open Live view to start the stream request."
+                    : detail.playback.setup_hint ?? detail.playback.message}
+                </span>
+              </div>
+            )}
+          </div>
+          {liveViewState === "opening" ? (
+            <div className="stream-live-message">Opening camera...</div>
+          ) : null}
+          {liveViewError ? (
+            <div className="stream-live-message is-error">
+              <strong>{liveViewError}</strong>
+              {detail.playback.playback_kind === "local_usb" ? (
+                <span>{localTroubleshootingText(detail.playback)}</span>
+              ) : null}
+            </div>
+          ) : detail.playback.playback_kind === "local_usb" ? (
+            <span className="stream-live-hint">
+              {localTroubleshootingText(detail.playback)}
+            </span>
+          ) : null}
+          <div className="detail-actions stream-live-actions">
+            {liveViewOpen ? (
+              <>
+                <button className="secondary-action" onClick={stopLiveView} type="button">
+                  Stop Live view
+                </button>
+                <button className="secondary-action" onClick={refreshLiveView} type="button">
+                  Refresh stream
+                </button>
+              </>
+            ) : (
+              <button
+                className="primary-action"
+                disabled={!liveUrl}
+                onClick={openLiveView}
+                type="button"
+              >
+                Open Live view
+              </button>
+            )}
+          </div>
+        </section>
+      ) : (
+        <StreamPanel
+          stream={detail.stream}
+          zones={detail.zones}
+          events={detail.events}
+          selectedZoneId={selectedZoneId}
+          drawMode={drawMode}
+          draftPolygon={draftPolygon}
+          onSelectZone={setSelectedZoneId}
+          onDrawStart={handleDrawStart}
+          onDrawMove={handleDrawMove}
+          onDrawEnd={handleDrawEnd}
+        />
+      )}
+
+      <div className="stream-context-strip">
+        <span>
+          <strong>Playback</strong> {formatLabel(detail.playback.playback_kind)}
+        </span>
+        <span>
+          <strong>Status</strong> {formatLabel(detail.playback.status)}
+        </span>
+        <span>
+          <strong>Source</strong> {sourceDisplay}
+        </span>
+        <span>
+          <strong>Zones</strong>{" "}
+          {detail.playback.supports_zone_editing ? "Available nearby" : "Unavailable"}
+        </span>
+        {detail.playback.live_stream_url_display ? (
+          <span>
+            <strong>Stream URL</strong> {detail.playback.live_stream_url_display}
+          </span>
         ) : null}
-      </section>
+        {isManualMediaStream ? (
+          <button className="secondary-action" onClick={onOpenImport} type="button">
+            Import media
+          </button>
+        ) : null}
+      </div>
+      <span className="meta-text">{detail.setupReview?.next_step ?? detail.playback.setup_hint}</span>
 
       <section className="split-grid">
         <div className="panel">
           <div className="section-heading">
             <h2>Zones</h2>
-            <span className="meta-text">User-authored context for outdoor activity</span>
-            <button className="secondary-action" onClick={drawMode ? cancelDrawMode : startDrawMode}>
+            <span className="meta-text">
+              {realLivePlayback
+                ? "Zone controls stay with this Stream; drawing over real video is not aligned yet."
+                : "User-authored context for outdoor activity"}
+            </span>
+            <button
+              className="secondary-action"
+              disabled={realLivePlayback}
+              onClick={drawMode ? cancelDrawMode : startDrawMode}
+            >
               {drawMode ? "Cancel draw" : "Draw new zone"}
             </button>
           </div>
