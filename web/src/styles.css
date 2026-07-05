@@ -1017,6 +1017,10 @@ button {
   background: #ffffff;
 }
 
+.source-stream-card.has-primary-live-stream {
+  grid-column: 1 / -1;
+}
+
 .source-stream-card h4,
 .source-stream-card p {
   margin: 0;
@@ -1038,6 +1042,11 @@ button {
   padding: 12px 0;
 }
 
+.live-view-panel.primary-stream-surface {
+  border-top: 0;
+  padding-top: 4px;
+}
+
 .live-view-frame {
   display: grid;
   min-height: 220px;
@@ -1046,6 +1055,10 @@ button {
   border-radius: 8px;
   background: #151d19;
   aspect-ratio: 16 / 9;
+}
+
+.live-view-frame.is-primary-stream {
+  min-height: 360px;
 }
 
 .live-view-frame img,
@@ -1067,6 +1080,15 @@ button {
 .live-view-placeholder span {
   color: #c9d6cf;
   font-size: 0.9rem;
+}
+
+.live-view-placeholder button {
+  justify-self: center;
+}
+
+.live-view-hint {
+  color: #5c6a61;
+  font-size: 0.88rem;
 }
 
 .live-view-meta {
@@ -5236,6 +5258,10 @@ button {
 
   .stream-scene {
     min-height: 260px;
+  }
+
+  .live-view-frame.is-primary-stream {
+    min-height: 240px;
   }
 
   .quality-issue-card {

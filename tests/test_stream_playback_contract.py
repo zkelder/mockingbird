@@ -76,6 +76,7 @@ async def product_counts(client: httpx.AsyncClient) -> dict[str, int]:
     responses = {
         "events": await client.get("/api/events"),
         "visits": await client.get("/api/visits"),
+        "media_assets": await client.get("/api/media"),
         "review_labels": await client.get("/api/review-labels"),
         "motion_evidence": await client.get("/api/motion/evidence"),
         "species_suggestions": await client.get("/api/species-suggestions"),
@@ -87,6 +88,7 @@ async def product_counts(client: httpx.AsyncClient) -> dict[str, int]:
     return {
         "events": len(responses["events"].json()),
         "visits": len(responses["visits"].json()),
+        "media_assets": len(responses["media_assets"].json()),
         "review_labels": len(responses["review_labels"].json()),
         "motion_evidence": len(responses["motion_evidence"].json()["motion_evidence"]),
         "species_suggestions": len(responses["species_suggestions"].json()["species_suggestions"]),
@@ -471,6 +473,28 @@ def test_rtsp_bridge_multipart_generator_stops_process() -> None:
     assert fake_process.killed is False
 
 
+def test_local_camera_multipart_generator_emits_two_frames_and_stops_process() -> None:
+    fake_process = FakeFfmpegProcess(
+        [
+            b"noise\xff\xd8frame-one\xff\xd9middle\xff\xd8frame",
+            b"-two\xff\xd9tail",
+        ]
+    )
+
+    chunks = list(local_camera_bridge.iter_multipart_mjpeg(fake_process))
+
+    assert len(chunks) == 2
+    assert chunks[0].startswith(b"--frame\r\nContent-Type: image/jpeg")
+    assert b"Content-Length: " in chunks[0]
+    assert b"\xff\xd8frame-one\xff\xd9" in chunks[0]
+    assert chunks[0].endswith(b"\r\n")
+    assert chunks[1].startswith(b"--frame\r\nContent-Type: image/jpeg")
+    assert b"\xff\xd8frame-two\xff\xd9" in chunks[1]
+    assert fake_process.terminated is True
+    assert fake_process.waited is True
+    assert fake_process.killed is False
+
+
 async def test_local_usb_playback_reports_not_configured_without_device(
     client: httpx.AsyncClient,
 ) -> None:
@@ -629,8 +653,12 @@ async def test_local_camera_bridge_endpoint_streams_mocked_mjpeg_without_creatin
     response = await get_stream_local_mjpeg_bridge(STREAM_ID)
 
     assert response.status_code == 200
-    assert response.media_type.startswith("multipart/x-mixed-replace")
-    assert response.headers["content-type"].startswith("multipart/x-mixed-replace")
+    assert response.media_type == (
+        f"multipart/x-mixed-replace; boundary={local_camera_bridge.MJPEG_BOUNDARY}"
+    )
+    assert response.headers["content-type"] == (
+        f"multipart/x-mixed-replace; boundary={local_camera_bridge.MJPEG_BOUNDARY}"
+    )
     assert started_devices == ["/dev/video0"]
     assert await product_counts(client) == before
 
