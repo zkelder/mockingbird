@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
+  DatasetExport,
   FolderImportEvidenceBatchCreateResponse,
   FolderImportEvidenceBatchDryRunResponse,
   FolderImportEvidenceBatchDryRunRequest,
@@ -27,6 +28,7 @@ import type {
   MotionEvidencePromoteResponse,
   Point,
   ReviewLabel,
+  ReviewQueueItem,
   SavedMediaRetentionItem,
   SavedMediaRetentionReportResponse,
   SavedPreviewMotionEvidenceResponse,
@@ -47,6 +49,8 @@ import { formatDateTime, formatLabel } from "../utils";
 interface StreamsPageProps {
   streams: Stream[];
   sources: CameraSource[];
+  reviewQueue: ReviewQueueItem[];
+  datasetExports: DatasetExport[];
   onOpenImport: () => void;
   onOpenStream: (streamId: string) => void;
   onOpenMotionEvidence: (motionEvidenceId: string) => void;
@@ -424,6 +428,29 @@ interface ActivityAreaZoneDraft {
   isSaving: boolean;
   message?: string | null;
   error?: string | null;
+}
+
+type FieldTestChecklistStatus = "ready" | "needs_action" | "warning" | "not_available";
+type FieldTestOverallLabel =
+  | "Ready to test monitoring"
+  | "Needs setup"
+  | "Needs snapshots"
+  | "Needs motion check"
+  | "Needs Zone for review handoff"
+  | "Ready for Review";
+
+interface FieldTestChecklistItem {
+  key: string;
+  label: string;
+  status: FieldTestChecklistStatus;
+  explanation: string;
+  nextAction: string;
+}
+
+interface FieldTestReadiness {
+  label: FieldTestOverallLabel;
+  nextAction: string;
+  items: FieldTestChecklistItem[];
 }
 
 interface MediaLifecycleSummary {
@@ -1082,6 +1109,320 @@ function monitorReviewHandoffText(status?: SourceMonitorStatusResponse | null): 
   return "No review activity yet";
 }
 
+function fieldTestStatusLabel(status: FieldTestChecklistStatus): string {
+  switch (status) {
+    case "ready":
+      return "Ready";
+    case "needs_action":
+      return "Needs action";
+    case "warning":
+      return "Warning";
+    case "not_available":
+      return "Not available";
+    default:
+      return "Needs action";
+  }
+}
+
+function fieldTestStatusTone(status: FieldTestChecklistStatus): "good" | "review" | "quiet" {
+  if (status === "ready") {
+    return "good";
+  }
+  if (status === "needs_action" || status === "warning") {
+    return "review";
+  }
+  return "quiet";
+}
+
+function fieldTestOverallTone(label: FieldTestOverallLabel): "good" | "review" | "quiet" {
+  if (label === "Ready to test monitoring" || label === "Ready for Review") {
+    return "good";
+  }
+  if (label === "Needs setup" || label === "Needs Zone for review handoff") {
+    return "review";
+  }
+  return "quiet";
+}
+
+function buildFieldTestReadiness(params: {
+  isExternalUrlProvider: boolean;
+  sourceConfigured: boolean;
+  snapshotTest?: SourceHealthSnapshotState;
+  lastCapture?: SourceHealthCaptureState;
+  savedImageCount: number;
+  motionState: StreamMotionCheckState;
+  reviewableZoneCount: number;
+  blockedZoneCount: number;
+  hasMarkableActivityArea: boolean;
+  monitorStatus?: SourceMonitorStatusResponse | null;
+  canStartMonitoring: boolean;
+  monitorStartBlockReason?: string | null;
+  reviewQueueCount: number;
+  reviewLabelCount: number;
+  exportCount: number;
+}): FieldTestReadiness {
+  const motionResult = params.motionState.result ?? null;
+  const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
+  const monitorReviewActivityEvidenceId =
+    params.monitorStatus?.review_activity_motion_evidence_id ?? null;
+  const hasReviewActivity =
+    Boolean(motionCreatedEvidence) ||
+    Boolean(monitorReviewActivityEvidenceId) ||
+    params.reviewQueueCount > 0;
+  const canCreateReviewActivity =
+    Boolean(
+      motionResult?.activity_detected &&
+        motionResult.can_create_review_activity &&
+        motionResult.should_create_review_activity,
+    ) || Boolean(params.monitorStatus?.review_activity_available);
+  const needsNamedZone =
+    params.hasMarkableActivityArea ||
+    motionResult?.creation_skipped_reason === "auto_region_review_activity_requires_user_zone" ||
+    params.monitorStatus?.review_activity_unavailable_reason ===
+      "auto_region_requires_named_zone";
+  const hasNamedZone = params.reviewableZoneCount > 0;
+  const snapshotReady = params.snapshotTest?.status === "success";
+  const captureReady = params.lastCapture?.status === "success" || params.savedImageCount > 0;
+  const motionReady = Boolean(motionResult) && !params.motionState.error;
+  const monitoringReady =
+    params.isExternalUrlProvider &&
+    (params.canStartMonitoring || monitorIsActive(params.monitorStatus));
+
+  const items: FieldTestChecklistItem[] = [
+    {
+      key: "source",
+      label: "Source configured",
+      status: params.sourceConfigured ? "ready" : "needs_action",
+      explanation: params.sourceConfigured
+        ? "Camera setup metadata is ready for explicit checks."
+        : params.isExternalUrlProvider
+          ? "Complete the camera source setup before testing."
+          : "Select or configure an external snapshot camera source.",
+      nextAction: params.sourceConfigured ? "Test snapshot" : "Configure source",
+    },
+    {
+      key: "snapshot",
+      label: "Snapshot test passed",
+      status: snapshotReady
+        ? "ready"
+        : params.snapshotTest?.status === "failure"
+          ? "warning"
+          : "needs_action",
+      explanation: snapshotReady
+        ? "Last snapshot test succeeded."
+        : params.snapshotTest?.status === "failure"
+          ? "Last snapshot test failed; check camera setup."
+          : "Run one explicit snapshot test for this camera.",
+      nextAction: snapshotReady ? "Capture snapshot" : "Test snapshot",
+    },
+    {
+      key: "capture",
+      label: "Capture works",
+      status: captureReady
+        ? "ready"
+        : params.lastCapture?.status === "failure"
+          ? "warning"
+          : "needs_action",
+      explanation: captureReady
+        ? "At least one saved image is available for this Stream."
+        : params.lastCapture?.status === "failure"
+          ? "Last capture failed; test snapshot again before saving."
+          : "Save one snapshot under this camera/source.",
+      nextAction: captureReady ? "Capture another snapshot" : "Capture snapshot",
+    },
+    {
+      key: "saved-images",
+      label: "Saved images ready for motion",
+      status: params.savedImageCount >= 2 ? "ready" : "needs_action",
+      explanation:
+        params.savedImageCount >= 2
+          ? `${params.savedImageCount} saved images can feed Check motion.`
+          : `${params.savedImageCount} saved image${
+              params.savedImageCount === 1 ? "" : "s"
+            }; motion needs at least two.`,
+      nextAction: params.savedImageCount >= 2 ? "Check motion" : "Capture another snapshot",
+    },
+    {
+      key: "motion",
+      label: "Motion check works",
+      status: motionReady
+        ? "ready"
+        : params.motionState.error
+          ? "warning"
+          : params.savedImageCount >= 2
+            ? "needs_action"
+            : "not_available",
+      explanation: motionReady
+        ? motionResult?.activity_detected
+          ? "Check motion found outdoor activity."
+          : "Check motion ran and found no activity yet."
+        : params.motionState.error
+          ? "Last motion check failed."
+          : params.savedImageCount >= 2
+            ? "Run Check motion on saved images."
+            : "Capture two snapshots before checking motion.",
+      nextAction: motionReady ? "Start monitoring" : "Check motion",
+    },
+    {
+      key: "activity-area",
+      label: "Activity area available",
+      status:
+        motionResult?.activity_detected || hasNamedZone
+          ? "ready"
+          : motionReady
+            ? "warning"
+            : "needs_action",
+      explanation: motionResult?.activity_detected
+        ? motionResult.uses_auto_regions
+          ? "Automatic activity area detected from saved images."
+          : "Named Zone activity detected from saved images."
+        : hasNamedZone
+          ? "Named Zones are available for activity checks."
+          : motionReady
+            ? "No activity area found yet; capture/check again."
+            : "Run Check motion to find an activity area.",
+      nextAction: motionResult?.activity_detected ? "Review activity path" : "Check motion",
+    },
+    {
+      key: "zone",
+      label: "Named Zone available or can mark area",
+      status: hasNamedZone
+        ? "ready"
+        : params.hasMarkableActivityArea
+          ? "warning"
+          : params.blockedZoneCount > 0
+            ? "warning"
+            : "needs_action",
+      explanation: hasNamedZone
+        ? "Named Zone available for review activity."
+        : params.hasMarkableActivityArea
+          ? "Mark this activity area as a Zone to enable review activity."
+          : params.blockedZoneCount > 0
+            ? "Only privacy/ignore Zones are active for this Stream."
+            : "Add or mark a useful activity area as a Zone.",
+      nextAction: hasNamedZone ? "Start monitoring" : "Mark activity area",
+    },
+    {
+      key: "monitoring",
+      label: "Monitoring start/stop available",
+      status: monitorIsActive(params.monitorStatus)
+        ? "ready"
+        : params.canStartMonitoring
+          ? "ready"
+          : params.monitorStatus?.status === "error"
+            ? "warning"
+            : params.isExternalUrlProvider
+              ? "needs_action"
+              : "not_available",
+      explanation: monitorIsActive(params.monitorStatus)
+        ? "Monitoring is running for this Stream."
+        : params.canStartMonitoring
+          ? "Start monitoring is available for this Stream."
+          : params.monitorStatus?.status === "error"
+            ? "Monitoring needs attention before another run."
+            : params.monitorStartBlockReason ?? "Monitoring is not available for this provider.",
+      nextAction: monitorIsActive(params.monitorStatus) ? "Stop monitoring when done" : "Start monitoring",
+    },
+    {
+      key: "review",
+      label: "Review activity available when Zone-backed",
+      status: canCreateReviewActivity || hasReviewActivity
+        ? "ready"
+        : needsNamedZone
+          ? "warning"
+          : hasNamedZone
+            ? "needs_action"
+            : "needs_action",
+      explanation: canCreateReviewActivity
+        ? "Zone-backed activity can become review activity."
+        : hasReviewActivity
+          ? "Review activity exists and needs correction."
+          : needsNamedZone
+            ? "Mark this activity area as a Zone before review handoff."
+            : hasNamedZone
+              ? "Run monitoring or Check motion until Zone-backed activity appears."
+              : "Create a named Zone before review handoff.",
+      nextAction: canCreateReviewActivity
+        ? "Create review activity"
+        : hasReviewActivity
+          ? "Open Review"
+          : needsNamedZone
+            ? "Mark activity area"
+            : "Start monitoring",
+    },
+    {
+      key: "bird-log",
+      label: "Review correction can land in Bird Log",
+      status: params.reviewLabelCount > 0
+        ? "ready"
+        : hasReviewActivity
+          ? "needs_action"
+          : "needs_action",
+      explanation:
+        params.reviewLabelCount > 0
+          ? "At least one reviewed correction can appear in Bird Log."
+          : hasReviewActivity
+            ? "Correct a review item to populate Bird Log."
+            : "Create review activity, then correct it.",
+      nextAction: params.reviewLabelCount > 0 ? "Open Bird Log" : "Open Review",
+    },
+    {
+      key: "export",
+      label: "Export path available",
+      status: params.reviewLabelCount > 0 ? "ready" : "needs_action",
+      explanation:
+        params.reviewLabelCount > 0
+          ? params.exportCount > 0
+            ? "Reviewed data and export history are available."
+            : "Reviewed data is ready for export."
+          : "Exports use reviewed corrections; create one correction first.",
+      nextAction: params.reviewLabelCount > 0 ? "Export reviewed data" : "Correct label",
+    },
+  ];
+
+  let label: FieldTestOverallLabel = "Ready to test monitoring";
+  if (!params.sourceConfigured) {
+    label = "Needs setup";
+  } else if (!snapshotReady) {
+    label = "Needs snapshots";
+  } else if (params.savedImageCount < 2) {
+    label = "Needs snapshots";
+  } else if (!motionReady) {
+    label = "Needs motion check";
+  } else if (needsNamedZone && !hasNamedZone) {
+    label = "Needs Zone for review handoff";
+  } else if (canCreateReviewActivity || hasReviewActivity) {
+    label = "Ready for Review";
+  }
+
+  let nextAction = "Start monitoring";
+  if (!params.sourceConfigured) {
+    nextAction = "Configure source";
+  } else if (!snapshotReady) {
+    nextAction = "Test snapshot";
+  } else if (!captureReady) {
+    nextAction = "Capture snapshot";
+  } else if (params.savedImageCount < 2) {
+    nextAction = "Capture another snapshot";
+  } else if (!motionReady) {
+    nextAction = "Check motion";
+  } else if (needsNamedZone && !hasNamedZone) {
+    nextAction = "Mark activity area";
+  } else if (canCreateReviewActivity) {
+    nextAction = "Create review activity";
+  } else if (hasReviewActivity) {
+    nextAction = "Open Review";
+  } else if (!monitorIsActive(params.monitorStatus) && monitoringReady) {
+    nextAction = "Start monitoring";
+  } else if (params.reviewLabelCount > 0 && params.exportCount === 0) {
+    nextAction = "Export reviewed data";
+  } else if (params.reviewLabelCount > 0) {
+    nextAction = "Open Bird Log";
+  }
+
+  return { label, nextAction, items };
+}
+
 function buildMediaLifecycleSummary(
   asset: MediaAsset,
   detectionRuns: DetectionRun[],
@@ -1257,6 +1598,8 @@ function localDetectorReadinessCopy(adapter: ModelAdapter | null): string {
 export function StreamsPage({
   streams,
   sources,
+  reviewQueue,
+  datasetExports,
   onOpenImport,
   onOpenStream,
   onOpenMotionEvidence,
@@ -4928,6 +5271,30 @@ export function StreamsPage({
                         : null;
                   const canStartMonitoring =
                     !isMonitorLoading && !isMonitoring && !monitorStartBlockReason;
+                  const streamReviewQueueCount = reviewQueue.filter(
+                    (item) => item.stream_id === stream.id && item.review_status === "needs_review",
+                  ).length;
+                  const fieldTestReadiness = buildFieldTestReadiness({
+                    isExternalUrlProvider,
+                    sourceConfigured:
+                      isExternalUrlProvider &&
+                      !sourceNeedsSetup(selectedConnection, selectedSetupReview),
+                    snapshotTest: lastSnapshotTest,
+                    lastCapture,
+                    savedImageCount: allStreamImageAssets.length,
+                    motionState,
+                    reviewableZoneCount: reviewableTimelineZones.length,
+                    blockedZoneCount: blockedTimelineZoneCount,
+                    hasMarkableActivityArea: Boolean(
+                      motionMarkableActivityArea || monitorMarkableActivityArea,
+                    ),
+                    monitorStatus,
+                    canStartMonitoring,
+                    monitorStartBlockReason,
+                    reviewQueueCount: streamReviewQueueCount,
+                    reviewLabelCount: timelineReviewLabels.length,
+                    exportCount: datasetExports.length,
+                  });
                   return (
                     <section className="source-stream-card" key={stream.id}>
                       <div className="item-title-row">
@@ -5023,6 +5390,62 @@ export function StreamsPage({
                             ) : null}
                           </div>
                         </details>
+                      </div>
+                      <div className="field-test-readiness-panel">
+                        <div className="item-title-row">
+                          <div>
+                            <strong>Field test readiness</strong>
+                            <p className="meta-text">
+                              End-to-end checks for real camera monitoring validation.
+                            </p>
+                          </div>
+                          <StatusPill
+                            label={fieldTestReadiness.label}
+                            tone={fieldTestOverallTone(fieldTestReadiness.label)}
+                          />
+                        </div>
+                        <div className="field-test-next-step">
+                          <span>Next step</span>
+                          <strong>{fieldTestReadiness.nextAction}</strong>
+                        </div>
+                        <div className="field-test-checklist">
+                          {fieldTestReadiness.items.map((item) => (
+                            <div className="field-test-checklist-row" key={item.key}>
+                              <div>
+                                <strong>{item.label}</strong>
+                                <span className="meta-text">{item.explanation}</span>
+                                <span className="meta-text">Next: {item.nextAction}</span>
+                              </div>
+                              <StatusPill
+                                label={fieldTestStatusLabel(item.status)}
+                                tone={fieldTestStatusTone(item.status)}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="detail-actions">
+                          <button
+                            className="secondary-action"
+                            onClick={onOpenReview}
+                            type="button"
+                          >
+                            Open Review
+                          </button>
+                          <button
+                            className="secondary-action"
+                            onClick={onOpenBirdLog}
+                            type="button"
+                          >
+                            Bird Log
+                          </button>
+                          <button
+                            className="secondary-action"
+                            onClick={onOpenExports}
+                            type="button"
+                          >
+                            Export reviewed data
+                          </button>
+                        </div>
                       </div>
                       <div className="source-storage-guardrails-panel">
                         <div className="item-title-row">

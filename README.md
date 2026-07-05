@@ -109,6 +109,11 @@ as feeder, birdbath, ground, yard, driveway, ignore, or privacy. That creates a
 real stream Zone from the activity bounds so future checks can use the normal
 Zone-backed review path. Privacy and ignore Zones suppress future activity in
 those areas; no fake Zones, review truth, or exports are created automatically.
+Field test readiness on Cameras/Streams summarizes the real-camera validation
+path for a selected Stream: configure/select an `external_url` source, Test
+snapshot, Capture two snapshots, Check motion, mark an activity area as a Zone
+when needed, Start monitoring, create review activity, correct it, confirm Bird
+Log, and Export reviewed data.
 The same Stream cards now show Storage guardrails: saved image counts, storage
 warnings, and reviewed/export-linked media protection before and during
 monitoring. Snapshot watch remains an advanced bounded page-local test harness.

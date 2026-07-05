@@ -181,16 +181,21 @@ Dataset Exports.
       remains truth.
 - [ ] Open Streams and configure or select an external snapshot camera/source.
 - [ ] Confirm Source health / Camera status is visible for the selected Stream.
+- [ ] Confirm Field test readiness appears and shows the next step for this
+      Stream.
 - [ ] Confirm Storage guardrails shows saved image count and monitoring
       readiness.
 - [ ] Confirm Camera Monitoring shows Start monitoring, Stop monitoring, and
       Refresh status for the external snapshot Stream.
 - [ ] Click `Test snapshot`.
+- [ ] Confirm Field test readiness updates the Snapshot test row.
 - [ ] Confirm success/failure, timestamp, content type, and preview image when available.
 - [ ] Confirm Last snapshot test updates in Source health.
 - [ ] Click `Capture snapshot`.
 - [ ] Confirm the saved image appears under that camera/source and Stream.
 - [ ] Confirm Last capture and Saved images update in Source health.
+- [ ] Capture a second snapshot and confirm Field test readiness says saved
+      images are ready for motion.
 - [ ] Confirm Storage guardrails updates saved image count and motion readiness.
 - [ ] Click `Start monitoring`.
 - [ ] Confirm monitoring status becomes Starting or Monitoring.
@@ -222,6 +227,8 @@ Dataset Exports.
 - [ ] Confirm `New activity detected`, `Ongoing activity`, `Cooldown active`,
       or `No activity detected` appears with an Activity area and best snapshot
       context.
+- [ ] Confirm Field test readiness moves from Check motion toward Mark activity
+      area, Start monitoring, or Create review activity as appropriate.
 - [ ] Confirm Last motion check, Last activity, and next recommended action update
       in Source health.
 - [ ] Confirm Storage guardrails still shows manual next actions and no cleanup button.

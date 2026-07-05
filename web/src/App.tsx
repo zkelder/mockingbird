@@ -334,6 +334,8 @@ export default function App() {
         <StreamsPage
           streams={data.streams}
           sources={data.sources}
+          reviewQueue={data.reviewQueue}
+          datasetExports={data.exports}
           onOpenImport={() => setPage("import")}
           onOpenStream={openStream}
           onOpenMotionEvidence={openMotionEvidence}

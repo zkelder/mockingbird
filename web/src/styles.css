@@ -1037,6 +1037,58 @@ button {
   padding: 0 0 12px;
 }
 
+.field-test-readiness-panel {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid #e0e6dc;
+  padding: 0 0 12px;
+}
+
+.field-test-next-step {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #d7e3ec;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fbfd;
+}
+
+.field-test-next-step span {
+  color: #5f6f64;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.field-test-next-step strong {
+  color: #28352f;
+  text-align: right;
+}
+
+.field-test-checklist {
+  display: grid;
+  gap: 8px;
+}
+
+.field-test-checklist-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.field-test-checklist-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
 .snapshot-watch-panel {
   display: grid;
   gap: 10px;
@@ -5039,6 +5091,19 @@ button {
   .page-header-actions button,
   .hero-actions button {
     width: 100%;
+  }
+
+  .field-test-checklist-row {
+    grid-template-columns: 1fr;
+  }
+
+  .field-test-next-step {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .field-test-next-step strong {
+    text-align: left;
   }
 
   .metric-grid,

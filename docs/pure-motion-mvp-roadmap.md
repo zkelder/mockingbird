@@ -102,6 +102,9 @@ Already built or partially built:
 - named Zone fast path: automatic activity areas can be explicitly marked as
   real stream Zones for feeder, birdbath, ground, yard, driveway, ignore, or
   privacy follow-up behavior
+- field test readiness: Cameras/Streams summarizes setup, snapshot, capture,
+  motion, activity-area, Zone, monitoring, review, Bird Log, and export readiness
+  for one selected real camera/source path
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
@@ -287,6 +290,12 @@ Zone types unlock the future user-zone review activity path; privacy/ignore
 Zones suppress future activity in that area. No fake Zones, automatic review
 truth, exports, or model runs are created.
 
+Field Test Readiness 1 status: Cameras/Streams can summarize one selected
+camera/source path from setup through Test snapshot, Capture, Check motion,
+activity area/Zone handoff, Monitoring, Review, Bird Log, and Export. It is
+read-only guidance over existing state and starts no provider work, model runs,
+truth writes, or exports.
+
 It adds no RTSP, USB, Pi, cellular, live video, model runtime, automatic truth,
 or automatic export behavior.
 
@@ -367,6 +376,12 @@ activity candidate -> Review -> ReviewLabel truth -> Bird Log -> export
      explicit user action.
    - Use those Zones on the next Check motion or monitoring pass before review
      activity handoff.
+
+10. **Field Test Readiness 1**
+    - Status: one compact Cameras/Streams checklist points to the next manual
+      validation step for a real external snapshot camera path.
+    - It composes Source health, Storage guardrails, Check motion, Zones,
+      Monitoring, Review, Bird Log, and Export without new backend behavior.
 
 ## Guardrails
 
