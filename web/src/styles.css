@@ -3654,6 +3654,120 @@ button {
   overflow-wrap: anywhere;
 }
 
+.bird-log-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.bird-log-summary-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.bird-log-summary-card span,
+.bird-log-summary-card small {
+  color: #607067;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.bird-log-summary-card strong {
+  color: #1f3329;
+  font-size: 1.45rem;
+}
+
+.bird-log-filter-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(180px, 0.45fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.bird-log-filter-panel label {
+  display: grid;
+  gap: 6px;
+  color: #536258;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.bird-log-filter-panel input,
+.bird-log-filter-panel select {
+  min-height: 40px;
+  border: 1px solid #c8d2c3;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.bird-log-group-list,
+.bird-log-group,
+.bird-log-entry-list {
+  display: grid;
+  gap: 14px;
+}
+
+.bird-log-entry {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.36fr) minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.bird-log-entry-body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bird-log-entry-body h3,
+.bird-log-entry-body p {
+  margin: 0;
+}
+
+.bird-log-entry-body h3 {
+  overflow-wrap: anywhere;
+}
+
+.bird-log-label-row,
+.bird-log-image-placeholder {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #e1e8dd;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fbf5;
+}
+
+.bird-log-label-row span,
+.bird-log-label-row small,
+.bird-log-image-placeholder span {
+  color: #607067;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.bird-log-label-row strong {
+  color: #20352a;
+  overflow-wrap: anywhere;
+}
+
+.bird-log-image-placeholder {
+  min-height: 160px;
+  place-content: center;
+  text-align: center;
+}
+
 .queue-media-block {
   max-width: 540px;
 }
@@ -4621,6 +4735,8 @@ button {
   }
 
   .metric-grid,
+  .bird-log-summary-grid,
+  .bird-log-filter-panel,
   .case-summary-grid,
   .manifest-summary,
   .manifest-export-form,
@@ -4666,6 +4782,7 @@ button {
   }
 
   .retention-detail-grid,
+  .bird-log-entry,
   .retention-linkage-grid,
   .retention-dry-run-form,
   .retention-dry-run-summary,
@@ -4727,6 +4844,9 @@ button {
   }
 
   .metric-grid,
+  .bird-log-summary-grid,
+  .bird-log-filter-panel,
+  .bird-log-entry,
   .case-summary-grid,
   .manifest-summary,
   .species-export-summary,

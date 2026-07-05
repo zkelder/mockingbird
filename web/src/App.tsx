@@ -14,6 +14,7 @@ import type {
   Stream,
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { BirdLogPage } from "./pages/BirdLogPage";
 import { ClassifierManifestPage } from "./pages/ClassifierManifestPage";
 import { ClassifierReadinessPage } from "./pages/ClassifierReadinessPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -53,6 +54,7 @@ type Page =
   | "event-detail"
   | "visit-detail"
   | "review"
+  | "bird-log"
   | "analytics"
   | "exports"
   | "saved-media-retention"
@@ -103,6 +105,7 @@ const navItems: Array<{ page: Page; label: string }> = [
   { page: "classifier-readiness", label: "Classifier Readiness" },
   { page: "classifier-manifest", label: "Classifier Manifest" },
   { page: "review", label: "Review" },
+  { page: "bird-log", label: "Bird Log" },
   { page: "analytics", label: "Analytics" },
   { page: "exports", label: "Exports" },
   { page: "saved-media-retention", label: "Saved Media Retention" },
@@ -510,6 +513,22 @@ export default function App() {
           onOpenClassifierReadiness={() => setPage("classifier-readiness")}
           onOpenExports={() => setPage("exports")}
           onOpenVisit={openVisit}
+        />
+      );
+    }
+
+    if (page === "bird-log") {
+      return (
+        <BirdLogPage
+          reviewQueue={data.reviewQueue}
+          sources={data.sources}
+          streams={data.streams}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
+          onOpenStreams={() => setPage("streams")}
+          onOpenImport={() => setPage("import")}
+          onOpenReview={() => openReviewQueue()}
+          onOpenExports={() => setPage("exports")}
         />
       );
     }

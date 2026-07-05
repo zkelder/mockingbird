@@ -118,6 +118,7 @@ Visit these surfaces during the walkthrough:
 - Import Media
 - Motion Evidence
 - Review Queue
+- Bird Log
 - Event Detail
 - Visit Detail
 - Analytics
@@ -142,6 +143,9 @@ Visit these surfaces during the walkthrough:
 - [ ] Confirm media/proposal evidence is visible.
 - [ ] Submit an explicit correction.
 - [ ] Confirm the correction panel names ReviewLabel truth.
+- [ ] Open Bird Log.
+- [ ] Confirm the reviewed observation appears with label, time, camera/source,
+      and source image when available.
 - [ ] Open Dataset Exports.
 - [ ] Create a reviewed-only export with detections and zone context included.
 - [ ] Inspect the manifest proof records.
@@ -185,6 +189,8 @@ Dataset Exports.
 - [ ] Send the suggestion to Review when needed.
 - [ ] Open Review.
 - [ ] Submit an explicit correction.
+- [ ] Open Bird Log and confirm the reviewed observation appears with label,
+      time, source, and image context.
 - [ ] Return to the Stream saved images and confirm reviewed/export status when
       inferable from existing corrections.
 - [ ] Create a reviewed-only Dataset Export and inspect the proof record.
@@ -236,6 +242,7 @@ create proposal evidence only.
       and stream/source context to find the review item.
 - [ ] Submit a correction.
 - [ ] Confirm correction becomes truth.
+- [ ] Open Bird Log and confirm the corrected activity appears in history.
 
 ## Step 3 - folder/trail-cam Provider Path
 
