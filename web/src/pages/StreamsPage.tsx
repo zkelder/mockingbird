@@ -103,6 +103,7 @@ const LIVE_STREAM_TYPE_OPTIONS = [
   { value: "browser_video", label: "Browser video" },
   { value: "hls", label: "HLS / browser-supported" },
   { value: "rtsp", label: "RTSP bridge" },
+  { value: "local_usb", label: "Local USB camera" },
 ];
 
 function isRedactedLiveStreamUrlPreview(key: string, preview?: string): boolean {
@@ -178,7 +179,18 @@ function isRtspBridgePlayback(status?: StreamPlaybackStatus | null): boolean {
   );
 }
 
+function isLocalCameraBridgePlayback(status?: StreamPlaybackStatus | null): boolean {
+  return (
+    status?.status === "live_ready" &&
+    status.playback_kind === "local_usb" &&
+    Boolean(status.local_camera_bridge_available)
+  );
+}
+
 function livePlaybackFailureMessage(status?: StreamPlaybackStatus | null): string {
+  if (status?.playback_kind === "local_usb") {
+    return "Local camera playback failed. Check ffmpeg, camera device, and host permissions.";
+  }
   if (status?.playback_kind === "rtsp") {
     return "RTSP live view failed to load. Check stream URL, ffmpeg, network, and credentials.";
   }
@@ -1937,6 +1949,8 @@ export function StreamsPage({
         selectedConfiguration.missing_fields.join(","),
         selectedConfiguration.safe_config_preview.live_stream_url ?? "",
         selectedConfiguration.safe_config_preview.live_stream_type ?? "",
+        selectedConfiguration.safe_config_preview.local_camera_device ?? "",
+        selectedConfiguration.safe_config_preview.local_camera_format ?? "",
       ].join("|")
     : "";
   const selectedReviewStreams = new Map(
@@ -5311,6 +5325,12 @@ export function StreamsPage({
                             {field.required ? "Required" : "Optional"}
                             {field.secret ? " · stored as marker only" : ""}
                           </span>
+                          {field.key === "local_camera_device" ? (
+                            <span className="field-meta">
+                              Linux example: /dev/video0. Windows/macOS local camera support is
+                              future.
+                            </span>
+                          ) : null}
                           {redactedLiveUrl && existingPreview ? (
                             <span className="field-meta">Current: {existingPreview}</span>
                           ) : null}
@@ -5358,8 +5378,12 @@ export function StreamsPage({
                   const livePlaybackError = livePlaybackErrors[stream.id] || null;
                   const canRenderBrowserLiveView = isBrowserPlayablePlayback(playbackStatus);
                   const canRenderRtspBridge = isRtspBridgePlayback(playbackStatus);
+                  const canRenderLocalCameraBridge = isLocalCameraBridgePlayback(playbackStatus);
                   const rtspBridgeUrl = canRenderRtspBridge
                     ? apiClient.rtspMjpegBridgeUrl(stream.id)
+                    : null;
+                  const localCameraBridgeUrl = canRenderLocalCameraBridge
+                    ? apiClient.localCameraMjpegBridgeUrl(stream.id)
                     : null;
                   const playbackLabel = reviewStream
                     ? formatLabel(reviewStream.playback_status)
@@ -5538,8 +5562,8 @@ export function StreamsPage({
                           <div>
                             <strong>Live view</strong>
                             <p className="meta-text">
-                              Browser-direct stream or optional RTSP bridge. Snapshot capture
-                              and monitoring stay separate.
+                              Browser-direct stream, optional RTSP bridge, or local camera
+                              bridge. Snapshot capture and monitoring stay separate.
                             </p>
                           </div>
                           <StatusPill
@@ -5554,7 +5578,25 @@ export function StreamsPage({
                           />
                         </div>
                         <div className="live-view-frame">
-                          {canRenderRtspBridge && rtspBridgeUrl ? (
+                          {canRenderLocalCameraBridge && localCameraBridgeUrl ? (
+                            <img
+                              alt="Local camera live stream"
+                              key={localCameraBridgeUrl}
+                              onError={() =>
+                                setLivePlaybackErrors((current) => ({
+                                  ...current,
+                                  [stream.id]: livePlaybackFailureMessage(playbackStatus),
+                                }))
+                              }
+                              onLoad={() =>
+                                setLivePlaybackErrors((current) => ({
+                                  ...current,
+                                  [stream.id]: "",
+                                }))
+                              }
+                              src={localCameraBridgeUrl}
+                            />
+                          ) : canRenderRtspBridge && rtspBridgeUrl ? (
                             <img
                               alt="RTSP bridge live camera stream"
                               key={rtspBridgeUrl}
@@ -5636,9 +5678,21 @@ export function StreamsPage({
                                 : "Unknown"}
                             </span>
                           ) : null}
-                          <span>
-                            Stream URL: {playbackStatus?.live_stream_url_display ?? "Not configured"}
-                          </span>
+                          {playbackStatus?.local_camera_status ? (
+                            <span>
+                              Local camera:{" "}
+                              {formatLabel(playbackStatus.local_camera_status)}
+                            </span>
+                          ) : null}
+                          {playbackStatus?.local_camera_device_display ? (
+                            <span>Device: {playbackStatus.local_camera_device_display}</span>
+                          ) : null}
+                          {playbackStatus?.playback_kind !== "local_usb" ? (
+                            <span>
+                              Stream URL:{" "}
+                              {playbackStatus?.live_stream_url_display ?? "Not configured"}
+                            </span>
+                          ) : null}
                         </div>
                         {livePlaybackError ? (
                           <div className="zone-error">{livePlaybackError}</div>

@@ -100,6 +100,11 @@ element without a new dependency. RTSP URLs can use the optional local bridge
 when system `ffmpeg` is installed on the MockingBird host. That bridge starts
 only for the active Live view request, returns MJPEG to the browser, stores no
 media, and creates no review truth or exports.
+MockingBird also has a first local USB/webcam Live view path through the
+`local_usb` provider. Linux `/dev/video0`-style devices are the first supported
+target, using optional system `ffmpeg` only while the browser Live view is open.
+If `ffmpeg` or the device path is unavailable, the app reports that local camera
+playback is unavailable without affecting setup, review, export, or monitoring.
 The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
 count, and motion readiness. Camera Monitoring Core can now start and stop an
@@ -124,7 +129,7 @@ Log, and Export reviewed data.
 The same Stream cards now show Storage guardrails: saved image counts, storage
 warnings, and reviewed/export-linked media protection before and during
 monitoring. Snapshot watch remains an advanced bounded page-local test harness.
-This adds no deletion, cleanup, bundled media runtime, USB/Pi/cellular behavior,
+This adds no deletion, cleanup, bundled media runtime, Pi/cellular behavior,
 model runtime, automatic truth, or automatic export behavior.
 Reviewed and needs-review observations are visible in the Bird Log, which turns
 captured or imported activity into a user-facing local history before export.

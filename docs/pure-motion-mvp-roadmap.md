@@ -109,6 +109,8 @@ Already built or partially built:
   browser-supported HLS stream URLs on an `external_url` Source
 - optional local RTSP-to-browser bridge for configured RTSP streams when system
   `ffmpeg` is available on the MockingBird host
+- first local USB/webcam Live view path for Linux `/dev/video0`-style devices
+  through optional system `ffmpeg`
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
@@ -116,7 +118,7 @@ Not yet complete:
 - derived focused crop file creation
 - persistent capture health sufficient for automatic/repeated capture
 - enforced storage/retention limits for automatic activity capture
-- production stream infrastructure, USB, ESP32, Pi, and cellular adapters
+- production stream infrastructure, ESP32, Pi/libcamera, and cellular adapters
 - automatic workers, polling, schedulers, or continuous frame sampling
 
 ## Required Next Updates Before Live Video Troubleshooting
@@ -316,6 +318,12 @@ only for the active Live view request, returns MJPEG to the browser, stores no
 media, and creates no review truth or exports. If `ffmpeg` is missing, the UI
 shows the bridge unavailable state.
 
+Local USB Camera Source 1 status: configured `local_usb` Sources can use a
+Linux `/dev/video0`-style device through optional system `ffmpeg`. The bridge is
+request-scoped, stores no media, creates no monitoring records or truth, and
+reports unavailable states for missing `ffmpeg`, invalid device paths, or
+unsupported platforms.
+
 Live view is separate from snapshot capture, monitoring, review truth, and
 exports.
 
@@ -415,6 +423,12 @@ activity candidate -> Review -> ReviewLabel truth -> Bird Log -> export
     - The bridge is request-scoped, stores no media, creates no truth, and adds
       no package dependency or bundled runtime.
 
+13. **Local USB Camera Source 1**
+    - Status: configured Linux `/dev/video*` webcam devices can render through
+      an optional local system `ffmpeg` bridge when available.
+    - Pi/libcamera, ESP32, cellular, monitoring integration, still capture,
+      discovery, dependencies, and automatic truth remain future work.
+
 ## Guardrails
 
 Do not add for this MVP path:
@@ -424,8 +438,8 @@ Do not add for this MVP path:
 - model downloads
 - bundled model files
 - dependency/package changes unless explicitly scoped
-- USB, ESP32, Pi, cellular adapters, or always-on stream infrastructure in the
-  Live view phase
+- ESP32, Pi/libcamera, cellular adapters, or always-on stream infrastructure in
+  the Live view phase
 - automatic ReviewLabel truth
 - automatic exports
 - automatic reviewed Event/Visit state

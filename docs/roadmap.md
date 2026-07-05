@@ -1019,8 +1019,7 @@ Current work:
   request-scoped RTSP-to-MJPEG streaming.
 - Cameras/Streams uses the bridge endpoint for RTSP Live view when available
   and shows a clear install-ffmpeg unavailable state when it is not.
-- Next likely phase: Phase 22 — Live camera playback smoke validation and
-  common camera URL polish.
+- Next likely phase: Phase 22 — Local USB Camera Source.
 
 Validation:
 
@@ -1035,4 +1034,44 @@ Validation:
 - Browser-direct MJPEG, browser video, and browser-supported HLS playback remain
   unchanged.
 - Snapshot capture, Source health, monitoring, Review, Bird Log, and Export
+  remain separate explicit workflows.
+
+## Phase 22 — Local USB Camera Source
+
+Goal: let configured local USB/webcam devices render in Cameras/Streams Live
+view through an optional local bridge while keeping playback separate from
+monitoring, review truth, exports, and platform-specific camera agents.
+
+Current work:
+
+- Local USB Camera Source 1: the `local_usb` provider can store a local camera
+  playback type, Linux `/dev/video*` device path, and optional v4l2 format
+  metadata.
+- Stream playback reports local camera bridge states for available, missing
+  `ffmpeg`, missing device path, invalid device path, and unsupported platform
+  cases.
+- The backend exposes `GET /api/streams/{stream_id}/live/local-mjpeg` for
+  request-scoped local camera MJPEG streaming.
+- Cameras/Streams uses the bridge endpoint for local camera Live view when
+  available and shows clear unavailable/setup copy when it is not.
+- Next likely phase: Phase 23 — Live camera playback smoke validation and common
+  camera URL/device polish.
+
+Validation:
+
+- The bridge uses system `ffmpeg` only when available on the MockingBird host;
+  no package dependency, bundled runtime, model file, or download behavior is
+  added.
+- `ffmpeg` starts only for an active local camera Live view HTTP request and is
+  stopped when the response ends or the client disconnects.
+- The local camera bridge accepts only Linux `/dev/video*` device paths in this
+  phase and reports unsupported platform/device states honestly.
+- The bridge stores no media, creates no Events/Visits, ReviewLabels,
+  DetectionProposals, MotionEvidence, dataset exports, analytics truth, workers,
+  schedulers, captures table, or source adapter records.
+- Pi camera/libcamera, ESP32, cellular, WebRTC, persistent HLS, automatic
+  discovery, local camera still capture, and monitoring integration remain
+  future work.
+- Browser-direct MJPEG, browser video, browser-supported HLS, RTSP bridge,
+  snapshot capture, Source health, monitoring, Review, Bird Log, and Export
   remain separate explicit workflows.

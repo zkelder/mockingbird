@@ -20,7 +20,8 @@ export type SourceProviderKind =
   | "placeholder"
   | "future_adapter"
   | "manual_media"
-  | "external_url";
+  | "external_url"
+  | "local_camera";
 export type StreamPlaybackStatusValue =
   | "demo"
   | "not_configured"
@@ -42,6 +43,7 @@ export type StreamPlaybackKind =
   | "browser_video"
   | "hls"
   | "rtsp"
+  | "local_usb"
   | "unknown";
 export type ExternalUrlPreviewStatus =
   | "available"
@@ -338,6 +340,9 @@ export interface StreamPlaybackStatus {
   rtsp_bridge_required: boolean;
   rtsp_bridge_available: boolean;
   rtsp_bridge_status?: string | null;
+  local_camera_bridge_available: boolean;
+  local_camera_status?: string | null;
+  local_camera_device_display?: string | null;
   bridged_mjpeg_url?: string | null;
 }
 

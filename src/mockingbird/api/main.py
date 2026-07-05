@@ -148,7 +148,7 @@ from mockingbird.monitoring import (
     SourceMonitorOptions,
     SourceMonitorState,
 )
-from mockingbird.playback import rtsp_bridge
+from mockingbird.playback import local_camera_bridge, rtsp_bridge
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.sampler import (
     SamplerConfig,
@@ -2832,6 +2832,66 @@ async def get_stream_rtsp_mjpeg_bridge(stream_id: str) -> StreamingResponse:
     return StreamingResponse(
         rtsp_bridge.iter_multipart_mjpeg(process),
         media_type=f"multipart/x-mixed-replace; boundary={rtsp_bridge.MJPEG_BOUNDARY}",
+    )
+
+
+@app.get("/api/streams/{stream_id}/live/local-mjpeg")
+async def get_stream_local_mjpeg_bridge(stream_id: str) -> StreamingResponse:
+    configuration = get_repository().get_stream_live_playback_config(stream_id)
+    if configuration is None:
+        raise _not_found("Stream", stream_id)
+    if configuration.provider_key != "local_usb":
+        raise HTTPException(
+            status_code=400,
+            detail="Local camera bridge requires a local_usb Source provider.",
+        )
+    if configuration.live_stream_type != local_camera_bridge.LOCAL_USB_STREAM_TYPE:
+        raise HTTPException(
+            status_code=400,
+            detail="Local camera bridge requires local USB playback type.",
+        )
+
+    bridge_status = local_camera_bridge.local_camera_status(
+        device=configuration.local_camera_device,
+        camera_format=configuration.local_camera_format,
+    )
+    if bridge_status == "device_missing":
+        raise HTTPException(
+            status_code=400,
+            detail="Choose a local camera device such as /dev/video0.",
+        )
+    if bridge_status == "invalid_device":
+        raise HTTPException(
+            status_code=400,
+            detail="Local camera device path must look like /dev/video0.",
+        )
+    if bridge_status == "unsupported_platform":
+        raise HTTPException(
+            status_code=400,
+            detail="Local camera bridge currently supports Linux /dev/video* devices.",
+        )
+    if bridge_status == "ffmpeg_missing":
+        raise HTTPException(
+            status_code=503,
+            detail="Local camera bridge unavailable: ffmpeg not found.",
+        )
+
+    try:
+        process = local_camera_bridge.start_local_camera_mjpeg_process(
+            configuration.local_camera_device or "",
+            camera_format=configuration.local_camera_format,
+        )
+    except (OSError, ValueError):
+        raise HTTPException(
+            status_code=502,
+            detail="Local camera device unavailable or playback failed.",
+        ) from None
+
+    return StreamingResponse(
+        local_camera_bridge.iter_multipart_mjpeg(process),
+        media_type=(
+            f"multipart/x-mixed-replace; boundary={local_camera_bridge.MJPEG_BOUNDARY}"
+        ),
     )
 
 

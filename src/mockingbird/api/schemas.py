@@ -41,6 +41,7 @@ class SourceProviderKind(str, Enum):
     future_adapter = "future_adapter"
     manual_media = "manual_media"
     external_url = "external_url"
+    local_camera = "local_camera"
 
 
 class SourceProviderDefinitionStatus(str, Enum):
@@ -72,6 +73,7 @@ class StreamPlaybackKind(str, Enum):
     browser_video = "browser_video"
     hls = "hls"
     rtsp = "rtsp"
+    local_usb = "local_usb"
     unknown = "unknown"
 
 
@@ -497,6 +499,9 @@ class StreamPlaybackStatus(BaseModel):
     rtsp_bridge_required: bool = False
     rtsp_bridge_available: bool = False
     rtsp_bridge_status: str | None = None
+    local_camera_bridge_available: bool = False
+    local_camera_status: str | None = None
+    local_camera_device_display: str | None = None
     bridged_mjpeg_url: str | None = None
 
 

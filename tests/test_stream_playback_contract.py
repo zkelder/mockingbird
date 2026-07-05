@@ -3,9 +3,14 @@ from pathlib import Path
 import httpx
 import pytest
 
-from mockingbird.api.main import app, configure_repository, get_stream_rtsp_mjpeg_bridge
+from mockingbird.api.main import (
+    app,
+    configure_repository,
+    get_stream_local_mjpeg_bridge,
+    get_stream_rtsp_mjpeg_bridge,
+)
 from mockingbird.api.schemas import SourceKind, SourceStatus
-from mockingbird.playback import rtsp_bridge
+from mockingbird.playback import local_camera_bridge, rtsp_bridge
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import CameraSourceModel, StreamModel
 
@@ -104,6 +109,26 @@ async def configure_external_url_live_stream(
                 "url": "http://camera.local/still.jpg",
                 "live_stream_url": live_stream_url,
                 "live_stream_type": live_stream_type,
+            },
+        },
+    )
+    assert response.status_code == 200
+
+
+async def configure_local_usb_camera(
+    client: httpx.AsyncClient,
+    *,
+    device: str | None,
+    camera_format: str = "v4l2",
+) -> None:
+    response = await client.patch(
+        f"/api/sources/{SOURCE_ID}/provider-configuration",
+        json={
+            "provider_key": "local_usb",
+            "config": {
+                "live_stream_type": "local_usb",
+                "local_camera_device": device,
+                "local_camera_format": camera_format,
             },
         },
     )
@@ -444,6 +469,226 @@ def test_rtsp_bridge_multipart_generator_stops_process() -> None:
     assert fake_process.terminated is True
     assert fake_process.waited is True
     assert fake_process.killed is False
+
+
+async def test_local_usb_playback_reports_not_configured_without_device(
+    client: httpx.AsyncClient,
+) -> None:
+    await configure_local_usb_camera(client, device=None)
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "not_configured"
+    assert playback["playback_kind"] == "local_usb"
+    assert playback["message"] == "Choose a local camera device such as /dev/video0."
+    assert playback["supports_live_playback"] is False
+    assert playback["live_stream_type"] == "local_usb"
+    assert playback["local_camera_status"] == "device_missing"
+    assert playback["local_camera_bridge_available"] is False
+    assert playback["bridged_mjpeg_url"] is None
+
+
+async def test_local_usb_playback_reports_ffmpeg_missing(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: False,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "unavailable"
+    assert playback["playback_kind"] == "local_usb"
+    assert playback["message"] == "Local camera bridge unavailable - ffmpeg not found."
+    assert playback["local_camera_status"] == "ffmpeg_missing"
+    assert playback["local_camera_bridge_available"] is False
+    assert playback["local_camera_device_display"] == "/dev/video0"
+
+
+async def test_local_usb_playback_rejects_invalid_device_path(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    await configure_local_usb_camera(client, device="/tmp/not-a-camera")
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "playback_error"
+    assert playback["message"] == "Local camera device path must look like /dev/video0."
+    assert playback["local_camera_status"] == "invalid_device"
+    assert playback["supports_live_playback"] is False
+
+
+async def test_local_usb_playback_reports_bridge_available(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "live_ready"
+    assert playback["playback_kind"] == "local_usb"
+    assert playback["supports_live_playback"] is True
+    assert playback["local_camera_status"] == "available"
+    assert playback["local_camera_bridge_available"] is True
+    assert playback["local_camera_device_display"] == "/dev/video0"
+    assert playback["bridged_mjpeg_url"] == f"/api/streams/{STREAM_ID}/live/local-mjpeg"
+
+
+async def test_local_camera_bridge_endpoint_rejects_non_local_usb_stream(
+    client: httpx.AsyncClient,
+) -> None:
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="http://camera.local/live.mjpg",
+        live_stream_type="mjpeg",
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live/local-mjpeg")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Local camera bridge requires a local_usb Source provider."
+    )
+
+
+async def test_local_camera_bridge_endpoint_rejects_unsafe_device_path(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    await configure_local_usb_camera(client, device="/home/user/webcam")
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live/local-mjpeg")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Local camera device path must look like /dev/video0."
+
+
+async def test_local_camera_bridge_endpoint_reports_ffmpeg_missing(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: False,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live/local-mjpeg")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Local camera bridge unavailable: ffmpeg not found."
+
+
+async def test_local_camera_bridge_endpoint_streams_mocked_mjpeg_without_creating_truth(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_process = object()
+    started_devices: list[str] = []
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, camera_format=None: started_devices.append(device) or fake_process,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.iter_multipart_mjpeg",
+        lambda process: iter([b"--frame\r\nContent-Type: image/jpeg\r\n\r\njpeg"]),
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    before = await product_counts(client)
+
+    response = await get_stream_local_mjpeg_bridge(STREAM_ID)
+
+    assert response.status_code == 200
+    assert response.media_type.startswith("multipart/x-mixed-replace")
+    assert response.headers["content-type"].startswith("multipart/x-mixed-replace")
+    assert started_devices == ["/dev/video0"]
+    assert await product_counts(client) == before
+
+
+async def test_playback_status_does_not_start_local_camera_bridge_process(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+
+    def fail_if_started(device: str, camera_format: str | None = None):  # noqa: ANN202
+        raise AssertionError("Playback status must not start local camera ffmpeg")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        fail_if_started,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+
+
+def test_local_camera_command_uses_list_args_and_safe_device_validation() -> None:
+    command = local_camera_bridge.build_local_camera_mjpeg_command("/dev/video0")
+
+    assert command[:13] == [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "v4l2",
+        "-input_format",
+        "mjpeg",
+        "-video_size",
+        "640x480",
+        "-framerate",
+        "10",
+        "-i",
+    ]
+    assert "/dev/video0" in command
+    assert "shell=True" not in command
+    assert local_camera_bridge.validate_local_camera_device("/dev/video0") is True
+    assert local_camera_bridge.validate_local_camera_device("/dev/video12") is True
+    assert local_camera_bridge.validate_local_camera_device("/tmp/video0") is False
+    assert (
+        local_camera_bridge.local_camera_status(
+            device="/dev/video0",
+            platform_name="darwin",
+            ffmpeg_available=True,
+        )
+        == "unsupported_platform"
+    )
 
 
 async def test_external_url_unknown_live_stream_type_reports_unsupported(

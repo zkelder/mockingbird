@@ -73,6 +73,7 @@ async def test_provider_definitions_return_contract_keys_and_field_metadata(
         "demo",
         "manual_media",
         "external_url",
+        "local_usb",
         "rtsp_future",
         "esp32_future",
         "browser_camera_future",
@@ -87,6 +88,15 @@ async def test_provider_definitions_return_contract_keys_and_field_metadata(
     assert rtsp_definition["supports_live_playback"] is False
     assert any(field["required"] for field in rtsp_definition["fields"])
     assert any(field["secret"] for field in rtsp_definition["fields"])
+
+    local_usb_definition = next(
+        definition for definition in definitions if definition["provider_key"] == "local_usb"
+    )
+    assert local_usb_definition["status"] == "available_contract_only"
+    assert local_usb_definition["supports_live_playback"] is True
+    local_usb_fields = {field["key"]: field for field in local_usb_definition["fields"]}
+    assert local_usb_fields["local_camera_device"]["required"] is True
+    assert local_usb_fields["local_camera_device"]["placeholder"] == "/dev/video0"
 
     folder_definition = next(
         definition

@@ -17,16 +17,18 @@ little or no data.
 Use [local-mvp-readiness-checklist.md](local-mvp-readiness-checklist.md) as the
 demo-readiness gate before treating this walkthrough as local MVP-ready.
 
-It demonstrates browser-direct Live view for supported stream URLs and optional
-local RTSP bridge playback when system `ffmpeg` is installed, but not
-automation, model runtime, training, persistent transcoding, or production
-provider infrastructure.
+It demonstrates browser-direct Live view for supported stream URLs, optional
+local RTSP bridge playback, and optional local USB/webcam Live view when system
+`ffmpeg` is installed, but not automation, model runtime, training, persistent
+transcoding, or production provider infrastructure.
 
 ## What This Demo Proves
 
 - Source/provider setup is understandable.
 - Browser-playable Live view can be configured for an `external_url` Source.
 - RTSP Live view can use the optional host `ffmpeg` bridge when available.
+- Local USB/webcam Live view can use a Linux `/dev/video0`-style device through
+  optional host `ffmpeg`.
 - The `external_url` still-image preview/save/evidence path works.
 - Manual bounded Snapshot watch works for `external_url` while the page is open.
 - The `folder_import_future` preview/import/evidence path works.
@@ -48,6 +50,7 @@ provider infrastructure.
 ## What This Demo Does Not Prove
 
 - Persistent RTSP transcoding or production stream infrastructure.
+- Pi camera/libcamera, cellular, or field-camera agent setup.
 - USB/browser camera capture.
 - Continuous monitoring.
 - Background workers.
@@ -68,7 +71,8 @@ provider infrastructure.
 - A safe test HTTP image URL is available for `external_url`.
 - A safe browser-playable or RTSP stream URL is optional for the Live view check.
 - System `ffmpeg` on the MockingBird host is optional and only needed for RTSP
-  bridge playback.
+  bridge playback or local USB/webcam playback.
+- A Linux `/dev/video0`-style webcam path is optional for local camera Live view.
 - A temporary local folder with tiny test images is available for folder import.
 - A local test image is available for Import Media and CLI smoke fallback.
 - No real camera is required.
@@ -190,10 +194,14 @@ Dataset Exports.
 - [ ] Open Streams and configure or select an external snapshot camera/source.
 - [ ] Configure a browser-playable or RTSP Live stream URL and stream type if
       available.
+- [ ] Optionally configure `local_usb` with a device path such as `/dev/video0`.
 - [ ] Confirm Live view appears in the Stream card.
 - [ ] Confirm a missing Live stream URL shows `No live stream URL configured.`
 - [ ] Confirm an RTSP URL shows bridge playback when host `ffmpeg` is available,
       or `RTSP bridge unavailable` when it is not.
+- [ ] Confirm local USB camera playback shows bridge playback when host
+      `ffmpeg` and the device are available, or a local camera unavailable state
+      when they are not.
 - [ ] Confirm Source health / Camera status is visible for the selected Stream.
 - [ ] Confirm Field test readiness appears and shows the next step for this
       Stream.
@@ -293,7 +301,7 @@ create proposal evidence only.
 - [ ] Confirm provider cards for `external_url`, folder/trail-cam, webhook, and
       manual media.
 - [ ] Confirm Live view is limited to configured browser-playable stream URLs or
-      optional RTSP bridge playback.
+      optional RTSP/local camera bridge playback.
 - [ ] Confirm next action links exist.
 - [ ] Confirm truth-boundary copy is visible.
 - [ ] Open Model Adapters and confirm Local Detector setup guidance is visible
@@ -309,12 +317,12 @@ create proposal evidence only.
 - [ ] Select or configure a Source as `external_url`.
 - [ ] Enter safe HTTP still-image URL metadata.
 - [ ] Optionally enter a Live stream URL and choose MJPEG, Browser video,
-      HLS/browser-supported, or RTSP bridge.
+      HLS/browser-supported, RTSP bridge, or configure a local USB camera device.
 - [ ] Confirm setup review/status says explicit preview is available and
       future-safe.
 - [ ] Confirm the Live view panel attempts browser-direct playback for
-      browser-playable URLs and uses the RTSP bridge only when host `ffmpeg` is
-      available.
+      browser-playable URLs and uses RTSP/local camera bridges only when host
+      `ffmpeg` is available.
 - [ ] Confirm Source health / Camera status shows readiness for manual checks.
 - [ ] Confirm Storage guardrails shows saved image counts and no cleanup/delete controls.
 - [ ] Confirm Snapshot watch controls are visible and explain that the watch only
