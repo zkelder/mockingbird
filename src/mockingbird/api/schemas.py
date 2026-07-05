@@ -1148,6 +1148,33 @@ class MotionActivityAreaResponse(BaseModel):
     cell_ids: list[str] = Field(default_factory=list)
 
 
+class MotionCropBoxNormalizedResponse(BaseModel):
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+
+class MotionCropBoxPixelsResponse(BaseModel):
+    left: int = Field(ge=0)
+    top: int = Field(ge=0)
+    right: int = Field(ge=1)
+    bottom: int = Field(ge=1)
+    width: int = Field(ge=1)
+    height: int = Field(ge=1)
+
+
+class MotionCropPlanResponse(BaseModel):
+    source_media_asset_id: str | None = None
+    crop_box_normalized: MotionCropBoxNormalizedResponse
+    crop_box_pixels: MotionCropBoxPixelsResponse
+    crop_reason: str
+    padding_ratio: float = Field(ge=0)
+    is_full_frame_fallback: bool = False
+    derived_crop_media_asset_id: str | None = None
+    warning: str | None = None
+
+
 class MotionEvaluateSavedMediaResponse(BaseModel):
     # Saved snapshots can create pending evidence only; review correction remains truth.
     stream_id: str
@@ -1170,6 +1197,7 @@ class MotionEvaluateSavedMediaResponse(BaseModel):
     existing_activity_reference: str | None = None
     best_snapshot_media_asset_id: str | None = None
     best_snapshot_reason: str | None = None
+    crop_plan: MotionCropPlanResponse | None = None
     quiet_period_seconds: int = Field(default=30, ge=1)
     cooldown_seconds: int = Field(default=30, ge=0)
     max_snapshots_per_session: int = Field(default=3, ge=1)

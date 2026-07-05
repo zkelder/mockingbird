@@ -211,6 +211,24 @@ async def test_saved_media_motion_scores_sequence_without_creating_records(
     assert result["created_evidence"] == []
     assert result["best_media_asset_id"] == assets[2]["id"]
     assert result["best_snapshot_media_asset_id"] == assets[2]["id"]
+    crop_plan = result["crop_plan"]
+    assert crop_plan["source_media_asset_id"] == assets[2]["id"]
+    assert crop_plan["crop_reason"] == "user_zone"
+    assert crop_plan["padding_ratio"] == 0.5
+    assert crop_plan["is_full_frame_fallback"] is False
+    assert crop_plan["derived_crop_media_asset_id"] is None
+    assert crop_plan["crop_box_normalized"]["left"] == pytest.approx(0.22)
+    assert crop_plan["crop_box_normalized"]["top"] == pytest.approx(0.08)
+    assert crop_plan["crop_box_normalized"]["right"] == pytest.approx(0.78)
+    assert crop_plan["crop_box_normalized"]["bottom"] == pytest.approx(0.72)
+    assert crop_plan["crop_box_pixels"] == {
+        "left": 0,
+        "top": 0,
+        "right": 4,
+        "bottom": 3,
+        "width": 4,
+        "height": 3,
+    }
     assert result["strongest_zone_id"] == FEEDER_ZONE_ID
     assert result["session_key"]
     assert result["session_status"] == "new_activity"
@@ -281,6 +299,10 @@ async def test_saved_media_motion_uses_auto_regions_without_user_zones(
     assert result["activity_areas"][0]["area_id"] == result["strongest_activity_area_id"]
     assert result["strongest_activity_area_label"]
     assert result["best_media_asset_id"] in {assets[1]["id"], assets[2]["id"]}
+    assert result["crop_plan"]["source_media_asset_id"] == result["best_media_asset_id"]
+    assert result["crop_plan"]["crop_reason"] == "auto_region_cluster"
+    assert result["crop_plan"]["is_full_frame_fallback"] is False
+    assert result["crop_plan"]["derived_crop_media_asset_id"] is None
     assert len(result["candidates"]) == 1
     assert len(result["debug_cell_zones"]) > 0
     assert await motion_evidence_count(client) == before_evidence_count
@@ -478,6 +500,7 @@ async def test_saved_media_motion_auto_regions_skip_privacy_ignore_areas(
     assert result["activity_detected"] is False
     assert result["session_status"] == "no_activity"
     assert result["should_create_review_activity"] is False
+    assert result["crop_plan"] is None
     assert result["created_evidence"] == []
     assert any("Privacy/ignore areas were skipped" in warning for warning in result["warnings"])
 
@@ -514,6 +537,8 @@ async def test_saved_media_motion_can_create_pending_evidence_with_best_snapshot
     assert evidence["stream_id"] == STREAM_ID
     assert evidence["zone_id"] == FEEDER_ZONE_ID
     assert evidence["snapshot_media_asset_id"] == assets[2]["id"]
+    assert result["crop_plan"]["source_media_asset_id"] == assets[2]["id"]
+    assert result["crop_plan"]["derived_crop_media_asset_id"] is None
     assert evidence["scoring_config"]["source"] == "saved_media_motion"
     assert await motion_evidence_count(client) == before_evidence_count + 1
     assert await truth_counts(client) == before_truth

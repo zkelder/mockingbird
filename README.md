@@ -113,9 +113,11 @@ areas using motion only; user Zones improve accuracy and privacy/ignore behavior
 later. Future classifier/model enrichment belongs on the best snapshot/crop for
 a finalized activity session, not each automatic area. Motion checks now classify
 activity as new, ongoing, cooldown-suppressed, or no activity; duplicate
-suppression is per Activity area, not global to the camera. Motion results remain
-candidate activity until explicit review/correction creates truth for Bird Log
-and export, and repeated/live capture remains future work.
+suppression is per Activity area, not global to the camera. They also identify a
+focused Activity crop plan while preserving the full best snapshot as the
+source/context image; crop file creation remains optional future derived context.
+Motion results remain candidate activity until explicit review/correction creates
+truth for Bird Log and export, and repeated/live capture remains future work.
 This timeline now summarizes existing proposal evidence, MotionEvidence,
 promoted Event/Visit context, inferable ReviewLabel truth, and the next safe
 review/export step. It does not run models, poll sources, create Events/Visits

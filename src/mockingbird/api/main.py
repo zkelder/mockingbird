@@ -57,6 +57,9 @@ from mockingbird.api.schemas import (
     MockSpeciesSuggestionRequest,
     MotionCandidateResponse,
     MotionActivityAreaResponse,
+    MotionCropBoxNormalizedResponse,
+    MotionCropBoxPixelsResponse,
+    MotionCropPlanResponse,
     MotionEvidenceAttachMediaRequest,
     MotionEvidenceBulkActionRequest,
     MotionEvidenceBulkActionResponse,
@@ -131,6 +134,7 @@ from mockingbird.motion import (
     extract_motion_candidates,
     score_frame_motion,
 )
+from mockingbird.motion.activity_crop import ActivityCropPlan, plan_activity_crop
 from mockingbird.motion.activity_session import (
     ExistingActivityReference,
     recommend_activity_session,
@@ -1262,6 +1266,40 @@ def _motion_evidence_session_references(
     ]
 
 
+def _frame_summary_for_media_asset(
+    frames: list[SavedMediaFrameSummary],
+    media_asset_id: str | None,
+) -> SavedMediaFrameSummary | None:
+    if media_asset_id is None:
+        return None
+    return next((frame for frame in frames if frame.media_asset_id == media_asset_id), None)
+
+
+def _motion_crop_plan_response(plan: ActivityCropPlan) -> MotionCropPlanResponse:
+    return MotionCropPlanResponse(
+        source_media_asset_id=plan.source_media_asset_id,
+        crop_box_normalized=MotionCropBoxNormalizedResponse(
+            left=plan.crop_box_normalized.left,
+            top=plan.crop_box_normalized.top,
+            right=plan.crop_box_normalized.right,
+            bottom=plan.crop_box_normalized.bottom,
+        ),
+        crop_box_pixels=MotionCropBoxPixelsResponse(
+            left=plan.crop_box_pixels.left,
+            top=plan.crop_box_pixels.top,
+            right=plan.crop_box_pixels.right,
+            bottom=plan.crop_box_pixels.bottom,
+            width=plan.crop_box_pixels.width,
+            height=plan.crop_box_pixels.height,
+        ),
+        crop_reason=plan.crop_reason,
+        padding_ratio=plan.padding_ratio,
+        is_full_frame_fallback=plan.is_full_frame_fallback,
+        derived_crop_media_asset_id=plan.derived_crop_media_asset_id,
+        warning=plan.warning,
+    )
+
+
 def _strongest_motion_summary(
     frame_scores: list[MotionFrameScoreResponse],
 ) -> tuple[str | None, float]:
@@ -1616,6 +1654,24 @@ async def evaluate_saved_media_motion(
         best_snapshot_media_asset_id=best_media_asset_id,
         existing_activities=existing_session_references,
     )
+    best_snapshot_frame = _frame_summary_for_media_asset(
+        frame_summaries,
+        best_media_asset_id,
+    )
+    crop_plan = (
+        plan_activity_crop(
+            source_media_asset_id=best_media_asset_id,
+            image_width=best_snapshot_frame.width,
+            image_height=best_snapshot_frame.height,
+            left=strongest_activity_area.left if strongest_activity_area else None,
+            top=strongest_activity_area.top if strongest_activity_area else None,
+            right=strongest_activity_area.right if strongest_activity_area else None,
+            bottom=strongest_activity_area.bottom if strongest_activity_area else None,
+            crop_reason="auto_region_cluster" if uses_auto_regions else "user_zone",
+        )
+        if best_snapshot_frame is not None and best_media_asset_id is not None
+        else None
+    )
     created_evidence: list[MotionEvidenceResponse] = []
     if payload.create_motion_evidence and motion_candidates and uses_auto_regions:
         creation_skipped_reason = "auto_region_review_activity_requires_user_zone"
@@ -1710,6 +1766,7 @@ async def evaluate_saved_media_motion(
         existing_activity_reference=session_recommendation.existing_activity_reference,
         best_snapshot_media_asset_id=session_recommendation.best_snapshot_media_asset_id,
         best_snapshot_reason=session_recommendation.best_snapshot_reason,
+        crop_plan=_motion_crop_plan_response(crop_plan) if crop_plan else None,
         quiet_period_seconds=session_recommendation.quiet_period_seconds,
         cooldown_seconds=session_recommendation.cooldown_seconds,
         max_snapshots_per_session=session_recommendation.max_snapshots_per_session,
@@ -1725,8 +1782,9 @@ async def evaluate_saved_media_motion(
         best_media_asset_id=best_media_asset_id,
         warnings=warnings,
         local_first_note=(
-            "Check motion used already-saved local snapshots and creates reviewed "
-            "labels or exports only after explicit review/correction."
+            "Check motion used already-saved local snapshots, keeps the full best "
+            "snapshot as context, and creates reviewed labels or exports only after "
+            "explicit review/correction."
         ),
     )
 

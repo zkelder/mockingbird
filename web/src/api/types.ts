@@ -1095,6 +1095,33 @@ export interface MotionActivityArea {
   cell_ids: string[];
 }
 
+export interface MotionCropBoxNormalized {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export interface MotionCropBoxPixels {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+export interface MotionCropPlan {
+  source_media_asset_id?: string | null;
+  crop_box_normalized: MotionCropBoxNormalized;
+  crop_box_pixels: MotionCropBoxPixels;
+  crop_reason: "user_zone" | "auto_region_cluster" | "full_frame_fallback" | string;
+  padding_ratio: number;
+  is_full_frame_fallback: boolean;
+  derived_crop_media_asset_id?: string | null;
+  warning?: string | null;
+}
+
 export interface MotionEvaluateSavedMediaRequest {
   stream_id: string;
   media_asset_ids: string[];
@@ -1130,6 +1157,7 @@ export interface MotionEvaluateSavedMediaResponse {
   existing_activity_reference?: string | null;
   best_snapshot_media_asset_id?: string | null;
   best_snapshot_reason?: string | null;
+  crop_plan?: MotionCropPlan | null;
   quiet_period_seconds: number;
   cooldown_seconds: number;
   max_snapshots_per_session: number;

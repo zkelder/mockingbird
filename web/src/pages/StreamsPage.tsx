@@ -20,6 +20,7 @@ import type {
   MediaAsset,
   ModelAdapter,
   ModelAdapterRunResult,
+  MotionCropPlan,
   MotionEvidence,
   MotionEvaluateSavedMediaResponse,
   MotionEvidencePromoteResponse,
@@ -285,6 +286,19 @@ function motionNextStep(
     return "Same activity";
   }
   return "Create review activity";
+}
+
+function focusedCropStatus(plan?: MotionCropPlan | null): string {
+  if (!plan) {
+    return "Not available";
+  }
+  if (plan.derived_crop_media_asset_id) {
+    return "Focused crop available";
+  }
+  if (plan.is_full_frame_fallback) {
+    return "Full snapshot fallback";
+  }
+  return "Focused crop planned";
 }
 
 function buildMediaLifecycleSummary(
@@ -3293,6 +3307,7 @@ export function StreamsPage({
                   const motionSessionLabel = activitySessionLabel(
                     motionResult?.session_status,
                   );
+                  const motionCropPlan = motionResult?.crop_plan ?? null;
                   const usesAutomaticActivityAreas = motionResult?.uses_auto_regions ?? false;
                   const bestMotionAssetId =
                     motionResult?.best_snapshot_media_asset_id ??
@@ -3589,6 +3604,10 @@ export function StreamsPage({
                                         )}
                                       </div>
                                       <div className="data-row">
+                                        <span>Focused crop</span>
+                                        <strong>{focusedCropStatus(motionCropPlan)}</strong>
+                                      </div>
+                                      <div className="data-row">
                                         <span>Score</span>
                                         <strong>
                                           {Math.round(
@@ -3606,6 +3625,17 @@ export function StreamsPage({
                                       <span className="meta-text">
                                         {motionResult.session_message}
                                       </span>
+                                    ) : null}
+                                    {motionCropPlan &&
+                                    !motionCropPlan.derived_crop_media_asset_id &&
+                                    !motionCropPlan.is_full_frame_fallback ? (
+                                      <span className="meta-text">
+                                        MockingBird identified the area to crop for review/model
+                                        input. Full snapshot remains saved.
+                                      </span>
+                                    ) : null}
+                                    {motionCropPlan?.warning ? (
+                                      <span className="meta-text">{motionCropPlan.warning}</span>
                                     ) : null}
                                     {motionResult.warnings.length > 0 ? (
                                       <div className="source-warning-list">
@@ -3655,6 +3685,47 @@ export function StreamsPage({
                                               {motionResult.existing_activity_reference}
                                             </strong>
                                           </div>
+                                        ) : null}
+                                        {motionCropPlan ? (
+                                          <>
+                                            <div className="data-row">
+                                              <span>Crop reason</span>
+                                              <strong>{formatLabel(motionCropPlan.crop_reason)}</strong>
+                                            </div>
+                                            <div className="data-row">
+                                              <span>Crop pixels</span>
+                                              <strong>
+                                                {motionCropPlan.crop_box_pixels.left},
+                                                {motionCropPlan.crop_box_pixels.top}-
+                                                {motionCropPlan.crop_box_pixels.right},
+                                                {motionCropPlan.crop_box_pixels.bottom} ·{" "}
+                                                {motionCropPlan.crop_box_pixels.width}x
+                                                {motionCropPlan.crop_box_pixels.height}
+                                              </strong>
+                                            </div>
+                                            <div className="data-row">
+                                              <span>Crop normalized</span>
+                                              <strong>
+                                                {motionCropPlan.crop_box_normalized.left.toFixed(3)}
+                                                ,
+                                                {motionCropPlan.crop_box_normalized.top.toFixed(3)}
+                                                -
+                                                {motionCropPlan.crop_box_normalized.right.toFixed(3)}
+                                                ,
+                                                {motionCropPlan.crop_box_normalized.bottom.toFixed(3)}
+                                              </strong>
+                                            </div>
+                                            <div className="data-row">
+                                              <span>Crop padding</span>
+                                              <strong>{motionCropPlan.padding_ratio}</strong>
+                                            </div>
+                                            <div className="data-row">
+                                              <span>Derived crop media</span>
+                                              <strong>
+                                                {motionCropPlan.derived_crop_media_asset_id ?? "not created"}
+                                              </strong>
+                                            </div>
+                                          </>
                                         ) : null}
                                         <div className="data-row">
                                           <span>MediaAsset IDs</span>

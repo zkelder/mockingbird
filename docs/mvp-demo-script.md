@@ -185,6 +185,8 @@ Dataset Exports.
 - [ ] Confirm `New activity detected`, `Ongoing activity`, `Cooldown active`,
       or `No activity detected` appears with an Activity area and best snapshot
       context.
+- [ ] Confirm `Focused crop planned` appears when activity is detected and that
+      the full best snapshot remains the source/context image.
 - [ ] Run `Check motion` again for the same saved snapshots and confirm the
       same-area result does not encourage duplicate review activity.
 - [ ] If no Zones exist, confirm automatic activity areas are used.
@@ -252,6 +254,8 @@ create proposal evidence only.
 - [ ] Click `Check motion`.
 - [ ] Confirm `New activity detected`, `Ongoing activity`, `Cooldown active`,
       or `No activity detected` appears with an Activity area.
+- [ ] Confirm Focused crop planning appears for detected activity while the full
+      snapshot remains saved.
 - [ ] Run `Check motion` again for the same Activity area and confirm duplicate
       review activity is not encouraged.
 - [ ] If no Zones exist, confirm automatic activity areas are used.

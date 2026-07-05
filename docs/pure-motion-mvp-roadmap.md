@@ -89,12 +89,13 @@ Already built or partially built:
 - MediaAsset attachment to MotionEvidence
 - saved-snapshot Check motion with automatic activity areas when no user Zones exist
 - saved-snapshot Activity session recommendation with per-area duplicate suppression
+- saved-snapshot focused Activity crop planning while preserving the full best snapshot
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
 
 - real repeated frame/snapshot motion bridge from source media
-- best full snapshot + focused crop creation
+- derived focused crop file creation
 - source health and capture status sufficient for automatic/repeated capture
 - storage/retention policy for automatic activity capture
 - live video / RTSP / USB / ESP32 adapters
@@ -187,6 +188,12 @@ Storage policy per activity session:
 
 Never save crop-only as the source record. The crop helps review/model input; the
 full snapshot preserves context and auditability.
+
+Motion Crop 1 status: explicit saved-snapshot motion checks now return a padded
+focused Activity crop plan for the best snapshot. The full best snapshot remains
+the source/context image, no crop media file is created yet, and future
+classifier/model enrichment should use the finalized activity session's best
+snapshot/crop rather than every grid cell.
 
 ### 5. Source Health / Capture Status
 
