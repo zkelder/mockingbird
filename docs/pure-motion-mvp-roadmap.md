@@ -93,12 +93,13 @@ Already built or partially built:
 - source health / camera status for manual snapshot tests, captures, saved image
   counts, and saved-snapshot motion readiness
 - storage guardrails for saved image counts, accumulation warnings, and
-  reviewed/export-linked media protection before repeated capture
+  reviewed/export-linked media protection before manual Snapshot watch
+- manual bounded Snapshot watch for external_url Sources while the page is open,
+  using existing capture and Check motion actions
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
 
-- real repeated frame/snapshot motion bridge from source media
 - derived focused crop file creation
 - persistent capture health sufficient for automatic/repeated capture
 - enforced storage/retention limits for automatic activity capture
@@ -201,7 +202,7 @@ snapshot/crop rather than every grid cell.
 
 ### 5. Source Health / Capture Status
 
-Before repeated capture or live troubleshooting, each camera/source should make
+Before Snapshot watch or live troubleshooting, each camera/source should make
 capture reliability obvious.
 
 Show:
@@ -216,8 +217,8 @@ Show:
 Source Health 1 status: Cameras/Streams now shows browser-state Source health
 for manual checks. It confirms the last snapshot test, last capture, saved image
 count, last motion check, last activity, and next recommended action without
-starting repeated capture, live video, polling, or background work. Repeated
-snapshot watch remains future work.
+starting live video or server automation. Snapshot watch remains user-started,
+bounded, and page-local.
 
 This prevents confusing camera/network failures with app failures.
 
@@ -236,8 +237,19 @@ Defaults should include:
 Storage Guardrails 1 status: Cameras/Streams now shows read-only Storage
 guardrails for each Stream: saved image counts, storage estimate when known,
 accumulation warnings, review-linked/protected counts when inferable, and the
-next manual action before repeated snapshot watch. It adds no deletion, cleanup,
-automatic capture, live video, polling, workers, schedulers, or repeated capture.
+next manual action before Snapshot watch. It adds no deletion, cleanup,
+live video, workers, schedulers, or automatic truth.
+
+### 7. Repeated Snapshot Watch
+
+Bridge manual snapshots into a short source watch without live playback.
+
+Repeated Snapshot Watch 1 status: Cameras/Streams now has a manual, bounded
+Snapshot watch for `external_url` Sources. The watch runs only while the page is
+open after Start watch, captures a small preset number of snapshots, refreshes
+Source health and Storage guardrails, and uses existing Check motion after at
+least two saved snapshots. It creates no truth, exports, server jobs, or live
+video behavior.
 
 ## Detector And Classifier Position
 
@@ -299,7 +311,8 @@ activity candidate -> Review -> ReviewLabel truth -> Bird Log -> export
      reviewed/export-linked protection are visible before repeated checks.
 
 7. **Repeated Snapshot Watch 1**
-   - Manual start/stop repeated snapshot capture from external_url source.
+   - Status: manual start/stop Snapshot watch from external_url source is
+     page-local, bounded, and motion-check only.
    - Still no RTSP/USB/ESP32/live video worker.
 
 8. **Live/Video Adapter Boundary**

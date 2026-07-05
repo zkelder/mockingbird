@@ -95,11 +95,13 @@ Test snapshot, Capture snapshot, Analyze image, Review/correct, then Export
 reviewed data.
 The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
-count, and motion readiness. It does not start repeated capture or live video;
-repeated snapshot watch remains future work.
+count, and motion readiness. Snapshot watch can be started manually for an
+`external_url` Source: it captures a small bounded run while the page is open,
+then uses the existing Check motion path after enough snapshots are saved.
 The same Stream cards now show Storage guardrails: saved image counts, storage
-warnings, and reviewed/export-linked media protection before repeated snapshot
-watch. This adds no deletion, cleanup, or automatic capture behavior.
+warnings, and reviewed/export-linked media protection before and during Snapshot
+watch. This adds no deletion, cleanup, live video, server automation, automatic
+truth, or automatic export behavior.
 Reviewed and needs-review observations are visible in the Bird Log, which turns
 captured or imported activity into a user-facing local history before export.
 Saved previews can now enter review as pending MotionEvidence through an
@@ -124,7 +126,8 @@ suppression is per Activity area, not global to the camera. They also identify a
 focused Activity crop plan while preserving the full best snapshot as the
 source/context image; crop file creation remains optional future derived context.
 Motion results remain candidate activity until explicit review/correction creates
-truth for Bird Log and export, and repeated/live capture remains future work.
+truth for Bird Log and export. Live capture remains future work, and Snapshot
+watch stays manual, bounded, and page-local.
 This timeline now summarizes existing proposal evidence, MotionEvidence,
 promoted Event/Visit context, inferable ReviewLabel truth, and the next safe
 review/export step. It does not run models, poll sources, create Events/Visits

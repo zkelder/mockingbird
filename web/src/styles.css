@@ -1015,7 +1015,16 @@ button {
   padding: 0 0 12px;
 }
 
-.source-health-grid {
+.snapshot-watch-panel {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid #e0e6dc;
+  padding: 0 0 12px;
+}
+
+.source-health-grid,
+.snapshot-watch-controls,
+.snapshot-watch-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
@@ -1028,11 +1037,24 @@ button {
 }
 
 .source-health-grid .data-row,
+.snapshot-watch-grid .data-row,
 .source-storage-grid .data-row,
+.snapshot-watch-grid strong,
 .source-storage-grid strong,
 .source-health-grid strong {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.snapshot-watch-controls label {
+  display: grid;
+  gap: 6px;
+  color: #28352f;
+  font-weight: 700;
+}
+
+.snapshot-watch-controls select {
+  width: 100%;
 }
 
 .stream-media-timeline {
@@ -4981,6 +5003,8 @@ button {
   .source-selector-row,
   .source-setup-layout,
   .source-health-grid,
+  .snapshot-watch-controls,
+  .snapshot-watch-grid,
   .source-storage-grid,
   .source-stream-grid,
   .folder-import-control-grid,

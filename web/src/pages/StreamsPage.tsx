@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
@@ -218,7 +218,7 @@ type StorageGuardrailReadiness =
   | "Watch accumulation"
   | "Review pending images"
   | "Export/reviewed media protected"
-  | "Repeated capture not enabled yet";
+  | "Needs snapshots";
 
 interface StorageGuardrailSummary {
   savedImageCount: number;
@@ -232,6 +232,36 @@ interface StorageGuardrailSummary {
   readiness: StorageGuardrailReadiness;
   recommendedAction: string;
   retentionCoverage: "available" | "partial" | "unavailable";
+}
+
+type SnapshotWatchStatus = "idle" | "watching" | "complete" | "stopped" | "error";
+
+type SnapshotWatchStopReason =
+  | "user_stopped"
+  | "max_captures_reached"
+  | "source_error"
+  | "storage_warning"
+  | "not_enough_snapshots"
+  | "completed";
+
+interface SnapshotWatchState {
+  isWatching: boolean;
+  status: SnapshotWatchStatus;
+  sourceId?: string | null;
+  streamId?: string | null;
+  watchStartedAt?: string | null;
+  lastWatchTickAt?: string | null;
+  nextCaptureAt?: string | null;
+  intervalSeconds: number;
+  maxCaptures: number;
+  capturesAttempted: number;
+  capturesSucceeded: number;
+  motionChecksRun: number;
+  lastWatchStatus: string;
+  lastWatchError?: string | null;
+  stopReason?: SnapshotWatchStopReason | null;
+  isTickRunning: boolean;
+  lastActivityResult?: string | null;
 }
 
 interface MediaLifecycleSummary {
@@ -256,6 +286,12 @@ interface MediaLifecycleSummary {
 const MEDIA_TIMELINE_LIMIT = 10;
 const MOTION_SNAPSHOT_LIMIT = 5;
 const LOCAL_IMAGE_DETECTOR_ADAPTER_ID = "local_image_detector";
+const SNAPSHOT_WATCH_INTERVAL_OPTIONS = [10, 30, 60];
+const SNAPSHOT_WATCH_CAPTURE_OPTIONS = [3, 5, 10];
+const DEFAULT_SNAPSHOT_WATCH_INTERVAL_SECONDS = 10;
+const DEFAULT_SNAPSHOT_WATCH_MAX_CAPTURES = 3;
+const MIN_SNAPSHOT_WATCH_INTERVAL_SECONDS = 5;
+const SNAPSHOT_WATCH_STORAGE_BLOCK_COUNT = 100;
 
 function uniquePresent(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
@@ -596,7 +632,7 @@ function storageGuardrailSummary(
   } else if (streamImages.length >= 2 && !motionState.result) {
     readiness = "OK";
   } else {
-    readiness = "Repeated capture not enabled yet";
+    readiness = "Needs snapshots";
   }
 
   let recommendedAction = "Capture another snapshot";
@@ -651,6 +687,105 @@ function storageGuardrailCopy(summary: StorageGuardrailSummary): string {
 
 function optionalCountText(count: number | null): string {
   return count === null ? "Not available yet" : String(count);
+}
+
+function initialSnapshotWatchState(): SnapshotWatchState {
+  return {
+    isWatching: false,
+    status: "idle",
+    sourceId: null,
+    streamId: null,
+    watchStartedAt: null,
+    lastWatchTickAt: null,
+    nextCaptureAt: null,
+    intervalSeconds: DEFAULT_SNAPSHOT_WATCH_INTERVAL_SECONDS,
+    maxCaptures: DEFAULT_SNAPSHOT_WATCH_MAX_CAPTURES,
+    capturesAttempted: 0,
+    capturesSucceeded: 0,
+    motionChecksRun: 0,
+    lastWatchStatus: "Not watching.",
+    lastWatchError: null,
+    stopReason: null,
+    isTickRunning: false,
+    lastActivityResult: null,
+  };
+}
+
+function snapshotWatchTone(status: SnapshotWatchStatus): "good" | "review" | "quiet" {
+  if (status === "watching") {
+    return "good";
+  }
+  if (status === "error") {
+    return "review";
+  }
+  return "quiet";
+}
+
+function snapshotWatchLabel(status: SnapshotWatchStatus): string {
+  switch (status) {
+    case "watching":
+      return "Watching";
+    case "complete":
+      return "Complete";
+    case "stopped":
+      return "Stopped";
+    case "error":
+      return "Error";
+    case "idle":
+    default:
+      return "Not watching";
+  }
+}
+
+function snapshotWatchStopReasonLabel(reason?: SnapshotWatchStopReason | null): string {
+  switch (reason) {
+    case "user_stopped":
+      return "User stopped";
+    case "max_captures_reached":
+      return "Max captures reached";
+    case "source_error":
+      return "Source error";
+    case "storage_warning":
+      return "Storage warning";
+    case "not_enough_snapshots":
+      return "Needs more snapshots";
+    case "completed":
+      return "Completed";
+    default:
+      return "None";
+  }
+}
+
+function snapshotWatchActivityText(result?: MotionEvaluateSavedMediaResponse | null): string {
+  if (!result) {
+    return "No motion check yet";
+  }
+  if (!result.activity_detected) {
+    return "No activity detected";
+  }
+  return `Activity detected in ${
+    result.strongest_activity_area_label ?? result.strongest_zone_id ?? "Activity area"
+  }`;
+}
+
+function snapshotWatchNextAction(
+  state: SnapshotWatchState,
+  motionResult?: MotionEvaluateSavedMediaResponse | null,
+  createdEvidence?: MotionEvidence | null,
+): string {
+  if (createdEvidence) {
+    return "Review activity";
+  }
+  if (motionResult?.activity_detected) {
+    return motionResult.can_create_review_activity ? "Review activity" : "Check motion";
+  }
+  if (state.status === "error") {
+    return "Check source";
+  }
+  if (state.status === "complete") {
+    return "Export reviewed data";
+  }
+  return state.capturesSucceeded < 2 ? "Capture another snapshot" : "Check motion";
 }
 
 function buildMediaLifecycleSummary(
@@ -941,6 +1076,39 @@ export function StreamsPage({
   const [folderEvidenceBatchConfirmed, setFolderEvidenceBatchConfirmed] = useState(false);
   const [folderEvidenceLoadingId, setFolderEvidenceLoadingId] = useState<string | null>(null);
   const [isSavingSetup, setIsSavingSetup] = useState(false);
+  const [snapshotWatch, setSnapshotWatch] =
+    useState<SnapshotWatchState>(() => initialSnapshotWatchState());
+  const [snapshotWatchIntervalSeconds, setSnapshotWatchIntervalSeconds] = useState(
+    DEFAULT_SNAPSHOT_WATCH_INTERVAL_SECONDS,
+  );
+  const [snapshotWatchMaxCaptures, setSnapshotWatchMaxCaptures] = useState(
+    DEFAULT_SNAPSHOT_WATCH_MAX_CAPTURES,
+  );
+  const snapshotWatchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const snapshotWatchStateRef = useRef<SnapshotWatchState>(snapshotWatch);
+
+  useEffect(() => {
+    snapshotWatchStateRef.current = snapshotWatch;
+  }, [snapshotWatch]);
+
+  function clearSnapshotWatchTimer() {
+    if (snapshotWatchTimerRef.current) {
+      clearTimeout(snapshotWatchTimerRef.current);
+      snapshotWatchTimerRef.current = null;
+    }
+  }
+
+  function updateSnapshotWatchState(
+    updater: SnapshotWatchState | ((current: SnapshotWatchState) => SnapshotWatchState),
+  ) {
+    setSnapshotWatch((current) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      snapshotWatchStateRef.current = next;
+      return next;
+    });
+  }
+
+  useEffect(() => clearSnapshotWatchTimer, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -1030,6 +1198,8 @@ export function StreamsPage({
     );
 
   useEffect(() => {
+    clearSnapshotWatchTimer();
+    updateSnapshotWatchState(initialSnapshotWatchState());
     setPreviewResult(null);
     setPreviewSaveResult(null);
     setPreviewEvidenceResult(null);
@@ -1197,6 +1367,29 @@ export function StreamsPage({
     }
   }
 
+  async function refreshMediaAndStorage(): Promise<{
+    nextMediaAssets: MediaAsset[];
+    nextRetentionReport: SavedMediaRetentionReportResponse | null;
+  }> {
+    setMediaAssetsError(null);
+    setSavedMediaRetentionError(null);
+    try {
+      const [nextMediaAssets, nextRetentionReport] = await Promise.all([
+        apiClient.getMediaAssets(),
+        apiClient.getSavedMediaRetentionReport(),
+      ]);
+      setMediaAssets(nextMediaAssets);
+      setSavedMediaRetentionReport(nextRetentionReport);
+      return { nextMediaAssets, nextRetentionReport };
+    } catch (caught) {
+      const message =
+        caught instanceof Error ? caught.message : "Could not refresh saved images.";
+      setMediaAssetsError(message);
+      setSavedMediaRetentionError(message);
+      return { nextMediaAssets: mediaAssets, nextRetentionReport: savedMediaRetentionReport };
+    }
+  }
+
   async function loadTimelineLifecycleData(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
     if (showLoading) {
@@ -1298,6 +1491,32 @@ export function StreamsPage({
     });
   }
 
+  async function saveStillImagePreviewForStream(
+    sourceId: string,
+    streamId: string | null,
+  ): Promise<ExternalUrlPreviewSaveResponse> {
+    const result = await apiClient.saveExternalUrlPreview(sourceId, {
+      stream_id: streamId,
+    });
+    setPreviewSaveResult(result);
+    const captureStreamId = result.stream_id ?? streamId;
+    if (captureStreamId) {
+      updateSourceHealthAction(sourceId, {
+        lastCaptureByStreamId: {
+          [captureStreamId]: {
+            status: result.status === "saved" ? "success" : "failure",
+            timestamp: result.fetched_at ?? new Date().toISOString(),
+            contentType: result.content_type,
+            mediaAssetId: result.media_asset_id,
+            fileName: result.file_name,
+            error: result.status === "saved" ? null : result.message,
+          },
+        },
+      });
+    }
+    return result;
+  }
+
   async function handleFetchStillImagePreview() {
     if (!selectedSourceId) {
       return;
@@ -1362,27 +1581,8 @@ export function StreamsPage({
     setSnapshotProposalResult(null);
     setSnapshotProposalDecisionResult(null);
     try {
-      const result = await apiClient.saveExternalUrlPreview(sourceId, {
-        stream_id: streamId,
-      });
-      setPreviewSaveResult(result);
-      const captureStreamId = result.stream_id ?? streamId;
-      if (captureStreamId) {
-        updateSourceHealthAction(sourceId, {
-          lastCaptureByStreamId: {
-            [captureStreamId]: {
-              status: result.status === "saved" ? "success" : "failure",
-              timestamp: result.fetched_at ?? new Date().toISOString(),
-              contentType: result.content_type,
-              mediaAssetId: result.media_asset_id,
-              fileName: result.file_name,
-              error: result.status === "saved" ? null : result.message,
-            },
-          },
-        });
-      }
-      await loadMediaAssets({ showLoading: false });
-      await loadSavedMediaRetentionReport({ showLoading: false });
+      await saveStillImagePreviewForStream(sourceId, streamId);
+      await refreshMediaAndStorage();
     } catch (caught) {
       const error = caught instanceof Error ? caught.message : "Could not capture snapshot.";
       setPreviewSaveError(error);
@@ -1612,7 +1812,7 @@ export function StreamsPage({
     assets: MediaAsset[],
     zones: Zone[],
     options: { createActivity: boolean },
-  ) {
+  ): Promise<MotionEvaluateSavedMediaResponse | null> {
     const selectedIds = selectedMotionMediaIds(stream.id, assets);
     const selectedAssets = sortOldestFirst(
       assets.filter((asset) => selectedIds.includes(asset.id)),
@@ -1622,7 +1822,7 @@ export function StreamsPage({
         error: "Select at least two saved snapshots before checking motion.",
         lastCheckedAt: new Date().toISOString(),
       });
-      return;
+      return null;
     }
 
     updateStreamMotionCheckState(stream.id, {
@@ -1649,17 +1849,258 @@ export function StreamsPage({
       if (options.createActivity) {
         await refreshLifecycleAndStorage();
       }
+      return result;
     } catch (caught) {
       updateStreamMotionCheckState(stream.id, {
         error: caught instanceof Error ? caught.message : "Could not check motion.",
         lastCheckedAt: new Date().toISOString(),
       });
+      return null;
     } finally {
       updateStreamMotionCheckState(stream.id, {
         isChecking: false,
         isCreatingActivity: false,
       });
     }
+  }
+
+  function stopSnapshotWatch(
+    reason: SnapshotWatchStopReason,
+    status: SnapshotWatchStatus,
+    message: string,
+    error: string | null = null,
+  ) {
+    clearSnapshotWatchTimer();
+    updateSnapshotWatchState((current) => ({
+      ...current,
+      isWatching: false,
+      status,
+      nextCaptureAt: null,
+      lastWatchStatus: message,
+      lastWatchError: error,
+      stopReason: reason,
+      isTickRunning: false,
+    }));
+  }
+
+  function scheduleSnapshotWatchTick(
+    context: {
+      sourceId: string;
+      stream: Stream;
+      zones: Zone[];
+      intervalSeconds: number;
+      maxCaptures: number;
+    },
+    delayMs: number,
+  ) {
+    clearSnapshotWatchTimer();
+    updateSnapshotWatchState((current) => ({
+      ...current,
+      nextCaptureAt: new Date(Date.now() + delayMs).toISOString(),
+    }));
+    snapshotWatchTimerRef.current = setTimeout(() => {
+      void runSnapshotWatchTick(context);
+    }, delayMs);
+  }
+
+  async function runSnapshotWatchTick(context: {
+    sourceId: string;
+    stream: Stream;
+    zones: Zone[];
+    intervalSeconds: number;
+    maxCaptures: number;
+  }) {
+    const activeWatch = snapshotWatchStateRef.current;
+    if (
+      !activeWatch.isWatching ||
+      activeWatch.sourceId !== context.sourceId ||
+      activeWatch.streamId !== context.stream.id ||
+      activeWatch.isTickRunning
+    ) {
+      return;
+    }
+    if (activeWatch.capturesAttempted >= context.maxCaptures) {
+      stopSnapshotWatch(
+        "max_captures_reached",
+        "complete",
+        "Bounded run complete.",
+      );
+      return;
+    }
+
+    updateSnapshotWatchState((current) => ({
+      ...current,
+      capturesAttempted: current.capturesAttempted + 1,
+      isTickRunning: true,
+      lastWatchTickAt: new Date().toISOString(),
+      nextCaptureAt: null,
+      lastWatchStatus: "Capturing snapshot.",
+      lastWatchError: null,
+    }));
+
+    try {
+      const captureResult = await saveStillImagePreviewForStream(
+        context.sourceId,
+        context.stream.id,
+      );
+      if (captureResult.status !== "saved" || !captureResult.media_asset_id) {
+        stopSnapshotWatch(
+          "source_error",
+          "error",
+          "Snapshot capture failed.",
+          captureResult.message,
+        );
+        return;
+      }
+
+      updateSnapshotWatchState((current) => ({
+        ...current,
+        capturesSucceeded: current.capturesSucceeded + 1,
+        lastWatchStatus: "Captured snapshot.",
+      }));
+
+      const { nextMediaAssets, nextRetentionReport } = await refreshMediaAndStorage();
+      const streamImages = sortNewestFirst(
+        nextMediaAssets.filter(
+          (asset) => asset.stream_id === context.stream.id && isImageMedia(asset),
+        ),
+      );
+      const streamRetentionItems =
+        nextRetentionReport?.items.filter((item) => item.stream_id === context.stream.id) ?? [];
+      const nextStorageSummary = storageGuardrailSummary(
+        streamImages,
+        streamRetentionItems,
+        streamMotionCheckState[context.stream.id] ?? {},
+      );
+      if (nextStorageSummary.savedImageCount >= SNAPSHOT_WATCH_STORAGE_BLOCK_COUNT) {
+        stopSnapshotWatch(
+          "storage_warning",
+          "stopped",
+          "Storage warning reached. Review/export or clean up manually before repeated checks.",
+        );
+        return;
+      }
+
+      let motionResult: MotionEvaluateSavedMediaResponse | null = null;
+      if (streamImages.length >= 2) {
+        updateSnapshotWatchState((current) => ({
+          ...current,
+          lastWatchStatus: "Checking motion.",
+        }));
+        motionResult = await handleEvaluateSavedMediaMotion(
+          context.stream,
+          streamImages,
+          context.zones,
+          { createActivity: false },
+        );
+        updateSnapshotWatchState((current) => ({
+          ...current,
+          motionChecksRun: motionResult
+            ? current.motionChecksRun + 1
+            : current.motionChecksRun,
+          lastActivityResult: snapshotWatchActivityText(motionResult),
+          lastWatchStatus: snapshotWatchActivityText(motionResult),
+        }));
+      } else {
+        updateSnapshotWatchState((current) => ({
+          ...current,
+          lastActivityResult: "Needs 2 snapshots for motion",
+          lastWatchStatus: "Captured snapshot. Needs 2 snapshots for motion.",
+        }));
+      }
+
+      updateSnapshotWatchState((current) => ({
+        ...current,
+        isTickRunning: false,
+      }));
+
+      const latestWatch = snapshotWatchStateRef.current;
+      if (latestWatch.capturesAttempted >= context.maxCaptures) {
+        stopSnapshotWatch(
+          streamImages.length >= 2 ? "max_captures_reached" : "not_enough_snapshots",
+          "complete",
+          streamImages.length >= 2
+            ? "Bounded run complete."
+            : "Bounded run complete; capture another snapshot before motion checks.",
+        );
+        return;
+      }
+
+      scheduleSnapshotWatchTick(context, context.intervalSeconds * 1000);
+    } catch (caught) {
+      const error = caught instanceof Error ? caught.message : "Snapshot watch failed.";
+      stopSnapshotWatch("source_error", "error", "Snapshot watch stopped.", error);
+    }
+  }
+
+  function handleStartSnapshotWatch(
+    stream: Stream,
+    zones: Zone[],
+    storageSummary: StorageGuardrailSummary,
+  ) {
+    if (!selectedSourceId || snapshotWatchStateRef.current.isWatching) {
+      return;
+    }
+    if (!isExternalUrlProvider) {
+      updateSnapshotWatchState((current) => ({
+        ...current,
+        status: "error",
+        lastWatchError: "Snapshot watch is available for external snapshot sources.",
+        lastWatchStatus: "Check source setup.",
+      }));
+      return;
+    }
+    if (sourceNeedsSetup(selectedConnection, selectedSetupReview)) {
+      updateSnapshotWatchState((current) => ({
+        ...current,
+        status: "error",
+        lastWatchError: "Check source setup before starting Snapshot watch.",
+        lastWatchStatus: "Check source setup.",
+      }));
+      return;
+    }
+    if (storageSummary.savedImageCount >= SNAPSHOT_WATCH_STORAGE_BLOCK_COUNT) {
+      updateSnapshotWatchState((current) => ({
+        ...current,
+        status: "error",
+        lastWatchError: "Review/export or clean up manually before starting repeated checks.",
+        lastWatchStatus: "Storage warning.",
+        stopReason: "storage_warning",
+      }));
+      return;
+    }
+
+    const intervalSeconds = Math.max(
+      MIN_SNAPSHOT_WATCH_INTERVAL_SECONDS,
+      snapshotWatchIntervalSeconds,
+    );
+    const maxCaptures = snapshotWatchMaxCaptures;
+    const startedAt = new Date().toISOString();
+    updateSnapshotWatchState({
+      ...initialSnapshotWatchState(),
+      isWatching: true,
+      status: "watching",
+      sourceId: selectedSourceId,
+      streamId: stream.id,
+      watchStartedAt: startedAt,
+      intervalSeconds,
+      maxCaptures,
+      lastWatchStatus: "Starting Snapshot watch.",
+    });
+    scheduleSnapshotWatchTick(
+      {
+        sourceId: selectedSourceId,
+        stream,
+        zones,
+        intervalSeconds,
+        maxCaptures,
+      },
+      0,
+    );
+  }
+
+  function handleStopSnapshotWatch() {
+    stopSnapshotWatch("user_stopped", "stopped", "Snapshot watch stopped.");
   }
 
   function timelineSelectedZoneId(asset: MediaAsset): string | null {
@@ -3733,14 +4174,15 @@ export function StreamsPage({
                     : stream.is_live
                       ? "Stream"
                       : "Placeholder";
-                  const streamMediaAssets =
-                    mediaAssetsByStream.get(stream.id)?.slice(0, MEDIA_TIMELINE_LIMIT) ?? [];
+                  const allStreamMediaAssets = mediaAssetsByStream.get(stream.id) ?? [];
+                  const streamMediaAssets = allStreamMediaAssets.slice(0, MEDIA_TIMELINE_LIMIT);
                   const streamTimelineZones = timelineZonesByStream[stream.id] ?? [];
                   const reviewableTimelineZones = streamTimelineZones.filter(isReviewableZone);
                   const selectedTimelineZoneId = timelineSelectedZoneByStream[stream.id] ?? "";
                   const blockedTimelineZoneCount = streamTimelineZones.filter(
                     (zone) => zone.is_active && !isReviewableZone(zone),
                   ).length;
+                  const allStreamImageAssets = allStreamMediaAssets.filter(isImageMedia);
                   const streamImageAssets = streamMediaAssets.filter(isImageMedia);
                   const recentMotionAssets = streamImageAssets.slice(0, MOTION_SNAPSHOT_LIMIT);
                   const motionState = streamMotionCheckState[stream.id] ?? {};
@@ -3759,7 +4201,7 @@ export function StreamsPage({
                     connection: selectedConnection,
                     setupReview: selectedSetupReview,
                     snapshotTest: lastSnapshotTest,
-                    savedImageCount: streamImageAssets.length,
+                    savedImageCount: allStreamImageAssets.length,
                     motionState,
                   });
                   const sourceHealthLastError =
@@ -3771,7 +4213,7 @@ export function StreamsPage({
                       (item) => item.stream_id === stream.id,
                     ) ?? [];
                   const storageSummary = storageGuardrailSummary(
-                    streamImageAssets,
+                    allStreamImageAssets,
                     streamRetentionItems,
                     motionState,
                   );
@@ -3795,10 +4237,36 @@ export function StreamsPage({
                     motionResult?.best_media_asset_id ??
                     null;
                   const bestMotionAsset = bestMotionAssetId
-                    ? streamImageAssets.find(
+                    ? allStreamImageAssets.find(
                         (asset) => asset.id === bestMotionAssetId,
                       )
                     : null;
+                  const isCurrentSnapshotWatch =
+                    snapshotWatch.sourceId === selectedSourceId &&
+                    snapshotWatch.streamId === stream.id;
+                  const streamSnapshotWatch = isCurrentSnapshotWatch
+                    ? snapshotWatch
+                    : initialSnapshotWatchState();
+                  const isAnotherSnapshotWatchActive =
+                    snapshotWatch.isWatching && !isCurrentSnapshotWatch;
+                  const snapshotWatchStartBlockReason = !isExternalUrlProvider
+                    ? "Snapshot watch is available for external snapshot sources."
+                    : sourceNeedsSetup(selectedConnection, selectedSetupReview)
+                      ? "Check source setup before starting Snapshot watch."
+                      : storageSummary.savedImageCount >= SNAPSHOT_WATCH_STORAGE_BLOCK_COUNT
+                        ? "Review/export or clean up manually before starting repeated checks."
+                        : isAnotherSnapshotWatchActive
+                          ? "Stop the current Snapshot watch before starting another."
+                          : null;
+                  const canStartSnapshotWatch =
+                    !snapshotWatch.isWatching &&
+                    !snapshotWatchStartBlockReason &&
+                    !isSavingPreview;
+                  const snapshotWatchNextRecommendation = snapshotWatchNextAction(
+                    streamSnapshotWatch,
+                    motionResult,
+                    motionCreatedEvidence,
+                  );
                   return (
                     <section className="source-stream-card" key={stream.id}>
                       <div className="item-title-row">
@@ -3851,7 +4319,7 @@ export function StreamsPage({
                           </div>
                           <div className="data-row">
                             <span>Saved images</span>
-                            <strong>{streamImageAssets.length}</strong>
+                            <strong>{allStreamImageAssets.length}</strong>
                           </div>
                           <div className="data-row">
                             <span>Last motion check</span>
@@ -3900,7 +4368,7 @@ export function StreamsPage({
                           <div>
                             <strong>Storage guardrails</strong>
                             <p className="meta-text">
-                              Read-only saved image signals before repeated checks later.
+                              Read-only saved image signals before manual Snapshot watch.
                             </p>
                           </div>
                           <StatusPill
@@ -3943,7 +4411,9 @@ export function StreamsPage({
                           Reviewed/export-linked media is protected by default. Manual cleanup
                           remains separate.
                         </span>
-                        <span className="meta-text">Repeated capture is not enabled yet.</span>
+                        <span className="meta-text">
+                          Snapshot watch remains bounded and user-started.
+                        </span>
                         {savedMediaRetentionError ? (
                           <div className="zone-error">{savedMediaRetentionError}</div>
                         ) : null}
@@ -3972,6 +4442,159 @@ export function StreamsPage({
                           </div>
                         </details>
                       </div>
+                      {isExternalUrlProvider ? (
+                        <div className="snapshot-watch-panel">
+                          <div className="item-title-row">
+                            <div>
+                              <strong>Snapshot watch</strong>
+                              <p className="meta-text">
+                                Snapshot watch only runs while this page is open and after you
+                                click Start.
+                              </p>
+                            </div>
+                            <StatusPill
+                              label={snapshotWatchLabel(streamSnapshotWatch.status)}
+                              tone={snapshotWatchTone(streamSnapshotWatch.status)}
+                            />
+                          </div>
+                          <div className="snapshot-watch-controls">
+                            <label>
+                              Snapshot interval
+                              <select
+                                disabled={snapshotWatch.isWatching}
+                                onChange={(event) =>
+                                  setSnapshotWatchIntervalSeconds(Number(event.target.value))
+                                }
+                                value={snapshotWatchIntervalSeconds}
+                              >
+                                {SNAPSHOT_WATCH_INTERVAL_OPTIONS.map((seconds) => (
+                                  <option key={seconds} value={seconds}>
+                                    {seconds}s
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Bounded run
+                              <select
+                                disabled={snapshotWatch.isWatching}
+                                onChange={(event) =>
+                                  setSnapshotWatchMaxCaptures(Number(event.target.value))
+                                }
+                                value={snapshotWatchMaxCaptures}
+                              >
+                                {SNAPSHOT_WATCH_CAPTURE_OPTIONS.map((count) => (
+                                  <option key={count} value={count}>
+                                    {count} captures
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                          <div className="snapshot-watch-grid">
+                            <div className="data-row">
+                              <span>Manual watch</span>
+                              <strong>{streamSnapshotWatch.lastWatchStatus}</strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Started</span>
+                              <strong>
+                                {streamSnapshotWatch.watchStartedAt
+                                  ? formatDateTime(streamSnapshotWatch.watchStartedAt)
+                                  : "Not started"}
+                              </strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Next capture</span>
+                              <strong>
+                                {streamSnapshotWatch.nextCaptureAt
+                                  ? formatDateTime(streamSnapshotWatch.nextCaptureAt)
+                                  : "Not scheduled"}
+                              </strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Captured snapshots</span>
+                              <strong>
+                                {streamSnapshotWatch.capturesSucceeded}/
+                                {streamSnapshotWatch.capturesAttempted}
+                              </strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Motion checks</span>
+                              <strong>{streamSnapshotWatch.motionChecksRun}</strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Last activity result</span>
+                              <strong>
+                                {streamSnapshotWatch.lastActivityResult ??
+                                  "No motion check yet"}
+                              </strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Stop reason</span>
+                              <strong>
+                                {snapshotWatchStopReasonLabel(streamSnapshotWatch.stopReason)}
+                              </strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Next recommended action</span>
+                              <strong>{snapshotWatchNextRecommendation}</strong>
+                            </div>
+                          </div>
+                          <div className="detail-actions">
+                            <button
+                              className="primary-action"
+                              disabled={!canStartSnapshotWatch}
+                              onClick={() =>
+                                handleStartSnapshotWatch(
+                                  stream,
+                                  reviewableTimelineZones,
+                                  storageSummary,
+                                )
+                              }
+                              type="button"
+                            >
+                              Start watch
+                            </button>
+                            {isCurrentSnapshotWatch && snapshotWatch.isWatching ? (
+                              <button
+                                className="secondary-action"
+                                onClick={handleStopSnapshotWatch}
+                                type="button"
+                              >
+                                Stop watch
+                              </button>
+                            ) : null}
+                          </div>
+                          {snapshotWatchStartBlockReason ? (
+                            <span className="meta-text">{snapshotWatchStartBlockReason}</span>
+                          ) : null}
+                          {isCurrentSnapshotWatch && streamSnapshotWatch.lastWatchError ? (
+                            <div className="zone-error">
+                              {streamSnapshotWatch.lastWatchError}
+                            </div>
+                          ) : null}
+                          <details className="advanced-details">
+                            <summary>Advanced details</summary>
+                            <div className="source-connection-meta">
+                              <span>Source ID: {selectedSourceId ?? "none"}</span>
+                              <span>Stream ID: {stream.id}</span>
+                              <span>Interval: {streamSnapshotWatch.intervalSeconds}s</span>
+                              <span>Max captures: {streamSnapshotWatch.maxCaptures}</span>
+                              <span>
+                                Last tick:{" "}
+                                {streamSnapshotWatch.lastWatchTickAt
+                                  ? formatDateTime(streamSnapshotWatch.lastWatchTickAt)
+                                  : "none"}
+                              </span>
+                              <span>
+                                Page-local timer:{" "}
+                                {streamSnapshotWatch.isWatching ? "active" : "inactive"}
+                              </span>
+                            </div>
+                          </details>
+                        </div>
+                      ) : null}
                       <div className="detail-actions">
                         <button
                           className="primary-action"

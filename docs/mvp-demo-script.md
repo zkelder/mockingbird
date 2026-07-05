@@ -24,6 +24,7 @@ production provider infrastructure.
 
 - Source/provider setup is understandable.
 - The `external_url` still-image preview/save/evidence path works.
+- Manual bounded Snapshot watch works for `external_url` while the page is open.
 - The `folder_import_future` preview/import/evidence path works.
 - The `webhook_future` metadata validation/evidence path works.
 - Browser media import can create demo DetectionProposal evidence.
@@ -177,7 +178,8 @@ Dataset Exports.
       remains truth.
 - [ ] Open Streams and configure or select an external snapshot camera/source.
 - [ ] Confirm Source health / Camera status is visible for the selected Stream.
-- [ ] Confirm Storage guardrails shows saved image count and no repeated capture.
+- [ ] Confirm Storage guardrails shows saved image count and Snapshot watch
+      readiness.
 - [ ] Click `Test snapshot`.
 - [ ] Confirm success/failure, timestamp, content type, and preview image when available.
 - [ ] Confirm Last snapshot test updates in Source health.
@@ -185,6 +187,10 @@ Dataset Exports.
 - [ ] Confirm the saved image appears under that camera/source and Stream.
 - [ ] Confirm Last capture and Saved images update in Source health.
 - [ ] Confirm Storage guardrails updates saved image count and motion readiness.
+- [ ] Click `Start watch`.
+- [ ] Confirm Snapshot watch captures a small bounded run while the page stays open.
+- [ ] Confirm `Stop watch` stops the run and keeps captured snapshots visible.
+- [ ] Confirm no capture continues after Stop watch or navigation.
 - [ ] Capture at least one more saved snapshot for the same Stream.
 - [ ] Click `Check motion`.
 - [ ] Confirm `New activity detected`, `Ongoing activity`, `Cooldown active`,
@@ -202,7 +208,9 @@ Dataset Exports.
       per activity area.
 - [ ] If activity is detected and review activity is available, click `Create review activity`, then `Review activity`.
 - [ ] Confirm no reviewed data is created until a later correction.
-- [ ] Confirm no repeated capture or live behavior starts.
+- [ ] Confirm no capture starts before explicit Start watch, and no live behavior starts.
+- [ ] Confirm Snapshot watch starts only after explicit Start watch and stops at
+      its bounded capture count.
 - [ ] Confirm reviewed/export-linked media protection copy appears before export.
 - [ ] Confirm image status shows Not analyzed, Suggestion available, Needs review, or Reviewed.
 - [ ] Confirm local detector readiness is visible for saved image media.
@@ -255,6 +263,8 @@ create proposal evidence only.
       future-safe.
 - [ ] Confirm Source health / Camera status shows readiness for manual checks.
 - [ ] Confirm Storage guardrails shows saved image counts and no cleanup/delete controls.
+- [ ] Confirm Snapshot watch controls are visible and explain that the watch only
+      runs while the page is open after Start watch.
 - [ ] Click `Test snapshot`.
 - [ ] Confirm transient preview appears with success/failure, timestamp, and
       content type.
@@ -265,6 +275,11 @@ create proposal evidence only.
       Stream.
 - [ ] Confirm Last capture and Saved images update in Source health.
 - [ ] Confirm Storage guardrails updates saved image count.
+- [ ] Start Snapshot watch.
+- [ ] Confirm captured snapshot count, motion check count, and last activity
+      result update during the bounded run.
+- [ ] Stop Snapshot watch or wait for the capture limit.
+- [ ] Confirm no watch continues after Stop watch or navigation.
 - [ ] Capture at least one more saved snapshot for the same Stream.
 - [ ] Click `Check motion`.
 - [ ] Confirm `New activity detected`, `Ongoing activity`, `Cooldown active`,
@@ -276,8 +291,8 @@ create proposal evidence only.
       snapshot remains saved.
 - [ ] Run `Check motion` again for the same Activity area and confirm duplicate
       review activity is not encouraged.
-- [ ] Confirm this path remains manual only; no repeated capture or live video
-      starts.
+- [ ] Confirm this path remains manual only; no live video starts and Snapshot
+      watch starts only after Start watch.
 - [ ] Confirm cleanup/deletion remains separate and is not available in this flow.
 - [ ] If no Zones exist, confirm automatic activity areas are used.
 - [ ] Confirm model analysis remains separate and is not run per automatic
