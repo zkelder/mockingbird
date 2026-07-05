@@ -34,6 +34,7 @@ production provider infrastructure.
 - Corrections drive analytics, export proof, and classifier readiness.
 - Reviewed-only exports include corrected truth and skip unreviewed candidates.
 - Saved media retention and cleanup are explicit and safe.
+- Stream saved-media timeline reuse is explicit and evidence-only.
 - Live playback is not implemented yet.
 
 ## What This Demo Does Not Prove
@@ -163,8 +164,11 @@ Dataset Exports.
 - [ ] Open Streams and configure or select an `external_url` Source.
 - [ ] Fetch a still-image snapshot preview.
 - [ ] Save the snapshot as a local MediaAsset.
-- [ ] Optionally create synthetic demo DetectionProposal evidence.
+- [ ] Confirm the saved MediaAsset appears in the Stream saved-media timeline.
+- [ ] Optionally create synthetic demo DetectionProposal evidence from the
+      saved timeline media.
 - [ ] Choose an active reviewable Zone and create pending MotionEvidence.
+- [ ] Optionally create pending MotionEvidence from the saved timeline media.
 - [ ] Optionally promote that evidence to reviewable Event/Visit records.
 - [ ] Open Review Queue.
 - [ ] Submit an explicit correction.
@@ -173,7 +177,8 @@ Dataset Exports.
 This path uses existing explicit browser actions only. Demo proposal creation is
 synthetic evidence, runs no model, and does not create ReviewLabel truth.
 Preview, save, evidence creation, and promotion also do not create truth. It is
-not live video.
+not live video. Saved timeline media can be reused later for proposal evidence
+or MotionEvidence, but reuse is still user-triggered and evidence-only.
 
 ## Step 1 - Dashboard MVP Readiness
 
@@ -198,6 +203,9 @@ not live video.
 - [ ] Confirm no Event, Visit, or truth is created.
 - [ ] Save preview as a local MediaAsset.
 - [ ] Confirm a MediaAsset ID appears.
+- [ ] Confirm the saved media appears in the selected Stream timeline.
+- [ ] Optionally create synthetic demo DetectionProposal evidence from the
+      timeline item.
 - [ ] Create pending MotionEvidence from saved media.
 - [ ] Open Motion Evidence.
 - [ ] Confirm pending evidence appears with saved media context.

@@ -15,6 +15,7 @@ import type {
   DetectionProposalDecisionResult,
   ExternalUrlPreviewResponse,
   ExternalUrlPreviewSaveResponse,
+  MediaAsset,
   MotionEvidencePromoteResponse,
   SavedPreviewMotionEvidenceResponse,
   SourceConnectionStatus,
@@ -129,6 +130,45 @@ function isReviewableZone(zone: Zone): boolean {
   return zone.is_active && zone.zone_type !== "privacy" && zone.zone_type !== "ignore";
 }
 
+function isImageMedia(asset: MediaAsset): boolean {
+  return asset.media_type === "image" || asset.content_type.startsWith("image/");
+}
+
+function mediaProvenanceHint(asset: MediaAsset): string {
+  const notes = asset.notes?.toLowerCase() ?? "";
+  if (
+    notes.includes("external_url") ||
+    notes.includes("external url") ||
+    notes.includes("preview")
+  ) {
+    return "external_url saved snapshot";
+  }
+  if (notes.includes("folder")) {
+    return "folder import";
+  }
+  if (notes.includes("manual") || notes.includes("import")) {
+    return "manual import";
+  }
+  return "local media";
+}
+
+interface TimelineMediaActionState {
+  proposalResult?: DemoDetectionRunResult | null;
+  proposalDecisionResult?: DetectionProposalDecisionResult | null;
+  proposalMessage?: string | null;
+  proposalError?: string | null;
+  evidenceResult?: SavedPreviewMotionEvidenceResponse | null;
+  evidenceError?: string | null;
+  promotionResult?: MotionEvidencePromoteResponse | null;
+  promotionError?: string | null;
+  isCreatingProposal?: boolean;
+  isConvertingProposal?: boolean;
+  isCreatingEvidence?: boolean;
+  isPromotingEvidence?: boolean;
+}
+
+const MEDIA_TIMELINE_LIMIT = 10;
+
 export function StreamsPage({
   streams,
   sources,
@@ -166,8 +206,17 @@ export function StreamsPage({
     useState<DemoDetectionRunResult | null>(null);
   const [snapshotProposalDecisionResult, setSnapshotProposalDecisionResult] =
     useState<DetectionProposalDecisionResult | null>(null);
+  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [previewZones, setPreviewZones] = useState<Zone[]>([]);
   const [selectedPreviewZoneId, setSelectedPreviewZoneId] = useState("");
+  const [timelineZonesByStream, setTimelineZonesByStream] = useState<Record<string, Zone[]>>({});
+  const [timelineSelectedZoneByStream, setTimelineSelectedZoneByStream] = useState<
+    Record<string, string>
+  >({});
+  const [timelineZoneErrors, setTimelineZoneErrors] = useState<Record<string, string>>({});
+  const [timelineActionState, setTimelineActionState] = useState<
+    Record<string, TimelineMediaActionState>
+  >({});
   const [folderPreviewResult, setFolderPreviewResult] =
     useState<FolderImportPreviewResponse | null>(null);
   const [folderImportResult, setFolderImportResult] = useState<FolderImportResponse | null>(null);
@@ -193,6 +242,7 @@ export function StreamsPage({
   const [snapshotProposalError, setSnapshotProposalError] = useState<string | null>(null);
   const [snapshotProposalMessage, setSnapshotProposalMessage] = useState<string | null>(null);
   const [previewZonesError, setPreviewZonesError] = useState<string | null>(null);
+  const [mediaAssetsError, setMediaAssetsError] = useState<string | null>(null);
   const [folderPreviewError, setFolderPreviewError] = useState<string | null>(null);
   const [folderImportError, setFolderImportError] = useState<string | null>(null);
   const [folderEvidenceDryRunError, setFolderEvidenceDryRunError] = useState<string | null>(null);
@@ -205,6 +255,7 @@ export function StreamsPage({
   const [isPromotingPreviewEvidence, setIsPromotingPreviewEvidence] = useState(false);
   const [isCreatingSnapshotProposal, setIsCreatingSnapshotProposal] = useState(false);
   const [isConvertingSnapshotProposal, setIsConvertingSnapshotProposal] = useState(false);
+  const [isLoadingMediaAssets, setIsLoadingMediaAssets] = useState(false);
   const [isPreviewingFolderImport, setIsPreviewingFolderImport] = useState(false);
   const [isImportingFolderMedia, setIsImportingFolderMedia] = useState(false);
   const [isDryRunningFolderEvidence, setIsDryRunningFolderEvidence] = useState(false);
@@ -290,6 +341,7 @@ export function StreamsPage({
   const selectedSourceStreams = selectedSource
     ? streams.filter((stream) => stream.source_id === selectedSource.id)
     : [];
+  const selectedSourceStreamIds = selectedSourceStreams.map((stream) => stream.id).join("|");
   const selectedReviewStreams = new Map(
     (selectedSetupReview?.streams ?? []).map((stream) => [stream.stream_id, stream]),
   );
@@ -351,6 +403,10 @@ export function StreamsPage({
     setConfigDraft(draftFromConfiguration(definition, selectedConfiguration));
   }, [providerDefinitions, selectedConfiguration]);
 
+  useEffect(() => {
+    void loadMediaAssets();
+  }, []);
+
   function handleProviderChange(nextProviderKey: string) {
     const definition = providerDefinitions.find((item) => item.provider_key === nextProviderKey);
     const matchingConfiguration =
@@ -407,6 +463,25 @@ export function StreamsPage({
       setSetupError(caught instanceof Error ? caught.message : "Could not save source setup.");
     } finally {
       setIsSavingSetup(false);
+    }
+  }
+
+  async function loadMediaAssets(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
+      setIsLoadingMediaAssets(true);
+    }
+    setMediaAssetsError(null);
+    try {
+      setMediaAssets(await apiClient.getMediaAssets());
+    } catch (caught) {
+      setMediaAssetsError(
+        caught instanceof Error ? caught.message : "Could not load saved Stream media.",
+      );
+    } finally {
+      if (showLoading) {
+        setIsLoadingMediaAssets(false);
+      }
     }
   }
 
@@ -486,6 +561,7 @@ export function StreamsPage({
         stream_id: selectedFirstStream?.id ?? null,
       });
       setPreviewSaveResult(result);
+      await loadMediaAssets({ showLoading: false });
     } catch (caught) {
       setPreviewSaveError(
         caught instanceof Error ? caught.message : "Could not save still-image preview.",
@@ -651,6 +727,184 @@ export function StreamsPage({
     }
   }
 
+  function updateTimelineActionState(mediaId: string, patch: TimelineMediaActionState) {
+    setTimelineActionState((current) => ({
+      ...current,
+      [mediaId]: {
+        ...(current[mediaId] ?? {}),
+        ...patch,
+      },
+    }));
+  }
+
+  function timelineSelectedZoneId(asset: MediaAsset): string | null {
+    return timelineSelectedZoneByStream[asset.stream_id] || null;
+  }
+
+  function buildTimelineProposalPayload(asset: MediaAsset): DemoDetectionRunCreate {
+    return {
+      media_asset_id: asset.id,
+      zone_id: timelineSelectedZoneId(asset),
+      label: "bird",
+      confidence: 0.72,
+      suggested_subject_label: "unknown_bird",
+      suggested_species: "unknown_bird",
+      notes:
+        "Stream media timeline demo detector evidence only. " +
+        "No model inspected the media and no reviewed truth was created.",
+    };
+  }
+
+  async function handleCreateTimelineProposal(asset: MediaAsset) {
+    if (!isImageMedia(asset)) {
+      updateTimelineActionState(asset.id, {
+        proposalError: "Only saved image media can create demo proposal evidence.",
+      });
+      return;
+    }
+
+    updateTimelineActionState(asset.id, {
+      isCreatingProposal: true,
+      proposalError: null,
+      proposalMessage: null,
+      proposalDecisionResult: null,
+    });
+    try {
+      const result = await apiClient.createDemoDetectionRun(buildTimelineProposalPayload(asset));
+      updateTimelineActionState(asset.id, {
+        proposalResult: result,
+        proposalMessage:
+          result.proposals.length > 0
+            ? "Synthetic timeline proposal evidence was created. Review correction still creates truth."
+            : "Demo run completed without proposal evidence.",
+      });
+    } catch (caught) {
+      updateTimelineActionState(asset.id, {
+        proposalError:
+          caught instanceof Error ? caught.message : "Timeline proposal evidence could not be created.",
+      });
+    } finally {
+      updateTimelineActionState(asset.id, { isCreatingProposal: false });
+    }
+  }
+
+  async function handleConvertTimelineProposal(asset: MediaAsset) {
+    const proposal = timelineActionState[asset.id]?.proposalResult?.proposals[0] ?? null;
+    if (!proposal) {
+      updateTimelineActionState(asset.id, {
+        proposalError: "Create timeline proposal evidence before converting it.",
+      });
+      return;
+    }
+
+    updateTimelineActionState(asset.id, {
+      isConvertingProposal: true,
+      proposalError: null,
+      proposalMessage: null,
+    });
+    try {
+      const result = await apiClient.decideDetectionProposal(proposal.id, {
+        decision: "convert_to_event",
+        event_title: "Stream media timeline proposal review",
+        subject_label: "unknown_bird",
+        species_guess: "unknown_bird",
+        notes: "Converted from explicit Stream media timeline proposal action; still needs review/correction.",
+      });
+      updateTimelineActionState(asset.id, {
+        proposalDecisionResult: result,
+        proposalMessage:
+          "Converted proposal into needs-review Event/Visit context. No ReviewLabel truth was created.",
+      });
+    } catch (caught) {
+      updateTimelineActionState(asset.id, {
+        proposalError:
+          caught instanceof Error ? caught.message : "Timeline proposal could not be converted.",
+      });
+    } finally {
+      updateTimelineActionState(asset.id, { isConvertingProposal: false });
+    }
+  }
+
+  async function handleCreateTimelineEvidence(asset: MediaAsset) {
+    const zoneId = timelineSelectedZoneId(asset);
+    if (!isImageMedia(asset)) {
+      updateTimelineActionState(asset.id, {
+        evidenceError: "Only saved image media can create pending MotionEvidence.",
+      });
+      return;
+    }
+    if (!zoneId) {
+      updateTimelineActionState(asset.id, {
+        evidenceError: "Add an active non-privacy/non-ignore Zone before creating MotionEvidence.",
+      });
+      return;
+    }
+
+    updateTimelineActionState(asset.id, {
+      isCreatingEvidence: true,
+      evidenceError: null,
+      promotionError: null,
+      promotionResult: null,
+    });
+    try {
+      const result = await apiClient.createMotionEvidenceFromMedia(asset.id, {
+        stream_id: asset.stream_id,
+        zone_id: zoneId,
+        note: "Stream media timeline evidence handoff.",
+        reason: "User requested pending evidence from saved Stream media.",
+        duplicate_policy: "skip_existing",
+      });
+      updateTimelineActionState(asset.id, { evidenceResult: result });
+    } catch (caught) {
+      updateTimelineActionState(asset.id, {
+        evidenceError:
+          caught instanceof Error ? caught.message : "Timeline MotionEvidence could not be created.",
+      });
+    } finally {
+      updateTimelineActionState(asset.id, { isCreatingEvidence: false });
+    }
+  }
+
+  async function handlePromoteTimelineEvidence(asset: MediaAsset) {
+    const currentEvidence = timelineActionState[asset.id]?.evidenceResult ?? null;
+    const evidenceId = currentEvidence?.motion_evidence_id;
+    if (!evidenceId) {
+      return;
+    }
+
+    updateTimelineActionState(asset.id, {
+      isPromotingEvidence: true,
+      promotionError: null,
+      promotionResult: null,
+    });
+    try {
+      const result = await apiClient.promoteMotionEvidence(evidenceId, {
+        event_title: "Stream media timeline review",
+        visit_label_hint: "unknown_animal",
+        notes: "Promoted by explicit Stream media timeline action.",
+        create_event: true,
+        create_visit: true,
+        attach_snapshot_media_asset_id: asset.id,
+      });
+      updateTimelineActionState(asset.id, {
+        promotionResult: result,
+        evidenceResult: currentEvidence
+          ? {
+              ...currentEvidence,
+              status: result.evidence.status,
+            }
+          : currentEvidence,
+      });
+    } catch (caught) {
+      updateTimelineActionState(asset.id, {
+        promotionError:
+          caught instanceof Error ? caught.message : "Timeline MotionEvidence could not be promoted.",
+      });
+    } finally {
+      updateTimelineActionState(asset.id, { isPromotingEvidence: false });
+    }
+  }
+
   function buildFolderPreviewRequest(): FolderImportPreviewRequest {
     return {
       recursive: folderRecursive,
@@ -747,6 +1001,7 @@ export function StreamsPage({
     try {
       const result = await apiClient.importFolderMedia(selectedSourceId, importPayload);
       setFolderImportResult(result);
+      await loadMediaAssets({ showLoading: false });
     } catch (caught) {
       setFolderImportError(
         caught instanceof Error ? caught.message : "Could not import previewed folder files.",
@@ -898,6 +1153,64 @@ export function StreamsPage({
   useEffect(() => {
     let isMounted = true;
 
+    if (selectedSourceStreams.length === 0) {
+      setTimelineZonesByStream({});
+      setTimelineSelectedZoneByStream({});
+      setTimelineZoneErrors({});
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    async function loadTimelineZones() {
+      const zoneEntries: Array<readonly [string, Zone[]]> = [];
+      const errorEntries: Array<readonly [string, string]> = [];
+
+      await Promise.all(
+        selectedSourceStreams.map(async (stream) => {
+          try {
+            const zones = await apiClient.getStreamZones(stream.id);
+            zoneEntries.push([stream.id, zones] as const);
+          } catch (caught) {
+            errorEntries.push([
+              stream.id,
+              caught instanceof Error ? caught.message : "Could not load Stream Zones.",
+            ] as const);
+          }
+        }),
+      );
+
+      if (!isMounted) {
+        return;
+      }
+
+      const nextZonesByStream = Object.fromEntries(zoneEntries);
+      setTimelineZonesByStream(nextZonesByStream);
+      setTimelineZoneErrors(Object.fromEntries(errorEntries));
+      setTimelineSelectedZoneByStream((current) => {
+        const next: Record<string, string> = {};
+        for (const stream of selectedSourceStreams) {
+          const reviewableZones = (nextZonesByStream[stream.id] ?? []).filter(isReviewableZone);
+          const currentZoneId = current[stream.id];
+          next[stream.id] =
+            currentZoneId && reviewableZones.some((zone) => zone.id === currentZoneId)
+              ? currentZoneId
+              : reviewableZones[0]?.id ?? "";
+        }
+        return next;
+      });
+    }
+
+    void loadTimelineZones();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedSourceStreamIds]);
+
+  useEffect(() => {
+    let isMounted = true;
+
     setPreviewZones([]);
     setSelectedPreviewZoneId("");
     setPreviewZonesError(null);
@@ -942,6 +1255,18 @@ export function StreamsPage({
     Boolean(selectedFirstStream) &&
     Boolean(selectedPreviewZoneId);
   const canPromotePreviewEvidence = previewEvidenceResult?.status === "pending";
+  const mediaAssetsByStream = new Map<string, MediaAsset[]>();
+  for (const asset of mediaAssets) {
+    const streamAssets = mediaAssetsByStream.get(asset.stream_id) ?? [];
+    streamAssets.push(asset);
+    mediaAssetsByStream.set(asset.stream_id, streamAssets);
+  }
+  for (const streamAssets of mediaAssetsByStream.values()) {
+    streamAssets.sort(
+      (left, right) =>
+        new Date(right.created_at).getTime() - new Date(left.created_at).getTime(),
+    );
+  }
   const folderEvidenceDryRunEligibleCount =
     folderEvidenceDryRunResult?.items.filter((item) => item.would_create_motion_evidence).length ??
     0;
@@ -2335,6 +2660,14 @@ export function StreamsPage({
                     : stream.is_live
                       ? "Stream"
                       : "Placeholder";
+                  const streamMediaAssets =
+                    mediaAssetsByStream.get(stream.id)?.slice(0, MEDIA_TIMELINE_LIMIT) ?? [];
+                  const streamTimelineZones = timelineZonesByStream[stream.id] ?? [];
+                  const reviewableTimelineZones = streamTimelineZones.filter(isReviewableZone);
+                  const selectedTimelineZoneId = timelineSelectedZoneByStream[stream.id] ?? "";
+                  const blockedTimelineZoneCount = streamTimelineZones.filter(
+                    (zone) => zone.is_active && !isReviewableZone(zone),
+                  ).length;
                   return (
                     <section className="source-stream-card" key={stream.id}>
                       <div className="item-title-row">
@@ -2380,6 +2713,378 @@ export function StreamsPage({
                             Import media
                           </button>
                         ) : null}
+                      </div>
+                      <div className="stream-media-timeline">
+                        <div className="item-title-row">
+                          <div>
+                            <strong>Saved media for this stream</strong>
+                            <p className="meta-text">
+                              Saved media is local evidence context. Actions below are explicit
+                              and create no ReviewLabel truth.
+                            </p>
+                          </div>
+                          <StatusPill
+                            label={
+                              isLoadingMediaAssets
+                                ? "Loading"
+                                : `${streamMediaAssets.length} recent`
+                            }
+                            tone="quiet"
+                          />
+                        </div>
+                        {mediaAssetsError ? (
+                          <div className="zone-error">{mediaAssetsError}</div>
+                        ) : null}
+                        {timelineZoneErrors[stream.id] ? (
+                          <div className="zone-error">{timelineZoneErrors[stream.id]}</div>
+                        ) : null}
+                        {streamMediaAssets.length > 0 ? (
+                          <>
+                            <label className="timeline-zone-select">
+                              Review zone for evidence actions
+                              <select
+                                disabled={reviewableTimelineZones.length === 0}
+                                onChange={(event) =>
+                                  setTimelineSelectedZoneByStream((current) => ({
+                                    ...current,
+                                    [stream.id]: event.target.value,
+                                  }))
+                                }
+                                value={selectedTimelineZoneId}
+                              >
+                                {reviewableTimelineZones.length > 0 ? (
+                                  reviewableTimelineZones.map((zone) => (
+                                    <option key={zone.id} value={zone.id}>
+                                      {zone.name} ({formatLabel(zone.zone_type)})
+                                    </option>
+                                  ))
+                                ) : (
+                                  <option value="">No reviewable Zones</option>
+                                )}
+                              </select>
+                            </label>
+                            {reviewableTimelineZones.length === 0 ? (
+                              <div className="zone-error">
+                                Add an active non-privacy/non-ignore Zone before creating
+                                MotionEvidence.
+                              </div>
+                            ) : null}
+                            {blockedTimelineZoneCount > 0 ? (
+                              <span className="meta-text">
+                                Privacy and ignore Zones are omitted from timeline evidence
+                                actions.
+                              </span>
+                            ) : null}
+                            <div className="timeline-media-list">
+                              {streamMediaAssets.map((asset) => {
+                                const actionState = timelineActionState[asset.id] ?? {};
+                                const eligibleImage = isImageMedia(asset);
+                                const proposal = actionState.proposalResult?.proposals[0] ?? null;
+                                const canConvertProposal =
+                                  Boolean(proposal) && !actionState.proposalDecisionResult;
+                                const canPromoteEvidence =
+                                  actionState.evidenceResult?.status === "pending";
+                                return (
+                                  <section className="timeline-media-item" key={asset.id}>
+                                    <div className="item-title-row">
+                                      <div>
+                                        <strong>
+                                          {asset.original_filename || asset.filename}
+                                        </strong>
+                                        <span className="meta-text">{asset.id}</span>
+                                      </div>
+                                      <StatusPill
+                                        label={eligibleImage ? "Image actions" : "Context only"}
+                                        tone={eligibleImage ? "good" : "quiet"}
+                                      />
+                                    </div>
+                                    <div className="source-connection-meta">
+                                      <span>Content: {asset.content_type}</span>
+                                      <span>Type: {asset.media_type}</span>
+                                      <span>Size: {formatBytes(asset.file_size_bytes)}</span>
+                                      <span>Created: {formatDateTime(asset.created_at)}</span>
+                                      <span>Source: {asset.source_id ?? "none"}</span>
+                                      <span>Stream: {asset.stream_id}</span>
+                                      <span>Provenance: {mediaProvenanceHint(asset)}</span>
+                                    </div>
+                                    {asset.notes ? (
+                                      <p className="meta-text">{asset.notes}</p>
+                                    ) : null}
+                                    <div className="detail-actions">
+                                      <a
+                                        className="inline-link"
+                                        href={apiClient.mediaFileUrl(asset.id)}
+                                        rel="noreferrer"
+                                        target="_blank"
+                                      >
+                                        Open media
+                                      </a>
+                                      <button
+                                        className="secondary-action"
+                                        disabled={
+                                          !eligibleImage ||
+                                          actionState.isCreatingProposal ||
+                                          actionState.isConvertingProposal
+                                        }
+                                        onClick={() => void handleCreateTimelineProposal(asset)}
+                                        type="button"
+                                      >
+                                        {actionState.isCreatingProposal
+                                          ? "Creating..."
+                                          : "Create demo proposal"}
+                                      </button>
+                                      {canConvertProposal ? (
+                                        <button
+                                          className="secondary-action"
+                                          disabled={actionState.isConvertingProposal}
+                                          onClick={() => void handleConvertTimelineProposal(asset)}
+                                          type="button"
+                                        >
+                                          {actionState.isConvertingProposal
+                                            ? "Converting..."
+                                            : "Convert first proposal"}
+                                        </button>
+                                      ) : null}
+                                      <button
+                                        className="secondary-action"
+                                        disabled={
+                                          !eligibleImage ||
+                                          !selectedTimelineZoneId ||
+                                          actionState.isCreatingEvidence
+                                        }
+                                        onClick={() => void handleCreateTimelineEvidence(asset)}
+                                        type="button"
+                                      >
+                                        {actionState.isCreatingEvidence
+                                          ? "Creating..."
+                                          : "Create MotionEvidence"}
+                                      </button>
+                                      <button
+                                        className="secondary-action"
+                                        onClick={onOpenDetectionProposals}
+                                        type="button"
+                                      >
+                                        Detection Proposals
+                                      </button>
+                                      <button
+                                        className="secondary-action"
+                                        onClick={onOpenReview}
+                                        type="button"
+                                      >
+                                        Review Queue
+                                      </button>
+                                      <button
+                                        className="secondary-action"
+                                        onClick={onOpenExports}
+                                        type="button"
+                                      >
+                                        Dataset Exports
+                                      </button>
+                                    </div>
+                                    {actionState.proposalMessage ? (
+                                      <div className="notice-panel compact-notice">
+                                        {actionState.proposalMessage}
+                                      </div>
+                                    ) : null}
+                                    {actionState.proposalError ? (
+                                      <div className="zone-error">
+                                        {actionState.proposalError}
+                                      </div>
+                                    ) : null}
+                                    {actionState.proposalResult ? (
+                                      <div className="timeline-result-grid">
+                                        <div className="data-row">
+                                          <span>DetectionRun</span>
+                                          <strong>
+                                            {actionState.proposalResult.detection_run.id}
+                                          </strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Proposals</span>
+                                          <strong>
+                                            {actionState.proposalResult.proposals.length > 0
+                                              ? actionState.proposalResult.proposals
+                                                  .map((item) => item.id)
+                                                  .join(", ")
+                                              : "none"}
+                                          </strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Review Queue</span>
+                                          <strong>
+                                            {actionState.proposalResult.review_queue_count} needs
+                                            review
+                                          </strong>
+                                        </div>
+                                        {actionState.proposalResult.proposals.map((item) => (
+                                          <div className="data-row" key={item.id}>
+                                            <span>{item.id}</span>
+                                            <strong>
+                                              {item.label} /{" "}
+                                              {Math.round(item.confidence * 100)}% /{" "}
+                                              {formatLabel(item.status)}
+                                            </strong>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                    {actionState.proposalDecisionResult ? (
+                                      <div className="timeline-result-grid">
+                                        <div className="data-row">
+                                          <span>Converted proposal</span>
+                                          <strong>
+                                            {actionState.proposalDecisionResult.proposal.id}
+                                          </strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Event</span>
+                                          {actionState.proposalDecisionResult.event ? (
+                                            <button
+                                              className="inline-link-button"
+                                              onClick={() =>
+                                                onOpenEvent(
+                                                  actionState.proposalDecisionResult!.event!.id,
+                                                )
+                                              }
+                                              type="button"
+                                            >
+                                              {actionState.proposalDecisionResult.event.id}
+                                            </button>
+                                          ) : (
+                                            <strong>not created</strong>
+                                          )}
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Visit</span>
+                                          {actionState.proposalDecisionResult.visit ? (
+                                            <button
+                                              className="inline-link-button"
+                                              onClick={() =>
+                                                onOpenVisit(
+                                                  actionState.proposalDecisionResult!.visit!.id,
+                                                )
+                                              }
+                                              type="button"
+                                            >
+                                              {actionState.proposalDecisionResult.visit.id}
+                                            </button>
+                                          ) : (
+                                            <strong>not created</strong>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    {actionState.evidenceError ? (
+                                      <div className="zone-error">{actionState.evidenceError}</div>
+                                    ) : null}
+                                    {actionState.evidenceResult ? (
+                                      <div className="timeline-result-grid">
+                                        <div className="data-row">
+                                          <span>MotionEvidence</span>
+                                          <button
+                                            className="inline-link-button"
+                                            onClick={() =>
+                                              onOpenMotionEvidence(
+                                                actionState.evidenceResult!.motion_evidence_id,
+                                              )
+                                            }
+                                            type="button"
+                                          >
+                                            {actionState.evidenceResult.motion_evidence_id}
+                                          </button>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Status</span>
+                                          <strong>
+                                            {formatLabel(actionState.evidenceResult.status)}
+                                          </strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Zone</span>
+                                          <strong>
+                                            {actionState.evidenceResult.zone_id ?? "none"}
+                                          </strong>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    {canPromoteEvidence ? (
+                                      <div className="detail-actions">
+                                        <button
+                                          className="primary-action"
+                                          disabled={actionState.isPromotingEvidence}
+                                          onClick={() => void handlePromoteTimelineEvidence(asset)}
+                                          type="button"
+                                        >
+                                          {actionState.isPromotingEvidence
+                                            ? "Promoting..."
+                                            : "Promote MotionEvidence"}
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                    {actionState.promotionError ? (
+                                      <div className="zone-error">
+                                        {actionState.promotionError}
+                                      </div>
+                                    ) : null}
+                                    {actionState.promotionResult ? (
+                                      <div className="timeline-result-grid">
+                                        <div className="data-row">
+                                          <span>Event</span>
+                                          {actionState.promotionResult.event_id ? (
+                                            <button
+                                              className="inline-link-button"
+                                              onClick={() =>
+                                                onOpenEvent(actionState.promotionResult!.event_id!)
+                                              }
+                                              type="button"
+                                            >
+                                              {actionState.promotionResult.event_id}
+                                            </button>
+                                          ) : (
+                                            <strong>not created</strong>
+                                          )}
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Visit</span>
+                                          {actionState.promotionResult.visit_id ? (
+                                            <button
+                                              className="inline-link-button"
+                                              onClick={() =>
+                                                onOpenVisit(actionState.promotionResult!.visit_id!)
+                                              }
+                                              type="button"
+                                            >
+                                              {actionState.promotionResult.visit_id}
+                                            </button>
+                                          ) : (
+                                            <strong>not created</strong>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    <div className="notice-panel compact-notice import-smoke-boundary">
+                                      <strong>Truth boundary</strong>
+                                      <ul>
+                                        <li>Saved media is local evidence context.</li>
+                                        <li>Demo proposal evidence is synthetic.</li>
+                                        <li>No model inspected this media.</li>
+                                        <li>
+                                          ReviewLabel truth only happens through Review Queue
+                                          correction.
+                                        </li>
+                                      </ul>
+                                    </div>
+                                  </section>
+                                );
+                              })}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="timeline-empty-state">
+                            No saved media for this stream yet. Fetch/save an external URL
+                            snapshot or import media.
+                          </div>
+                        )}
                       </div>
                     </section>
                   );

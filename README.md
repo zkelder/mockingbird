@@ -99,6 +99,11 @@ The Motion Evidence review UI shows saved preview media/provenance context while
 keeping ignore, promote, and correction as explicit steps.
 After explicit promotion, Event and Visit detail keep saved preview media
 context visible while correction remains the analytics/export truth boundary.
+The Streams page also shows recent saved media for each selected Stream so
+external_url saved previews or other local image MediaAssets can be explicitly
+reused later for synthetic DetectionProposal evidence or pending MotionEvidence.
+This timeline does not run models, poll sources, create Events/Visits
+automatically, or create ReviewLabel truth.
 The source/stream smoke-test hardening plan is documented in
 [docs/source-stream-smoke-test-hardening.md](docs/source-stream-smoke-test-hardening.md).
 For manual browser/API validation of that same explicit path, use
@@ -206,9 +211,9 @@ proof.
 It also includes the explicit `external_url` snapshot capture-to-review path:
 configure/select Source, fetch preview, save MediaAsset, create pending
 MotionEvidence, optionally create synthetic demo DetectionProposal evidence,
-optionally promote to Event/Visit, correct in Review Queue, and inspect a
-reviewed-only export proof record. The proposal path runs no model, creates no
-truth, and this path is not live video.
+reuse saved Stream media from the timeline, optionally promote to Event/Visit,
+correct in Review Queue, and inspect a reviewed-only export proof record. The
+proposal path runs no model, creates no truth, and this path is not live video.
 
 ```sh
 .venv/bin/python -m uvicorn mockingbird.api.main:app --reload
