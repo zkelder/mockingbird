@@ -1115,6 +1115,45 @@ class MotionEvaluateSequenceResponse(BaseModel):
     created_evidence: list[MotionEvidenceResponse]
 
 
+class SavedMediaFrameSummary(BaseModel):
+    media_asset_id: str
+    created_at: datetime
+    width: int = Field(ge=1)
+    height: int = Field(ge=1)
+
+
+class MotionEvaluateSavedMediaRequest(BaseModel):
+    stream_id: str
+    media_asset_ids: list[str] = Field(min_length=2)
+    zone_ids: list[str] | None = None
+    create_motion_evidence: bool = False
+    attach_best_snapshot: bool = True
+    frame_index_start: int = Field(default=0, ge=0)
+    pixel_delta_threshold: float = Field(default=25.0, ge=0)
+    min_changed_ratio: float = Field(default=0.02, ge=0, le=1)
+    min_triggered_frames: int = Field(default=2, ge=1)
+    max_gap_frames: int = Field(default=1, ge=0)
+    notes: str | None = None
+
+
+class MotionEvaluateSavedMediaResponse(BaseModel):
+    # Saved snapshots can create pending evidence only; review correction remains truth.
+    stream_id: str
+    source_id: str
+    media_asset_ids: list[str]
+    zones: list[MotionZoneInput]
+    frames: list[SavedMediaFrameSummary]
+    frame_scores: list[MotionFrameScoreResponse]
+    candidates: list[MotionCandidateResponse]
+    created_evidence: list[MotionEvidenceResponse]
+    activity_detected: bool
+    strongest_zone_id: str | None = None
+    strongest_changed_ratio: float = 0.0
+    best_media_asset_id: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    local_first_note: str
+
+
 class MotionEvidenceListResponse(BaseModel):
     motion_evidence: list[MotionEvidenceResponse]
 

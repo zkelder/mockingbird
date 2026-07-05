@@ -65,6 +65,8 @@ from mockingbird.api.schemas import (
     MotionEvidenceResponse,
     MotionEvidenceStatus,
     MotionEvaluateFrameRequest,
+    MotionEvaluateSavedMediaRequest,
+    MotionEvaluateSavedMediaResponse,
     MotionEvaluateSequenceRequest,
     MotionEvaluateSequenceResponse,
     MotionExtractCandidatesRequest,
@@ -80,6 +82,7 @@ from mockingbird.api.schemas import (
     ReviewQueueItem,
     SavedMediaBulkMotionEvidenceRequest,
     SavedMediaBulkMotionEvidenceResponse,
+    SavedMediaFrameSummary,
     SavedMediaCleanupDryRunRequest,
     SavedMediaCleanupDryRunResponse,
     SavedMediaCleanupRequest,
@@ -133,6 +136,11 @@ from mockingbird.sampler import (
     SamplerZone,
     create_motion_evidence_from_sampler_result,
     evaluate_sampled_frame_sequence,
+)
+from mockingbird.sampler.saved_media_frames import (
+    SavedMediaFrame,
+    SavedMediaFrameDecodeError,
+    load_saved_image_frame_plane,
 )
 from mockingbird.source_providers import external_url_preview
 
@@ -526,6 +534,32 @@ def _motion_evaluation_error(error: ValueError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(error))
 
 
+def _saved_media_motion_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "missing_media_file":
+        return HTTPException(
+            status_code=404,
+            detail="Saved snapshot file was not found for motion check.",
+        )
+    if reason == "unsupported_image_content_type":
+        return HTTPException(
+            status_code=400,
+            detail="Check motion supports saved image snapshots only.",
+        )
+    if reason == "image_decoder_unavailable":
+        return HTTPException(
+            status_code=400,
+            detail=(
+                "Saved snapshot could not be decoded locally. PNG works without extra "
+                "dependencies; JPEG/WebP need an available local image decoder."
+            ),
+        )
+    return HTTPException(
+        status_code=400,
+        detail=f"Saved snapshot could not be checked for motion: {reason}",
+    )
+
+
 def _motion_evidence_error(error: ValueError) -> HTTPException:
     reason = str(error)
     if reason == "missing_source":
@@ -793,6 +827,68 @@ def _motion_candidate_response(candidate: MotionCandidate) -> MotionCandidateRes
     )
 
 
+def _motion_zone_from_zone(zone: Zone) -> MotionZoneInput:
+    xs = [point.x for point in zone.polygon]
+    ys = [point.y for point in zone.polygon]
+    return MotionZoneInput(
+        zone_id=zone.id,
+        left=max(0.0, min(xs)),
+        top=max(0.0, min(ys)),
+        right=min(1.0, max(xs)),
+        bottom=min(1.0, max(ys)),
+    )
+
+
+def _frame_asset_index(frame_index: int | None, frame_index_start: int) -> int | None:
+    if frame_index is None:
+        return None
+    index = frame_index - frame_index_start
+    if index < 0:
+        return None
+    return index
+
+
+def _media_asset_id_for_frame(
+    media_asset_ids: list[str],
+    *,
+    frame_index: int | None,
+    frame_index_start: int,
+) -> str | None:
+    index = _frame_asset_index(frame_index, frame_index_start)
+    if index is None or index >= len(media_asset_ids):
+        return None
+    return media_asset_ids[index]
+
+
+def _media_timestamp_for_frame(
+    frames: list[SavedMediaFrameSummary],
+    *,
+    frame_index: int | None,
+    frame_index_start: int,
+) -> str | None:
+    index = _frame_asset_index(frame_index, frame_index_start)
+    if index is None or index >= len(frames):
+        return None
+    return frames[index].created_at.isoformat()
+
+
+def _strongest_motion_summary(
+    frame_scores: list[MotionFrameScoreResponse],
+) -> tuple[str | None, float]:
+    strongest = max(
+        frame_scores,
+        key=lambda score: score.strongest_changed_ratio,
+        default=None,
+    )
+    if strongest is None:
+        return None, 0.0
+    return strongest.strongest_zone_id, strongest.strongest_changed_ratio
+
+
+def _best_motion_candidate(candidates: list[MotionCandidate]) -> MotionCandidate | None:
+    return max(candidates, key=lambda candidate: candidate.peak_changed_ratio, default=None)
+
+
 def _detection_runs_for_proposals(
     repository: ProductRepository,
     proposals: list[DetectionProposal],
@@ -922,6 +1018,208 @@ async def evaluate_motion_sequence(
             for candidate in sampler_result.candidates
         ],
         created_evidence=created_evidence,
+    )
+
+
+@app.post("/api/motion/evaluate-saved-media", response_model=MotionEvaluateSavedMediaResponse)
+async def evaluate_saved_media_motion(
+    payload: MotionEvaluateSavedMediaRequest,
+) -> MotionEvaluateSavedMediaResponse:
+    # Saved snapshots are explicitly supplied by the user; this does no capture,
+    # background source work, model inference, Event/Visit promotion, or truth writes.
+    repository = get_repository()
+    stream = repository.get_stream(payload.stream_id)
+    if stream is None:
+        raise _not_found("Stream", payload.stream_id)
+
+    media_assets: list[MediaAsset] = []
+    frames: list[SavedMediaFrame] = []
+    frame_summaries: list[SavedMediaFrameSummary] = []
+    for media_asset_id in payload.media_asset_ids:
+        asset = repository.get_media_asset(media_asset_id)
+        if asset is None:
+            raise _not_found("Media asset", media_asset_id)
+        if asset.stream_id != stream.id:
+            raise HTTPException(
+                status_code=400,
+                detail="Saved snapshots for Check motion must belong to the selected Stream.",
+            )
+        if asset.source_id is not None and asset.source_id != stream.source_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Saved snapshots for Check motion must match the Stream Source.",
+            )
+        if asset.media_type != "image" or not asset.content_type.startswith("image/"):
+            raise HTTPException(
+                status_code=400,
+                detail="Check motion supports saved image snapshots only.",
+            )
+        media_path = repository.media_file_path(asset.id)
+        if media_path is None:
+            raise _not_found("Media asset", asset.id)
+        try:
+            frame = load_saved_image_frame_plane(media_path, content_type=asset.content_type)
+        except SavedMediaFrameDecodeError as error:
+            raise _saved_media_motion_error(error) from error
+
+        media_assets.append(asset)
+        frames.append(frame)
+        frame_summaries.append(
+            SavedMediaFrameSummary(
+                media_asset_id=asset.id,
+                created_at=asset.created_at,
+                width=frame.width,
+                height=frame.height,
+            )
+        )
+
+    all_zones = repository.zones_for_stream(stream.id)
+    zones_by_id = {zone.id: zone for zone in all_zones}
+    requested_zone_ids = [zone_id for zone_id in payload.zone_ids or [] if zone_id.strip()]
+    candidate_zones = (
+        [zones_by_id[zone_id] for zone_id in requested_zone_ids if zone_id in zones_by_id]
+        if requested_zone_ids
+        else all_zones
+    )
+    missing_zone_ids = [zone_id for zone_id in requested_zone_ids if zone_id not in zones_by_id]
+    if missing_zone_ids:
+        raise _not_found("Zone", missing_zone_ids[0])
+
+    warnings: list[str] = []
+    reviewable_zones: list[Zone] = []
+    for zone in candidate_zones:
+        if not zone.is_active:
+            warnings.append(f"Inactive Zone skipped: {zone.name}.")
+            continue
+        if zone.zone_type.value in {"privacy", "ignore"}:
+            warnings.append(
+                f"{zone.zone_type.value.replace('_', ' ').title()} Zone skipped: {zone.name}."
+            )
+            continue
+        reviewable_zones.append(zone)
+
+    if not reviewable_zones:
+        raise HTTPException(
+            status_code=400,
+            detail="Add an active non-privacy/non-ignore Zone before checking motion.",
+        )
+
+    motion_zones = [_motion_zone_from_zone(zone) for zone in reviewable_zones]
+    sampler_config = SamplerConfig(
+        pixel_delta_threshold=payload.pixel_delta_threshold,
+        min_changed_ratio=payload.min_changed_ratio,
+        min_triggered_frames=payload.min_triggered_frames,
+        max_gap_frames=payload.max_gap_frames,
+        frame_index_start=payload.frame_index_start,
+        create_motion_evidence=payload.create_motion_evidence,
+    )
+    try:
+        sampler_result = evaluate_sampled_frame_sequence(
+            [frame.frame for frame in frames],
+            [_sampler_zone_from_payload(zone) for zone in motion_zones],
+            sampler_config,
+        )
+    except ValueError as error:
+        raise _motion_evaluation_error(error) from error
+
+    frame_score_responses = [
+        _motion_frame_score_response(frame_score)
+        for frame_score in sampler_result.frame_scores
+    ]
+    candidate_responses = [
+        _motion_candidate_response(candidate)
+        for candidate in sampler_result.candidates
+    ]
+    created_evidence: list[MotionEvidenceResponse] = []
+    if payload.create_motion_evidence and sampler_result.candidates:
+        for candidate in sampler_result.candidates:
+            best_media_asset_id = (
+                _media_asset_id_for_frame(
+                    payload.media_asset_ids,
+                    frame_index=candidate.best_frame_index,
+                    frame_index_start=payload.frame_index_start,
+                )
+                if payload.attach_best_snapshot
+                else None
+            )
+            try:
+                created_evidence.append(
+                    repository.create_motion_evidence(
+                        MotionEvidenceCreateRequest(
+                            source_id=stream.source_id,
+                            stream_id=stream.id,
+                            zone_id=candidate.zone_id,
+                            start_frame_index=candidate.start_frame_index,
+                            end_frame_index=candidate.end_frame_index,
+                            best_frame_index=candidate.best_frame_index,
+                            start_time=_media_timestamp_for_frame(
+                                frame_summaries,
+                                frame_index=candidate.start_frame_index,
+                                frame_index_start=payload.frame_index_start,
+                            ),
+                            end_time=_media_timestamp_for_frame(
+                                frame_summaries,
+                                frame_index=candidate.end_frame_index,
+                                frame_index_start=payload.frame_index_start,
+                            ),
+                            best_frame_time=_media_timestamp_for_frame(
+                                frame_summaries,
+                                frame_index=candidate.best_frame_index,
+                                frame_index_start=payload.frame_index_start,
+                            ),
+                            peak_changed_ratio=candidate.peak_changed_ratio,
+                            triggered_frame_count=candidate.triggered_frame_count,
+                            scoring_config={
+                                "source": "saved_media_motion",
+                                "media_asset_count": len(media_assets),
+                                "pixel_delta_threshold": payload.pixel_delta_threshold,
+                                "min_changed_ratio": payload.min_changed_ratio,
+                                "min_triggered_frames": payload.min_triggered_frames,
+                                "max_gap_frames": payload.max_gap_frames,
+                                "frame_index_start": payload.frame_index_start,
+                                "attach_best_snapshot": payload.attach_best_snapshot,
+                            },
+                            snapshot_media_asset_id=best_media_asset_id,
+                            notes=payload.notes
+                            or "Saved snapshot motion check created pending review activity.",
+                        )
+                    )
+                )
+            except ValueError as error:
+                raise _motion_evidence_error(error) from error
+
+    strongest_zone_id, strongest_changed_ratio = _strongest_motion_summary(
+        frame_score_responses,
+    )
+    best_candidate = _best_motion_candidate(sampler_result.candidates)
+    best_media_asset_id = (
+        _media_asset_id_for_frame(
+            payload.media_asset_ids,
+            frame_index=best_candidate.best_frame_index if best_candidate else None,
+            frame_index_start=payload.frame_index_start,
+        )
+        if best_candidate
+        else None
+    )
+    return MotionEvaluateSavedMediaResponse(
+        stream_id=stream.id,
+        source_id=stream.source_id,
+        media_asset_ids=payload.media_asset_ids,
+        zones=motion_zones,
+        frames=frame_summaries,
+        frame_scores=frame_score_responses,
+        candidates=candidate_responses,
+        created_evidence=created_evidence,
+        activity_detected=bool(sampler_result.candidates),
+        strongest_zone_id=strongest_zone_id,
+        strongest_changed_ratio=strongest_changed_ratio,
+        best_media_asset_id=best_media_asset_id,
+        warnings=warnings,
+        local_first_note=(
+            "Check motion used already-saved local snapshots. It creates pending "
+            "review activity only when explicitly requested, and never creates "
+            "reviewed labels or exports."
+        ),
     )
 
 

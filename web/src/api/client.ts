@@ -57,6 +57,8 @@ import type {
   MotionEvidencePromoteRequest,
   MotionEvidencePromoteResponse,
   MotionEvidenceStatus,
+  MotionEvaluateSavedMediaRequest,
+  MotionEvaluateSavedMediaResponse,
   MotionEvaluateSequenceRequest,
   MotionEvaluateSequenceResponse,
   ReviewCorrectionCreate,
@@ -368,6 +370,11 @@ export const apiClient = {
     }),
   evaluateMotionSequence: (payload: MotionEvaluateSequenceRequest) =>
     request<MotionEvaluateSequenceResponse>("/api/motion/evaluate-sequence", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  evaluateSavedMediaMotion: (payload: MotionEvaluateSavedMediaRequest) =>
+    request<MotionEvaluateSavedMediaResponse>("/api/motion/evaluate-saved-media", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

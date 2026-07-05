@@ -180,6 +180,11 @@ Dataset Exports.
 - [ ] Confirm success/failure, timestamp, content type, and preview image when available.
 - [ ] Click `Capture snapshot`.
 - [ ] Confirm the saved image appears under that camera/source and Stream.
+- [ ] Capture at least one more saved snapshot for the same Stream.
+- [ ] Click `Check motion`.
+- [ ] Confirm `Activity detected` or `No activity detected` appears with Zone and best snapshot context.
+- [ ] If activity is detected, click `Create review activity`, then `Review activity`.
+- [ ] Confirm no reviewed data is created until a later correction.
 - [ ] Confirm image status shows Not analyzed, Suggestion available, Needs review, or Reviewed.
 - [ ] Confirm local detector readiness is visible for saved image media.
 - [ ] If not configured, confirm setup guidance and demo analysis fallback.
@@ -236,6 +241,10 @@ create proposal evidence only.
 - [ ] Click `Capture snapshot`.
 - [ ] Confirm the saved image appears under the selected camera/source and
       Stream.
+- [ ] Capture at least one more saved snapshot for the same Stream.
+- [ ] Click `Check motion`.
+- [ ] Confirm `Activity detected` or `No activity detected` appears.
+- [ ] If activity is detected, create and review the activity before correction.
 - [ ] Confirm image status is visible before analyzing.
 - [ ] Confirm local detector readiness and analyze only if configured.
 - [ ] Otherwise use `Analyze image (demo)`.

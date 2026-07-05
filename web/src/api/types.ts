@@ -1071,6 +1071,44 @@ export interface MotionEvaluateSequenceResponse {
   created_evidence: MotionEvidence[];
 }
 
+export interface SavedMediaFrameSummary {
+  media_asset_id: string;
+  created_at: string;
+  width: number;
+  height: number;
+}
+
+export interface MotionEvaluateSavedMediaRequest {
+  stream_id: string;
+  media_asset_ids: string[];
+  zone_ids?: string[] | null;
+  create_motion_evidence?: boolean;
+  attach_best_snapshot?: boolean;
+  frame_index_start?: number;
+  pixel_delta_threshold?: number;
+  min_changed_ratio?: number;
+  min_triggered_frames?: number;
+  max_gap_frames?: number;
+  notes?: string | null;
+}
+
+export interface MotionEvaluateSavedMediaResponse {
+  stream_id: string;
+  source_id: string;
+  media_asset_ids: string[];
+  zones: MotionZoneInput[];
+  frames: SavedMediaFrameSummary[];
+  frame_scores: MotionFrameScoreResponse[];
+  candidates: MotionCandidateResponse[];
+  created_evidence: MotionEvidence[];
+  activity_detected: boolean;
+  strongest_zone_id?: string | null;
+  strongest_changed_ratio: number;
+  best_media_asset_id?: string | null;
+  warnings: string[];
+  local_first_note: string;
+}
+
 export interface MotionEvidencePromoteRequest {
   event_title?: string | null;
   visit_label_hint?: string | null;

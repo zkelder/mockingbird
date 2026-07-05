@@ -21,6 +21,7 @@ import type {
   ModelAdapter,
   ModelAdapterRunResult,
   MotionEvidence,
+  MotionEvaluateSavedMediaResponse,
   MotionEvidencePromoteResponse,
   ReviewLabel,
   SavedPreviewMotionEvidenceResponse,
@@ -177,6 +178,14 @@ interface TimelineMediaActionState {
   isRunningLocalDetector?: boolean;
 }
 
+interface StreamMotionCheckState {
+  selectedMediaIds?: string[];
+  result?: MotionEvaluateSavedMediaResponse | null;
+  error?: string | null;
+  isChecking?: boolean;
+  isCreatingActivity?: boolean;
+}
+
 interface MediaLifecycleSummary {
   detectionRuns: DetectionRun[];
   proposals: DetectionProposal[];
@@ -197,6 +206,7 @@ interface MediaLifecycleSummary {
 }
 
 const MEDIA_TIMELINE_LIMIT = 10;
+const MOTION_SNAPSHOT_LIMIT = 5;
 const LOCAL_IMAGE_DETECTOR_ADAPTER_ID = "local_image_detector";
 
 function uniquePresent(values: Array<string | null | undefined>): string[] {
@@ -216,6 +226,18 @@ function summarizeCounts(values: string[]): string {
 function sortNewestFirst<T extends { created_at: string }>(items: T[]): T[] {
   return [...items].sort(
     (left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime(),
+  );
+}
+
+function sortOldestFirst<T extends { created_at: string }>(items: T[]): T[] {
+  return [...items].sort(
+    (left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
+  );
+}
+
+function defaultMotionSnapshotIds(assets: MediaAsset[]): string[] {
+  return sortOldestFirst(assets.filter(isImageMedia).slice(0, MOTION_SNAPSHOT_LIMIT)).map(
+    (asset) => asset.id,
   );
 }
 
@@ -447,6 +469,9 @@ export function StreamsPage({
   const [timelineActionState, setTimelineActionState] = useState<
     Record<string, TimelineMediaActionState>
   >({});
+  const [streamMotionCheckState, setStreamMotionCheckState] = useState<
+    Record<string, StreamMotionCheckState>
+  >({});
   const [folderPreviewResult, setFolderPreviewResult] =
     useState<FolderImportPreviewResponse | null>(null);
   const [folderImportResult, setFolderImportResult] = useState<FolderImportResponse | null>(null);
@@ -612,6 +637,7 @@ export function StreamsPage({
     setFolderEvidenceBatchCreateError(null);
     setFolderEvidenceResults({});
     setFolderEvidenceErrors({});
+    setStreamMotionCheckState({});
     setIsFetchingPreview(false);
     setIsSavingPreview(false);
     setIsCreatingPreviewEvidence(false);
@@ -1033,6 +1059,99 @@ export function StreamsPage({
         ...patch,
       },
     }));
+  }
+
+  function updateStreamMotionCheckState(streamId: string, patch: StreamMotionCheckState) {
+    setStreamMotionCheckState((current) => ({
+      ...current,
+      [streamId]: {
+        ...(current[streamId] ?? {}),
+        ...patch,
+      },
+    }));
+  }
+
+  function selectedMotionMediaIds(streamId: string, assets: MediaAsset[]): string[] {
+    const validIds = new Set(assets.map((asset) => asset.id));
+    const savedSelection = streamMotionCheckState[streamId]?.selectedMediaIds;
+    return savedSelection
+      ? savedSelection.filter((id) => validIds.has(id))
+      : defaultMotionSnapshotIds(assets);
+  }
+
+  function toggleMotionSnapshot(streamId: string, assets: MediaAsset[], mediaId: string) {
+    const currentSelection = selectedMotionMediaIds(streamId, assets);
+    const selected = new Set(currentSelection);
+    if (selected.has(mediaId)) {
+      selected.delete(mediaId);
+    } else {
+      selected.add(mediaId);
+    }
+    updateStreamMotionCheckState(streamId, {
+      selectedMediaIds: sortOldestFirst(
+        assets.filter((asset) => selected.has(asset.id)),
+      ).map((asset) => asset.id),
+      result: null,
+      error: null,
+    });
+  }
+
+  async function handleEvaluateSavedMediaMotion(
+    stream: Stream,
+    assets: MediaAsset[],
+    zones: Zone[],
+    options: { createActivity: boolean },
+  ) {
+    const selectedIds = selectedMotionMediaIds(stream.id, assets);
+    const selectedAssets = sortOldestFirst(
+      assets.filter((asset) => selectedIds.includes(asset.id)),
+    );
+    if (selectedAssets.length < 2) {
+      updateStreamMotionCheckState(stream.id, {
+        error: "Select at least two saved snapshots before checking motion.",
+      });
+      return;
+    }
+    if (zones.length === 0) {
+      updateStreamMotionCheckState(stream.id, {
+        error: "Add an active non-privacy/non-ignore Zone before checking motion.",
+      });
+      return;
+    }
+
+    updateStreamMotionCheckState(stream.id, {
+      error: null,
+      isChecking: options.createActivity ? false : true,
+      isCreatingActivity: options.createActivity,
+    });
+    try {
+      const result = await apiClient.evaluateSavedMediaMotion({
+        stream_id: stream.id,
+        media_asset_ids: selectedAssets.map((asset) => asset.id),
+        zone_ids: zones.map((zone) => zone.id),
+        create_motion_evidence: options.createActivity,
+        attach_best_snapshot: true,
+        notes: options.createActivity
+          ? "User created review activity from a saved snapshot motion check."
+          : null,
+      });
+      updateStreamMotionCheckState(stream.id, {
+        result,
+        error: null,
+      });
+      if (options.createActivity) {
+        await loadTimelineLifecycleData({ showLoading: false });
+      }
+    } catch (caught) {
+      updateStreamMotionCheckState(stream.id, {
+        error: caught instanceof Error ? caught.message : "Could not check motion.",
+      });
+    } finally {
+      updateStreamMotionCheckState(stream.id, {
+        isChecking: false,
+        isCreatingActivity: false,
+      });
+    }
   }
 
   function timelineSelectedZoneId(asset: MediaAsset): string | null {
@@ -3114,6 +3233,25 @@ export function StreamsPage({
                   const blockedTimelineZoneCount = streamTimelineZones.filter(
                     (zone) => zone.is_active && !isReviewableZone(zone),
                   ).length;
+                  const streamImageAssets = streamMediaAssets.filter(isImageMedia);
+                  const recentMotionAssets = streamImageAssets.slice(0, MOTION_SNAPSHOT_LIMIT);
+                  const motionState = streamMotionCheckState[stream.id] ?? {};
+                  const motionSelectedIds = selectedMotionMediaIds(stream.id, streamImageAssets);
+                  const selectedMotionAssets = sortOldestFirst(
+                    streamImageAssets.filter((asset) => motionSelectedIds.includes(asset.id)),
+                  );
+                  const motionResult = motionState.result ?? null;
+                  const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
+                  const bestMotionAsset = motionResult?.best_media_asset_id
+                    ? streamImageAssets.find(
+                        (asset) => asset.id === motionResult.best_media_asset_id,
+                      )
+                    : null;
+                  const strongestMotionZone = motionResult?.strongest_zone_id
+                    ? reviewableTimelineZones.find(
+                        (zone) => zone.id === motionResult.strongest_zone_id,
+                      )
+                    : null;
                   return (
                     <section className="source-stream-card" key={stream.id}>
                       <div className="item-title-row">
@@ -3219,6 +3357,260 @@ export function StreamsPage({
                               <span className="meta-text">
                                 Privacy and ignore Zones are omitted from review context actions.
                               </span>
+                            ) : null}
+                            {streamImageAssets.length >= 2 ? (
+                              <div className="stream-motion-check-panel">
+                                <div className="item-title-row">
+                                  <div>
+                                    <strong>Check motion</strong>
+                                    <p className="meta-text">
+                                      Compare saved snapshots inside active Zones before creating a
+                                      review activity.
+                                    </p>
+                                  </div>
+                                  <StatusPill
+                                    label={`${selectedMotionAssets.length} snapshots`}
+                                    tone={selectedMotionAssets.length >= 2 ? "good" : "review"}
+                                  />
+                                </div>
+                                <div className="source-connection-meta">
+                                  <span>
+                                    Saved snapshots: {streamImageAssets.length}
+                                  </span>
+                                  <span>
+                                    Zones:{" "}
+                                    {reviewableTimelineZones.length > 0
+                                      ? reviewableTimelineZones
+                                          .map((zone) => zone.name)
+                                          .join(", ")
+                                      : "none"}
+                                  </span>
+                                  <span>Manual action</span>
+                                  <span>No reviewed data created</span>
+                                </div>
+                                <div className="motion-snapshot-picker">
+                                  {recentMotionAssets.map((asset) => (
+                                    <label className="checkbox-row" key={asset.id}>
+                                      <input
+                                        checked={motionSelectedIds.includes(asset.id)}
+                                        onChange={() =>
+                                          toggleMotionSnapshot(
+                                            stream.id,
+                                            streamImageAssets,
+                                            asset.id,
+                                          )
+                                        }
+                                        type="checkbox"
+                                      />
+                                      <span>
+                                        {asset.original_filename || asset.filename} ·{" "}
+                                        {formatDateTime(asset.created_at)}
+                                      </span>
+                                    </label>
+                                  ))}
+                                </div>
+                                <div className="detail-actions">
+                                  <button
+                                    className="primary-action"
+                                    disabled={
+                                      motionState.isChecking ||
+                                      motionState.isCreatingActivity ||
+                                      selectedMotionAssets.length < 2 ||
+                                      reviewableTimelineZones.length === 0
+                                    }
+                                    onClick={() =>
+                                      void handleEvaluateSavedMediaMotion(
+                                        stream,
+                                        streamImageAssets,
+                                        reviewableTimelineZones,
+                                        { createActivity: false },
+                                      )
+                                    }
+                                    type="button"
+                                  >
+                                    {motionState.isChecking ? "Checking..." : "Check motion"}
+                                  </button>
+                                  {motionResult?.activity_detected &&
+                                  motionResult.created_evidence.length === 0 ? (
+                                    <button
+                                      className="primary-action"
+                                      disabled={motionState.isCreatingActivity}
+                                      onClick={() =>
+                                        void handleEvaluateSavedMediaMotion(
+                                          stream,
+                                          streamImageAssets,
+                                          reviewableTimelineZones,
+                                          { createActivity: true },
+                                        )
+                                      }
+                                      type="button"
+                                    >
+                                      {motionState.isCreatingActivity
+                                        ? "Creating..."
+                                        : "Create review activity"}
+                                    </button>
+                                  ) : null}
+                                  {motionCreatedEvidence ? (
+                                    <button
+                                      className="primary-action"
+                                      onClick={() => onOpenMotionEvidence(motionCreatedEvidence.id)}
+                                      type="button"
+                                    >
+                                      Review activity
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    className="secondary-action"
+                                    onClick={onOpenBirdLog}
+                                    type="button"
+                                  >
+                                    Bird Log
+                                  </button>
+                                  <button
+                                    className="secondary-action"
+                                    onClick={onOpenExports}
+                                    type="button"
+                                  >
+                                    Export reviewed data
+                                  </button>
+                                </div>
+                                {motionState.error ? (
+                                  <div className="zone-error">{motionState.error}</div>
+                                ) : null}
+                                {motionResult ? (
+                                  <div className="stream-motion-result">
+                                    <div className="item-title-row">
+                                      <strong>
+                                        {motionResult.activity_detected
+                                          ? "Activity detected"
+                                          : "No activity detected"}
+                                      </strong>
+                                      <StatusPill
+                                        label={
+                                          motionResult.activity_detected
+                                            ? "Activity detected"
+                                            : "No activity detected"
+                                        }
+                                        tone={
+                                          motionResult.activity_detected ? "review" : "quiet"
+                                        }
+                                      />
+                                    </div>
+                                    <div className="timeline-result-grid">
+                                      <div className="data-row">
+                                        <span>Strongest Zone</span>
+                                        <strong>
+                                          {strongestMotionZone?.name ??
+                                            motionResult.strongest_zone_id ??
+                                            "none"}
+                                        </strong>
+                                      </div>
+                                      <div className="data-row">
+                                        <span>Best snapshot</span>
+                                        {bestMotionAsset ? (
+                                          <a
+                                            className="inline-link"
+                                            href={apiClient.mediaFileUrl(bestMotionAsset.id)}
+                                            rel="noreferrer"
+                                            target="_blank"
+                                          >
+                                            {bestMotionAsset.original_filename ||
+                                              bestMotionAsset.filename}
+                                          </a>
+                                        ) : (
+                                          <strong>none</strong>
+                                        )}
+                                      </div>
+                                      <div className="data-row">
+                                        <span>Score</span>
+                                        <strong>
+                                          {Math.round(
+                                            motionResult.strongest_changed_ratio * 1000,
+                                          ) / 10}
+                                          % changed
+                                        </strong>
+                                      </div>
+                                      <div className="data-row">
+                                        <span>Next</span>
+                                        <strong>
+                                          {motionCreatedEvidence
+                                            ? "Review activity"
+                                            : motionResult.activity_detected
+                                              ? "Create review activity"
+                                              : "Capture more saved snapshots"}
+                                        </strong>
+                                      </div>
+                                    </div>
+                                    {motionResult.warnings.length > 0 ? (
+                                      <div className="source-warning-list">
+                                        {motionResult.warnings.map((warning) => (
+                                          <span key={warning}>{warning}</span>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                    <span className="meta-text">
+                                      {motionResult.local_first_note}
+                                    </span>
+                                    <details className="advanced-details">
+                                      <summary>Advanced motion details</summary>
+                                      <div className="timeline-result-grid">
+                                        <div className="data-row">
+                                          <span>MediaAsset IDs</span>
+                                          <strong>{motionResult.media_asset_ids.join(", ")}</strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Candidate count</span>
+                                          <strong>{motionResult.candidates.length}</strong>
+                                        </div>
+                                        {motionResult.frame_scores.map((score) => (
+                                          <div
+                                            className="data-row"
+                                            key={`motion-frame-${stream.id}-${score.frame_index}`}
+                                          >
+                                            <span>Frame {score.frame_index}</span>
+                                            <strong>
+                                              {score.triggered_zone_ids.length > 0
+                                                ? score.triggered_zone_ids.join(", ")
+                                                : "no triggered zones"}{" "}
+                                              ·{" "}
+                                              {Math.round(score.strongest_changed_ratio * 1000) /
+                                                10}
+                                              %
+                                            </strong>
+                                          </div>
+                                        ))}
+                                        {motionResult.candidates.map((candidate) => (
+                                          <div
+                                            className="data-row"
+                                            key={`motion-candidate-${stream.id}-${candidate.zone_id}-${candidate.start_frame_index}`}
+                                          >
+                                            <span>{candidate.zone_id}</span>
+                                            <strong>
+                                              {candidate.start_frame_index}-
+                                              {candidate.end_frame_index}, best{" "}
+                                              {candidate.best_frame_index},{" "}
+                                              {Math.round(candidate.peak_changed_ratio * 1000) /
+                                                10}
+                                              %
+                                            </strong>
+                                          </div>
+                                        ))}
+                                        {motionResult.created_evidence.map((evidence) => (
+                                          <div
+                                            className="data-row"
+                                            key={`motion-created-${evidence.id}`}
+                                          >
+                                            <span>MotionEvidence</span>
+                                            <strong>
+                                              {evidence.id} · {formatLabel(evidence.status)}
+                                            </strong>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </details>
+                                  </div>
+                                ) : null}
+                              </div>
                             ) : null}
                             <div className="timeline-media-list">
                               {streamMediaAssets.map((asset) => {

@@ -1023,6 +1023,42 @@ button {
   width: 100%;
 }
 
+.stream-motion-check-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #c8d8e8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f7fbfd;
+}
+
+.motion-snapshot-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.motion-snapshot-picker .checkbox-row {
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 8px;
+  background: #ffffff;
+}
+
+.motion-snapshot-picker span {
+  overflow-wrap: anywhere;
+}
+
+.stream-motion-result {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7e3ec;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
 .timeline-media-item,
 .timeline-empty-state {
   min-width: 0;
