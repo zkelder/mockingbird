@@ -89,6 +89,28 @@ button {
   margin-top: 0;
 }
 
+.nav-group {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.nav-group summary {
+  cursor: pointer;
+  color: #b8cdbb;
+  font-size: 0.78rem;
+  font-weight: 800;
+  list-style-position: inside;
+}
+
+.nav-group-items {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding-left: 10px;
+  border-left: 1px solid #5d8068;
+}
+
 .nav-item {
   width: 100%;
   border: 1px solid transparent;
@@ -1020,6 +1042,18 @@ button {
   gap: 10px;
   border-bottom: 1px solid #e0e6dc;
   padding: 0 0 12px;
+}
+
+.snapshot-watch-harness summary {
+  cursor: pointer;
+  color: #375244;
+  font-weight: 800;
+}
+
+.snapshot-watch-panel-body {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
 }
 
 .source-health-grid,
@@ -4853,6 +4887,10 @@ button {
   }
 
   .nav-section-label {
+    grid-column: 1 / -1;
+  }
+
+  .nav-group {
     grid-column: 1 / -1;
   }
 

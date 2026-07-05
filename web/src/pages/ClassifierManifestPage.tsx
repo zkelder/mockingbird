@@ -194,9 +194,9 @@ export function ClassifierManifestPage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Future classifier export"
+        eyebrow="Developer tool"
         title="Classifier Training Manifest"
-        description="This manifest preview shows reviewed media-backed examples and can create local metadata export files for later external training review. It does not copy media, train models, or create reviewed truth."
+        description="Developer-facing manifest preview for later external training review. It does not copy media, train models, or create reviewed truth."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenClassifierReadiness}>
@@ -211,6 +211,14 @@ export function ClassifierManifestPage({
           </>
         }
       />
+
+      <section className="notice-panel">
+        <strong>Developer tool — metadata preview only</strong>
+        <span>
+          Use Exports / Data for the product path. Manifest files are future classifier review
+          metadata and do not replace corrections.
+        </span>
+      </section>
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}

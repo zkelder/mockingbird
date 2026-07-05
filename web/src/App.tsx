@@ -93,25 +93,32 @@ const initialData: AppData = {
   modelReadiness: null,
 };
 
-const navItems: Array<{ page: Page; label: string }> = [
-  { page: "dashboard", label: "Dashboard" },
-  { page: "streams", label: "Streams" },
+const productNavItems: Array<{ page: Page; label: string }> = [
+  { page: "dashboard", label: "Overview" },
+  { page: "streams", label: "Cameras / Streams" },
+  { page: "review", label: "Review" },
+  { page: "bird-log", label: "Bird Log" },
+  { page: "exports", label: "Exports / Data" },
+];
+
+const advancedNavItems: Array<{ page: Page; label: string }> = [
   { page: "import", label: "Import Media" },
   { page: "folder-import", label: "Folder Import" },
-  { page: "model-adapters", label: "Model Adapters" },
-  { page: "detection-proposals", label: "Detection Proposals" },
+  { page: "analytics", label: "Analytics" },
+  { page: "saved-media-retention", label: "Saved Media Retention" },
   { page: "motion-evidence", label: "Motion Evidence" },
+  { page: "detection-proposals", label: "Detection Proposals" },
+  { page: "model-adapters", label: "Model Adapters" },
   { page: "species-suggestions", label: "Species Suggestions" },
   { page: "classifier-readiness", label: "Classifier Readiness" },
   { page: "classifier-manifest", label: "Classifier Manifest" },
-  { page: "review", label: "Review" },
-  { page: "bird-log", label: "Bird Log" },
-  { page: "analytics", label: "Analytics" },
-  { page: "exports", label: "Exports" },
-  { page: "saved-media-retention", label: "Saved Media Retention" },
-  { page: "worker-status", label: "Worker Status" },
   { page: "settings", label: "Local Data" },
 ];
+
+const advancedPages = new Set<Page>([
+  ...advancedNavItems.map((item) => item.page),
+  "motion-evidence-detail",
+]);
 
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
@@ -126,6 +133,7 @@ export default function App() {
   const [data, setData] = useState<AppData>(initialData);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isAdvancedNavOpen, setIsAdvancedNavOpen] = useState(false);
 
   async function loadAppData(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
@@ -180,6 +188,14 @@ export default function App() {
   useEffect(() => {
     void loadAppData();
   }, []);
+
+  const isAdvancedPageActive = advancedPages.has(page);
+
+  useEffect(() => {
+    if (isAdvancedPageActive) {
+      setIsAdvancedNavOpen(true);
+    }
+  }, [isAdvancedPageActive]);
 
   const selectedStream = useMemo(
     () => data.streams.find((stream) => stream.id === selectedStreamId) ?? data.streams[0],
@@ -599,7 +615,7 @@ export default function App() {
         </div>
         <nav className="nav-list" aria-label="Product navigation">
           <span className="nav-section-label">Product loop</span>
-          {navItems.map((item) => (
+          {productNavItems.map((item) => (
             <button
               className={page === item.page ? "nav-item active" : "nav-item"}
               key={item.page}
@@ -608,6 +624,24 @@ export default function App() {
               {item.label}
             </button>
           ))}
+          <details
+            className="nav-group"
+            open={isAdvancedNavOpen || isAdvancedPageActive}
+            onToggle={(event) => setIsAdvancedNavOpen(event.currentTarget.open)}
+          >
+            <summary>Advanced / Developer tools</summary>
+            <div className="nav-group-items">
+              {advancedNavItems.map((item) => (
+                <button
+                  className={page === item.page ? "nav-item active" : "nav-item"}
+                  key={item.page}
+                  onClick={() => setPage(item.page)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </details>
           {selectedStream || selectedEventId || selectedVisitId ? (
             <span className="nav-section-label">Current context</span>
           ) : null}

@@ -180,9 +180,9 @@ export function ModelAdaptersPage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Future detector hooks"
+        eyebrow="Advanced setup"
         title="Model Adapters"
-        description="Model adapters consume product media/context and create proposal evidence. Review and correction remain required before export truth."
+        description="Developer-facing adapter readiness and evidence tests. Model suggestions are not review truth and are secondary to the Cameras → Review → Bird Log → Export loop."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenImport}>
@@ -194,6 +194,14 @@ export function ModelAdaptersPage({
           </>
         }
       />
+
+      <section className="notice-panel">
+        <strong>Advanced setup — not the product center</strong>
+        <span>
+          Adapter runs are optional evidence checks for development. Camera monitoring and review
+          remain the product path.
+        </span>
+      </section>
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}

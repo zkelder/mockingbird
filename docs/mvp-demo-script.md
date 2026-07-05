@@ -116,18 +116,21 @@ Visit these surfaces during the walkthrough:
 
 - Dashboard
 - Streams
-- Import Media
-- Motion Evidence
 - Review Queue
 - Bird Log
 - Event Detail
 - Visit Detail
-- Analytics
 - Dataset Exports
+- Local Data / Settings if available
+
+Advanced / Developer tools remain available for validation:
+
+- Import Media
+- Motion Evidence
+- Analytics
 - Classifier Readiness
 - Classifier Manifest
 - Saved Media Retention
-- Local Data / Settings if available
 
 ## Short Import-To-Export Proof Loop
 
@@ -188,7 +191,8 @@ Dataset Exports.
 - [ ] Confirm Last capture and Saved images update in Source health.
 - [ ] Confirm Storage guardrails updates saved image count and motion readiness.
 - [ ] Click `Start watch`.
-- [ ] Confirm Snapshot watch captures a small bounded run while the page stays open.
+- [ ] Confirm Snapshot watch is shown as an advanced test harness and captures a
+      small bounded run while the page stays open.
 - [ ] Confirm `Stop watch` stops the run and keeps captured snapshots visible.
 - [ ] Confirm no capture continues after Stop watch or navigation.
 - [ ] Capture at least one more saved snapshot for the same Stream.
@@ -276,6 +280,8 @@ create proposal evidence only.
 - [ ] Confirm Last capture and Saved images update in Source health.
 - [ ] Confirm Storage guardrails updates saved image count.
 - [ ] Start Snapshot watch.
+- [ ] Confirm it is marked as a bounded page-local test harness, not Camera
+      Monitoring Core.
 - [ ] Confirm captured snapshot count, motion check count, and last activity
       result update during the bounded run.
 - [ ] Stop Snapshot watch or wait for the capture limit.

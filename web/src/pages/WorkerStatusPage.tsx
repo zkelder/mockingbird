@@ -373,9 +373,9 @@ export function WorkerStatusPage() {
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Future automation"
-        title="Worker Status"
-        description="Future automation status only. No workers run from this page."
+        eyebrow="Developer tool"
+        title="Automation Status"
+        description="Developer-facing future automation status only. Nothing runs from this page."
         actions={
           <button
             className="secondary-action"

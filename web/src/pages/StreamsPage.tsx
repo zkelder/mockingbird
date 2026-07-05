@@ -850,11 +850,11 @@ function buildMediaLifecycleSummary(
       : eventIds.length > 0 || visitIds.length > 0
         ? "Correct in Review Queue"
         : hasPendingMotionEvidence
-          ? "Promote MotionEvidence"
+          ? "Review activity evidence"
           : proposals.length > 0
-            ? "Convert proposal or create MotionEvidence"
+            ? "Send suggestion to Review"
             : isImageMedia(asset)
-              ? "Create proposal evidence or MotionEvidence"
+              ? "Analyze image or create review context"
               : "Use as media context only";
 
   return {
@@ -4443,13 +4443,16 @@ export function StreamsPage({
                         </details>
                       </div>
                       {isExternalUrlProvider ? (
-                        <div className="snapshot-watch-panel">
+                        <details className="snapshot-watch-panel snapshot-watch-harness">
+                          <summary>Advanced test harness: Snapshot watch</summary>
+                          <div className="snapshot-watch-panel-body">
                           <div className="item-title-row">
                             <div>
-                              <strong>Snapshot watch</strong>
+                              <strong>Snapshot watch test harness</strong>
                               <p className="meta-text">
-                                Snapshot watch only runs while this page is open and after you
-                                click Start.
+                                This is a bounded page-local test harness. The product monitoring
+                                path is Camera Monitoring Core. It only runs while this page is
+                                open and after you click Start.
                               </p>
                             </div>
                             <StatusPill
@@ -4593,7 +4596,8 @@ export function StreamsPage({
                               </span>
                             </div>
                           </details>
-                        </div>
+                          </div>
+                        </details>
                       ) : null}
                       <div className="detail-actions">
                         <button

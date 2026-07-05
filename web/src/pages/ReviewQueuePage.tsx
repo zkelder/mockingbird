@@ -495,7 +495,7 @@ function reviewEvidenceFilterLabel(evidenceFilter: ReviewEvidenceFilter): string
     all: "All evidence",
     has_media: "Has media",
     has_detection_proposal: "Has detection proposal",
-    has_motion_evidence: "Has MotionEvidence",
+    has_motion_evidence: "Has activity evidence",
     no_proposal_evidence: "No proposal evidence",
   };
   return labels[evidenceFilter];
@@ -1195,7 +1195,7 @@ export function ReviewQueuePage({
       {queueItems.length === 0 ? (
         <EmptyState
           title="No Visits need correction"
-          description="The Review Queue contains Visits that need user correction. Promote MotionEvidence or import media to create reviewable Visits; corrections create analytics, export, and classifier truth."
+          description="The Review Queue contains Visits that need user correction. Create reviewable activity from Cameras/Streams or import media; corrections create analytics, export, and classifier truth."
           action={
             <button className="primary-action" onClick={onOpenExports}>
               Open Dataset Exports
@@ -1254,7 +1254,7 @@ export function ReviewQueuePage({
                 <option value="all">All evidence states</option>
                 <option value="has_media">Has media</option>
                 <option value="has_detection_proposal">Has detection proposal</option>
-                <option value="has_motion_evidence">Has MotionEvidence</option>
+                <option value="has_motion_evidence">Has activity evidence</option>
                 <option value="no_proposal_evidence">No proposal evidence</option>
               </select>
             </label>
@@ -1562,20 +1562,20 @@ export function ReviewQueuePage({
                             </span>
                             <span>Proposal ID: {proposal.id}</span>
                           </div>
-                          <p>Detection proposals remain evidence. The correction form creates truth.</p>
+                          <p>Suggestions remain evidence. The correction form creates truth.</p>
                         </article>
                       );
                     })}
                     {itemEvidenceProposals.length > 3 ? (
                       <span className="meta-text">
                         {itemEvidenceProposals.length - 3} more proposal evidence item
-                        {itemEvidenceProposals.length - 3 === 1 ? "" : "s"} available in Detection Proposals.
+                        {itemEvidenceProposals.length - 3 === 1 ? "" : "s"} available in advanced proposal tools.
                       </span>
                     ) : null}
                   </div>
                 ) : (
                   <span className="meta-text">
-                    No DetectionProposal evidence is linked to this review item yet.
+                    No proposal evidence is linked to this review item yet.
                   </span>
                 )}
               </div>
@@ -1615,7 +1615,7 @@ export function ReviewQueuePage({
                     taxonomyLabels={taxonomyLabels}
                   />
                   <span className="review-correction-boundary">
-                    Corrections create ReviewLabel truth. Detection proposals remain evidence.
+                    Corrections create local dataset truth. Suggestions remain evidence.
                   </span>
                   <label>
                     Notes
@@ -1698,14 +1698,14 @@ function CorrectionSuccessPanel({
     <section className="notice-panel correction-success-panel">
       <div className="correction-success-header">
         <div>
-          <EvidenceBadge label="ReviewLabel truth" tone="truth" />
+          <EvidenceBadge label="Correction truth" tone="truth" />
           <h2>{isBulk ? "Bulk correction saved" : "Correction saved"}</h2>
           <p>
             {isBulk
-              ? `${summary.succeededCount} ReviewLabel${
+              ? `${summary.succeededCount} correction${
                   summary.succeededCount === 1 ? "" : "s"
                 } created explicitly for ${appliedLabel}.`
-              : `ReviewLabel ${summary.reviewLabelId} created explicitly for ${appliedLabel}.`}
+              : `Correction ${summary.reviewLabelId} created explicitly for ${appliedLabel}.`}
           </p>
         </div>
         <StatusPill
@@ -1727,7 +1727,7 @@ function CorrectionSuccessPanel({
               <small>{summary.label}</small>
             </div>
             <div className="data-row">
-              <span>ReviewLabel ID</span>
+              <span>Correction ID</span>
               <strong>{summary.reviewLabelId}</strong>
             </div>
           </>
@@ -1751,15 +1751,15 @@ function CorrectionSuccessPanel({
               </strong>
             </div>
             <div className="data-row">
-              <span>ReviewLabel IDs</span>
-              <strong>{compactIdList(reviewLabelIds, "No ReviewLabel IDs returned")}</strong>
+              <span>Correction IDs</span>
+              <strong>{compactIdList(reviewLabelIds, "No correction IDs returned")}</strong>
               <small>{reviewLabelIds.length} created</small>
             </div>
           </>
         )}
       </div>
       <div className="correction-success-boundary">
-        <strong>This ReviewLabel is local dataset truth.</strong>
+        <strong>This correction is local dataset truth.</strong>
         <span>
           Detection proposals and media stay evidence. This correction now counts toward dataset
           coverage, classifier readiness, exports, and analytics.
@@ -1767,7 +1767,7 @@ function CorrectionSuccessPanel({
       </div>
       <div className="detail-actions correction-success-actions">
         <button className="secondary-action" onClick={onOpenClassifierReadiness} type="button">
-          Classifier Readiness
+          Advanced Classifier Readiness
         </button>
         <button className="secondary-action" onClick={onOpenExports} type="button">
           Dataset Exports
@@ -1804,7 +1804,7 @@ function CorrectionAuditPanel({
         <div>
           <h2>Reviewed correction audit</h2>
           <span className="meta-text">
-            Latest ReviewLabel truth stays visible after items leave the active queue.
+            Latest correction truth stays visible after items leave the active queue.
           </span>
         </div>
         <EvidenceBadge

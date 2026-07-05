@@ -276,9 +276,9 @@ export function SpeciesSuggestionsPage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Species evidence"
+        eyebrow="Developer tool"
         title="Species Suggestions"
-        description="Species suggestions are classifier or manual evidence for review. They do not create reviewed labels, dataset truth, or export-ready observations."
+        description="Inspect classifier or manual suggestion evidence for review testing. Suggestions do not create reviewed labels, dataset truth, or export-ready observations."
         actions={
           <button className="secondary-action" onClick={onOpenReview}>
             Review Queue
@@ -287,7 +287,7 @@ export function SpeciesSuggestionsPage({
       />
 
       <section className="notice-panel">
-        <strong>Evidence before truth</strong>
+        <strong>Developer tool — evidence before truth</strong>
         <span>
           Accept means useful evidence only; reject means dismissed evidence; supersede means
           replaced evidence. Save a correction in review before exports, coverage, or analytics

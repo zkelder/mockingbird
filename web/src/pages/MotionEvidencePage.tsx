@@ -624,9 +624,9 @@ export function MotionEvidencePage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Motion-triggered evidence"
+        eyebrow="Developer tool"
         title="Motion Evidence Review"
-        description="Review pending motion evidence before it becomes Event/Visit context."
+        description="Inspect and promote internal activity evidence for testing. The normal product loop is Cameras/Streams → Review → Bird Log → Export."
         actions={
           <button className="secondary-action" onClick={onOpenReview}>
             Review Queue
@@ -635,8 +635,11 @@ export function MotionEvidencePage({
       />
 
       <section className="notice-panel">
-        <strong>Evidence before truth</strong>
-        <span>Promote useful evidence; correct Visits for truth.</span>
+        <strong>Test harness — evidence before truth</strong>
+        <span>
+          Promote useful evidence only when validating the internal flow; correct Visits for
+          dataset truth.
+        </span>
       </section>
 
       <section className="panel motion-workflow-panel">

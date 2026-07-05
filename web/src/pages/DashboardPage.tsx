@@ -113,9 +113,9 @@ const mvpStartSteps: MvpStartStep[] = [
     action: "import",
   },
   {
-    title: "Review pending MotionEvidence",
-    detail: "Ignore noise or promote useful activity.",
-    actionLabel: "Motion Evidence",
+    title: "Advanced: inspect motion evidence",
+    detail: "Developer evidence review for validating the internal flow.",
+    actionLabel: "Advanced Motion Evidence",
     action: "motion-evidence",
   },
   {
@@ -151,10 +151,10 @@ const mvpProviderWorkflows: MvpProviderWorkflow[] = [
     name: "Generic webhook ingest",
     supportLevel: "API dry-run and metadata evidence",
     nextAction: "Use API validation/evidence route.",
-    creates: "Pending MotionEvidence from explicit metadata motion payloads.",
+    creates: "Pending activity evidence from explicit metadata motion payloads.",
     doesNotCreate: "Media upload/download or external labels as truth.",
     livePlayback: "Future work.",
-    actionLabel: "Review Motion Evidence",
+    actionLabel: "Advanced Motion Evidence",
     action: "motion-evidence",
   },
   {
@@ -427,20 +427,9 @@ export function DashboardPage({
           </p>
         </div>
         <div className="hero-actions">
-          <button className="primary-action" onClick={onOpenImport}>
-            Import media
+          <button className="primary-action" onClick={onOpenStreams}>
+            Open Cameras / Streams
           </button>
-          <button className="secondary-action" onClick={onOpenDetectionProposals}>
-            Detection proposals
-          </button>
-          <button className="secondary-action" onClick={onOpenModelAdapters}>
-            Model adapters
-          </button>
-          {mainStream ? (
-            <button className="secondary-action" onClick={() => onOpenStream(mainStream.id)}>
-              Open main stream
-            </button>
-          ) : null}
           {reviewQueue.length > 0 ? (
             <button className="secondary-action" onClick={onOpenReview}>
               Review {reviewQueue.length} item{reviewQueue.length === 1 ? "" : "s"}
@@ -450,6 +439,11 @@ export function DashboardPage({
               Open exports
             </button>
           )}
+          {mainStream ? (
+            <button className="secondary-action" onClick={() => onOpenStream(mainStream.id)}>
+              Open main stream
+            </button>
+          ) : null}
         </div>
       </section>
 
@@ -527,10 +521,10 @@ export function DashboardPage({
           <span>Evidence needs review. Corrections drive analytics and exports.</span>
         </div>
         <div className="notice-panel compact-notice">
-          <strong>Worker Status</strong>
+          <strong>Automation Status</strong>
           <span>Future automation is disabled/read-only. External URL dry-run plan available.</span>
           <button className="secondary-action" onClick={onOpenWorkerStatus} type="button">
-            Worker Status
+            Advanced Automation Status
           </button>
         </div>
         <div className="provider-workflow-grid">
@@ -576,19 +570,19 @@ export function DashboardPage({
             Streams
           </button>
           <button className="secondary-action" onClick={onOpenImport} type="button">
-            Import Media
+            Advanced Import Media
           </button>
           <button className="secondary-action" onClick={onOpenMotionEvidence} type="button">
-            Motion Evidence
+            Advanced Motion Evidence
           </button>
           <button className="secondary-action" onClick={onOpenReview} type="button">
             Review Queue
           </button>
           <button className="secondary-action" onClick={onOpenSavedMediaRetention} type="button">
-            Saved Media Retention
+            Advanced Media Retention
           </button>
           <button className="secondary-action" onClick={onOpenClassifierReadiness} type="button">
-            Classifier Readiness
+            Advanced Classifier Readiness
           </button>
           <button className="secondary-action" onClick={onOpenExports} type="button">
             Dataset Exports
@@ -673,10 +667,10 @@ export function DashboardPage({
             Streams
           </button>
           <button className="secondary-action" onClick={onOpenMotionEvidence} type="button">
-            Motion Evidence
+            Advanced Motion Evidence
           </button>
           <button className="secondary-action" onClick={onOpenSavedMediaRetention} type="button">
-            Saved Media Retention
+            Advanced Media Retention
           </button>
           <button className="secondary-action" onClick={onOpenReview} type="button">
             Review Queue
@@ -756,10 +750,10 @@ export function DashboardPage({
               Dataset Exports
             </button>
             <button className="secondary-action" onClick={onOpenModelAdapters}>
-              Model Adapters
+              Advanced Model Adapters
             </button>
             <button className="secondary-action" onClick={onOpenClassifierReadiness}>
-              Classifier Readiness
+              Advanced Classifier Readiness
             </button>
           </div>
         </section>
@@ -820,18 +814,17 @@ export function DashboardPage({
         </div>
       </section>
       <section className="notice-panel">
-        <strong>Detection proposals are evidence first</strong>
+        <strong>Advanced developer tools are secondary</strong>
         <span>
-          Future detector hooks create proposal evidence under the product loop. Accept proposal
-          evidence into reviewable events and visits, then correct labels before analytics or exports
-          treat them as truth.
+          Proposal and adapter tools remain available for validation, but the product path is
+          Cameras/Streams, Review, Bird Log, and Exports/Data.
         </span>
         <div className="detail-actions">
           <button className="secondary-action" onClick={onOpenModelAdapters}>
-            Open Model Adapters
+            Advanced Model Adapters
           </button>
           <button className="secondary-action" onClick={onOpenDetectionProposals}>
-            Open Detection Proposals
+            Advanced Detection Proposals
           </button>
         </div>
       </section>

@@ -127,7 +127,10 @@ focused Activity crop plan while preserving the full best snapshot as the
 source/context image; crop file creation remains optional future derived context.
 Motion results remain candidate activity until explicit review/correction creates
 truth for Bird Log and export. Live capture remains future work, and Snapshot
-watch stays manual, bounded, and page-local.
+watch stays manual, bounded, page-local, and contained as an advanced test
+harness. The next real monitoring direction is Camera Monitoring Core:
+backend-managed, explicit start/stop, external_url first, and adapter-ready
+later.
 This timeline now summarizes existing proposal evidence, MotionEvidence,
 promoted Event/Visit context, inferable ReviewLabel truth, and the next safe
 review/export step. It does not run models, poll sources, create Events/Visits

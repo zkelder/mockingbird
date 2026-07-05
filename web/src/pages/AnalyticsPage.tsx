@@ -66,7 +66,7 @@ export function AnalyticsPage({
               Open Dataset Exports
             </button>
             <button className="secondary-action" onClick={onOpenDetectionProposals}>
-              Detection Proposals
+              Advanced Detection Proposals
             </button>
           </>
         }

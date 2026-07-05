@@ -117,9 +117,9 @@ export function ClassifierReadinessPage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Future classifier export"
+        eyebrow="Advanced setup"
         title="Classifier Readiness"
-        description="Classifier readiness summarizes reviewed media-backed examples that can feed the classifier manifest preview and metadata export. It does not copy media, train models, or create reviewed truth."
+        description="Developer-facing dataset readiness for future classifier work. It does not copy media, train models, or create reviewed truth."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenClassifierManifest}>
@@ -136,8 +136,11 @@ export function ClassifierReadinessPage({
       />
 
       <section className="notice-panel">
-        <strong>Reviewed corrections are training truth</strong>
-        <span>Evidence and suggestions are not enough. Training remains future work.</span>
+        <strong>Advanced setup — reviewed corrections are training truth</strong>
+        <span>
+          Evidence and suggestions are not enough. Training remains future work and secondary to
+          the review loop.
+        </span>
       </section>
 
       <section className="panel classifier-readiness-status">

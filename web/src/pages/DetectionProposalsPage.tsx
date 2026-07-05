@@ -259,9 +259,9 @@ export function DetectionProposalsPage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Detection pipeline interface"
+        eyebrow="Developer tool"
         title="Detection Proposals"
-        description="Generate demo detector proposals from imported media, review them as evidence, then convert or reject them before they affect analytics and exports."
+        description="Test detector proposal evidence from imported media. This is not the normal birdcam review loop, and proposals are not review truth."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenImport}>
@@ -276,6 +276,14 @@ export function DetectionProposalsPage({
           </>
         }
       />
+
+      <section className="notice-panel">
+        <strong>Developer tool — proposal evidence only</strong>
+        <span>
+          Use Cameras/Streams, Review, Bird Log, and Exports for the product path. This page stays
+          available for validating internal proposal flow.
+        </span>
+      </section>
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}

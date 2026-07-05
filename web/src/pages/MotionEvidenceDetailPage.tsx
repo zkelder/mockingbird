@@ -179,9 +179,9 @@ export function MotionEvidenceDetailPage({
   return (
     <div className="page-stack motion-evidence-detail-page">
       <PageHeader
-        eyebrow="Source evidence"
+        eyebrow="Developer tool"
         title={`MotionEvidence ${evidence.id}`}
-        description="Inspect the evidence that can explain Event/Visit review context. Evidence is not truth."
+        description="Inspect internal evidence behind review context. This is a developer detail page; evidence is not truth."
         actions={
           <button className="secondary-action" onClick={onOpenMotionEvidence} type="button">
             Back to Motion Evidence
@@ -191,8 +191,8 @@ export function MotionEvidenceDetailPage({
 
       <section className="notice-panel motion-status-note">
         <div>
-          <strong>Evidence is not truth</strong>
-          <span>Corrections create dataset-grade truth for analytics and exports.</span>
+          <strong>Developer detail — evidence is not truth</strong>
+          <span>Corrections create dataset-grade truth for Bird Log, analytics, and exports.</span>
         </div>
         <StatusPill label={formatLabel(evidence.status)} tone={statusTone(evidence.status)} />
       </section>

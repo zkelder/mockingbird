@@ -141,7 +141,7 @@ export function ExportsPage({
               Open Review Queue
             </button>
             <button className="secondary-action" onClick={onOpenDetectionProposals}>
-              Detection Proposals
+              Advanced Detection Proposals
             </button>
           </>
         }
@@ -169,7 +169,7 @@ export function ExportsPage({
             <div>
               <h2>Create reviewed-only export</h2>
               <span className="meta-text">
-                Exports use ReviewLabel / reviewed correction truth. Detection proposals remain evidence.
+                Exports use reviewed correction truth. Suggestions remain evidence.
               </span>
             </div>
           </div>
@@ -278,7 +278,7 @@ export function ExportsPage({
               <div>
                 <strong>These records are local dataset/export output.</strong>
                 <span>
-                  ReviewLabel corrections are truth. Detections and proposals are evidence.
+                  Reviewed corrections are truth. Detections and proposals are evidence.
                   Reviewed-only exports exclude unreviewed candidates.
                 </span>
               </div>
@@ -348,7 +348,7 @@ export function ExportsPage({
                   Review skipped activity
                 </button>
                 <button className="secondary-action" onClick={onOpenDetectionProposals}>
-                  Open proposal evidence
+                  Advanced proposal evidence
                 </button>
               </div>
             ) : null}
@@ -363,7 +363,7 @@ export function ExportsPage({
                       </span>
                       <h3>{record.label_display_name ?? formatLabel(record.label)}</h3>
                       <p>
-                        ReviewLabel truth exports as <strong>{record.label}</strong>; subject context is{" "}
+                        Correction truth exports as <strong>{record.label}</strong>; subject context is{" "}
                         <strong>{formatLabel(record.subject_label)}</strong>.
                       </p>
                     </div>

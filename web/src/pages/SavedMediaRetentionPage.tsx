@@ -443,9 +443,9 @@ export function SavedMediaRetentionPage() {
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Local storage visibility"
+        eyebrow="Advanced storage"
         title="Saved Media Retention"
-        description="Review saved preview media, risk, dry-run planning, and low-risk file cleanup."
+        description="Advanced local storage visibility for saved preview media, risk, dry-run planning, and low-risk file cleanup."
         actions={
           <button className="secondary-action" onClick={() => void loadReport({ showLoading: false })}>
             Refresh report

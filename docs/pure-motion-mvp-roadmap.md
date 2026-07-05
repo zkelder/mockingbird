@@ -251,6 +251,23 @@ Source health and Storage guardrails, and uses existing Check motion after at
 least two saved snapshots. It creates no truth, exports, server jobs, or live
 video behavior.
 
+Snapshot watch is a bounded browser/page-local test harness, not the final
+monitoring architecture. Do not expand it into the product center.
+
+### 8. Camera Monitoring Core
+
+The next real implementation target is Camera Monitoring Core.
+
+Camera Monitoring Core should be backend-managed, explicit start/stop,
+external_url first, and adapter-ready later. It should turn camera activity into:
+
+```text
+camera/source -> activity detected -> Review -> Bird Log -> export
+```
+
+while keeping internal developer surfaces secondary to Cameras/Streams, Review,
+Bird Log, and Exports/Data.
+
 ## Detector And Classifier Position
 
 Detector models are not required for the pure-motion MVP.
@@ -312,11 +329,14 @@ activity candidate -> Review -> ReviewLabel truth -> Bird Log -> export
 
 7. **Repeated Snapshot Watch 1**
    - Status: manual start/stop Snapshot watch from external_url source is
-     page-local, bounded, and motion-check only.
+     page-local, bounded, motion-check only, and contained as a test harness.
    - Still no RTSP/USB/ESP32/live video worker.
 
-8. **Live/Video Adapter Boundary**
-   - Only after the above proves anti-flood, storage, and review behavior.
+8. **Camera Monitoring Core**
+   - Next real implementation target.
+   - Backend-managed, explicit start/stop, external_url first, adapter-ready
+     later.
+   - Do not expand the browser Snapshot watch harness as the final architecture.
 
 ## Guardrails
 
