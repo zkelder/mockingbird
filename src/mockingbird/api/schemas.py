@@ -1163,6 +1163,17 @@ class MotionEvaluateSavedMediaResponse(BaseModel):
     can_create_review_activity: bool = True
     review_activity_created: bool = False
     creation_skipped_reason: str | None = None
+    session_key: str | None = None
+    session_status: str = "no_activity"
+    should_create_review_activity: bool = False
+    session_message: str | None = None
+    existing_activity_reference: str | None = None
+    best_snapshot_media_asset_id: str | None = None
+    best_snapshot_reason: str | None = None
+    quiet_period_seconds: int = Field(default=30, ge=1)
+    cooldown_seconds: int = Field(default=30, ge=0)
+    max_snapshots_per_session: int = Field(default=3, ge=1)
+    session_debug: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
     debug_cell_zones: list[MotionZoneInput] = Field(default_factory=list)
     frames: list[SavedMediaFrameSummary]
     frame_scores: list[MotionFrameScoreResponse]

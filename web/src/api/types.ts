@@ -58,6 +58,11 @@ export type DetectionRunStatus = "pending" | "completed" | "failed";
 export type DetectionProposalStatus = "proposed" | "accepted" | "rejected" | "converted";
 export type DetectionProposalDecision = "accept" | "reject" | "convert_to_event";
 export type MotionEvidenceStatus = "pending" | "promoted" | "ignored";
+export type ActivitySessionStatus =
+  | "new_activity"
+  | "ongoing_activity"
+  | "cooldown_suppressed"
+  | "no_activity";
 export type SpeciesSuggestionStatus = "pending" | "accepted" | "rejected" | "superseded";
 export type AdapterEvaluationOutcome =
   | "matched_reviewed_truth"
@@ -1118,6 +1123,17 @@ export interface MotionEvaluateSavedMediaResponse {
   can_create_review_activity: boolean;
   review_activity_created: boolean;
   creation_skipped_reason?: string | null;
+  session_key?: string | null;
+  session_status: ActivitySessionStatus | string;
+  should_create_review_activity: boolean;
+  session_message?: string | null;
+  existing_activity_reference?: string | null;
+  best_snapshot_media_asset_id?: string | null;
+  best_snapshot_reason?: string | null;
+  quiet_period_seconds: number;
+  cooldown_seconds: number;
+  max_snapshots_per_session: number;
+  session_debug: Record<string, string | number | boolean | null>;
   debug_cell_zones: MotionZoneInput[];
   frames: SavedMediaFrameSummary[];
   frame_scores: MotionFrameScoreResponse[];

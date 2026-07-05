@@ -182,7 +182,11 @@ Dataset Exports.
 - [ ] Confirm the saved image appears under that camera/source and Stream.
 - [ ] Capture at least one more saved snapshot for the same Stream.
 - [ ] Click `Check motion`.
-- [ ] Confirm `Activity detected` or `No activity detected` appears with an Activity area and best snapshot context.
+- [ ] Confirm `New activity detected`, `Ongoing activity`, `Cooldown active`,
+      or `No activity detected` appears with an Activity area and best snapshot
+      context.
+- [ ] Run `Check motion` again for the same saved snapshots and confirm the
+      same-area result does not encourage duplicate review activity.
 - [ ] If no Zones exist, confirm automatic activity areas are used.
 - [ ] Confirm automatic activity areas are motion-only; do not run model analysis
       per activity area.
@@ -246,8 +250,10 @@ create proposal evidence only.
       Stream.
 - [ ] Capture at least one more saved snapshot for the same Stream.
 - [ ] Click `Check motion`.
-- [ ] Confirm `Activity detected` or `No activity detected` appears with an
-      Activity area.
+- [ ] Confirm `New activity detected`, `Ongoing activity`, `Cooldown active`,
+      or `No activity detected` appears with an Activity area.
+- [ ] Run `Check motion` again for the same Activity area and confirm duplicate
+      review activity is not encouraged.
 - [ ] If no Zones exist, confirm automatic activity areas are used.
 - [ ] Confirm model analysis remains separate and is not run per automatic
       activity area.

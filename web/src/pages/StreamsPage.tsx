@@ -241,6 +241,52 @@ function defaultMotionSnapshotIds(assets: MediaAsset[]): string[] {
   );
 }
 
+function activitySessionLabel(status?: string | null): string {
+  switch (status) {
+    case "new_activity":
+      return "New activity detected";
+    case "ongoing_activity":
+      return "Ongoing activity";
+    case "cooldown_suppressed":
+      return "Cooldown active";
+    case "no_activity":
+      return "No activity detected";
+    default:
+      return "Activity";
+  }
+}
+
+function activitySessionTone(
+  status?: string | null,
+): "good" | "review" | "quiet" {
+  if (status === "new_activity") {
+    return "review";
+  }
+  if (status === "ongoing_activity" || status === "cooldown_suppressed") {
+    return "quiet";
+  }
+  return "quiet";
+}
+
+function motionNextStep(
+  result: MotionEvaluateSavedMediaResponse,
+  createdEvidence: MotionEvidence | null,
+): string {
+  if (createdEvidence) {
+    return "Review activity";
+  }
+  if (!result.activity_detected) {
+    return "Capture more saved snapshots";
+  }
+  if (!result.can_create_review_activity) {
+    return "Named Zone needed for review activity";
+  }
+  if (!result.should_create_review_activity) {
+    return "Same activity";
+  }
+  return "Create review activity";
+}
+
 function buildMediaLifecycleSummary(
   asset: MediaAsset,
   detectionRuns: DetectionRun[],
@@ -3238,14 +3284,23 @@ export function StreamsPage({
                   const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
                   const canCreateMotionReviewActivity =
                     motionResult?.can_create_review_activity ?? true;
+                  const shouldCreateMotionReviewActivity =
+                    motionResult?.should_create_review_activity ?? false;
                   const motionActivityAreaLabel =
                     motionResult?.strongest_activity_area_label ??
                     motionResult?.strongest_zone_id ??
                     null;
+                  const motionSessionLabel = activitySessionLabel(
+                    motionResult?.session_status,
+                  );
                   const usesAutomaticActivityAreas = motionResult?.uses_auto_regions ?? false;
-                  const bestMotionAsset = motionResult?.best_media_asset_id
+                  const bestMotionAssetId =
+                    motionResult?.best_snapshot_media_asset_id ??
+                    motionResult?.best_media_asset_id ??
+                    null;
+                  const bestMotionAsset = bestMotionAssetId
                     ? streamImageAssets.find(
-                        (asset) => asset.id === motionResult.best_media_asset_id,
+                        (asset) => asset.id === bestMotionAssetId,
                       )
                     : null;
                   return (
@@ -3434,7 +3489,8 @@ export function StreamsPage({
                                   </button>
                                   {motionResult?.activity_detected &&
                                   motionResult.created_evidence.length === 0 &&
-                                  canCreateMotionReviewActivity ? (
+                                  canCreateMotionReviewActivity &&
+                                  shouldCreateMotionReviewActivity ? (
                                     <button
                                       className="primary-action"
                                       disabled={motionState.isCreatingActivity}
@@ -3483,30 +3539,35 @@ export function StreamsPage({
                                 {motionResult?.activity_detected &&
                                 !canCreateMotionReviewActivity ? (
                                   <span className="meta-text">
-                                    Automatic activity areas found motion. Saved review activity
-                                    from automatic areas is not available yet.
+                                    Automatic activity areas can detect motion now; review activity
+                                    creation still requires a named Zone in this build.
+                                  </span>
+                                ) : null}
+                                {motionResult?.activity_detected &&
+                                canCreateMotionReviewActivity &&
+                                !shouldCreateMotionReviewActivity &&
+                                !motionCreatedEvidence ? (
+                                  <span className="meta-text">
+                                    {motionResult.creation_skipped_reason ===
+                                    "activity_session_duplicate_suppressed"
+                                      ? "This looks like the same recent activity, so MockingBird did not create another review item."
+                                      : "This looks like the same recent activity."}
                                   </span>
                                 ) : null}
                                 {motionResult ? (
                                   <div className="stream-motion-result">
                                     <div className="item-title-row">
-                                      <strong>
-                                        {motionResult.activity_detected
-                                          ? "Activity detected"
-                                          : "No activity detected"}
-                                      </strong>
+                                      <strong>{motionSessionLabel}</strong>
                                       <StatusPill
-                                        label={
-                                          motionResult.activity_detected
-                                            ? "Activity detected"
-                                            : "No activity detected"
-                                        }
-                                        tone={
-                                          motionResult.activity_detected ? "review" : "quiet"
-                                        }
+                                        label={motionSessionLabel}
+                                        tone={activitySessionTone(motionResult.session_status)}
                                       />
                                     </div>
                                     <div className="timeline-result-grid">
+                                      <div className="data-row">
+                                        <span>Activity session</span>
+                                        <strong>{motionSessionLabel}</strong>
+                                      </div>
                                       <div className="data-row">
                                         <span>Activity area</span>
                                         <strong>{motionActivityAreaLabel ?? "none"}</strong>
@@ -3538,17 +3599,14 @@ export function StreamsPage({
                                       </div>
                                       <div className="data-row">
                                         <span>Next</span>
-                                        <strong>
-                                          {motionCreatedEvidence
-                                            ? "Review activity"
-                                            : motionResult.activity_detected
-                                              ? canCreateMotionReviewActivity
-                                                ? "Create review activity"
-                                                : "Automatic area result"
-                                              : "Capture more saved snapshots"}
-                                        </strong>
+                                        <strong>{motionNextStep(motionResult, motionCreatedEvidence)}</strong>
                                       </div>
                                     </div>
+                                    {motionResult.session_message ? (
+                                      <span className="meta-text">
+                                        {motionResult.session_message}
+                                      </span>
+                                    ) : null}
                                     {motionResult.warnings.length > 0 ? (
                                       <div className="source-warning-list">
                                         {motionResult.warnings.map((warning) => (
@@ -3567,9 +3625,37 @@ export function StreamsPage({
                                           <strong>
                                             {usesAutomaticActivityAreas
                                               ? "automatic activity areas"
-                                              : "user Zones"}
+                                            : "user Zones"}
                                           </strong>
                                         </div>
+                                        <div className="data-row">
+                                          <span>Session key</span>
+                                          <strong>{motionResult.session_key ?? "none"}</strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Quiet period</span>
+                                          <strong>
+                                            {motionResult.quiet_period_seconds} seconds
+                                          </strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Cooldown</span>
+                                          <strong>{motionResult.cooldown_seconds} seconds</strong>
+                                        </div>
+                                        <div className="data-row">
+                                          <span>Max snapshots</span>
+                                          <strong>
+                                            {motionResult.max_snapshots_per_session}
+                                          </strong>
+                                        </div>
+                                        {motionResult.existing_activity_reference ? (
+                                          <div className="data-row">
+                                            <span>Existing activity</span>
+                                            <strong>
+                                              {motionResult.existing_activity_reference}
+                                            </strong>
+                                          </div>
+                                        ) : null}
                                         <div className="data-row">
                                           <span>MediaAsset IDs</span>
                                           <strong>{motionResult.media_asset_ids.join(", ")}</strong>

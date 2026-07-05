@@ -210,7 +210,14 @@ async def test_saved_media_motion_scores_sequence_without_creating_records(
     assert result["activity_detected"] is True
     assert result["created_evidence"] == []
     assert result["best_media_asset_id"] == assets[2]["id"]
+    assert result["best_snapshot_media_asset_id"] == assets[2]["id"]
     assert result["strongest_zone_id"] == FEEDER_ZONE_ID
+    assert result["session_key"]
+    assert result["session_status"] == "new_activity"
+    assert result["should_create_review_activity"] is True
+    assert result["quiet_period_seconds"] == 30
+    assert result["cooldown_seconds"] == 30
+    assert result["max_snapshots_per_session"] == 3
     assert len(result["frame_scores"]) == 2
     assert result["candidates"][0]["zone_id"] == FEEDER_ZONE_ID
     assert await motion_evidence_count(client) == before_evidence_count
@@ -266,6 +273,9 @@ async def test_saved_media_motion_uses_auto_regions_without_user_zones(
     assert result["activity_detected"] is True
     assert result["can_create_review_activity"] is False
     assert result["review_activity_created"] is False
+    assert result["session_key"]
+    assert result["session_status"] == "new_activity"
+    assert result["should_create_review_activity"] is False
     assert result["created_evidence"] == []
     assert len(result["activity_areas"]) == 1
     assert result["activity_areas"][0]["area_id"] == result["strongest_activity_area_id"]
@@ -324,10 +334,12 @@ async def test_saved_media_motion_auto_region_create_request_is_result_only(
     assert result["activity_detected"] is True
     assert result["uses_auto_regions"] is True
     assert result["can_create_review_activity"] is False
+    assert result["session_status"] == "new_activity"
+    assert result["should_create_review_activity"] is False
     assert result["review_activity_created"] is False
     assert result["creation_skipped_reason"] == "auto_region_review_activity_requires_user_zone"
     assert result["created_evidence"] == []
-    assert any("result-only" in warning for warning in result["warnings"])
+    assert any("review activity creation still requires a named Zone" in warning for warning in result["warnings"])
     assert await motion_evidence_count(client) == before_evidence_count
     assert await truth_counts(client) == before_truth
 
@@ -464,6 +476,8 @@ async def test_saved_media_motion_auto_regions_skip_privacy_ignore_areas(
     assert result["uses_auto_regions"] is True
     assert result["suppressed_auto_region_count"] > 0
     assert result["activity_detected"] is False
+    assert result["session_status"] == "no_activity"
+    assert result["should_create_review_activity"] is False
     assert result["created_evidence"] == []
     assert any("Privacy/ignore areas were skipped" in warning for warning in result["warnings"])
 
@@ -491,6 +505,8 @@ async def test_saved_media_motion_can_create_pending_evidence_with_best_snapshot
     assert response.status_code == 200
     result = response.json()
     assert result["activity_detected"] is True
+    assert result["session_status"] == "new_activity"
+    assert result["should_create_review_activity"] is True
     assert len(result["created_evidence"]) == 1
     evidence = result["created_evidence"][0]
     assert evidence["status"] == "pending"
@@ -501,6 +517,115 @@ async def test_saved_media_motion_can_create_pending_evidence_with_best_snapshot
     assert evidence["scoring_config"]["source"] == "saved_media_motion"
     assert await motion_evidence_count(client) == before_evidence_count + 1
     assert await truth_counts(client) == before_truth
+
+
+async def test_saved_media_motion_suppresses_same_activity_review_creation(
+    client: httpx.AsyncClient,
+) -> None:
+    assets = await import_motion_frames(client)
+    before_truth = await truth_counts(client)
+
+    first_response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": STREAM_ID,
+            "media_asset_ids": [asset["id"] for asset in assets],
+            "zone_ids": [FEEDER_ZONE_ID],
+            "create_motion_evidence": True,
+            "attach_best_snapshot": True,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 2,
+        },
+    )
+    assert first_response.status_code == 200
+    first_result = first_response.json()
+    assert first_result["session_status"] == "new_activity"
+    assert first_result["should_create_review_activity"] is True
+    assert len(first_result["created_evidence"]) == 1
+    first_evidence_id = first_result["created_evidence"][0]["id"]
+    evidence_count = await motion_evidence_count(client)
+
+    second_response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": STREAM_ID,
+            "media_asset_ids": [asset["id"] for asset in assets],
+            "zone_ids": [FEEDER_ZONE_ID],
+            "create_motion_evidence": True,
+            "attach_best_snapshot": True,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 2,
+        },
+    )
+
+    assert second_response.status_code == 200
+    second_result = second_response.json()
+    assert second_result["activity_detected"] is True
+    assert second_result["created_evidence"] == []
+    assert second_result["review_activity_created"] is False
+    assert second_result["session_status"] == "ongoing_activity"
+    assert second_result["should_create_review_activity"] is False
+    assert second_result["existing_activity_reference"] == first_evidence_id
+    assert second_result["creation_skipped_reason"] == "activity_session_duplicate_suppressed"
+    assert any("same recent activity" in warning for warning in second_result["warnings"])
+    assert await motion_evidence_count(client) == evidence_count
+    assert await truth_counts(client) == before_truth
+
+
+async def test_saved_media_motion_allows_separate_zone_activity(
+    client: httpx.AsyncClient,
+) -> None:
+    assets = await import_motion_frames(client)
+    zone_response = await client.post(
+        "/api/zones",
+        json={
+            "stream_id": STREAM_ID,
+            "name": "Whole yard activity",
+            "zone_type": "yard",
+            "polygon": [
+                {"x": 0.0, "y": 0.0},
+                {"x": 1.0, "y": 0.0},
+                {"x": 1.0, "y": 1.0},
+                {"x": 0.0, "y": 1.0},
+            ],
+            "is_active": True,
+        },
+    )
+    assert zone_response.status_code == 201
+    yard_zone_id = zone_response.json()["zone"]["id"]
+
+    first_response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": STREAM_ID,
+            "media_asset_ids": [asset["id"] for asset in assets],
+            "zone_ids": [FEEDER_ZONE_ID],
+            "create_motion_evidence": True,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 2,
+        },
+    )
+    assert first_response.status_code == 200
+    assert len(first_response.json()["created_evidence"]) == 1
+
+    second_response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": STREAM_ID,
+            "media_asset_ids": [asset["id"] for asset in assets],
+            "zone_ids": [yard_zone_id],
+            "create_motion_evidence": True,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert second_response.status_code == 200
+    second_result = second_response.json()
+    assert second_result["session_status"] == "new_activity"
+    assert second_result["should_create_review_activity"] is True
+    assert len(second_result["created_evidence"]) == 1
+    assert second_result["created_evidence"][0]["zone_id"] == yard_zone_id
 
 
 async def test_saved_media_motion_excludes_privacy_and_ignore_zones(

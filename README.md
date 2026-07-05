@@ -111,9 +111,11 @@ Streams with at least two saved image snapshots can also run an explicit Check
 motion action. If no user Zones exist yet, MockingBird checks automatic activity
 areas using motion only; user Zones improve accuracy and privacy/ignore behavior
 later. Future classifier/model enrichment belongs on the best snapshot/crop for
-a finalized activity session, not each automatic area. Motion results remain
+a finalized activity session, not each automatic area. Motion checks now classify
+activity as new, ongoing, cooldown-suppressed, or no activity; duplicate
+suppression is per Activity area, not global to the camera. Motion results remain
 candidate activity until explicit review/correction creates truth for Bird Log
-and export.
+and export, and repeated/live capture remains future work.
 This timeline now summarizes existing proposal evidence, MotionEvidence,
 promoted Event/Visit context, inferable ReviewLabel truth, and the next safe
 review/export step. It does not run models, poll sources, create Events/Visits

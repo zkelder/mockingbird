@@ -131,6 +131,10 @@ from mockingbird.motion import (
     extract_motion_candidates,
     score_frame_motion,
 )
+from mockingbird.motion.activity_session import (
+    ExistingActivityReference,
+    recommend_activity_session,
+)
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.sampler import (
     SamplerConfig,
@@ -1217,6 +1221,47 @@ def _media_timestamp_for_frame(
     return frames[index].created_at.isoformat()
 
 
+def _media_datetime_for_frame(
+    frames: list[SavedMediaFrameSummary],
+    *,
+    frame_index: int | None,
+    frame_index_start: int,
+):
+    index = _frame_asset_index(frame_index, frame_index_start)
+    if index is None or index >= len(frames):
+        return None
+    return frames[index].created_at
+
+
+def _activity_session_region_id(area: MotionActivityAreaResponse | None) -> str | None:
+    if area is None:
+        return None
+    if area.zone_id:
+        return area.zone_id
+    return (
+        f"{area.source}:{area.label}:"
+        f"{area.left:.3f}:{area.top:.3f}:{area.right:.3f}:{area.bottom:.3f}"
+    )
+
+
+def _motion_evidence_session_references(
+    evidence_items: list[MotionEvidenceResponse],
+) -> list[ExistingActivityReference]:
+    return [
+        ExistingActivityReference(
+            activity_id=evidence.id,
+            source_id=evidence.source_id,
+            stream_id=evidence.stream_id,
+            region_kind="zone",
+            region_id=evidence.zone_id,
+            created_at=evidence.created_at,
+            snapshot_media_asset_id=evidence.snapshot_media_asset_id,
+            status=evidence.status.value,
+        )
+        for evidence in evidence_items
+    ]
+
+
 def _strongest_motion_summary(
     frame_scores: list[MotionFrameScoreResponse],
 ) -> tuple[str | None, float]:
@@ -1513,69 +1558,6 @@ async def evaluate_saved_media_motion(
         _motion_candidate_response(candidate)
         for candidate in motion_candidates
     ]
-    created_evidence: list[MotionEvidenceResponse] = []
-    can_create_review_activity = not uses_auto_regions
-    if payload.create_motion_evidence and motion_candidates and uses_auto_regions:
-        creation_skipped_reason = "auto_region_review_activity_requires_user_zone"
-        warnings.append(
-            "Automatic activity areas are result-only in this phase; no review activity was created."
-        )
-    if payload.create_motion_evidence and motion_candidates and not uses_auto_regions:
-        for candidate in motion_candidates:
-            best_media_asset_id = (
-                _media_asset_id_for_frame(
-                    payload.media_asset_ids,
-                    frame_index=candidate.best_frame_index,
-                    frame_index_start=payload.frame_index_start,
-                )
-                if payload.attach_best_snapshot
-                else None
-            )
-            try:
-                created_evidence.append(
-                    repository.create_motion_evidence(
-                        MotionEvidenceCreateRequest(
-                            source_id=stream.source_id,
-                            stream_id=stream.id,
-                            zone_id=candidate.zone_id,
-                            start_frame_index=candidate.start_frame_index,
-                            end_frame_index=candidate.end_frame_index,
-                            best_frame_index=candidate.best_frame_index,
-                            start_time=_media_timestamp_for_frame(
-                                frame_summaries,
-                                frame_index=candidate.start_frame_index,
-                                frame_index_start=payload.frame_index_start,
-                            ),
-                            end_time=_media_timestamp_for_frame(
-                                frame_summaries,
-                                frame_index=candidate.end_frame_index,
-                                frame_index_start=payload.frame_index_start,
-                            ),
-                            best_frame_time=_media_timestamp_for_frame(
-                                frame_summaries,
-                                frame_index=candidate.best_frame_index,
-                                frame_index_start=payload.frame_index_start,
-                            ),
-                            peak_changed_ratio=candidate.peak_changed_ratio,
-                            triggered_frame_count=candidate.triggered_frame_count,
-                            scoring_config={
-                                "source": "saved_media_motion",
-                                "media_asset_count": len(media_assets),
-                                "pixel_delta_threshold": payload.pixel_delta_threshold,
-                                "min_changed_ratio": payload.min_changed_ratio,
-                                "min_triggered_frames": payload.min_triggered_frames,
-                                "max_gap_frames": payload.max_gap_frames,
-                                "frame_index_start": payload.frame_index_start,
-                                "attach_best_snapshot": payload.attach_best_snapshot,
-                            },
-                            snapshot_media_asset_id=best_media_asset_id,
-                            notes=payload.notes
-                            or "Saved snapshot motion check created pending review activity.",
-                        )
-                    )
-                )
-            except ValueError as error:
-                raise _motion_evidence_error(error) from error
 
     raw_strongest_zone_id, raw_strongest_changed_ratio = _strongest_motion_summary(
         frame_score_responses,
@@ -1601,9 +1583,108 @@ async def evaluate_saved_media_motion(
         else None
     )
     activity_area_by_id = {area.area_id: area for area in activity_areas}
-    strongest_activity_area = (
-        activity_area_by_id.get(strongest_zone_id) if strongest_zone_id else None
+    session_activity_area = (
+        activity_area_by_id.get(best_candidate.zone_id) if best_candidate else None
     )
+    strongest_activity_area = (
+        session_activity_area
+        or (activity_area_by_id.get(strongest_zone_id) if strongest_zone_id else None)
+    )
+    best_activity_at = _media_datetime_for_frame(
+        frame_summaries,
+        frame_index=best_candidate.best_frame_index if best_candidate else None,
+        frame_index_start=payload.frame_index_start,
+    )
+    session_region_kind = "auto_area" if uses_auto_regions else "zone"
+    session_region_id = _activity_session_region_id(strongest_activity_area)
+    existing_session_references = (
+        _motion_evidence_session_references(
+            repository.list_motion_evidence(zone_id=best_candidate.zone_id)
+        )
+        if best_candidate and not uses_auto_regions
+        else []
+    )
+    can_create_review_activity = not uses_auto_regions
+    session_recommendation = recommend_activity_session(
+        source_id=stream.source_id,
+        stream_id=stream.id,
+        region_kind=session_region_kind,
+        region_id=session_region_id,
+        activity_at=best_activity_at,
+        activity_detected=bool(motion_candidates),
+        review_activity_available=can_create_review_activity,
+        best_snapshot_media_asset_id=best_media_asset_id,
+        existing_activities=existing_session_references,
+    )
+    created_evidence: list[MotionEvidenceResponse] = []
+    if payload.create_motion_evidence and motion_candidates and uses_auto_regions:
+        creation_skipped_reason = "auto_region_review_activity_requires_user_zone"
+        warnings.append(
+            "Automatic activity areas can detect motion now; review activity creation "
+            "still requires a named Zone in this build."
+        )
+    elif (
+        payload.create_motion_evidence
+        and motion_candidates
+        and not session_recommendation.should_create_review_activity
+    ):
+        creation_skipped_reason = "activity_session_duplicate_suppressed"
+        warnings.append(
+            "This looks like the same recent activity, so MockingBird did not create "
+            "another review item."
+        )
+    elif payload.create_motion_evidence and best_candidate:
+        try:
+            created_evidence.append(
+                repository.create_motion_evidence(
+                    MotionEvidenceCreateRequest(
+                        source_id=stream.source_id,
+                        stream_id=stream.id,
+                        zone_id=best_candidate.zone_id,
+                        start_frame_index=best_candidate.start_frame_index,
+                        end_frame_index=best_candidate.end_frame_index,
+                        best_frame_index=best_candidate.best_frame_index,
+                        start_time=_media_timestamp_for_frame(
+                            frame_summaries,
+                            frame_index=best_candidate.start_frame_index,
+                            frame_index_start=payload.frame_index_start,
+                        ),
+                        end_time=_media_timestamp_for_frame(
+                            frame_summaries,
+                            frame_index=best_candidate.end_frame_index,
+                            frame_index_start=payload.frame_index_start,
+                        ),
+                        best_frame_time=_media_timestamp_for_frame(
+                            frame_summaries,
+                            frame_index=best_candidate.best_frame_index,
+                            frame_index_start=payload.frame_index_start,
+                        ),
+                        peak_changed_ratio=best_candidate.peak_changed_ratio,
+                        triggered_frame_count=best_candidate.triggered_frame_count,
+                        scoring_config={
+                            "source": "saved_media_motion",
+                            "media_asset_count": len(media_assets),
+                            "pixel_delta_threshold": payload.pixel_delta_threshold,
+                            "min_changed_ratio": payload.min_changed_ratio,
+                            "min_triggered_frames": payload.min_triggered_frames,
+                            "max_gap_frames": payload.max_gap_frames,
+                            "frame_index_start": payload.frame_index_start,
+                            "attach_best_snapshot": payload.attach_best_snapshot,
+                            "activity_session_status": session_recommendation.session_status,
+                            "max_snapshots_per_session": (
+                                session_recommendation.max_snapshots_per_session
+                            ),
+                        },
+                        snapshot_media_asset_id=(
+                            best_media_asset_id if payload.attach_best_snapshot else None
+                        ),
+                        notes=payload.notes
+                        or "Saved snapshot motion check created pending review activity.",
+                    )
+                )
+            )
+        except ValueError as error:
+            raise _motion_evidence_error(error) from error
     return MotionEvaluateSavedMediaResponse(
         stream_id=stream.id,
         source_id=stream.source_id,
@@ -1622,6 +1703,17 @@ async def evaluate_saved_media_motion(
         can_create_review_activity=can_create_review_activity,
         review_activity_created=bool(created_evidence),
         creation_skipped_reason=creation_skipped_reason,
+        session_key=session_recommendation.session_key,
+        session_status=session_recommendation.session_status,
+        should_create_review_activity=session_recommendation.should_create_review_activity,
+        session_message=session_recommendation.message,
+        existing_activity_reference=session_recommendation.existing_activity_reference,
+        best_snapshot_media_asset_id=session_recommendation.best_snapshot_media_asset_id,
+        best_snapshot_reason=session_recommendation.best_snapshot_reason,
+        quiet_period_seconds=session_recommendation.quiet_period_seconds,
+        cooldown_seconds=session_recommendation.cooldown_seconds,
+        max_snapshots_per_session=session_recommendation.max_snapshots_per_session,
+        session_debug=session_recommendation.debug,
         debug_cell_zones=debug_cell_zones,
         frames=frame_summaries,
         frame_scores=frame_score_responses,

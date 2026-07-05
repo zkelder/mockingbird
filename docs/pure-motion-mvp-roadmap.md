@@ -88,12 +88,12 @@ Already built or partially built:
 - MotionEvidence schema/API/review/promote bridge
 - MediaAsset attachment to MotionEvidence
 - saved-snapshot Check motion with automatic activity areas when no user Zones exist
+- saved-snapshot Activity session recommendation with per-area duplicate suppression
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
 
 - real repeated frame/snapshot motion bridge from source media
-- activity sessionization / anti-flood grouping
 - best full snapshot + focused crop creation
 - source health and capture status sufficient for automatic/repeated capture
 - storage/retention policy for automatic activity capture
@@ -165,6 +165,11 @@ Core behavior:
 - close after a quiet period
 - apply cooldown to that region only, not the whole camera
 - allow separate regions to trigger independently
+- Activity Sessionization 1 status: explicit saved-snapshot motion checks now
+  classify results as new, ongoing, cooldown-suppressed, or no activity, return
+  a best snapshot, and suppress duplicate review activity creation for the same
+  Stream and Activity area within the quiet/cooldown window. Repeated capture,
+  crop generation, and automatic source checks remain future work.
 
 Early output should count visits/observations, not exact individual birds.
 
