@@ -1112,12 +1112,6 @@ export function StreamsPage({
       });
       return;
     }
-    if (zones.length === 0) {
-      updateStreamMotionCheckState(stream.id, {
-        error: "Add an active non-privacy/non-ignore Zone before checking motion.",
-      });
-      return;
-    }
 
     updateStreamMotionCheckState(stream.id, {
       error: null,
@@ -1128,7 +1122,7 @@ export function StreamsPage({
       const result = await apiClient.evaluateSavedMediaMotion({
         stream_id: stream.id,
         media_asset_ids: selectedAssets.map((asset) => asset.id),
-        zone_ids: zones.map((zone) => zone.id),
+        zone_ids: zones.length > 0 ? zones.map((zone) => zone.id) : null,
         create_motion_evidence: options.createActivity,
         attach_best_snapshot: true,
         notes: options.createActivity
@@ -3242,14 +3236,16 @@ export function StreamsPage({
                   );
                   const motionResult = motionState.result ?? null;
                   const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
+                  const canCreateMotionReviewActivity =
+                    motionResult?.can_create_review_activity ?? true;
+                  const motionActivityAreaLabel =
+                    motionResult?.strongest_activity_area_label ??
+                    motionResult?.strongest_zone_id ??
+                    null;
+                  const usesAutomaticActivityAreas = motionResult?.uses_auto_regions ?? false;
                   const bestMotionAsset = motionResult?.best_media_asset_id
                     ? streamImageAssets.find(
                         (asset) => asset.id === motionResult.best_media_asset_id,
-                      )
-                    : null;
-                  const strongestMotionZone = motionResult?.strongest_zone_id
-                    ? reviewableTimelineZones.find(
-                        (zone) => zone.id === motionResult.strongest_zone_id,
                       )
                     : null;
                   return (
@@ -3364,8 +3360,9 @@ export function StreamsPage({
                                   <div>
                                     <strong>Check motion</strong>
                                     <p className="meta-text">
-                                      Compare saved snapshots inside active Zones before creating a
-                                      review activity.
+                                      {reviewableTimelineZones.length > 0
+                                        ? "Compare saved snapshots inside active Zones before creating a review activity."
+                                        : "No zones yet — MockingBird will check motion across automatic activity areas."}
                                     </p>
                                   </div>
                                   <StatusPill
@@ -3378,16 +3375,22 @@ export function StreamsPage({
                                     Saved snapshots: {streamImageAssets.length}
                                   </span>
                                   <span>
-                                    Zones:{" "}
+                                    Activity areas:{" "}
                                     {reviewableTimelineZones.length > 0
                                       ? reviewableTimelineZones
                                           .map((zone) => zone.name)
                                           .join(", ")
-                                      : "none"}
+                                      : "automatic"}
                                   </span>
                                   <span>Manual action</span>
                                   <span>No reviewed data created</span>
                                 </div>
+                                {reviewableTimelineZones.length === 0 ? (
+                                  <span className="meta-text">
+                                    You can draw feeder/birdbath/ignore zones later for better
+                                    results, but they are not required to check motion.
+                                  </span>
+                                ) : null}
                                 <div className="motion-snapshot-picker">
                                   {recentMotionAssets.map((asset) => (
                                     <label className="checkbox-row" key={asset.id}>
@@ -3415,8 +3418,7 @@ export function StreamsPage({
                                     disabled={
                                       motionState.isChecking ||
                                       motionState.isCreatingActivity ||
-                                      selectedMotionAssets.length < 2 ||
-                                      reviewableTimelineZones.length === 0
+                                      selectedMotionAssets.length < 2
                                     }
                                     onClick={() =>
                                       void handleEvaluateSavedMediaMotion(
@@ -3431,7 +3433,8 @@ export function StreamsPage({
                                     {motionState.isChecking ? "Checking..." : "Check motion"}
                                   </button>
                                   {motionResult?.activity_detected &&
-                                  motionResult.created_evidence.length === 0 ? (
+                                  motionResult.created_evidence.length === 0 &&
+                                  canCreateMotionReviewActivity ? (
                                     <button
                                       className="primary-action"
                                       disabled={motionState.isCreatingActivity}
@@ -3477,6 +3480,13 @@ export function StreamsPage({
                                 {motionState.error ? (
                                   <div className="zone-error">{motionState.error}</div>
                                 ) : null}
+                                {motionResult?.activity_detected &&
+                                !canCreateMotionReviewActivity ? (
+                                  <span className="meta-text">
+                                    Automatic activity areas found motion. Saved review activity
+                                    from automatic areas is not available yet.
+                                  </span>
+                                ) : null}
                                 {motionResult ? (
                                   <div className="stream-motion-result">
                                     <div className="item-title-row">
@@ -3498,12 +3508,8 @@ export function StreamsPage({
                                     </div>
                                     <div className="timeline-result-grid">
                                       <div className="data-row">
-                                        <span>Strongest Zone</span>
-                                        <strong>
-                                          {strongestMotionZone?.name ??
-                                            motionResult.strongest_zone_id ??
-                                            "none"}
-                                        </strong>
+                                        <span>Activity area</span>
+                                        <strong>{motionActivityAreaLabel ?? "none"}</strong>
                                       </div>
                                       <div className="data-row">
                                         <span>Best snapshot</span>
@@ -3536,7 +3542,9 @@ export function StreamsPage({
                                           {motionCreatedEvidence
                                             ? "Review activity"
                                             : motionResult.activity_detected
-                                              ? "Create review activity"
+                                              ? canCreateMotionReviewActivity
+                                                ? "Create review activity"
+                                                : "Automatic area result"
                                               : "Capture more saved snapshots"}
                                         </strong>
                                       </div>
@@ -3555,9 +3563,39 @@ export function StreamsPage({
                                       <summary>Advanced motion details</summary>
                                       <div className="timeline-result-grid">
                                         <div className="data-row">
+                                          <span>Area source</span>
+                                          <strong>
+                                            {usesAutomaticActivityAreas
+                                              ? "automatic activity areas"
+                                              : "user Zones"}
+                                          </strong>
+                                        </div>
+                                        <div className="data-row">
                                           <span>MediaAsset IDs</span>
                                           <strong>{motionResult.media_asset_ids.join(", ")}</strong>
                                         </div>
+                                        {motionResult.activity_areas.map((area) => (
+                                          <div
+                                            className="data-row"
+                                            key={`motion-area-${stream.id}-${area.area_id}`}
+                                          >
+                                            <span>{area.label}</span>
+                                            <strong>
+                                              {area.area_id}
+                                              {area.cell_ids.length > 0
+                                                ? ` · ${area.cell_ids.length} cells`
+                                                : ""}
+                                            </strong>
+                                          </div>
+                                        ))}
+                                        {motionResult.debug_cell_zones.length > 0 ? (
+                                          <div className="data-row">
+                                            <span>Raw cell count</span>
+                                            <strong>
+                                              {motionResult.debug_cell_zones.length}
+                                            </strong>
+                                          </div>
+                                        ) : null}
                                         <div className="data-row">
                                           <span>Candidate count</span>
                                           <strong>{motionResult.candidates.length}</strong>

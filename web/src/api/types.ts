@@ -1078,6 +1078,18 @@ export interface SavedMediaFrameSummary {
   height: number;
 }
 
+export interface MotionActivityArea {
+  area_id: string;
+  label: string;
+  source: "user_zone" | "auto_region" | string;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  zone_id?: string | null;
+  cell_ids: string[];
+}
+
 export interface MotionEvaluateSavedMediaRequest {
   stream_id: string;
   media_asset_ids: string[];
@@ -1097,6 +1109,16 @@ export interface MotionEvaluateSavedMediaResponse {
   source_id: string;
   media_asset_ids: string[];
   zones: MotionZoneInput[];
+  activity_areas: MotionActivityArea[];
+  region_source: "user_zones" | "auto_regions" | string;
+  uses_auto_regions: boolean;
+  strongest_activity_area_id?: string | null;
+  strongest_activity_area_label?: string | null;
+  suppressed_auto_region_count: number;
+  can_create_review_activity: boolean;
+  review_activity_created: boolean;
+  creation_skipped_reason?: string | null;
+  debug_cell_zones: MotionZoneInput[];
   frames: SavedMediaFrameSummary[];
   frame_scores: MotionFrameScoreResponse[];
   candidates: MotionCandidateResponse[];

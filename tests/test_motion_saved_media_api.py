@@ -10,7 +10,7 @@ import pytest
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
-from mockingbird.storage.models import MediaAssetModel
+from mockingbird.storage.models import MediaAssetModel, StreamModel
 
 pytestmark = pytest.mark.anyio
 
@@ -18,6 +18,9 @@ SOURCE_ID = "source-backyard-demo"
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
 IGNORE_ZONE_ID = "zone-ignore-driveway-edge"
+AUTO_STREAM_ID = "stream-auto-regions-test"
+AUTO_CLUSTER_STREAM_ID = "stream-auto-regions-cluster-test"
+AUTO_PRIVACY_STREAM_ID = "stream-auto-regions-privacy-test"
 
 
 @pytest.fixture
@@ -64,15 +67,36 @@ def png_bytes(rows: list[list[int]]) -> bytes:
     ) + chunk(b"IEND", b"")
 
 
-def blank_frame() -> list[list[int]]:
-    return [[0, 0, 0, 0] for _ in range(4)]
+def blank_frame(*, width: int = 4, height: int = 4) -> list[list[int]]:
+    return [[0 for _x in range(width)] for _y in range(height)]
 
 
-def frame_with(points: list[tuple[int, int]]) -> list[list[int]]:
-    frame = blank_frame()
+def frame_with(
+    points: list[tuple[int, int]],
+    *,
+    width: int = 4,
+    height: int = 4,
+) -> list[list[int]]:
+    frame = blank_frame(width=width, height=height)
     for y, x in points:
         frame[y][x] = 255
     return frame
+
+
+def frame_with_rectangles(
+    rectangles: list[tuple[int, int, int, int]],
+    *,
+    width: int,
+    height: int,
+) -> list[list[int]]:
+    points: list[tuple[int, int]] = []
+    for top, left, bottom, right in rectangles:
+        points.extend(
+            (y, x)
+            for y in range(top, bottom)
+            for x in range(left, right)
+        )
+    return frame_with(points, width=width, height=height)
 
 
 async def import_png(
@@ -80,18 +104,41 @@ async def import_png(
     *,
     filename: str,
     frame: list[list[int]],
+    stream_id: str = STREAM_ID,
+    zone_id: str | None = FEEDER_ZONE_ID,
 ) -> dict:
+    data = {
+        "stream_id": stream_id,
+        "subject_label": "unknown_animal",
+    }
+    if zone_id is not None:
+        data["zone_id"] = zone_id
     response = await client.post(
         "/api/media/import",
-        data={
-            "stream_id": STREAM_ID,
-            "zone_id": FEEDER_ZONE_ID,
-            "subject_label": "unknown_animal",
-        },
+        data=data,
         files={"file": (filename, png_bytes(frame), "image/png")},
     )
     assert response.status_code == 201
     return response.json()["media_asset"]
+
+
+def add_stream_without_zones(
+    repository: ProductRepository,
+    *,
+    stream_id: str = AUTO_STREAM_ID,
+) -> None:
+    with repository.session_factory() as session:
+        with session.begin():
+            if session.get(StreamModel, stream_id) is None:
+                session.add(
+                    StreamModel(
+                        id=stream_id,
+                        source_id=SOURCE_ID,
+                        name="Auto region test stream",
+                        description="Synthetic stream for automatic activity area tests.",
+                        is_live=False,
+                    )
+                )
 
 
 async def import_motion_frames(client: httpx.AsyncClient) -> list[dict]:
@@ -168,6 +215,257 @@ async def test_saved_media_motion_scores_sequence_without_creating_records(
     assert result["candidates"][0]["zone_id"] == FEEDER_ZONE_ID
     assert await motion_evidence_count(client) == before_evidence_count
     assert await truth_counts(client) == before_truth
+
+
+async def test_saved_media_motion_uses_auto_regions_without_user_zones(
+    client: httpx.AsyncClient,
+    repository: ProductRepository,
+) -> None:
+    add_stream_without_zones(repository)
+    assets = [
+        await import_png(
+            client,
+            filename="auto-0.png",
+            frame=blank_frame(),
+            stream_id=AUTO_STREAM_ID,
+            zone_id=None,
+        ),
+        await import_png(
+            client,
+            filename="auto-1.png",
+            frame=frame_with([(1, 1), (1, 2), (2, 1), (2, 2)]),
+            stream_id=AUTO_STREAM_ID,
+            zone_id=None,
+        ),
+        await import_png(
+            client,
+            filename="auto-2.png",
+            frame=blank_frame(),
+            stream_id=AUTO_STREAM_ID,
+            zone_id=None,
+        ),
+    ]
+    before_truth = await truth_counts(client)
+    before_evidence_count = await motion_evidence_count(client)
+
+    response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": AUTO_STREAM_ID,
+            "media_asset_ids": [asset["id"] for asset in assets],
+            "create_motion_evidence": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["uses_auto_regions"] is True
+    assert result["region_source"] == "auto_regions"
+    assert result["activity_detected"] is True
+    assert result["can_create_review_activity"] is False
+    assert result["review_activity_created"] is False
+    assert result["created_evidence"] == []
+    assert len(result["activity_areas"]) == 1
+    assert result["activity_areas"][0]["area_id"] == result["strongest_activity_area_id"]
+    assert result["strongest_activity_area_label"]
+    assert result["best_media_asset_id"] in {assets[1]["id"], assets[2]["id"]}
+    assert len(result["candidates"]) == 1
+    assert len(result["debug_cell_zones"]) > 0
+    assert await motion_evidence_count(client) == before_evidence_count
+    assert await truth_counts(client) == before_truth
+
+
+async def test_saved_media_motion_auto_region_create_request_is_result_only(
+    client: httpx.AsyncClient,
+    repository: ProductRepository,
+) -> None:
+    add_stream_without_zones(repository)
+    assets = [
+        await import_png(
+            client,
+            filename="auto-create-0.png",
+            frame=blank_frame(),
+            stream_id=AUTO_STREAM_ID,
+            zone_id=None,
+        ),
+        await import_png(
+            client,
+            filename="auto-create-1.png",
+            frame=frame_with([(1, 1), (1, 2), (2, 1), (2, 2)]),
+            stream_id=AUTO_STREAM_ID,
+            zone_id=None,
+        ),
+        await import_png(
+            client,
+            filename="auto-create-2.png",
+            frame=blank_frame(),
+            stream_id=AUTO_STREAM_ID,
+            zone_id=None,
+        ),
+    ]
+    before_truth = await truth_counts(client)
+    before_evidence_count = await motion_evidence_count(client)
+
+    response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": AUTO_STREAM_ID,
+            "media_asset_ids": [asset["id"] for asset in assets],
+            "create_motion_evidence": True,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["activity_detected"] is True
+    assert result["uses_auto_regions"] is True
+    assert result["can_create_review_activity"] is False
+    assert result["review_activity_created"] is False
+    assert result["creation_skipped_reason"] == "auto_region_review_activity_requires_user_zone"
+    assert result["created_evidence"] == []
+    assert any("result-only" in warning for warning in result["warnings"])
+    assert await motion_evidence_count(client) == before_evidence_count
+    assert await truth_counts(client) == before_truth
+
+
+async def test_saved_media_motion_auto_regions_cluster_and_cap_candidates(
+    client: httpx.AsyncClient,
+    repository: ProductRepository,
+) -> None:
+    add_stream_without_zones(repository, stream_id=AUTO_CLUSTER_STREAM_ID)
+    changed_frame = frame_with_rectangles(
+        [
+            (0, 0, 6, 4),
+            (0, 20, 6, 24),
+            (18, 0, 24, 4),
+            (18, 20, 24, 24),
+        ],
+        width=24,
+        height=24,
+    )
+    assets = [
+        await import_png(
+            client,
+            filename="auto-cluster-0.png",
+            frame=blank_frame(width=24, height=24),
+            stream_id=AUTO_CLUSTER_STREAM_ID,
+            zone_id=None,
+        ),
+        await import_png(
+            client,
+            filename="auto-cluster-1.png",
+            frame=changed_frame,
+            stream_id=AUTO_CLUSTER_STREAM_ID,
+            zone_id=None,
+        ),
+    ]
+
+    response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": AUTO_CLUSTER_STREAM_ID,
+            "media_asset_ids": [asset["id"] for asset in assets],
+            "create_motion_evidence": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["uses_auto_regions"] is True
+    assert len(result["debug_cell_zones"]) == 24
+    assert len(result["activity_areas"]) == 3
+    assert len(result["candidates"]) == 3
+    assert len(result["candidates"]) < 4
+    assert all(area["cell_ids"] for area in result["activity_areas"])
+
+
+async def test_saved_media_motion_prefers_user_zones_when_available(
+    client: httpx.AsyncClient,
+) -> None:
+    assets = await import_motion_frames(client)
+
+    response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": STREAM_ID,
+            "media_asset_ids": [asset["id"] for asset in assets],
+            "create_motion_evidence": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["uses_auto_regions"] is False
+    assert result["region_source"] == "user_zones"
+    assert result["can_create_review_activity"] is True
+    assert FEEDER_ZONE_ID in [zone["zone_id"] for zone in result["zones"]]
+    assert FEEDER_ZONE_ID in [area["zone_id"] for area in result["activity_areas"]]
+
+
+async def test_saved_media_motion_auto_regions_skip_privacy_ignore_areas(
+    client: httpx.AsyncClient,
+    repository: ProductRepository,
+) -> None:
+    add_stream_without_zones(repository, stream_id=AUTO_PRIVACY_STREAM_ID)
+    privacy_response = await client.post(
+        "/api/zones",
+        json={
+            "stream_id": AUTO_PRIVACY_STREAM_ID,
+            "name": "Patio privacy",
+            "zone_type": "privacy",
+            "polygon": [
+                {"x": 0.0, "y": 0.0},
+                {"x": 0.5, "y": 0.0},
+                {"x": 0.5, "y": 1.0},
+                {"x": 0.0, "y": 1.0},
+            ],
+            "is_active": True,
+        },
+    )
+    assert privacy_response.status_code == 201
+    assets = [
+        await import_png(
+            client,
+            filename="privacy-auto-0.png",
+            frame=blank_frame(),
+            stream_id=AUTO_PRIVACY_STREAM_ID,
+            zone_id=None,
+        ),
+        await import_png(
+            client,
+            filename="privacy-auto-1.png",
+            frame=frame_with([(1, 0), (1, 1), (2, 0), (2, 1)]),
+            stream_id=AUTO_PRIVACY_STREAM_ID,
+            zone_id=None,
+        ),
+    ]
+
+    response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": AUTO_PRIVACY_STREAM_ID,
+            "media_asset_ids": [asset["id"] for asset in assets],
+            "create_motion_evidence": True,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["uses_auto_regions"] is True
+    assert result["suppressed_auto_region_count"] > 0
+    assert result["activity_detected"] is False
+    assert result["created_evidence"] == []
+    assert any("Privacy/ignore areas were skipped" in warning for warning in result["warnings"])
 
 
 async def test_saved_media_motion_can_create_pending_evidence_with_best_snapshot(

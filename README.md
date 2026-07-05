@@ -108,9 +108,12 @@ The Streams page also shows recent saved media for each selected Stream so
 external_url saved previews or other local image MediaAssets can be explicitly
 reused later for synthetic DetectionProposal evidence or pending MotionEvidence.
 Streams with at least two saved image snapshots can also run an explicit Check
-motion action across recent saved snapshots and active Zones. If activity is
-detected, users can create a pending review activity with the best snapshot
-attached, then review/correct before Bird Log and export use the result.
+motion action. If no user Zones exist yet, MockingBird checks automatic activity
+areas using motion only; user Zones improve accuracy and privacy/ignore behavior
+later. Future classifier/model enrichment belongs on the best snapshot/crop for
+a finalized activity session, not each automatic area. Motion results remain
+candidate activity until explicit review/correction creates truth for Bird Log
+and export.
 This timeline now summarizes existing proposal evidence, MotionEvidence,
 promoted Event/Visit context, inferable ReviewLabel truth, and the next safe
 review/export step. It does not run models, poll sources, create Events/Visits

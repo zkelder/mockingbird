@@ -1136,12 +1136,34 @@ class MotionEvaluateSavedMediaRequest(BaseModel):
     notes: str | None = None
 
 
+class MotionActivityAreaResponse(BaseModel):
+    area_id: str
+    label: str
+    source: str
+    left: float
+    top: float
+    right: float
+    bottom: float
+    zone_id: str | None = None
+    cell_ids: list[str] = Field(default_factory=list)
+
+
 class MotionEvaluateSavedMediaResponse(BaseModel):
     # Saved snapshots can create pending evidence only; review correction remains truth.
     stream_id: str
     source_id: str
     media_asset_ids: list[str]
     zones: list[MotionZoneInput]
+    activity_areas: list[MotionActivityAreaResponse] = Field(default_factory=list)
+    region_source: str
+    uses_auto_regions: bool = False
+    strongest_activity_area_id: str | None = None
+    strongest_activity_area_label: str | None = None
+    suppressed_auto_region_count: int = Field(default=0, ge=0)
+    can_create_review_activity: bool = True
+    review_activity_created: bool = False
+    creation_skipped_reason: str | None = None
+    debug_cell_zones: list[MotionZoneInput] = Field(default_factory=list)
     frames: list[SavedMediaFrameSummary]
     frame_scores: list[MotionFrameScoreResponse]
     candidates: list[MotionCandidateResponse]

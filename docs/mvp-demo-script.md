@@ -182,8 +182,11 @@ Dataset Exports.
 - [ ] Confirm the saved image appears under that camera/source and Stream.
 - [ ] Capture at least one more saved snapshot for the same Stream.
 - [ ] Click `Check motion`.
-- [ ] Confirm `Activity detected` or `No activity detected` appears with Zone and best snapshot context.
-- [ ] If activity is detected, click `Create review activity`, then `Review activity`.
+- [ ] Confirm `Activity detected` or `No activity detected` appears with an Activity area and best snapshot context.
+- [ ] If no Zones exist, confirm automatic activity areas are used.
+- [ ] Confirm automatic activity areas are motion-only; do not run model analysis
+      per activity area.
+- [ ] If activity is detected and review activity is available, click `Create review activity`, then `Review activity`.
 - [ ] Confirm no reviewed data is created until a later correction.
 - [ ] Confirm image status shows Not analyzed, Suggestion available, Needs review, or Reviewed.
 - [ ] Confirm local detector readiness is visible for saved image media.
@@ -243,8 +246,13 @@ create proposal evidence only.
       Stream.
 - [ ] Capture at least one more saved snapshot for the same Stream.
 - [ ] Click `Check motion`.
-- [ ] Confirm `Activity detected` or `No activity detected` appears.
-- [ ] If activity is detected, create and review the activity before correction.
+- [ ] Confirm `Activity detected` or `No activity detected` appears with an
+      Activity area.
+- [ ] If no Zones exist, confirm automatic activity areas are used.
+- [ ] Confirm model analysis remains separate and is not run per automatic
+      activity area.
+- [ ] If activity is detected and review activity is available, create and
+      review the activity before correction.
 - [ ] Confirm image status is visible before analyzing.
 - [ ] Confirm local detector readiness and analyze only if configured.
 - [ ] Otherwise use `Analyze image (demo)`.
