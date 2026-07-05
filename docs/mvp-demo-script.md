@@ -217,6 +217,10 @@ create proposal evidence only.
 - [ ] Confirm truth-boundary copy is visible.
 - [ ] Open Model Adapters and confirm Local Detector setup guidance is visible
       without configuring or running a model.
+- [ ] For a real local model smoke check, configure the local model path if you
+      have one, restart the API, capture/import an image, run Analyze image from
+      the saved image, review/correct the suggested label, confirm Bird Log, and
+      export reviewed data.
 
 ## Step 2 - external_url Provider Path
 

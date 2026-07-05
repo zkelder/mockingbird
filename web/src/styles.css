@@ -1756,6 +1756,7 @@ button {
 .adapter-evaluation-panel,
 .model-readiness-panel,
 .local-detector-setup-panel,
+.real-model-smoke-panel,
 .adapter-list,
 .adapter-proposal-list,
 .adapter-evaluation-list,
@@ -1875,7 +1876,14 @@ button {
   gap: 10px;
 }
 
-.local-detector-setup-row {
+.real-model-smoke-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.local-detector-setup-row,
+.real-model-smoke-row {
   display: grid;
   gap: 6px;
   align-content: start;
@@ -1887,19 +1895,22 @@ button {
 }
 
 .local-detector-setup-row span,
+.real-model-smoke-row span,
 .local-detector-env-row span {
   color: #627168;
   font-size: 0.84rem;
 }
 
 .local-detector-setup-row strong,
+.real-model-smoke-row strong,
 .local-detector-env-row code {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
 .local-detector-setup-copy,
-.local-detector-env-list {
+.local-detector-env-list,
+.real-model-smoke-steps {
   display: grid;
   gap: 8px;
 }
@@ -1923,6 +1934,24 @@ button {
 
 .local-detector-boundary {
   background: #f8fbf4;
+}
+
+.real-model-smoke-steps {
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbf4;
+}
+
+.real-model-smoke-steps ol {
+  margin: 0;
+  padding-left: 20px;
+  color: #5c6a61;
+  font-weight: 650;
+}
+
+.real-model-smoke-steps li {
+  margin: 4px 0;
 }
 
 .adapter-result-grid div,
@@ -4755,6 +4784,7 @@ button {
   .adapter-config-grid,
   .model-readiness-grid,
   .local-detector-setup-grid,
+  .real-model-smoke-grid,
   .adapter-result-grid,
   .detection-proposal-meta,
   .provider-field-grid,
@@ -4865,6 +4895,7 @@ button {
   .adapter-evaluation-grid,
   .model-readiness-grid,
   .local-detector-setup-grid,
+  .real-model-smoke-grid,
   .adapter-result-grid,
   .detection-proposal-meta,
   .playback-status-grid,

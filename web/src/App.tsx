@@ -325,6 +325,7 @@ export default function App() {
           onOpenVisit={openVisit}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenReview={() => openReviewQueue()}
+          onOpenBirdLog={() => setPage("bird-log")}
           onOpenExports={() => setPage("exports")}
         />
       );
@@ -388,6 +389,7 @@ export default function App() {
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
           onOpenReview={() => openReviewQueue()}
+          onOpenBirdLog={() => setPage("bird-log")}
           onOpenExports={() => setPage("exports")}
           onProposalChanged={() => loadAppData({ showLoading: false })}
           modelReadiness={data.modelReadiness}

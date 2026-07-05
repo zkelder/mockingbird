@@ -41,6 +41,7 @@ interface ModelAdaptersPageProps {
   onOpenImport: () => void;
   onOpenStreams: () => void;
   onOpenReview: () => void;
+  onOpenBirdLog: () => void;
   onOpenVisit: (visitId: string) => void;
   onProposalChanged: () => Promise<void>;
   modelReadiness: ModelReadinessSummary | null;
@@ -53,6 +54,7 @@ export function ModelAdaptersPage({
   onOpenImport,
   onOpenStreams,
   onOpenReview,
+  onOpenBirdLog,
   onOpenVisit,
   onProposalChanged,
   modelReadiness,
@@ -208,6 +210,16 @@ export function ModelAdaptersPage({
       <LocalDetectorSetupPanel
         adapter={localDetectorAdapter}
         isLoading={isLoading}
+        onOpenStreams={onOpenStreams}
+      />
+
+      <RealModelSmokeCheck
+        adapter={localDetectorAdapter}
+        isLoading={isLoading}
+        mediaCount={mediaAssets.filter((asset) => asset.media_type === "image").length}
+        onOpenBirdLog={onOpenBirdLog}
+        onOpenImport={onOpenImport}
+        onOpenReview={onOpenReview}
         onOpenStreams={onOpenStreams}
       />
 
@@ -646,6 +658,119 @@ function LocalDetectorSetupPanel({
         </span>
       </div>
     </section>
+  );
+}
+
+function RealModelSmokeCheck({
+  adapter,
+  isLoading,
+  mediaCount,
+  onOpenBirdLog,
+  onOpenImport,
+  onOpenReview,
+  onOpenStreams,
+}: {
+  adapter: ModelAdapter | null;
+  isLoading: boolean;
+  mediaCount: number;
+  onOpenBirdLog: () => void;
+  onOpenImport: () => void;
+  onOpenReview: () => void;
+  onOpenStreams: () => void;
+}) {
+  const configuration = adapter?.configuration_status ?? null;
+  const modelReady = Boolean(configuration?.can_run);
+  const hasSavedImages = mediaCount > 0;
+
+  return (
+    <section className="panel real-model-smoke-panel">
+      <div className="section-heading">
+        <div>
+          <h2>Real model smoke check</h2>
+          <span className="meta-text">
+            Prove a configured local model can suggest labels from saved images without creating reviewed data.
+          </span>
+        </div>
+        <StatusPill
+          label={modelReady && hasSavedImages ? "Ready to try" : "Needs setup"}
+          tone={modelReady && hasSavedImages ? "good" : "review"}
+        />
+      </div>
+
+      <div className="real-model-smoke-grid">
+        <SmokeCheckRow
+          label="Local model"
+          ready={modelReady}
+          value={
+            isLoading
+              ? "Loading"
+              : modelReady
+                ? "Configured and runnable"
+                : "Not configured"
+          }
+        />
+        <SmokeCheckRow
+          label="Saved images"
+          ready={hasSavedImages}
+          value={hasSavedImages ? `${mediaCount} image${mediaCount === 1 ? "" : "s"}` : "None yet"}
+        />
+        <SmokeCheckRow
+          label="Run action"
+          ready={modelReady && hasSavedImages}
+          value="Cameras/Streams saved image"
+        />
+        <SmokeCheckRow
+          label="Truth boundary"
+          ready
+          value="Correction creates reviewed data"
+        />
+      </div>
+
+      <div className="real-model-smoke-steps">
+        <strong>How to smoke test</strong>
+        <ol>
+          <li>Set local model env vars if you have a model file.</li>
+          <li>Restart the API so readiness updates.</li>
+          <li>Capture or import an image.</li>
+          <li>Open Cameras/Streams and click Analyze image on a saved image.</li>
+          <li>Confirm a Suggested label appears, then Review suggestion.</li>
+          <li>Correct label, confirm the item in Bird Log, then Export reviewed data.</li>
+        </ol>
+      </div>
+
+      <div className="detail-actions">
+        <button className="secondary-action" onClick={onOpenStreams} type="button">
+          Cameras / Streams
+        </button>
+        <button className="secondary-action" onClick={onOpenImport} type="button">
+          Import image
+        </button>
+        <button className="secondary-action" onClick={onOpenReview} type="button">
+          Review
+        </button>
+        <button className="secondary-action" onClick={onOpenBirdLog} type="button">
+          Bird Log
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function SmokeCheckRow({
+  label,
+  ready,
+  value,
+}: {
+  label: string;
+  ready: boolean;
+  value: string;
+}) {
+  return (
+    <div className="real-model-smoke-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <EvidenceBadge label={ready ? "Ready" : "Needs setup"} tone={ready ? "truth" : "review"} />
+    </div>
   );
 }
 

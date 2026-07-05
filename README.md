@@ -120,6 +120,10 @@ configured.
 The Model Adapters page shows the Local Detector setup/readiness panel with
 the exact local env vars, supported image media types, runtime readiness, and a
 link back to Streams. Model files are not bundled or downloaded.
+For a real local model smoke check, configure the local model path if you have
+one, restart the API, capture or import an image, run Analyze image explicitly
+from the saved image, review/correct the suggested label, confirm Bird Log, and
+export reviewed data.
 The source/stream smoke-test hardening plan is documented in
 [docs/source-stream-smoke-test-hardening.md](docs/source-stream-smoke-test-hardening.md).
 For manual browser/API validation of that same explicit path, use

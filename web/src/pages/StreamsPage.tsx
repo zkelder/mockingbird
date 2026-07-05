@@ -46,6 +46,7 @@ interface StreamsPageProps {
   onOpenVisit: (visitId: string) => void;
   onOpenDetectionProposals: () => void;
   onOpenReview: () => void;
+  onOpenBirdLog: () => void;
   onOpenExports: () => void;
 }
 
@@ -400,6 +401,7 @@ export function StreamsPage({
   onOpenVisit,
   onOpenDetectionProposals,
   onOpenReview,
+  onOpenBirdLog,
   onOpenExports,
 }: StreamsPageProps) {
   const [connectionStatuses, setConnectionStatuses] = useState<
@@ -3449,8 +3451,8 @@ export function StreamsPage({
                                           <div>
                                             <strong>Analyze image</strong>
                                             <p className="meta-text">
-                                              Run a configured local detector, or use the demo
-                                              suggestion fallback for testing.
+                                              Run a configured local model explicitly, or use the
+                                              demo suggestion fallback for testing.
                                             </p>
                                           </div>
                                           <StatusPill
@@ -3537,8 +3539,7 @@ export function StreamsPage({
                                             {!localDetectorCanRun ? (
                                               <span className="meta-text">
                                                 Use demo analysis for smoke testing, or configure
-                                                the local detector model path to run real local
-                                                detector suggestions.
+                                                the local model path to run real local suggestions.
                                               </span>
                                             ) : null}
                                             <div className="detail-actions">
@@ -3561,7 +3562,7 @@ export function StreamsPage({
                                                 onClick={onOpenDetectionProposals}
                                                 type="button"
                                               >
-                                                Review suggestions
+                                                Review suggestion
                                               </button>
                                               <button
                                                 className="secondary-action"
@@ -3581,14 +3582,25 @@ export function StreamsPage({
                                         {actionState.localDetectorResult ? (
                                           <div className="timeline-result-grid">
                                             <div className="data-row">
-                                              <span>Suggested labels</span>
+                                              <span>Suggested label</span>
                                               <strong>
                                                 {actionState.localDetectorResult.proposals.length >
                                                 0
                                                   ? actionState.localDetectorResult.proposals
-                                                      .map((item) => item.label)
+                                                      .map(
+                                                        (item) =>
+                                                          `${formatLabel(item.label)} (${Math.round(
+                                                            item.confidence * 100,
+                                                          )}%)`,
+                                                      )
                                                       .join(", ")
                                                   : "none"}
+                                              </strong>
+                                            </div>
+                                            <div className="data-row">
+                                              <span>Local model</span>
+                                              <strong>
+                                                {actionState.localDetectorResult.adapter.name}
                                               </strong>
                                             </div>
                                             <div className="data-row">
@@ -3605,6 +3617,31 @@ export function StreamsPage({
                                               <span>Reviewed data created</span>
                                               <strong>No</strong>
                                             </div>
+                                          </div>
+                                        ) : null}
+                                        {actionState.localDetectorResult ? (
+                                          <div className="detail-actions">
+                                            <button
+                                              className="primary-action"
+                                              onClick={onOpenDetectionProposals}
+                                              type="button"
+                                            >
+                                              Review suggestion
+                                            </button>
+                                            <button
+                                              className="secondary-action"
+                                              onClick={onOpenReview}
+                                              type="button"
+                                            >
+                                              Correct label
+                                            </button>
+                                            <button
+                                              className="secondary-action"
+                                              onClick={onOpenBirdLog}
+                                              type="button"
+                                            >
+                                              Bird Log
+                                            </button>
                                           </div>
                                         ) : null}
                                         {actionState.localDetectorResult ? (
@@ -3735,7 +3772,7 @@ export function StreamsPage({
                                         onClick={onOpenDetectionProposals}
                                         type="button"
                                       >
-                                        Review suggestions
+                                        Review suggestion
                                       </button>
                                       <button
                                         className="secondary-action"
@@ -3743,6 +3780,13 @@ export function StreamsPage({
                                         type="button"
                                       >
                                         Review
+                                      </button>
+                                      <button
+                                        className="secondary-action"
+                                        onClick={onOpenBirdLog}
+                                        type="button"
+                                      >
+                                        Bird Log
                                       </button>
                                       <button
                                         className="secondary-action"
@@ -3995,8 +4039,11 @@ export function StreamsPage({
                                       <strong>Truth boundary</strong>
                                       <ul>
                                         <li>Saved images are local review context.</li>
-                                        <li>Demo analysis creates suggested labels only.</li>
-                                        <li>No model inspected this image unless you ran one.</li>
+                                        <li>Demo analysis creates test-only suggested labels.</li>
+                                        <li>
+                                          Local model analysis runs only when you click Analyze
+                                          image.
+                                        </li>
                                         <li>
                                           Reviewed data only happens through explicit Review
                                           correction.
