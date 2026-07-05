@@ -975,3 +975,34 @@ Validation:
   activity areas result-only until a named Zone is available.
 - Automatic activity areas become Zones only after explicit user action; privacy
   and ignore Zones keep future activity suppressed in those areas.
+
+## Phase 20 — Live Camera Playback
+
+Goal: show a real Live view in Cameras/Streams for browser-playable camera
+stream URLs while keeping source adapters, monitoring, review truth, and exports
+separate.
+
+Current work:
+
+- Live Camera Playback 1: `external_url` Source setup can store optional
+  `live_stream_url` and `live_stream_type` metadata.
+- Cameras/Streams shows a primary Live view panel for selected Streams.
+- MJPEG renders through a browser image stream; browser video and direct
+  browser-supported HLS render through the native video element.
+- RTSP URLs are stored but shown as requiring a future backend
+  bridge/transcode.
+- Next likely phase: Live Camera Playback 2 — manual browser smoke validation
+  polish and docs for common camera URL formats.
+
+Validation:
+
+- Empty Live stream URL is allowed and shows a clear missing-URL state.
+- Browser-playable stream URLs are loaded frontend-direct only.
+- The backend reports playback readiness/status but does not fetch, decode,
+  transcode, generate HLS, or verify the stream.
+- Credentials embedded in stream URLs are redacted in displayed URLs.
+- Snapshot capture, Source health, monitoring, Review, Bird Log, and Export
+  remain separate explicit workflows.
+- No RTSP bridge/transcode, USB, ESP32, Pi, cellular, model runtime, automatic
+  truth, automatic exports, captures table, worker, scheduler, or dependency
+  behavior is added.

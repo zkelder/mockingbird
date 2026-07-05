@@ -26,8 +26,23 @@ export type StreamPlaybackStatusValue =
   | "not_configured"
   | "unavailable"
   | "offline"
-  | "unsupported";
-export type StreamPlaybackKind = "placeholder" | "demo_panel" | "external_url" | "media_preview";
+  | "unsupported"
+  | "live_ready"
+  | "needs_stream_url"
+  | "unsupported_rtsp_bridge_required"
+  | "unsupported_stream_type"
+  | "playback_error"
+  | "unknown";
+export type StreamPlaybackKind =
+  | "placeholder"
+  | "demo_panel"
+  | "external_url"
+  | "media_preview"
+  | "mjpeg"
+  | "browser_video"
+  | "hls"
+  | "rtsp"
+  | "unknown";
 export type ExternalUrlPreviewStatus =
   | "available"
   | "not_configured"
@@ -318,6 +333,8 @@ export interface StreamPlaybackStatus {
   last_checked_at?: string | null;
   preview_media_asset_id?: string | null;
   preview_url?: string | null;
+  live_stream_type?: string | null;
+  live_stream_url_display?: string | null;
 }
 
 export interface ExternalUrlPreviewRequest {

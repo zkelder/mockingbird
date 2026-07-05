@@ -55,6 +55,12 @@ class StreamPlaybackStatusValue(str, Enum):
     unavailable = "unavailable"
     offline = "offline"
     unsupported = "unsupported"
+    live_ready = "live_ready"
+    needs_stream_url = "needs_stream_url"
+    unsupported_rtsp_bridge_required = "unsupported_rtsp_bridge_required"
+    unsupported_stream_type = "unsupported_stream_type"
+    playback_error = "playback_error"
+    unknown = "unknown"
 
 
 class StreamPlaybackKind(str, Enum):
@@ -62,6 +68,11 @@ class StreamPlaybackKind(str, Enum):
     demo_panel = "demo_panel"
     external_url = "external_url"
     media_preview = "media_preview"
+    mjpeg = "mjpeg"
+    browser_video = "browser_video"
+    hls = "hls"
+    rtsp = "rtsp"
+    unknown = "unknown"
 
 
 class ExternalUrlPreviewStatus(str, Enum):
@@ -481,6 +492,8 @@ class StreamPlaybackStatus(BaseModel):
     last_checked_at: datetime | None = None
     preview_media_asset_id: str | None = None
     preview_url: str | None = None
+    live_stream_type: str | None = None
+    live_stream_url_display: str | None = None
 
 
 class StreamPlaybackStatusResponse(StreamPlaybackStatus):

@@ -105,6 +105,122 @@ async def test_playback_contract_does_not_claim_live_playback(client: httpx.Asyn
     assert playback["playback_kind"] in {"demo_panel", "placeholder"}
 
 
+async def test_external_url_without_live_stream_reports_needs_stream_url(
+    client: httpx.AsyncClient,
+) -> None:
+    update_response = await client.patch(
+        f"/api/sources/{SOURCE_ID}/provider-configuration",
+        json={
+            "provider_key": "external_url",
+            "config": {"url": "http://camera.local/still.jpg"},
+        },
+    )
+    assert update_response.status_code == 200
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "needs_stream_url"
+    assert playback["playback_kind"] == "external_url"
+    assert playback["message"] == "No live stream URL configured."
+    assert playback["supports_live_playback"] is False
+    assert playback["preview_url"] is None
+    assert playback["live_stream_type"] == "unknown"
+    assert playback["live_stream_url_display"] is None
+
+
+async def test_external_url_mjpeg_live_stream_reports_browser_ready_and_redacts_display(
+    client: httpx.AsyncClient,
+) -> None:
+    live_url = "http://viewer:secret@camera.local/live.mjpg"
+    update_response = await client.patch(
+        f"/api/sources/{SOURCE_ID}/provider-configuration",
+        json={
+            "provider_key": "external_url",
+            "config": {
+                "url": "http://camera.local/still.jpg",
+                "live_stream_url": live_url,
+                "live_stream_type": "mjpeg",
+            },
+        },
+    )
+    assert update_response.status_code == 200
+    configuration = update_response.json()
+    assert configuration["supports_live_playback"] is True
+    assert configuration["safe_config_preview"]["live_stream_url"] == (
+        "http://***:***@camera.local/live.mjpg"
+    )
+    assert "secret" not in str(configuration)
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "live_ready"
+    assert playback["playback_kind"] == "mjpeg"
+    assert playback["supports_live_playback"] is True
+    assert playback["preview_url"] == live_url
+    assert playback["live_stream_type"] == "mjpeg"
+    assert playback["live_stream_url_display"] == "http://***:***@camera.local/live.mjpg"
+    assert "secret" not in playback["live_stream_url_display"]
+
+
+async def test_external_url_rtsp_live_stream_reports_bridge_required(
+    client: httpx.AsyncClient,
+) -> None:
+    update_response = await client.patch(
+        f"/api/sources/{SOURCE_ID}/provider-configuration",
+        json={
+            "provider_key": "external_url",
+            "config": {
+                "url": "http://camera.local/still.jpg",
+                "live_stream_url": "rtsp://camera.local/live",
+                "live_stream_type": "rtsp",
+            },
+        },
+    )
+    assert update_response.status_code == 200
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "unsupported_rtsp_bridge_required"
+    assert playback["playback_kind"] == "rtsp"
+    assert playback["message"] == "RTSP requires a backend bridge/transcode in a later phase."
+    assert playback["supports_live_playback"] is False
+    assert playback["preview_url"] is None
+    assert playback["live_stream_type"] == "rtsp"
+
+
+async def test_external_url_unknown_live_stream_type_reports_unsupported(
+    client: httpx.AsyncClient,
+) -> None:
+    update_response = await client.patch(
+        f"/api/sources/{SOURCE_ID}/provider-configuration",
+        json={
+            "provider_key": "external_url",
+            "config": {
+                "url": "http://camera.local/still.jpg",
+                "live_stream_url": "http://camera.local/custom-stream",
+                "live_stream_type": "unknown",
+            },
+        },
+    )
+    assert update_response.status_code == 200
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "unsupported_stream_type"
+    assert playback["playback_kind"] == "unknown"
+    assert playback["supports_live_playback"] is False
+    assert playback["preview_url"] is None
+    assert playback["live_stream_type"] == "unknown"
+
+
 async def test_not_configured_stream_returns_setup_hint(
     client: httpx.AsyncClient,
     isolated_repository: ProductRepository,

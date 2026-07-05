@@ -17,12 +17,14 @@ little or no data.
 Use [local-mvp-readiness-checklist.md](local-mvp-readiness-checklist.md) as the
 demo-readiness gate before treating this walkthrough as local MVP-ready.
 
-It does not demonstrate live playback, automation, model runtime, training, or
+It demonstrates browser-direct Live view for supported stream URLs, but not
+automation, model runtime, training, RTSP bridge/transcode behavior, or
 production provider infrastructure.
 
 ## What This Demo Proves
 
 - Source/provider setup is understandable.
+- Browser-playable Live view can be configured for an `external_url` Source.
 - The `external_url` still-image preview/save/evidence path works.
 - Manual bounded Snapshot watch works for `external_url` while the page is open.
 - The `folder_import_future` preview/import/evidence path works.
@@ -38,11 +40,12 @@ production provider infrastructure.
 - Stream saved-media timeline reuse is explicit and evidence-only.
 - Optional local detector runs from saved image media are explicit and
   evidence-only when configured.
-- Live playback is not implemented yet.
+- Live playback stays separate from snapshot capture, monitoring, review truth,
+  and exports.
 
 ## What This Demo Does Not Prove
 
-- RTSP/live video playback.
+- RTSP bridge/transcoded playback.
 - USB/browser camera capture.
 - Continuous monitoring.
 - Background workers.
@@ -61,6 +64,7 @@ production provider infrastructure.
 - Local database can be seeded or reset.
 - Demo streams and zones exist. If not, reset or seed local data before the demo.
 - A safe test HTTP image URL is available for `external_url`.
+- A safe browser-playable stream URL is optional for the Live view check.
 - A temporary local folder with tiny test images is available for folder import.
 - A local test image is available for Import Media and CLI smoke fallback.
 - No real camera is required.
@@ -180,6 +184,10 @@ Dataset Exports.
       detector output is DetectionProposal evidence, and ReviewLabel correction
       remains truth.
 - [ ] Open Streams and configure or select an external snapshot camera/source.
+- [ ] Configure a browser-playable Live stream URL and stream type if available.
+- [ ] Confirm Live view appears in the Stream card.
+- [ ] Confirm a missing Live stream URL shows `No live stream URL configured.`
+- [ ] Confirm an RTSP URL shows the bridge-required state rather than playback.
 - [ ] Confirm Source health / Camera status is visible for the selected Stream.
 - [ ] Confirm Field test readiness appears and shows the next step for this
       Stream.
@@ -241,7 +249,8 @@ Dataset Exports.
       per activity area.
 - [ ] If activity is detected and review activity is available, click `Create review activity`, then `Review activity`.
 - [ ] Confirm no reviewed data is created until a later correction.
-- [ ] Confirm no capture starts before explicit Start watch, and no live behavior starts.
+- [ ] Confirm no capture starts before explicit Start watch, and Live view does
+      not start monitoring or review activity.
 - [ ] Confirm Snapshot watch starts only after explicit Start watch and stops at
       its bounded capture count.
 - [ ] Confirm reviewed/export-linked media protection copy appears before export.
@@ -262,10 +271,10 @@ Dataset Exports.
 
 This path uses existing explicit browser actions only. Demo proposal creation is
 synthetic evidence, runs no model, and does not create ReviewLabel truth.
-Preview, save, evidence creation, and promotion also do not create truth. It is
-not live video. Saved timeline media can be reused later for proposal evidence
-or MotionEvidence, and the timeline shows duplicate-safe lifecycle status, but
-reuse is still user-triggered and evidence-only.
+Preview, save, evidence creation, and promotion also do not create truth. They
+are separate from Live view. Saved timeline media can be reused later for
+proposal evidence or MotionEvidence, and the timeline shows duplicate-safe
+lifecycle status, but reuse is still user-triggered and evidence-only.
 Optional local detector runs require an explicit local model path, can use an
 optional labels path and confidence threshold, do not download models, and
 create proposal evidence only.
@@ -277,7 +286,7 @@ create proposal evidence only.
 - [ ] Find the MVP readiness/provider workflow section.
 - [ ] Confirm provider cards for `external_url`, folder/trail-cam, webhook, and
       manual media.
-- [ ] Confirm live playback is not claimed.
+- [ ] Confirm Live view is limited to configured browser-playable stream URLs.
 - [ ] Confirm next action links exist.
 - [ ] Confirm truth-boundary copy is visible.
 - [ ] Open Model Adapters and confirm Local Detector setup guidance is visible
@@ -292,8 +301,12 @@ create proposal evidence only.
 - [ ] Open Streams.
 - [ ] Select or configure a Source as `external_url`.
 - [ ] Enter safe HTTP still-image URL metadata.
+- [ ] Optionally enter a Live stream URL and choose MJPEG, Browser video, or
+      HLS/browser-supported.
 - [ ] Confirm setup review/status says explicit preview is available and
       future-safe.
+- [ ] Confirm the Live view panel attempts browser-direct playback only when a
+      browser-playable stream URL is configured.
 - [ ] Confirm Source health / Camera status shows readiness for manual checks.
 - [ ] Confirm Storage guardrails shows saved image counts and no cleanup/delete controls.
 - [ ] Confirm Snapshot watch controls are visible and explain that the watch only
@@ -326,8 +339,8 @@ create proposal evidence only.
       snapshot remains saved.
 - [ ] Run `Check motion` again for the same Activity area and confirm duplicate
       review activity is not encouraged.
-- [ ] Confirm this path remains manual only; no live video starts and Snapshot
-      watch starts only after Start watch.
+- [ ] Confirm this path remains manual only; Live view stays separate from
+      snapshot capture and Snapshot watch starts only after Start watch.
 - [ ] Confirm cleanup/deletion remains separate and is not available in this flow.
 - [ ] If no Zones exist, confirm automatic activity areas are used.
 - [ ] Confirm model analysis remains separate and is not run per automatic

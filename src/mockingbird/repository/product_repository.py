@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 import uuid
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
@@ -320,19 +321,38 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="external_url",
-        display_name="External URL / HTTP still-image",
-        description="Metadata for explicit still-image preview/status; no live playback claim.",
+        display_name="External URL / HTTP camera",
+        description=(
+            "Metadata for explicit still-image preview/status and optional "
+            "browser-playable live view."
+        ),
         status=SourceProviderDefinitionStatus.available_contract_only,
-        supports_live_playback=False,
+        supports_live_playback=True,
         supports_zone_editing=True,
         fields=[
             SourceProviderField(
                 key="url",
-                label="URL",
+                label="Snapshot URL",
                 required=True,
                 secret=False,
                 description="Used only by explicit still-image preview fetch.",
                 placeholder="http://camera.local/still.jpg",
+            ),
+            SourceProviderField(
+                key="live_stream_url",
+                label="Live stream URL",
+                required=False,
+                secret=False,
+                description="Browser-direct stream URL; not fetched by the backend.",
+                placeholder="http://camera.local/live.mjpg",
+            ),
+            SourceProviderField(
+                key="live_stream_type",
+                label="Live stream type",
+                required=False,
+                secret=False,
+                description="Use mjpeg, browser_video, hls, rtsp, or unknown.",
+                placeholder="mjpeg",
             ),
             SourceProviderField(
                 key="display_name",
@@ -1123,13 +1143,18 @@ class ProductRepository:
         if definition is None:
             raise ValueError("unknown_provider_key")
 
-        sanitized_config = _sanitize_source_provider_config(definition, payload.config)
         with self.session_factory() as session:
             with session.begin():
                 source = session.get(CameraSourceModel, source_id)
                 if source is None:
                     return None
                 model = session.get(SourceProviderConfigurationModel, source_id)
+                existing_config = json.loads(model.config_json) if model is not None else {}
+                sanitized_config = _sanitize_source_provider_config(
+                    definition,
+                    payload.config,
+                    existing_config,
+                )
                 if model is None:
                     model = SourceProviderConfigurationModel(
                         source_id=source_id,
@@ -1490,11 +1515,24 @@ class ProductRepository:
                 )
             elif provider_kind == SourceProviderKind.external_url:
                 status = SourceConnectionStatusValue.configured
-                message = (
-                    "External URL metadata is ready for explicit still-image preview fetch; "
-                    "live playback is not implemented."
-                )
-                setup_hint = "Fetch a still-image preview explicitly; zone editing can continue."
+                if configuration.supports_live_playback:
+                    message = (
+                        "External URL metadata is ready for browser-direct live view and "
+                        "explicit still-image preview fetch."
+                    )
+                    setup_hint = (
+                        "Open Live view for playback; Test snapshot and Capture snapshot "
+                        "remain separate explicit actions."
+                    )
+                else:
+                    message = (
+                        "External URL metadata is ready for explicit still-image preview fetch; "
+                        "Live view needs a browser-playable stream URL."
+                    )
+                    setup_hint = (
+                        "Add a Live stream URL for playback, or continue with snapshot "
+                        "capture and monitoring."
+                    )
             else:
                 status = SourceConnectionStatusValue.configured
                 message = (
@@ -1511,7 +1549,7 @@ class ProductRepository:
                 message=message,
                 setup_hint=setup_hint,
                 supports_streams=len(stream_ids) > 0,
-                supports_live_playback=False,
+                supports_live_playback=configuration.supports_live_playback,
                 supports_zone_editing=supports_zone_editing,
                 adapter_key=configuration.provider_key,
                 configured_fields=configuration.configured_fields,
@@ -2042,6 +2080,12 @@ class ProductRepository:
                     supports_zone_editing=True,
                     supports_live_playback=False,
                     adapter_key=configured_provider_key,
+                )
+            if configured_provider_key == "external_url":
+                config = json.loads(model.config_json) if model is not None else {}
+                return _external_url_stream_playback_status(
+                    stream=stream,
+                    config=config,
                 )
 
             if source.kind == SourceKind.demo.value:
@@ -7773,11 +7817,165 @@ def _source_provider_kind(provider_key: str) -> SourceProviderKind:
     return SourceProviderKind.future_adapter
 
 
+BROWSER_LIVE_STREAM_TYPES = {"mjpeg", "browser_video", "hls"}
+
+
+def _source_provider_supports_live_playback(
+    definition: SourceProviderDefinition,
+    config: dict[str, str],
+) -> bool:
+    if definition.provider_key == "external_url":
+        return _external_url_supports_browser_live_playback(config)
+    return False
+
+
+def _external_url_supports_browser_live_playback(config: dict[str, str]) -> bool:
+    live_url = (config.get("live_stream_url") or "").strip()
+    live_type = _normalize_live_stream_type(config.get("live_stream_type"), live_url)
+    return bool(live_url and live_type in BROWSER_LIVE_STREAM_TYPES)
+
+
+def _normalize_live_stream_type(raw_type: str | None, url: str) -> str:
+    normalized = (raw_type or "").strip().lower().replace("-", "_").replace(" ", "_")
+    url_lower = url.strip().lower()
+
+    if url_lower.startswith("rtsp://") or normalized == "rtsp":
+        return "rtsp"
+    if normalized in {"mjpeg", "mjpg", "multipart_mjpeg"}:
+        return "mjpeg"
+    if normalized in {"browser_video", "video", "html5_video", "mp4", "webm"}:
+        return "browser_video"
+    if normalized in {"hls", "m3u8"}:
+        return "hls"
+    if normalized == "unknown":
+        return "unknown"
+
+    if url_lower.endswith(".m3u8"):
+        return "hls"
+    if any(marker in url_lower for marker in (".mjpeg", ".mjpg", "mjpeg", "mjpg")):
+        return "mjpeg"
+    if any(url_lower.endswith(extension) for extension in (".mp4", ".webm", ".ogg", ".ogv")):
+        return "browser_video"
+    return "unknown"
+
+
+def _redact_url_credentials(url: str) -> str:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if "@" not in parts.netloc:
+        return url
+    host_port = parts.netloc.rsplit("@", 1)[1]
+    return urlunsplit((parts.scheme, f"***:***@{host_port}", parts.path, parts.query, parts.fragment))
+
+
+def _playback_kind_for_live_stream_type(live_type: str) -> StreamPlaybackKind:
+    if live_type == "mjpeg":
+        return StreamPlaybackKind.mjpeg
+    if live_type == "browser_video":
+        return StreamPlaybackKind.browser_video
+    if live_type == "hls":
+        return StreamPlaybackKind.hls
+    if live_type == "rtsp":
+        return StreamPlaybackKind.rtsp
+    return StreamPlaybackKind.unknown
+
+
+def _external_url_stream_playback_status(
+    *,
+    stream: StreamModel,
+    config: dict[str, str],
+) -> StreamPlaybackStatus:
+    live_url = (config.get("live_stream_url") or "").strip()
+    live_type = _normalize_live_stream_type(config.get("live_stream_type"), live_url)
+    live_url_display = _redact_url_credentials(live_url) if live_url else None
+
+    if not live_url:
+        return StreamPlaybackStatus(
+            stream_id=stream.id,
+            source_id=stream.source_id,
+            status=StreamPlaybackStatusValue.needs_stream_url,
+            playback_kind=StreamPlaybackKind.external_url,
+            display_title=stream.name,
+            message="No live stream URL configured.",
+            setup_hint=(
+                "Add a browser-playable Stream URL for Live view. Snapshot capture and "
+                "monitoring remain separate."
+            ),
+            supports_zone_editing=True,
+            supports_live_playback=False,
+            adapter_key="external_url",
+            live_stream_type="unknown",
+        )
+
+    if live_type == "rtsp":
+        return StreamPlaybackStatus(
+            stream_id=stream.id,
+            source_id=stream.source_id,
+            status=StreamPlaybackStatusValue.unsupported_rtsp_bridge_required,
+            playback_kind=StreamPlaybackKind.rtsp,
+            display_title=stream.name,
+            message="RTSP requires a backend bridge/transcode in a later phase.",
+            setup_hint=(
+                "Store the RTSP URL for later, but use MJPEG, browser video, or "
+                "browser-supported HLS for today's Live view."
+            ),
+            supports_zone_editing=True,
+            supports_live_playback=False,
+            adapter_key="external_url",
+            live_stream_type=live_type,
+            live_stream_url_display=live_url_display,
+        )
+
+    if live_type not in BROWSER_LIVE_STREAM_TYPES:
+        return StreamPlaybackStatus(
+            stream_id=stream.id,
+            source_id=stream.source_id,
+            status=StreamPlaybackStatusValue.unsupported_stream_type,
+            playback_kind=StreamPlaybackKind.unknown,
+            display_title=stream.name,
+            message="This live stream type is not supported for browser-direct playback.",
+            setup_hint=(
+                "Choose MJPEG, browser video, or browser-supported HLS. The backend "
+                "does not fetch or transcode the stream in this phase."
+            ),
+            supports_zone_editing=True,
+            supports_live_playback=False,
+            adapter_key="external_url",
+            live_stream_type=live_type,
+            live_stream_url_display=live_url_display,
+        )
+
+    setup_hint = (
+        "HLS playback depends on direct browser support; no player dependency is installed."
+        if live_type == "hls"
+        else "The browser loads this stream directly; snapshot capture remains separate."
+    )
+    return StreamPlaybackStatus(
+        stream_id=stream.id,
+        source_id=stream.source_id,
+        status=StreamPlaybackStatusValue.live_ready,
+        playback_kind=_playback_kind_for_live_stream_type(live_type),
+        display_title=stream.name,
+        message="Browser-playable live view is configured.",
+        setup_hint=setup_hint,
+        supports_zone_editing=True,
+        supports_live_playback=True,
+        adapter_key="external_url",
+        preview_url=live_url,
+        live_stream_type=live_type,
+        live_stream_url_display=live_url_display,
+    )
+
+
 def _sanitize_source_provider_config(
     definition: SourceProviderDefinition,
     config: dict[str, str | None],
+    existing_config: dict[str, str] | None = None,
 ) -> dict[str, str]:
     sanitized: dict[str, str] = {}
+    existing_config = existing_config or {}
     fields_by_key = {field.key: field for field in definition.fields}
     for key, value in config.items():
         field = fields_by_key.get(key)
@@ -7785,6 +7983,14 @@ def _sanitize_source_provider_config(
             continue
         normalized = value.strip()
         if not normalized:
+            continue
+        if (
+            definition.provider_key == "external_url"
+            and key == "live_stream_url"
+            and normalized == "configured"
+            and existing_config.get(key)
+        ):
+            sanitized[key] = existing_config[key]
             continue
         if definition.provider_key == "folder_import_future" and key == "folder_path":
             sanitized[key] = normalized
@@ -7832,7 +8038,10 @@ def _source_provider_configuration_from_config(
         value = (config.get(field.key) or "").strip()
         if value:
             configured_fields.append(field.key)
-            safe_config_preview[field.key] = "configured" if field.secret else value
+            if definition.provider_key == "external_url" and field.key == "live_stream_url":
+                safe_config_preview[field.key] = _redact_url_credentials(value)
+            else:
+                safe_config_preview[field.key] = "configured" if field.secret else value
         else:
             safe_config_preview[field.key] = "not_configured"
             if field.required:
@@ -7887,8 +8096,21 @@ def _source_provider_configuration_from_config(
             "Import media for a related Source/Stream; review and correction create truth."
         )
     elif definition.provider_key == "external_url":
-        message = "External URL metadata is available for explicit still-image preview fetch."
-        setup_hint = "Fetch a still-image preview explicitly; live playback is not implemented."
+        if _external_url_supports_browser_live_playback(config):
+            message = (
+                "External URL metadata is available for browser-direct live view "
+                "and explicit still-image preview fetch."
+            )
+            setup_hint = "Open Live view for playback; snapshot capture remains separate."
+        else:
+            message = (
+                "External URL metadata is available for explicit still-image preview fetch. "
+                "Add a browser-playable stream URL for Live view."
+            )
+            setup_hint = (
+                "Use MJPEG, browser video, or browser-supported HLS for Live view; "
+                "snapshot capture can continue separately."
+            )
     else:
         message = "Provider configuration metadata is saved for this Source."
         setup_hint = "Zone editing can continue while playback remains unavailable."
@@ -7899,7 +8121,7 @@ def _source_provider_configuration_from_config(
         configured_fields=configured_fields,
         missing_fields=missing_fields,
         safe_config_preview=safe_config_preview,
-        supports_live_playback=False,
+        supports_live_playback=_source_provider_supports_live_playback(definition, config),
         supports_zone_editing=supports_zone_editing,
         message=message,
         setup_hint=setup_hint,
@@ -7965,11 +8187,24 @@ def _source_setup_review_from_contracts(
         next_step = "Import media for this Source/Stream, then review and correct before export."
     elif configuration.provider_key == "external_url":
         readiness_level = "metadata_ready"
-        summary = (
-            "External URL metadata is ready for explicit still-image preview fetch. "
-            "Live playback is not implemented."
-        )
-        next_step = "Fetch still-image preview explicitly; zone editing can continue."
+        if supports_live_playback:
+            summary = (
+                "External URL metadata is ready for browser-direct Live view and "
+                "explicit still-image preview fetch."
+            )
+            next_step = (
+                "Open Live view for playback, or use snapshot capture and monitoring "
+                "as separate explicit actions."
+            )
+        else:
+            summary = (
+                "External URL metadata is ready for explicit still-image preview fetch. "
+                "Live view needs a browser-playable stream URL."
+            )
+            next_step = (
+                "Add a Live stream URL for playback, or continue with snapshot capture "
+                "and monitoring."
+            )
     elif configuration.provider_key == "folder_import_future":
         readiness_level = "future_adapter_required"
         summary = (
@@ -8016,6 +8251,8 @@ def _source_setup_review_from_contracts(
         )
         warnings.append("Webhook metadata creates no media, Events/Visits, labels, or truth.")
         warnings.append("Live playback is not expected for this provider.")
+    elif configuration.provider_key == "external_url" and not supports_live_playback:
+        warnings.append("Live view needs a browser-playable Stream URL.")
     elif not supports_live_playback and configuration.provider_key != "manual_media":
         warnings.append("Live playback is not implemented for this provider yet.")
     if not supports_zone_editing:
@@ -8027,7 +8264,11 @@ def _source_setup_review_from_contracts(
         else (
             "Live playback is available."
             if supports_live_playback
-            else "Live playback is not implemented for this provider yet."
+            else (
+                "Live view needs a browser-playable Stream URL."
+                if configuration.provider_key == "external_url"
+                else "Live playback is not implemented for this provider yet."
+            )
         )
     )
     workflow_step = (

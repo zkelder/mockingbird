@@ -38,6 +38,7 @@ import type {
   SourceProviderDefinition,
   SourceSetupReviewResponse,
   Stream,
+  StreamPlaybackStatus,
   Zone,
   ZoneType,
 } from "../api/types";
@@ -96,6 +97,33 @@ function stepTone(
   return "quiet";
 }
 
+const LIVE_STREAM_TYPE_OPTIONS = [
+  { value: "unknown", label: "Unknown" },
+  { value: "mjpeg", label: "MJPEG" },
+  { value: "browser_video", label: "Browser video" },
+  { value: "hls", label: "HLS / browser-supported" },
+  { value: "rtsp", label: "RTSP unsupported for now" },
+];
+
+function isRedactedLiveStreamUrlPreview(key: string, preview?: string): boolean {
+  return key === "live_stream_url" && Boolean(preview?.includes("***:***@"));
+}
+
+function shouldPreserveConfiguredField(
+  key: string,
+  secret: boolean,
+  draftValue: string,
+  existingPreview?: string,
+): boolean {
+  if (draftValue) {
+    return false;
+  }
+  return (
+    (secret && existingPreview === "configured") ||
+    isRedactedLiveStreamUrlPreview(key, existingPreview)
+  );
+}
+
 function draftFromConfiguration(
   definition: SourceProviderDefinition | undefined,
   configuration: SourceProviderConfiguration | null,
@@ -106,10 +134,56 @@ function draftFromConfiguration(
   return Object.fromEntries(
     definition.fields.map((field) => {
       const preview = configuration?.safe_config_preview[field.key];
-      const value = !field.secret && preview && preview !== "not_configured" ? preview : "";
+      const value =
+        !field.secret &&
+        preview &&
+        preview !== "not_configured" &&
+        !isRedactedLiveStreamUrlPreview(field.key, preview)
+          ? preview
+          : "";
       return [field.key, value];
     }),
   );
+}
+
+function playbackStatusTone(status?: StreamPlaybackStatus | null): "good" | "review" | "quiet" {
+  if (status?.status === "live_ready") {
+    return "good";
+  }
+  if (
+    status?.status === "needs_stream_url" ||
+    status?.status === "unsupported_rtsp_bridge_required" ||
+    status?.status === "unsupported_stream_type" ||
+    status?.status === "playback_error" ||
+    status?.status === "unknown"
+  ) {
+    return "review";
+  }
+  return "quiet";
+}
+
+function isBrowserPlayablePlayback(status?: StreamPlaybackStatus | null): boolean {
+  return (
+    status?.status === "live_ready" &&
+    Boolean(status.preview_url) &&
+    ["mjpeg", "browser_video", "hls"].includes(status.playback_kind)
+  );
+}
+
+function liveViewFallbackMessage(status?: StreamPlaybackStatus | null): string {
+  if (!status) {
+    return "Loading live view status...";
+  }
+  if (status.status === "needs_stream_url") {
+    return "No live stream URL configured.";
+  }
+  if (status.status === "unsupported_rtsp_bridge_required") {
+    return "RTSP requires a backend bridge in a later phase.";
+  }
+  if (status.status === "unsupported_stream_type") {
+    return status.message;
+  }
+  return status.message;
 }
 
 function formatBytes(bytes?: number | null): string {
@@ -1661,6 +1735,11 @@ export function StreamsPage({
   const [streamMotionCheckState, setStreamMotionCheckState] = useState<
     Record<string, StreamMotionCheckState>
   >({});
+  const [streamPlaybackStatuses, setStreamPlaybackStatuses] = useState<
+    Record<string, StreamPlaybackStatus>
+  >({});
+  const [streamPlaybackErrors, setStreamPlaybackErrors] = useState<Record<string, string>>({});
+  const [livePlaybackErrors, setLivePlaybackErrors] = useState<Record<string, string>>({});
   const [streamMonitorStatuses, setStreamMonitorStatuses] = useState<
     Record<string, SourceMonitorStatusResponse>
   >({});
@@ -1836,6 +1915,15 @@ export function StreamsPage({
     ? streams.filter((stream) => stream.source_id === selectedSource.id)
     : [];
   const selectedSourceStreamIds = selectedSourceStreams.map((stream) => stream.id).join("|");
+  const selectedConfigurationSignature = selectedConfiguration
+    ? [
+        selectedConfiguration.provider_key,
+        selectedConfiguration.configured_fields.join(","),
+        selectedConfiguration.missing_fields.join(","),
+        selectedConfiguration.safe_config_preview.live_stream_url ?? "",
+        selectedConfiguration.safe_config_preview.live_stream_type ?? "",
+      ].join("|")
+    : "";
   const selectedReviewStreams = new Map(
     (selectedSetupReview?.streams ?? []).map((stream) => [stream.stream_id, stream]),
   );
@@ -1844,6 +1932,71 @@ export function StreamsPage({
     providerDefinitions.find(
       (definition) => definition.provider_key === selectedConfiguration?.provider_key,
     );
+
+  async function refreshStreamPlaybackStatus(
+    streamId: string,
+  ): Promise<StreamPlaybackStatus | null> {
+    try {
+      const status = await apiClient.getStreamPlaybackStatus(streamId);
+      setStreamPlaybackStatuses((current) => ({
+        ...current,
+        [streamId]: status,
+      }));
+      setStreamPlaybackErrors((current) => ({
+        ...current,
+        [streamId]: "",
+      }));
+      setLivePlaybackErrors((current) => ({
+        ...current,
+        [streamId]: "",
+      }));
+      return status;
+    } catch (caught) {
+      setStreamPlaybackErrors((current) => ({
+        ...current,
+        [streamId]: caught instanceof Error ? caught.message : "Could not load live view status.",
+      }));
+      return null;
+    }
+  }
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadSelectedPlaybackStatuses() {
+      if (selectedSourceStreams.length === 0) {
+        setStreamPlaybackStatuses({});
+        setStreamPlaybackErrors({});
+        setLivePlaybackErrors({});
+        return;
+      }
+      const entries: Array<readonly [string, StreamPlaybackStatus]> = [];
+      const errors: Array<readonly [string, string]> = [];
+      await Promise.all(
+        selectedSourceStreams.map(async (stream) => {
+          try {
+            entries.push([stream.id, await apiClient.getStreamPlaybackStatus(stream.id)] as const);
+          } catch (caught) {
+            errors.push([
+              stream.id,
+              caught instanceof Error ? caught.message : "Could not load live view status.",
+            ] as const);
+          }
+        }),
+      );
+      if (!isMounted) {
+        return;
+      }
+      setStreamPlaybackStatuses(Object.fromEntries(entries));
+      setStreamPlaybackErrors(Object.fromEntries(errors));
+      setLivePlaybackErrors({});
+    }
+
+    void loadSelectedPlaybackStatuses();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedSourceStreamIds, selectedConfigurationSignature]);
 
   async function refreshStreamMonitorStatus(streamId: string): Promise<SourceMonitorStatusResponse | null> {
     try {
@@ -2008,7 +2161,14 @@ export function StreamsPage({
     for (const field of selectedProviderDefinition.fields) {
       const draftValue = configDraft[field.key]?.trim() ?? "";
       const existingPreview = selectedConfiguration?.safe_config_preview[field.key];
-      if (field.secret && !draftValue && existingPreview === "configured") {
+      if (
+        shouldPreserveConfiguredField(
+          field.key,
+          field.secret,
+          draftValue,
+          existingPreview,
+        )
+      ) {
         config[field.key] = "configured";
       } else {
         config[field.key] = draftValue || null;
@@ -5090,28 +5250,55 @@ export function StreamsPage({
                   <div className="provider-field-grid">
                     {selectedProviderDefinition.fields.map((field) => {
                       const existingPreview = selectedConfiguration?.safe_config_preview[field.key];
+                      const redactedLiveUrl = isRedactedLiveStreamUrlPreview(
+                        field.key,
+                        existingPreview,
+                      );
                       return (
                         <label key={field.key}>
                           {field.label}
-                          <input
-                            placeholder={
-                              field.secret && existingPreview === "configured"
-                                ? "Configured marker saved"
-                                : field.placeholder ?? ""
-                            }
-                            type={field.secret ? "password" : "text"}
-                            value={configDraft[field.key] ?? ""}
-                            onChange={(event) =>
-                              setConfigDraft((current) => ({
-                                ...current,
-                                [field.key]: event.target.value,
-                              }))
-                            }
-                          />
+                          {field.key === "live_stream_type" ? (
+                            <select
+                              value={configDraft[field.key] || "unknown"}
+                              onChange={(event) =>
+                                setConfigDraft((current) => ({
+                                  ...current,
+                                  [field.key]: event.target.value,
+                                }))
+                              }
+                            >
+                              {LIVE_STREAM_TYPE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              placeholder={
+                                redactedLiveUrl
+                                  ? "Credentials hidden; enter a new URL to replace"
+                                  : field.secret && existingPreview === "configured"
+                                    ? "Configured marker saved"
+                                    : field.placeholder ?? ""
+                              }
+                              type={field.secret ? "password" : "text"}
+                              value={configDraft[field.key] ?? ""}
+                              onChange={(event) =>
+                                setConfigDraft((current) => ({
+                                  ...current,
+                                  [field.key]: event.target.value,
+                                }))
+                              }
+                            />
+                          )}
                           <span className="field-meta">
                             {field.required ? "Required" : "Optional"}
                             {field.secret ? " · stored as marker only" : ""}
                           </span>
+                          {redactedLiveUrl && existingPreview ? (
+                            <span className="field-meta">Current: {existingPreview}</span>
+                          ) : null}
                         </label>
                       );
                     })}
@@ -5151,6 +5338,10 @@ export function StreamsPage({
               {selectedSourceStreams.length > 0 ? (
                 selectedSourceStreams.map((stream) => {
                   const reviewStream = selectedReviewStreams.get(stream.id);
+                  const playbackStatus = streamPlaybackStatuses[stream.id] ?? null;
+                  const playbackError = streamPlaybackErrors[stream.id] || null;
+                  const livePlaybackError = livePlaybackErrors[stream.id] || null;
+                  const canRenderLiveView = isBrowserPlayablePlayback(playbackStatus);
                   const playbackLabel = reviewStream
                     ? formatLabel(reviewStream.playback_status)
                     : stream.is_live
@@ -5322,6 +5513,103 @@ export function StreamsPage({
                               : "Unavailable"
                             : "Available"}
                         </span>
+                      </div>
+                      <div className="live-view-panel">
+                        <div className="item-title-row">
+                          <div>
+                            <strong>Live view</strong>
+                            <p className="meta-text">
+                              Browser-direct camera stream. Snapshot capture and monitoring
+                              stay separate.
+                            </p>
+                          </div>
+                          <StatusPill
+                            label={
+                              playbackStatus
+                                ? formatLabel(playbackStatus.status)
+                                : playbackError
+                                  ? "Unavailable"
+                                  : "Loading"
+                            }
+                            tone={playbackStatusTone(playbackStatus)}
+                          />
+                        </div>
+                        <div className="live-view-frame">
+                          {canRenderLiveView && playbackStatus?.preview_url ? (
+                            playbackStatus.playback_kind === "mjpeg" ? (
+                              <img
+                                alt="Live camera stream"
+                                key={playbackStatus.preview_url}
+                                onError={() =>
+                                  setLivePlaybackErrors((current) => ({
+                                    ...current,
+                                    [stream.id]:
+                                      "Live view failed to load. Check stream URL, network, credentials, and browser support.",
+                                  }))
+                                }
+                                onLoad={() =>
+                                  setLivePlaybackErrors((current) => ({
+                                    ...current,
+                                    [stream.id]: "",
+                                  }))
+                                }
+                                src={playbackStatus.preview_url}
+                              />
+                            ) : (
+                              <video
+                                controls
+                                key={playbackStatus.preview_url}
+                                muted
+                                onCanPlay={() =>
+                                  setLivePlaybackErrors((current) => ({
+                                    ...current,
+                                    [stream.id]: "",
+                                  }))
+                                }
+                                onError={() =>
+                                  setLivePlaybackErrors((current) => ({
+                                    ...current,
+                                    [stream.id]:
+                                      "Live view failed to load. Check stream URL, network, credentials, and browser support.",
+                                  }))
+                                }
+                                playsInline
+                                src={playbackStatus.preview_url}
+                              />
+                            )
+                          ) : (
+                            <div className="live-view-placeholder">
+                              <strong>{playbackError ?? liveViewFallbackMessage(playbackStatus)}</strong>
+                              {playbackStatus?.setup_hint ? (
+                                <span>{playbackStatus.setup_hint}</span>
+                              ) : null}
+                            </div>
+                          )}
+                        </div>
+                        <div className="live-view-meta">
+                          <span>
+                            Type:{" "}
+                            {playbackStatus?.live_stream_type
+                              ? formatLabel(playbackStatus.live_stream_type)
+                              : "Unknown"}
+                          </span>
+                          <span>
+                            Stream URL: {playbackStatus?.live_stream_url_display ?? "Not configured"}
+                          </span>
+                        </div>
+                        {livePlaybackError ? (
+                          <div className="zone-error">{livePlaybackError}</div>
+                        ) : null}
+                        {playbackError ? <div className="zone-error">{playbackError}</div> : null}
+                        <div className="detail-actions">
+                          <button
+                            className="secondary-action"
+                            onClick={() => void refreshStreamPlaybackStatus(stream.id)}
+                            type="button"
+                          >
+                            Refresh live view
+                          </button>
+                        </div>
                       </div>
                       <div className="source-health-panel">
                         <div className="item-title-row">

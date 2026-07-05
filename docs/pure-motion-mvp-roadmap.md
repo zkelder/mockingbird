@@ -105,6 +105,8 @@ Already built or partially built:
 - field test readiness: Cameras/Streams summarizes setup, snapshot, capture,
   motion, activity-area, Zone, monitoring, review, Bird Log, and export readiness
   for one selected real camera/source path
+- first browser-direct Live view path for configured MJPEG, browser video, and
+  browser-supported HLS stream URLs on an `external_url` Source
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
@@ -112,7 +114,7 @@ Not yet complete:
 - derived focused crop file creation
 - persistent capture health sufficient for automatic/repeated capture
 - enforced storage/retention limits for automatic activity capture
-- live video / RTSP / USB / ESP32 adapters
+- RTSP bridge/transcode, USB, ESP32, Pi, and cellular adapters
 - automatic workers, polling, schedulers, or continuous frame sampling
 
 ## Required Next Updates Before Live Video Troubleshooting
@@ -296,8 +298,19 @@ activity area/Zone handoff, Monitoring, Review, Bird Log, and Export. It is
 read-only guidance over existing state and starts no provider work, model runs,
 truth writes, or exports.
 
-It adds no RTSP, USB, Pi, cellular, live video, model runtime, automatic truth,
-or automatic export behavior.
+It adds no RTSP bridge/transcode, USB, Pi, cellular, model runtime, automatic
+truth, or automatic export behavior.
+
+### 9. Live Camera Playback
+
+Live Camera Playback 1 status: Cameras/Streams can show a browser-direct Live
+view for configured MJPEG, browser video, or browser-supported HLS stream URLs.
+The backend stores playback metadata and returns readiness/status, but does not
+fetch, decode, transcode, or generate HLS. RTSP URLs are stored as unsupported
+for now and require a future backend bridge/transcode phase.
+
+Live view is separate from snapshot capture, monitoring, review truth, and
+exports.
 
 ## Detector And Classifier Position
 
@@ -383,6 +396,12 @@ activity candidate -> Review -> ReviewLabel truth -> Bird Log -> export
     - It composes Source health, Storage guardrails, Check motion, Zones,
       Monitoring, Review, Bird Log, and Export without new backend behavior.
 
+11. **Live Camera Playback 1**
+    - Status: browser-direct Live view works for configured browser-playable
+      stream URLs.
+    - RTSP bridge/transcode, USB, Pi, cellular, and generated HLS remain future
+      adapter/runtime work.
+
 ## Guardrails
 
 Do not add for this MVP path:
@@ -392,8 +411,8 @@ Do not add for this MVP path:
 - model downloads
 - bundled model files
 - dependency/package changes unless explicitly scoped
-- live video before repeated-snapshot behavior is safe
-- RTSP/USB/ESP32 adapters before sessionization/storage guardrails
+- RTSP bridge/transcode, USB, ESP32, Pi, or cellular adapters in the browser-only
+  Live view phase
 - automatic ReviewLabel truth
 - automatic exports
 - automatic reviewed Event/Visit state

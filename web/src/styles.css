@@ -1030,6 +1030,54 @@ button {
   padding: 12px 0;
 }
 
+.live-view-panel {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #e0e6dc;
+  border-bottom: 1px solid #e0e6dc;
+  padding: 12px 0;
+}
+
+.live-view-frame {
+  display: grid;
+  min-height: 220px;
+  overflow: hidden;
+  place-items: center;
+  border-radius: 8px;
+  background: #151d19;
+  aspect-ratio: 16 / 9;
+}
+
+.live-view-frame img,
+.live-view-frame video {
+  width: 100%;
+  height: 100%;
+  background: #000000;
+  object-fit: contain;
+}
+
+.live-view-placeholder {
+  display: grid;
+  gap: 8px;
+  padding: 20px;
+  color: #e9f2eb;
+  text-align: center;
+}
+
+.live-view-placeholder span {
+  color: #c9d6cf;
+  font-size: 0.9rem;
+}
+
+.live-view-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: #5c6a61;
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
 .source-storage-guardrails-panel {
   display: grid;
   gap: 10px;
