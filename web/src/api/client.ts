@@ -268,6 +268,8 @@ export const apiClient = {
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),
   getStreamPlaybackStatus: (streamId: string) =>
     request<StreamPlaybackStatus>(`/api/streams/${streamId}/playback`),
+  rtspMjpegBridgeUrl: (streamId: string) =>
+    `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live/rtsp-mjpeg`,
   getStreamZones: (streamId: string) => request<Zone[]>(`/api/streams/${streamId}/zones`),
   getStreamEvents: (streamId: string) => request<Event[]>(`/api/streams/${streamId}/events`),
   getEventVisits: (eventId: string) => request<Visit[]>(`/api/events/${eventId}/visits`),

@@ -494,6 +494,10 @@ class StreamPlaybackStatus(BaseModel):
     preview_url: str | None = None
     live_stream_type: str | None = None
     live_stream_url_display: str | None = None
+    rtsp_bridge_required: bool = False
+    rtsp_bridge_available: bool = False
+    rtsp_bridge_status: str | None = None
+    bridged_mjpeg_url: str | None = None
 
 
 class StreamPlaybackStatusResponse(StreamPlaybackStatus):

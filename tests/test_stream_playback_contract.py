@@ -3,8 +3,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from mockingbird.api.main import app, configure_repository
+from mockingbird.api.main import app, configure_repository, get_stream_rtsp_mjpeg_bridge
 from mockingbird.api.schemas import SourceKind, SourceStatus
+from mockingbird.playback import rtsp_bridge
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import CameraSourceModel, StreamModel
 
@@ -37,6 +38,35 @@ async def client():
         yield api_client
 
 
+class FakeStdout:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    def read(self, chunk_size: int) -> bytes:
+        return self._chunks.pop(0) if self._chunks else b""
+
+
+class FakeFfmpegProcess:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.stdout = FakeStdout(chunks)
+        self.terminated = False
+        self.killed = False
+        self.waited = False
+
+    def poll(self) -> int | None:
+        return None
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.waited = True
+        return 0
+
+    def kill(self) -> None:
+        self.killed = True
+
+
 async def product_counts(client: httpx.AsyncClient) -> dict[str, int]:
     responses = {
         "events": await client.get("/api/events"),
@@ -58,6 +88,26 @@ async def product_counts(client: httpx.AsyncClient) -> dict[str, int]:
         "detection_proposals": len(responses["detection_proposals"].json()),
         "dataset_exports": len(responses["dataset_exports"].json()),
     }
+
+
+async def configure_external_url_live_stream(
+    client: httpx.AsyncClient,
+    *,
+    live_stream_url: str,
+    live_stream_type: str,
+) -> None:
+    response = await client.patch(
+        f"/api/sources/{SOURCE_ID}/provider-configuration",
+        json={
+            "provider_key": "external_url",
+            "config": {
+                "url": "http://camera.local/still.jpg",
+                "live_stream_url": live_stream_url,
+                "live_stream_type": live_stream_type,
+            },
+        },
+    )
+    assert response.status_code == 200
 
 
 async def test_known_demo_stream_returns_playback_contract(client: httpx.AsyncClient) -> None:
@@ -134,19 +184,15 @@ async def test_external_url_mjpeg_live_stream_reports_browser_ready_and_redacts_
     client: httpx.AsyncClient,
 ) -> None:
     live_url = "http://viewer:secret@camera.local/live.mjpg"
-    update_response = await client.patch(
-        f"/api/sources/{SOURCE_ID}/provider-configuration",
-        json={
-            "provider_key": "external_url",
-            "config": {
-                "url": "http://camera.local/still.jpg",
-                "live_stream_url": live_url,
-                "live_stream_type": "mjpeg",
-            },
-        },
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url=live_url,
+        live_stream_type="mjpeg",
     )
-    assert update_response.status_code == 200
-    configuration = update_response.json()
+
+    configuration_response = await client.get(f"/api/sources/{SOURCE_ID}/provider-configuration")
+    assert configuration_response.status_code == 200
+    configuration = configuration_response.json()
     assert configuration["supports_live_playback"] is True
     assert configuration["safe_config_preview"]["live_stream_url"] == (
         "http://***:***@camera.local/live.mjpg"
@@ -168,19 +214,17 @@ async def test_external_url_mjpeg_live_stream_reports_browser_ready_and_redacts_
 
 async def test_external_url_rtsp_live_stream_reports_bridge_required(
     client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    update_response = await client.patch(
-        f"/api/sources/{SOURCE_ID}/provider-configuration",
-        json={
-            "provider_key": "external_url",
-            "config": {
-                "url": "http://camera.local/still.jpg",
-                "live_stream_url": "rtsp://camera.local/live",
-                "live_stream_type": "rtsp",
-            },
-        },
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.is_ffmpeg_available",
+        lambda: False,
     )
-    assert update_response.status_code == 200
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="rtsp://camera.local/live",
+        live_stream_type="rtsp",
+    )
 
     response = await client.get(f"/api/streams/{STREAM_ID}/playback")
 
@@ -188,10 +232,218 @@ async def test_external_url_rtsp_live_stream_reports_bridge_required(
     playback = response.json()
     assert playback["status"] == "unsupported_rtsp_bridge_required"
     assert playback["playback_kind"] == "rtsp"
-    assert playback["message"] == "RTSP requires a backend bridge/transcode in a later phase."
+    assert playback["message"] == "RTSP bridge unavailable - ffmpeg not found."
     assert playback["supports_live_playback"] is False
     assert playback["preview_url"] is None
     assert playback["live_stream_type"] == "rtsp"
+    assert playback["rtsp_bridge_required"] is True
+    assert playback["rtsp_bridge_available"] is False
+    assert playback["rtsp_bridge_status"] == "ffmpeg_missing"
+
+
+async def test_external_url_rtsp_live_stream_reports_bridge_available(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="rtsp://viewer:secret@camera.local/live",
+        live_stream_type="rtsp",
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "live_ready"
+    assert playback["playback_kind"] == "rtsp"
+    assert playback["supports_live_playback"] is True
+    assert playback["preview_url"] is None
+    assert playback["live_stream_type"] == "rtsp"
+    assert playback["live_stream_url_display"] == "rtsp://***:***@camera.local/live"
+    assert playback["rtsp_bridge_required"] is True
+    assert playback["rtsp_bridge_available"] is True
+    assert playback["rtsp_bridge_status"] == "available"
+    assert playback["bridged_mjpeg_url"] == f"/api/streams/{STREAM_ID}/live/rtsp-mjpeg"
+    assert "secret" not in playback["live_stream_url_display"]
+
+
+async def test_external_url_rtsp_live_stream_rejects_invalid_rtsp_url(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="http://camera.local/not-rtsp",
+        live_stream_type="rtsp",
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "unsupported_rtsp_bridge_required"
+    assert playback["supports_live_playback"] is False
+    assert playback["rtsp_bridge_required"] is True
+    assert playback["rtsp_bridge_available"] is False
+    assert playback["rtsp_bridge_status"] == "unsupported_url"
+    assert playback["bridged_mjpeg_url"] is None
+
+
+async def test_rtsp_bridge_endpoint_rejects_non_rtsp_stream(
+    client: httpx.AsyncClient,
+) -> None:
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="http://camera.local/live.mjpg",
+        live_stream_type="mjpeg",
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live/rtsp-mjpeg")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "RTSP bridge requires RTSP stream type."
+
+
+async def test_rtsp_bridge_endpoint_rejects_missing_live_stream_url(
+    client: httpx.AsyncClient,
+) -> None:
+    update_response = await client.patch(
+        f"/api/sources/{SOURCE_ID}/provider-configuration",
+        json={"provider_key": "external_url", "config": {"url": "http://camera.local/still.jpg"}},
+    )
+    assert update_response.status_code == 200
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live/rtsp-mjpeg")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Live stream URL is not configured."
+
+
+async def test_rtsp_bridge_endpoint_reports_ffmpeg_missing(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.api.main.rtsp_bridge.is_ffmpeg_available",
+        lambda: False,
+    )
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="rtsp://camera.local/live",
+        live_stream_type="rtsp",
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live/rtsp-mjpeg")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "RTSP bridge unavailable: ffmpeg not found."
+
+
+async def test_rtsp_bridge_endpoint_streams_mocked_mjpeg_without_creating_truth(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jpeg_frame = b"\xff\xd8mock-jpeg\xff\xd9"
+    fake_process = object()
+    started_urls: list[str] = []
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.rtsp_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.rtsp_bridge.start_rtsp_mjpeg_process",
+        lambda url: started_urls.append(url) or fake_process,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.rtsp_bridge.iter_multipart_mjpeg",
+        lambda process: iter([b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg_frame]),
+    )
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="rtsp://viewer:secret@camera.local/live",
+        live_stream_type="rtsp",
+    )
+    before = await product_counts(client)
+
+    response = await get_stream_rtsp_mjpeg_bridge(STREAM_ID)
+
+    assert response.status_code == 200
+    assert response.media_type.startswith("multipart/x-mixed-replace")
+    assert response.background is None
+    assert response.headers["content-type"].startswith("multipart/x-mixed-replace")
+    assert started_urls == ["rtsp://viewer:secret@camera.local/live"]
+    assert await product_counts(client) == before
+
+
+async def test_playback_status_does_not_start_rtsp_bridge_process(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+
+    def fail_if_started(url: str):  # noqa: ANN202
+        raise AssertionError("Playback status must not start ffmpeg")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.rtsp_bridge.start_rtsp_mjpeg_process",
+        fail_if_started,
+    )
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="rtsp://camera.local/live",
+        live_stream_type="rtsp",
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+
+
+def test_rtsp_bridge_command_and_redaction_do_not_drop_credentials() -> None:
+    url = "rtsp://viewer:secret@camera.local/live"
+
+    command = rtsp_bridge.build_rtsp_mjpeg_command(url)
+
+    assert command[:7] == [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-rtsp_transport",
+        "tcp",
+        "-i",
+    ]
+    assert url in command
+    assert rtsp_bridge.redact_url(url) == "rtsp://***:***@camera.local/live"
+    assert rtsp_bridge.validate_rtsp_url(url) is True
+    assert rtsp_bridge.validate_rtsp_url("rtsps://camera.local/live") is True
+    assert rtsp_bridge.validate_rtsp_url("http://camera.local/live") is False
+
+
+def test_rtsp_bridge_multipart_generator_stops_process() -> None:
+    fake_process = FakeFfmpegProcess([b"noise", b"\xff\xd8frame-one\xff\xd9tail"])
+
+    chunks = list(rtsp_bridge.iter_multipart_mjpeg(fake_process))
+
+    assert len(chunks) == 1
+    assert chunks[0].startswith(b"--frame\r\nContent-Type: image/jpeg")
+    assert b"\xff\xd8frame-one\xff\xd9" in chunks[0]
+    assert fake_process.terminated is True
+    assert fake_process.waited is True
+    assert fake_process.killed is False
 
 
 async def test_external_url_unknown_live_stream_type_reports_unsupported(

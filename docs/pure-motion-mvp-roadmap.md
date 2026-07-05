@@ -107,6 +107,8 @@ Already built or partially built:
   for one selected real camera/source path
 - first browser-direct Live view path for configured MJPEG, browser video, and
   browser-supported HLS stream URLs on an `external_url` Source
+- optional local RTSP-to-browser bridge for configured RTSP streams when system
+  `ffmpeg` is available on the MockingBird host
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
@@ -114,7 +116,7 @@ Not yet complete:
 - derived focused crop file creation
 - persistent capture health sufficient for automatic/repeated capture
 - enforced storage/retention limits for automatic activity capture
-- RTSP bridge/transcode, USB, ESP32, Pi, and cellular adapters
+- production stream infrastructure, USB, ESP32, Pi, and cellular adapters
 - automatic workers, polling, schedulers, or continuous frame sampling
 
 ## Required Next Updates Before Live Video Troubleshooting
@@ -298,16 +300,21 @@ activity area/Zone handoff, Monitoring, Review, Bird Log, and Export. It is
 read-only guidance over existing state and starts no provider work, model runs,
 truth writes, or exports.
 
-It adds no RTSP bridge/transcode, USB, Pi, cellular, model runtime, automatic
-truth, or automatic export behavior.
+It adds no production stream infrastructure, USB, Pi, cellular, model runtime,
+automatic truth, or automatic export behavior.
 
 ### 9. Live Camera Playback
 
 Live Camera Playback 1 status: Cameras/Streams can show a browser-direct Live
 view for configured MJPEG, browser video, or browser-supported HLS stream URLs.
 The backend stores playback metadata and returns readiness/status, but does not
-fetch, decode, transcode, or generate HLS. RTSP URLs are stored as unsupported
-for now and require a future backend bridge/transcode phase.
+fetch, decode, transcode, or generate HLS.
+
+RTSP Bridge 1 status: configured RTSP streams can use an optional local bridge
+when system `ffmpeg` is installed on the MockingBird host. The bridge starts
+only for the active Live view request, returns MJPEG to the browser, stores no
+media, and creates no review truth or exports. If `ffmpeg` is missing, the UI
+shows the bridge unavailable state.
 
 Live view is separate from snapshot capture, monitoring, review truth, and
 exports.
@@ -399,8 +406,14 @@ activity candidate -> Review -> ReviewLabel truth -> Bird Log -> export
 11. **Live Camera Playback 1**
     - Status: browser-direct Live view works for configured browser-playable
       stream URLs.
-    - RTSP bridge/transcode, USB, Pi, cellular, and generated HLS remain future
-      adapter/runtime work.
+    - Generated HLS, USB, Pi, cellular, and production stream infrastructure
+      remain future adapter/runtime work.
+
+12. **RTSP Bridge 1**
+    - Status: configured RTSP stream URLs can render through an optional local
+      system `ffmpeg` bridge when available.
+    - The bridge is request-scoped, stores no media, creates no truth, and adds
+      no package dependency or bundled runtime.
 
 ## Guardrails
 
@@ -411,7 +424,7 @@ Do not add for this MVP path:
 - model downloads
 - bundled model files
 - dependency/package changes unless explicitly scoped
-- RTSP bridge/transcode, USB, ESP32, Pi, or cellular adapters in the browser-only
+- USB, ESP32, Pi, cellular adapters, or always-on stream infrastructure in the
   Live view phase
 - automatic ReviewLabel truth
 - automatic exports

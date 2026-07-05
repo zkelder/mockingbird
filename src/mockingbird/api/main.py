@@ -8,7 +8,7 @@ import sys
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import FileResponse, Response
+from starlette.responses import FileResponse, Response, StreamingResponse
 
 from mockingbird.api.schemas import (
     AnalyticsSummary,
@@ -148,6 +148,7 @@ from mockingbird.monitoring import (
     SourceMonitorOptions,
     SourceMonitorState,
 )
+from mockingbird.playback import rtsp_bridge
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.sampler import (
     SamplerConfig,
@@ -2799,6 +2800,39 @@ async def get_stream_playback_status(stream_id: str) -> StreamPlaybackStatus:
     if status is None:
         raise _not_found("Stream", stream_id)
     return status
+
+
+@app.get("/api/streams/{stream_id}/live/rtsp-mjpeg")
+async def get_stream_rtsp_mjpeg_bridge(stream_id: str) -> StreamingResponse:
+    configuration = get_repository().get_stream_live_playback_config(stream_id)
+    if configuration is None:
+        raise _not_found("Stream", stream_id)
+    if configuration.provider_key != "external_url":
+        raise HTTPException(
+            status_code=400,
+            detail="RTSP bridge requires an external_url Source provider.",
+        )
+    if not configuration.live_stream_url:
+        raise HTTPException(status_code=400, detail="Live stream URL is not configured.")
+    if configuration.live_stream_type != "rtsp":
+        raise HTTPException(status_code=400, detail="RTSP bridge requires RTSP stream type.")
+    if not rtsp_bridge.validate_rtsp_url(configuration.live_stream_url):
+        raise HTTPException(
+            status_code=400,
+            detail="RTSP bridge requires an rtsp:// or rtsps:// stream URL.",
+        )
+    if not rtsp_bridge.is_ffmpeg_available():
+        raise HTTPException(status_code=503, detail="RTSP bridge unavailable: ffmpeg not found.")
+
+    try:
+        process = rtsp_bridge.start_rtsp_mjpeg_process(configuration.live_stream_url)
+    except (OSError, ValueError):
+        raise HTTPException(status_code=502, detail="RTSP live view failed to start.") from None
+
+    return StreamingResponse(
+        rtsp_bridge.iter_multipart_mjpeg(process),
+        media_type=f"multipart/x-mixed-replace; boundary={rtsp_bridge.MJPEG_BOUNDARY}",
+    )
 
 
 @app.get("/api/streams/{stream_id}/zones", response_model=list[Zone])

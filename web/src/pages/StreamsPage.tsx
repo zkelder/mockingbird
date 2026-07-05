@@ -102,7 +102,7 @@ const LIVE_STREAM_TYPE_OPTIONS = [
   { value: "mjpeg", label: "MJPEG" },
   { value: "browser_video", label: "Browser video" },
   { value: "hls", label: "HLS / browser-supported" },
-  { value: "rtsp", label: "RTSP unsupported for now" },
+  { value: "rtsp", label: "RTSP bridge" },
 ];
 
 function isRedactedLiveStreamUrlPreview(key: string, preview?: string): boolean {
@@ -170,6 +170,21 @@ function isBrowserPlayablePlayback(status?: StreamPlaybackStatus | null): boolea
   );
 }
 
+function isRtspBridgePlayback(status?: StreamPlaybackStatus | null): boolean {
+  return (
+    status?.status === "live_ready" &&
+    status.playback_kind === "rtsp" &&
+    Boolean(status.rtsp_bridge_available)
+  );
+}
+
+function livePlaybackFailureMessage(status?: StreamPlaybackStatus | null): string {
+  if (status?.playback_kind === "rtsp") {
+    return "RTSP live view failed to load. Check stream URL, ffmpeg, network, and credentials.";
+  }
+  return "Live view failed to load. Check stream URL, network, credentials, and browser support.";
+}
+
 function liveViewFallbackMessage(status?: StreamPlaybackStatus | null): string {
   if (!status) {
     return "Loading live view status...";
@@ -178,7 +193,7 @@ function liveViewFallbackMessage(status?: StreamPlaybackStatus | null): string {
     return "No live stream URL configured.";
   }
   if (status.status === "unsupported_rtsp_bridge_required") {
-    return "RTSP requires a backend bridge in a later phase.";
+    return status.message;
   }
   if (status.status === "unsupported_stream_type") {
     return status.message;
@@ -5341,7 +5356,11 @@ export function StreamsPage({
                   const playbackStatus = streamPlaybackStatuses[stream.id] ?? null;
                   const playbackError = streamPlaybackErrors[stream.id] || null;
                   const livePlaybackError = livePlaybackErrors[stream.id] || null;
-                  const canRenderLiveView = isBrowserPlayablePlayback(playbackStatus);
+                  const canRenderBrowserLiveView = isBrowserPlayablePlayback(playbackStatus);
+                  const canRenderRtspBridge = isRtspBridgePlayback(playbackStatus);
+                  const rtspBridgeUrl = canRenderRtspBridge
+                    ? apiClient.rtspMjpegBridgeUrl(stream.id)
+                    : null;
                   const playbackLabel = reviewStream
                     ? formatLabel(reviewStream.playback_status)
                     : stream.is_live
@@ -5519,8 +5538,8 @@ export function StreamsPage({
                           <div>
                             <strong>Live view</strong>
                             <p className="meta-text">
-                              Browser-direct camera stream. Snapshot capture and monitoring
-                              stay separate.
+                              Browser-direct stream or optional RTSP bridge. Snapshot capture
+                              and monitoring stay separate.
                             </p>
                           </div>
                           <StatusPill
@@ -5535,7 +5554,25 @@ export function StreamsPage({
                           />
                         </div>
                         <div className="live-view-frame">
-                          {canRenderLiveView && playbackStatus?.preview_url ? (
+                          {canRenderRtspBridge && rtspBridgeUrl ? (
+                            <img
+                              alt="RTSP bridge live camera stream"
+                              key={rtspBridgeUrl}
+                              onError={() =>
+                                setLivePlaybackErrors((current) => ({
+                                  ...current,
+                                  [stream.id]: livePlaybackFailureMessage(playbackStatus),
+                                }))
+                              }
+                              onLoad={() =>
+                                setLivePlaybackErrors((current) => ({
+                                  ...current,
+                                  [stream.id]: "",
+                                }))
+                              }
+                              src={rtspBridgeUrl}
+                            />
+                          ) : canRenderBrowserLiveView && playbackStatus?.preview_url ? (
                             playbackStatus.playback_kind === "mjpeg" ? (
                               <img
                                 alt="Live camera stream"
@@ -5543,8 +5580,7 @@ export function StreamsPage({
                                 onError={() =>
                                   setLivePlaybackErrors((current) => ({
                                     ...current,
-                                    [stream.id]:
-                                      "Live view failed to load. Check stream URL, network, credentials, and browser support.",
+                                    [stream.id]: livePlaybackFailureMessage(playbackStatus),
                                   }))
                                 }
                                 onLoad={() =>
@@ -5569,8 +5605,7 @@ export function StreamsPage({
                                 onError={() =>
                                   setLivePlaybackErrors((current) => ({
                                     ...current,
-                                    [stream.id]:
-                                      "Live view failed to load. Check stream URL, network, credentials, and browser support.",
+                                    [stream.id]: livePlaybackFailureMessage(playbackStatus),
                                   }))
                                 }
                                 playsInline
@@ -5593,6 +5628,14 @@ export function StreamsPage({
                               ? formatLabel(playbackStatus.live_stream_type)
                               : "Unknown"}
                           </span>
+                          {playbackStatus?.rtsp_bridge_required ? (
+                            <span>
+                              RTSP bridge:{" "}
+                              {playbackStatus.rtsp_bridge_status
+                                ? formatLabel(playbackStatus.rtsp_bridge_status)
+                                : "Unknown"}
+                            </span>
+                          ) : null}
                           <span>
                             Stream URL: {playbackStatus?.live_stream_url_display ?? "Not configured"}
                           </span>

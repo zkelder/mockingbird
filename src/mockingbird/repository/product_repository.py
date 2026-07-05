@@ -194,6 +194,7 @@ from mockingbird.api.schemas import (
     ZoneType,
     ZoneUpdate,
 )
+from mockingbird.playback import rtsp_bridge
 from mockingbird.source_providers import folder_import_preview
 from mockingbird.source_providers.webhook_validation import classify_webhook_payload
 from mockingbird.storage.database import (
@@ -653,6 +654,15 @@ class _SavedMediaMotionEvidenceResult:
     duplicate_skipped: bool = False
     existing_motion_evidence_id: str | None = None
     provenance_kind: str | None = None
+
+
+@dataclass(frozen=True)
+class StreamLivePlaybackConfig:
+    stream_id: str
+    source_id: str
+    provider_key: str | None
+    live_stream_url: str | None
+    live_stream_type: str
 
 
 class MotionEvidenceModel(Base):
@@ -2135,6 +2145,31 @@ class ProductRepository:
                 supports_zone_editing=True,
                 supports_live_playback=False,
                 adapter_key=adapter_key,
+            )
+
+    def get_stream_live_playback_config(
+        self,
+        stream_id: str,
+    ) -> StreamLivePlaybackConfig | None:
+        with self.session_factory() as session:
+            stream = session.get(StreamModel, stream_id)
+            if stream is None:
+                return None
+
+            model = session.get(SourceProviderConfigurationModel, stream.source_id)
+            provider_key = model.provider_key if model is not None else None
+            config = json.loads(model.config_json) if model is not None else {}
+            live_url = (config.get("live_stream_url") or "").strip() or None
+            live_type = _normalize_live_stream_type(
+                config.get("live_stream_type"),
+                live_url or "",
+            )
+            return StreamLivePlaybackConfig(
+                stream_id=stream.id,
+                source_id=stream.source_id,
+                provider_key=provider_key,
+                live_stream_url=live_url,
+                live_stream_type=live_type,
             )
 
     def streams_for_source(self, source_id: str) -> list[Stream]:
@@ -7832,6 +7867,8 @@ def _source_provider_supports_live_playback(
 def _external_url_supports_browser_live_playback(config: dict[str, str]) -> bool:
     live_url = (config.get("live_stream_url") or "").strip()
     live_type = _normalize_live_stream_type(config.get("live_stream_type"), live_url)
+    if live_type == "rtsp":
+        return rtsp_bridge.validate_rtsp_url(live_url) and rtsp_bridge.is_ffmpeg_available()
     return bool(live_url and live_type in BROWSER_LIVE_STREAM_TYPES)
 
 
@@ -7839,7 +7876,7 @@ def _normalize_live_stream_type(raw_type: str | None, url: str) -> str:
     normalized = (raw_type or "").strip().lower().replace("-", "_").replace(" ", "_")
     url_lower = url.strip().lower()
 
-    if url_lower.startswith("rtsp://") or normalized == "rtsp":
+    if url_lower.startswith(("rtsp://", "rtsps://")) or normalized == "rtsp":
         return "rtsp"
     if normalized in {"mjpeg", "mjpg", "multipart_mjpeg"}:
         return "mjpeg"
@@ -7910,22 +7947,68 @@ def _external_url_stream_playback_status(
         )
 
     if live_type == "rtsp":
+        if not rtsp_bridge.validate_rtsp_url(live_url):
+            return StreamPlaybackStatus(
+                stream_id=stream.id,
+                source_id=stream.source_id,
+                status=StreamPlaybackStatusValue.unsupported_rtsp_bridge_required,
+                playback_kind=StreamPlaybackKind.rtsp,
+                display_title=stream.name,
+                message="RTSP bridge requires an rtsp:// or rtsps:// stream URL.",
+                setup_hint=(
+                    "Check the stream URL and keep snapshot capture or browser-direct "
+                    "playback separate."
+                ),
+                supports_zone_editing=True,
+                supports_live_playback=False,
+                adapter_key="external_url",
+                live_stream_type=live_type,
+                live_stream_url_display=live_url_display,
+                rtsp_bridge_required=True,
+                rtsp_bridge_available=False,
+                rtsp_bridge_status="unsupported_url",
+            )
+        if rtsp_bridge.is_ffmpeg_available():
+            bridge_url = f"/api/streams/{stream.id}/live/rtsp-mjpeg"
+            return StreamPlaybackStatus(
+                stream_id=stream.id,
+                source_id=stream.source_id,
+                status=StreamPlaybackStatusValue.live_ready,
+                playback_kind=StreamPlaybackKind.rtsp,
+                display_title=stream.name,
+                message="RTSP bridge is available for Live view.",
+                setup_hint=(
+                    "The bridge starts local ffmpeg only while this Live view is open."
+                ),
+                supports_zone_editing=True,
+                supports_live_playback=True,
+                adapter_key="external_url",
+                live_stream_type=live_type,
+                live_stream_url_display=live_url_display,
+                rtsp_bridge_required=True,
+                rtsp_bridge_available=True,
+                rtsp_bridge_status="available",
+                bridged_mjpeg_url=bridge_url,
+            )
         return StreamPlaybackStatus(
             stream_id=stream.id,
             source_id=stream.source_id,
             status=StreamPlaybackStatusValue.unsupported_rtsp_bridge_required,
             playback_kind=StreamPlaybackKind.rtsp,
             display_title=stream.name,
-            message="RTSP requires a backend bridge/transcode in a later phase.",
+            message="RTSP bridge unavailable - ffmpeg not found.",
             setup_hint=(
-                "Store the RTSP URL for later, but use MJPEG, browser video, or "
-                "browser-supported HLS for today's Live view."
+                "Install ffmpeg on the MockingBird host, then refresh Live view. "
+                "The bridge is on-demand and does not run at startup."
             ),
             supports_zone_editing=True,
             supports_live_playback=False,
             adapter_key="external_url",
             live_stream_type=live_type,
             live_stream_url_display=live_url_display,
+            rtsp_bridge_required=True,
+            rtsp_bridge_available=False,
+            rtsp_bridge_status="ffmpeg_missing",
         )
 
     if live_type not in BROWSER_LIVE_STREAM_TYPES:
@@ -7966,6 +8049,7 @@ def _external_url_stream_playback_status(
         preview_url=live_url,
         live_stream_type=live_type,
         live_stream_url_display=live_url_display,
+        rtsp_bridge_status="not_rtsp",
     )
 
 

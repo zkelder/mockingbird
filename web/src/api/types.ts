@@ -335,6 +335,10 @@ export interface StreamPlaybackStatus {
   preview_url?: string | null;
   live_stream_type?: string | null;
   live_stream_url_display?: string | null;
+  rtsp_bridge_required: boolean;
+  rtsp_bridge_available: boolean;
+  rtsp_bridge_status?: string | null;
+  bridged_mjpeg_url?: string | null;
 }
 
 export interface ExternalUrlPreviewRequest {

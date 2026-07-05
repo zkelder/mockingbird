@@ -989,10 +989,8 @@ Current work:
 - Cameras/Streams shows a primary Live view panel for selected Streams.
 - MJPEG renders through a browser image stream; browser video and direct
   browser-supported HLS render through the native video element.
-- RTSP URLs are stored but shown as requiring a future backend
-  bridge/transcode.
-- Next likely phase: Live Camera Playback 2 — manual browser smoke validation
-  polish and docs for common camera URL formats.
+- RTSP URLs are stored for the next optional local bridge phase.
+- Next likely phase: Phase 21 — RTSP Bridge.
 
 Validation:
 
@@ -1003,6 +1001,38 @@ Validation:
 - Credentials embedded in stream URLs are redacted in displayed URLs.
 - Snapshot capture, Source health, monitoring, Review, Bird Log, and Export
   remain separate explicit workflows.
-- No RTSP bridge/transcode, USB, ESP32, Pi, cellular, model runtime, automatic
-  truth, automatic exports, captures table, worker, scheduler, or dependency
-  behavior is added.
+- No USB, ESP32, Pi, cellular, model runtime, automatic truth, automatic
+  exports, captures table, worker, scheduler, or dependency behavior is added.
+
+## Phase 21 — RTSP Bridge
+
+Goal: let configured RTSP camera streams render in browser Live view through an
+optional local bridge while keeping playback separate from monitoring, review
+truth, exports, and source adapter identity.
+
+Current work:
+
+- RTSP Bridge 1: `external_url` stream playback reports whether RTSP bridge
+  playback is available, unavailable because `ffmpeg` is missing, not RTSP, or
+  unsupported because the URL is not `rtsp://` or `rtsps://`.
+- The backend exposes `GET /api/streams/{stream_id}/live/rtsp-mjpeg` for
+  request-scoped RTSP-to-MJPEG streaming.
+- Cameras/Streams uses the bridge endpoint for RTSP Live view when available
+  and shows a clear install-ffmpeg unavailable state when it is not.
+- Next likely phase: Phase 22 — Live camera playback smoke validation and
+  common camera URL polish.
+
+Validation:
+
+- The bridge uses system `ffmpeg` only when available on the MockingBird host;
+  no package dependency, bundled runtime, model file, or download behavior is
+  added.
+- `ffmpeg` starts only for an active RTSP Live view HTTP request and is stopped
+  when the response ends or the client disconnects.
+- The bridge stores no media, creates no Events/Visits, ReviewLabels,
+  DetectionProposals, MotionEvidence, dataset exports, analytics truth, workers,
+  schedulers, captures table, or source adapter records.
+- Browser-direct MJPEG, browser video, and browser-supported HLS playback remain
+  unchanged.
+- Snapshot capture, Source health, monitoring, Review, Bird Log, and Export
+  remain separate explicit workflows.

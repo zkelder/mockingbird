@@ -96,8 +96,10 @@ reviewed data.
 The Streams page now also supports a first Live view path for browser-playable
 stream URLs configured on an `external_url` Source. MJPEG uses a browser image
 stream; browser video and direct browser-supported HLS use the native video
-element without a new dependency. RTSP URLs can be stored, but they show that a
-future backend bridge/transcode is required.
+element without a new dependency. RTSP URLs can use the optional local bridge
+when system `ffmpeg` is installed on the MockingBird host. That bridge starts
+only for the active Live view request, returns MJPEG to the browser, stores no
+media, and creates no review truth or exports.
 The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
 count, and motion readiness. Camera Monitoring Core can now start and stop an
@@ -122,8 +124,8 @@ Log, and Export reviewed data.
 The same Stream cards now show Storage guardrails: saved image counts, storage
 warnings, and reviewed/export-linked media protection before and during
 monitoring. Snapshot watch remains an advanced bounded page-local test harness.
-This adds no deletion, cleanup, RTSP bridge/transcoding, USB/Pi/cellular
-behavior, model runtime, automatic truth, or automatic export behavior.
+This adds no deletion, cleanup, bundled media runtime, USB/Pi/cellular behavior,
+model runtime, automatic truth, or automatic export behavior.
 Reviewed and needs-review observations are visible in the Bird Log, which turns
 captured or imported activity into a user-facing local history before export.
 Saved previews can now enter review as pending MotionEvidence through an
