@@ -1000,6 +1000,26 @@ button {
   margin: 0;
 }
 
+.source-health-panel {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #e0e6dc;
+  border-bottom: 1px solid #e0e6dc;
+  padding: 12px 0;
+}
+
+.source-health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.source-health-grid .data-row,
+.source-health-grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .stream-media-timeline {
   display: grid;
   gap: 12px;
@@ -4945,6 +4965,7 @@ button {
   .source-overview-grid,
   .source-selector-row,
   .source-setup-layout,
+  .source-health-grid,
   .source-stream-grid,
   .folder-import-control-grid,
   .folder-import-list-grid,

@@ -93,6 +93,10 @@ saving fetched previews must be explicit, local, bounded, and truth-safe.
 In the browser, the product path is: select an external snapshot camera/source,
 Test snapshot, Capture snapshot, Analyze image, Review/correct, then Export
 reviewed data.
+The Streams page shows Source health / Camera status for each selected Stream so
+manual checks can confirm the last snapshot test, last capture, saved image
+count, and motion readiness. It does not start repeated capture or live video;
+repeated snapshot watch remains future work.
 Reviewed and needs-review observations are visible in the Bird Log, which turns
 captured or imported activity into a user-facing local history before export.
 Saved previews can now enter review as pending MotionEvidence through an

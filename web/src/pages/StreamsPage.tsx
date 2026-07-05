@@ -185,6 +185,30 @@ interface StreamMotionCheckState {
   error?: string | null;
   isChecking?: boolean;
   isCreatingActivity?: boolean;
+  lastCheckedAt?: string;
+}
+
+type SourceHealthActionStatus = "success" | "failure";
+
+interface SourceHealthSnapshotState {
+  status: SourceHealthActionStatus;
+  timestamp: string;
+  contentType?: string | null;
+  error?: string | null;
+}
+
+interface SourceHealthCaptureState {
+  status: SourceHealthActionStatus;
+  timestamp: string;
+  contentType?: string | null;
+  mediaAssetId?: string | null;
+  fileName?: string | null;
+  error?: string | null;
+}
+
+interface SourceHealthActionState {
+  lastSnapshotTest?: SourceHealthSnapshotState;
+  lastCaptureByStreamId?: Record<string, SourceHealthCaptureState>;
 }
 
 interface MediaLifecycleSummary {
@@ -299,6 +323,178 @@ function focusedCropStatus(plan?: MotionCropPlan | null): string {
     return "Full snapshot fallback";
   }
   return "Focused crop planned";
+}
+
+type SourceHealthReadinessLabel =
+  | "Ready for manual checks"
+  | "Needs snapshot test"
+  | "Needs saved images"
+  | "Needs 2+ snapshots for motion"
+  | "Check source setup"
+  | "Motion check ready";
+
+function sourceHealthReadinessTone(
+  label: SourceHealthReadinessLabel,
+): "good" | "review" | "quiet" {
+  if (label === "Ready for manual checks" || label === "Motion check ready") {
+    return "good";
+  }
+  if (label === "Check source setup") {
+    return "review";
+  }
+  return "quiet";
+}
+
+function sourceNeedsSetup(
+  connection: SourceConnectionStatus | null,
+  setupReview: SourceSetupReviewResponse | null,
+): boolean {
+  return (
+    connection?.status === "not_configured" ||
+    connection?.status === "unavailable" ||
+    connection?.status === "offline" ||
+    connection?.status === "unsupported" ||
+    setupReview?.readiness_level === "needs_setup" ||
+    setupReview?.readiness_level === "unavailable"
+  );
+}
+
+function sourceHealthReadiness(params: {
+  isExternalUrlProvider: boolean;
+  connection: SourceConnectionStatus | null;
+  setupReview: SourceSetupReviewResponse | null;
+  snapshotTest?: SourceHealthSnapshotState;
+  savedImageCount: number;
+  motionState: StreamMotionCheckState;
+}): SourceHealthReadinessLabel {
+  if (sourceNeedsSetup(params.connection, params.setupReview)) {
+    return "Check source setup";
+  }
+  if (params.isExternalUrlProvider && !params.snapshotTest) {
+    return "Needs snapshot test";
+  }
+  if (params.isExternalUrlProvider && params.snapshotTest?.status === "failure") {
+    return "Check source setup";
+  }
+  if (params.savedImageCount === 0) {
+    return "Needs saved images";
+  }
+  if (params.savedImageCount < 2) {
+    return "Needs 2+ snapshots for motion";
+  }
+  if (!params.motionState.result) {
+    return "Motion check ready";
+  }
+  return "Ready for manual checks";
+}
+
+function sourceHealthNextAction(
+  label: SourceHealthReadinessLabel,
+  motionResult?: MotionEvaluateSavedMediaResponse | null,
+  createdEvidence?: MotionEvidence | null,
+): string {
+  if (createdEvidence) {
+    return "Review activity.";
+  }
+  if (
+    motionResult?.activity_detected &&
+    motionResult.can_create_review_activity &&
+    motionResult.should_create_review_activity
+  ) {
+    return "Create review activity.";
+  }
+  if (motionResult?.activity_detected && !motionResult.should_create_review_activity) {
+    return "Ready for manual checks.";
+  }
+  switch (label) {
+    case "Check source setup":
+      return "Check source setup.";
+    case "Needs snapshot test":
+      return "Needs snapshot test - click Test snapshot.";
+    case "Needs saved images":
+      return "Capture ready - click Capture snapshot after a successful test.";
+    case "Needs 2+ snapshots for motion":
+      return "Needs 2 snapshots for motion.";
+    case "Motion check ready":
+      return "Motion ready - click Check motion.";
+    case "Ready for manual checks":
+      return "Ready for manual checks.";
+    default:
+      return "Ready for manual checks.";
+  }
+}
+
+function formatHealthTimestamp(timestamp?: string | null): string {
+  return timestamp ? formatDateTime(timestamp) : "time unknown";
+}
+
+function snapshotHealthText(snapshotTest?: SourceHealthSnapshotState): string {
+  if (!snapshotTest) {
+    return "Not tested in this session";
+  }
+  const when = formatHealthTimestamp(snapshotTest.timestamp);
+  if (snapshotTest.status === "success") {
+    const content = snapshotTest.contentType ? ` · ${snapshotTest.contentType}` : "";
+    return `Succeeded at ${when}${content}`;
+  }
+  return `Failed at ${when}`;
+}
+
+function captureHealthText(
+  capture: SourceHealthCaptureState | undefined,
+  streamImages: MediaAsset[],
+): string {
+  if (capture) {
+    const when = formatHealthTimestamp(capture.timestamp);
+    if (capture.status === "success") {
+      const fileName = capture.fileName ? ` · ${capture.fileName}` : "";
+      return `Saved at ${when}${fileName}`;
+    }
+    return `Failed at ${when}`;
+  }
+  const latestImage = streamImages[0];
+  if (latestImage) {
+    return `No capture this session. Latest saved image: ${
+      latestImage.original_filename || latestImage.filename
+    }`;
+  }
+  return "No saved image yet";
+}
+
+function motionHealthText(motionState: StreamMotionCheckState): string {
+  if (motionState.isChecking) {
+    return "Checking motion...";
+  }
+  if (motionState.isCreatingActivity) {
+    return "Creating review activity...";
+  }
+  if (motionState.error) {
+    return `Failed at ${formatHealthTimestamp(motionState.lastCheckedAt)}`;
+  }
+  const result = motionState.result;
+  if (!result) {
+    return "Not checked in this session";
+  }
+  const checkedAt = ` at ${formatHealthTimestamp(motionState.lastCheckedAt)}`;
+  if (!result.activity_detected) {
+    return `No activity detected${checkedAt}`;
+  }
+  const label =
+    result.strongest_activity_area_label ?? result.strongest_zone_id ?? "Activity area";
+  return `Activity detected in ${label}${checkedAt}`;
+}
+
+function lastActivityHealthText(motionState: StreamMotionCheckState): string {
+  const result = motionState.result;
+  if (!result) {
+    return "No activity checked yet";
+  }
+  if (!result.activity_detected) {
+    return "No activity detected";
+  }
+  const label =
+    result.strongest_activity_area_label ?? result.strongest_zone_id ?? "Activity area";
+  return `${activitySessionLabel(result.session_status)} in ${label}`;
 }
 
 function buildMediaLifecycleSummary(
@@ -526,6 +722,9 @@ export function StreamsPage({
     Record<string, string>
   >({});
   const [timelineZoneErrors, setTimelineZoneErrors] = useState<Record<string, string>>({});
+  const [sourceHealthActions, setSourceHealthActions] = useState<
+    Record<string, SourceHealthActionState>
+  >({});
   const [timelineActionState, setTimelineActionState] = useState<
     Record<string, TimelineMediaActionState>
   >({});
@@ -890,11 +1089,29 @@ export function StreamsPage({
     }
   }
 
+  function updateSourceHealthAction(sourceId: string, patch: SourceHealthActionState) {
+    setSourceHealthActions((current) => {
+      const existing = current[sourceId] ?? {};
+      return {
+        ...current,
+        [sourceId]: {
+          ...existing,
+          ...patch,
+          lastCaptureByStreamId: {
+            ...(existing.lastCaptureByStreamId ?? {}),
+            ...(patch.lastCaptureByStreamId ?? {}),
+          },
+        },
+      };
+    });
+  }
+
   async function handleFetchStillImagePreview() {
     if (!selectedSourceId) {
       return;
     }
 
+    const sourceId = selectedSourceId;
     setIsFetchingPreview(true);
     setPreviewError(null);
     setPreviewResult(null);
@@ -909,12 +1126,26 @@ export function StreamsPage({
     setSnapshotProposalResult(null);
     setSnapshotProposalDecisionResult(null);
     try {
-      const result = await apiClient.fetchExternalUrlPreview(selectedSourceId, {});
+      const result = await apiClient.fetchExternalUrlPreview(sourceId, {});
       setPreviewResult(result);
+      updateSourceHealthAction(sourceId, {
+        lastSnapshotTest: {
+          status: result.status === "available" ? "success" : "failure",
+          timestamp: result.fetched_at ?? new Date().toISOString(),
+          contentType: result.content_type,
+          error: result.status === "available" ? null : result.message,
+        },
+      });
     } catch (caught) {
-      setPreviewError(
-        caught instanceof Error ? caught.message : "Could not test snapshot.",
-      );
+      const error = caught instanceof Error ? caught.message : "Could not test snapshot.";
+      setPreviewError(error);
+      updateSourceHealthAction(sourceId, {
+        lastSnapshotTest: {
+          status: "failure",
+          timestamp: new Date().toISOString(),
+          error,
+        },
+      });
     } finally {
       setIsFetchingPreview(false);
     }
@@ -925,6 +1156,8 @@ export function StreamsPage({
       return;
     }
 
+    const sourceId = selectedSourceId;
+    const streamId = selectedFirstStream?.id ?? null;
     setIsSavingPreview(true);
     setPreviewSaveError(null);
     setPreviewSaveResult(null);
@@ -937,15 +1170,40 @@ export function StreamsPage({
     setSnapshotProposalResult(null);
     setSnapshotProposalDecisionResult(null);
     try {
-      const result = await apiClient.saveExternalUrlPreview(selectedSourceId, {
-        stream_id: selectedFirstStream?.id ?? null,
+      const result = await apiClient.saveExternalUrlPreview(sourceId, {
+        stream_id: streamId,
       });
       setPreviewSaveResult(result);
+      const captureStreamId = result.stream_id ?? streamId;
+      if (captureStreamId) {
+        updateSourceHealthAction(sourceId, {
+          lastCaptureByStreamId: {
+            [captureStreamId]: {
+              status: result.status === "saved" ? "success" : "failure",
+              timestamp: result.fetched_at ?? new Date().toISOString(),
+              contentType: result.content_type,
+              mediaAssetId: result.media_asset_id,
+              fileName: result.file_name,
+              error: result.status === "saved" ? null : result.message,
+            },
+          },
+        });
+      }
       await loadMediaAssets({ showLoading: false });
     } catch (caught) {
-      setPreviewSaveError(
-        caught instanceof Error ? caught.message : "Could not capture snapshot.",
-      );
+      const error = caught instanceof Error ? caught.message : "Could not capture snapshot.";
+      setPreviewSaveError(error);
+      if (streamId) {
+        updateSourceHealthAction(sourceId, {
+          lastCaptureByStreamId: {
+            [streamId]: {
+              status: "failure",
+              timestamp: new Date().toISOString(),
+              error,
+            },
+          },
+        });
+      }
     } finally {
       setIsSavingPreview(false);
     }
@@ -1169,6 +1427,7 @@ export function StreamsPage({
     if (selectedAssets.length < 2) {
       updateStreamMotionCheckState(stream.id, {
         error: "Select at least two saved snapshots before checking motion.",
+        lastCheckedAt: new Date().toISOString(),
       });
       return;
     }
@@ -1192,6 +1451,7 @@ export function StreamsPage({
       updateStreamMotionCheckState(stream.id, {
         result,
         error: null,
+        lastCheckedAt: new Date().toISOString(),
       });
       if (options.createActivity) {
         await loadTimelineLifecycleData({ showLoading: false });
@@ -1199,6 +1459,7 @@ export function StreamsPage({
     } catch (caught) {
       updateStreamMotionCheckState(stream.id, {
         error: caught instanceof Error ? caught.message : "Could not check motion.",
+        lastCheckedAt: new Date().toISOString(),
       });
     } finally {
       updateStreamMotionCheckState(stream.id, {
@@ -3294,6 +3555,24 @@ export function StreamsPage({
                   const selectedMotionAssets = sortOldestFirst(
                     streamImageAssets.filter((asset) => motionSelectedIds.includes(asset.id)),
                   );
+                  const sourceHealthState = selectedSource
+                    ? sourceHealthActions[selectedSource.id]
+                    : undefined;
+                  const lastSnapshotTest = sourceHealthState?.lastSnapshotTest;
+                  const lastCapture =
+                    sourceHealthState?.lastCaptureByStreamId?.[stream.id];
+                  const sourceHealthLabel = sourceHealthReadiness({
+                    isExternalUrlProvider,
+                    connection: selectedConnection,
+                    setupReview: selectedSetupReview,
+                    snapshotTest: lastSnapshotTest,
+                    savedImageCount: streamImageAssets.length,
+                    motionState,
+                  });
+                  const sourceHealthLastError =
+                    motionState.error ??
+                    (lastCapture?.status === "failure" ? lastCapture.error : null) ??
+                    (lastSnapshotTest?.status === "failure" ? lastSnapshotTest.error : null);
                   const motionResult = motionState.result ?? null;
                   const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
                   const canCreateMotionReviewActivity =
@@ -3345,6 +3624,74 @@ export function StreamsPage({
                               : "Unavailable"
                             : "Available"}
                         </span>
+                      </div>
+                      <div className="source-health-panel">
+                        <div className="item-title-row">
+                          <div>
+                            <strong>Source health</strong>
+                            <p className="meta-text">
+                              Camera status for manual snapshot and motion checks.
+                            </p>
+                          </div>
+                          <StatusPill
+                            label={sourceHealthLabel}
+                            tone={sourceHealthReadinessTone(sourceHealthLabel)}
+                          />
+                        </div>
+                        <div className="source-health-grid">
+                          <div className="data-row">
+                            <span>Last snapshot test</span>
+                            <strong>{snapshotHealthText(lastSnapshotTest)}</strong>
+                          </div>
+                          <div className="data-row">
+                            <span>Last capture</span>
+                            <strong>{captureHealthText(lastCapture, streamImageAssets)}</strong>
+                          </div>
+                          <div className="data-row">
+                            <span>Saved images</span>
+                            <strong>{streamImageAssets.length}</strong>
+                          </div>
+                          <div className="data-row">
+                            <span>Last motion check</span>
+                            <strong>{motionHealthText(motionState)}</strong>
+                          </div>
+                          <div className="data-row">
+                            <span>Last activity</span>
+                            <strong>{lastActivityHealthText(motionState)}</strong>
+                          </div>
+                          <div className="data-row">
+                            <span>Next recommended action</span>
+                            <strong>
+                              {sourceHealthNextAction(
+                                sourceHealthLabel,
+                                motionResult,
+                                motionCreatedEvidence,
+                              )}
+                            </strong>
+                          </div>
+                        </div>
+                        {sourceHealthLastError ? (
+                          <div className="zone-error">Last error: {sourceHealthLastError}</div>
+                        ) : null}
+                        <details className="advanced-details">
+                          <summary>Advanced details</summary>
+                          <div className="source-connection-meta">
+                            <span>Source ID: {selectedSource?.id ?? "none"}</span>
+                            <span>Stream ID: {stream.id}</span>
+                            <span>
+                              Provider:{" "}
+                              {selectedConfiguration?.provider_key ??
+                                selectedSetupReview?.provider_key ??
+                                "unknown"}
+                            </span>
+                            {lastSnapshotTest?.contentType ? (
+                              <span>Snapshot content: {lastSnapshotTest.contentType}</span>
+                            ) : null}
+                            {lastCapture?.mediaAssetId ? (
+                              <span>Saved image ID: {lastCapture.mediaAssetId}</span>
+                            ) : null}
+                          </div>
+                        </details>
                       </div>
                       <div className="detail-actions">
                         <button

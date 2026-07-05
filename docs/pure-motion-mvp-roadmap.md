@@ -90,13 +90,15 @@ Already built or partially built:
 - saved-snapshot Check motion with automatic activity areas when no user Zones exist
 - saved-snapshot Activity session recommendation with per-area duplicate suppression
 - saved-snapshot focused Activity crop planning while preserving the full best snapshot
+- source health / camera status for manual snapshot tests, captures, saved image
+  counts, and saved-snapshot motion readiness
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
 
 - real repeated frame/snapshot motion bridge from source media
 - derived focused crop file creation
-- source health and capture status sufficient for automatic/repeated capture
+- persistent capture health sufficient for automatic/repeated capture
 - storage/retention policy for automatic activity capture
 - live video / RTSP / USB / ESP32 adapters
 - automatic workers, polling, schedulers, or continuous frame sampling
@@ -209,6 +211,12 @@ Show:
 - saved image count
 - current source status
 
+Source Health 1 status: Cameras/Streams now shows browser-state Source health
+for manual checks. It confirms the last snapshot test, last capture, saved image
+count, last motion check, last activity, and next recommended action without
+starting repeated capture, live video, polling, or background work. Repeated
+snapshot watch remains future work.
+
 This prevents confusing camera/network failures with app failures.
 
 ### 6. Storage And Retention Guardrails
@@ -275,7 +283,8 @@ activity candidate -> Review -> ReviewLabel truth -> Bird Log -> export
    - Add full-frame + padded activity crop records for review/model input.
 
 5. **Source Health 1**
-   - Make repeated capture readiness obvious before live adapters.
+   - Status: manual Source health is visible in Cameras/Streams for snapshot,
+     capture, saved-image, and motion readiness.
 
 6. **Repeated Snapshot Watch 1**
    - Manual start/stop repeated snapshot capture from external_url source.
