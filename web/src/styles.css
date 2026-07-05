@@ -1008,13 +1008,28 @@ button {
   padding: 12px 0;
 }
 
+.source-storage-guardrails-panel {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid #e0e6dc;
+  padding: 0 0 12px;
+}
+
 .source-health-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
+.source-storage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .source-health-grid .data-row,
+.source-storage-grid .data-row,
+.source-storage-grid strong,
 .source-health-grid strong {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -4966,6 +4981,7 @@ button {
   .source-selector-row,
   .source-setup-layout,
   .source-health-grid,
+  .source-storage-grid,
   .source-stream-grid,
   .folder-import-control-grid,
   .folder-import-list-grid,

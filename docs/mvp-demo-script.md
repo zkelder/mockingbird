@@ -177,12 +177,14 @@ Dataset Exports.
       remains truth.
 - [ ] Open Streams and configure or select an external snapshot camera/source.
 - [ ] Confirm Source health / Camera status is visible for the selected Stream.
+- [ ] Confirm Storage guardrails shows saved image count and no repeated capture.
 - [ ] Click `Test snapshot`.
 - [ ] Confirm success/failure, timestamp, content type, and preview image when available.
 - [ ] Confirm Last snapshot test updates in Source health.
 - [ ] Click `Capture snapshot`.
 - [ ] Confirm the saved image appears under that camera/source and Stream.
 - [ ] Confirm Last capture and Saved images update in Source health.
+- [ ] Confirm Storage guardrails updates saved image count and motion readiness.
 - [ ] Capture at least one more saved snapshot for the same Stream.
 - [ ] Click `Check motion`.
 - [ ] Confirm `New activity detected`, `Ongoing activity`, `Cooldown active`,
@@ -190,6 +192,7 @@ Dataset Exports.
       context.
 - [ ] Confirm Last motion check, Last activity, and next recommended action update
       in Source health.
+- [ ] Confirm Storage guardrails still shows manual next actions and no cleanup button.
 - [ ] Confirm `Focused crop planned` appears when activity is detected and that
       the full best snapshot remains the source/context image.
 - [ ] Run `Check motion` again for the same saved snapshots and confirm the
@@ -200,6 +203,7 @@ Dataset Exports.
 - [ ] If activity is detected and review activity is available, click `Create review activity`, then `Review activity`.
 - [ ] Confirm no reviewed data is created until a later correction.
 - [ ] Confirm no repeated capture or live behavior starts.
+- [ ] Confirm reviewed/export-linked media protection copy appears before export.
 - [ ] Confirm image status shows Not analyzed, Suggestion available, Needs review, or Reviewed.
 - [ ] Confirm local detector readiness is visible for saved image media.
 - [ ] If not configured, confirm setup guidance and demo analysis fallback.
@@ -250,6 +254,7 @@ create proposal evidence only.
 - [ ] Confirm setup review/status says explicit preview is available and
       future-safe.
 - [ ] Confirm Source health / Camera status shows readiness for manual checks.
+- [ ] Confirm Storage guardrails shows saved image counts and no cleanup/delete controls.
 - [ ] Click `Test snapshot`.
 - [ ] Confirm transient preview appears with success/failure, timestamp, and
       content type.
@@ -259,18 +264,21 @@ create proposal evidence only.
 - [ ] Confirm the saved image appears under the selected camera/source and
       Stream.
 - [ ] Confirm Last capture and Saved images update in Source health.
+- [ ] Confirm Storage guardrails updates saved image count.
 - [ ] Capture at least one more saved snapshot for the same Stream.
 - [ ] Click `Check motion`.
 - [ ] Confirm `New activity detected`, `Ongoing activity`, `Cooldown active`,
       or `No activity detected` appears with an Activity area.
 - [ ] Confirm Last motion check, Last activity, and next recommended action update
       in Source health.
+- [ ] Confirm Storage guardrails recommends review/export when useful activity exists.
 - [ ] Confirm Focused crop planning appears for detected activity while the full
       snapshot remains saved.
 - [ ] Run `Check motion` again for the same Activity area and confirm duplicate
       review activity is not encouraged.
 - [ ] Confirm this path remains manual only; no repeated capture or live video
       starts.
+- [ ] Confirm cleanup/deletion remains separate and is not available in this flow.
 - [ ] If no Zones exist, confirm automatic activity areas are used.
 - [ ] Confirm model analysis remains separate and is not run per automatic
       activity area.

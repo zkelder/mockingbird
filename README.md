@@ -97,6 +97,9 @@ The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
 count, and motion readiness. It does not start repeated capture or live video;
 repeated snapshot watch remains future work.
+The same Stream cards now show Storage guardrails: saved image counts, storage
+warnings, and reviewed/export-linked media protection before repeated snapshot
+watch. This adds no deletion, cleanup, or automatic capture behavior.
 Reviewed and needs-review observations are visible in the Bird Log, which turns
 captured or imported activity into a user-facing local history before export.
 Saved previews can now enter review as pending MotionEvidence through an

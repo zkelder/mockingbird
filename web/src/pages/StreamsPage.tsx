@@ -25,6 +25,8 @@ import type {
   MotionEvaluateSavedMediaResponse,
   MotionEvidencePromoteResponse,
   ReviewLabel,
+  SavedMediaRetentionItem,
+  SavedMediaRetentionReportResponse,
   SavedPreviewMotionEvidenceResponse,
   SourceConnectionStatus,
   SourceProviderConfiguration,
@@ -209,6 +211,27 @@ interface SourceHealthCaptureState {
 interface SourceHealthActionState {
   lastSnapshotTest?: SourceHealthSnapshotState;
   lastCaptureByStreamId?: Record<string, SourceHealthCaptureState>;
+}
+
+type StorageGuardrailReadiness =
+  | "OK"
+  | "Watch accumulation"
+  | "Review pending images"
+  | "Export/reviewed media protected"
+  | "Repeated capture not enabled yet";
+
+interface StorageGuardrailSummary {
+  savedImageCount: number;
+  savedImageTotalBytes: number | null;
+  recentSavedImageCount: number;
+  protectedMediaCount: number | null;
+  reviewLinkedCount: number | null;
+  unreviewedSavedImageCount: number | null;
+  oldestSavedImageAt?: string | null;
+  newestSavedImageAt?: string | null;
+  readiness: StorageGuardrailReadiness;
+  recommendedAction: string;
+  retentionCoverage: "available" | "partial" | "unavailable";
 }
 
 interface MediaLifecycleSummary {
@@ -497,6 +520,139 @@ function lastActivityHealthText(motionState: StreamMotionCheckState): string {
   return `${activitySessionLabel(result.session_status)} in ${label}`;
 }
 
+function storageGuardrailTone(
+  readiness: StorageGuardrailReadiness,
+): "good" | "review" | "quiet" {
+  if (readiness === "OK") {
+    return "good";
+  }
+  if (
+    readiness === "Watch accumulation" ||
+    readiness === "Review pending images" ||
+    readiness === "Export/reviewed media protected"
+  ) {
+    return "review";
+  }
+  return "quiet";
+}
+
+function storageGuardrailSummary(
+  streamImages: MediaAsset[],
+  retentionItems: SavedMediaRetentionItem[],
+  motionState: StreamMotionCheckState,
+): StorageGuardrailSummary {
+  const retentionByMediaId = new Map(
+    retentionItems.map((item) => [item.media_asset_id, item]),
+  );
+  const coveredItems = streamImages
+    .map((asset) => retentionByMediaId.get(asset.id))
+    .filter((item): item is SavedMediaRetentionItem => Boolean(item));
+  const savedImageTotalBytes = streamImages.reduce((total, asset) => {
+    if (asset.file_size_bytes < 0) {
+      return total;
+    }
+    return total + asset.file_size_bytes;
+  }, 0);
+  const createdTimes = streamImages
+    .map((asset) => asset.created_at)
+    .filter((value): value is string => Boolean(value))
+    .sort((left, right) => new Date(left).getTime() - new Date(right).getTime());
+  const protectedMediaCount =
+    coveredItems.length > 0
+      ? coveredItems.filter((item) => item.risk_level === "protected").length
+      : null;
+  const reviewLinkedCount =
+    coveredItems.length > 0
+      ? coveredItems.filter(
+          (item) =>
+            item.linked_motion_evidence_count > 0 ||
+            item.linked_event_count > 0 ||
+            item.linked_visit_count > 0 ||
+            item.reviewed_truth_count > 0,
+        ).length
+      : null;
+  const unreviewedSavedImageCount =
+    coveredItems.length > 0
+      ? coveredItems.filter((item) => item.reviewed_truth_count === 0).length
+      : null;
+  const retentionCoverage =
+    streamImages.length === 0
+      ? "available"
+      : coveredItems.length === streamImages.length
+        ? "available"
+        : coveredItems.length > 0
+          ? "partial"
+          : "unavailable";
+
+  let readiness: StorageGuardrailReadiness = "OK";
+  if (protectedMediaCount && protectedMediaCount > 0) {
+    readiness = "Export/reviewed media protected";
+  } else if (reviewLinkedCount && reviewLinkedCount > 0) {
+    readiness = "Review pending images";
+  } else if (streamImages.length > 100) {
+    readiness = "Watch accumulation";
+  } else if (streamImages.length > 20) {
+    readiness = "Watch accumulation";
+  } else if (streamImages.length >= 2 && !motionState.result) {
+    readiness = "OK";
+  } else {
+    readiness = "Repeated capture not enabled yet";
+  }
+
+  let recommendedAction = "Capture another snapshot";
+  if (streamImages.length === 0) {
+    recommendedAction = "Capture another snapshot";
+  } else if (streamImages.length === 1) {
+    recommendedAction = "Capture another snapshot";
+  } else if (motionState.result?.activity_detected) {
+    recommendedAction = "Review activity";
+  } else if (streamImages.length > 20 || (reviewLinkedCount && reviewLinkedCount > 0)) {
+    recommendedAction = "Review activity";
+  } else {
+    recommendedAction = "Check motion";
+  }
+  if (protectedMediaCount && protectedMediaCount > 0) {
+    recommendedAction = "Export reviewed data";
+  }
+  if (streamImages.length > 100 && (!reviewLinkedCount || reviewLinkedCount === 0)) {
+    recommendedAction = "Configure cleanup later";
+  }
+
+  return {
+    savedImageCount: streamImages.length,
+    savedImageTotalBytes,
+    recentSavedImageCount: streamImages.filter((asset) => {
+      const createdAt = new Date(asset.created_at).getTime();
+      return Number.isFinite(createdAt) && Date.now() - createdAt <= 24 * 60 * 60 * 1000;
+    }).length,
+    protectedMediaCount,
+    reviewLinkedCount,
+    unreviewedSavedImageCount,
+    oldestSavedImageAt: createdTimes[0] ?? null,
+    newestSavedImageAt: createdTimes[createdTimes.length - 1] ?? null,
+    readiness,
+    recommendedAction,
+    retentionCoverage,
+  };
+}
+
+function storageGuardrailCopy(summary: StorageGuardrailSummary): string {
+  if (summary.savedImageCount < 2) {
+    return `${summary.savedImageCount} saved images. Needs snapshots for motion.`;
+  }
+  if (summary.savedImageCount > 100) {
+    return `${summary.savedImageCount} saved images. Storage warning before repeated checks.`;
+  }
+  if (summary.savedImageCount > 20) {
+    return `${summary.savedImageCount} saved images. Watch accumulation before repeated checks.`;
+  }
+  return `${summary.savedImageCount} saved images. Motion check ready.`;
+}
+
+function optionalCountText(count: number | null): string {
+  return count === null ? "Not available yet" : String(count);
+}
+
 function buildMediaLifecycleSummary(
   asset: MediaAsset,
   detectionRuns: DetectionRun[],
@@ -708,6 +864,8 @@ export function StreamsPage({
   const [snapshotProposalDecisionResult, setSnapshotProposalDecisionResult] =
     useState<DetectionProposalDecisionResult | null>(null);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  const [savedMediaRetentionReport, setSavedMediaRetentionReport] =
+    useState<SavedMediaRetentionReportResponse | null>(null);
   const [timelineDetectionRuns, setTimelineDetectionRuns] = useState<DetectionRun[]>([]);
   const [timelineDetectionProposals, setTimelineDetectionProposals] = useState<
     DetectionProposal[]
@@ -757,6 +915,7 @@ export function StreamsPage({
   const [snapshotProposalMessage, setSnapshotProposalMessage] = useState<string | null>(null);
   const [previewZonesError, setPreviewZonesError] = useState<string | null>(null);
   const [mediaAssetsError, setMediaAssetsError] = useState<string | null>(null);
+  const [savedMediaRetentionError, setSavedMediaRetentionError] = useState<string | null>(null);
   const [timelineLifecycleError, setTimelineLifecycleError] = useState<string | null>(null);
   const [localDetectorAdapterError, setLocalDetectorAdapterError] = useState<string | null>(null);
   const [folderPreviewError, setFolderPreviewError] = useState<string | null>(null);
@@ -772,6 +931,7 @@ export function StreamsPage({
   const [isCreatingSnapshotProposal, setIsCreatingSnapshotProposal] = useState(false);
   const [isConvertingSnapshotProposal, setIsConvertingSnapshotProposal] = useState(false);
   const [isLoadingMediaAssets, setIsLoadingMediaAssets] = useState(false);
+  const [isLoadingSavedMediaRetention, setIsLoadingSavedMediaRetention] = useState(false);
   const [isLoadingTimelineLifecycle, setIsLoadingTimelineLifecycle] = useState(false);
   const [isLoadingLocalDetectorAdapter, setIsLoadingLocalDetectorAdapter] = useState(false);
   const [isPreviewingFolderImport, setIsPreviewingFolderImport] = useState(false);
@@ -927,6 +1087,10 @@ export function StreamsPage({
   }, []);
 
   useEffect(() => {
+    void loadSavedMediaRetentionReport();
+  }, []);
+
+  useEffect(() => {
     void loadTimelineLifecycleData();
   }, []);
 
@@ -1012,6 +1176,27 @@ export function StreamsPage({
     }
   }
 
+  async function loadSavedMediaRetentionReport(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
+      setIsLoadingSavedMediaRetention(true);
+    }
+    setSavedMediaRetentionError(null);
+    try {
+      setSavedMediaRetentionReport(await apiClient.getSavedMediaRetentionReport());
+    } catch (caught) {
+      setSavedMediaRetentionError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not load storage guardrails.",
+      );
+    } finally {
+      if (showLoading) {
+        setIsLoadingSavedMediaRetention(false);
+      }
+    }
+  }
+
   async function loadTimelineLifecycleData(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
     if (showLoading) {
@@ -1038,6 +1223,13 @@ export function StreamsPage({
         setIsLoadingTimelineLifecycle(false);
       }
     }
+  }
+
+  async function refreshLifecycleAndStorage() {
+    await Promise.all([
+      loadTimelineLifecycleData({ showLoading: false }),
+      loadSavedMediaRetentionReport({ showLoading: false }),
+    ]);
   }
 
   async function loadLocalDetectorAdapter(options: { showLoading?: boolean } = {}) {
@@ -1190,6 +1382,7 @@ export function StreamsPage({
         });
       }
       await loadMediaAssets({ showLoading: false });
+      await loadSavedMediaRetentionReport({ showLoading: false });
     } catch (caught) {
       const error = caught instanceof Error ? caught.message : "Could not capture snapshot.";
       setPreviewSaveError(error);
@@ -1246,7 +1439,7 @@ export function StreamsPage({
           ? "Demo analysis created a suggested label. Review correction still creates reviewed data."
           : "Demo analysis completed without a suggested label.",
       );
-      await loadTimelineLifecycleData({ showLoading: false });
+      await refreshLifecycleAndStorage();
     } catch (caught) {
       setSnapshotProposalError(
         caught instanceof Error ? caught.message : "Image analysis could not be created.",
@@ -1280,7 +1473,7 @@ export function StreamsPage({
       setSnapshotProposalMessage(
         "Sent suggestion to Review. No reviewed data was created.",
       );
-      await loadTimelineLifecycleData({ showLoading: false });
+      await refreshLifecycleAndStorage();
     } catch (caught) {
       setSnapshotProposalError(
         caught instanceof Error
@@ -1318,7 +1511,7 @@ export function StreamsPage({
         },
       );
       setPreviewEvidenceResult(result);
-      await loadTimelineLifecycleData({ showLoading: false });
+      await refreshLifecycleAndStorage();
     } catch (caught) {
       setPreviewEvidenceError(
         caught instanceof Error ? caught.message : "Could not create pending evidence.",
@@ -1357,7 +1550,7 @@ export function StreamsPage({
             }
           : current,
       );
-      await loadTimelineLifecycleData({ showLoading: false });
+      await refreshLifecycleAndStorage();
     } catch (caught) {
       setPreviewPromotionError(
         caught instanceof Error
@@ -1454,7 +1647,7 @@ export function StreamsPage({
         lastCheckedAt: new Date().toISOString(),
       });
       if (options.createActivity) {
-        await loadTimelineLifecycleData({ showLoading: false });
+        await refreshLifecycleAndStorage();
       }
     } catch (caught) {
       updateStreamMotionCheckState(stream.id, {
@@ -1510,7 +1703,7 @@ export function StreamsPage({
             ? "Demo analysis created a suggested label. Review correction still creates reviewed data."
             : "Demo analysis completed without a suggested label.",
       });
-      await loadTimelineLifecycleData({ showLoading: false });
+      await refreshLifecycleAndStorage();
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         proposalError:
@@ -1548,7 +1741,7 @@ export function StreamsPage({
         proposalMessage:
           "Sent suggestion to Review. No reviewed data was created.",
       });
-      await loadTimelineLifecycleData({ showLoading: false });
+      await refreshLifecycleAndStorage();
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         proposalError:
@@ -1596,7 +1789,7 @@ export function StreamsPage({
           "Outputs are proposal evidence only; no reviewed truth was created.",
       });
       updateTimelineActionState(asset.id, { localDetectorResult: result });
-      await loadTimelineLifecycleData({ showLoading: false });
+      await refreshLifecycleAndStorage();
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         localDetectorError:
@@ -1637,7 +1830,7 @@ export function StreamsPage({
         duplicate_policy: "skip_existing",
       });
       updateTimelineActionState(asset.id, { evidenceResult: result });
-      await loadTimelineLifecycleData({ showLoading: false });
+      await refreshLifecycleAndStorage();
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         evidenceError:
@@ -1678,7 +1871,7 @@ export function StreamsPage({
             }
           : currentEvidence,
       });
-      await loadTimelineLifecycleData({ showLoading: false });
+      await refreshLifecycleAndStorage();
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         promotionError:
@@ -1858,7 +2051,7 @@ export function StreamsPage({
       });
       setFolderEvidenceBatchCreateResult(result);
       setFolderEvidenceBatchConfirmed(false);
-      await loadTimelineLifecycleData({ showLoading: false });
+      await refreshLifecycleAndStorage();
     } catch (caught) {
       setFolderEvidenceBatchCreateError(
         caught instanceof Error ? caught.message : "Could not create pending evidence batch.",
@@ -1894,7 +2087,7 @@ export function StreamsPage({
         ...current,
         [item.media_asset_id]: result,
       }));
-      await loadTimelineLifecycleData({ showLoading: false });
+      await refreshLifecycleAndStorage();
     } catch (caught) {
       setFolderEvidenceErrors((current) => ({
         ...current,
@@ -3573,6 +3766,15 @@ export function StreamsPage({
                     motionState.error ??
                     (lastCapture?.status === "failure" ? lastCapture.error : null) ??
                     (lastSnapshotTest?.status === "failure" ? lastSnapshotTest.error : null);
+                  const streamRetentionItems =
+                    savedMediaRetentionReport?.items.filter(
+                      (item) => item.stream_id === stream.id,
+                    ) ?? [];
+                  const storageSummary = storageGuardrailSummary(
+                    streamImageAssets,
+                    streamRetentionItems,
+                    motionState,
+                  );
                   const motionResult = motionState.result ?? null;
                   const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
                   const canCreateMotionReviewActivity =
@@ -3690,6 +3892,83 @@ export function StreamsPage({
                             {lastCapture?.mediaAssetId ? (
                               <span>Saved image ID: {lastCapture.mediaAssetId}</span>
                             ) : null}
+                          </div>
+                        </details>
+                      </div>
+                      <div className="source-storage-guardrails-panel">
+                        <div className="item-title-row">
+                          <div>
+                            <strong>Storage guardrails</strong>
+                            <p className="meta-text">
+                              Read-only saved image signals before repeated checks later.
+                            </p>
+                          </div>
+                          <StatusPill
+                            label={
+                              isLoadingSavedMediaRetention
+                                ? "Loading"
+                                : storageSummary.readiness
+                            }
+                            tone={storageGuardrailTone(storageSummary.readiness)}
+                          />
+                        </div>
+                        <span className="meta-text">{storageGuardrailCopy(storageSummary)}</span>
+                        <div className="source-storage-grid">
+                          <div className="data-row">
+                            <span>Saved images</span>
+                            <strong>{storageSummary.savedImageCount}</strong>
+                          </div>
+                          <div className="data-row">
+                            <span>Storage estimate</span>
+                            <strong>{formatBytes(storageSummary.savedImageTotalBytes)}</strong>
+                          </div>
+                          <div className="data-row">
+                            <span>Recent saved images</span>
+                            <strong>{storageSummary.recentSavedImageCount}</strong>
+                          </div>
+                          <div className="data-row">
+                            <span>Protected media</span>
+                            <strong>{optionalCountText(storageSummary.protectedMediaCount)}</strong>
+                          </div>
+                          <div className="data-row">
+                            <span>Review-linked/pending</span>
+                            <strong>{optionalCountText(storageSummary.reviewLinkedCount)}</strong>
+                          </div>
+                          <div className="data-row">
+                            <span>Recommended next action</span>
+                            <strong>{storageSummary.recommendedAction}</strong>
+                          </div>
+                        </div>
+                        <span className="meta-text">
+                          Reviewed/export-linked media is protected by default. Manual cleanup
+                          remains separate.
+                        </span>
+                        <span className="meta-text">Repeated capture is not enabled yet.</span>
+                        {savedMediaRetentionError ? (
+                          <div className="zone-error">{savedMediaRetentionError}</div>
+                        ) : null}
+                        <details className="advanced-details">
+                          <summary>Advanced details</summary>
+                          <div className="source-connection-meta">
+                            <span>
+                              Retention coverage: {formatLabel(storageSummary.retentionCoverage)}
+                            </span>
+                            <span>
+                              Unreviewed saved images:{" "}
+                              {optionalCountText(storageSummary.unreviewedSavedImageCount)}
+                            </span>
+                            <span>
+                              Oldest saved image:{" "}
+                              {storageSummary.oldestSavedImageAt
+                                ? formatDateTime(storageSummary.oldestSavedImageAt)
+                                : "Not available yet"}
+                            </span>
+                            <span>
+                              Newest saved image:{" "}
+                              {storageSummary.newestSavedImageAt
+                                ? formatDateTime(storageSummary.newestSavedImageAt)
+                                : "Not available yet"}
+                            </span>
                           </div>
                         </details>
                       </div>

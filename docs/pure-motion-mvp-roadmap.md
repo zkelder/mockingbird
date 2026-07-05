@@ -92,6 +92,8 @@ Already built or partially built:
 - saved-snapshot focused Activity crop planning while preserving the full best snapshot
 - source health / camera status for manual snapshot tests, captures, saved image
   counts, and saved-snapshot motion readiness
+- storage guardrails for saved image counts, accumulation warnings, and
+  reviewed/export-linked media protection before repeated capture
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
@@ -99,7 +101,7 @@ Not yet complete:
 - real repeated frame/snapshot motion bridge from source media
 - derived focused crop file creation
 - persistent capture health sufficient for automatic/repeated capture
-- storage/retention policy for automatic activity capture
+- enforced storage/retention limits for automatic activity capture
 - live video / RTSP / USB / ESP32 adapters
 - automatic workers, polling, schedulers, or continuous frame sampling
 
@@ -231,6 +233,12 @@ Defaults should include:
 - reviewed/export-related media protected by default
 - destructive cleanup remains explicit and confirmed, not automatic
 
+Storage Guardrails 1 status: Cameras/Streams now shows read-only Storage
+guardrails for each Stream: saved image counts, storage estimate when known,
+accumulation warnings, review-linked/protected counts when inferable, and the
+next manual action before repeated snapshot watch. It adds no deletion, cleanup,
+automatic capture, live video, polling, workers, schedulers, or repeated capture.
+
 ## Detector And Classifier Position
 
 Detector models are not required for the pure-motion MVP.
@@ -286,11 +294,15 @@ activity candidate -> Review -> ReviewLabel truth -> Bird Log -> export
    - Status: manual Source health is visible in Cameras/Streams for snapshot,
      capture, saved-image, and motion readiness.
 
-6. **Repeated Snapshot Watch 1**
+6. **Storage Guardrails 1**
+   - Status: read-only saved-image counts, accumulation warnings, and
+     reviewed/export-linked protection are visible before repeated checks.
+
+7. **Repeated Snapshot Watch 1**
    - Manual start/stop repeated snapshot capture from external_url source.
    - Still no RTSP/USB/ESP32/live video worker.
 
-7. **Live/Video Adapter Boundary**
+8. **Live/Video Adapter Boundary**
    - Only after the above proves anti-flood, storage, and review behavior.
 
 ## Guardrails
