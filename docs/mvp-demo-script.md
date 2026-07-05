@@ -171,25 +171,22 @@ Dataset Exports.
 - [ ] Confirm the setup panel says model files are not bundled or downloaded,
       detector output is DetectionProposal evidence, and ReviewLabel correction
       remains truth.
-- [ ] Open Streams and configure or select an `external_url` Source.
-- [ ] Fetch a still-image snapshot preview.
-- [ ] Save the snapshot as a local MediaAsset.
-- [ ] Confirm the saved MediaAsset appears in the Stream saved-media timeline.
-- [ ] Confirm lifecycle status shows whether proposal evidence, MotionEvidence,
-      promoted review context, or ReviewLabel truth already exists.
+- [ ] Open Streams and configure or select an external snapshot camera/source.
+- [ ] Click `Test snapshot`.
+- [ ] Confirm success/failure, timestamp, content type, and preview image when available.
+- [ ] Click `Capture snapshot`.
+- [ ] Confirm the saved image appears under that camera/source and Stream.
+- [ ] Confirm image status shows Not analyzed, Suggestion available, Needs review, or Reviewed.
 - [ ] Confirm local detector readiness is visible for saved image media.
-- [ ] If not configured, confirm setup guidance and demo proposal fallback.
+- [ ] If not configured, confirm setup guidance and demo analysis fallback.
 - [ ] If configured with `MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH`, run the local
-      detector explicitly and confirm DetectionRun/DetectionProposal evidence.
-- [ ] Optionally create synthetic demo DetectionProposal evidence from the
-      saved timeline media.
-- [ ] Choose an active reviewable Zone and create pending MotionEvidence.
-- [ ] Optionally create pending MotionEvidence from the saved timeline media.
-- [ ] Optionally promote that evidence to reviewable Event/Visit records.
-- [ ] Open Review Queue.
+      detector explicitly and confirm suggested labels.
+- [ ] Otherwise click `Analyze image (demo)`.
+- [ ] Send the suggestion to Review when needed.
+- [ ] Open Review.
 - [ ] Submit an explicit correction.
-- [ ] Return to the Stream saved-media timeline and confirm truth/export status
-      appears when inferable from existing review labels.
+- [ ] Return to the Stream saved images and confirm reviewed/export status when
+      inferable from existing corrections.
 - [ ] Create a reviewed-only Dataset Export and inspect the proof record.
 
 This path uses existing explicit browser actions only. Demo proposal creation is
@@ -222,24 +219,21 @@ create proposal evidence only.
 - [ ] Enter safe HTTP still-image URL metadata.
 - [ ] Confirm setup review/status says explicit preview is available and
       future-safe.
-- [ ] Click `Fetch still-image preview`.
-- [ ] Confirm transient preview appears.
+- [ ] Click `Test snapshot`.
+- [ ] Confirm transient preview appears with success/failure, timestamp, and
+      content type.
 - [ ] Confirm no Event, Visit, or truth is created.
-- [ ] Save preview as a local MediaAsset.
-- [ ] Confirm a MediaAsset ID appears.
-- [ ] Confirm the saved media appears in the selected Stream timeline.
-- [ ] Confirm lifecycle status is visible before creating more evidence.
-- [ ] Confirm local detector readiness and run the detector only if configured.
-- [ ] Optionally create synthetic demo DetectionProposal evidence from the
-      timeline item.
-- [ ] Create pending MotionEvidence from saved media.
-- [ ] Open Motion Evidence.
-- [ ] Confirm pending evidence appears with saved media context.
-- [ ] Promote explicitly.
+- [ ] Click `Capture snapshot`.
+- [ ] Confirm the saved image appears under the selected camera/source and
+      Stream.
+- [ ] Confirm image status is visible before analyzing.
+- [ ] Confirm local detector readiness and analyze only if configured.
+- [ ] Otherwise use `Analyze image (demo)`.
+- [ ] Send the suggestion to Review.
 - [ ] Open Event Detail and Visit Detail.
 - [ ] Confirm no label/truth yet.
-- [ ] Open Review Queue and filter by search text, item type, evidence/media
-      state, and stream/source context to find the review item.
+- [ ] Open Review and filter by search text, item type, evidence/media state,
+      and stream/source context to find the review item.
 - [ ] Submit a correction.
 - [ ] Confirm correction becomes truth.
 

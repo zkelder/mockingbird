@@ -845,6 +845,19 @@ button {
   object-fit: contain;
 }
 
+.advanced-details {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.advanced-details summary {
+  color: #526158;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
 .folder-source-import-panel,
 .folder-import-preview-result,
 .folder-import-result-panel,

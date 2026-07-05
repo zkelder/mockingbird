@@ -307,35 +307,53 @@ function buildMediaLifecycleSummary(
   };
 }
 
-function lifecycleTone(summary: MediaLifecycleSummary): "good" | "review" | "quiet" {
+function savedImageStatusLabel(summary: MediaLifecycleSummary): string {
+  if (summary.truthLabels.length > 0) {
+    return "Reviewed";
+  }
+  if (summary.eventIds.length > 0 || summary.visitIds.length > 0) {
+    return "Needs review";
+  }
+  if (
+    summary.proposals.length > 0 ||
+    summary.detectionRuns.length > 0 ||
+    summary.motionEvidence.length > 0
+  ) {
+    return "Suggestion available";
+  }
+  return "Not analyzed";
+}
+
+function savedImageStatusTone(summary: MediaLifecycleSummary): "good" | "review" | "quiet" {
   if (summary.truthLabels.length > 0) {
     return "good";
   }
   if (
     summary.eventIds.length > 0 ||
     summary.visitIds.length > 0 ||
-    summary.hasPendingMotionEvidence ||
-    summary.proposals.length > 0
+    summary.proposals.length > 0 ||
+    summary.detectionRuns.length > 0 ||
+    summary.motionEvidence.length > 0
   ) {
     return "review";
   }
   return "quiet";
 }
 
-function lifecycleLabel(summary: MediaLifecycleSummary): string {
+function savedImageNextAction(summary: MediaLifecycleSummary): string {
   if (summary.truthLabels.length > 0) {
-    return "Truth exists";
+    return "Export reviewed data";
   }
   if (summary.eventIds.length > 0 || summary.visitIds.length > 0) {
-    return "Needs correction";
+    return "Review item";
   }
-  if (summary.hasPendingMotionEvidence) {
-    return "Pending evidence";
+  if (summary.proposals.length > 0 || summary.detectionRuns.length > 0) {
+    return "Review suggestion";
   }
-  if (summary.proposals.length > 0) {
-    return "Proposal evidence";
+  if (summary.motionEvidence.length > 0) {
+    return "Open review context";
   }
-  return "No evidence";
+  return "Analyze image";
 }
 
 function modelAdapterTone(status?: ModelAdapter["status"]): "good" | "review" | "quiet" {
@@ -360,10 +378,10 @@ function modelAdapterSupportsMedia(adapter: ModelAdapter | null, asset: MediaAss
 
 function localDetectorReadinessCopy(adapter: ModelAdapter | null): string {
   if (!adapter) {
-    return "Local detector readiness is unavailable. Demo proposal evidence remains available.";
+    return "Local detector readiness is unavailable. Demo analysis remains available.";
   }
   if (canRunModelAdapter(adapter)) {
-    return "Ready for explicit local image detector runs. Outputs remain proposal evidence only.";
+    return "Ready for explicit local image analysis. Suggestions still require Review correction.";
   }
   return (
     adapter.configuration_status?.setup_hint ??
@@ -726,7 +744,7 @@ export function StreamsPage({
       setTimelineReviewLabels(labels);
     } catch (caught) {
       setTimelineLifecycleError(
-        caught instanceof Error ? caught.message : "Could not load saved media lifecycle status.",
+        caught instanceof Error ? caught.message : "Could not load saved image status.",
       );
     } finally {
       if (showLoading) {
@@ -807,7 +825,7 @@ export function StreamsPage({
       setPreviewResult(result);
     } catch (caught) {
       setPreviewError(
-        caught instanceof Error ? caught.message : "Could not fetch still-image preview.",
+        caught instanceof Error ? caught.message : "Could not test snapshot.",
       );
     } finally {
       setIsFetchingPreview(false);
@@ -838,7 +856,7 @@ export function StreamsPage({
       await loadMediaAssets({ showLoading: false });
     } catch (caught) {
       setPreviewSaveError(
-        caught instanceof Error ? caught.message : "Could not save still-image preview.",
+        caught instanceof Error ? caught.message : "Could not capture snapshot.",
       );
     } finally {
       setIsSavingPreview(false);
@@ -866,7 +884,7 @@ export function StreamsPage({
   async function handleCreateSnapshotProposal() {
     const payload = buildSnapshotProposalPayload();
     if (!payload) {
-      setSnapshotProposalError("Save a snapshot as local media before creating proposal evidence.");
+      setSnapshotProposalError("Capture a snapshot before analyzing the image.");
       return;
     }
 
@@ -879,13 +897,13 @@ export function StreamsPage({
       setSnapshotProposalResult(result);
       setSnapshotProposalMessage(
         result.proposals.length > 0
-          ? "Synthetic snapshot proposal evidence was created. Review correction still creates truth."
-          : "Demo run completed without proposal evidence.",
+          ? "Demo analysis created a suggested label. Review correction still creates reviewed data."
+          : "Demo analysis completed without a suggested label.",
       );
       await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       setSnapshotProposalError(
-        caught instanceof Error ? caught.message : "Snapshot proposal evidence could not be created.",
+        caught instanceof Error ? caught.message : "Image analysis could not be created.",
       );
     } finally {
       setIsCreatingSnapshotProposal(false);
@@ -896,7 +914,7 @@ export function StreamsPage({
     const proposal = snapshotProposalResult?.proposals[0] ?? null;
     if (!proposal) {
       setSnapshotProposalError(
-        "Create snapshot proposal evidence before converting it to Event/Visit context.",
+        "Analyze the image before sending a suggestion to Review.",
       );
       return;
     }
@@ -914,14 +932,14 @@ export function StreamsPage({
       });
       setSnapshotProposalDecisionResult(result);
       setSnapshotProposalMessage(
-        "Converted proposal into needs-review Event/Visit context. No ReviewLabel truth was created.",
+        "Sent suggestion to Review. No reviewed data was created.",
       );
       await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       setSnapshotProposalError(
         caught instanceof Error
           ? caught.message
-          : "Snapshot proposal could not be converted.",
+          : "Suggestion could not be sent to Review.",
       );
     } finally {
       setIsConvertingSnapshotProposal(false);
@@ -1036,7 +1054,7 @@ export function StreamsPage({
   async function handleCreateTimelineProposal(asset: MediaAsset) {
     if (!isImageMedia(asset)) {
       updateTimelineActionState(asset.id, {
-        proposalError: "Only saved image media can create demo proposal evidence.",
+        proposalError: "Only saved images can be analyzed.",
       });
       return;
     }
@@ -1053,14 +1071,14 @@ export function StreamsPage({
         proposalResult: result,
         proposalMessage:
           result.proposals.length > 0
-            ? "Synthetic timeline proposal evidence was created. Review correction still creates truth."
-            : "Demo run completed without proposal evidence.",
+            ? "Demo analysis created a suggested label. Review correction still creates reviewed data."
+            : "Demo analysis completed without a suggested label.",
       });
       await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         proposalError:
-          caught instanceof Error ? caught.message : "Timeline proposal evidence could not be created.",
+          caught instanceof Error ? caught.message : "Image analysis could not be created.",
       });
     } finally {
       updateTimelineActionState(asset.id, { isCreatingProposal: false });
@@ -1071,7 +1089,7 @@ export function StreamsPage({
     const proposal = timelineActionState[asset.id]?.proposalResult?.proposals[0] ?? null;
     if (!proposal) {
       updateTimelineActionState(asset.id, {
-        proposalError: "Create timeline proposal evidence before converting it.",
+        proposalError: "Analyze the image before sending a suggestion to Review.",
       });
       return;
     }
@@ -1092,13 +1110,13 @@ export function StreamsPage({
       updateTimelineActionState(asset.id, {
         proposalDecisionResult: result,
         proposalMessage:
-          "Converted proposal into needs-review Event/Visit context. No ReviewLabel truth was created.",
+          "Sent suggestion to Review. No reviewed data was created.",
       });
       await loadTimelineLifecycleData({ showLoading: false });
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         proposalError:
-          caught instanceof Error ? caught.message : "Timeline proposal could not be converted.",
+          caught instanceof Error ? caught.message : "Suggestion could not be sent to Review.",
       });
     } finally {
       updateTimelineActionState(asset.id, { isConvertingProposal: false });
@@ -1138,7 +1156,7 @@ export function StreamsPage({
         media_asset_id: asset.id,
         zone_ids: selectedZoneId ? [selectedZoneId] : null,
         notes:
-          "Explicit local detector run from Stream saved media timeline. " +
+          "Explicit local detector run from Stream saved image timeline. " +
           "Outputs are proposal evidence only; no reviewed truth was created.",
       });
       updateTimelineActionState(asset.id, { localDetectorResult: result });
@@ -1157,13 +1175,13 @@ export function StreamsPage({
     const zoneId = timelineSelectedZoneId(asset);
     if (!isImageMedia(asset)) {
       updateTimelineActionState(asset.id, {
-        evidenceError: "Only saved image media can create pending MotionEvidence.",
+        evidenceError: "Only saved images can create review context.",
       });
       return;
     }
     if (!zoneId) {
       updateTimelineActionState(asset.id, {
-        evidenceError: "Add an active non-privacy/non-ignore Zone before creating MotionEvidence.",
+        evidenceError: "Add an active non-privacy/non-ignore Zone before creating review context.",
       });
       return;
     }
@@ -1187,7 +1205,7 @@ export function StreamsPage({
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         evidenceError:
-          caught instanceof Error ? caught.message : "Timeline MotionEvidence could not be created.",
+          caught instanceof Error ? caught.message : "Review context could not be created.",
       });
     } finally {
       updateTimelineActionState(asset.id, { isCreatingEvidence: false });
@@ -1228,7 +1246,7 @@ export function StreamsPage({
     } catch (caught) {
       updateTimelineActionState(asset.id, {
         promotionError:
-          caught instanceof Error ? caught.message : "Timeline MotionEvidence could not be promoted.",
+          caught instanceof Error ? caught.message : "Review item could not be created.",
       });
     } finally {
       updateTimelineActionState(asset.id, { isPromotingEvidence: false });
@@ -1618,7 +1636,7 @@ export function StreamsPage({
             selectedSetupReview.readiness_level === "future_adapter_required"
           ? "Next: future webhook ingest implementation required."
         : isExternalUrlProvider && selectedSetupReview.readiness_level === "metadata_ready"
-          ? "Next: fetch still-image preview explicitly."
+          ? "Next: test a snapshot explicitly."
           : selectedSetupReview.readiness_level === "needs_setup"
           ? "Next: complete setup metadata."
           : selectedSetupReview.readiness_level === "future_adapter_required"
@@ -1630,6 +1648,8 @@ export function StreamsPage({
       ? "Webhook UI ingest is future work."
       : isFolderImportProvider && selectedSetupReview?.readiness_level === "future_adapter_required"
       ? "Preview first, then import as MediaAssets."
+      : isExternalUrlProvider && selectedSetupReview?.readiness_level === "metadata_ready"
+      ? "Test snapshot, then capture one saved image under this camera/source."
       : selectedSetupReview?.next_step ?? selectedConnection?.setup_hint;
 
   return (
@@ -1641,7 +1661,9 @@ export function StreamsPage({
       />
       <section className="notice-panel onboarding-provider-note">
         <strong>Provider setup is metadata first</strong>
-        <span>Use explicit preview, import, or evidence actions below. Live playback is future work.</span>
+        <span>
+          Use explicit snapshot, import, or review actions below. Live playback is future work.
+        </span>
       </section>
       {connectionError ? <div className="error-panel">{connectionError}</div> : null}
       {selectedSource ? (
@@ -1799,22 +1821,22 @@ export function StreamsPage({
               {isExternalUrlProvider ? (
                 <div className="external-preview-panel">
                   <div className="item-title-row">
-                    <h3>Snapshot capture for review</h3>
+                    <h3>Snapshot camera</h3>
                     <StatusPill
                       label={previewResult ? formatLabel(previewResult.status) : "Explicit"}
                       tone={previewResult?.status === "available" ? "good" : "quiet"}
                     />
                   </div>
                   <p>
-                    Fetch one still-image snapshot, save it as local media, then choose whether it
-                    should become pending evidence for review.
+                    Test the Snapshot URL, capture one saved image, then analyze it when you are
+                    ready to review.
                   </p>
                   <div className="source-connection-meta">
-                    <span>Still-image snapshot only</span>
+                    <span>Snapshot URL</span>
                     <span>Not live video</span>
-                    <span>Preview creates no records</span>
-                    <span>Save creates MediaAsset only</span>
-                    <span>Correction creates truth</span>
+                    <span>Test creates no records</span>
+                    <span>Capture saves one image</span>
+                    <span>Correction creates reviewed data</span>
                   </div>
                   <button
                     className="secondary-action"
@@ -1822,12 +1844,12 @@ export function StreamsPage({
                     onClick={handleFetchStillImagePreview}
                     type="button"
                   >
-                    {isFetchingPreview ? "Fetching preview..." : "Fetch still-image preview"}
+                    {isFetchingPreview ? "Testing snapshot..." : "Test snapshot"}
                   </button>
                   {previewError ? <div className="zone-error">{previewError}</div> : null}
                   {previewResult ? (
                     <div className="external-preview-result">
-                      <strong>{previewResult.message}</strong>
+                      <strong>Snapshot test: {previewResult.message}</strong>
                       {previewResult.warnings.length > 0 ? (
                         <div className="source-warning-list">
                           {previewResult.warnings.map((warning) => (
@@ -1844,12 +1866,15 @@ export function StreamsPage({
                         </div>
                       ) : null}
                       <div className="source-connection-meta">
+                        {previewResult.fetched_at ? (
+                          <span>Tested: {formatDateTime(previewResult.fetched_at)}</span>
+                        ) : null}
                         {previewResult.content_type ? (
                           <span>Content: {previewResult.content_type}</span>
                         ) : null}
                         {previewResult.bytes_read !== null &&
                         previewResult.bytes_read !== undefined ? (
-                          <span>Bytes read: {previewResult.bytes_read}</span>
+                          <span>Size read: {formatBytes(previewResult.bytes_read)}</span>
                         ) : null}
                         <span>Not saved</span>
                         <span>No Events/Visits created</span>
@@ -1863,35 +1888,41 @@ export function StreamsPage({
                             type="button"
                           >
                             {isSavingPreview
-                              ? "Saving preview..."
-                              : "Save preview as local media"}
+                              ? "Capturing snapshot..."
+                              : "Capture snapshot"}
                           </button>
                           <span className="meta-text">
-                            Saved as local media only. No Events, Visits, or truth will be created.
+                            Capture saves one local image only. It will not analyze, review, or
+                            export automatically.
                           </span>
                         </div>
                       ) : null}
                       {previewSaveError ? <div className="zone-error">{previewSaveError}</div> : null}
                       {previewSaveResult ? (
                         <div className="external-preview-save-status">
-                          <strong>{previewSaveResult.message}</strong>
+                          <strong>Captured snapshot: {previewSaveResult.message}</strong>
                           <div className="source-connection-meta">
-                            {previewSaveResult.media_asset_id ? (
-                              <span>MediaAsset: {previewSaveResult.media_asset_id}</span>
+                            {previewSaveResult.fetched_at ? (
+                              <span>Captured: {formatDateTime(previewSaveResult.fetched_at)}</span>
                             ) : null}
                             {previewSaveResult.content_type ? (
                               <span>Content: {previewSaveResult.content_type}</span>
                             ) : null}
                             {previewSaveResult.file_name ? (
-                              <span>File: {previewSaveResult.file_name}</span>
+                              <span>Saved image: {previewSaveResult.file_name}</span>
                             ) : null}
-                            {previewSaveResult.relative_path ? (
-                              <span>Path: {previewSaveResult.relative_path}</span>
-                            ) : null}
-                            <span>Bytes written: {previewSaveResult.bytes_written}</span>
+                            <span>Size: {formatBytes(previewSaveResult.bytes_written)}</span>
+                            <span>Source: {selectedSource?.name ?? previewSaveResult.source_id}</span>
+                            <span>
+                              Stream:{" "}
+                              {selectedFirstStream?.name ??
+                                previewSaveResult.stream_id ??
+                                "none"}
+                            </span>
                           </div>
                           <span className="meta-text">
-                            Saved as local media only. No Events, Visits, or truth were created.
+                            Next: analyze the saved image below. No review truth or export was
+                            created.
                           </span>
                           {previewSaveResult.media_asset_id ? (
                             <a
@@ -1900,26 +1931,46 @@ export function StreamsPage({
                               rel="noreferrer"
                               target="_blank"
                             >
-                              Open saved media
+                              Open saved image
                             </a>
                           ) : null}
+                          <details className="advanced-details">
+                            <summary>Advanced details</summary>
+                            <div className="source-connection-meta">
+                              {previewSaveResult.media_asset_id ? (
+                                <span>MediaAsset: {previewSaveResult.media_asset_id}</span>
+                              ) : null}
+                              {previewSaveResult.relative_path ? (
+                                <span>Path: {previewSaveResult.relative_path}</span>
+                              ) : null}
+                              <span>
+                                Creates Event: {previewSaveResult.creates_event ? "Yes" : "No"}
+                              </span>
+                              <span>
+                                Creates Visit: {previewSaveResult.creates_visit ? "Yes" : "No"}
+                              </span>
+                              <span>
+                                Creates truth: {previewSaveResult.creates_truth ? "Yes" : "No"}
+                              </span>
+                            </div>
+                          </details>
                           {previewSaveResult.media_asset_id ? (
                             <div className="external-preview-proposal-status">
                               <div className="section-heading">
                                 <div>
-                                  <span className="meta-text">Track B</span>
-                                  <h3>Create snapshot proposal evidence</h3>
+                                  <span className="meta-text">Saved image</span>
+                                  <h3>Analyze captured image</h3>
                                 </div>
-                                <StatusPill label="Synthetic evidence" tone="quiet" />
+                                <StatusPill label="Demo suggestion" tone="quiet" />
                               </div>
                               <p>
-                                Create synthetic demo proposal evidence from this saved snapshot.
-                                No model inspects the media and no reviewed truth is created.
+                                Create a demo suggestion for review from this saved snapshot. No
+                                model inspects the image and no reviewed data is created.
                               </p>
                               <div className="import-flow-strip">
-                                <span>Saved snapshot</span>
-                                <span>DetectionProposal evidence</span>
-                                <span>Review correction truth</span>
+                                <span>Saved image</span>
+                                <span>Suggested label</span>
+                                <span>Review correction</span>
                               </div>
                               {snapshotProposalMessage ? (
                                 <div className="notice-panel compact-notice">
@@ -1941,7 +1992,7 @@ export function StreamsPage({
                                 >
                                   {isCreatingSnapshotProposal
                                     ? "Creating..."
-                                    : "Create demo proposal"}
+                                    : "Analyze image"}
                                 </button>
                                 {snapshotProposalResult?.proposals[0] &&
                                 !snapshotProposalDecisionResult ? (
@@ -1953,7 +2004,7 @@ export function StreamsPage({
                                   >
                                     {isConvertingSnapshotProposal
                                       ? "Converting..."
-                                      : "Convert first proposal to Event/Visit"}
+                                      : "Send suggestion to Review"}
                                   </button>
                                 ) : null}
                                 <button
@@ -1961,118 +2012,179 @@ export function StreamsPage({
                                   onClick={onOpenDetectionProposals}
                                   type="button"
                                 >
-                                  Open Detection Proposals
+                                  Review suggestions
                                 </button>
                                 <button
                                   className="secondary-action"
                                   onClick={onOpenReview}
                                   type="button"
                                 >
-                                  Open Review Queue
+                                  Review
                                 </button>
                               </div>
                               {snapshotProposalResult ? (
-                                <div className="import-smoke-result-grid">
+                                <div className="timeline-result-grid">
                                   <div className="data-row">
-                                    <span>DetectionRun ID</span>
-                                    <strong>{snapshotProposalResult.detection_run.id}</strong>
-                                  </div>
-                                  <div className="data-row">
-                                    <span>Proposal IDs</span>
+                                    <span>Suggested labels</span>
                                     <strong>
                                       {snapshotProposalResult.proposals.length > 0
                                         ? snapshotProposalResult.proposals
-                                            .map((proposal) => proposal.id)
+                                            .map((proposal) => proposal.label)
                                             .join(", ")
                                         : "none"}
                                     </strong>
                                   </div>
                                   <div className="data-row">
-                                    <span>Review Queue</span>
+                                    <span>Review status</span>
                                     <strong>
-                                      {snapshotProposalResult.review_queue_count} needs review
+                                      {snapshotProposalResult.review_queue_count} items need review
                                     </strong>
                                   </div>
-                                  {snapshotProposalResult.proposals.map((proposal) => (
-                                    <div className="data-row" key={proposal.id}>
-                                      <span>{proposal.id}</span>
+                                  <div className="data-row">
+                                    <span>Reviewed data created</span>
+                                    <strong>No</strong>
+                                  </div>
+                                </div>
+                              ) : null}
+                              {snapshotProposalResult ? (
+                                <details className="advanced-details">
+                                  <summary>Advanced analysis details</summary>
+                                  <div className="import-smoke-result-grid">
+                                    <div className="data-row">
+                                      <span>DetectionRun ID</span>
+                                      <strong>{snapshotProposalResult.detection_run.id}</strong>
+                                    </div>
+                                    <div className="data-row">
+                                      <span>Proposal IDs</span>
                                       <strong>
-                                        {proposal.label} / {Math.round(proposal.confidence * 100)}
-                                        % / {formatLabel(proposal.status)}
+                                        {snapshotProposalResult.proposals.length > 0
+                                          ? snapshotProposalResult.proposals
+                                              .map((proposal) => proposal.id)
+                                              .join(", ")
+                                          : "none"}
                                       </strong>
                                     </div>
-                                  ))}
+                                    <div className="data-row">
+                                      <span>Review Queue</span>
+                                      <strong>
+                                        {snapshotProposalResult.review_queue_count} needs review
+                                      </strong>
+                                    </div>
+                                    {snapshotProposalResult.proposals.map((proposal) => (
+                                      <div className="data-row" key={proposal.id}>
+                                        <span>{proposal.id}</span>
+                                        <strong>
+                                          {proposal.label} / {Math.round(proposal.confidence * 100)}
+                                          % / {formatLabel(proposal.status)}
+                                        </strong>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </details>
+                              ) : null}
+                              {snapshotProposalDecisionResult ? (
+                                <div className="timeline-result-grid">
+                                  <div className="data-row">
+                                    <span>Review item</span>
+                                    <strong>
+                                      {snapshotProposalDecisionResult.visit
+                                        ? "Visit ready for correction"
+                                        : snapshotProposalDecisionResult.event
+                                          ? "Event ready for correction"
+                                          : "Not created"}
+                                    </strong>
+                                  </div>
+                                  <div className="data-row">
+                                    <span>Next</span>
+                                    <strong>Review item</strong>
+                                  </div>
+                                  <div className="data-row">
+                                    <span>Reviewed data created</span>
+                                    <strong>No</strong>
+                                  </div>
+                                  <button
+                                    className="primary-action"
+                                    onClick={onOpenReview}
+                                    type="button"
+                                  >
+                                    Review item
+                                  </button>
                                 </div>
                               ) : null}
                               {snapshotProposalDecisionResult ? (
-                                <div className="import-smoke-result-grid">
-                                  <div className="data-row">
-                                    <span>Converted proposal</span>
-                                    <strong>
-                                      {snapshotProposalDecisionResult.proposal.id}
-                                    </strong>
+                                <details className="advanced-details">
+                                  <summary>Advanced review item details</summary>
+                                  <div className="import-smoke-result-grid">
+                                    <div className="data-row">
+                                      <span>Converted proposal</span>
+                                      <strong>
+                                        {snapshotProposalDecisionResult.proposal.id}
+                                      </strong>
+                                    </div>
+                                    <div className="data-row">
+                                      <span>Event</span>
+                                      {snapshotProposalDecisionResult.event ? (
+                                        <button
+                                          className="inline-link-button"
+                                          onClick={() =>
+                                            onOpenEvent(
+                                              snapshotProposalDecisionResult.event!.id,
+                                            )
+                                          }
+                                          type="button"
+                                        >
+                                          {snapshotProposalDecisionResult.event.id}
+                                        </button>
+                                      ) : (
+                                        <strong>not created</strong>
+                                      )}
+                                    </div>
+                                    <div className="data-row">
+                                      <span>Visit</span>
+                                      {snapshotProposalDecisionResult.visit ? (
+                                        <button
+                                          className="inline-link-button"
+                                          onClick={() =>
+                                            onOpenVisit(
+                                              snapshotProposalDecisionResult.visit!.id,
+                                            )
+                                          }
+                                          type="button"
+                                        >
+                                          {snapshotProposalDecisionResult.visit.id}
+                                        </button>
+                                      ) : (
+                                        <strong>not created</strong>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="data-row">
-                                    <span>Event</span>
-                                    {snapshotProposalDecisionResult.event ? (
-                                      <button
-                                        className="inline-link-button"
-                                        onClick={() =>
-                                          onOpenEvent(
-                                            snapshotProposalDecisionResult.event!.id,
-                                          )
-                                        }
-                                        type="button"
-                                      >
-                                        {snapshotProposalDecisionResult.event.id}
-                                      </button>
-                                    ) : (
-                                      <strong>not created</strong>
-                                    )}
-                                  </div>
-                                  <div className="data-row">
-                                    <span>Visit</span>
-                                    {snapshotProposalDecisionResult.visit ? (
-                                      <button
-                                        className="inline-link-button"
-                                        onClick={() =>
-                                          onOpenVisit(
-                                            snapshotProposalDecisionResult.visit!.id,
-                                          )
-                                        }
-                                        type="button"
-                                      >
-                                        {snapshotProposalDecisionResult.visit.id}
-                                      </button>
-                                    ) : (
-                                      <strong>not created</strong>
-                                    )}
-                                  </div>
-                                </div>
+                                </details>
                               ) : null}
                               <div className="notice-panel compact-notice import-smoke-boundary">
                                 <strong>Truth boundary</strong>
                                 <ul>
-                                  <li>Demo proposal is synthetic evidence.</li>
+                                  <li>Demo analysis creates a suggested label only.</li>
                                   <li>No model inspected the snapshot.</li>
-                                  <li>No ReviewLabel truth was created.</li>
-                                  <li>Correction remains explicit in the Review Queue.</li>
+                                  <li>No reviewed data was created.</li>
+                                  <li>Correction remains explicit in Review.</li>
                                 </ul>
                               </div>
                             </div>
                           ) : null}
                           {previewSaveResult.media_asset_id ? (
-                            <div className="external-preview-evidence-actions">
+                            <details className="advanced-details">
+                              <summary>Advanced review context actions</summary>
+                              <div className="external-preview-evidence-actions">
                               <div className="section-heading">
                                 <div>
-                                  <span className="meta-text">Track A</span>
-                                  <h3>Create MotionEvidence</h3>
+                                  <span className="meta-text">Evidence workflow</span>
+                                  <h3>Create pending review context</h3>
                                 </div>
                                 <StatusPill label="Pending evidence" tone="quiet" />
                               </div>
                               <p className="meta-text">
-                                This track keeps the saved snapshot attached to pending
-                                MotionEvidence, with optional explicit Event/Visit promotion.
+                                This keeps the saved snapshot attached to pending internal
+                                evidence, with optional explicit Event/Visit review context.
                               </p>
                               <label className="external-preview-zone-select">
                                 Review zone
@@ -2121,13 +2233,14 @@ export function StreamsPage({
                               >
                                 {isCreatingPreviewEvidence
                                   ? "Creating pending evidence..."
-                                  : "Create pending evidence from saved media"}
+                                  : "Create pending context from saved image"}
                               </button>
                               <span className="meta-text">
                                 This creates pending evidence only. It does not create Events,
                                 Visits, labels, or truth.
                               </span>
-                            </div>
+                              </div>
+                            </details>
                           ) : null}
                           {previewEvidenceError ? (
                             <div className="zone-error">{previewEvidenceError}</div>
@@ -2137,7 +2250,7 @@ export function StreamsPage({
                               <strong>{previewEvidenceResult.message}</strong>
                               <div className="source-connection-meta">
                                 <span>
-                                  MotionEvidence: {previewEvidenceResult.motion_evidence_id}
+                                  Review context: {previewEvidenceResult.motion_evidence_id}
                                 </span>
                                 {previewEvidenceResult.zone_id ? (
                                   <span>Zone: {previewEvidenceResult.zone_id}</span>
@@ -2145,9 +2258,8 @@ export function StreamsPage({
                                 <span>Status: {formatLabel(previewEvidenceResult.status)}</span>
                               </div>
                               <span className="meta-text">
-                                Pending evidence is not truth. Promotion can create reviewable
-                                Event/Visit records, and Review Queue correction still creates the
-                                dataset label.
+                                Pending context is not reviewed data. Creating a review item is
+                                explicit, and Review correction still creates the dataset label.
                               </span>
                               {previewEvidenceResult.warnings.length > 0 ? (
                                 <div className="source-warning-list">
@@ -2166,7 +2278,7 @@ export function StreamsPage({
                                   }
                                   type="button"
                                 >
-                                  Open Motion Evidence
+                                  Open review context
                                 </button>
                                 <button
                                   className="primary-action"
@@ -2177,8 +2289,8 @@ export function StreamsPage({
                                   type="button"
                                 >
                                   {isPromotingPreviewEvidence
-                                    ? "Promoting..."
-                                    : "Promote to Event/Visit"}
+                                    ? "Creating review item..."
+                                    : "Create review item"}
                                 </button>
                               </div>
                               {previewPromotionError ? (
@@ -2187,7 +2299,7 @@ export function StreamsPage({
                               {previewPromotionResult ? (
                                 <div className="external-preview-promotion-status">
                                   <strong>
-                                    Promoted to reviewable Event/Visit evidence.
+                                    Review item created.
                                   </strong>
                                   <div className="source-connection-meta">
                                     {previewPromotionResult.event_id ? (
@@ -2202,8 +2314,8 @@ export function StreamsPage({
                                     </span>
                                   </div>
                                   <span className="meta-text">
-                                    No ReviewLabel truth was created. Correct the Visit in Review
-                                    Queue before using reviewed-only exports.
+                                    No reviewed data was created. Correct the item in Review before
+                                    using reviewed-only exports.
                                   </span>
                                   <div className="detail-actions">
                                     {previewPromotionResult.event_id ? (
@@ -2214,7 +2326,7 @@ export function StreamsPage({
                                         }
                                         type="button"
                                       >
-                                        Open Event
+                                        Open Event detail
                                       </button>
                                     ) : null}
                                     {previewPromotionResult.visit_id ? (
@@ -2225,7 +2337,7 @@ export function StreamsPage({
                                         }
                                         type="button"
                                       >
-                                        Open Visit
+                                        Open Visit detail
                                       </button>
                                     ) : null}
                                     <button
@@ -2233,14 +2345,14 @@ export function StreamsPage({
                                       onClick={onOpenReview}
                                       type="button"
                                     >
-                                      Correct in Review Queue
+                                      Review item
                                     </button>
                                     <button
                                       className="secondary-action"
                                       onClick={onOpenExports}
                                       type="button"
                                     >
-                                      Open Dataset Exports
+                                      Export reviewed data
                                     </button>
                                   </div>
                                 </div>
@@ -3049,10 +3161,10 @@ export function StreamsPage({
                       <div className="stream-media-timeline">
                         <div className="item-title-row">
                           <div>
-                            <strong>Saved media for this stream</strong>
+                            <strong>Saved images for this stream</strong>
                             <p className="meta-text">
-                              Saved media is local evidence context. Actions below are explicit
-                              and create no ReviewLabel truth.
+                              Captured snapshots and imported images stay under this camera/stream.
+                              Analyze, review, and export remain explicit.
                             </p>
                           </div>
                           <StatusPill
@@ -3098,13 +3210,12 @@ export function StreamsPage({
                             {reviewableTimelineZones.length === 0 ? (
                               <div className="zone-error">
                                 Add an active non-privacy/non-ignore Zone before creating
-                                MotionEvidence.
+                                review context.
                               </div>
                             ) : null}
                             {blockedTimelineZoneCount > 0 ? (
                               <span className="meta-text">
-                                Privacy and ignore Zones are omitted from timeline evidence
-                                actions.
+                                Privacy and ignore Zones are omitted from review context actions.
                               </span>
                             ) : null}
                             <div className="timeline-media-list">
@@ -3150,42 +3261,56 @@ export function StreamsPage({
                                   canRunModelAdapter(localDetectorAdapter);
                                 const localDetectorSupportsAsset =
                                   modelAdapterSupportsMedia(localDetectorAdapter, asset);
+                                const savedImageStatus = savedImageStatusLabel(lifecycleSummary);
                                 return (
                                   <section className="timeline-media-item" key={asset.id}>
                                     <div className="item-title-row">
                                       <div>
                                         <strong>
-                                          {asset.original_filename || asset.filename}
+                                          {mediaProvenanceHint(asset).includes("external_url")
+                                            ? "Snapshot"
+                                            : asset.original_filename || asset.filename}
                                         </strong>
-                                        <span className="meta-text">{asset.id}</span>
+                                        <span className="meta-text">
+                                          {asset.original_filename || asset.filename}
+                                        </span>
                                       </div>
                                       <StatusPill
-                                        label={eligibleImage ? "Image actions" : "Context only"}
-                                        tone={eligibleImage ? "good" : "quiet"}
+                                        label={eligibleImage ? savedImageStatus : "Context only"}
+                                        tone={
+                                          eligibleImage
+                                            ? savedImageStatusTone(lifecycleSummary)
+                                            : "quiet"
+                                        }
                                       />
                                     </div>
                                     <div className="source-connection-meta">
                                       <span>Content: {asset.content_type}</span>
-                                      <span>Type: {asset.media_type}</span>
                                       <span>Size: {formatBytes(asset.file_size_bytes)}</span>
-                                      <span>Created: {formatDateTime(asset.created_at)}</span>
-                                      <span>Source: {asset.source_id ?? "none"}</span>
-                                      <span>Stream: {asset.stream_id}</span>
-                                      <span>Provenance: {mediaProvenanceHint(asset)}</span>
+                                      <span>Captured: {formatDateTime(asset.created_at)}</span>
+                                      <span>
+                                        Source:{" "}
+                                        {sources.find((source) => source.id === asset.source_id)
+                                          ?.name ??
+                                          asset.source_id ??
+                                          "none"}
+                                      </span>
+                                      <span>Stream: {stream.name}</span>
+                                      <span>Origin: {mediaProvenanceHint(asset)}</span>
                                     </div>
                                     {asset.notes ? (
                                       <p className="meta-text">{asset.notes}</p>
                                     ) : null}
                                     <div className="timeline-lifecycle-panel">
                                       <div className="item-title-row">
-                                        <strong>Lifecycle</strong>
+                                        <strong>Image status</strong>
                                         <StatusPill
                                           label={
                                             isLoadingTimelineLifecycle
                                               ? "Loading"
-                                              : lifecycleLabel(lifecycleSummary)
+                                              : savedImageStatus
                                           }
-                                          tone={lifecycleTone(lifecycleSummary)}
+                                          tone={savedImageStatusTone(lifecycleSummary)}
                                         />
                                       </div>
                                       {timelineLifecycleError ? (
@@ -3195,62 +3320,69 @@ export function StreamsPage({
                                       ) : null}
                                       <div className="timeline-lifecycle-grid">
                                         <div className="data-row">
-                                          <span>Proposal evidence</span>
+                                          <span>Analysis</span>
                                           <strong>{lifecycleSummary.proposalStatusText}</strong>
                                         </div>
                                         <div className="data-row">
-                                          <span>DetectionRun</span>
+                                          <span>Analysis run</span>
                                           <strong>{lifecycleSummary.detectionRunText}</strong>
                                         </div>
                                         <div className="data-row">
-                                          <span>MotionEvidence</span>
+                                          <span>Review context</span>
                                           <strong>{lifecycleSummary.motionEvidenceText}</strong>
                                         </div>
                                         <div className="data-row">
-                                          <span>Promoted</span>
+                                          <span>Review item</span>
                                           <strong>{lifecycleSummary.promotedText}</strong>
                                         </div>
                                         <div className="data-row">
-                                          <span>ReviewLabel truth</span>
+                                          <span>Correction</span>
                                           <strong>{lifecycleSummary.reviewTruthText}</strong>
                                         </div>
                                         <div className="data-row">
-                                          <span>Export readiness</span>
+                                          <span>Export</span>
                                           <strong>{lifecycleSummary.exportReadinessText}</strong>
                                         </div>
                                         <div className="data-row">
                                           <span>Next</span>
-                                          <strong>{lifecycleSummary.nextStep}</strong>
+                                          <strong>{savedImageNextAction(lifecycleSummary)}</strong>
                                         </div>
-                                        {latestProposal ? (
-                                          <div className="data-row">
-                                            <span>Latest proposal</span>
-                                            <strong>
-                                              {latestProposal.id} · {latestProposal.label} ·{" "}
-                                              {Math.round(latestProposal.confidence * 100)}% ·{" "}
-                                              {formatLabel(latestProposal.status)}
-                                            </strong>
-                                          </div>
-                                        ) : null}
-                                        {latestRun ? (
-                                          <div className="data-row">
-                                            <span>Latest run</span>
-                                            <strong>
-                                              {latestRun.id} · {formatLabel(latestRun.source)} ·{" "}
-                                              {formatLabel(latestRun.status)}
-                                            </strong>
-                                          </div>
-                                        ) : null}
-                                        {latestEvidence ? (
-                                          <div className="data-row">
-                                            <span>Latest MotionEvidence</span>
-                                            <strong>
-                                              {latestEvidence.id} ·{" "}
-                                              {formatLabel(latestEvidence.status)}
-                                            </strong>
-                                          </div>
-                                        ) : null}
                                       </div>
+                                      {latestProposal || latestRun || latestEvidence ? (
+                                        <details className="advanced-details">
+                                          <summary>Advanced status details</summary>
+                                          <div className="timeline-lifecycle-grid">
+                                            {latestProposal ? (
+                                              <div className="data-row">
+                                                <span>Latest proposal</span>
+                                                <strong>
+                                                  {latestProposal.id} · {latestProposal.label} ·{" "}
+                                                  {Math.round(latestProposal.confidence * 100)}% ·{" "}
+                                                  {formatLabel(latestProposal.status)}
+                                                </strong>
+                                              </div>
+                                            ) : null}
+                                            {latestRun ? (
+                                              <div className="data-row">
+                                                <span>Latest run</span>
+                                                <strong>
+                                                  {latestRun.id} · {formatLabel(latestRun.source)} ·{" "}
+                                                  {formatLabel(latestRun.status)}
+                                                </strong>
+                                              </div>
+                                            ) : null}
+                                            {latestEvidence ? (
+                                              <div className="data-row">
+                                                <span>Latest MotionEvidence</span>
+                                                <strong>
+                                                  {latestEvidence.id} ·{" "}
+                                                  {formatLabel(latestEvidence.status)}
+                                                </strong>
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        </details>
+                                      ) : null}
                                       <div className="detail-actions timeline-lifecycle-actions">
                                         {latestProposal ? (
                                           <button
@@ -3258,7 +3390,7 @@ export function StreamsPage({
                                             onClick={onOpenDetectionProposals}
                                             type="button"
                                           >
-                                            Open proposals
+                                            Review suggestions
                                           </button>
                                         ) : null}
                                         {latestEvidence ? (
@@ -3267,7 +3399,7 @@ export function StreamsPage({
                                             onClick={() => onOpenMotionEvidence(latestEvidence.id)}
                                             type="button"
                                           >
-                                            Open MotionEvidence
+                                            Open review context
                                           </button>
                                         ) : null}
                                         {lifecycleSummary.eventIds.slice(0, 2).map((eventId) => (
@@ -3297,7 +3429,7 @@ export function StreamsPage({
                                             onClick={onOpenReview}
                                             type="button"
                                           >
-                                            Review Queue
+                                            Review item
                                           </button>
                                         ) : null}
                                         {lifecycleSummary.truthLabels.length > 0 ? (
@@ -3306,7 +3438,7 @@ export function StreamsPage({
                                             onClick={onOpenExports}
                                             type="button"
                                           >
-                                            Dataset Exports
+                                            Export reviewed data
                                           </button>
                                         ) : null}
                                       </div>
@@ -3315,10 +3447,10 @@ export function StreamsPage({
                                       <div className="timeline-detector-panel">
                                         <div className="item-title-row">
                                           <div>
-                                            <strong>Local detector</strong>
+                                            <strong>Analyze image</strong>
                                             <p className="meta-text">
-                                              Detector outputs are proposal evidence only.
-                                              ReviewLabel correction remains truth.
+                                              Run a configured local detector, or use the demo
+                                              suggestion fallback for testing.
                                             </p>
                                           </div>
                                           <StatusPill
@@ -3335,13 +3467,15 @@ export function StreamsPage({
                                         {localDetectorAdapterError && !localDetectorAdapter ? (
                                           <div className="zone-error">
                                             Local detector readiness could not be loaded:{" "}
-                                            {localDetectorAdapterError}. Demo proposal evidence
-                                            remains available.
+                                            {localDetectorAdapterError}. Demo suggestions remain
+                                            available.
                                           </div>
                                         ) : null}
                                         {localDetectorAdapter ? (
                                           <>
-                                            <div className="timeline-detector-grid">
+                                            <details className="advanced-details">
+                                              <summary>Advanced detector details</summary>
+                                              <div className="timeline-detector-grid">
                                               <div className="data-row">
                                                 <span>Adapter</span>
                                                 <strong>
@@ -3395,15 +3529,16 @@ export function StreamsPage({
                                                     : "Unsupported media"}
                                                 </strong>
                                               </div>
-                                            </div>
+                                              </div>
+                                            </details>
                                             <span className="meta-text">
                                               {localDetectorReadinessCopy(localDetectorAdapter)}
                                             </span>
                                             {!localDetectorCanRun ? (
                                               <span className="meta-text">
-                                                Use demo proposal for smoke testing, or configure
+                                                Use demo analysis for smoke testing, or configure
                                                 the local detector model path to run real local
-                                                detector evidence.
+                                                detector suggestions.
                                               </span>
                                             ) : null}
                                             <div className="detail-actions">
@@ -3418,22 +3553,22 @@ export function StreamsPage({
                                                 type="button"
                                               >
                                                 {actionState.isRunningLocalDetector
-                                                  ? "Running..."
-                                                  : "Run local detector"}
+                                                  ? "Analyzing..."
+                                                  : "Analyze image"}
                                               </button>
                                               <button
                                                 className="secondary-action"
                                                 onClick={onOpenDetectionProposals}
                                                 type="button"
                                               >
-                                                Detection Proposals
+                                                Review suggestions
                                               </button>
                                               <button
                                                 className="secondary-action"
                                                 onClick={onOpenReview}
                                                 type="button"
                                               >
-                                                Review Queue
+                                                Review
                                               </button>
                                             </div>
                                           </>
@@ -3446,64 +3581,96 @@ export function StreamsPage({
                                         {actionState.localDetectorResult ? (
                                           <div className="timeline-result-grid">
                                             <div className="data-row">
-                                              <span>DetectionRun</span>
-                                              <strong>
-                                                {
-                                                  actionState.localDetectorResult.detection_run
-                                                    .id
-                                                }
-                                              </strong>
-                                            </div>
-                                            <div className="data-row">
-                                              <span>Adapter</span>
-                                              <strong>
-                                                {actionState.localDetectorResult.adapter.name} (
-                                                {actionState.localDetectorResult.adapter.id})
-                                              </strong>
-                                            </div>
-                                            <div className="data-row">
-                                              <span>Proposals</span>
+                                              <span>Suggested labels</span>
                                               <strong>
                                                 {actionState.localDetectorResult.proposals.length >
                                                 0
                                                   ? actionState.localDetectorResult.proposals
-                                                      .map((item) => item.id)
+                                                      .map((item) => item.label)
                                                       .join(", ")
                                                   : "none"}
                                               </strong>
                                             </div>
                                             <div className="data-row">
-                                              <span>Review Queue</span>
+                                              <span>Review status</span>
                                               <strong>
                                                 {
                                                   actionState.localDetectorResult
                                                     .review_queue_count
                                                 }{" "}
-                                                needs review
+                                                items need review
                                               </strong>
                                             </div>
-                                            {actionState.localDetectorResult.proposals.map(
-                                              (item) => (
-                                                <div className="data-row" key={item.id}>
-                                                  <span>{item.id}</span>
-                                                  <strong>
-                                                    {item.label} /{" "}
-                                                    {Math.round(item.confidence * 100)}% /{" "}
-                                                    {formatLabel(item.status)}
-                                                  </strong>
-                                                </div>
-                                              ),
-                                            )}
                                             <div className="data-row">
-                                              <span>Local note</span>
-                                              <strong>
-                                                {
-                                                  actionState.localDetectorResult
-                                                    .local_first_note
-                                                }
-                                              </strong>
+                                              <span>Reviewed data created</span>
+                                              <strong>No</strong>
                                             </div>
                                           </div>
+                                        ) : null}
+                                        {actionState.localDetectorResult ? (
+                                          <details className="advanced-details">
+                                            <summary>Advanced analysis details</summary>
+                                            <div className="timeline-result-grid">
+                                              <div className="data-row">
+                                                <span>DetectionRun</span>
+                                                <strong>
+                                                  {
+                                                    actionState.localDetectorResult.detection_run
+                                                      .id
+                                                  }
+                                                </strong>
+                                              </div>
+                                              <div className="data-row">
+                                                <span>Adapter</span>
+                                                <strong>
+                                                  {actionState.localDetectorResult.adapter.name} (
+                                                  {actionState.localDetectorResult.adapter.id})
+                                                </strong>
+                                              </div>
+                                              <div className="data-row">
+                                                <span>Proposals</span>
+                                                <strong>
+                                                  {actionState.localDetectorResult.proposals.length >
+                                                  0
+                                                    ? actionState.localDetectorResult.proposals
+                                                        .map((item) => item.id)
+                                                        .join(", ")
+                                                    : "none"}
+                                                </strong>
+                                              </div>
+                                              <div className="data-row">
+                                                <span>Review Queue</span>
+                                                <strong>
+                                                  {
+                                                    actionState.localDetectorResult
+                                                      .review_queue_count
+                                                  }{" "}
+                                                  needs review
+                                                </strong>
+                                              </div>
+                                              {actionState.localDetectorResult.proposals.map(
+                                                (item) => (
+                                                  <div className="data-row" key={item.id}>
+                                                    <span>{item.id}</span>
+                                                    <strong>
+                                                      {item.label} /{" "}
+                                                      {Math.round(item.confidence * 100)}% /{" "}
+                                                      {formatLabel(item.status)}
+                                                    </strong>
+                                                  </div>
+                                                ),
+                                              )}
+                                              <div className="data-row">
+                                                <span>Local note</span>
+                                                <strong>
+                                                  {
+                                                    actionState.localDetectorResult
+                                                      .local_first_note
+                                                  }
+                                                </strong>
+                                              </div>
+                                            </div>
+                                          </details>
                                         ) : null}
                                       </div>
                                     ) : null}
@@ -3514,7 +3681,7 @@ export function StreamsPage({
                                         rel="noreferrer"
                                         target="_blank"
                                       >
-                                        Open media
+                                        Open image
                                       </a>
                                       <button
                                         className="secondary-action"
@@ -3527,10 +3694,10 @@ export function StreamsPage({
                                         type="button"
                                       >
                                         {actionState.isCreatingProposal
-                                          ? "Creating..."
+                                          ? "Analyzing..."
                                           : lifecycleSummary.proposals.length > 0
-                                            ? "Create another demo proposal"
-                                            : "Create demo proposal"}
+                                            ? "Analyze again (demo)"
+                                            : "Analyze image (demo)"}
                                       </button>
                                       {canConvertProposal ? (
                                         <button
@@ -3540,8 +3707,8 @@ export function StreamsPage({
                                           type="button"
                                         >
                                           {actionState.isConvertingProposal
-                                            ? "Converting..."
-                                            : "Convert first proposal"}
+                                            ? "Sending..."
+                                            : "Send suggestion to Review"}
                                         </button>
                                       ) : null}
                                       <button
@@ -3558,31 +3725,31 @@ export function StreamsPage({
                                         {actionState.isCreatingEvidence
                                           ? "Creating..."
                                           : lifecycleSummary.hasPendingMotionEvidence
-                                            ? "Pending MotionEvidence exists"
+                                            ? "Pending review context exists"
                                             : lifecycleSummary.hasPromotedMotionEvidence
-                                              ? "MotionEvidence promoted"
-                                              : "Create MotionEvidence"}
+                                              ? "Review context exists"
+                                              : "Create review context"}
                                       </button>
                                       <button
                                         className="secondary-action"
                                         onClick={onOpenDetectionProposals}
                                         type="button"
                                       >
-                                        Detection Proposals
+                                        Review suggestions
                                       </button>
                                       <button
                                         className="secondary-action"
                                         onClick={onOpenReview}
                                         type="button"
                                       >
-                                        Review Queue
+                                        Review
                                       </button>
                                       <button
                                         className="secondary-action"
                                         onClick={onOpenExports}
                                         type="button"
                                       >
-                                        Dataset Exports
+                                        Export reviewed data
                                       </button>
                                     </div>
                                     {actionState.proposalMessage ? (
@@ -3598,85 +3765,138 @@ export function StreamsPage({
                                     {actionState.proposalResult ? (
                                       <div className="timeline-result-grid">
                                         <div className="data-row">
-                                          <span>DetectionRun</span>
-                                          <strong>
-                                            {actionState.proposalResult.detection_run.id}
-                                          </strong>
-                                        </div>
-                                        <div className="data-row">
-                                          <span>Proposals</span>
+                                          <span>Suggested labels</span>
                                           <strong>
                                             {actionState.proposalResult.proposals.length > 0
                                               ? actionState.proposalResult.proposals
-                                                  .map((item) => item.id)
+                                                  .map((item) => item.label)
                                                   .join(", ")
                                               : "none"}
                                           </strong>
                                         </div>
                                         <div className="data-row">
-                                          <span>Review Queue</span>
+                                          <span>Review status</span>
                                           <strong>
-                                            {actionState.proposalResult.review_queue_count} needs
-                                            review
+                                            {actionState.proposalResult.review_queue_count} items
+                                            need review
                                           </strong>
                                         </div>
-                                        {actionState.proposalResult.proposals.map((item) => (
-                                          <div className="data-row" key={item.id}>
-                                            <span>{item.id}</span>
+                                        <div className="data-row">
+                                          <span>Reviewed data created</span>
+                                          <strong>No</strong>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    {actionState.proposalResult ? (
+                                      <details className="advanced-details">
+                                        <summary>Advanced analysis details</summary>
+                                        <div className="timeline-result-grid">
+                                          <div className="data-row">
+                                            <span>DetectionRun</span>
                                             <strong>
-                                              {item.label} /{" "}
-                                              {Math.round(item.confidence * 100)}% /{" "}
-                                              {formatLabel(item.status)}
+                                              {actionState.proposalResult.detection_run.id}
                                             </strong>
                                           </div>
-                                        ))}
-                                      </div>
+                                          <div className="data-row">
+                                            <span>Proposals</span>
+                                            <strong>
+                                              {actionState.proposalResult.proposals.length > 0
+                                                ? actionState.proposalResult.proposals
+                                                    .map((item) => item.id)
+                                                    .join(", ")
+                                                : "none"}
+                                            </strong>
+                                          </div>
+                                          <div className="data-row">
+                                            <span>Review Queue</span>
+                                            <strong>
+                                              {actionState.proposalResult.review_queue_count} needs
+                                              review
+                                            </strong>
+                                          </div>
+                                          {actionState.proposalResult.proposals.map((item) => (
+                                            <div className="data-row" key={item.id}>
+                                              <span>{item.id}</span>
+                                              <strong>
+                                                {item.label} /{" "}
+                                                {Math.round(item.confidence * 100)}% /{" "}
+                                                {formatLabel(item.status)}
+                                              </strong>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </details>
                                     ) : null}
                                     {actionState.proposalDecisionResult ? (
                                       <div className="timeline-result-grid">
                                         <div className="data-row">
-                                          <span>Converted proposal</span>
+                                          <span>Review item</span>
                                           <strong>
-                                            {actionState.proposalDecisionResult.proposal.id}
+                                            {actionState.proposalDecisionResult.visit
+                                              ? "Visit ready for correction"
+                                              : actionState.proposalDecisionResult.event
+                                                ? "Event ready for correction"
+                                                : "Not created"}
                                           </strong>
                                         </div>
                                         <div className="data-row">
-                                          <span>Event</span>
-                                          {actionState.proposalDecisionResult.event ? (
-                                            <button
-                                              className="inline-link-button"
-                                              onClick={() =>
-                                                onOpenEvent(
-                                                  actionState.proposalDecisionResult!.event!.id,
-                                                )
-                                              }
-                                              type="button"
-                                            >
-                                              {actionState.proposalDecisionResult.event.id}
-                                            </button>
-                                          ) : (
-                                            <strong>not created</strong>
-                                          )}
+                                          <span>Next</span>
+                                          <strong>Review item</strong>
                                         </div>
                                         <div className="data-row">
-                                          <span>Visit</span>
-                                          {actionState.proposalDecisionResult.visit ? (
-                                            <button
-                                              className="inline-link-button"
-                                              onClick={() =>
-                                                onOpenVisit(
-                                                  actionState.proposalDecisionResult!.visit!.id,
-                                                )
-                                              }
-                                              type="button"
-                                            >
-                                              {actionState.proposalDecisionResult.visit.id}
-                                            </button>
-                                          ) : (
-                                            <strong>not created</strong>
-                                          )}
+                                          <span>Reviewed data created</span>
+                                          <strong>No</strong>
                                         </div>
                                       </div>
+                                    ) : null}
+                                    {actionState.proposalDecisionResult ? (
+                                      <details className="advanced-details">
+                                        <summary>Advanced review item details</summary>
+                                        <div className="timeline-result-grid">
+                                          <div className="data-row">
+                                            <span>Converted proposal</span>
+                                            <strong>
+                                              {actionState.proposalDecisionResult.proposal.id}
+                                            </strong>
+                                          </div>
+                                          <div className="data-row">
+                                            <span>Event</span>
+                                            {actionState.proposalDecisionResult.event ? (
+                                              <button
+                                                className="inline-link-button"
+                                                onClick={() =>
+                                                  onOpenEvent(
+                                                    actionState.proposalDecisionResult!.event!.id,
+                                                  )
+                                                }
+                                                type="button"
+                                              >
+                                                {actionState.proposalDecisionResult.event.id}
+                                              </button>
+                                            ) : (
+                                              <strong>not created</strong>
+                                            )}
+                                          </div>
+                                          <div className="data-row">
+                                            <span>Visit</span>
+                                            {actionState.proposalDecisionResult.visit ? (
+                                              <button
+                                                className="inline-link-button"
+                                                onClick={() =>
+                                                  onOpenVisit(
+                                                    actionState.proposalDecisionResult!.visit!.id,
+                                                  )
+                                                }
+                                                type="button"
+                                              >
+                                                {actionState.proposalDecisionResult.visit.id}
+                                              </button>
+                                            ) : (
+                                              <strong>not created</strong>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </details>
                                     ) : null}
                                     {actionState.evidenceError ? (
                                       <div className="zone-error">{actionState.evidenceError}</div>
@@ -3684,7 +3904,7 @@ export function StreamsPage({
                                     {actionState.evidenceResult ? (
                                       <div className="timeline-result-grid">
                                         <div className="data-row">
-                                          <span>MotionEvidence</span>
+                                          <span>Review context</span>
                                           <button
                                             className="inline-link-button"
                                             onClick={() =>
@@ -3694,7 +3914,7 @@ export function StreamsPage({
                                             }
                                             type="button"
                                           >
-                                            {actionState.evidenceResult.motion_evidence_id}
+                                            Open details
                                           </button>
                                         </div>
                                         <div className="data-row">
@@ -3725,8 +3945,8 @@ export function StreamsPage({
                                           type="button"
                                         >
                                           {actionState.isPromotingEvidence
-                                            ? "Promoting..."
-                                            : "Promote MotionEvidence"}
+                                            ? "Creating review item..."
+                                            : "Create review item"}
                                         </button>
                                       </div>
                                     ) : null}
@@ -3738,7 +3958,7 @@ export function StreamsPage({
                                     {actionState.promotionResult ? (
                                       <div className="timeline-result-grid">
                                         <div className="data-row">
-                                          <span>Event</span>
+                                          <span>Review item</span>
                                           {actionState.promotionResult.event_id ? (
                                             <button
                                               className="inline-link-button"
@@ -3774,11 +3994,11 @@ export function StreamsPage({
                                     <div className="notice-panel compact-notice import-smoke-boundary">
                                       <strong>Truth boundary</strong>
                                       <ul>
-                                        <li>Saved media is local evidence context.</li>
-                                        <li>Demo proposal evidence is synthetic.</li>
-                                        <li>No model inspected this media.</li>
+                                        <li>Saved images are local review context.</li>
+                                        <li>Demo analysis creates suggested labels only.</li>
+                                        <li>No model inspected this image unless you ran one.</li>
                                         <li>
-                                          ReviewLabel truth only happens through Review Queue
+                                          Reviewed data only happens through explicit Review
                                           correction.
                                         </li>
                                       </ul>
@@ -3790,8 +4010,8 @@ export function StreamsPage({
                           </>
                         ) : (
                           <div className="timeline-empty-state">
-                            No saved media for this stream yet. Fetch/save an external URL
-                            snapshot or import media.
+                            No saved images for this stream yet. Test and capture a snapshot or
+                            import an image.
                           </div>
                         )}
                       </div>

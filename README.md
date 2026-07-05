@@ -90,6 +90,9 @@ MediaAsset through an explicit user action. It creates no Events, Visits,
 MotionEvidence, ReviewLabels, or truth. The boundary is documented in
 [docs/external-url-preview-media-asset-handoff-design.md](docs/external-url-preview-media-asset-handoff-design.md);
 saving fetched previews must be explicit, local, bounded, and truth-safe.
+In the browser, the product path is: select an external snapshot camera/source,
+Test snapshot, Capture snapshot, Analyze image, Review/correct, then Export
+reviewed data.
 Saved previews can now enter review as pending MotionEvidence through an
 explicit user action documented in
 [docs/saved-preview-review-evidence-handoff-design.md](docs/saved-preview-review-evidence-handoff-design.md);
