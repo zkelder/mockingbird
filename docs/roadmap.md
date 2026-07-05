@@ -1047,11 +1047,20 @@ Current work:
 - Local USB Camera Source 1: the `local_usb` provider can store a local camera
   playback type, Linux `/dev/video*` device path, and optional v4l2 format
   metadata.
+- Windows DirectShow Camera Source 1: the same provider can store
+  `windows_dshow`, a DirectShow camera name, optional Windows `ffmpeg.exe` path,
+  video size, and framerate metadata for Windows webcam Live view.
 - Stream playback reports local camera bridge states for available, missing
   `ffmpeg`, missing device path, invalid device path, and unsupported platform
   cases.
+- Stream playback reports Windows DirectShow bridge states for available,
+  missing camera name, missing ffmpeg, unsupported WSL/Linux host path, and
+  request-time ffmpeg failures.
 - The backend exposes `GET /api/streams/{stream_id}/live/local-mjpeg` for
   request-scoped local camera MJPEG streaming.
+- The backend exposes
+  `GET /api/streams/{stream_id}/live/windows-dshow-mjpeg` for request-scoped
+  Windows DirectShow MJPEG streaming.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — Live camera playback smoke validation and common
@@ -1066,6 +1075,10 @@ Validation:
   stopped when the response ends or the client disconnects.
 - The local camera bridge accepts only Linux `/dev/video*` device paths in this
   phase and reports unsupported platform/device states honestly.
+- Windows DirectShow uses optional Windows `ffmpeg.exe`; when the API runs in
+  WSL, a Windows executable path such as `/mnt/c/ffmpeg/bin/ffmpeg.exe` is the
+  recommended webcam path rather than WSL USB passthrough.
+- DirectShow camera names are passed as subprocess arguments, not shell strings.
 - The bridge stores no media, creates no Events/Visits, ReviewLabels,
   DetectionProposals, MotionEvidence, dataset exports, analytics truth, workers,
   schedulers, captures table, or source adapter records.

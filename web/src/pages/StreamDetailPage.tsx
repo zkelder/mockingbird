@@ -93,15 +93,27 @@ function isLocalCameraBridgePlayback(status?: StreamPlaybackStatus | null): bool
   );
 }
 
+function isWindowsDshowBridgePlayback(status?: StreamPlaybackStatus | null): boolean {
+  return (
+    status?.status === "live_ready" &&
+    status.playback_kind === "windows_dshow" &&
+    Boolean(status.windows_camera_bridge_available)
+  );
+}
+
 function hasRealLivePlayback(status?: StreamPlaybackStatus | null): boolean {
   return (
     isBrowserPlayablePlayback(status) ||
     isRtspBridgePlayback(status) ||
-    isLocalCameraBridgePlayback(status)
+    isLocalCameraBridgePlayback(status) ||
+    isWindowsDshowBridgePlayback(status)
   );
 }
 
 function liveStreamUrl(playback: StreamPlaybackStatus, streamId: string): string | null {
+  if (isWindowsDshowBridgePlayback(playback)) {
+    return apiClient.windowsDshowMjpegBridgeUrl(streamId);
+  }
   if (isLocalCameraBridgePlayback(playback)) {
     return apiClient.localCameraMjpegBridgeUrl(streamId);
   }
@@ -114,7 +126,16 @@ function liveStreamUrl(playback: StreamPlaybackStatus, streamId: string): string
   return null;
 }
 
-function localTroubleshootingText(playback: StreamPlaybackStatus): string {
+function liveTroubleshootingText(playback: StreamPlaybackStatus): string | null {
+  if (playback.playback_kind === "windows_dshow") {
+    return (
+      "Close Windows Camera or meeting apps, check the DirectShow camera name, " +
+      "check the ffmpeg.exe path, and allow Windows camera privacy permissions."
+    );
+  }
+  if (playback.playback_kind !== "local_usb") {
+    return null;
+  }
   const device = playback.local_camera_device_display ?? "/dev/video0";
   return (
     `Stop other camera apps, check ${device}, try /dev/video1 in Source setup if needed, ` +
@@ -445,6 +466,7 @@ export function StreamDetailPage({
         ? "good"
         : "quiet";
   const sourceDisplay = detail.setupReview?.provider_display_name ?? "Source";
+  const liveHelpText = liveTroubleshootingText(detail.playback);
 
   return (
     <div className="page-stack">
@@ -493,6 +515,12 @@ export function StreamDetailPage({
               {detail.playback.local_camera_device_display ? (
                 <StatusPill label={detail.playback.local_camera_device_display} tone="quiet" />
               ) : null}
+              {detail.playback.windows_camera_name_display ? (
+                <StatusPill label={detail.playback.windows_camera_name_display} tone="quiet" />
+              ) : null}
+              {detail.playback.windows_ffmpeg_binary_display ? (
+                <StatusPill label={detail.playback.windows_ffmpeg_binary_display} tone="quiet" />
+              ) : null}
               <StatusPill label={liveViewStatusLabel} tone={liveViewTone} />
             </div>
           </div>
@@ -529,7 +557,8 @@ export function StreamDetailPage({
                   }}
                   src={
                     detail.playback.playback_kind === "local_usb" ||
-                    detail.playback.playback_kind === "rtsp"
+                    detail.playback.playback_kind === "rtsp" ||
+                    detail.playback.playback_kind === "windows_dshow"
                       ? `${liveUrl}${liveUrl.includes("?") ? "&" : "?"}reload=${liveViewReloadToken}`
                       : liveUrl
                   }
@@ -552,14 +581,10 @@ export function StreamDetailPage({
           {liveViewError ? (
             <div className="stream-live-message is-error">
               <strong>{liveViewError}</strong>
-              {detail.playback.playback_kind === "local_usb" ? (
-                <span>{localTroubleshootingText(detail.playback)}</span>
-              ) : null}
+              {liveHelpText ? <span>{liveHelpText}</span> : null}
             </div>
-          ) : detail.playback.playback_kind === "local_usb" ? (
-            <span className="stream-live-hint">
-              {localTroubleshootingText(detail.playback)}
-            </span>
+          ) : liveHelpText ? (
+            <span className="stream-live-hint">{liveHelpText}</span>
           ) : null}
           <div className="detail-actions stream-live-actions">
             {liveViewOpen ? (
@@ -615,6 +640,11 @@ export function StreamDetailPage({
         {detail.playback.live_stream_url_display ? (
           <span>
             <strong>Stream URL</strong> {detail.playback.live_stream_url_display}
+          </span>
+        ) : null}
+        {detail.playback.windows_camera_name_display ? (
+          <span>
+            <strong>Windows camera</strong> {detail.playback.windows_camera_name_display}
           </span>
         ) : null}
         {isManualMediaStream ? (

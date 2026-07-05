@@ -104,6 +104,7 @@ const LIVE_STREAM_TYPE_OPTIONS = [
   { value: "hls", label: "HLS / browser-supported" },
   { value: "rtsp", label: "RTSP bridge" },
   { value: "local_usb", label: "Local USB camera" },
+  { value: "windows_dshow", label: "Windows DirectShow webcam" },
 ];
 
 function isRedactedLiveStreamUrlPreview(key: string, preview?: string): boolean {
@@ -168,6 +169,14 @@ function isLocalCameraBridgePlayback(status?: StreamPlaybackStatus | null): bool
     status?.status === "live_ready" &&
     status.playback_kind === "local_usb" &&
     Boolean(status.local_camera_bridge_available)
+  );
+}
+
+function isWindowsDshowBridgePlayback(status?: StreamPlaybackStatus | null): boolean {
+  return (
+    status?.status === "live_ready" &&
+    status.playback_kind === "windows_dshow" &&
+    Boolean(status.windows_camera_bridge_available)
   );
 }
 
@@ -1908,6 +1917,10 @@ export function StreamsPage({
         selectedConfiguration.safe_config_preview.live_stream_type ?? "",
         selectedConfiguration.safe_config_preview.local_camera_device ?? "",
         selectedConfiguration.safe_config_preview.local_camera_format ?? "",
+        selectedConfiguration.safe_config_preview.windows_camera_name ?? "",
+        selectedConfiguration.safe_config_preview.ffmpeg_binary_path ?? "",
+        selectedConfiguration.safe_config_preview.video_size ?? "",
+        selectedConfiguration.safe_config_preview.framerate ?? "",
       ].join("|")
     : "";
   const selectedReviewStreams = new Map(
@@ -5279,8 +5292,18 @@ export function StreamsPage({
                           </span>
                           {field.key === "local_camera_device" ? (
                             <span className="field-meta">
-                              Linux example: /dev/video0. Windows/macOS local camera support is
-                              future.
+                              Linux example: /dev/video0. Use Windows DirectShow for Windows
+                              webcams.
+                            </span>
+                          ) : null}
+                          {field.key === "windows_camera_name" ? (
+                            <span className="field-meta">
+                              Find camera name with: ffmpeg -list_devices true -f dshow -i dummy
+                            </span>
+                          ) : null}
+                          {field.key === "ffmpeg_binary_path" ? (
+                            <span className="field-meta">
+                              If running API in WSL, configure a Windows ffmpeg.exe path.
                             </span>
                           ) : null}
                           {redactedLiveUrl && existingPreview ? (
@@ -5330,8 +5353,13 @@ export function StreamsPage({
                   const canRenderBrowserLiveView = isBrowserPlayablePlayback(playbackStatus);
                   const canRenderRtspBridge = isRtspBridgePlayback(playbackStatus);
                   const canRenderLocalCameraBridge = isLocalCameraBridgePlayback(playbackStatus);
+                  const canRenderWindowsDshowBridge =
+                    isWindowsDshowBridgePlayback(playbackStatus);
                   const hasRealLivePlayback =
-                    canRenderBrowserLiveView || canRenderRtspBridge || canRenderLocalCameraBridge;
+                    canRenderBrowserLiveView ||
+                    canRenderRtspBridge ||
+                    canRenderLocalCameraBridge ||
+                    canRenderWindowsDshowBridge;
                   const playbackLabel = hasRealLivePlayback
                     ? "Live camera"
                     : reviewStream
@@ -5515,6 +5543,9 @@ export function StreamsPage({
                         </span>
                         {playbackStatus?.local_camera_device_display ? (
                           <span>Device: {playbackStatus.local_camera_device_display}</span>
+                        ) : null}
+                        {playbackStatus?.windows_camera_name_display ? (
+                          <span>Windows camera: {playbackStatus.windows_camera_name_display}</span>
                         ) : null}
                       </div>
                       {playbackError ? <div className="zone-error">{playbackError}</div> : null}

@@ -105,6 +105,11 @@ MockingBird also has a first local USB/webcam Live view path through the
 target, using optional system `ffmpeg` only while the browser Live view is open.
 If `ffmpeg` or the device path is unavailable, the app reports that local camera
 playback is unavailable without affecting setup, review, export, or monitoring.
+Windows webcams can use the same `local_usb` provider with `windows_dshow` and
+an optional Windows `ffmpeg.exe` DirectShow bridge. If the API runs in WSL,
+configure a Windows ffmpeg path such as `/mnt/c/ffmpeg/bin/ffmpeg.exe`; WSL USB
+passthrough is not the recommended webcam path. This Live view starts ffmpeg
+only for the active request and creates no media, truth, or exports.
 The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
 count, and motion readiness. Camera Monitoring Core can now start and stop an

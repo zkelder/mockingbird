@@ -8,9 +8,10 @@ from mockingbird.api.main import (
     configure_repository,
     get_stream_local_mjpeg_bridge,
     get_stream_rtsp_mjpeg_bridge,
+    get_stream_windows_dshow_mjpeg_bridge,
 )
 from mockingbird.api.schemas import SourceKind, SourceStatus
-from mockingbird.playback import local_camera_bridge, rtsp_bridge
+from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import CameraSourceModel, StreamModel
 
@@ -131,6 +132,30 @@ async def configure_local_usb_camera(
                 "live_stream_type": "local_usb",
                 "local_camera_device": device,
                 "local_camera_format": camera_format,
+            },
+        },
+    )
+    assert response.status_code == 200
+
+
+async def configure_windows_dshow_camera(
+    client: httpx.AsyncClient,
+    *,
+    camera_name: str | None,
+    ffmpeg_binary_path: str | None = None,
+    video_size: str | None = None,
+    framerate: str | None = None,
+) -> None:
+    response = await client.patch(
+        f"/api/sources/{SOURCE_ID}/provider-configuration",
+        json={
+            "provider_key": "local_usb",
+            "config": {
+                "live_stream_type": "windows_dshow",
+                "windows_camera_name": camera_name,
+                "ffmpeg_binary_path": ffmpeg_binary_path,
+                "video_size": video_size,
+                "framerate": framerate,
             },
         },
     )
@@ -739,6 +764,295 @@ def test_local_camera_command_allows_explicit_input_options() -> None:
     assert command[command.index("-video_size") + 1] == "640x480"
     assert command[command.index("-framerate") + 1] == "10"
     assert "/dev/video1" in command
+
+
+async def test_windows_dshow_configuration_requires_camera_name(
+    client: httpx.AsyncClient,
+) -> None:
+    await configure_windows_dshow_camera(client, camera_name=None)
+
+    response = await client.get(f"/api/sources/{SOURCE_ID}/provider-configuration")
+
+    assert response.status_code == 200
+    configuration = response.json()
+    assert configuration["provider_key"] == "local_usb"
+    assert configuration["missing_fields"] == ["windows_camera_name"]
+    assert "Windows DirectShow camera name is required" in configuration["message"]
+    assert "ffmpeg -list_devices true -f dshow -i dummy" in configuration["setup_hint"]
+
+
+async def test_windows_dshow_playback_reports_missing_camera_name(
+    client: httpx.AsyncClient,
+) -> None:
+    await configure_windows_dshow_camera(client, camera_name=None)
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "not_configured"
+    assert playback["playback_kind"] == "windows_dshow"
+    assert playback["supports_live_playback"] is False
+    assert playback["windows_camera_status"] == "camera_name_missing"
+    assert playback["windows_camera_bridge_available"] is False
+    assert playback["bridged_mjpeg_url"] is None
+    assert "ffmpeg -list_devices true -f dshow -i dummy" in playback["setup_hint"]
+
+
+async def test_windows_dshow_playback_reports_unsupported_host_without_windows_ffmpeg(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.windows_camera_bridge.windows_camera_status",
+        lambda **kwargs: "unsupported_host",
+    )
+    await configure_windows_dshow_camera(client, camera_name="EMEET SmartCam S600")
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "unsupported_stream_type"
+    assert playback["playback_kind"] == "windows_dshow"
+    assert playback["supports_live_playback"] is False
+    assert playback["windows_camera_status"] == "unsupported_host"
+    assert playback["windows_camera_bridge_available"] is False
+    assert playback["message"] == (
+        "Windows DirectShow requires Windows ffmpeg.exe or running the API on Windows."
+    )
+    assert "/mnt/c/ffmpeg/bin/ffmpeg.exe" in playback["setup_hint"]
+
+
+async def test_windows_dshow_playback_reports_ffmpeg_missing(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.windows_camera_bridge.windows_camera_status",
+        lambda **kwargs: "ffmpeg_missing",
+    )
+    await configure_windows_dshow_camera(client, camera_name="EMEET SmartCam S600")
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "unavailable"
+    assert playback["playback_kind"] == "windows_dshow"
+    assert playback["supports_live_playback"] is False
+    assert playback["windows_camera_status"] == "ffmpeg_missing"
+    assert playback["windows_camera_bridge_available"] is False
+    assert playback["message"] == "Windows DirectShow bridge unavailable - ffmpeg not found."
+
+
+async def test_windows_dshow_playback_reports_bridge_available_with_windows_ffmpeg_path(
+    client: httpx.AsyncClient,
+) -> None:
+    await configure_windows_dshow_camera(
+        client,
+        camera_name="EMEET SmartCam S600",
+        ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "live_ready"
+    assert playback["playback_kind"] == "windows_dshow"
+    assert playback["supports_live_playback"] is True
+    assert playback["windows_camera_status"] == "available"
+    assert playback["windows_camera_bridge_available"] is True
+    assert playback["windows_camera_name_display"] == "EMEET SmartCam S600"
+    assert playback["windows_ffmpeg_binary_display"] == "/mnt/c/ffmpeg/bin/ffmpeg.exe"
+    assert playback["bridged_mjpeg_url"] == (
+        f"/api/streams/{STREAM_ID}/live/windows-dshow-mjpeg"
+    )
+
+
+async def test_windows_dshow_bridge_endpoint_rejects_non_windows_dshow_stream(
+    client: httpx.AsyncClient,
+) -> None:
+    await configure_local_usb_camera(client, device="/dev/video0")
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live/windows-dshow-mjpeg")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Windows DirectShow bridge requires windows_dshow playback type."
+    )
+
+
+async def test_windows_dshow_bridge_endpoint_streams_mocked_mjpeg_without_creating_truth(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jpeg_frame_one = b"\xff\xd8windows-frame-one\xff\xd9"
+    jpeg_frame_two = b"\xff\xd8windows-frame-two\xff\xd9"
+    fake_process = object()
+    started: list[tuple[str, str | None, str | None, str | None]] = []
+
+    def fake_start(
+        camera_name: str,
+        *,
+        ffmpeg_binary_path: str | None = None,
+        video_size: str | None = None,
+        framerate: str | None = None,
+    ) -> object:
+        started.append((camera_name, ffmpeg_binary_path, video_size, framerate))
+        return fake_process
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.start_windows_dshow_mjpeg_process",
+        fake_start,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.iter_multipart_mjpeg",
+        lambda process: iter(
+            [
+                b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg_frame_one,
+                b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg_frame_two,
+            ]
+        ),
+    )
+    await configure_windows_dshow_camera(
+        client,
+        camera_name="EMEET SmartCam S600",
+        ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+        video_size="640x480",
+        framerate="10",
+    )
+    before = await product_counts(client)
+
+    response = await get_stream_windows_dshow_mjpeg_bridge(STREAM_ID)
+
+    assert response.status_code == 200
+    assert response.media_type == (
+        f"multipart/x-mixed-replace; boundary={windows_camera_bridge.MJPEG_BOUNDARY}"
+    )
+    assert response.headers["content-type"] == (
+        f"multipart/x-mixed-replace; boundary={windows_camera_bridge.MJPEG_BOUNDARY}"
+    )
+    assert started == [
+        (
+            "EMEET SmartCam S600",
+            "/mnt/c/ffmpeg/bin/ffmpeg.exe",
+            "640x480",
+            "10",
+        )
+    ]
+    assert await product_counts(client) == before
+
+
+def test_windows_dshow_command_uses_list_args_and_safe_camera_name() -> None:
+    command = windows_camera_bridge.build_windows_dshow_mjpeg_command(
+        "EMEET SmartCam S600",
+        ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+        video_size="640x480",
+        framerate="10",
+    )
+
+    assert command == [
+        "/mnt/c/ffmpeg/bin/ffmpeg.exe",
+        "-f",
+        "dshow",
+        "-video_size",
+        "640x480",
+        "-framerate",
+        "10",
+        "-i",
+        "video=EMEET SmartCam S600",
+        "-an",
+        "-f",
+        "image2pipe",
+        "-vcodec",
+        "mjpeg",
+        "-r",
+        "5",
+        "pipe:1",
+    ]
+    assert windows_camera_bridge.build_windows_dshow_list_devices_command() == [
+        "ffmpeg",
+        "-list_devices",
+        "true",
+        "-f",
+        "dshow",
+        "-i",
+        "dummy",
+    ]
+    assert windows_camera_bridge.validate_windows_camera_name("EMEET SmartCam S600") is True
+    assert windows_camera_bridge.validate_windows_camera_name("Camera\nName") is False
+    assert windows_camera_bridge.validate_windows_camera_name("") is False
+
+
+def test_windows_dshow_start_uses_popen_list_without_shell() -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_popen(command: list[str], **kwargs: object) -> FakeFfmpegProcess:
+        calls.append((command, kwargs))
+        return FakeFfmpegProcess([])
+
+    process = windows_camera_bridge.start_windows_dshow_mjpeg_process(
+        "EMEET SmartCam S600",
+        ffmpeg_binary_path="C:\\ffmpeg\\bin\\ffmpeg.exe",
+        popen_factory=fake_popen,
+    )
+
+    assert isinstance(process, FakeFfmpegProcess)
+    assert calls[0][0][0] == "C:\\ffmpeg\\bin\\ffmpeg.exe"
+    assert calls[0][0][calls[0][0].index("-i") + 1] == "video=EMEET SmartCam S600"
+    assert calls[0][1].get("shell") is not True
+
+
+def test_windows_dshow_status_is_wsl_aware() -> None:
+    assert (
+        windows_camera_bridge.windows_camera_status(
+            camera_name="EMEET SmartCam S600",
+            platform_name="linux",
+            ffmpeg_binary_path=None,
+            ffmpeg_available=True,
+        )
+        == "unsupported_host"
+    )
+    assert (
+        windows_camera_bridge.windows_camera_status(
+            camera_name="EMEET SmartCam S600",
+            platform_name="win32",
+            ffmpeg_binary_path="ffmpeg",
+            ffmpeg_available=False,
+        )
+        == "ffmpeg_missing"
+    )
+    assert (
+        windows_camera_bridge.windows_camera_status(
+            camera_name="EMEET SmartCam S600",
+            platform_name="linux",
+            ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+            ffmpeg_available=False,
+        )
+        == "available"
+    )
+
+
+def test_windows_dshow_multipart_generator_emits_two_frames_and_stops_process() -> None:
+    fake_process = FakeFfmpegProcess(
+        [
+            b"noise\xff\xd8frame-one\xff\xd9middle\xff\xd8frame",
+            b"-two\xff\xd9tail",
+        ]
+    )
+
+    chunks = list(windows_camera_bridge.iter_multipart_mjpeg(fake_process))
+
+    assert len(chunks) == 2
+    assert chunks[0].startswith(b"--frame\r\nContent-Type: image/jpeg")
+    assert b"\xff\xd8frame-one\xff\xd9" in chunks[0]
+    assert chunks[1].startswith(b"--frame\r\nContent-Type: image/jpeg")
+    assert b"\xff\xd8frame-two\xff\xd9" in chunks[1]
+    assert fake_process.terminated is True
+    assert fake_process.waited is True
+    assert fake_process.killed is False
 
 
 async def test_external_url_unknown_live_stream_type_reports_unsupported(

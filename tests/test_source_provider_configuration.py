@@ -95,8 +95,13 @@ async def test_provider_definitions_return_contract_keys_and_field_metadata(
     assert local_usb_definition["status"] == "available_contract_only"
     assert local_usb_definition["supports_live_playback"] is True
     local_usb_fields = {field["key"]: field for field in local_usb_definition["fields"]}
-    assert local_usb_fields["local_camera_device"]["required"] is True
+    assert local_usb_fields["local_camera_device"]["required"] is False
     assert local_usb_fields["local_camera_device"]["placeholder"] == "/dev/video0"
+    assert local_usb_fields["windows_camera_name"]["required"] is False
+    assert local_usb_fields["windows_camera_name"]["placeholder"] == "EMEET SmartCam S600"
+    assert local_usb_fields["ffmpeg_binary_path"]["placeholder"] == "/mnt/c/ffmpeg/bin/ffmpeg.exe"
+    assert local_usb_fields["video_size"]["placeholder"] == "640x480"
+    assert local_usb_fields["framerate"]["placeholder"] == "10"
 
     folder_definition = next(
         definition

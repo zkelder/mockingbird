@@ -19,7 +19,9 @@ demo-readiness gate before treating this walkthrough as local MVP-ready.
 
 It demonstrates browser-direct Live view for supported stream URLs, optional
 local RTSP bridge playback, and optional local USB/webcam Live view when system
-`ffmpeg` is installed, but not automation, model runtime, training, persistent
+`ffmpeg` is installed. Windows webcam Live view can use optional Windows
+`ffmpeg.exe` DirectShow metadata, but this script does not prove automation,
+model runtime, training, persistent
 transcoding, or production provider infrastructure.
 
 ## What This Demo Proves
@@ -29,6 +31,8 @@ transcoding, or production provider infrastructure.
 - RTSP Live view can use the optional host `ffmpeg` bridge when available.
 - Local USB/webcam Live view can use a Linux `/dev/video0`-style device through
   optional host `ffmpeg`.
+- Windows webcam Live view can use `windows_dshow` with a DirectShow camera name
+  and optional Windows `ffmpeg.exe` path.
 - The `external_url` still-image preview/save/evidence path works.
 - Manual bounded Snapshot watch works for `external_url` while the page is open.
 - The `folder_import_future` preview/import/evidence path works.
@@ -73,6 +77,11 @@ transcoding, or production provider infrastructure.
 - System `ffmpeg` on the MockingBird host is optional and only needed for RTSP
   bridge playback or local USB/webcam playback.
 - A Linux `/dev/video0`-style webcam path is optional for local camera Live view.
+- A Windows DirectShow camera name is optional for Windows webcam Live view; find
+  it with `ffmpeg -list_devices true -f dshow -i dummy`.
+- If the API runs in WSL, configure a Windows `ffmpeg.exe` path such as
+  `/mnt/c/ffmpeg/bin/ffmpeg.exe`; WSL USB passthrough is not the recommended
+  webcam path.
 - A temporary local folder with tiny test images is available for folder import.
 - A local test image is available for Import Media and CLI smoke fallback.
 - No real camera is required.
@@ -195,6 +204,9 @@ Dataset Exports.
 - [ ] Configure a browser-playable or RTSP Live stream URL and stream type if
       available.
 - [ ] Optionally configure `local_usb` with a device path such as `/dev/video0`.
+- [ ] On Windows, optionally configure `local_usb` with `windows_dshow`, a
+      DirectShow camera name, and a Windows `ffmpeg.exe` path when running the
+      API in WSL.
 - [ ] Confirm Live view appears in the Stream card.
 - [ ] Confirm a missing Live stream URL shows `No live stream URL configured.`
 - [ ] Confirm an RTSP URL shows bridge playback when host `ffmpeg` is available,
@@ -202,6 +214,9 @@ Dataset Exports.
 - [ ] Confirm local USB camera playback shows bridge playback when host
       `ffmpeg` and the device are available, or a local camera unavailable state
       when they are not.
+- [ ] Confirm Windows DirectShow playback shows bridge playback when camera name
+      and Windows `ffmpeg.exe` path are available, or a clear setup state when
+      they are not.
 - [ ] Confirm Source health / Camera status is visible for the selected Stream.
 - [ ] Confirm Field test readiness appears and shows the next step for this
       Stream.

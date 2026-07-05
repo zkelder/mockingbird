@@ -74,6 +74,7 @@ class StreamPlaybackKind(str, Enum):
     hls = "hls"
     rtsp = "rtsp"
     local_usb = "local_usb"
+    windows_dshow = "windows_dshow"
     unknown = "unknown"
 
 
@@ -502,6 +503,10 @@ class StreamPlaybackStatus(BaseModel):
     local_camera_bridge_available: bool = False
     local_camera_status: str | None = None
     local_camera_device_display: str | None = None
+    windows_camera_bridge_available: bool = False
+    windows_camera_status: str | None = None
+    windows_camera_name_display: str | None = None
+    windows_ffmpeg_binary_display: str | None = None
     bridged_mjpeg_url: str | None = None
 
 

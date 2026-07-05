@@ -44,6 +44,7 @@ export type StreamPlaybackKind =
   | "hls"
   | "rtsp"
   | "local_usb"
+  | "windows_dshow"
   | "unknown";
 export type ExternalUrlPreviewStatus =
   | "available"
@@ -343,6 +344,10 @@ export interface StreamPlaybackStatus {
   local_camera_bridge_available: boolean;
   local_camera_status?: string | null;
   local_camera_device_display?: string | null;
+  windows_camera_bridge_available: boolean;
+  windows_camera_status?: string | null;
+  windows_camera_name_display?: string | null;
+  windows_ffmpeg_binary_display?: string | null;
   bridged_mjpeg_url?: string | null;
 }
 

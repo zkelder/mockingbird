@@ -148,7 +148,7 @@ from mockingbird.monitoring import (
     SourceMonitorOptions,
     SourceMonitorState,
 )
-from mockingbird.playback import local_camera_bridge, rtsp_bridge
+from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.sampler import (
     SamplerConfig,
@@ -2891,6 +2891,70 @@ async def get_stream_local_mjpeg_bridge(stream_id: str) -> StreamingResponse:
         local_camera_bridge.iter_multipart_mjpeg(process),
         media_type=(
             f"multipart/x-mixed-replace; boundary={local_camera_bridge.MJPEG_BOUNDARY}"
+        ),
+    )
+
+
+@app.get("/api/streams/{stream_id}/live/windows-dshow-mjpeg")
+async def get_stream_windows_dshow_mjpeg_bridge(stream_id: str) -> StreamingResponse:
+    configuration = get_repository().get_stream_live_playback_config(stream_id)
+    if configuration is None:
+        raise _not_found("Stream", stream_id)
+    if configuration.provider_key != "local_usb":
+        raise HTTPException(
+            status_code=400,
+            detail="Windows DirectShow bridge requires a local camera Source provider.",
+        )
+    if configuration.live_stream_type != windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+        raise HTTPException(
+            status_code=400,
+            detail="Windows DirectShow bridge requires windows_dshow playback type.",
+        )
+
+    bridge_status = windows_camera_bridge.windows_camera_status(
+        camera_name=configuration.windows_camera_name,
+        ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
+    )
+    if bridge_status == "camera_name_missing":
+        raise HTTPException(
+            status_code=400,
+            detail="Choose a Windows DirectShow camera name.",
+        )
+    if bridge_status == "unsupported_host":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Windows DirectShow requires Windows ffmpeg.exe or running the API on Windows."
+            ),
+        )
+    if bridge_status == "ffmpeg_missing":
+        raise HTTPException(
+            status_code=503,
+            detail="Windows DirectShow bridge unavailable: ffmpeg not found.",
+        )
+    if bridge_status == "ffmpeg_failed":
+        raise HTTPException(
+            status_code=502,
+            detail="Windows DirectShow camera unavailable or playback failed.",
+        )
+
+    try:
+        process = windows_camera_bridge.start_windows_dshow_mjpeg_process(
+            configuration.windows_camera_name or "",
+            ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
+            video_size=configuration.windows_video_size,
+            framerate=configuration.windows_framerate,
+        )
+    except (OSError, ValueError):
+        raise HTTPException(
+            status_code=502,
+            detail="Windows DirectShow camera unavailable or playback failed.",
+        ) from None
+
+    return StreamingResponse(
+        windows_camera_bridge.iter_multipart_mjpeg(process),
+        media_type=(
+            f"multipart/x-mixed-replace; boundary={windows_camera_bridge.MJPEG_BOUNDARY}"
         ),
     )
 

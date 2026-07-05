@@ -272,6 +272,8 @@ export const apiClient = {
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live/rtsp-mjpeg`,
   localCameraMjpegBridgeUrl: (streamId: string) =>
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live/local-mjpeg`,
+  windowsDshowMjpegBridgeUrl: (streamId: string) =>
+    `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live/windows-dshow-mjpeg`,
   getStreamZones: (streamId: string) => request<Zone[]>(`/api/streams/${streamId}/zones`),
   getStreamEvents: (streamId: string) => request<Event[]>(`/api/streams/${streamId}/events`),
   getEventVisits: (eventId: string) => request<Visit[]>(`/api/events/${eventId}/visits`),

@@ -194,7 +194,7 @@ from mockingbird.api.schemas import (
     ZoneType,
     ZoneUpdate,
 )
-from mockingbird.playback import local_camera_bridge, rtsp_bridge
+from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
 from mockingbird.source_providers import folder_import_preview
 from mockingbird.source_providers.webhook_validation import classify_webhook_payload
 from mockingbird.storage.database import (
@@ -399,9 +399,9 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="local_usb",
-        display_name="Local USB / webcam",
+        display_name="Local USB / Windows webcam",
         description=(
-            "Metadata for local USB/webcam Live view through optional system ffmpeg."
+            "Metadata for local USB or Windows webcam Live view through optional ffmpeg."
         ),
         status=SourceProviderDefinitionStatus.available_contract_only,
         supports_live_playback=True,
@@ -412,13 +412,13 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 label="Playback type",
                 required=False,
                 secret=False,
-                description="Use local_usb for a local camera Live view.",
+                description="Use local_usb for Linux V4L2 or windows_dshow for Windows DirectShow.",
                 placeholder="local_usb",
             ),
             SourceProviderField(
                 key="local_camera_device",
-                label="Camera device",
-                required=True,
+                label="Linux camera device",
+                required=False,
                 secret=False,
                 description="Linux device path for the local USB/webcam.",
                 placeholder="/dev/video0",
@@ -430,6 +430,38 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 secret=False,
                 description="Linux v4l2 is supported first; other platforms are future work.",
                 placeholder="v4l2",
+            ),
+            SourceProviderField(
+                key="windows_camera_name",
+                label="Windows camera name",
+                required=False,
+                secret=False,
+                description="DirectShow video device name from ffmpeg device listing.",
+                placeholder="EMEET SmartCam S600",
+            ),
+            SourceProviderField(
+                key="ffmpeg_binary_path",
+                label="ffmpeg binary path",
+                required=False,
+                secret=False,
+                description="Optional Windows ffmpeg.exe path when the API runs in WSL.",
+                placeholder="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+            ),
+            SourceProviderField(
+                key="video_size",
+                label="Video size",
+                required=False,
+                secret=False,
+                description="Optional DirectShow video size.",
+                placeholder="640x480",
+            ),
+            SourceProviderField(
+                key="framerate",
+                label="Framerate",
+                required=False,
+                secret=False,
+                description="Optional DirectShow input framerate.",
+                placeholder="10",
             ),
             SourceProviderField(
                 key="display_name",
@@ -717,6 +749,10 @@ class StreamLivePlaybackConfig:
     live_stream_type: str
     local_camera_device: str | None = None
     local_camera_format: str | None = None
+    windows_camera_name: str | None = None
+    windows_ffmpeg_binary_path: str | None = None
+    windows_video_size: str | None = None
+    windows_framerate: str | None = None
 
 
 class MotionEvidenceModel(Base):
@@ -1535,11 +1571,26 @@ class ProductRepository:
                         "payloads yet."
                     )
                 elif configuration.provider_key == "local_usb":
-                    message = (
-                        "This source needs a local camera device path before Live view "
-                        "can use the local camera bridge."
+                    live_type = _normalize_live_stream_type(
+                        configuration.safe_config_preview.get("live_stream_type")
+                        or local_camera_bridge.LOCAL_USB_STREAM_TYPE,
+                        "",
                     )
-                    setup_hint = "Choose a local camera device such as /dev/video0."
+                    if live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+                        message = (
+                            "This source needs a Windows DirectShow camera name before "
+                            "Live view can use the Windows camera bridge."
+                        )
+                        setup_hint = (
+                            "Find the exact camera name with: "
+                            "ffmpeg -list_devices true -f dshow -i dummy."
+                        )
+                    else:
+                        message = (
+                            "This source needs a local camera device path before Live view "
+                            "can use the local camera bridge."
+                        )
+                        setup_hint = "Choose a local camera device such as /dev/video0."
                 else:
                     message = (
                         "This source still needs provider metadata before a future provider can run."
@@ -2170,6 +2221,12 @@ class ProductRepository:
                 )
             if configured_provider_key == "local_usb":
                 config = json.loads(model.config_json) if model is not None else {}
+                live_type = _normalize_live_stream_type(config.get("live_stream_type"), "")
+                if live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+                    return _windows_dshow_stream_playback_status(
+                        stream=stream,
+                        config=config,
+                    )
                 return _local_usb_stream_playback_status(
                     stream=stream,
                     config=config,
@@ -2247,7 +2304,10 @@ class ProductRepository:
                 config.get("live_stream_type"),
                 live_url or "",
             )
-            if provider_key == "local_usb":
+            if (
+                provider_key == "local_usb"
+                and live_type != windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE
+            ):
                 live_type = local_camera_bridge.LOCAL_USB_STREAM_TYPE
             return StreamLivePlaybackConfig(
                 stream_id=stream.id,
@@ -2263,6 +2323,14 @@ class ProductRepository:
                         config.get("local_camera_format")
                     )
                 ),
+                windows_camera_name=(
+                    (config.get("windows_camera_name") or "").strip() or None
+                ),
+                windows_ffmpeg_binary_path=(
+                    (config.get("ffmpeg_binary_path") or "").strip() or None
+                ),
+                windows_video_size=((config.get("video_size") or "").strip() or None),
+                windows_framerate=((config.get("framerate") or "").strip() or None),
             )
 
     def streams_for_source(self, source_id: str) -> list[Stream]:
@@ -7962,10 +8030,10 @@ def _source_provider_supports_live_playback(
 
 
 def _local_usb_supports_live_playback(config: dict[str, str]) -> bool:
-    return (
-        _local_usb_bridge_status(config)
-        == "available"
-    )
+    live_type = _normalize_live_stream_type(config.get("live_stream_type"), "")
+    if live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+        return _windows_dshow_bridge_status(config) == "available"
+    return _local_usb_bridge_status(config) == "available"
 
 
 def _external_url_supports_browser_live_playback(config: dict[str, str]) -> bool:
@@ -7982,6 +8050,8 @@ def _normalize_live_stream_type(raw_type: str | None, url: str) -> str:
 
     if normalized in {"local_usb", "local_camera", "usb", "webcam"}:
         return local_camera_bridge.LOCAL_USB_STREAM_TYPE
+    if normalized in {"windows_dshow", "dshow", "directshow", "windows_webcam"}:
+        return windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE
     if url_lower.startswith(("rtsp://", "rtsps://")) or normalized == "rtsp":
         return "rtsp"
     if normalized in {"mjpeg", "mjpg", "multipart_mjpeg"}:
@@ -8024,6 +8094,8 @@ def _playback_kind_for_live_stream_type(live_type: str) -> StreamPlaybackKind:
         return StreamPlaybackKind.rtsp
     if live_type == local_camera_bridge.LOCAL_USB_STREAM_TYPE:
         return StreamPlaybackKind.local_usb
+    if live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+        return StreamPlaybackKind.windows_dshow
     return StreamPlaybackKind.unknown
 
 
@@ -8031,6 +8103,91 @@ def _local_usb_bridge_status(config: dict[str, str]) -> str:
     return local_camera_bridge.local_camera_status(
         device=(config.get("local_camera_device") or "").strip() or None,
         camera_format=config.get("local_camera_format"),
+    )
+
+
+def _windows_dshow_bridge_status(config: dict[str, str]) -> str:
+    return windows_camera_bridge.windows_camera_status(
+        camera_name=(config.get("windows_camera_name") or "").strip() or None,
+        ffmpeg_binary_path=(config.get("ffmpeg_binary_path") or "").strip() or None,
+    )
+
+
+def _windows_dshow_stream_playback_status(
+    *,
+    stream: StreamModel,
+    config: dict[str, str],
+) -> StreamPlaybackStatus:
+    camera_name = (config.get("windows_camera_name") or "").strip()
+    ffmpeg_binary_path = (config.get("ffmpeg_binary_path") or "").strip()
+    bridge_status = _windows_dshow_bridge_status(config)
+    common = {
+        "stream_id": stream.id,
+        "source_id": stream.source_id,
+        "playback_kind": StreamPlaybackKind.windows_dshow,
+        "display_title": stream.name,
+        "supports_zone_editing": True,
+        "adapter_key": "local_usb",
+        "live_stream_type": windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE,
+        "windows_camera_bridge_available": bridge_status == "available",
+        "windows_camera_status": bridge_status,
+        "windows_camera_name_display": camera_name or None,
+        "windows_ffmpeg_binary_display": ffmpeg_binary_path or None,
+    }
+
+    if bridge_status == "available":
+        return StreamPlaybackStatus(
+            **common,
+            status=StreamPlaybackStatusValue.live_ready,
+            message="Windows DirectShow camera bridge is available for Live view.",
+            setup_hint=(
+                "The bridge starts Windows ffmpeg only while this Live view is open."
+            ),
+            supports_live_playback=True,
+            bridged_mjpeg_url=f"/api/streams/{stream.id}/live/windows-dshow-mjpeg",
+        )
+    if bridge_status == "camera_name_missing":
+        return StreamPlaybackStatus(
+            **common,
+            status=StreamPlaybackStatusValue.not_configured,
+            message="Choose a Windows DirectShow camera name.",
+            setup_hint=(
+                "Find the exact camera name with: ffmpeg -list_devices true -f dshow -i dummy."
+            ),
+            supports_live_playback=False,
+        )
+    if bridge_status == "unsupported_host":
+        return StreamPlaybackStatus(
+            **common,
+            status=StreamPlaybackStatusValue.unsupported_stream_type,
+            message=(
+                "Windows DirectShow requires Windows ffmpeg.exe or running the API on Windows."
+            ),
+            setup_hint=(
+                "If the API runs in WSL, configure a Windows ffmpeg.exe path such as "
+                "/mnt/c/ffmpeg/bin/ffmpeg.exe."
+            ),
+            supports_live_playback=False,
+        )
+    if bridge_status == "ffmpeg_failed":
+        return StreamPlaybackStatus(
+            **common,
+            status=StreamPlaybackStatusValue.playback_error,
+            message="Windows DirectShow camera unavailable or playback failed.",
+            setup_hint=(
+                "Close other camera apps, check the DirectShow camera name, and "
+                "confirm Windows camera privacy permissions."
+            ),
+            supports_live_playback=False,
+        )
+    return StreamPlaybackStatus(
+        **common,
+        status=StreamPlaybackStatusValue.unavailable,
+        message="Windows DirectShow bridge unavailable - ffmpeg not found.",
+        setup_hint=(
+            "Install Windows ffmpeg or configure ffmpeg_binary_path to a Windows ffmpeg.exe."
+        ),
+        supports_live_playback=False,
     )
 
 
@@ -8321,6 +8478,22 @@ def _source_provider_configuration_from_config(
             if field.required:
                 missing_fields.append(field.key)
 
+    if definition.provider_key == "local_usb":
+        live_type = _normalize_live_stream_type(
+            config.get("live_stream_type") or local_camera_bridge.LOCAL_USB_STREAM_TYPE,
+            "",
+        )
+        conditional_required_field = (
+            "windows_camera_name"
+            if live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE
+            else "local_camera_device"
+        )
+        if (
+            conditional_required_field not in missing_fields
+            and not (config.get(conditional_required_field) or "").strip()
+        ):
+            missing_fields.append(conditional_required_field)
+
     if missing_fields:
         missing_labels = [
             field.label for field in definition.fields if field.key in set(missing_fields)
@@ -8335,8 +8508,18 @@ def _source_provider_configuration_from_config(
                 "can be implemented."
             )
         elif definition.provider_key == "local_usb":
-            message = "Local camera setup metadata is incomplete."
-            setup_hint = "Choose a local camera device such as /dev/video0."
+            live_type = _normalize_live_stream_type(
+                config.get("live_stream_type") or local_camera_bridge.LOCAL_USB_STREAM_TYPE,
+                "",
+            )
+            if live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+                message = "Windows DirectShow camera name is required."
+                setup_hint = (
+                    "Find the exact camera name with: ffmpeg -list_devices true -f dshow -i dummy."
+                )
+            else:
+                message = "Local camera setup metadata is incomplete."
+                setup_hint = "Choose a local camera device such as /dev/video0."
         else:
             message = "Provider configuration metadata is incomplete."
             setup_hint = f"Add metadata for: {', '.join(missing_labels)}."
@@ -8359,12 +8542,34 @@ def _source_provider_configuration_from_config(
             "upload/download and reviewed truth remain future work."
         )
     elif definition.provider_key == "local_usb":
+        live_type = _normalize_live_stream_type(config.get("live_stream_type"), "")
         if _local_usb_supports_live_playback(config):
-            message = "Local camera metadata is ready for Live view."
+            if live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+                message = "Windows DirectShow camera metadata is ready for Live view."
+            else:
+                message = "Local camera metadata is ready for Live view."
             setup_hint = (
                 "Open Live view for playback; monitoring, review, and export remain "
                 "separate explicit workflows."
             )
+        elif live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+            bridge_status = _windows_dshow_bridge_status(config)
+            if bridge_status == "camera_name_missing":
+                message = "Windows DirectShow camera name is required."
+                setup_hint = (
+                    "Find the exact camera name with: ffmpeg -list_devices true -f dshow -i dummy."
+                )
+            elif bridge_status == "unsupported_host":
+                message = "Windows DirectShow needs Windows ffmpeg.exe from this host."
+                setup_hint = (
+                    "If the API runs in WSL, configure ffmpeg_binary_path to a Windows "
+                    "ffmpeg.exe path."
+                )
+            else:
+                message = "Windows DirectShow bridge unavailable - ffmpeg not found."
+                setup_hint = (
+                    "Install Windows ffmpeg or configure ffmpeg_binary_path to ffmpeg.exe."
+                )
         else:
             bridge_status = _local_usb_bridge_status(config)
             if bridge_status == "ffmpeg_missing":
@@ -8505,12 +8710,22 @@ def _source_setup_review_from_contracts(
             )
     elif configuration.provider_key == "local_usb":
         readiness_level = "metadata_ready"
+        live_type = _normalize_live_stream_type(
+            configuration.safe_config_preview.get("live_stream_type"),
+            "",
+        )
         if supports_live_playback:
-            summary = "Local camera metadata is ready for Live view."
+            if live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+                summary = "Windows DirectShow camera metadata is ready for Live view."
+            else:
+                summary = "Local camera metadata is ready for Live view."
             next_step = (
                 "Open Live view for playback; monitoring and review remain separate "
                 "explicit workflows."
             )
+        elif live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+            summary = "Windows DirectShow camera metadata is saved, but Live view is unavailable."
+            next_step = configuration.setup_hint or "Check the Windows camera setup."
         else:
             summary = (
                 "Local camera metadata is saved, but Live view needs Linux /dev/video* "
@@ -8564,7 +8779,17 @@ def _source_setup_review_from_contracts(
         warnings.append("Webhook metadata creates no media, Events/Visits, labels, or truth.")
         warnings.append("Live playback is not expected for this provider.")
     elif configuration.provider_key == "local_usb" and not supports_live_playback:
-        warnings.append("Local camera Live view needs Linux /dev/video* access and host ffmpeg.")
+        live_type = _normalize_live_stream_type(
+            configuration.safe_config_preview.get("live_stream_type")
+            or local_camera_bridge.LOCAL_USB_STREAM_TYPE,
+            "",
+        )
+        if live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+            warnings.append(
+                "Windows DirectShow Live view needs a camera name and Windows ffmpeg.exe."
+            )
+        else:
+            warnings.append("Local camera Live view needs Linux /dev/video* access and host ffmpeg.")
     elif configuration.provider_key == "external_url" and not supports_live_playback:
         warnings.append("Live view needs a browser-playable Stream URL.")
     elif not supports_live_playback and configuration.provider_key != "manual_media":
