@@ -1282,7 +1282,7 @@ button {
 
 .review-narrow-controls {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr);
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 10px;
   align-items: end;
 }
@@ -1308,9 +1308,11 @@ button {
 .review-filter-summary {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 
+.review-filter-summary strong,
 .review-filter-summary span {
   border: 1px solid #dce3d8;
   border-radius: 999px;
@@ -1319,6 +1321,29 @@ button {
   color: #34443a;
   font-size: 0.85rem;
   font-weight: 800;
+}
+
+.review-active-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-filter-chip {
+  min-height: 32px;
+  border: 1px solid #b9c8b4;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #ffffff;
+  color: #263a2e;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.review-filter-chip::after {
+  content: " x";
+  color: #627168;
 }
 
 .review-bulk-panel,

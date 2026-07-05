@@ -238,6 +238,8 @@ create proposal evidence only.
 - [ ] Promote explicitly.
 - [ ] Open Event Detail and Visit Detail.
 - [ ] Confirm no label/truth yet.
+- [ ] Open Review Queue and filter by search text, item type, evidence/media
+      state, and stream/source context to find the review item.
 - [ ] Submit a correction.
 - [ ] Confirm correction becomes truth.
 

@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import type {
   DetectionProposal,
   DetectionRun,
+  MotionEvidence,
   ReviewCorrectionResult,
   ReviewLabel,
   ReviewQueueBulkCorrectionResponse,
@@ -31,6 +32,12 @@ import { formatDateTime, formatLabel } from "../utils";
 
 type ReviewFilter = "all" | "bird_species" | "unknown_animals" | "false_positives";
 type ReviewTargetFilter = "all" | "event" | "visit";
+type ReviewEvidenceFilter =
+  | "all"
+  | "has_media"
+  | "has_detection_proposal"
+  | "has_motion_evidence"
+  | "no_proposal_evidence";
 export type ReviewStatusFilter = "unreviewed" | "reviewed" | "all";
 type LabelValidationStatus = "empty" | "suggested" | "recent" | "taxonomy" | "custom";
 
@@ -58,6 +65,29 @@ interface CorrectionHistoryGroup {
 interface ReviewEvidenceProposal {
   proposal: DetectionProposal;
   relation: "linked" | "same_media";
+}
+
+interface ReviewItemFilterMetadata {
+  detectionProposalCount: number;
+  hasDetectionProposal: boolean;
+  hasMedia: boolean;
+  hasMotionEvidence: boolean;
+  motionEvidenceCount: number;
+  searchText: string;
+  sourceId: string | null;
+  streamId: string | null;
+}
+
+interface SourceStreamFilterOption {
+  value: string;
+  label: string;
+  count: number;
+}
+
+interface ActiveFilterChip {
+  key: string;
+  label: string;
+  onClear: () => void;
 }
 
 type LastCorrectionSummary =
@@ -303,6 +333,181 @@ function reviewEvidenceProposals(
     });
 }
 
+function reviewMotionEvidenceForQueueItem(
+  item: ReviewQueueItem,
+  motionEvidence: MotionEvidence[],
+): MotionEvidence[] {
+  return motionEvidence
+    .filter(
+      (evidence) =>
+        (item.visit_id && evidence.promoted_visit_id === item.visit_id) ||
+        (item.event_id && evidence.promoted_event_id === item.event_id) ||
+        (item.media_asset?.id && evidence.snapshot_media_asset_id === item.media_asset.id),
+    )
+    .sort(
+      (first, second) =>
+        new Date(second.created_at).getTime() - new Date(first.created_at).getTime(),
+    );
+}
+
+function reviewItemFilterMetadata(
+  item: ReviewQueueItem,
+  proposals: DetectionProposal[],
+  motionEvidence: MotionEvidence[],
+  taxonomyLabels: TaxonomyLabel[],
+  detectionRunsById: Map<string, DetectionRun>,
+): ReviewItemFilterMetadata {
+  const proposalEvidence = reviewEvidenceProposals(item, proposals);
+  const motionEvidenceItems = reviewMotionEvidenceForQueueItem(item, motionEvidence);
+  const sourceId =
+    item.media_asset?.source_id ??
+    motionEvidenceItems.find((evidence) => evidence.source_id)?.source_id ??
+    null;
+  const streamId =
+    item.stream_id ||
+    item.media_asset?.stream_id ||
+    motionEvidenceItems.find((evidence) => evidence.stream_id)?.stream_id ||
+    null;
+  const proposalSearch = proposalEvidence.flatMap(({ proposal }) => {
+    const run = detectionRunsById.get(proposal.run_id);
+    return [
+      proposal.id,
+      proposal.label,
+      proposal.suggested_subject_label,
+      proposal.suggested_species ?? "",
+      proposal.status,
+      proposal.run_id,
+      run?.source ?? "",
+      run?.summary ?? "",
+    ];
+  });
+  const motionSearch = motionEvidenceItems.flatMap((evidence) => [
+    evidence.id,
+    evidence.status,
+    evidence.source_id ?? "",
+    evidence.stream_id ?? "",
+    evidence.zone_id,
+    evidence.snapshot_media_asset_id ?? "",
+    evidence.notes ?? "",
+  ]);
+  const hasMedia =
+    Boolean(item.media_asset) ||
+    proposalEvidence.some(({ proposal }) => Boolean(proposal.media_asset_id)) ||
+    motionEvidenceItems.some((evidence) => Boolean(evidence.snapshot_media_asset_id));
+
+  return {
+    detectionProposalCount: proposalEvidence.length,
+    hasDetectionProposal: proposalEvidence.length > 0,
+    hasMedia,
+    hasMotionEvidence: motionEvidenceItems.length > 0,
+    motionEvidenceCount: motionEvidenceItems.length,
+    searchText: [
+      reviewQueueSearchText(item, taxonomyLabels),
+      sourceId ?? "",
+      streamId ?? "",
+      item.media_asset?.source_id ?? "",
+      item.media_asset?.stream_id ?? "",
+      ...proposalSearch,
+      ...motionSearch,
+    ]
+      .join(" ")
+      .toLowerCase(),
+    sourceId,
+    streamId,
+  };
+}
+
+function matchesEvidenceFilter(
+  metadata: ReviewItemFilterMetadata,
+  evidenceFilter: ReviewEvidenceFilter,
+): boolean {
+  if (evidenceFilter === "has_media") {
+    return metadata.hasMedia;
+  }
+  if (evidenceFilter === "has_detection_proposal") {
+    return metadata.hasDetectionProposal;
+  }
+  if (evidenceFilter === "has_motion_evidence") {
+    return metadata.hasMotionEvidence;
+  }
+  if (evidenceFilter === "no_proposal_evidence") {
+    return !metadata.hasDetectionProposal;
+  }
+  return true;
+}
+
+function matchesSourceStreamFilter(
+  metadata: ReviewItemFilterMetadata,
+  sourceStreamFilter: string,
+): boolean {
+  if (sourceStreamFilter === "all") {
+    return true;
+  }
+  if (sourceStreamFilter.startsWith("stream:")) {
+    return metadata.streamId === sourceStreamFilter.slice("stream:".length);
+  }
+  if (sourceStreamFilter.startsWith("source:")) {
+    return metadata.sourceId === sourceStreamFilter.slice("source:".length);
+  }
+  return true;
+}
+
+function sourceStreamFilterOptions(
+  metadataById: Map<string, ReviewItemFilterMetadata>,
+): SourceStreamFilterOption[] {
+  const streamCounts = new Map<string, number>();
+  const sourceCounts = new Map<string, number>();
+
+  for (const metadata of metadataById.values()) {
+    if (metadata.streamId) {
+      streamCounts.set(metadata.streamId, (streamCounts.get(metadata.streamId) ?? 0) + 1);
+    }
+    if (metadata.sourceId) {
+      sourceCounts.set(metadata.sourceId, (sourceCounts.get(metadata.sourceId) ?? 0) + 1);
+    }
+  }
+
+  return [
+    {
+      count: metadataById.size,
+      label: "All streams/sources",
+      value: "all",
+    },
+    ...[...streamCounts.entries()]
+      .sort(([first], [second]) => first.localeCompare(second))
+      .map(([streamId, count]) => ({
+        count,
+        label: `Stream ${streamId}`,
+        value: `stream:${streamId}`,
+      })),
+    ...[...sourceCounts.entries()]
+      .sort(([first], [second]) => first.localeCompare(second))
+      .map(([sourceId, count]) => ({
+        count,
+        label: `Source ${sourceId}`,
+        value: `source:${sourceId}`,
+      })),
+  ];
+}
+
+function reviewEvidenceFilterLabel(evidenceFilter: ReviewEvidenceFilter): string {
+  const labels: Record<ReviewEvidenceFilter, string> = {
+    all: "All evidence",
+    has_media: "Has media",
+    has_detection_proposal: "Has detection proposal",
+    has_motion_evidence: "Has MotionEvidence",
+    no_proposal_evidence: "No proposal evidence",
+  };
+  return labels[evidenceFilter];
+}
+
+function sourceStreamFilterLabel(
+  sourceStreamFilter: string,
+  options: SourceStreamFilterOption[],
+): string {
+  return options.find((option) => option.value === sourceStreamFilter)?.label ?? sourceStreamFilter;
+}
+
 function formatConfidence(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
@@ -383,11 +588,14 @@ export function ReviewQueuePage({
   const [selectedTargetIds, setSelectedTargetIds] = useState<string[]>([]);
   const [detectionProposals, setDetectionProposals] = useState<DetectionProposal[]>([]);
   const [detectionRuns, setDetectionRuns] = useState<DetectionRun[]>([]);
+  const [motionEvidence, setMotionEvidence] = useState<MotionEvidence[]>([]);
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [reviewLabels, setReviewLabels] = useState<ReviewLabel[]>([]);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [textSearch, setTextSearch] = useState("");
   const [targetTypeFilter, setTargetTypeFilter] = useState<ReviewTargetFilter>("all");
+  const [evidenceFilter, setEvidenceFilter] = useState<ReviewEvidenceFilter>("all");
+  const [sourceStreamFilter, setSourceStreamFilter] = useState("all");
   const [reviewStatusFilter, setReviewStatusFilter] =
     useState<ReviewStatusFilter>("unreviewed");
   const [readinessHandoffLabel, setReadinessHandoffLabel] = useState<string | null>(null);
@@ -421,11 +629,42 @@ export function ReviewQueuePage({
     { value: "false_positives", label: "False positives", count: queueCounts.false_positives },
   ];
 
+  const detectionRunsById = useMemo(
+    () => new Map(detectionRuns.map((run) => [run.id, run])),
+    [detectionRuns],
+  );
+
+  const filterMetadataByItemId = useMemo(
+    () =>
+      new Map(
+        queueItems.map((item) => [
+          item.id,
+          reviewItemFilterMetadata(
+            item,
+            detectionProposals,
+            motionEvidence,
+            taxonomyLabels,
+            detectionRunsById,
+          ),
+        ]),
+      ),
+    [detectionProposals, detectionRunsById, motionEvidence, queueItems, taxonomyLabels],
+  );
+
+  const sourceStreamOptions = useMemo(
+    () => sourceStreamFilterOptions(filterMetadataByItemId),
+    [filterMetadataByItemId],
+  );
+
   const filteredItems = useMemo(
     () => {
       const normalizedSearch = textSearch.trim().toLowerCase();
 
       return queueItems.filter((item) => {
+        const metadata = filterMetadataByItemId.get(item.id);
+        if (!metadata) {
+          return false;
+        }
         if (
           reviewFilter === "bird_species" &&
           !isBirdReviewLabel(item.suggested_label, taxonomyLabels)
@@ -451,9 +690,15 @@ export function ReviewQueuePage({
         if (!matchesStatusFilter(item, reviewStatusFilter)) {
           return false;
         }
+        if (!matchesEvidenceFilter(metadata, evidenceFilter)) {
+          return false;
+        }
+        if (!matchesSourceStreamFilter(metadata, sourceStreamFilter)) {
+          return false;
+        }
         if (
           normalizedSearch &&
-          !reviewQueueSearchText(item, taxonomyLabels).includes(normalizedSearch)
+          !metadata.searchText.includes(normalizedSearch)
         ) {
           return false;
         }
@@ -461,7 +706,17 @@ export function ReviewQueuePage({
         return true;
       });
     },
-    [queueItems, reviewFilter, reviewStatusFilter, targetTypeFilter, textSearch, taxonomyLabels],
+    [
+      evidenceFilter,
+      filterMetadataByItemId,
+      queueItems,
+      reviewFilter,
+      reviewStatusFilter,
+      sourceStreamFilter,
+      targetTypeFilter,
+      textSearch,
+      taxonomyLabels,
+    ],
   );
 
   const selectedItems = useMemo(
@@ -486,6 +741,65 @@ export function ReviewQueuePage({
     () => filteredItems.filter(isBulkCorrectionEligible),
     [filteredItems],
   );
+
+  const activeFilterChips = useMemo<ActiveFilterChip[]>(() => {
+    const chips: ActiveFilterChip[] = [];
+    if (textSearch.trim()) {
+      chips.push({
+        key: "search",
+        label: `Search: ${textSearch.trim()}`,
+        onClear: () => {
+          setTextSearch("");
+          setReadinessHandoffLabel(null);
+        },
+      });
+    }
+    if (reviewFilter !== "all") {
+      chips.push({
+        key: "category",
+        label: `Group: ${reviewFilters.find((filter) => filter.value === reviewFilter)?.label ?? reviewFilter}`,
+        onClear: () => setReviewFilter("all"),
+      });
+    }
+    if (targetTypeFilter !== "all") {
+      chips.push({
+        key: "target",
+        label: `Type: ${formatLabel(targetTypeFilter)}`,
+        onClear: () => setTargetTypeFilter("all"),
+      });
+    }
+    if (evidenceFilter !== "all") {
+      chips.push({
+        key: "evidence",
+        label: `Evidence: ${reviewEvidenceFilterLabel(evidenceFilter)}`,
+        onClear: () => setEvidenceFilter("all"),
+      });
+    }
+    if (sourceStreamFilter !== "all") {
+      chips.push({
+        key: "source-stream",
+        label: sourceStreamFilterLabel(sourceStreamFilter, sourceStreamOptions),
+        onClear: () => setSourceStreamFilter("all"),
+      });
+    }
+    if (reviewStatusFilter !== "all") {
+      chips.push({
+        key: "status",
+        label: `Status: ${formatLabel(reviewStatusFilter)}`,
+        onClear: () => setReviewStatusFilter("all"),
+      });
+    }
+    return chips;
+  }, [
+    evidenceFilter,
+    reviewFilter,
+    reviewFilters,
+    reviewStatusFilter,
+    sourceStreamFilter,
+    sourceStreamOptions,
+    targetTypeFilter,
+    textSearch,
+  ]);
 
   const recentLabelValues = useMemo(
     () => recentReviewLabelValues(reviewLabels),
@@ -532,11 +846,6 @@ export function ReviewQueuePage({
     [reviewLabels],
   );
 
-  const detectionRunsById = useMemo(
-    () => new Map(detectionRuns.map((run) => [run.id, run])),
-    [detectionRuns],
-  );
-
   useEffect(() => {
     if (!initialContext) {
       return;
@@ -573,7 +882,20 @@ export function ReviewQueuePage({
   useEffect(() => {
     setSelectedTargetIds([]);
     setBulkResult(null);
-  }, [reviewFilter, reviewStatusFilter, targetTypeFilter, textSearch]);
+  }, [
+    evidenceFilter,
+    reviewFilter,
+    reviewStatusFilter,
+    sourceStreamFilter,
+    targetTypeFilter,
+    textSearch,
+  ]);
+
+  useEffect(() => {
+    if (!sourceStreamOptions.some((option) => option.value === sourceStreamFilter)) {
+      setSourceStreamFilter("all");
+    }
+  }, [sourceStreamFilter, sourceStreamOptions]);
 
   useEffect(() => {
     const availableTargetIds = new Set(
@@ -619,18 +941,21 @@ export function ReviewQueuePage({
 
     async function loadDetectionEvidence() {
       try {
-        const [nextProposals, nextRuns] = await Promise.all([
+        const [nextProposals, nextRuns, nextMotionEvidence] = await Promise.all([
           apiClient.getDetectionProposals(),
           apiClient.getDetectionRuns(),
+          apiClient.listMotionEvidence({ status: "all" }),
         ]);
         if (isMounted) {
           setDetectionProposals(nextProposals);
           setDetectionRuns(nextRuns);
+          setMotionEvidence(nextMotionEvidence.motion_evidence);
         }
       } catch {
         if (isMounted) {
           setDetectionProposals([]);
           setDetectionRuns([]);
+          setMotionEvidence([]);
         }
       }
     }
@@ -715,6 +1040,18 @@ export function ReviewQueuePage({
 
   function clearReadinessSearch() {
     setTextSearch("");
+    setReadinessHandoffLabel(null);
+    setSelectedTargetIds([]);
+    setBulkResult(null);
+  }
+
+  function resetReviewFilters() {
+    setReviewFilter("all");
+    setTextSearch("");
+    setTargetTypeFilter("all");
+    setEvidenceFilter("all");
+    setSourceStreamFilter("all");
+    setReviewStatusFilter("all");
     setReadinessHandoffLabel(null);
     setSelectedTargetIds([]);
     setBulkResult(null);
@@ -888,7 +1225,7 @@ export function ReviewQueuePage({
               Search
               <input
                 onChange={(event) => setTextSearch(event.target.value)}
-                placeholder="label, id, stream, note"
+                placeholder="label, id, stream, media, proposal"
                 type="search"
                 value={textSearch}
               />
@@ -907,6 +1244,36 @@ export function ReviewQueuePage({
               </select>
             </label>
             <label>
+              Evidence
+              <select
+                onChange={(event) =>
+                  setEvidenceFilter(event.target.value as ReviewEvidenceFilter)
+                }
+                value={evidenceFilter}
+              >
+                <option value="all">All evidence states</option>
+                <option value="has_media">Has media</option>
+                <option value="has_detection_proposal">Has detection proposal</option>
+                <option value="has_motion_evidence">Has MotionEvidence</option>
+                <option value="no_proposal_evidence">No proposal evidence</option>
+              </select>
+            </label>
+            {sourceStreamOptions.length > 1 ? (
+              <label>
+                Source / Stream
+                <select
+                  onChange={(event) => setSourceStreamFilter(event.target.value)}
+                  value={sourceStreamFilter}
+                >
+                  {sourceStreamOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label} ({option.count})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <label>
               Status
               <select
                 onChange={(event) =>
@@ -919,10 +1286,32 @@ export function ReviewQueuePage({
                 <option value="all">All statuses</option>
               </select>
             </label>
+            <button className="secondary-action" onClick={resetReviewFilters} type="button">
+              Reset filters
+            </button>
           </div>
           <div className="review-filter-summary">
-            <span>{filteredItems.length} visible</span>
+            <strong>
+              Showing {filteredItems.length} of {queueItems.length} review items
+            </strong>
             <span>{visibleEligibleItems.length} visible eligible</span>
+            <span>{selectedTargetIds.length} selected</span>
+          </div>
+          <div className="review-active-filter-row">
+            {activeFilterChips.length > 0 ? (
+              activeFilterChips.map((chip) => (
+                <button
+                  className="review-filter-chip"
+                  key={chip.key}
+                  onClick={chip.onClear}
+                  type="button"
+                >
+                  {chip.label}
+                </button>
+              ))
+            ) : (
+              <span className="meta-text">No extra filters active.</span>
+            )}
           </div>
         </section>
       ) : null}
@@ -1260,19 +1649,23 @@ export function ReviewQueuePage({
         {queueItems.length > 0 && filteredItems.length === 0 ? (
           <EmptyState
             title={
-              readinessHandoffLabel ? "No matching review items found" : "No review items in this filter"
+              readinessHandoffLabel ? "No matching review items found" : "No review items match these filters"
             }
             description={
               readinessHandoffLabel
                 ? "No matching review items found. Clear search to review other items."
-                : "Switch filters to resolve species, unknown animals, or false positives."
+                : "There is still review work outside this filtered view. Reset filters to see the full queue."
             }
             action={
               readinessHandoffLabel ? (
                 <button className="secondary-action" onClick={clearReadinessSearch} type="button">
                   Clear search
                 </button>
-              ) : undefined
+              ) : (
+                <button className="secondary-action" onClick={resetReviewFilters} type="button">
+                  Reset filters
+                </button>
+              )
             }
           />
         ) : null}
