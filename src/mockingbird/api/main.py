@@ -3029,9 +3029,11 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
             return LocalCameraFrameCaptureResponse(
                 **common,
                 status="capture_failed",
-                message="Could not capture a JPEG frame from the Windows DirectShow camera.",
+                message=(
+                    "Camera is busy. Stop Live view or other camera apps, then retry capture."
+                ),
                 warnings=[
-                    "Close other camera apps, check the camera name, and confirm Windows privacy permissions."
+                    "Check the camera name and confirm Windows privacy permissions."
                 ],
             )
         playback_type = windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE
@@ -3070,8 +3072,10 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
             return LocalCameraFrameCaptureResponse(
                 **common,
                 status="capture_failed",
-                message="Could not capture a JPEG frame from the local camera.",
-                warnings=["Close other camera apps and confirm the device path is available."],
+                message=(
+                    "Camera is busy. Stop Live view or other camera apps, then retry capture."
+                ),
+                warnings=["Confirm the local camera device path is available."],
             )
         playback_type = local_camera_bridge.LOCAL_USB_STREAM_TYPE
         camera_label = configuration.local_camera_device

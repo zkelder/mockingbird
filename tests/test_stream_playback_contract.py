@@ -1164,6 +1164,9 @@ async def test_local_camera_capture_reports_no_frame_as_capture_failed(
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "capture_failed"
+    assert body["message"] == (
+        "Camera is busy. Stop Live view or other camera apps, then retry capture."
+    )
     assert body["bytes_written"] == 0
     assert await product_counts(client) == before
 
