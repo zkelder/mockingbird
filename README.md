@@ -203,6 +203,12 @@ The frontend defaults to http://127.0.0.1:8000 for the API. Set `VITE_API_BASE_U
 Use [docs/mvp-demo-script.md](docs/mvp-demo-script.md) for the browser demo
 loop from import evidence through ReviewLabel correction and Dataset Export
 proof.
+It also includes the explicit `external_url` snapshot capture-to-review path:
+configure/select Source, fetch preview, save MediaAsset, create pending
+MotionEvidence, optionally create synthetic demo DetectionProposal evidence,
+optionally promote to Event/Visit, correct in Review Queue, and inspect a
+reviewed-only export proof record. The proposal path runs no model, creates no
+truth, and this path is not live video.
 
 ```sh
 .venv/bin/python -m uvicorn mockingbird.api.main:app --reload

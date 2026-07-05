@@ -10,14 +10,19 @@ import type {
   FolderImportCreatedMediaAsset,
   FolderImportRequest,
   FolderImportResponse,
+  DemoDetectionRunCreate,
+  DemoDetectionRunResult,
+  DetectionProposalDecisionResult,
   ExternalUrlPreviewResponse,
   ExternalUrlPreviewSaveResponse,
+  MotionEvidencePromoteResponse,
   SavedPreviewMotionEvidenceResponse,
   SourceConnectionStatus,
   SourceProviderConfiguration,
   SourceProviderDefinition,
   SourceSetupReviewResponse,
   Stream,
+  Zone,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
@@ -29,6 +34,12 @@ interface StreamsPageProps {
   sources: CameraSource[];
   onOpenImport: () => void;
   onOpenStream: (streamId: string) => void;
+  onOpenMotionEvidence: (motionEvidenceId: string) => void;
+  onOpenEvent: (eventId: string) => void;
+  onOpenVisit: (visitId: string) => void;
+  onOpenDetectionProposals: () => void;
+  onOpenReview: () => void;
+  onOpenExports: () => void;
 }
 
 function connectionTone(status: SourceConnectionStatus["status"]): "good" | "review" | "quiet" {
@@ -114,7 +125,22 @@ function parseAllowedExtensions(value: string): string[] | null {
   return extensions.length > 0 ? extensions : null;
 }
 
-export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: StreamsPageProps) {
+function isReviewableZone(zone: Zone): boolean {
+  return zone.is_active && zone.zone_type !== "privacy" && zone.zone_type !== "ignore";
+}
+
+export function StreamsPage({
+  streams,
+  sources,
+  onOpenImport,
+  onOpenStream,
+  onOpenMotionEvidence,
+  onOpenEvent,
+  onOpenVisit,
+  onOpenDetectionProposals,
+  onOpenReview,
+  onOpenExports,
+}: StreamsPageProps) {
   const [connectionStatuses, setConnectionStatuses] = useState<
     Record<string, SourceConnectionStatus>
   >({});
@@ -134,6 +160,14 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     useState<ExternalUrlPreviewSaveResponse | null>(null);
   const [previewEvidenceResult, setPreviewEvidenceResult] =
     useState<SavedPreviewMotionEvidenceResponse | null>(null);
+  const [previewPromotionResult, setPreviewPromotionResult] =
+    useState<MotionEvidencePromoteResponse | null>(null);
+  const [snapshotProposalResult, setSnapshotProposalResult] =
+    useState<DemoDetectionRunResult | null>(null);
+  const [snapshotProposalDecisionResult, setSnapshotProposalDecisionResult] =
+    useState<DetectionProposalDecisionResult | null>(null);
+  const [previewZones, setPreviewZones] = useState<Zone[]>([]);
+  const [selectedPreviewZoneId, setSelectedPreviewZoneId] = useState("");
   const [folderPreviewResult, setFolderPreviewResult] =
     useState<FolderImportPreviewResponse | null>(null);
   const [folderImportResult, setFolderImportResult] = useState<FolderImportResponse | null>(null);
@@ -155,6 +189,10 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewSaveError, setPreviewSaveError] = useState<string | null>(null);
   const [previewEvidenceError, setPreviewEvidenceError] = useState<string | null>(null);
+  const [previewPromotionError, setPreviewPromotionError] = useState<string | null>(null);
+  const [snapshotProposalError, setSnapshotProposalError] = useState<string | null>(null);
+  const [snapshotProposalMessage, setSnapshotProposalMessage] = useState<string | null>(null);
+  const [previewZonesError, setPreviewZonesError] = useState<string | null>(null);
   const [folderPreviewError, setFolderPreviewError] = useState<string | null>(null);
   const [folderImportError, setFolderImportError] = useState<string | null>(null);
   const [folderEvidenceDryRunError, setFolderEvidenceDryRunError] = useState<string | null>(null);
@@ -164,6 +202,9 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
   const [isFetchingPreview, setIsFetchingPreview] = useState(false);
   const [isSavingPreview, setIsSavingPreview] = useState(false);
   const [isCreatingPreviewEvidence, setIsCreatingPreviewEvidence] = useState(false);
+  const [isPromotingPreviewEvidence, setIsPromotingPreviewEvidence] = useState(false);
+  const [isCreatingSnapshotProposal, setIsCreatingSnapshotProposal] = useState(false);
+  const [isConvertingSnapshotProposal, setIsConvertingSnapshotProposal] = useState(false);
   const [isPreviewingFolderImport, setIsPreviewingFolderImport] = useState(false);
   const [isImportingFolderMedia, setIsImportingFolderMedia] = useState(false);
   const [isDryRunningFolderEvidence, setIsDryRunningFolderEvidence] = useState(false);
@@ -262,9 +303,18 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setPreviewResult(null);
     setPreviewSaveResult(null);
     setPreviewEvidenceResult(null);
+    setPreviewPromotionResult(null);
+    setSnapshotProposalResult(null);
+    setSnapshotProposalDecisionResult(null);
+    setPreviewZones([]);
+    setSelectedPreviewZoneId("");
     setPreviewError(null);
     setPreviewSaveError(null);
     setPreviewEvidenceError(null);
+    setPreviewPromotionError(null);
+    setSnapshotProposalError(null);
+    setSnapshotProposalMessage(null);
+    setPreviewZonesError(null);
     setFolderPreviewResult(null);
     setFolderImportResult(null);
     setFolderEvidenceDryRunResult(null);
@@ -279,6 +329,9 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setIsFetchingPreview(false);
     setIsSavingPreview(false);
     setIsCreatingPreviewEvidence(false);
+    setIsPromotingPreviewEvidence(false);
+    setIsCreatingSnapshotProposal(false);
+    setIsConvertingSnapshotProposal(false);
     setIsPreviewingFolderImport(false);
     setIsImportingFolderMedia(false);
     setIsDryRunningFolderEvidence(false);
@@ -394,6 +447,12 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setPreviewSaveResult(null);
     setPreviewEvidenceError(null);
     setPreviewEvidenceResult(null);
+    setPreviewPromotionError(null);
+    setPreviewPromotionResult(null);
+    setSnapshotProposalError(null);
+    setSnapshotProposalMessage(null);
+    setSnapshotProposalResult(null);
+    setSnapshotProposalDecisionResult(null);
     try {
       const result = await apiClient.fetchExternalUrlPreview(selectedSourceId, {});
       setPreviewResult(result);
@@ -416,6 +475,12 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     setPreviewSaveResult(null);
     setPreviewEvidenceError(null);
     setPreviewEvidenceResult(null);
+    setPreviewPromotionError(null);
+    setPreviewPromotionResult(null);
+    setSnapshotProposalError(null);
+    setSnapshotProposalMessage(null);
+    setSnapshotProposalResult(null);
+    setSnapshotProposalDecisionResult(null);
     try {
       const result = await apiClient.saveExternalUrlPreview(selectedSourceId, {
         stream_id: selectedFirstStream?.id ?? null,
@@ -430,21 +495,110 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     }
   }
 
+  function buildSnapshotProposalPayload(): DemoDetectionRunCreate | null {
+    if (!previewSaveResult?.media_asset_id) {
+      return null;
+    }
+
+    return {
+      media_asset_id: previewSaveResult.media_asset_id,
+      zone_id: selectedPreviewZoneId || null,
+      label: "bird",
+      confidence: 0.72,
+      suggested_subject_label: "unknown_bird",
+      suggested_species: "unknown_bird",
+      notes:
+        "External URL snapshot smoke path demo detector evidence only. " +
+        "No model inspected the media and no reviewed truth was created.",
+    };
+  }
+
+  async function handleCreateSnapshotProposal() {
+    const payload = buildSnapshotProposalPayload();
+    if (!payload) {
+      setSnapshotProposalError("Save a snapshot as local media before creating proposal evidence.");
+      return;
+    }
+
+    setIsCreatingSnapshotProposal(true);
+    setSnapshotProposalError(null);
+    setSnapshotProposalMessage(null);
+    setSnapshotProposalDecisionResult(null);
+    try {
+      const result = await apiClient.createDemoDetectionRun(payload);
+      setSnapshotProposalResult(result);
+      setSnapshotProposalMessage(
+        result.proposals.length > 0
+          ? "Synthetic snapshot proposal evidence was created. Review correction still creates truth."
+          : "Demo run completed without proposal evidence.",
+      );
+    } catch (caught) {
+      setSnapshotProposalError(
+        caught instanceof Error ? caught.message : "Snapshot proposal evidence could not be created.",
+      );
+    } finally {
+      setIsCreatingSnapshotProposal(false);
+    }
+  }
+
+  async function handleConvertSnapshotProposal() {
+    const proposal = snapshotProposalResult?.proposals[0] ?? null;
+    if (!proposal) {
+      setSnapshotProposalError(
+        "Create snapshot proposal evidence before converting it to Event/Visit context.",
+      );
+      return;
+    }
+
+    setIsConvertingSnapshotProposal(true);
+    setSnapshotProposalError(null);
+    setSnapshotProposalMessage(null);
+    try {
+      const result = await apiClient.decideDetectionProposal(proposal.id, {
+        decision: "convert_to_event",
+        event_title: "External URL snapshot proposal review",
+        subject_label: "unknown_bird",
+        species_guess: "unknown_bird",
+        notes: "Converted from explicit external URL snapshot proposal action; still needs review/correction.",
+      });
+      setSnapshotProposalDecisionResult(result);
+      setSnapshotProposalMessage(
+        "Converted proposal into needs-review Event/Visit context. No ReviewLabel truth was created.",
+      );
+    } catch (caught) {
+      setSnapshotProposalError(
+        caught instanceof Error
+          ? caught.message
+          : "Snapshot proposal could not be converted.",
+      );
+    } finally {
+      setIsConvertingSnapshotProposal(false);
+    }
+  }
+
   async function handleCreateMotionEvidenceFromSavedPreview() {
     if (!previewSaveResult?.media_asset_id) {
+      return;
+    }
+    if (!selectedPreviewZoneId) {
+      setPreviewEvidenceError("Choose an active reviewable Zone before creating evidence.");
       return;
     }
 
     setIsCreatingPreviewEvidence(true);
     setPreviewEvidenceError(null);
     setPreviewEvidenceResult(null);
+    setPreviewPromotionError(null);
+    setPreviewPromotionResult(null);
     try {
       const result = await apiClient.createMotionEvidenceFromMedia(
         previewSaveResult.media_asset_id,
         {
           stream_id: previewSaveResult.stream_id ?? selectedFirstStream?.id ?? null,
+          zone_id: selectedPreviewZoneId,
           note: "Saved preview review handoff.",
           reason: "User requested pending evidence from saved media.",
+          duplicate_policy: "skip_existing",
         },
       );
       setPreviewEvidenceResult(result);
@@ -454,6 +608,46 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
       );
     } finally {
       setIsCreatingPreviewEvidence(false);
+    }
+  }
+
+  async function handlePromotePreviewEvidence() {
+    if (!previewEvidenceResult?.motion_evidence_id) {
+      return;
+    }
+
+    setIsPromotingPreviewEvidence(true);
+    setPreviewPromotionError(null);
+    setPreviewPromotionResult(null);
+    try {
+      const result = await apiClient.promoteMotionEvidence(
+        previewEvidenceResult.motion_evidence_id,
+        {
+          event_title: "External URL snapshot review",
+          visit_label_hint: "unknown_animal",
+          notes: "Promoted by explicit external URL snapshot capture-to-review action.",
+          create_event: true,
+          create_visit: true,
+          attach_snapshot_media_asset_id: previewSaveResult?.media_asset_id ?? undefined,
+        },
+      );
+      setPreviewPromotionResult(result);
+      setPreviewEvidenceResult((current) =>
+        current
+          ? {
+              ...current,
+              status: result.evidence.status,
+            }
+          : current,
+      );
+    } catch (caught) {
+      setPreviewPromotionError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not promote pending evidence to reviewable Event/Visit.",
+      );
+    } finally {
+      setIsPromotingPreviewEvidence(false);
     }
   }
 
@@ -700,8 +894,54 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
     selectedSetupReview?.provider_key === "webhook_future" ||
     selectedConfiguration?.provider_key === "webhook_future";
   const selectedFirstStream = selectedSourceStreams[0] ?? null;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    setPreviewZones([]);
+    setSelectedPreviewZoneId("");
+    setPreviewZonesError(null);
+    if (!isExternalUrlProvider || !selectedFirstStream) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    async function loadPreviewZones() {
+      try {
+        const zones = await apiClient.getStreamZones(selectedFirstStream.id);
+        if (!isMounted) {
+          return;
+        }
+        setPreviewZones(zones);
+        setSelectedPreviewZoneId(zones.find(isReviewableZone)?.id ?? "");
+      } catch (caught) {
+        if (isMounted) {
+          setPreviewZonesError(
+            caught instanceof Error ? caught.message : "Could not load Stream Zones.",
+          );
+        }
+      }
+    }
+
+    void loadPreviewZones();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isExternalUrlProvider, selectedFirstStream]);
+
+  const reviewablePreviewZones = previewZones.filter(isReviewableZone);
+  const blockedPreviewZoneCount = previewZones.filter(
+    (zone) => zone.is_active && !isReviewableZone(zone),
+  ).length;
   const canSavePreview =
     previewResult?.status === "available" && Boolean(previewResult.preview_data_url);
+  const canCreatePreviewEvidence =
+    Boolean(previewSaveResult?.media_asset_id) &&
+    Boolean(selectedFirstStream) &&
+    Boolean(selectedPreviewZoneId);
+  const canPromotePreviewEvidence = previewEvidenceResult?.status === "pending";
   const folderEvidenceDryRunEligibleCount =
     folderEvidenceDryRunResult?.items.filter((item) => item.would_create_motion_evidence).length ??
     0;
@@ -902,16 +1142,23 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
               {isExternalUrlProvider ? (
                 <div className="external-preview-panel">
                   <div className="item-title-row">
-                    <h3>Still-image preview</h3>
+                    <h3>Snapshot capture for review</h3>
                     <StatusPill
                       label={previewResult ? formatLabel(previewResult.status) : "Explicit"}
                       tone={previewResult?.status === "available" ? "good" : "quiet"}
                     />
                   </div>
                   <p>
-                    Explicit preview fetch. Not saved. No Events/Visits created. Live playback is
-                    not implemented. Zone editing can continue.
+                    Fetch one still-image snapshot, save it as local media, then choose whether it
+                    should become pending evidence for review.
                   </p>
+                  <div className="source-connection-meta">
+                    <span>Still-image snapshot only</span>
+                    <span>Not live video</span>
+                    <span>Preview creates no records</span>
+                    <span>Save creates MediaAsset only</span>
+                    <span>Correction creates truth</span>
+                  </div>
                   <button
                     className="secondary-action"
                     disabled={isFetchingPreview}
@@ -978,6 +1225,12 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                             {previewSaveResult.content_type ? (
                               <span>Content: {previewSaveResult.content_type}</span>
                             ) : null}
+                            {previewSaveResult.file_name ? (
+                              <span>File: {previewSaveResult.file_name}</span>
+                            ) : null}
+                            {previewSaveResult.relative_path ? (
+                              <span>Path: {previewSaveResult.relative_path}</span>
+                            ) : null}
                             <span>Bytes written: {previewSaveResult.bytes_written}</span>
                           </div>
                           <span className="meta-text">
@@ -994,10 +1247,218 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                             </a>
                           ) : null}
                           {previewSaveResult.media_asset_id ? (
+                            <div className="external-preview-proposal-status">
+                              <div className="section-heading">
+                                <div>
+                                  <span className="meta-text">Track B</span>
+                                  <h3>Create snapshot proposal evidence</h3>
+                                </div>
+                                <StatusPill label="Synthetic evidence" tone="quiet" />
+                              </div>
+                              <p>
+                                Create synthetic demo proposal evidence from this saved snapshot.
+                                No model inspects the media and no reviewed truth is created.
+                              </p>
+                              <div className="import-flow-strip">
+                                <span>Saved snapshot</span>
+                                <span>DetectionProposal evidence</span>
+                                <span>Review correction truth</span>
+                              </div>
+                              {snapshotProposalMessage ? (
+                                <div className="notice-panel compact-notice">
+                                  {snapshotProposalMessage}
+                                </div>
+                              ) : null}
+                              {snapshotProposalError ? (
+                                <div className="zone-error">{snapshotProposalError}</div>
+                              ) : null}
+                              <div className="detail-actions">
+                                <button
+                                  className="primary-action"
+                                  disabled={
+                                    isCreatingSnapshotProposal ||
+                                    isConvertingSnapshotProposal
+                                  }
+                                  onClick={handleCreateSnapshotProposal}
+                                  type="button"
+                                >
+                                  {isCreatingSnapshotProposal
+                                    ? "Creating..."
+                                    : "Create demo proposal"}
+                                </button>
+                                {snapshotProposalResult?.proposals[0] &&
+                                !snapshotProposalDecisionResult ? (
+                                  <button
+                                    className="secondary-action"
+                                    disabled={isConvertingSnapshotProposal}
+                                    onClick={handleConvertSnapshotProposal}
+                                    type="button"
+                                  >
+                                    {isConvertingSnapshotProposal
+                                      ? "Converting..."
+                                      : "Convert first proposal to Event/Visit"}
+                                  </button>
+                                ) : null}
+                                <button
+                                  className="secondary-action"
+                                  onClick={onOpenDetectionProposals}
+                                  type="button"
+                                >
+                                  Open Detection Proposals
+                                </button>
+                                <button
+                                  className="secondary-action"
+                                  onClick={onOpenReview}
+                                  type="button"
+                                >
+                                  Open Review Queue
+                                </button>
+                              </div>
+                              {snapshotProposalResult ? (
+                                <div className="import-smoke-result-grid">
+                                  <div className="data-row">
+                                    <span>DetectionRun ID</span>
+                                    <strong>{snapshotProposalResult.detection_run.id}</strong>
+                                  </div>
+                                  <div className="data-row">
+                                    <span>Proposal IDs</span>
+                                    <strong>
+                                      {snapshotProposalResult.proposals.length > 0
+                                        ? snapshotProposalResult.proposals
+                                            .map((proposal) => proposal.id)
+                                            .join(", ")
+                                        : "none"}
+                                    </strong>
+                                  </div>
+                                  <div className="data-row">
+                                    <span>Review Queue</span>
+                                    <strong>
+                                      {snapshotProposalResult.review_queue_count} needs review
+                                    </strong>
+                                  </div>
+                                  {snapshotProposalResult.proposals.map((proposal) => (
+                                    <div className="data-row" key={proposal.id}>
+                                      <span>{proposal.id}</span>
+                                      <strong>
+                                        {proposal.label} / {Math.round(proposal.confidence * 100)}
+                                        % / {formatLabel(proposal.status)}
+                                      </strong>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {snapshotProposalDecisionResult ? (
+                                <div className="import-smoke-result-grid">
+                                  <div className="data-row">
+                                    <span>Converted proposal</span>
+                                    <strong>
+                                      {snapshotProposalDecisionResult.proposal.id}
+                                    </strong>
+                                  </div>
+                                  <div className="data-row">
+                                    <span>Event</span>
+                                    {snapshotProposalDecisionResult.event ? (
+                                      <button
+                                        className="inline-link-button"
+                                        onClick={() =>
+                                          onOpenEvent(
+                                            snapshotProposalDecisionResult.event!.id,
+                                          )
+                                        }
+                                        type="button"
+                                      >
+                                        {snapshotProposalDecisionResult.event.id}
+                                      </button>
+                                    ) : (
+                                      <strong>not created</strong>
+                                    )}
+                                  </div>
+                                  <div className="data-row">
+                                    <span>Visit</span>
+                                    {snapshotProposalDecisionResult.visit ? (
+                                      <button
+                                        className="inline-link-button"
+                                        onClick={() =>
+                                          onOpenVisit(
+                                            snapshotProposalDecisionResult.visit!.id,
+                                          )
+                                        }
+                                        type="button"
+                                      >
+                                        {snapshotProposalDecisionResult.visit.id}
+                                      </button>
+                                    ) : (
+                                      <strong>not created</strong>
+                                    )}
+                                  </div>
+                                </div>
+                              ) : null}
+                              <div className="notice-panel compact-notice import-smoke-boundary">
+                                <strong>Truth boundary</strong>
+                                <ul>
+                                  <li>Demo proposal is synthetic evidence.</li>
+                                  <li>No model inspected the snapshot.</li>
+                                  <li>No ReviewLabel truth was created.</li>
+                                  <li>Correction remains explicit in the Review Queue.</li>
+                                </ul>
+                              </div>
+                            </div>
+                          ) : null}
+                          {previewSaveResult.media_asset_id ? (
                             <div className="external-preview-evidence-actions">
+                              <div className="section-heading">
+                                <div>
+                                  <span className="meta-text">Track A</span>
+                                  <h3>Create MotionEvidence</h3>
+                                </div>
+                                <StatusPill label="Pending evidence" tone="quiet" />
+                              </div>
+                              <p className="meta-text">
+                                This track keeps the saved snapshot attached to pending
+                                MotionEvidence, with optional explicit Event/Visit promotion.
+                              </p>
+                              <label className="external-preview-zone-select">
+                                Review zone
+                                <select
+                                  disabled={reviewablePreviewZones.length === 0}
+                                  onChange={(event) =>
+                                    setSelectedPreviewZoneId(event.target.value)
+                                  }
+                                  value={selectedPreviewZoneId}
+                                >
+                                  {reviewablePreviewZones.length > 0 ? (
+                                    reviewablePreviewZones.map((zone) => (
+                                      <option key={zone.id} value={zone.id}>
+                                        {zone.name} ({formatLabel(zone.zone_type)})
+                                      </option>
+                                    ))
+                                  ) : (
+                                    <option value="">No reviewable Zones</option>
+                                  )}
+                                </select>
+                              </label>
+                              {previewZonesError ? (
+                                <div className="zone-error">{previewZonesError}</div>
+                              ) : null}
+                              {!selectedFirstStream ? (
+                                <div className="zone-error">
+                                  Add Stream context before creating evidence.
+                                </div>
+                              ) : null}
+                              {selectedFirstStream && reviewablePreviewZones.length === 0 ? (
+                                <div className="zone-error">
+                                  Draw an active reviewable Zone on the related Stream before
+                                  creating evidence.
+                                </div>
+                              ) : null}
+                              {blockedPreviewZoneCount > 0 ? (
+                                <span className="meta-text">
+                                  Privacy and ignore Zones are excluded from evidence creation.
+                                </span>
+                              ) : null}
                               <button
                                 className="secondary-action"
-                                disabled={isCreatingPreviewEvidence}
+                                disabled={isCreatingPreviewEvidence || !canCreatePreviewEvidence}
                                 onClick={handleCreateMotionEvidenceFromSavedPreview}
                                 type="button"
                               >
@@ -1026,6 +1487,11 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                                 ) : null}
                                 <span>Status: {formatLabel(previewEvidenceResult.status)}</span>
                               </div>
+                              <span className="meta-text">
+                                Pending evidence is not truth. Promotion can create reviewable
+                                Event/Visit records, and Review Queue correction still creates the
+                                dataset label.
+                              </span>
                               {previewEvidenceResult.warnings.length > 0 ? (
                                 <div className="source-warning-list">
                                   {previewEvidenceResult.warnings.map((warning) => (
@@ -1033,10 +1499,95 @@ export function StreamsPage({ streams, sources, onOpenImport, onOpenStream }: St
                                   ))}
                                 </div>
                               ) : null}
-                              <span className="meta-text">
-                                Open Motion Evidence to review, ignore, or promote this pending
-                                evidence.
-                              </span>
+                              <div className="detail-actions">
+                                <button
+                                  className="secondary-action"
+                                  onClick={() =>
+                                    onOpenMotionEvidence(
+                                      previewEvidenceResult.motion_evidence_id,
+                                    )
+                                  }
+                                  type="button"
+                                >
+                                  Open Motion Evidence
+                                </button>
+                                <button
+                                  className="primary-action"
+                                  disabled={
+                                    isPromotingPreviewEvidence || !canPromotePreviewEvidence
+                                  }
+                                  onClick={handlePromotePreviewEvidence}
+                                  type="button"
+                                >
+                                  {isPromotingPreviewEvidence
+                                    ? "Promoting..."
+                                    : "Promote to Event/Visit"}
+                                </button>
+                              </div>
+                              {previewPromotionError ? (
+                                <div className="zone-error">{previewPromotionError}</div>
+                              ) : null}
+                              {previewPromotionResult ? (
+                                <div className="external-preview-promotion-status">
+                                  <strong>
+                                    Promoted to reviewable Event/Visit evidence.
+                                  </strong>
+                                  <div className="source-connection-meta">
+                                    {previewPromotionResult.event_id ? (
+                                      <span>Event: {previewPromotionResult.event_id}</span>
+                                    ) : null}
+                                    {previewPromotionResult.visit_id ? (
+                                      <span>Visit: {previewPromotionResult.visit_id}</span>
+                                    ) : null}
+                                    <span>
+                                      Evidence:{" "}
+                                      {formatLabel(previewPromotionResult.evidence.status)}
+                                    </span>
+                                  </div>
+                                  <span className="meta-text">
+                                    No ReviewLabel truth was created. Correct the Visit in Review
+                                    Queue before using reviewed-only exports.
+                                  </span>
+                                  <div className="detail-actions">
+                                    {previewPromotionResult.event_id ? (
+                                      <button
+                                        className="secondary-action"
+                                        onClick={() =>
+                                          onOpenEvent(previewPromotionResult.event_id!)
+                                        }
+                                        type="button"
+                                      >
+                                        Open Event
+                                      </button>
+                                    ) : null}
+                                    {previewPromotionResult.visit_id ? (
+                                      <button
+                                        className="secondary-action"
+                                        onClick={() =>
+                                          onOpenVisit(previewPromotionResult.visit_id!)
+                                        }
+                                        type="button"
+                                      >
+                                        Open Visit
+                                      </button>
+                                    ) : null}
+                                    <button
+                                      className="primary-action"
+                                      onClick={onOpenReview}
+                                      type="button"
+                                    >
+                                      Correct in Review Queue
+                                    </button>
+                                    <button
+                                      className="secondary-action"
+                                      onClick={onOpenExports}
+                                      type="button"
+                                    >
+                                      Open Dataset Exports
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
                             </div>
                           ) : null}
                         </div>

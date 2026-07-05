@@ -156,6 +156,25 @@ The CLI fallback imports media and creates synthetic demo proposal evidence. It
 does not create ReviewLabel truth; finish the loop through Review Queue and
 Dataset Exports.
 
+## External URL Snapshot-To-Review Browser Path
+
+- [ ] Start the API.
+- [ ] Start the frontend.
+- [ ] Open Streams and configure or select an `external_url` Source.
+- [ ] Fetch a still-image snapshot preview.
+- [ ] Save the snapshot as a local MediaAsset.
+- [ ] Optionally create synthetic demo DetectionProposal evidence.
+- [ ] Choose an active reviewable Zone and create pending MotionEvidence.
+- [ ] Optionally promote that evidence to reviewable Event/Visit records.
+- [ ] Open Review Queue.
+- [ ] Submit an explicit correction.
+- [ ] Create a reviewed-only Dataset Export and inspect the proof record.
+
+This path uses existing explicit browser actions only. Demo proposal creation is
+synthetic evidence, runs no model, and does not create ReviewLabel truth.
+Preview, save, evidence creation, and promotion also do not create truth. It is
+not live video.
+
 ## Step 1 - Dashboard MVP Readiness
 
 - [ ] Open Dashboard.

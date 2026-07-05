@@ -317,6 +317,12 @@ export default function App() {
           sources={data.sources}
           onOpenImport={() => setPage("import")}
           onOpenStream={openStream}
+          onOpenMotionEvidence={openMotionEvidence}
+          onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
+          onOpenDetectionProposals={() => setPage("detection-proposals")}
+          onOpenReview={() => openReviewQueue()}
+          onOpenExports={() => setPage("exports")}
         />
       );
     }

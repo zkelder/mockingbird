@@ -773,7 +773,9 @@ button {
 .external-preview-panel,
 .external-preview-result,
 .external-preview-save-status,
-.external-preview-evidence-status {
+.external-preview-evidence-status,
+.external-preview-proposal-status,
+.external-preview-promotion-status {
   display: grid;
   gap: 10px;
   border: 1px solid #d8e2d3;
@@ -785,15 +787,28 @@ button {
 .external-preview-panel p,
 .external-preview-result p,
 .external-preview-save-status p,
-.external-preview-evidence-status p {
+.external-preview-evidence-status p,
+.external-preview-proposal-status p,
+.external-preview-promotion-status p {
   margin: 0;
 }
 
 .external-preview-save-actions,
-.external-preview-evidence-actions {
+.external-preview-evidence-actions,
+.external-preview-zone-select {
   display: grid;
   gap: 8px;
   align-items: start;
+}
+
+.external-preview-zone-select {
+  color: #536258;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.external-preview-zone-select select {
+  max-width: 100%;
 }
 
 .external-preview-save-status {
@@ -804,6 +819,16 @@ button {
 .external-preview-evidence-status {
   border-color: #c7d7e8;
   background: #f5f9fd;
+}
+
+.external-preview-proposal-status {
+  border-color: #d8d7b8;
+  background: #fbfaf0;
+}
+
+.external-preview-promotion-status {
+  border-color: #b8d7c1;
+  background: #f4fbf6;
 }
 
 .external-preview-image-frame {
