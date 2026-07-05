@@ -196,6 +196,11 @@ Dataset Exports.
 - [ ] Confirm monitoring status becomes Starting or Monitoring.
 - [ ] Confirm Last checked, Last snapshot, snapshots saved, motion checks, and
       Last activity update over time.
+- [ ] If user-zone-backed activity appears, confirm `Create review activity`
+      is available, click it, and confirm `Review activity` opens the review
+      context without creating reviewed truth.
+- [ ] If automatic activity areas appear without a named Zone, confirm the UI
+      explains that review activity creation needs a named Zone in this build.
 - [ ] Click `Stop monitoring`.
 - [ ] Confirm monitoring stops and does not create reviewed truth or exports.
 - [ ] Click `Start watch`.

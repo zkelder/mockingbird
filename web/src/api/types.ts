@@ -389,9 +389,18 @@ export interface SourceMonitorStatusResponse {
   snapshots_saved: number;
   motion_checks_run: number;
   last_snapshot_media_asset_id?: string | null;
+  last_motion_media_asset_ids: string[];
   last_activity_detected?: boolean | null;
   last_activity_area?: Record<string, unknown> | null;
   last_session_status?: string | null;
+  best_snapshot_media_asset_id?: string | null;
+  crop_plan?: MotionCropPlan | null;
+  review_activity_available: boolean;
+  review_activity_created: boolean;
+  review_activity_unavailable_reason?: string | null;
+  review_activity_motion_evidence_id?: string | null;
+  review_activity_event_id?: string | null;
+  review_activity_visit_id?: string | null;
   last_error?: string | null;
   consecutive_failures: number;
   stop_reason?: string | null;

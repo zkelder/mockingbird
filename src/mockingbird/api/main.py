@@ -2379,18 +2379,83 @@ async def _monitor_evaluate_saved_media(
 
     activity_area = None
     if result.strongest_activity_area_id:
+        strongest_area = next(
+            (
+                area
+                for area in result.activity_areas
+                if area.area_id == result.strongest_activity_area_id
+            ),
+            None,
+        )
         activity_area = {
             "area_id": result.strongest_activity_area_id,
             "label": result.strongest_activity_area_label,
             "best_media_asset_id": result.best_media_asset_id,
             "strongest_changed_ratio": result.strongest_changed_ratio,
+            "source": strongest_area.source if strongest_area else None,
+            "zone_id": strongest_area.zone_id if strongest_area else None,
+            "left": strongest_area.left if strongest_area else None,
+            "top": strongest_area.top if strongest_area else None,
+            "right": strongest_area.right if strongest_area else None,
+            "bottom": strongest_area.bottom if strongest_area else None,
         }
+    created_evidence = result.created_evidence[0] if result.created_evidence else None
+    unavailable_reason = _monitor_review_unavailable_reason(result)
+    best_snapshot_media_asset_id = (
+        result.best_snapshot_media_asset_id or result.best_media_asset_id
+    )
     return MonitorMotionResult(
         activity_detected=result.activity_detected,
+        media_asset_ids=result.media_asset_ids,
         activity_area=activity_area,
         session_status=result.session_status,
         best_media_asset_id=result.best_media_asset_id,
+        best_snapshot_media_asset_id=best_snapshot_media_asset_id,
+        crop_plan=(
+            result.crop_plan.model_dump(mode="json")
+            if result.crop_plan is not None
+            else None
+        ),
+        review_activity_available=(
+            result.activity_detected
+            and result.can_create_review_activity
+            and result.should_create_review_activity
+            and best_snapshot_media_asset_id is not None
+            and created_evidence is None
+            and unavailable_reason is None
+        ),
+        review_activity_created=created_evidence is not None,
+        review_activity_unavailable_reason=unavailable_reason,
+        review_activity_motion_evidence_id=(
+            created_evidence.id
+            if created_evidence is not None
+            else result.existing_activity_reference
+            if unavailable_reason == "already_exists"
+            else None
+        ),
     )
+
+
+def _monitor_review_unavailable_reason(result: MotionEvaluateSavedMediaResponse) -> str | None:
+    if not result.activity_detected:
+        return "no_activity_detected"
+    if result.uses_auto_regions or not result.can_create_review_activity:
+        return "auto_region_requires_named_zone"
+    if not (result.best_snapshot_media_asset_id or result.best_media_asset_id):
+        return "missing_best_snapshot"
+    if result.review_activity_created:
+        return None
+    if result.creation_skipped_reason == "activity_session_duplicate_suppressed":
+        if result.session_status == "cooldown_suppressed":
+            return "cooldown_suppressed"
+        return "already_exists"
+    if result.session_status == "cooldown_suppressed":
+        return "cooldown_suppressed"
+    if result.session_status == "ongoing_activity":
+        return "already_exists"
+    if not result.should_create_review_activity:
+        return "already_exists"
+    return None
 
 
 def _saved_image_media_asset_ids_for_stream(
@@ -2419,6 +2484,23 @@ def _monitor_stopped_state(source_id: str, stream_id: str) -> SourceMonitorState
 
 
 def _monitor_status_message(state: SourceMonitorState) -> str:
+    if state.review_activity_created and state.review_activity_motion_evidence_id:
+        return "Review activity is ready."
+    if state.review_activity_available:
+        return "Activity detected. Create review activity when ready."
+    if state.review_activity_unavailable_reason == "auto_region_requires_named_zone":
+        return (
+            "Activity detected in an automatic area. Add or select a named zone to "
+            "create a review activity in this build."
+        )
+    if state.review_activity_unavailable_reason == "cooldown_suppressed":
+        return "Same recent activity. No duplicate review item is needed."
+    if state.review_activity_unavailable_reason == "already_exists":
+        return "Review activity already exists for this recent activity."
+    if state.review_activity_unavailable_reason == "no_activity_detected":
+        return "No activity detected yet."
+    if state.review_activity_unavailable_reason == "missing_best_snapshot":
+        return "Capture at least two snapshots before creating review activity."
     if state.status == "monitoring":
         if state.last_activity_detected is True:
             return "Monitoring is active. Activity detected on the latest motion check."
@@ -2442,6 +2524,14 @@ def _monitor_status_message(state: SourceMonitorState) -> str:
     return "Monitoring is stopped."
 
 
+def _monitor_crop_plan_response_from_state(
+    state: SourceMonitorState,
+) -> MotionCropPlanResponse | None:
+    if state.crop_plan is None:
+        return None
+    return MotionCropPlanResponse.model_validate(state.crop_plan)
+
+
 def _monitor_status_response(state: SourceMonitorState) -> SourceMonitorStatusResponse:
     return SourceMonitorStatusResponse(
         monitor_id=state.monitor_id,
@@ -2459,9 +2549,18 @@ def _monitor_status_response(state: SourceMonitorState) -> SourceMonitorStatusRe
         snapshots_saved=state.snapshots_saved,
         motion_checks_run=state.motion_checks_run,
         last_snapshot_media_asset_id=state.last_snapshot_media_asset_id,
+        last_motion_media_asset_ids=state.last_motion_media_asset_ids,
         last_activity_detected=state.last_activity_detected,
         last_activity_area=state.last_activity_area,
         last_session_status=state.last_session_status,
+        best_snapshot_media_asset_id=state.best_snapshot_media_asset_id,
+        crop_plan=_monitor_crop_plan_response_from_state(state),
+        review_activity_available=state.review_activity_available,
+        review_activity_created=state.review_activity_created,
+        review_activity_unavailable_reason=state.review_activity_unavailable_reason,
+        review_activity_motion_evidence_id=state.review_activity_motion_evidence_id,
+        review_activity_event_id=state.review_activity_event_id,
+        review_activity_visit_id=state.review_activity_visit_id,
         last_error=state.last_error,
         consecutive_failures=state.consecutive_failures,
         stop_reason=state.stop_reason,
@@ -2564,6 +2663,83 @@ async def stop_stream_monitor(stream_id: str) -> SourceMonitorStatusResponse:
     return _monitor_status_response(
         state or _monitor_stopped_state(stream.source_id, stream.id)
     )
+
+
+@app.post(
+    "/api/streams/{stream_id}/monitor/review-activity",
+    response_model=SourceMonitorStatusResponse,
+)
+async def create_stream_monitor_review_activity(
+    stream_id: str,
+) -> SourceMonitorStatusResponse:
+    repository = get_repository()
+    stream, _source = _stream_source_for_monitor(repository, stream_id)
+    manager = get_source_monitor_manager()
+    state = await manager.status(stream.id)
+    if state is None:
+        stopped_state = _monitor_stopped_state(stream.source_id, stream.id)
+        stopped_state.review_activity_unavailable_reason = "no_activity_detected"
+        return _monitor_status_response(stopped_state)
+
+    if state.review_activity_created and state.review_activity_motion_evidence_id:
+        return _monitor_status_response(state)
+
+    if not state.last_activity_detected:
+        updated = await manager.mark_review_activity_result(
+            stream.id,
+            available=False,
+            unavailable_reason="no_activity_detected",
+        )
+        return _monitor_status_response(updated or state)
+
+    if not state.review_activity_available:
+        unavailable_reason = state.review_activity_unavailable_reason
+        if unavailable_reason is None:
+            unavailable_reason = (
+                "cooldown_suppressed"
+                if state.last_session_status == "cooldown_suppressed"
+                else "already_exists"
+                if state.last_session_status == "ongoing_activity"
+                else "missing_best_snapshot"
+            )
+        updated = await manager.mark_review_activity_result(
+            stream.id,
+            available=False,
+            unavailable_reason=unavailable_reason,
+            motion_evidence_id=(
+                state.review_activity_motion_evidence_id
+                if unavailable_reason == "already_exists"
+                else None
+            ),
+        )
+        return _monitor_status_response(updated or state)
+
+    if len(state.last_motion_media_asset_ids) < 2:
+        updated = await manager.mark_review_activity_result(
+            stream.id,
+            available=False,
+            unavailable_reason="missing_best_snapshot",
+        )
+        return _monitor_status_response(updated or state)
+
+    motion_result = await _monitor_evaluate_saved_media(
+        stream.id,
+        state.last_motion_media_asset_ids,
+        True,
+    )
+    unavailable_reason = motion_result.review_activity_unavailable_reason
+    created = (
+        motion_result.review_activity_created
+        and motion_result.review_activity_motion_evidence_id is not None
+    )
+    updated = await manager.mark_review_activity_result(
+        stream.id,
+        available=not created and unavailable_reason is None,
+        created=created,
+        unavailable_reason=unavailable_reason,
+        motion_evidence_id=motion_result.review_activity_motion_evidence_id,
+    )
+    return _monitor_status_response(updated or state)
 
 
 @app.get(

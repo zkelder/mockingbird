@@ -559,9 +559,18 @@ class SourceMonitorStatusResponse(BaseModel):
     snapshots_saved: int = Field(ge=0)
     motion_checks_run: int = Field(ge=0)
     last_snapshot_media_asset_id: str | None = None
+    last_motion_media_asset_ids: list[str] = Field(default_factory=list)
     last_activity_detected: bool | None = None
     last_activity_area: dict[str, Any] | None = None
     last_session_status: str | None = None
+    best_snapshot_media_asset_id: str | None = None
+    crop_plan: MotionCropPlanResponse | None = None
+    review_activity_available: bool = False
+    review_activity_created: bool = False
+    review_activity_unavailable_reason: str | None = None
+    review_activity_motion_evidence_id: str | None = None
+    review_activity_event_id: str | None = None
+    review_activity_visit_id: str | None = None
     last_error: str | None = None
     consecutive_failures: int = Field(ge=0)
     stop_reason: str | None = None

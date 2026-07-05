@@ -867,6 +867,31 @@ function monitorActivityAreaText(status?: SourceMonitorStatusResponse | null): s
   return typeof areaId === "string" && areaId.trim() ? areaId : "Activity area";
 }
 
+function monitorReviewHandoffText(status?: SourceMonitorStatusResponse | null): string {
+  if (!status) {
+    return "No monitored activity yet";
+  }
+  if (status.review_activity_created && status.review_activity_motion_evidence_id) {
+    return "Needs review";
+  }
+  if (status.review_activity_available) {
+    return "Create review activity";
+  }
+  if (status.review_activity_unavailable_reason === "auto_region_requires_named_zone") {
+    return "Needs named zone";
+  }
+  if (status.review_activity_unavailable_reason === "cooldown_suppressed") {
+    return "Same recent activity";
+  }
+  if (status.review_activity_unavailable_reason === "already_exists") {
+    return "Review activity exists";
+  }
+  if (status.review_activity_unavailable_reason === "missing_best_snapshot") {
+    return "Needs best snapshot";
+  }
+  return "No review activity yet";
+}
+
 function buildMediaLifecycleSummary(
   asset: MediaAsset,
   detectionRuns: DetectionRun[],
@@ -1108,6 +1133,9 @@ export function StreamsPage({
   >({});
   const [streamMonitorErrors, setStreamMonitorErrors] = useState<Record<string, string>>({});
   const [streamMonitorLoading, setStreamMonitorLoading] = useState<Record<string, boolean>>({});
+  const [streamMonitorReviewLoading, setStreamMonitorReviewLoading] = useState<
+    Record<string, boolean>
+  >({});
   const [folderPreviewResult, setFolderPreviewResult] =
     useState<FolderImportPreviewResponse | null>(null);
   const [folderImportResult, setFolderImportResult] = useState<FolderImportResponse | null>(null);
@@ -2310,6 +2338,27 @@ export function StreamsPage({
     await refreshStreamMonitorStatus(stream.id);
     await refreshMediaAndStorage();
     setStreamMonitorLoading((current) => ({ ...current, [stream.id]: false }));
+  }
+
+  async function handleCreateMonitorReviewActivity(stream: Stream) {
+    setStreamMonitorReviewLoading((current) => ({ ...current, [stream.id]: true }));
+    setStreamMonitorErrors((current) => ({ ...current, [stream.id]: "" }));
+    try {
+      const status = await apiClient.createStreamMonitorReviewActivity(stream.id);
+      setStreamMonitorStatuses((current) => ({
+        ...current,
+        [stream.id]: status,
+      }));
+      await refreshLifecycleAndStorage();
+    } catch (caught) {
+      setStreamMonitorErrors((current) => ({
+        ...current,
+        [stream.id]:
+          caught instanceof Error ? caught.message : "Could not create review activity.",
+      }));
+    } finally {
+      setStreamMonitorReviewLoading((current) => ({ ...current, [stream.id]: false }));
+    }
   }
 
   function timelineSelectedZoneId(asset: MediaAsset): string | null {
@@ -4479,7 +4528,12 @@ export function StreamsPage({
                   const monitorStatus = streamMonitorStatuses[stream.id] ?? null;
                   const monitorError = streamMonitorErrors[stream.id] || null;
                   const isMonitorLoading = Boolean(streamMonitorLoading[stream.id]);
+                  const isReviewActivityLoading = Boolean(
+                    streamMonitorReviewLoading[stream.id],
+                  );
                   const isMonitoring = monitorIsActive(monitorStatus);
+                  const monitorReviewActivityEvidenceId =
+                    monitorStatus?.review_activity_motion_evidence_id ?? null;
                   const monitorStartBlockReason = !isExternalUrlProvider
                     ? "Monitoring is available for external snapshot sources."
                     : sourceNeedsSetup(selectedConnection, selectedSetupReview)
@@ -4722,6 +4776,10 @@ export function StreamsPage({
                               </strong>
                             </div>
                             <div className="data-row">
+                              <span>Review activity</span>
+                              <strong>{monitorReviewHandoffText(monitorStatus)}</strong>
+                            </div>
+                            <div className="data-row">
                               <span>Stop reason</span>
                               <strong>
                                 {monitorStopReasonLabel(monitorStatus?.stop_reason)}
@@ -4757,7 +4815,33 @@ export function StreamsPage({
                             >
                               Refresh status
                             </button>
+                            {monitorStatus?.review_activity_available ? (
+                              <button
+                                className="primary-action"
+                                disabled={isMonitorLoading || isReviewActivityLoading}
+                                onClick={() => void handleCreateMonitorReviewActivity(stream)}
+                                type="button"
+                              >
+                                {isReviewActivityLoading
+                                  ? "Creating..."
+                                  : "Create review activity"}
+                              </button>
+                            ) : null}
+                            {monitorReviewActivityEvidenceId ? (
+                              <button
+                                className="primary-action"
+                                onClick={() =>
+                                  onOpenMotionEvidence(monitorReviewActivityEvidenceId)
+                                }
+                                type="button"
+                              >
+                                Review activity
+                              </button>
+                            ) : null}
                           </div>
+                          {monitorStatus?.message ? (
+                            <span className="meta-text">{monitorStatus.message}</span>
+                          ) : null}
                           <span className="meta-text">
                             Monitoring is in-memory for this API run. Review activity, correction,
                             Bird Log, and Export remain explicit actions.
@@ -4797,6 +4881,18 @@ export function StreamsPage({
                               <span>
                                 Consecutive failures:{" "}
                                 {monitorStatus?.consecutive_failures ?? 0}
+                              </span>
+                              <span>
+                                Best snapshot:{" "}
+                                {monitorStatus?.best_snapshot_media_asset_id ?? "none"}
+                              </span>
+                              <span>
+                                Review activity evidence:{" "}
+                                {monitorStatus?.review_activity_motion_evidence_id ?? "none"}
+                              </span>
+                              <span>
+                                Unavailable reason:{" "}
+                                {monitorStatus?.review_activity_unavailable_reason ?? "none"}
                               </span>
                             </div>
                           </details>

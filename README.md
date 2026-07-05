@@ -100,6 +100,10 @@ explicit backend-managed in-memory monitor for an `external_url` Stream. It uses
 existing still-image snapshot capture, saved-media motion checks, source health,
 and storage guardrails. It does not survive API restart and creates no automatic
 truth or exports.
+When monitoring detects user-zone-backed activity, the Streams page can offer an
+explicit `Create review activity` handoff to pending review activity. Automatic
+activity areas remain result-only until a named Zone is available, and
+correction/export truth stays user-confirmed.
 The same Stream cards now show Storage guardrails: saved image counts, storage
 warnings, and reviewed/export-linked media protection before and during
 monitoring. Snapshot watch remains an advanced bounded page-local test harness.

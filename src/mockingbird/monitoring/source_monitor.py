@@ -61,9 +61,18 @@ class MonitorSnapshotResult:
 @dataclass(frozen=True)
 class MonitorMotionResult:
     activity_detected: bool
+    media_asset_ids: list[str] = field(default_factory=list)
     activity_area: dict[str, Any] | None = None
     session_status: str | None = None
     best_media_asset_id: str | None = None
+    best_snapshot_media_asset_id: str | None = None
+    crop_plan: dict[str, Any] | None = None
+    review_activity_available: bool = False
+    review_activity_created: bool = False
+    review_activity_unavailable_reason: str | None = None
+    review_activity_motion_evidence_id: str | None = None
+    review_activity_event_id: str | None = None
+    review_activity_visit_id: str | None = None
     error: str | None = None
 
 
@@ -84,9 +93,18 @@ class SourceMonitorState:
     snapshots_saved: int = 0
     motion_checks_run: int = 0
     last_snapshot_media_asset_id: str | None = None
+    last_motion_media_asset_ids: list[str] = field(default_factory=list)
     last_activity_detected: bool | None = None
     last_activity_area: dict[str, Any] | None = None
     last_session_status: str | None = None
+    best_snapshot_media_asset_id: str | None = None
+    crop_plan: dict[str, Any] | None = None
+    review_activity_available: bool = False
+    review_activity_created: bool = False
+    review_activity_unavailable_reason: str | None = None
+    review_activity_motion_evidence_id: str | None = None
+    review_activity_event_id: str | None = None
+    review_activity_visit_id: str | None = None
     last_error: str | None = None
     consecutive_failures: int = 0
     stop_reason: StopReason | None = None
@@ -180,6 +198,29 @@ class SourceMonitorManager:
         await self._run_tick(record)
         return record.state.copy()
 
+    async def mark_review_activity_result(
+        self,
+        stream_id: str,
+        *,
+        available: bool,
+        created: bool = False,
+        unavailable_reason: str | None = None,
+        motion_evidence_id: str | None = None,
+        event_id: str | None = None,
+        visit_id: str | None = None,
+    ) -> SourceMonitorState | None:
+        async with self._lock:
+            record = self._records.get(stream_id)
+            if record is None:
+                return None
+            record.state.review_activity_available = available
+            record.state.review_activity_created = created
+            record.state.review_activity_unavailable_reason = unavailable_reason
+            record.state.review_activity_motion_evidence_id = motion_evidence_id
+            record.state.review_activity_event_id = event_id
+            record.state.review_activity_visit_id = visit_id
+            return record.state.copy()
+
     async def reset(self) -> None:
         async with self._lock:
             self.cancel_all()
@@ -259,14 +300,32 @@ class SourceMonitorManager:
                 if motion.error:
                     self._note_failure(state, motion.error)
                     return
+                state.last_motion_media_asset_ids = motion.media_asset_ids
                 state.last_activity_detected = motion.activity_detected
                 state.last_activity_area = motion.activity_area
                 state.last_session_status = motion.session_status
+                state.best_snapshot_media_asset_id = (
+                    motion.best_snapshot_media_asset_id or motion.best_media_asset_id
+                )
+                state.crop_plan = motion.crop_plan
+                state.review_activity_available = motion.review_activity_available
+                state.review_activity_created = motion.review_activity_created
+                state.review_activity_unavailable_reason = (
+                    motion.review_activity_unavailable_reason
+                )
+                state.review_activity_motion_evidence_id = (
+                    motion.review_activity_motion_evidence_id
+                )
+                state.review_activity_event_id = motion.review_activity_event_id
+                state.review_activity_visit_id = motion.review_activity_visit_id
                 state.consecutive_failures = 0
                 state.last_error = None
             elif state.check_motion:
                 state.last_activity_detected = None
                 state.last_session_status = "needs_more_snapshots"
+                state.review_activity_available = False
+                state.review_activity_created = False
+                state.review_activity_unavailable_reason = "missing_best_snapshot"
 
             if self._should_stop_after_tick(state):
                 return

@@ -253,6 +253,13 @@ export const apiClient = {
         method: "POST",
       },
     ),
+  createStreamMonitorReviewActivity: (streamId: string) =>
+    request<SourceMonitorStatusResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/monitor/review-activity`,
+      {
+        method: "POST",
+      },
+    ),
   getStreamMonitorStatus: (streamId: string) =>
     request<SourceMonitorStatusResponse>(
       `/api/streams/${encodeURIComponent(streamId)}/monitor/status`,

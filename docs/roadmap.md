@@ -950,8 +950,10 @@ Current work:
 
 - Camera Monitoring Core 1: in-memory Start monitoring / Stop monitoring /
   Monitor status for `external_url` Streams.
+- Monitoring Review Candidate 1: monitored user-zone activity can be explicitly
+  turned into pending review activity from Cameras/Streams.
 - Next likely phase: Camera Monitoring Core 2 — browser/API smoke validation
-  polish and review handoff guidance.
+  polish for the monitoring-to-review handoff.
 
 Validation:
 
@@ -966,3 +968,6 @@ Validation:
 - Monitoring creates no ReviewLabel truth, reviewed Event/Visit state,
   analytics/export truth, automatic exports, model runtime calls, RTSP, USB,
   ESP32, Pi, cellular, or live video behavior.
+- Monitoring review handoff creates pending review activity only after explicit
+  user action, reuses existing activity for duplicates, and leaves automatic
+  activity areas result-only until a named Zone is available.

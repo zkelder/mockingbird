@@ -96,6 +96,9 @@ Already built or partially built:
   reviewed/export-linked media protection before manual Snapshot watch
 - manual bounded Snapshot watch for external_url Sources while the page is open,
   using existing capture and Check motion actions
+- explicit monitoring review handoff: monitored user-zone activity can offer
+  `Create review activity`, while automatic activity areas remain result-only
+  until a named Zone is available
 - truth boundary: model/motion outputs are not truth; ReviewLabel correction is truth
 
 Not yet complete:
@@ -268,6 +271,12 @@ camera/source -> activity detected -> Review -> Bird Log -> export
 
 while keeping internal developer surfaces secondary to Cameras/Streams, Review,
 Bird Log, and Exports/Data.
+
+Monitoring Review Candidate 1 status: monitored user-zone activity can be
+explicitly turned into pending review activity from Cameras/Streams. Duplicate
+session checks reuse the existing review item, automatic activity areas stay
+result-only until a named Zone exists, and ReviewLabel correction/export remain
+separate explicit actions.
 
 It adds no RTSP, USB, Pi, cellular, live video, model runtime, automatic truth,
 or automatic export behavior.
