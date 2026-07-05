@@ -1065,10 +1065,14 @@ Current work:
   `POST /api/streams/{stream_id}/local-camera/capture-frame` so local USB or
   Windows DirectShow playback can save one user-triggered JPEG frame as a local
   MediaAsset.
+- Captured Frame Review Handoff 1: Stream Detail explains that captured frames
+  are saved media, refreshes the Stream saved-image count after capture, enables
+  explicit Check motion only after at least two saved frames, and keeps Review
+  Queue / Motion Evidence / Bird Log handoff separate.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
-- Next likely phase: Phase 23 — local camera capture smoke validation and saved
-  image review-flow polish.
+- Next likely phase: Phase 23 — local camera capture browser smoke validation
+  and review handoff polish.
 
 Validation:
 
@@ -1087,6 +1091,9 @@ Validation:
   configured camera size/framerate when present, and creates no Events, Visits,
   ReviewLabels, MotionEvidence, dataset exports, analytics truth, or reviewed
   truth by itself.
+- Captured frame handoff preserves the truth boundary: Bird Log shows reviewed
+  activity only, and motion/review/export require explicit user actions after
+  capture.
 - The bridge stores no media, creates no Events/Visits, ReviewLabels,
   DetectionProposals, MotionEvidence, dataset exports, analytics truth, workers,
   schedulers, captures table, or source adapter records.

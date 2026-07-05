@@ -113,7 +113,9 @@ only for the active request and creates no media, truth, or exports.
 Local camera Live view can also capture one user-triggered still frame into the
 existing saved-image pipeline. Captured frames use configured camera settings
 when present, save as local JPEG MediaAssets, and create no Events, Visits,
-review truth, or exports by themselves.
+review truth, or exports by themselves. After capture, Stream Detail refreshes
+saved images and points to explicit Check motion / review actions; Bird Log
+continues to show reviewed activity, not raw captures.
 The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
 count, and motion readiness. Camera Monitoring Core can now start and stop an

@@ -3099,8 +3099,8 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
         media_asset_id=media_asset.id,
         status="saved",
         message=(
-            "Saved one local camera frame as local media only. "
-            "No Events, Visits, truth, or exports were created."
+            "Saved local camera frame. It will not appear in Bird Log until you "
+            "create/review activity."
         ),
         file_name=media_asset.filename,
         relative_path=media_asset.filename,

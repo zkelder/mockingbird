@@ -222,6 +222,12 @@ Dataset Exports.
 - [ ] From a local camera Live view, click `Capture frame`.
 - [ ] Confirm one saved image appears for the Stream and no ReviewLabel/export
       truth is created.
+- [ ] Confirm the capture success says the frame will not appear in Bird Log
+      until activity is created/reviewed.
+- [ ] Capture a second local camera frame and confirm `Check motion` becomes
+      available from the capture handoff.
+- [ ] Run `Check motion` from the capture handoff and confirm review activity,
+      Bird Log, and export still require explicit later actions.
 - [ ] Confirm Source health / Camera status is visible for the selected Stream.
 - [ ] Confirm Field test readiness appears and shows the next step for this
       Stream.

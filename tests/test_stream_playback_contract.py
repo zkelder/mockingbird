@@ -982,6 +982,10 @@ async def test_windows_dshow_capture_frame_creates_one_media_asset_only(
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "saved"
+    assert body["message"] == (
+        "Saved local camera frame. It will not appear in Bird Log until you "
+        "create/review activity."
+    )
     assert body["stream_id"] == STREAM_ID
     assert body["source_id"] == SOURCE_ID
     assert body["media_asset_id"].startswith("media-asset-")
@@ -1064,6 +1068,10 @@ async def test_local_usb_capture_frame_creates_one_media_asset_only(
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "saved"
+    assert body["message"] == (
+        "Saved local camera frame. It will not appear in Bird Log until you "
+        "create/review activity."
+    )
     assert body["content_type"] == "image/jpeg"
     assert body["bytes_written"] == len(jpeg_frame)
     assert body["creates_event"] is False

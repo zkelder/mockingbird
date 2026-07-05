@@ -488,6 +488,7 @@ export default function App() {
           onOpenImport={() => setPage("import")}
           onOpenExports={() => setPage("exports")}
           onOpenReview={() => openReviewQueue()}
+          onOpenMotionEvidence={openMotionEvidence}
         />
       );
     }

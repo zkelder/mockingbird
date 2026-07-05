@@ -3,6 +3,8 @@ import { apiClient } from "../api/client";
 import type {
   Event,
   LocalCameraFrameCaptureResponse,
+  MediaAsset,
+  MotionEvaluateSavedMediaResponse,
   Point,
   ReviewQueueItem,
   SourceSetupReviewResponse,
@@ -24,6 +26,7 @@ interface StreamDetailPageProps {
   onOpenImport: () => void;
   onOpenExports: () => void;
   onOpenReview: () => void;
+  onOpenMotionEvidence: (motionEvidenceId: string) => void;
 }
 
 interface StreamDetailState {
@@ -115,6 +118,24 @@ function supportsFrameCapture(status?: StreamPlaybackStatus | null): boolean {
   return isLocalCameraBridgePlayback(status) || isWindowsDshowBridgePlayback(status);
 }
 
+function streamImageMediaAssets(mediaAssets: MediaAsset[], streamId: string): MediaAsset[] {
+  return mediaAssets
+    .filter(
+      (asset) =>
+        asset.stream_id === streamId &&
+        (asset.media_type === "image" || asset.content_type.startsWith("image/")),
+    )
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+}
+
+function oldestFirstMediaAssets(mediaAssets: MediaAsset[]): MediaAsset[] {
+  return [...mediaAssets].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+}
+
+function isReviewableZone(zone: Zone): boolean {
+  return zone.is_active && zone.zone_type !== "privacy" && zone.zone_type !== "ignore";
+}
+
 function liveStreamUrl(playback: StreamPlaybackStatus, streamId: string): string | null {
   if (isWindowsDshowBridgePlayback(playback)) {
     return apiClient.windowsDshowMjpegBridgeUrl(streamId);
@@ -171,6 +192,7 @@ export function StreamDetailPage({
   onOpenImport,
   onOpenExports,
   onOpenReview,
+  onOpenMotionEvidence,
 }: StreamDetailPageProps) {
   const [detail, setDetail] = useState<StreamDetailState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -192,6 +214,13 @@ export function StreamDetailPage({
   const [captureResult, setCaptureResult] = useState<LocalCameraFrameCaptureResponse | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [isCapturingFrame, setIsCapturingFrame] = useState(false);
+  const [savedImageAssets, setSavedImageAssets] = useState<MediaAsset[]>([]);
+  const [savedImageError, setSavedImageError] = useState<string | null>(null);
+  const [isLoadingSavedImages, setIsLoadingSavedImages] = useState(false);
+  const [motionResult, setMotionResult] = useState<MotionEvaluateSavedMediaResponse | null>(null);
+  const [motionError, setMotionError] = useState<string | null>(null);
+  const [isCheckingMotion, setIsCheckingMotion] = useState(false);
+  const [isCreatingReviewActivity, setIsCreatingReviewActivity] = useState(false);
 
   const selectedZone = detail?.zones.find((zone) => zone.id === selectedZoneId) ?? null;
 
@@ -213,6 +242,13 @@ export function StreamDetailPage({
       setCaptureResult(null);
       setCaptureError(null);
       setIsCapturingFrame(false);
+      setSavedImageAssets([]);
+      setSavedImageError(null);
+      setIsLoadingSavedImages(false);
+      setMotionResult(null);
+      setMotionError(null);
+      setIsCheckingMotion(false);
+      setIsCreatingReviewActivity(false);
       try {
         const stream = await apiClient.getStream(streamId);
         const [playback, setupReview, zones, events] = await Promise.all([
@@ -246,6 +282,37 @@ export function StreamDetailPage({
     }
 
     void loadStreamDetail();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [streamId]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadSavedImages() {
+      setIsLoadingSavedImages(true);
+      setSavedImageError(null);
+      try {
+        const mediaAssets = await apiClient.getMediaAssets();
+        if (isMounted) {
+          setSavedImageAssets(streamImageMediaAssets(mediaAssets, streamId));
+        }
+      } catch (caught) {
+        if (isMounted) {
+          setSavedImageError(
+            caught instanceof Error ? caught.message : "Could not load saved images.",
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingSavedImages(false);
+        }
+      }
+    }
+
+    void loadSavedImages();
 
     return () => {
       isMounted = false;
@@ -327,6 +394,19 @@ export function StreamDetailPage({
     setLiveViewReloadToken((current) => current + 1);
   }
 
+  async function refreshSavedImages(): Promise<MediaAsset[]> {
+    setSavedImageError(null);
+    try {
+      const mediaAssets = await apiClient.getMediaAssets();
+      const nextSavedImages = streamImageMediaAssets(mediaAssets, streamId);
+      setSavedImageAssets(nextSavedImages);
+      return nextSavedImages;
+    } catch (caught) {
+      setSavedImageError(caught instanceof Error ? caught.message : "Could not refresh saved images.");
+      return savedImageAssets;
+    }
+  }
+
   async function handleCaptureFrame() {
     if (!detail || !supportsFrameCapture(detail.playback)) {
       return;
@@ -339,11 +419,55 @@ export function StreamDetailPage({
       setCaptureResult(result);
       if (result.status !== "saved") {
         setCaptureError(result.message);
+      } else {
+        setMotionResult(null);
+        setMotionError(null);
+        await refreshSavedImages();
       }
     } catch (caught) {
       setCaptureError(caught instanceof Error ? caught.message : "Could not capture frame.");
     } finally {
       setIsCapturingFrame(false);
+    }
+  }
+
+  async function handleCheckMotion(createReviewActivity: boolean) {
+    if (!detail) {
+      return;
+    }
+    const selectedAssets = oldestFirstMediaAssets(savedImageAssets);
+    if (selectedAssets.length < 2) {
+      setMotionError("Capture at least two saved frames before checking motion.");
+      return;
+    }
+
+    const reviewableZones = detail.zones.filter(isReviewableZone);
+    setMotionError(null);
+    if (createReviewActivity) {
+      setIsCreatingReviewActivity(true);
+    } else {
+      setIsCheckingMotion(true);
+    }
+    try {
+      const result = await apiClient.evaluateSavedMediaMotion({
+        stream_id: detail.stream.id,
+        media_asset_ids: selectedAssets.map((asset) => asset.id),
+        zone_ids: reviewableZones.length > 0 ? reviewableZones.map((zone) => zone.id) : null,
+        create_motion_evidence: createReviewActivity,
+        attach_best_snapshot: true,
+        notes: createReviewActivity
+          ? "User created review activity from captured local camera frames."
+          : null,
+      });
+      setMotionResult(result);
+    } catch (caught) {
+      setMotionError(caught instanceof Error ? caught.message : "Could not check motion.");
+    } finally {
+      if (createReviewActivity) {
+        setIsCreatingReviewActivity(false);
+      } else {
+        setIsCheckingMotion(false);
+      }
     }
   }
 
@@ -499,6 +623,17 @@ export function StreamDetailPage({
   const sourceDisplay = detail.setupReview?.provider_display_name ?? "Source";
   const liveHelpText = liveTroubleshootingText(detail.playback);
   const canCaptureFrame = supportsFrameCapture(detail.playback);
+  const captureSaved = captureResult?.status === "saved";
+  const latestSavedImage = savedImageAssets[0] ?? null;
+  const savedImageCount = savedImageAssets.length;
+  const canCheckMotion = savedImageCount >= 2;
+  const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
+  const canCreateReviewActivity = Boolean(
+    motionResult?.activity_detected &&
+      motionResult.can_create_review_activity &&
+      motionResult.should_create_review_activity &&
+      motionResult.created_evidence.length === 0,
+  );
 
   return (
     <div className="page-stack">
@@ -624,12 +759,110 @@ export function StreamDetailPage({
                 captureResult.status === "saved" ? "" : " is-error"
               }`}
             >
-              <strong>{captureResult.message}</strong>
-              {captureResult.status === "saved" && captureResult.media_asset_id ? (
-                <a href={apiClient.mediaFileUrl(captureResult.media_asset_id)}>
-                  Open saved frame
-                </a>
+              <strong>
+                {captureSaved
+                  ? "Saved local camera frame. It will not appear in Bird Log until you create/review activity."
+                  : captureResult.message}
+              </strong>
+              {captureSaved ? (
+                <>
+                  <span>
+                    Saved images for this stream: {savedImageCount}
+                    {latestSavedImage
+                      ? ` · Latest ${latestSavedImage.original_filename || latestSavedImage.filename}`
+                      : ""}
+                  </span>
+                  <span>Bird Log shows reviewed activity, not raw captures.</span>
+                  <div className="detail-actions stream-live-actions">
+                    {captureResult.media_asset_id ? (
+                      <a
+                        className="secondary-action"
+                        href={apiClient.mediaFileUrl(captureResult.media_asset_id)}
+                      >
+                        Open saved frame
+                      </a>
+                    ) : null}
+                    <button
+                      className="secondary-action"
+                      disabled={isCapturingFrame}
+                      onClick={handleCaptureFrame}
+                      type="button"
+                    >
+                      {isCapturingFrame ? "Capturing..." : "Capture another frame"}
+                    </button>
+                    <button
+                      className="primary-action"
+                      disabled={!canCheckMotion || isCheckingMotion || isCreatingReviewActivity}
+                      onClick={() => void handleCheckMotion(false)}
+                      type="button"
+                    >
+                      {isCheckingMotion ? "Checking..." : "Check motion"}
+                    </button>
+                    {streamReviewItems.length > 0 ? (
+                      <button className="secondary-action" onClick={onOpenReview} type="button">
+                        Open Review Queue
+                      </button>
+                    ) : null}
+                  </div>
+                  {!canCheckMotion ? (
+                    <span>Capture another saved frame before motion can be checked.</span>
+                  ) : null}
+                </>
               ) : null}
+            </div>
+          ) : null}
+          {captureSaved && savedImageError ? (
+            <div className="stream-live-message is-error">
+              <strong>{savedImageError}</strong>
+            </div>
+          ) : null}
+          {captureSaved && isLoadingSavedImages ? (
+            <span className="stream-live-hint">Refreshing saved images...</span>
+          ) : null}
+          {captureSaved && motionError ? (
+            <div className="stream-live-message is-error">
+              <strong>{motionError}</strong>
+            </div>
+          ) : null}
+          {captureSaved && motionResult ? (
+            <div className="stream-live-message">
+              <strong>
+                {motionResult.activity_detected
+                  ? "Motion found candidate activity."
+                  : "No motion activity found yet."}
+              </strong>
+              <span>
+                {motionResult.activity_detected
+                  ? "Create review activity explicitly, then review/correct before Bird Log or export."
+                  : "Captured frames remain saved media until activity is reviewed."}
+              </span>
+              {motionResult.session_message ? <span>{motionResult.session_message}</span> : null}
+              <div className="detail-actions stream-live-actions">
+                {canCreateReviewActivity ? (
+                  <button
+                    className="primary-action"
+                    disabled={isCreatingReviewActivity}
+                    onClick={() => void handleCheckMotion(true)}
+                    type="button"
+                  >
+                    {isCreatingReviewActivity ? "Creating..." : "Create review activity"}
+                  </button>
+                ) : null}
+                {motionCreatedEvidence ? (
+                  <button
+                    className="secondary-action"
+                    onClick={() => onOpenMotionEvidence(motionCreatedEvidence.id)}
+                    type="button"
+                  >
+                    Open review activity
+                  </button>
+                ) : null}
+                {streamReviewItems.length > 0 ? (
+                  <button className="secondary-action" onClick={onOpenReview} type="button">
+                    Open Review Queue
+                  </button>
+                ) : null}
+              </div>
             </div>
           ) : null}
           {captureError && !captureResult ? (
