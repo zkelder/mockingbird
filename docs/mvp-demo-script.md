@@ -181,8 +181,10 @@ Dataset Exports.
       remains truth.
 - [ ] Open Streams and configure or select an external snapshot camera/source.
 - [ ] Confirm Source health / Camera status is visible for the selected Stream.
-- [ ] Confirm Storage guardrails shows saved image count and Snapshot watch
+- [ ] Confirm Storage guardrails shows saved image count and monitoring
       readiness.
+- [ ] Confirm Camera Monitoring shows Start monitoring, Stop monitoring, and
+      Refresh status for the external snapshot Stream.
 - [ ] Click `Test snapshot`.
 - [ ] Confirm success/failure, timestamp, content type, and preview image when available.
 - [ ] Confirm Last snapshot test updates in Source health.
@@ -190,6 +192,12 @@ Dataset Exports.
 - [ ] Confirm the saved image appears under that camera/source and Stream.
 - [ ] Confirm Last capture and Saved images update in Source health.
 - [ ] Confirm Storage guardrails updates saved image count and motion readiness.
+- [ ] Click `Start monitoring`.
+- [ ] Confirm monitoring status becomes Starting or Monitoring.
+- [ ] Confirm Last checked, Last snapshot, snapshots saved, motion checks, and
+      Last activity update over time.
+- [ ] Click `Stop monitoring`.
+- [ ] Confirm monitoring stops and does not create reviewed truth or exports.
 - [ ] Click `Start watch`.
 - [ ] Confirm Snapshot watch is shown as an advanced test harness and captures a
       small bounded run while the page stays open.

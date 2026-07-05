@@ -95,13 +95,16 @@ Test snapshot, Capture snapshot, Analyze image, Review/correct, then Export
 reviewed data.
 The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
-count, and motion readiness. Snapshot watch can be started manually for an
-`external_url` Source: it captures a small bounded run while the page is open,
-then uses the existing Check motion path after enough snapshots are saved.
+count, and motion readiness. Camera Monitoring Core can now start and stop an
+explicit backend-managed in-memory monitor for an `external_url` Stream. It uses
+existing still-image snapshot capture, saved-media motion checks, source health,
+and storage guardrails. It does not survive API restart and creates no automatic
+truth or exports.
 The same Stream cards now show Storage guardrails: saved image counts, storage
-warnings, and reviewed/export-linked media protection before and during Snapshot
-watch. This adds no deletion, cleanup, live video, server automation, automatic
-truth, or automatic export behavior.
+warnings, and reviewed/export-linked media protection before and during
+monitoring. Snapshot watch remains an advanced bounded page-local test harness.
+This adds no deletion, cleanup, live video, RTSP/USB/Pi/cellular behavior, model
+runtime, automatic truth, or automatic export behavior.
 Reviewed and needs-review observations are visible in the Bird Log, which turns
 captured or imported activity into a user-facing local history before export.
 Saved previews can now enter review as pending MotionEvidence through an
@@ -126,11 +129,9 @@ suppression is per Activity area, not global to the camera. They also identify a
 focused Activity crop plan while preserving the full best snapshot as the
 source/context image; crop file creation remains optional future derived context.
 Motion results remain candidate activity until explicit review/correction creates
-truth for Bird Log and export. Live capture remains future work, and Snapshot
-watch stays manual, bounded, page-local, and contained as an advanced test
-harness. The next real monitoring direction is Camera Monitoring Core:
-backend-managed, explicit start/stop, external_url first, and adapter-ready
-later.
+truth for Bird Log and export. Live video remains future work. Camera Monitoring
+Core is backend-managed, explicit start/stop, external_url first, in-memory for
+this phase, and adapter-ready later.
 This timeline now summarizes existing proposal evidence, MotionEvidence,
 promoted Event/Visit context, inferable ReviewLabel truth, and the next safe
 review/export step. It does not run models, poll sources, create Events/Visits

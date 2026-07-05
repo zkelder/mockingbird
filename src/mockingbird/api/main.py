@@ -104,6 +104,8 @@ from mockingbird.api.schemas import (
     SourceConnectionStatusResponse,
     SourceFolderImportRequest,
     SourceFolderImportResponse,
+    SourceMonitorStartRequest,
+    SourceMonitorStatusResponse,
     SourceFolderImportPreviewRequest,
     SourceFolderImportPreviewResponse,
     SourceProviderConfiguration,
@@ -138,6 +140,13 @@ from mockingbird.motion.activity_crop import ActivityCropPlan, plan_activity_cro
 from mockingbird.motion.activity_session import (
     ExistingActivityReference,
     recommend_activity_session,
+)
+from mockingbird.monitoring import (
+    MonitorMotionResult,
+    MonitorSnapshotResult,
+    SourceMonitorManager,
+    SourceMonitorOptions,
+    SourceMonitorState,
 )
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.sampler import (
@@ -262,6 +271,7 @@ def _patch_testclient_for_pytest() -> None:
 _patch_testclient_for_pytest()
 
 _repository: ProductRepository | None = None
+_source_monitor_manager: SourceMonitorManager | None = None
 
 
 def get_repository() -> ProductRepository:
@@ -272,8 +282,22 @@ def get_repository() -> ProductRepository:
 
 
 def configure_repository(repository: ProductRepository | None) -> None:
-    global _repository
+    global _repository, _source_monitor_manager
+    if _source_monitor_manager is not None:
+        _source_monitor_manager.cancel_all()
+        _source_monitor_manager = None
     _repository = repository
+
+
+def get_source_monitor_manager() -> SourceMonitorManager:
+    global _source_monitor_manager
+    if _source_monitor_manager is None:
+        _source_monitor_manager = SourceMonitorManager(
+            capture_snapshot=_monitor_capture_snapshot,
+            list_saved_images=_monitor_saved_image_ids,
+            evaluate_saved_media=_monitor_evaluate_saved_media,
+        )
+    return _source_monitor_manager
 
 
 def _not_found(product_type: str, product_id: str) -> HTTPException:
@@ -2285,6 +2309,273 @@ async def save_external_url_preview(
         creates_visit=False,
         creates_truth=False,
         warnings=[*warnings, *result.warnings],
+    )
+
+
+async def _monitor_capture_snapshot(
+    source_id: str,
+    stream_id: str,
+) -> MonitorSnapshotResult:
+    try:
+        result = await save_external_url_preview(
+            source_id,
+            ExternalUrlPreviewSaveRequest(
+                stream_id=stream_id,
+                note="Camera Monitoring Core snapshot; no truth created.",
+            ),
+        )
+    except HTTPException as error:
+        return MonitorSnapshotResult(
+            media_asset_id=None,
+            status="error",
+            message=str(error.detail),
+        )
+    return MonitorSnapshotResult(
+        media_asset_id=result.media_asset_id,
+        status=result.status.value if hasattr(result.status, "value") else str(result.status),
+        message=result.message,
+    )
+
+
+async def _monitor_saved_image_ids(source_id: str, stream_id: str) -> list[str]:
+    return _saved_image_media_asset_ids_for_stream(
+        get_repository(),
+        source_id=source_id,
+        stream_id=stream_id,
+    )
+
+
+async def _monitor_evaluate_saved_media(
+    stream_id: str,
+    media_asset_ids: list[str],
+    create_review_activity: bool,
+) -> MonitorMotionResult:
+    selected_ids = media_asset_ids[-5:]
+    if len(selected_ids) < 2:
+        return MonitorMotionResult(
+            activity_detected=False,
+            session_status="needs_more_snapshots",
+        )
+    try:
+        result = await evaluate_saved_media_motion(
+            MotionEvaluateSavedMediaRequest(
+                stream_id=stream_id,
+                media_asset_ids=selected_ids,
+                create_motion_evidence=create_review_activity,
+                attach_best_snapshot=True,
+                notes=(
+                    "Camera Monitoring Core created pending review activity."
+                    if create_review_activity
+                    else None
+                ),
+            )
+        )
+    except HTTPException as error:
+        return MonitorMotionResult(
+            activity_detected=False,
+            session_status="error",
+            error=str(error.detail),
+        )
+
+    activity_area = None
+    if result.strongest_activity_area_id:
+        activity_area = {
+            "area_id": result.strongest_activity_area_id,
+            "label": result.strongest_activity_area_label,
+            "best_media_asset_id": result.best_media_asset_id,
+            "strongest_changed_ratio": result.strongest_changed_ratio,
+        }
+    return MonitorMotionResult(
+        activity_detected=result.activity_detected,
+        activity_area=activity_area,
+        session_status=result.session_status,
+        best_media_asset_id=result.best_media_asset_id,
+    )
+
+
+def _saved_image_media_asset_ids_for_stream(
+    repository: ProductRepository,
+    *,
+    source_id: str,
+    stream_id: str,
+) -> list[str]:
+    return [
+        asset.id
+        for asset in repository.list_media_assets()
+        if asset.stream_id == stream_id
+        and (asset.source_id is None or asset.source_id == source_id)
+        and asset.media_type == "image"
+        and asset.content_type.startswith("image/")
+    ]
+
+
+def _monitor_stopped_state(source_id: str, stream_id: str) -> SourceMonitorState:
+    return SourceMonitorState(
+        monitor_id="source-monitor-not-started",
+        source_id=source_id,
+        stream_id=stream_id,
+        status="stopped",
+    )
+
+
+def _monitor_status_message(state: SourceMonitorState) -> str:
+    if state.status == "monitoring":
+        if state.last_activity_detected is True:
+            return "Monitoring is active. Activity detected on the latest motion check."
+        if state.last_activity_detected is False:
+            return "Monitoring is active. No activity detected on the latest motion check."
+        return "Monitoring is active."
+    if state.status == "starting":
+        return "Monitoring is starting."
+    if state.status == "stopped_by_user":
+        return "Monitoring stopped."
+    if state.status == "completed":
+        if state.stop_reason == "storage_guardrail":
+            return "Monitoring stopped because saved image guardrails were reached."
+        if state.stop_reason == "max_runtime_reached":
+            return "Monitoring stopped after the configured maximum runtime."
+        if state.stop_reason == "max_snapshots_reached":
+            return "Monitoring stopped after the configured snapshot limit."
+        return "Monitoring completed."
+    if state.status == "error":
+        return state.last_error or "Monitoring stopped after an error."
+    return "Monitoring is stopped."
+
+
+def _monitor_status_response(state: SourceMonitorState) -> SourceMonitorStatusResponse:
+    return SourceMonitorStatusResponse(
+        monitor_id=state.monitor_id,
+        source_id=state.source_id,
+        stream_id=state.stream_id,
+        status=state.status,
+        started_at=state.started_at,
+        stopped_at=state.stopped_at,
+        last_tick_at=state.last_tick_at,
+        next_tick_at=state.next_tick_at,
+        interval_seconds=state.interval_seconds,
+        max_runtime_seconds=state.max_runtime_seconds,
+        max_snapshots=state.max_snapshots,
+        snapshots_attempted=state.snapshots_attempted,
+        snapshots_saved=state.snapshots_saved,
+        motion_checks_run=state.motion_checks_run,
+        last_snapshot_media_asset_id=state.last_snapshot_media_asset_id,
+        last_activity_detected=state.last_activity_detected,
+        last_activity_area=state.last_activity_area,
+        last_session_status=state.last_session_status,
+        last_error=state.last_error,
+        consecutive_failures=state.consecutive_failures,
+        stop_reason=state.stop_reason,
+        check_motion=state.check_motion,
+        create_review_activity=state.create_review_activity,
+        message=_monitor_status_message(state),
+    )
+
+
+def _stream_source_for_monitor(
+    repository: ProductRepository,
+    stream_id: str,
+) -> tuple[Stream, CameraSource]:
+    stream = repository.get_stream(stream_id)
+    if stream is None:
+        raise _not_found("Stream", stream_id)
+    source = repository.get_source(stream.source_id)
+    if source is None:
+        raise _not_found("Source", stream.source_id)
+    return stream, source
+
+
+def _validate_monitor_source(
+    repository: ProductRepository,
+    *,
+    source_id: str,
+) -> None:
+    configuration = repository.get_source_provider_configuration(source_id)
+    if configuration is None:
+        raise _not_found("Source", source_id)
+    if configuration.provider_key != "external_url":
+        raise HTTPException(
+            status_code=400,
+            detail="Start monitoring supports external URL Sources only in this phase.",
+        )
+    url = configuration.safe_config_preview.get("url")
+    if not url or url == "not_configured":
+        raise HTTPException(
+            status_code=400,
+            detail="Add an external URL before starting monitoring.",
+        )
+
+
+@app.post(
+    "/api/streams/{stream_id}/monitor/start",
+    response_model=SourceMonitorStatusResponse,
+)
+async def start_stream_monitor(
+    stream_id: str,
+    payload: SourceMonitorStartRequest | None = None,
+) -> SourceMonitorStatusResponse:
+    repository = get_repository()
+    stream, _source = _stream_source_for_monitor(repository, stream_id)
+    manager = get_source_monitor_manager()
+    existing = await manager.status(stream.id)
+    if existing is not None and existing.status in {"starting", "monitoring"}:
+        return _monitor_status_response(existing)
+
+    _validate_monitor_source(repository, source_id=stream.source_id)
+    saved_image_count = len(
+        _saved_image_media_asset_ids_for_stream(
+            repository,
+            source_id=stream.source_id,
+            stream_id=stream.id,
+        )
+    )
+    if saved_image_count >= 100:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Storage guardrails reached 100 saved images for this Stream. "
+                "Review/export or clean up manually before starting monitoring."
+            ),
+        )
+
+    request = payload or SourceMonitorStartRequest()
+    options = SourceMonitorOptions(
+        interval_seconds=request.interval_seconds,
+        max_runtime_seconds=request.max_runtime_minutes * 60,
+        max_snapshots=request.max_snapshots,
+        check_motion=request.check_motion,
+        create_review_activity=False,
+    )
+    state = await manager.start(
+        source_id=stream.source_id,
+        stream_id=stream.id,
+        options=options,
+    )
+    return _monitor_status_response(state)
+
+
+@app.post(
+    "/api/streams/{stream_id}/monitor/stop",
+    response_model=SourceMonitorStatusResponse,
+)
+async def stop_stream_monitor(stream_id: str) -> SourceMonitorStatusResponse:
+    repository = get_repository()
+    stream, _source = _stream_source_for_monitor(repository, stream_id)
+    state = await get_source_monitor_manager().stop(stream.id)
+    return _monitor_status_response(
+        state or _monitor_stopped_state(stream.source_id, stream.id)
+    )
+
+
+@app.get(
+    "/api/streams/{stream_id}/monitor/status",
+    response_model=SourceMonitorStatusResponse,
+)
+async def get_stream_monitor_status(stream_id: str) -> SourceMonitorStatusResponse:
+    repository = get_repository()
+    stream, _source = _stream_source_for_monitor(repository, stream_id)
+    state = await get_source_monitor_manager().status(stream.id)
+    return _monitor_status_response(
+        state or _monitor_stopped_state(stream.source_id, stream.id)
     )
 
 

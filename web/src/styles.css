@@ -1044,6 +1044,13 @@ button {
   padding: 0 0 12px;
 }
 
+.camera-monitor-panel {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid #e0e6dc;
+  padding: 0 0 12px;
+}
+
 .snapshot-watch-harness summary {
   cursor: pointer;
   color: #375244;
@@ -1057,6 +1064,7 @@ button {
 }
 
 .source-health-grid,
+.camera-monitor-grid,
 .snapshot-watch-controls,
 .snapshot-watch-grid {
   display: grid;
@@ -1071,8 +1079,10 @@ button {
 }
 
 .source-health-grid .data-row,
+.camera-monitor-grid .data-row,
 .snapshot-watch-grid .data-row,
 .source-storage-grid .data-row,
+.camera-monitor-grid strong,
 .snapshot-watch-grid strong,
 .source-storage-grid strong,
 .source-health-grid strong {
@@ -5041,6 +5051,7 @@ button {
   .source-selector-row,
   .source-setup-layout,
   .source-health-grid,
+  .camera-monitor-grid,
   .snapshot-watch-controls,
   .snapshot-watch-grid,
   .source-storage-grid,

@@ -256,10 +256,11 @@ monitoring architecture. Do not expand it into the product center.
 
 ### 8. Camera Monitoring Core
 
-The next real implementation target is Camera Monitoring Core.
-
-Camera Monitoring Core should be backend-managed, explicit start/stop,
-external_url first, and adapter-ready later. It should turn camera activity into:
+Camera Monitoring Core adds explicit backend-managed Start monitoring / Stop
+monitoring for `external_url` Streams. In this phase it is in-memory only,
+does not survive API restart, and reuses existing snapshot capture,
+saved-media motion checks, source health, and storage guardrails. It turns
+camera activity into:
 
 ```text
 camera/source -> activity detected -> Review -> Bird Log -> export
@@ -267,6 +268,9 @@ camera/source -> activity detected -> Review -> Bird Log -> export
 
 while keeping internal developer surfaces secondary to Cameras/Streams, Review,
 Bird Log, and Exports/Data.
+
+It adds no RTSP, USB, Pi, cellular, live video, model runtime, automatic truth,
+or automatic export behavior.
 
 ## Detector And Classifier Position
 
@@ -333,9 +337,11 @@ activity candidate -> Review -> ReviewLabel truth -> Bird Log -> export
    - Still no RTSP/USB/ESP32/live video worker.
 
 8. **Camera Monitoring Core**
-   - Next real implementation target.
    - Backend-managed, explicit start/stop, external_url first, adapter-ready
      later.
+   - Status: in-memory backend monitor sessions can capture snapshots and run
+     saved-media motion checks until Stop monitoring, max runtime, max
+     snapshots, repeated failures, or storage guardrails.
    - Do not expand the browser Snapshot watch harness as the final architecture.
 
 ## Guardrails

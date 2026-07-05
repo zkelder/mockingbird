@@ -939,3 +939,30 @@ Validation:
   an editable bulk correction label. It auto-selects nothing, auto-submits
   nothing, and still creates classifier/export truth only through explicit
   ReviewLabel correction.
+
+## Phase 19 — Camera Monitoring Core
+
+Goal: add explicit backend-managed monitoring for configured camera/source
+Streams without turning source adapters, workers, or model runtimes into the
+product center.
+
+Current work:
+
+- Camera Monitoring Core 1: in-memory Start monitoring / Stop monitoring /
+  Monitor status for `external_url` Streams.
+- Next likely phase: Camera Monitoring Core 2 — browser/API smoke validation
+  polish and review handoff guidance.
+
+Validation:
+
+- Monitoring starts only from an explicit user action.
+- Monitoring is source/stream scoped, in-memory only, and does not survive API
+  restart.
+- The first monitor path reuses existing external_url snapshot capture,
+  saved-media motion checks, source health, storage guardrails, activity
+  sessionization, and crop planning.
+- Monitoring stops on explicit Stop monitoring, max runtime, max snapshots,
+  repeated failures, or storage guardrails.
+- Monitoring creates no ReviewLabel truth, reviewed Event/Visit state,
+  analytics/export truth, automatic exports, model runtime calls, RTSP, USB,
+  ESP32, Pi, cellular, or live video behavior.

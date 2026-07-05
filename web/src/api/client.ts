@@ -82,6 +82,8 @@ import type {
   SpeciesSuggestionStatus,
   SpeciesSuggestionStatusUpdateRequest,
   SourceConnectionStatus,
+  SourceMonitorStartRequest,
+  SourceMonitorStatusResponse,
   SourceProviderConfiguration,
   SourceProviderConfigurationUpdate,
   SourceProviderDefinition,
@@ -236,6 +238,25 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  startStreamMonitor: (streamId: string, payload: SourceMonitorStartRequest = {}) =>
+    request<SourceMonitorStatusResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/monitor/start`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+  stopStreamMonitor: (streamId: string) =>
+    request<SourceMonitorStatusResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/monitor/stop`,
+      {
+        method: "POST",
+      },
+    ),
+  getStreamMonitorStatus: (streamId: string) =>
+    request<SourceMonitorStatusResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/monitor/status`,
+    ),
   getStreams: () => request<Stream[]>("/api/streams"),
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),
   getStreamPlaybackStatus: (streamId: string) =>

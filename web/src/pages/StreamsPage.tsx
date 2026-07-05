@@ -29,6 +29,7 @@ import type {
   SavedMediaRetentionReportResponse,
   SavedPreviewMotionEvidenceResponse,
   SourceConnectionStatus,
+  SourceMonitorStatusResponse,
   SourceProviderConfiguration,
   SourceProviderDefinition,
   SourceSetupReviewResponse,
@@ -788,6 +789,84 @@ function snapshotWatchNextAction(
   return state.capturesSucceeded < 2 ? "Capture another snapshot" : "Check motion";
 }
 
+function monitorIsActive(status?: SourceMonitorStatusResponse | null): boolean {
+  return status?.status === "starting" || status?.status === "monitoring";
+}
+
+function monitorTone(status?: SourceMonitorStatusResponse | null): "good" | "review" | "quiet" {
+  if (status?.status === "starting" || status?.status === "monitoring") {
+    return "good";
+  }
+  if (status?.status === "error") {
+    return "review";
+  }
+  return "quiet";
+}
+
+function monitorLabel(status?: SourceMonitorStatusResponse | null): string {
+  switch (status?.status) {
+    case "starting":
+      return "Starting";
+    case "monitoring":
+      return "Monitoring";
+    case "completed":
+      return "Completed";
+    case "stopped_by_user":
+      return "Stopped";
+    case "error":
+      return "Needs attention";
+    case "stopped":
+    default:
+      return "Stopped";
+  }
+}
+
+function monitorStopReasonLabel(reason?: string | null): string {
+  switch (reason) {
+    case "user_stopped":
+      return "User stopped";
+    case "max_runtime_reached":
+      return "Max runtime reached";
+    case "max_snapshots_reached":
+      return "Max snapshots reached";
+    case "repeated_failures":
+      return "Repeated failures";
+    case "storage_guardrail":
+      return "Storage guardrail";
+    case "source_not_ready":
+      return "Source not ready";
+    case "error":
+      return "Error";
+    default:
+      return "None";
+  }
+}
+
+function monitorActivityText(status?: SourceMonitorStatusResponse | null): string {
+  if (status?.last_activity_detected === true) {
+    return "Activity detected";
+  }
+  if (status?.last_activity_detected === false) {
+    return "No activity detected";
+  }
+  return status?.last_session_status === "needs_more_snapshots"
+    ? "Needs 2 snapshots"
+    : "No motion check yet";
+}
+
+function monitorActivityAreaText(status?: SourceMonitorStatusResponse | null): string {
+  const area = status?.last_activity_area;
+  if (!area) {
+    return "None yet";
+  }
+  const label = area.label;
+  const areaId = area.area_id;
+  if (typeof label === "string" && label.trim()) {
+    return label;
+  }
+  return typeof areaId === "string" && areaId.trim() ? areaId : "Activity area";
+}
+
 function buildMediaLifecycleSummary(
   asset: MediaAsset,
   detectionRuns: DetectionRun[],
@@ -1024,6 +1103,11 @@ export function StreamsPage({
   const [streamMotionCheckState, setStreamMotionCheckState] = useState<
     Record<string, StreamMotionCheckState>
   >({});
+  const [streamMonitorStatuses, setStreamMonitorStatuses] = useState<
+    Record<string, SourceMonitorStatusResponse>
+  >({});
+  const [streamMonitorErrors, setStreamMonitorErrors] = useState<Record<string, string>>({});
+  const [streamMonitorLoading, setStreamMonitorLoading] = useState<Record<string, boolean>>({});
   const [folderPreviewResult, setFolderPreviewResult] =
     useState<FolderImportPreviewResponse | null>(null);
   const [folderImportResult, setFolderImportResult] = useState<FolderImportResponse | null>(null);
@@ -1196,6 +1280,78 @@ export function StreamsPage({
     providerDefinitions.find(
       (definition) => definition.provider_key === selectedConfiguration?.provider_key,
     );
+
+  async function refreshStreamMonitorStatus(streamId: string): Promise<SourceMonitorStatusResponse | null> {
+    try {
+      const status = await apiClient.getStreamMonitorStatus(streamId);
+      setStreamMonitorStatuses((current) => ({
+        ...current,
+        [streamId]: status,
+      }));
+      setStreamMonitorErrors((current) => ({
+        ...current,
+        [streamId]: "",
+      }));
+      return status;
+    } catch (caught) {
+      setStreamMonitorErrors((current) => ({
+        ...current,
+        [streamId]: caught instanceof Error ? caught.message : "Could not load monitoring status.",
+      }));
+      return null;
+    }
+  }
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadSelectedMonitorStatuses() {
+      if (selectedSourceStreams.length === 0) {
+        setStreamMonitorStatuses({});
+        setStreamMonitorErrors({});
+        return;
+      }
+      const entries: Array<readonly [string, SourceMonitorStatusResponse]> = [];
+      const errors: Array<readonly [string, string]> = [];
+      await Promise.all(
+        selectedSourceStreams.map(async (stream) => {
+          try {
+            entries.push([stream.id, await apiClient.getStreamMonitorStatus(stream.id)] as const);
+          } catch (caught) {
+            errors.push([
+              stream.id,
+              caught instanceof Error ? caught.message : "Could not load monitoring status.",
+            ] as const);
+          }
+        }),
+      );
+      if (!isMounted) {
+        return;
+      }
+      setStreamMonitorStatuses(Object.fromEntries(entries));
+      setStreamMonitorErrors(Object.fromEntries(errors));
+    }
+
+    void loadSelectedMonitorStatuses();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedSourceStreamIds]);
+
+  useEffect(() => {
+    const activeStreamIds = selectedSourceStreams
+      .filter((stream) => monitorIsActive(streamMonitorStatuses[stream.id]))
+      .map((stream) => stream.id);
+    if (activeStreamIds.length === 0) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      activeStreamIds.forEach((streamId) => {
+        void refreshStreamMonitorStatus(streamId);
+      });
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [selectedSourceStreamIds, streamMonitorStatuses]);
 
   useEffect(() => {
     clearSnapshotWatchTimer();
@@ -2101,6 +2257,59 @@ export function StreamsPage({
 
   function handleStopSnapshotWatch() {
     stopSnapshotWatch("user_stopped", "stopped", "Snapshot watch stopped.");
+  }
+
+  async function handleStartMonitoring(stream: Stream) {
+    setStreamMonitorLoading((current) => ({ ...current, [stream.id]: true }));
+    setStreamMonitorErrors((current) => ({ ...current, [stream.id]: "" }));
+    try {
+      const status = await apiClient.startStreamMonitor(stream.id, {
+        interval_seconds: 15,
+        max_runtime_minutes: 30,
+        max_snapshots: 100,
+        check_motion: true,
+        create_review_activity: false,
+      });
+      setStreamMonitorStatuses((current) => ({
+        ...current,
+        [stream.id]: status,
+      }));
+      await refreshMediaAndStorage();
+    } catch (caught) {
+      setStreamMonitorErrors((current) => ({
+        ...current,
+        [stream.id]: caught instanceof Error ? caught.message : "Could not start monitoring.",
+      }));
+    } finally {
+      setStreamMonitorLoading((current) => ({ ...current, [stream.id]: false }));
+    }
+  }
+
+  async function handleStopMonitoring(stream: Stream) {
+    setStreamMonitorLoading((current) => ({ ...current, [stream.id]: true }));
+    setStreamMonitorErrors((current) => ({ ...current, [stream.id]: "" }));
+    try {
+      const status = await apiClient.stopStreamMonitor(stream.id);
+      setStreamMonitorStatuses((current) => ({
+        ...current,
+        [stream.id]: status,
+      }));
+      await refreshMediaAndStorage();
+    } catch (caught) {
+      setStreamMonitorErrors((current) => ({
+        ...current,
+        [stream.id]: caught instanceof Error ? caught.message : "Could not stop monitoring.",
+      }));
+    } finally {
+      setStreamMonitorLoading((current) => ({ ...current, [stream.id]: false }));
+    }
+  }
+
+  async function handleRefreshMonitoring(stream: Stream) {
+    setStreamMonitorLoading((current) => ({ ...current, [stream.id]: true }));
+    await refreshStreamMonitorStatus(stream.id);
+    await refreshMediaAndStorage();
+    setStreamMonitorLoading((current) => ({ ...current, [stream.id]: false }));
   }
 
   function timelineSelectedZoneId(asset: MediaAsset): string | null {
@@ -4267,6 +4476,19 @@ export function StreamsPage({
                     motionResult,
                     motionCreatedEvidence,
                   );
+                  const monitorStatus = streamMonitorStatuses[stream.id] ?? null;
+                  const monitorError = streamMonitorErrors[stream.id] || null;
+                  const isMonitorLoading = Boolean(streamMonitorLoading[stream.id]);
+                  const isMonitoring = monitorIsActive(monitorStatus);
+                  const monitorStartBlockReason = !isExternalUrlProvider
+                    ? "Monitoring is available for external snapshot sources."
+                    : sourceNeedsSetup(selectedConnection, selectedSetupReview)
+                      ? "Confirm Source health before starting monitoring."
+                      : storageSummary.savedImageCount >= SNAPSHOT_WATCH_STORAGE_BLOCK_COUNT
+                        ? "Review/export or clean up manually before starting monitoring."
+                        : null;
+                  const canStartMonitoring =
+                    !isMonitorLoading && !isMonitoring && !monitorStartBlockReason;
                   return (
                     <section className="source-stream-card" key={stream.id}>
                       <div className="item-title-row">
@@ -4442,6 +4664,144 @@ export function StreamsPage({
                           </div>
                         </details>
                       </div>
+                      {isExternalUrlProvider ? (
+                        <div className="camera-monitor-panel">
+                          <div className="item-title-row">
+                            <div>
+                              <strong>Camera Monitoring</strong>
+                              <p className="meta-text">
+                                Backend-managed monitoring for this external snapshot stream.
+                              </p>
+                            </div>
+                            <StatusPill
+                              label={monitorLabel(monitorStatus)}
+                              tone={monitorTone(monitorStatus)}
+                            />
+                          </div>
+                          <div className="camera-monitor-grid">
+                            <div className="data-row">
+                              <span>Last checked</span>
+                              <strong>
+                                {monitorStatus?.last_tick_at
+                                  ? formatDateTime(monitorStatus.last_tick_at)
+                                  : "Not checked"}
+                              </strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Last snapshot</span>
+                              <strong>
+                                {monitorStatus?.last_snapshot_media_asset_id ?? "None yet"}
+                              </strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Snapshots saved</span>
+                              <strong>
+                                {monitorStatus
+                                  ? `${monitorStatus.snapshots_saved}/${monitorStatus.max_snapshots}`
+                                  : "0/100"}
+                              </strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Motion checks run</span>
+                              <strong>{monitorStatus?.motion_checks_run ?? 0}</strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Last activity</span>
+                              <strong>{monitorActivityText(monitorStatus)}</strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Last activity area</span>
+                              <strong>{monitorActivityAreaText(monitorStatus)}</strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Last session status</span>
+                              <strong>
+                                {monitorStatus?.last_session_status
+                                  ? formatLabel(monitorStatus.last_session_status)
+                                  : "None yet"}
+                              </strong>
+                            </div>
+                            <div className="data-row">
+                              <span>Stop reason</span>
+                              <strong>
+                                {monitorStopReasonLabel(monitorStatus?.stop_reason)}
+                              </strong>
+                            </div>
+                          </div>
+                          <div className="detail-actions">
+                            <button
+                              className="primary-action"
+                              disabled={!canStartMonitoring}
+                              onClick={() => void handleStartMonitoring(stream)}
+                              type="button"
+                            >
+                              {isMonitorLoading && !isMonitoring
+                                ? "Starting..."
+                                : "Start monitoring"}
+                            </button>
+                            <button
+                              className="secondary-action"
+                              disabled={isMonitorLoading || !isMonitoring}
+                              onClick={() => void handleStopMonitoring(stream)}
+                              type="button"
+                            >
+                              {isMonitorLoading && isMonitoring
+                                ? "Stopping..."
+                                : "Stop monitoring"}
+                            </button>
+                            <button
+                              className="secondary-action"
+                              disabled={isMonitorLoading}
+                              onClick={() => void handleRefreshMonitoring(stream)}
+                              type="button"
+                            >
+                              Refresh status
+                            </button>
+                          </div>
+                          <span className="meta-text">
+                            Monitoring is in-memory for this API run. Review activity, correction,
+                            Bird Log, and Export remain explicit actions.
+                          </span>
+                          {monitorStartBlockReason ? (
+                            <span className="meta-text">{monitorStartBlockReason}</span>
+                          ) : null}
+                          {monitorStatus?.last_error ? (
+                            <div className="zone-error">Last error: {monitorStatus.last_error}</div>
+                          ) : null}
+                          {monitorError ? <div className="zone-error">{monitorError}</div> : null}
+                          <details className="advanced-details">
+                            <summary>Advanced details</summary>
+                            <div className="source-connection-meta">
+                              <span>Monitor ID: {monitorStatus?.monitor_id ?? "none"}</span>
+                              <span>
+                                Started:{" "}
+                                {monitorStatus?.started_at
+                                  ? formatDateTime(monitorStatus.started_at)
+                                  : "Not started"}
+                              </span>
+                              <span>
+                                Next check:{" "}
+                                {monitorStatus?.next_tick_at
+                                  ? formatDateTime(monitorStatus.next_tick_at)
+                                  : "Not scheduled"}
+                              </span>
+                              <span>
+                                Runtime limit:{" "}
+                                {monitorStatus
+                                  ? `${Math.round(monitorStatus.max_runtime_seconds / 60)} min`
+                                  : "30 min"}
+                              </span>
+                              <span>
+                                Check interval: {monitorStatus?.interval_seconds ?? 15}s
+                              </span>
+                              <span>
+                                Consecutive failures:{" "}
+                                {monitorStatus?.consecutive_failures ?? 0}
+                              </span>
+                            </div>
+                          </details>
+                        </div>
+                      ) : null}
                       {isExternalUrlProvider ? (
                         <details className="snapshot-watch-panel snapshot-watch-harness">
                           <summary>Advanced test harness: Snapshot watch</summary>

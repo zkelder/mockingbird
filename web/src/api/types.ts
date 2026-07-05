@@ -365,6 +365,44 @@ export interface ExternalUrlPreviewSaveResponse {
   warnings: string[];
 }
 
+export interface SourceMonitorStartRequest {
+  interval_seconds?: number;
+  max_runtime_minutes?: number;
+  max_snapshots?: number;
+  check_motion?: boolean;
+  create_review_activity?: boolean;
+}
+
+export interface SourceMonitorStatusResponse {
+  monitor_id: string;
+  source_id: string;
+  stream_id: string;
+  status: string;
+  started_at?: string | null;
+  stopped_at?: string | null;
+  last_tick_at?: string | null;
+  next_tick_at?: string | null;
+  interval_seconds: number;
+  max_runtime_seconds: number;
+  max_snapshots: number;
+  snapshots_attempted: number;
+  snapshots_saved: number;
+  motion_checks_run: number;
+  last_snapshot_media_asset_id?: string | null;
+  last_activity_detected?: boolean | null;
+  last_activity_area?: Record<string, unknown> | null;
+  last_session_status?: string | null;
+  last_error?: string | null;
+  consecutive_failures: number;
+  stop_reason?: string | null;
+  check_motion: boolean;
+  create_review_activity: boolean;
+  creates_truth: boolean;
+  creates_exports: boolean;
+  persistent: boolean;
+  message: string;
+}
+
 export interface SavedPreviewMotionEvidenceRequest {
   stream_id?: string | null;
   zone_id?: string | null;

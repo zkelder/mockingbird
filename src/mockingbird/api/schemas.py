@@ -534,6 +534,45 @@ class ExternalUrlPreviewSaveResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class SourceMonitorStartRequest(BaseModel):
+    interval_seconds: int = Field(default=15, ge=5)
+    max_runtime_minutes: int = Field(default=30, ge=1, le=120)
+    max_snapshots: int = Field(default=100, ge=1, le=500)
+    check_motion: bool = True
+    create_review_activity: bool = False
+
+
+class SourceMonitorStatusResponse(BaseModel):
+    # Monitor state is in-memory and evidence-only; correction remains truth.
+    monitor_id: str
+    source_id: str
+    stream_id: str
+    status: str
+    started_at: datetime | None = None
+    stopped_at: datetime | None = None
+    last_tick_at: datetime | None = None
+    next_tick_at: datetime | None = None
+    interval_seconds: int = Field(ge=1)
+    max_runtime_seconds: int = Field(ge=1)
+    max_snapshots: int = Field(ge=1)
+    snapshots_attempted: int = Field(ge=0)
+    snapshots_saved: int = Field(ge=0)
+    motion_checks_run: int = Field(ge=0)
+    last_snapshot_media_asset_id: str | None = None
+    last_activity_detected: bool | None = None
+    last_activity_area: dict[str, Any] | None = None
+    last_session_status: str | None = None
+    last_error: str | None = None
+    consecutive_failures: int = Field(ge=0)
+    stop_reason: str | None = None
+    check_motion: bool = True
+    create_review_activity: bool = False
+    creates_truth: bool = False
+    creates_exports: bool = False
+    persistent: bool = False
+    message: str
+
+
 class SavedPreviewMotionEvidenceRequest(BaseModel):
     stream_id: str | None = None
     zone_id: str | None = None
