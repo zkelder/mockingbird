@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   Event,
+  LocalCameraFrameCaptureResponse,
   Point,
   ReviewQueueItem,
   SourceSetupReviewResponse,
@@ -110,6 +111,10 @@ function hasRealLivePlayback(status?: StreamPlaybackStatus | null): boolean {
   );
 }
 
+function supportsFrameCapture(status?: StreamPlaybackStatus | null): boolean {
+  return isLocalCameraBridgePlayback(status) || isWindowsDshowBridgePlayback(status);
+}
+
 function liveStreamUrl(playback: StreamPlaybackStatus, streamId: string): string | null {
   if (isWindowsDshowBridgePlayback(playback)) {
     return apiClient.windowsDshowMjpegBridgeUrl(streamId);
@@ -184,6 +189,9 @@ export function StreamDetailPage({
   const [liveViewState, setLiveViewState] = useState<LiveViewState>("idle");
   const [liveViewReloadToken, setLiveViewReloadToken] = useState(0);
   const [liveViewError, setLiveViewError] = useState<string | null>(null);
+  const [captureResult, setCaptureResult] = useState<LocalCameraFrameCaptureResponse | null>(null);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const [isCapturingFrame, setIsCapturingFrame] = useState(false);
 
   const selectedZone = detail?.zones.find((zone) => zone.id === selectedZoneId) ?? null;
 
@@ -202,6 +210,9 @@ export function StreamDetailPage({
       setLiveViewState("idle");
       setLiveViewReloadToken(0);
       setLiveViewError(null);
+      setCaptureResult(null);
+      setCaptureError(null);
+      setIsCapturingFrame(false);
       try {
         const stream = await apiClient.getStream(streamId);
         const [playback, setupReview, zones, events] = await Promise.all([
@@ -314,6 +325,26 @@ export function StreamDetailPage({
     setLiveViewState("opening");
     setLiveViewError(null);
     setLiveViewReloadToken((current) => current + 1);
+  }
+
+  async function handleCaptureFrame() {
+    if (!detail || !supportsFrameCapture(detail.playback)) {
+      return;
+    }
+    setIsCapturingFrame(true);
+    setCaptureError(null);
+    setCaptureResult(null);
+    try {
+      const result = await apiClient.captureLocalCameraFrame(detail.stream.id);
+      setCaptureResult(result);
+      if (result.status !== "saved") {
+        setCaptureError(result.message);
+      }
+    } catch (caught) {
+      setCaptureError(caught instanceof Error ? caught.message : "Could not capture frame.");
+    } finally {
+      setIsCapturingFrame(false);
+    }
   }
 
   async function handleSaveSelectedZone(event: FormEvent<HTMLFormElement>) {
@@ -467,6 +498,7 @@ export function StreamDetailPage({
         : "quiet";
   const sourceDisplay = detail.setupReview?.provider_display_name ?? "Source";
   const liveHelpText = liveTroubleshootingText(detail.playback);
+  const canCaptureFrame = supportsFrameCapture(detail.playback);
 
   return (
     <div className="page-stack">
@@ -586,6 +618,25 @@ export function StreamDetailPage({
           ) : liveHelpText ? (
             <span className="stream-live-hint">{liveHelpText}</span>
           ) : null}
+          {captureResult ? (
+            <div
+              className={`stream-live-message${
+                captureResult.status === "saved" ? "" : " is-error"
+              }`}
+            >
+              <strong>{captureResult.message}</strong>
+              {captureResult.status === "saved" && captureResult.media_asset_id ? (
+                <a href={apiClient.mediaFileUrl(captureResult.media_asset_id)}>
+                  Open saved frame
+                </a>
+              ) : null}
+            </div>
+          ) : null}
+          {captureError && !captureResult ? (
+            <div className="stream-live-message is-error">
+              <strong>{captureError}</strong>
+            </div>
+          ) : null}
           <div className="detail-actions stream-live-actions">
             {liveViewOpen ? (
               <>
@@ -606,7 +657,22 @@ export function StreamDetailPage({
                 Open Live view
               </button>
             )}
+            {canCaptureFrame ? (
+              <button
+                className="secondary-action"
+                disabled={isCapturingFrame}
+                onClick={handleCaptureFrame}
+                type="button"
+              >
+                {isCapturingFrame ? "Capturing..." : "Capture frame"}
+              </button>
+            ) : null}
           </div>
+          {canCaptureFrame ? (
+            <span className="stream-live-hint">
+              Save one frame from this live camera for motion/review.
+            </span>
+          ) : null}
         </section>
       ) : (
         <StreamPanel

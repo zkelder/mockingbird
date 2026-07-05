@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import sys
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -37,6 +38,7 @@ from mockingbird.api.schemas import (
     ExternalUrlPreviewResponse,
     ExternalUrlPreviewSaveRequest,
     ExternalUrlPreviewSaveResponse,
+    LocalCameraFrameCaptureResponse,
     Event,
     EventDetail,
     FolderImportCreate,
@@ -2956,6 +2958,154 @@ async def get_stream_windows_dshow_mjpeg_bridge(stream_id: str) -> StreamingResp
         media_type=(
             f"multipart/x-mixed-replace; boundary={windows_camera_bridge.MJPEG_BOUNDARY}"
         ),
+    )
+
+
+@app.post(
+    "/api/streams/{stream_id}/local-camera/capture-frame",
+    response_model=LocalCameraFrameCaptureResponse,
+)
+async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameCaptureResponse:
+    repository = get_repository()
+    configuration = repository.get_stream_live_playback_config(stream_id)
+    if configuration is None:
+        raise _not_found("Stream", stream_id)
+
+    common = {
+        "stream_id": configuration.stream_id,
+        "source_id": configuration.source_id,
+        "creates_truth": False,
+        "creates_event": False,
+        "creates_visit": False,
+        "creates_export": False,
+    }
+    if configuration.provider_key != "local_usb":
+        return LocalCameraFrameCaptureResponse(
+            **common,
+            status="unsupported",
+            message="Capture frame requires a local camera Source provider.",
+            warnings=["This Stream is not configured for local camera playback."],
+        )
+
+    if configuration.live_stream_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+        bridge_status = windows_camera_bridge.windows_camera_status(
+            camera_name=configuration.windows_camera_name,
+            ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
+        )
+        if bridge_status == "camera_name_missing":
+            return LocalCameraFrameCaptureResponse(
+                **common,
+                status="camera_not_configured",
+                message="Choose a Windows DirectShow camera name before capture.",
+                warnings=[
+                    "Find the exact camera name with: ffmpeg -list_devices true -f dshow -i dummy."
+                ],
+            )
+        if bridge_status == "unsupported_host":
+            return LocalCameraFrameCaptureResponse(
+                **common,
+                status="unsupported",
+                message=(
+                    "Windows DirectShow requires Windows ffmpeg.exe or running the API on Windows."
+                ),
+                warnings=[
+                    "If the API runs in WSL, configure a Windows ffmpeg.exe path."
+                ],
+            )
+        if bridge_status == "ffmpeg_missing":
+            return LocalCameraFrameCaptureResponse(
+                **common,
+                status="ffmpeg_missing",
+                message="Windows DirectShow capture unavailable: ffmpeg not found.",
+            )
+        try:
+            frame = windows_camera_bridge.capture_windows_dshow_frame(
+                configuration.windows_camera_name or "",
+                ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
+                video_size=configuration.camera_video_size,
+                framerate=configuration.camera_framerate,
+            )
+        except (OSError, ValueError):
+            return LocalCameraFrameCaptureResponse(
+                **common,
+                status="capture_failed",
+                message="Could not capture a JPEG frame from the Windows DirectShow camera.",
+                warnings=[
+                    "Close other camera apps, check the camera name, and confirm Windows privacy permissions."
+                ],
+            )
+        playback_type = windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE
+        camera_label = configuration.windows_camera_name
+    elif configuration.live_stream_type == local_camera_bridge.LOCAL_USB_STREAM_TYPE:
+        bridge_status = local_camera_bridge.local_camera_status(
+            device=configuration.local_camera_device,
+            camera_format=configuration.local_camera_format,
+        )
+        if bridge_status == "device_missing":
+            return LocalCameraFrameCaptureResponse(
+                **common,
+                status="camera_not_configured",
+                message="Choose a local camera device such as /dev/video0 before capture.",
+            )
+        if bridge_status in {"invalid_device", "unsupported_platform"}:
+            return LocalCameraFrameCaptureResponse(
+                **common,
+                status="unsupported",
+                message="Local camera capture requires a supported Linux /dev/video* device.",
+            )
+        if bridge_status == "ffmpeg_missing":
+            return LocalCameraFrameCaptureResponse(
+                **common,
+                status="ffmpeg_missing",
+                message="Local camera capture unavailable: ffmpeg not found.",
+            )
+        try:
+            frame = local_camera_bridge.capture_local_camera_frame(
+                configuration.local_camera_device or "",
+                camera_format=configuration.local_camera_format,
+                video_size=configuration.camera_video_size,
+                input_frame_rate=configuration.camera_framerate,
+            )
+        except (OSError, ValueError):
+            return LocalCameraFrameCaptureResponse(
+                **common,
+                status="capture_failed",
+                message="Could not capture a JPEG frame from the local camera.",
+                warnings=["Close other camera apps and confirm the device path is available."],
+            )
+        playback_type = local_camera_bridge.LOCAL_USB_STREAM_TYPE
+        camera_label = configuration.local_camera_device
+    else:
+        return LocalCameraFrameCaptureResponse(
+            **common,
+            status="unsupported",
+            message="Capture frame is available only for local_usb and windows_dshow playback.",
+        )
+
+    try:
+        media_asset = repository.create_local_camera_frame_media_asset(
+            source_id=configuration.source_id,
+            stream_id=configuration.stream_id,
+            content=frame,
+            captured_at=datetime.now(UTC),
+            playback_type=playback_type,
+            camera_label=camera_label,
+        )
+    except ValueError as error:
+        raise _media_import_error(error) from error
+
+    return LocalCameraFrameCaptureResponse(
+        **common,
+        media_asset_id=media_asset.id,
+        status="saved",
+        message=(
+            "Saved one local camera frame as local media only. "
+            "No Events, Visits, truth, or exports were created."
+        ),
+        file_name=media_asset.filename,
+        relative_path=media_asset.filename,
+        bytes_written=media_asset.file_size_bytes,
+        content_type=media_asset.content_type,
     )
 
 

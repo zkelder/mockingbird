@@ -1061,10 +1061,14 @@ Current work:
 - The backend exposes
   `GET /api/streams/{stream_id}/live/windows-dshow-mjpeg` for request-scoped
   Windows DirectShow MJPEG streaming.
+- Local Camera Frame Capture 1: the backend exposes
+  `POST /api/streams/{stream_id}/local-camera/capture-frame` so local USB or
+  Windows DirectShow playback can save one user-triggered JPEG frame as a local
+  MediaAsset.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
-- Next likely phase: Phase 23 — Live camera playback smoke validation and common
-  camera URL/device polish.
+- Next likely phase: Phase 23 — local camera capture smoke validation and saved
+  image review-flow polish.
 
 Validation:
 
@@ -1079,12 +1083,15 @@ Validation:
   WSL, a Windows executable path such as `/mnt/c/ffmpeg/bin/ffmpeg.exe` is the
   recommended webcam path rather than WSL USB passthrough.
 - DirectShow camera names are passed as subprocess arguments, not shell strings.
+- Frame capture uses the existing saved-image MediaAsset pipeline, reuses
+  configured camera size/framerate when present, and creates no Events, Visits,
+  ReviewLabels, MotionEvidence, dataset exports, analytics truth, or reviewed
+  truth by itself.
 - The bridge stores no media, creates no Events/Visits, ReviewLabels,
   DetectionProposals, MotionEvidence, dataset exports, analytics truth, workers,
   schedulers, captures table, or source adapter records.
 - Pi camera/libcamera, ESP32, cellular, WebRTC, persistent HLS, automatic
-  discovery, local camera still capture, and monitoring integration remain
-  future work.
+  discovery, automatic capture, and monitoring integration remain future work.
 - Browser-direct MJPEG, browser video, browser-supported HLS, RTSP bridge,
   snapshot capture, Source health, monitoring, Review, Bird Log, and Export
   remain separate explicit workflows.

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 
+from mockingbird.playback.frame_capture import read_one_jpeg_frame
 from mockingbird.playback.rtsp_bridge import MJPEG_BOUNDARY, iter_multipart_mjpeg
 
 LOCAL_USB_STREAM_TYPE = "local_usb"
@@ -115,14 +116,106 @@ def start_local_camera_mjpeg_process(
     )
 
 
+def build_local_camera_frame_capture_command(
+    device: str,
+    *,
+    camera_format: str | None = None,
+    input_format: str | None = None,
+    ffmpeg_binary: str = "ffmpeg",
+    video_size: str | None = None,
+    input_frame_rate: str | int | None = None,
+) -> list[str]:
+    if normalize_local_camera_format(camera_format) != DEFAULT_CAMERA_FORMAT:
+        raise ValueError("unsupported_local_camera_format")
+    if not validate_local_camera_device(device):
+        raise ValueError("invalid_local_camera_device")
+    command = [
+        ffmpeg_binary,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        DEFAULT_CAMERA_FORMAT,
+    ]
+    normalized_input_format = (input_format or "").strip()
+    if normalized_input_format:
+        command.extend(["-input_format", normalized_input_format])
+    normalized_video_size = (video_size or "").strip()
+    if normalized_video_size:
+        command.extend(["-video_size", normalized_video_size])
+    normalized_framerate = (
+        str(input_frame_rate).strip() if input_frame_rate is not None else ""
+    )
+    if normalized_framerate:
+        command.extend(["-framerate", normalized_framerate])
+    command.extend(
+        [
+            "-i",
+            device.strip(),
+            "-an",
+            "-frames:v",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "pipe:1",
+        ]
+    )
+    return command
+
+
+def start_local_camera_frame_capture_process(
+    device: str,
+    *,
+    camera_format: str | None = None,
+    video_size: str | None = None,
+    input_frame_rate: str | int | None = None,
+    popen_factory: PopenFactory = subprocess.Popen,
+) -> subprocess.Popen[bytes]:
+    command = build_local_camera_frame_capture_command(
+        device,
+        camera_format=camera_format,
+        video_size=video_size,
+        input_frame_rate=input_frame_rate,
+    )
+    return popen_factory(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+    )
+
+
+def capture_local_camera_frame(
+    device: str,
+    *,
+    camera_format: str | None = None,
+    video_size: str | None = None,
+    input_frame_rate: str | int | None = None,
+    popen_factory: PopenFactory = subprocess.Popen,
+) -> bytes:
+    process = start_local_camera_frame_capture_process(
+        device,
+        camera_format=camera_format,
+        video_size=video_size,
+        input_frame_rate=input_frame_rate,
+        popen_factory=popen_factory,
+    )
+    return read_one_jpeg_frame(process)
+
+
 __all__ = [
     "LOCAL_USB_STREAM_TYPE",
     "MJPEG_BOUNDARY",
+    "build_local_camera_frame_capture_command",
     "build_local_camera_mjpeg_command",
+    "capture_local_camera_frame",
     "is_ffmpeg_available",
     "iter_multipart_mjpeg",
     "local_camera_status",
     "normalize_local_camera_format",
+    "start_local_camera_frame_capture_process",
     "start_local_camera_mjpeg_process",
     "validate_local_camera_device",
 ]

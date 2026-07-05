@@ -753,6 +753,8 @@ class StreamLivePlaybackConfig:
     windows_ffmpeg_binary_path: str | None = None
     windows_video_size: str | None = None
     windows_framerate: str | None = None
+    camera_video_size: str | None = None
+    camera_framerate: str | None = None
 
 
 class MotionEvidenceModel(Base):
@@ -2304,6 +2306,8 @@ class ProductRepository:
                 config.get("live_stream_type"),
                 live_url or "",
             )
+            video_size = (config.get("video_size") or "").strip() or None
+            framerate = (config.get("framerate") or "").strip() or None
             if (
                 provider_key == "local_usb"
                 and live_type != windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE
@@ -2329,8 +2333,10 @@ class ProductRepository:
                 windows_ffmpeg_binary_path=(
                     (config.get("ffmpeg_binary_path") or "").strip() or None
                 ),
-                windows_video_size=((config.get("video_size") or "").strip() or None),
-                windows_framerate=((config.get("framerate") or "").strip() or None),
+                windows_video_size=video_size,
+                windows_framerate=framerate,
+                camera_video_size=video_size,
+                camera_framerate=framerate,
             )
 
     def streams_for_source(self, source_id: str) -> list[Stream]:
@@ -3021,6 +3027,65 @@ class ProductRepository:
                     original_filename=original_filename,
                     file_size_bytes=len(content),
                     created_at=fetched_at,
+                    notes=notes,
+                )
+                session.add(asset_model)
+                session.flush()
+                return _media_asset_from_model(asset_model)
+
+    def create_local_camera_frame_media_asset(
+        self,
+        *,
+        source_id: str,
+        stream_id: str,
+        content: bytes,
+        captured_at: datetime,
+        playback_type: str,
+        camera_label: str | None = None,
+    ) -> MediaAsset:
+        if not content:
+            raise ValueError("empty_file")
+
+        content_type = "image/jpeg"
+        media_type = SUPPORTED_MEDIA_CONTENT_TYPES[content_type]
+        extension = EXTERNAL_URL_PREVIEW_EXTENSIONS[content_type]
+
+        with self.session_factory() as session:
+            with session.begin():
+                source_model = session.get(CameraSourceModel, source_id)
+                if source_model is None:
+                    raise ValueError("missing_source")
+
+                stream_model = session.get(StreamModel, stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+                if stream_model.source_id != source_id:
+                    raise ValueError("stream_source_mismatch")
+
+                media_id = self._next_id(session, MediaAssetModel, "media-asset")
+                original_filename = f"local-camera-frame-{media_id}{extension}"
+                filename = f"{media_id}-local-camera-frame{extension}"
+                filename, local_path = self._write_media_file(filename, content)
+                notes = self._local_camera_frame_media_notes(
+                    source_id=source_id,
+                    stream_id=stream_id,
+                    captured_at=captured_at,
+                    content_type=content_type,
+                    bytes_written=len(content),
+                    playback_type=playback_type,
+                    camera_label=camera_label,
+                )
+                asset_model = MediaAssetModel(
+                    id=media_id,
+                    source_id=source_id,
+                    stream_id=stream_id,
+                    filename=filename,
+                    content_type=content_type,
+                    media_type=media_type,
+                    local_path=str(local_path),
+                    original_filename=original_filename,
+                    file_size_bytes=len(content),
+                    created_at=captured_at,
                     notes=notes,
                 )
                 session.add(asset_model)
@@ -5603,6 +5668,33 @@ class ProductRepository:
         cleaned_note = _clean_optional_text(note)
         if cleaned_note is not None:
             lines.append(f"note={cleaned_note}")
+        return "\n".join(lines)
+
+    def _local_camera_frame_media_notes(
+        self,
+        *,
+        source_id: str,
+        stream_id: str,
+        captured_at: datetime,
+        content_type: str,
+        bytes_written: int,
+        playback_type: str,
+        camera_label: str | None,
+    ) -> str:
+        lines = [
+            "Saved explicit local camera frame capture.",
+            "Creates no Events, Visits, ReviewLabels, exports, or truth.",
+            "provider_key=local_usb",
+            f"playback_type={playback_type}",
+            f"source_id={source_id}",
+            f"stream_id={stream_id}",
+            f"captured_at={captured_at.isoformat()}",
+            f"content_type={content_type}",
+            f"bytes_written={bytes_written}",
+        ]
+        cleaned_camera_label = _clean_optional_text(camera_label)
+        if cleaned_camera_label is not None:
+            lines.append(f"camera={cleaned_camera_label}")
         return "\n".join(lines)
 
     def _preview_folder_import_for_path(self, folder: Path) -> FolderImportPreview:

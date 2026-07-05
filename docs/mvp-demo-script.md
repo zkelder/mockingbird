@@ -33,6 +33,8 @@ transcoding, or production provider infrastructure.
   optional host `ffmpeg`.
 - Windows webcam Live view can use `windows_dshow` with a DirectShow camera name
   and optional Windows `ffmpeg.exe` path.
+- Local camera Live view can save one explicit still frame as a local saved
+  image without creating truth or exports.
 - The `external_url` still-image preview/save/evidence path works.
 - Manual bounded Snapshot watch works for `external_url` while the page is open.
 - The `folder_import_future` preview/import/evidence path works.
@@ -217,6 +219,9 @@ Dataset Exports.
 - [ ] Confirm Windows DirectShow playback shows bridge playback when camera name
       and Windows `ffmpeg.exe` path are available, or a clear setup state when
       they are not.
+- [ ] From a local camera Live view, click `Capture frame`.
+- [ ] Confirm one saved image appears for the Stream and no ReviewLabel/export
+      truth is created.
 - [ ] Confirm Source health / Camera status is visible for the selected Stream.
 - [ ] Confirm Field test readiness appears and shows the next step for this
       Stream.

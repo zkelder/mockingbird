@@ -58,6 +58,13 @@ export type ExternalUrlPreviewSaveStatus =
   | "unavailable"
   | "unsupported"
   | "error";
+export type LocalCameraFrameCaptureStatus =
+  | "saved"
+  | "unavailable"
+  | "unsupported"
+  | "ffmpeg_missing"
+  | "camera_not_configured"
+  | "capture_failed";
 
 export type ZoneType =
   | "feeder"
@@ -393,6 +400,23 @@ export interface ExternalUrlPreviewSaveResponse {
   creates_event: boolean;
   creates_visit: boolean;
   creates_truth: boolean;
+  warnings: string[];
+}
+
+export interface LocalCameraFrameCaptureResponse {
+  stream_id: string;
+  source_id?: string | null;
+  media_asset_id?: string | null;
+  status: LocalCameraFrameCaptureStatus;
+  message: string;
+  file_name?: string | null;
+  relative_path?: string | null;
+  bytes_written: number;
+  content_type?: string | null;
+  creates_truth: boolean;
+  creates_event: boolean;
+  creates_visit: boolean;
+  creates_export: boolean;
   warnings: string[];
 }
 

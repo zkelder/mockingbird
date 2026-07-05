@@ -5,6 +5,7 @@ import pytest
 
 from mockingbird.api.main import (
     app,
+    capture_stream_local_camera_frame,
     configure_repository,
     get_stream_local_mjpeg_bridge,
     get_stream_rtsp_mjpeg_bridge,
@@ -945,6 +946,220 @@ async def test_windows_dshow_bridge_endpoint_streams_mocked_mjpeg_without_creati
     assert await product_counts(client) == before
 
 
+async def test_windows_dshow_capture_frame_creates_one_media_asset_only(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jpeg_frame = b"\xff\xd8captured-windows-frame\xff\xd9"
+    captured_args: list[tuple[str, str | None, str | None, str | None]] = []
+
+    def fake_capture(
+        camera_name: str,
+        *,
+        ffmpeg_binary_path: str | None = None,
+        video_size: str | None = None,
+        framerate: str | None = None,
+    ) -> bytes:
+        captured_args.append((camera_name, ffmpeg_binary_path, video_size, framerate))
+        return jpeg_frame
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.capture_windows_dshow_frame",
+        fake_capture,
+    )
+    await configure_windows_dshow_camera(
+        client,
+        camera_name="EMEET SmartCam S600",
+        ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+        video_size="1280x720",
+        framerate="10",
+    )
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/local-camera/capture-frame")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "saved"
+    assert body["stream_id"] == STREAM_ID
+    assert body["source_id"] == SOURCE_ID
+    assert body["media_asset_id"].startswith("media-asset-")
+    assert body["content_type"] == "image/jpeg"
+    assert body["bytes_written"] == len(jpeg_frame)
+    assert body["file_name"].endswith(".jpg")
+    assert body["relative_path"] == body["file_name"]
+    assert body["creates_event"] is False
+    assert body["creates_visit"] is False
+    assert body["creates_truth"] is False
+    assert body["creates_export"] is False
+    assert captured_args == [
+        (
+            "EMEET SmartCam S600",
+            "/mnt/c/ffmpeg/bin/ffmpeg.exe",
+            "1280x720",
+            "10",
+        )
+    ]
+
+    media_response = await client.get(f"/api/media/{body['media_asset_id']}")
+    assert media_response.status_code == 200
+    media_asset = media_response.json()
+    assert media_asset["source_id"] == SOURCE_ID
+    assert media_asset["stream_id"] == STREAM_ID
+    assert media_asset["content_type"] == "image/jpeg"
+    assert media_asset["media_type"] == "image"
+    assert "Saved explicit local camera frame capture." in media_asset["notes"]
+    assert "playback_type=windows_dshow" in media_asset["notes"]
+    assert "Creates no Events, Visits, ReviewLabels, exports, or truth." in media_asset["notes"]
+    saved_path = Path(media_asset["local_path"]).resolve()
+    assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
+    assert saved_path.read_bytes() == jpeg_frame
+
+    after = await product_counts(client)
+    assert after["media_assets"] == before["media_assets"] + 1
+    for key in (
+        "events",
+        "visits",
+        "review_labels",
+        "motion_evidence",
+        "species_suggestions",
+        "detection_proposals",
+        "dataset_exports",
+    ):
+        assert after[key] == before[key]
+
+
+async def test_local_usb_capture_frame_creates_one_media_asset_only(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jpeg_frame = b"\xff\xd8captured-local-frame\xff\xd9"
+    captured_args: list[tuple[str, str | None, str | None, str | None]] = []
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.local_camera_status",
+        lambda **kwargs: "available",
+    )
+
+    def fake_capture(
+        device: str,
+        *,
+        camera_format: str | None = None,
+        video_size: str | None = None,
+        input_frame_rate: str | None = None,
+    ) -> bytes:
+        captured_args.append((device, camera_format, video_size, input_frame_rate))
+        return jpeg_frame
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.capture_local_camera_frame",
+        fake_capture,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/local-camera/capture-frame")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "saved"
+    assert body["content_type"] == "image/jpeg"
+    assert body["bytes_written"] == len(jpeg_frame)
+    assert body["creates_event"] is False
+    assert body["creates_visit"] is False
+    assert body["creates_truth"] is False
+    assert body["creates_export"] is False
+    assert captured_args == [("/dev/video0", "v4l2", None, None)]
+
+    media_response = await client.get(f"/api/media/{body['media_asset_id']}")
+    assert media_response.status_code == 200
+    media_asset = media_response.json()
+    assert "playback_type=local_usb" in media_asset["notes"]
+    after = await product_counts(client)
+    assert after["media_assets"] == before["media_assets"] + 1
+    for key in before:
+        if key != "media_assets":
+            assert after[key] == before[key]
+
+
+async def test_local_camera_capture_reports_missing_windows_camera_name(
+    client: httpx.AsyncClient,
+) -> None:
+    await configure_windows_dshow_camera(client, camera_name=None)
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/local-camera/capture-frame")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "camera_not_configured"
+    assert body["media_asset_id"] is None
+    assert "Windows DirectShow camera name" in body["message"]
+    assert await product_counts(client) == before
+
+
+async def test_local_camera_capture_reports_ffmpeg_missing(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.windows_camera_status",
+        lambda **kwargs: "ffmpeg_missing",
+    )
+    await configure_windows_dshow_camera(client, camera_name="EMEET SmartCam S600")
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/local-camera/capture-frame")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ffmpeg_missing"
+    assert body["bytes_written"] == 0
+    assert await product_counts(client) == before
+
+
+async def test_local_camera_capture_rejects_unsupported_stream_kind(
+    client: httpx.AsyncClient,
+) -> None:
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="http://camera.local/live.mjpg",
+        live_stream_type="mjpeg",
+    )
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/local-camera/capture-frame")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "unsupported"
+    assert "local camera Source provider" in body["message"]
+
+
+async def test_local_camera_capture_reports_no_frame_as_capture_failed(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.capture_windows_dshow_frame",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("no_frame_captured")),
+    )
+    await configure_windows_dshow_camera(
+        client,
+        camera_name="EMEET SmartCam S600",
+        ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+    )
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/local-camera/capture-frame")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "capture_failed"
+    assert body["bytes_written"] == 0
+    assert await product_counts(client) == before
+
+
 def test_windows_dshow_command_uses_list_args_and_safe_camera_name() -> None:
     command = windows_camera_bridge.build_windows_dshow_mjpeg_command(
         "EMEET SmartCam S600",
@@ -986,6 +1201,35 @@ def test_windows_dshow_command_uses_list_args_and_safe_camera_name() -> None:
     assert windows_camera_bridge.validate_windows_camera_name("") is False
 
 
+def test_windows_dshow_frame_capture_command_uses_list_args() -> None:
+    command = windows_camera_bridge.build_windows_dshow_frame_capture_command(
+        "EMEET SmartCam S600",
+        ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+        video_size="1280x720",
+        framerate="10",
+    )
+
+    assert command == [
+        "/mnt/c/ffmpeg/bin/ffmpeg.exe",
+        "-f",
+        "dshow",
+        "-video_size",
+        "1280x720",
+        "-framerate",
+        "10",
+        "-i",
+        "video=EMEET SmartCam S600",
+        "-an",
+        "-frames:v",
+        "1",
+        "-f",
+        "image2pipe",
+        "-vcodec",
+        "mjpeg",
+        "pipe:1",
+    ]
+
+
 def test_windows_dshow_start_uses_popen_list_without_shell() -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
 
@@ -1003,6 +1247,63 @@ def test_windows_dshow_start_uses_popen_list_without_shell() -> None:
     assert calls[0][0][0] == "C:\\ffmpeg\\bin\\ffmpeg.exe"
     assert calls[0][0][calls[0][0].index("-i") + 1] == "video=EMEET SmartCam S600"
     assert calls[0][1].get("shell") is not True
+
+
+def test_local_camera_frame_capture_command_uses_list_args() -> None:
+    command = local_camera_bridge.build_local_camera_frame_capture_command(
+        "/dev/video0",
+        video_size="640x480",
+        input_frame_rate="10",
+    )
+
+    assert command[:6] == [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "v4l2",
+    ]
+    assert command[command.index("-video_size") + 1] == "640x480"
+    assert command[command.index("-framerate") + 1] == "10"
+    assert command[command.index("-i") + 1] == "/dev/video0"
+    assert command[command.index("-frames:v") + 1] == "1"
+    assert "shell=True" not in command
+
+
+def test_frame_capture_reader_returns_one_jpeg_and_stops_process() -> None:
+    fake_process = FakeFfmpegProcess(
+        [
+            b"noise\xff\xd8captured-frame",
+            b"\xff\xd9ignored\xff\xd8second-frame\xff\xd9",
+        ]
+    )
+
+    frame = windows_camera_bridge.capture_windows_dshow_frame(
+        "EMEET SmartCam S600",
+        ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+        popen_factory=lambda *args, **kwargs: fake_process,
+    )
+
+    assert frame == b"\xff\xd8captured-frame\xff\xd9"
+    assert fake_process.terminated is True
+    assert fake_process.waited is True
+    assert fake_process.killed is False
+
+
+def test_frame_capture_reader_reports_no_jpeg() -> None:
+    fake_process = FakeFfmpegProcess([b"not-a-jpeg"])
+
+    with pytest.raises(ValueError, match="no_frame_captured"):
+        windows_camera_bridge.capture_windows_dshow_frame(
+            "EMEET SmartCam S600",
+            ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+            popen_factory=lambda *args, **kwargs: fake_process,
+        )
+
+    assert fake_process.terminated is True
+    assert fake_process.waited is True
+    assert fake_process.killed is False
 
 
 def test_windows_dshow_status_is_wsl_aware() -> None:

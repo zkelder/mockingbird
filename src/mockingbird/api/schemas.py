@@ -94,6 +94,15 @@ class ExternalUrlPreviewSaveStatus(str, Enum):
     error = "error"
 
 
+class LocalCameraFrameCaptureStatus(str, Enum):
+    saved = "saved"
+    unavailable = "unavailable"
+    unsupported = "unsupported"
+    ffmpeg_missing = "ffmpeg_missing"
+    camera_not_configured = "camera_not_configured"
+    capture_failed = "capture_failed"
+
+
 class ZoneType(str, Enum):
     feeder = "feeder"
     birdbath = "birdbath"
@@ -558,6 +567,24 @@ class ExternalUrlPreviewSaveResponse(BaseModel):
     creates_event: bool = False
     creates_visit: bool = False
     creates_truth: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class LocalCameraFrameCaptureResponse(BaseModel):
+    # Captured frames are local MediaAssets only; correction remains truth.
+    stream_id: str
+    source_id: str | None = None
+    media_asset_id: str | None = None
+    status: LocalCameraFrameCaptureStatus
+    message: str
+    file_name: str | None = None
+    relative_path: str | None = None
+    bytes_written: int = Field(default=0, ge=0)
+    content_type: str | None = None
+    creates_truth: bool = False
+    creates_event: bool = False
+    creates_visit: bool = False
+    creates_export: bool = False
     warnings: list[str] = Field(default_factory=list)
 
 
