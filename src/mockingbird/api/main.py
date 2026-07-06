@@ -592,8 +592,8 @@ def _saved_media_motion_error(error: ValueError) -> HTTPException:
         return HTTPException(
             status_code=400,
             detail=(
-                "Saved snapshot could not be decoded locally. PNG works without extra "
-                "dependencies; JPEG/WebP need an available local image decoder."
+                "Captured frame could not be decoded for motion. "
+                "Try recapturing or check image decoder support."
             ),
         )
     return HTTPException(
@@ -1491,6 +1491,11 @@ async def evaluate_saved_media_motion(
     stream = repository.get_stream(payload.stream_id)
     if stream is None:
         raise _not_found("Stream", payload.stream_id)
+    if len(payload.media_asset_ids) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Check motion compares two or more saved frames from the selected Stream.",
+        )
 
     media_assets: list[MediaAsset] = []
     frames: list[SavedMediaFrame] = []

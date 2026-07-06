@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import struct
 import zlib
@@ -10,6 +11,7 @@ import pytest
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.sampler.saved_media_frames import SavedMediaFrameDecodeError
 from mockingbird.storage.models import MediaAssetModel, StreamModel
 
 pytestmark = pytest.mark.anyio
@@ -65,6 +67,12 @@ def png_bytes(rows: list[list[int]]) -> bytes:
         b"IDAT",
         zlib.compress(raw),
     ) + chunk(b"IEND", b"")
+
+
+def pgm_bytes(rows: list[list[int]]) -> bytes:
+    height = len(rows)
+    width = len(rows[0])
+    return f"P5\n{width} {height}\n255\n".encode("ascii") + b"".join(bytes(row) for row in rows)
 
 
 def blank_frame(*, width: int = 4, height: int = 4) -> list[list[int]]:
@@ -150,6 +158,25 @@ async def import_motion_frames(client: httpx.AsyncClient) -> list[dict]:
             filename="motion-2.png",
             frame=frame_with([(1, 1), (1, 2), (2, 1), (2, 2)]),
         ),
+    ]
+
+
+def create_local_camera_jpeg_assets(
+    repository: ProductRepository,
+    *,
+    count: int = 2,
+) -> list:
+    captured_at = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    return [
+        repository.create_local_camera_frame_media_asset(
+            source_id=SOURCE_ID,
+            stream_id=STREAM_ID,
+            content=f"\xff\xd8captured-jpeg-{index}\xff\xd9".encode("latin1"),
+            captured_at=captured_at + timedelta(seconds=index),
+            playback_type="windows_dshow",
+            camera_label="Test Camera",
+        )
+        for index in range(count)
     ]
 
 
@@ -240,6 +267,99 @@ async def test_saved_media_motion_scores_sequence_without_creating_records(
     assert result["candidates"][0]["zone_id"] == FEEDER_ZONE_ID
     assert await motion_evidence_count(client) == before_evidence_count
     assert await truth_counts(client) == before_truth
+
+
+async def test_saved_media_motion_rejects_single_saved_frame_with_product_copy(
+    client: httpx.AsyncClient,
+) -> None:
+    asset = await import_png(client, filename="single-motion-frame.png", frame=blank_frame())
+
+    response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": STREAM_ID,
+            "media_asset_ids": [asset["id"]],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Check motion compares two or more saved frames from the selected Stream."
+    )
+
+
+async def test_saved_media_motion_decodes_local_camera_jpeg_frames_with_ffmpeg_fallback(
+    client: httpx.AsyncClient,
+    repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assets = create_local_camera_jpeg_assets(repository)
+    frames_by_filename = {
+        assets[0].filename: pgm_bytes(blank_frame()),
+        assets[1].filename: pgm_bytes(frame_with([(1, 1), (1, 2), (2, 1), (2, 2)])),
+    }
+    before_truth = await truth_counts(client)
+    before_evidence_count = await motion_evidence_count(client)
+
+    class FakeCompletedProcess:
+        def __init__(self, stdout: bytes) -> None:
+            self.stdout = stdout
+
+    def fake_run(command: list[str], **kwargs: object) -> FakeCompletedProcess:
+        image_path = Path(command[command.index("-i") + 1])
+        return FakeCompletedProcess(frames_by_filename[image_path.name])
+
+    monkeypatch.setattr(
+        "mockingbird.sampler.saved_media_frames.subprocess.run",
+        fake_run,
+    )
+
+    response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": STREAM_ID,
+            "media_asset_ids": [asset.id for asset in assets],
+            "zone_ids": [FEEDER_ZONE_ID],
+            "create_motion_evidence": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["media_asset_ids"] == [asset.id for asset in assets]
+    assert result["activity_detected"] is True
+    assert result["best_snapshot_media_asset_id"] == assets[1].id
+    assert result["created_evidence"] == []
+    assert await motion_evidence_count(client) == before_evidence_count
+    assert await truth_counts(client) == before_truth
+
+
+async def test_saved_media_motion_decoder_error_uses_captured_frame_copy(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assets = await import_motion_frames(client)
+
+    def fail_decode(*args: object, **kwargs: object):
+        raise SavedMediaFrameDecodeError("image_decoder_unavailable")
+
+    monkeypatch.setattr("mockingbird.api.main.load_saved_image_frame_plane", fail_decode)
+
+    response = await client.post(
+        "/api/motion/evaluate-saved-media",
+        json={
+            "stream_id": STREAM_ID,
+            "media_asset_ids": [asset["id"] for asset in assets[:2]],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Captured frame could not be decoded for motion. "
+        "Try recapturing or check image decoder support."
+    )
 
 
 async def test_saved_media_motion_uses_auto_regions_without_user_zones(

@@ -224,10 +224,13 @@ Dataset Exports.
       truth is created.
 - [ ] Confirm the capture success says the frame will not appear in Bird Log
       until activity is created/reviewed.
-- [ ] Capture a second local camera frame and confirm `Check motion` becomes
-      available from the capture handoff.
-- [ ] Run `Check motion` from the capture handoff and confirm review activity,
-      Bird Log, and export still require explicit later actions.
+- [ ] Confirm the motion action is disabled/helpful after one capture and says
+      to capture another frame before checking motion.
+- [ ] Capture a second local camera frame and confirm `Compare captured frames`
+      becomes available from the capture handoff.
+- [ ] Run the frame comparison from the capture handoff and confirm captured
+      JPEG frames decode for motion, while review activity, Bird Log, and
+      export still require explicit later actions.
 - [ ] Confirm Source health / Camera status is visible for the selected Stream.
 - [ ] Confirm Field test readiness appears and shows the next step for this
       Stream.

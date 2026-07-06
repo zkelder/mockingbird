@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import struct
+import subprocess
 import zlib
 
 from mockingbird.motion.scoring import FramePlane
@@ -134,7 +135,7 @@ def _load_with_optional_pillow(
     try:
         from PIL import Image
     except ImportError as error:
-        raise SavedMediaFrameDecodeError("image_decoder_unavailable") from error
+        return _load_with_ffmpeg(path, max_dimension=max_dimension, cause=error)
 
     try:
         with Image.open(path) as image:
@@ -154,13 +155,110 @@ def _load_with_optional_pillow(
     except SavedMediaFrameDecodeError:
         raise
     except OSError as error:
-        raise SavedMediaFrameDecodeError("image_decode_failed") from error
+        return _load_with_ffmpeg(path, max_dimension=max_dimension, cause=error)
 
     frame = [
         pixels[row_index * out_width : (row_index + 1) * out_width]
         for row_index in range(out_height)
     ]
     return SavedMediaFrame(width=width, height=height, frame=frame)
+
+
+def _load_with_ffmpeg(
+    path: Path,
+    *,
+    max_dimension: int,
+    cause: BaseException | None = None,
+) -> SavedMediaFrame:
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(path),
+        "-frames:v",
+        "1",
+        "-vf",
+        (
+            f"scale='min(iw,{max_dimension})':'min(ih,{max_dimension})':"
+            "force_original_aspect_ratio=decrease,format=gray"
+        ),
+        "-f",
+        "image2pipe",
+        "-vcodec",
+        "pgm",
+        "pipe:1",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+    except FileNotFoundError as error:
+        raise SavedMediaFrameDecodeError("image_decoder_unavailable") from (cause or error)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise SavedMediaFrameDecodeError("image_decode_failed") from (cause or error)
+
+    try:
+        return _load_pgm_frame(completed.stdout)
+    except SavedMediaFrameDecodeError as error:
+        raise SavedMediaFrameDecodeError("image_decode_failed") from error
+
+
+def _load_pgm_frame(data: bytes) -> SavedMediaFrame:
+    tokens: list[bytes] = []
+    index = 0
+    while len(tokens) < 4:
+        index = _skip_pgm_whitespace_and_comments(data, index)
+        if index >= len(data):
+            raise SavedMediaFrameDecodeError("invalid_pgm")
+        start = index
+        while index < len(data) and data[index] not in b" \t\r\n\f\v":
+            index += 1
+        tokens.append(data[start:index])
+
+    if tokens[0] != b"P5":
+        raise SavedMediaFrameDecodeError("invalid_pgm")
+    try:
+        width = int(tokens[1])
+        height = int(tokens[2])
+        max_value = int(tokens[3])
+    except ValueError as error:
+        raise SavedMediaFrameDecodeError("invalid_pgm") from error
+    if width < 1 or height < 1 or max_value != 255:
+        raise SavedMediaFrameDecodeError("invalid_pgm")
+
+    if index < len(data) and data[index] in b" \t\r\n\f\v":
+        index += 1
+    pixel_count = width * height
+    pixels = data[index : index + pixel_count]
+    if len(pixels) < pixel_count:
+        raise SavedMediaFrameDecodeError("invalid_pgm")
+
+    frame = [
+        list(pixels[row_index * width : (row_index + 1) * width])
+        for row_index in range(height)
+    ]
+    return SavedMediaFrame(width=width, height=height, frame=frame)
+
+
+def _skip_pgm_whitespace_and_comments(data: bytes, index: int) -> int:
+    while index < len(data):
+        if data[index] in b" \t\r\n\f\v":
+            index += 1
+            continue
+        if data[index : index + 1] == b"#":
+            index = data.find(b"\n", index)
+            if index < 0:
+                return len(data)
+            index += 1
+            continue
+        break
+    return index
 
 
 def _unfilter_png_row(

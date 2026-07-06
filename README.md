@@ -113,9 +113,12 @@ only for the active request and creates no media, truth, or exports.
 Local camera Live view can also capture one user-triggered still frame into the
 existing saved-image pipeline. Captured frames use configured camera settings
 when present, save as local JPEG MediaAssets, and create no Events, Visits,
-review truth, or exports by themselves. After capture, Stream Detail refreshes
-saved images and points to explicit Check motion / review actions; Bird Log
-continues to show reviewed activity, not raw captures.
+review truth, or exports by themselves. A single capture is saved media only;
+motion checks compare two or more saved frames from the same Stream. Captured
+local camera JPEG frames are motion-check compatible without adding package
+dependencies. After capture, Stream Detail refreshes saved images and points to
+explicit frame comparison / review actions; Bird Log continues to show reviewed
+activity, not raw captures.
 The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
 count, and motion readiness. Camera Monitoring Core can now start and stop an
@@ -156,8 +159,8 @@ context visible while correction remains the analytics/export truth boundary.
 The Streams page also shows recent saved media for each selected Stream so
 external_url saved previews or other local image MediaAssets can be explicitly
 reused later for synthetic DetectionProposal evidence or pending MotionEvidence.
-Streams with at least two saved image snapshots can also run an explicit Check
-motion action. If no user Zones exist yet, MockingBird checks automatic activity
+Streams with at least two saved image snapshots can also run an explicit motion
+comparison. If no user Zones exist yet, MockingBird checks automatic activity
 areas using motion only; user Zones improve accuracy and privacy/ignore behavior
 later. Future classifier/model enrichment belongs on the best snapshot/crop for
 a finalized activity session, not each automatic area. Motion checks now classify

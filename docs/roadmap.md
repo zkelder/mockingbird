@@ -1069,6 +1069,10 @@ Current work:
   are saved media, refreshes the Stream saved-image count after capture, enables
   explicit Check motion only after at least two saved frames, and keeps Review
   Queue / Motion Evidence / Bird Log handoff separate.
+- Captured Frame Motion Sanity Fix: single captured frames remain saved media
+  only, motion checks compare two or more saved frames, captured local camera
+  JPEGs are motion-check compatible, and Bird Log still requires reviewed
+  correction truth.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — local camera capture browser smoke validation

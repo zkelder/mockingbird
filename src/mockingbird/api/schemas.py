@@ -1228,7 +1228,7 @@ class SavedMediaFrameSummary(BaseModel):
 
 class MotionEvaluateSavedMediaRequest(BaseModel):
     stream_id: str
-    media_asset_ids: list[str] = Field(min_length=2)
+    media_asset_ids: list[str]
     zone_ids: list[str] | None = None
     create_motion_evidence: bool = False
     attach_best_snapshot: bool = True

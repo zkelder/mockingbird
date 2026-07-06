@@ -132,6 +132,16 @@ function oldestFirstMediaAssets(mediaAssets: MediaAsset[]): MediaAsset[] {
   return [...mediaAssets].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
 }
 
+function isCapturedCameraFrame(asset: MediaAsset): boolean {
+  return asset.notes?.includes("Saved explicit local camera frame capture.") ?? false;
+}
+
+function latestMotionPair(mediaAssets: MediaAsset[]): MediaAsset[] {
+  const capturedFrames = mediaAssets.filter(isCapturedCameraFrame);
+  const sourceAssets = capturedFrames.length >= 2 ? capturedFrames : mediaAssets;
+  return oldestFirstMediaAssets(sourceAssets.slice(0, 2));
+}
+
 function isReviewableZone(zone: Zone): boolean {
   return zone.is_active && zone.zone_type !== "privacy" && zone.zone_type !== "ignore";
 }
@@ -435,9 +445,9 @@ export function StreamDetailPage({
     if (!detail) {
       return;
     }
-    const selectedAssets = oldestFirstMediaAssets(savedImageAssets);
+    const selectedAssets = latestMotionPair(savedImageAssets);
     if (selectedAssets.length < 2) {
-      setMotionError("Capture at least two saved frames before checking motion.");
+      setMotionError("Capture another frame to check motion.");
       return;
     }
 
@@ -627,6 +637,10 @@ export function StreamDetailPage({
   const latestSavedImage = savedImageAssets[0] ?? null;
   const savedImageCount = savedImageAssets.length;
   const canCheckMotion = savedImageCount >= 2;
+  const motionPair = latestMotionPair(savedImageAssets);
+  const motionActionLabel = canCheckMotion
+    ? "Compare captured frames"
+    : "Capture another frame to check motion";
   const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
   const canCreateReviewActivity = Boolean(
     motionResult?.activity_detected &&
@@ -804,7 +818,7 @@ export function StreamDetailPage({
                       onClick={() => void handleCheckMotion(false)}
                       type="button"
                     >
-                      {isCheckingMotion ? "Checking..." : "Check motion"}
+                      {isCheckingMotion ? "Comparing..." : motionActionLabel}
                     </button>
                     {streamReviewItems.length > 0 ? (
                       <button className="secondary-action" onClick={onOpenReview} type="button">
@@ -813,8 +827,15 @@ export function StreamDetailPage({
                     ) : null}
                   </div>
                   {!canCheckMotion ? (
-                    <span>Capture another saved frame before motion can be checked.</span>
-                  ) : null}
+                    <span>Motion checks compare two saved frames from this stream.</span>
+                  ) : (
+                    <span>
+                      Comparing the two most recent saved frames:{" "}
+                      {motionPair
+                        .map((asset) => asset.original_filename || asset.filename)
+                        .join(" -> ")}
+                    </span>
+                  )}
                 </>
               ) : null}
             </div>
