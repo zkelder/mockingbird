@@ -125,6 +125,10 @@ the in-memory live stream cache, saves the strongest activity frame as local
 evidence, and offers an explicit review activity handoff. It is page-started
 and bounded, not a persistent scheduler, and it creates no reviewed truth,
 Bird Log entry, export, or model result by itself.
+Stream Detail can now draw and edit user-authored Zones directly over the real
+live stream surface. Monitoring uses those same active feeder, birdbath, ground,
+perch, yard, driveway, privacy, and ignore Zones when available; Bird Log and
+exports still begin only after Review Queue correction.
 When the user clicks `Create review activity`, live motion creates an uncertain
 needs-review Event/Visit candidate from MotionEvidence with the saved best frame
 attached. The Review Queue is where that low-confidence activity is confirmed or

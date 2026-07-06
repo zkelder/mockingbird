@@ -1082,10 +1082,14 @@ Current work:
   live MotionEvidence into an uncertain needs-review Event/Visit candidate with
   the saved best frame attached, returns Review Queue ids, and creates no
   ReviewLabel, Bird Log history, export, model output, or reviewed truth.
+- Live Video Zone Overlay 1: Stream Detail renders and edits existing normalized
+  Zone polygons directly over the real live camera surface. Monitoring continues
+  to use the same user-authored Zone records, including privacy and ignore
+  boundaries, without creating truth.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
-- Next likely phase: Phase 23 — local camera capture browser smoke validation
-  and review handoff polish.
+- Next likely phase: Phase 23 — live zone overlay browser smoke validation and
+  field-test polish.
 
 Validation:
 
@@ -1113,6 +1117,9 @@ Validation:
   candidates only after explicit user action. ReviewLabel truth, Bird Log
   history, analytics/export truth, and model output are not created
   automatically.
+- Live Zone Overlay keeps coordinates normalized to the visible live stream
+  surface, uses existing Zone create/update routes, and stores no adapter-specific
+  or fake auto-zone model.
 - The bridge stores no media, creates no Events/Visits, ReviewLabels,
   DetectionProposals, MotionEvidence, dataset exports, analytics truth, workers,
   schedulers, captures table, or source adapter records.

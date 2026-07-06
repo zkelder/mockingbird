@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { apiClient } from "../api/client";
 import type {
   Event,
@@ -55,6 +62,11 @@ interface ZoneDraft {
   name: string;
   zone_type: ZoneType;
   is_active: boolean;
+}
+
+interface MediaRenderSize {
+  width: number;
+  height: number;
 }
 
 type LiveViewState = "idle" | "opening" | "streaming" | "failed" | "no_frames";
@@ -164,6 +176,60 @@ function isReviewableZone(zone: Zone): boolean {
   return zone.is_active && zone.zone_type !== "privacy" && zone.zone_type !== "ignore";
 }
 
+function polygonPoints(points: Point[]): string {
+  return points.map((point) => `${point.x * 100},${point.y * 100}`).join(" ");
+}
+
+function zoneCenter(zone: Zone): Point {
+  const total = zone.polygon.reduce(
+    (sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }),
+    { x: 0, y: 0 },
+  );
+
+  return {
+    x: total.x / zone.polygon.length,
+    y: total.y / zone.polygon.length,
+  };
+}
+
+function pointFromPointer(event: ReactPointerEvent<HTMLElement>): Point {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width;
+  const y = (event.clientY - rect.top) / rect.height;
+
+  return {
+    x: Math.min(1, Math.max(0, x)),
+    y: Math.min(1, Math.max(0, y)),
+  };
+}
+
+function containedMediaRectStyle(size: MediaRenderSize | null): CSSProperties {
+  if (!size?.width || !size.height) {
+    return { inset: 0 };
+  }
+
+  const containerAspect = 16 / 9;
+  const mediaAspect = size.width / size.height;
+
+  if (mediaAspect > containerAspect) {
+    const heightPercent = (containerAspect / mediaAspect) * 100;
+    return {
+      left: "0%",
+      top: `${(100 - heightPercent) / 2}%`,
+      width: "100%",
+      height: `${heightPercent}%`,
+    };
+  }
+
+  const widthPercent = (mediaAspect / containerAspect) * 100;
+  return {
+    left: `${(100 - widthPercent) / 2}%`,
+    top: "0%",
+    width: `${widthPercent}%`,
+    height: "100%",
+  };
+}
+
 function liveStreamUrl(playback: StreamPlaybackStatus, streamId: string): string | null {
   if (isWindowsDshowBridgePlayback(playback)) {
     return apiClient.windowsDshowMjpegBridgeUrl(streamId);
@@ -240,6 +306,7 @@ export function StreamDetailPage({
   const [liveViewState, setLiveViewState] = useState<LiveViewState>("idle");
   const [liveViewReloadToken, setLiveViewReloadToken] = useState(0);
   const [liveViewError, setLiveViewError] = useState<string | null>(null);
+  const [liveMediaSize, setLiveMediaSize] = useState<MediaRenderSize | null>(null);
   const [captureResult, setCaptureResult] = useState<LocalCameraFrameCaptureResponse | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [isCapturingFrame, setIsCapturingFrame] = useState(false);
@@ -284,6 +351,7 @@ export function StreamDetailPage({
       setLiveViewState("idle");
       setLiveViewReloadToken(0);
       setLiveViewError(null);
+      setLiveMediaSize(null);
       setCaptureResult(null);
       setCaptureError(null);
       setIsCapturingFrame(false);
@@ -433,11 +501,15 @@ export function StreamDetailPage({
     setLiveViewOpen(true);
     setLiveViewState("opening");
     setLiveViewError(null);
+    setLiveMediaSize(null);
     setLiveViewReloadToken((current) => current + 1);
   }
 
   function stopLiveView() {
     stopLiveMonitoring();
+    setDrawMode(false);
+    setDraftPolygon(null);
+    setDrawStart(null);
     setLiveViewOpen(false);
     setLiveViewState("idle");
     setLiveViewError(null);
@@ -450,6 +522,7 @@ export function StreamDetailPage({
     }
     setLiveViewState("opening");
     setLiveViewError(null);
+    setLiveMediaSize(null);
     setLiveViewReloadToken((current) => current + 1);
   }
 
@@ -662,6 +735,10 @@ export function StreamDetailPage({
   }
 
   function startDrawMode() {
+    if (detail && hasRealLivePlayback(detail.playback) && !liveViewOpen) {
+      setZoneError("Open Live view to draw zones on the camera stream.");
+      return;
+    }
     setDrawMode(true);
     setDraftPolygon(null);
     setDrawStart(null);
@@ -707,6 +784,30 @@ export function StreamDetailPage({
 
     setDraftPolygon(rectanglePolygon(drawStart, point));
     setZoneMessage("Zone shape ready.");
+  }
+
+  function handleLiveDrawStart(event: ReactPointerEvent<HTMLElement>) {
+    if (!drawMode) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    handleDrawStart(pointFromPointer(event));
+  }
+
+  function handleLiveDrawMove(event: ReactPointerEvent<HTMLElement>) {
+    if (!drawMode || event.buttons !== 1) {
+      return;
+    }
+    handleDrawMove(pointFromPointer(event));
+  }
+
+  function handleLiveDrawEnd(event: ReactPointerEvent<HTMLElement>) {
+    if (!drawMode) {
+      return;
+    }
+    event.preventDefault();
+    handleDrawEnd(pointFromPointer(event));
   }
 
   async function handleCreateZone(event: FormEvent<HTMLFormElement>) {
@@ -887,7 +988,9 @@ export function StreamDetailPage({
               ? "Live camera is running."
               : liveWorkflowState === "opening"
                 ? "Opening live view..."
-                : "Open live view to start camera stream.";
+                : "Open Live view to draw zones on the camera stream.";
+  const liveOverlayStyle = containedMediaRectStyle(liveMediaSize);
+  const activeZoneCount = detail.zones.filter((zone) => zone.is_active).length;
 
   return (
     <div className="page-stack">
@@ -942,6 +1045,9 @@ export function StreamDetailPage({
           <div className="stream-live-meta-grid">
             <span>
               <strong>Playback</strong> {formatLabel(detail.playback.playback_kind)}
+            </span>
+            <span>
+              <strong>Zones</strong> {activeZoneCount} active / {detail.zones.length} total
             </span>
             {detail.playback.local_camera_device_display ? (
               <span>
@@ -1005,59 +1111,143 @@ export function StreamDetailPage({
                   </button>
                 </>
               )}
+              <button
+                className={drawMode ? "primary-action" : "secondary-action"}
+                disabled={!liveViewOpen || isSavingZone}
+                onClick={drawMode ? cancelDrawMode : startDrawMode}
+                type="button"
+              >
+                {drawMode ? "Cancel draw" : "Draw new zone"}
+              </button>
             </div>
           )}
 
-          <div className="stream-live-frame">
-            {liveViewOpen && liveUrl ? (
-              detail.playback.playback_kind === "browser_video" ||
-              detail.playback.playback_kind === "hls" ? (
-                <video
-                  controls
-                  key={liveElementKey}
-                  muted
-                  onCanPlay={() => {
-                    setLiveViewState("streaming");
-                    setLiveViewError(null);
-                  }}
-                  onError={() => {
-                    setLiveViewState("failed");
-                    setLiveViewError("Live camera failed to load.");
-                  }}
-                  playsInline
-                  src={liveUrl}
-                />
+          <div className={`stream-live-frame${drawMode ? " draw-mode" : ""}`}>
+            <div className="stream-live-media-layer">
+              {liveViewOpen && liveUrl ? (
+                detail.playback.playback_kind === "browser_video" ||
+                detail.playback.playback_kind === "hls" ? (
+                  <video
+                    controls
+                    key={liveElementKey}
+                    muted
+                    onCanPlay={() => {
+                      setLiveViewState("streaming");
+                      setLiveViewError(null);
+                    }}
+                    onError={() => {
+                      setLiveViewState("failed");
+                      setLiveViewError("Live camera failed to load.");
+                    }}
+                    onLoadedMetadata={(event) => {
+                      const video = event.currentTarget;
+                      setLiveMediaSize({
+                        width: video.videoWidth || 16,
+                        height: video.videoHeight || 9,
+                      });
+                    }}
+                    playsInline
+                    src={liveUrl}
+                  />
+                ) : (
+                  <img
+                    alt={`${detail.stream.name} live camera stream`}
+                    key={liveElementKey}
+                    onError={() => {
+                      setLiveViewState("failed");
+                      setLiveViewError("Live camera failed to load.");
+                    }}
+                    onLoad={(event) => {
+                      const image = event.currentTarget;
+                      setLiveViewState("streaming");
+                      setLiveViewError(null);
+                      setLiveMediaSize({
+                        width: image.naturalWidth || 16,
+                        height: image.naturalHeight || 9,
+                      });
+                    }}
+                    src={
+                      detail.playback.playback_kind === "local_usb" ||
+                      detail.playback.playback_kind === "rtsp" ||
+                      detail.playback.playback_kind === "windows_dshow"
+                        ? `${liveUrl}${liveUrl.includes("?") ? "&" : "?"}reload=${liveViewReloadToken}`
+                        : liveUrl
+                    }
+                  />
+                )
               ) : (
-                <img
-                  alt={`${detail.stream.name} live camera stream`}
-                  key={liveElementKey}
-                  onError={() => {
-                    setLiveViewState("failed");
-                    setLiveViewError("Live camera failed to load.");
-                  }}
-                  onLoad={() => {
-                    setLiveViewState("streaming");
-                    setLiveViewError(null);
-                  }}
-                  src={
-                    detail.playback.playback_kind === "local_usb" ||
-                    detail.playback.playback_kind === "rtsp" ||
-                    detail.playback.playback_kind === "windows_dshow"
-                      ? `${liveUrl}${liveUrl.includes("?") ? "&" : "?"}reload=${liveViewReloadToken}`
-                      : liveUrl
-                  }
-                />
-              )
-            ) : (
-              <div className="stream-live-placeholder">
-                <strong>{liveUrl ? "Live camera ready" : "Live camera unavailable"}</strong>
-                <span>
-                  {liveUrl
-                    ? "Open Live view to start camera stream."
-                    : detail.playback.setup_hint ?? detail.playback.message}
-                </span>
-              </div>
-            )}
+                <div className="stream-live-placeholder">
+                  <strong>{liveUrl ? "Live camera ready" : "Live camera unavailable"}</strong>
+                  <span>
+                    {liveUrl
+                      ? "Open Live view to draw zones on the camera stream."
+                      : detail.playback.setup_hint ?? detail.playback.message}
+                  </span>
+                </div>
+              )}
+            </div>
+            <div
+              className={`stream-live-zone-surface${drawMode ? " draw-mode" : ""}`}
+              style={liveOverlayStyle}
+              onPointerDown={handleLiveDrawStart}
+              onPointerMove={handleLiveDrawMove}
+              onPointerUp={handleLiveDrawEnd}
+            >
+              <svg
+                aria-label="Live stream zones"
+                className="zone-overlay"
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+              >
+                {detail.zones.map((zone) => (
+                  <polygon
+                    key={zone.id}
+                    className={`zone-shape zone-${zone.zone_type}${
+                      selectedZoneId === zone.id ? " zone-selected" : ""
+                    }${zone.is_active ? "" : " zone-inactive"}`}
+                    points={polygonPoints(zone.polygon)}
+                    aria-label={`Select ${zone.name}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (!drawMode) {
+                        setSelectedZoneId(zone.id);
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if (!drawMode && (event.key === "Enter" || event.key === " ")) {
+                        event.preventDefault();
+                        setSelectedZoneId(zone.id);
+                      }
+                    }}
+                  />
+                ))}
+                {draftPolygon ? (
+                  <polygon className="zone-shape zone-draft" points={polygonPoints(draftPolygon)} />
+                ) : null}
+              </svg>
+              {detail.zones.map((zone) => {
+                const center = zoneCenter(zone);
+                return (
+                  <button
+                    className={`zone-label live-zone-label zone-label-${zone.zone_type}${
+                      selectedZoneId === zone.id ? " zone-label-selected" : ""
+                    }${zone.is_active ? "" : " zone-label-inactive"}`}
+                    key={zone.id}
+                    type="button"
+                    style={{ left: `${center.x * 100}%`, top: `${center.y * 100}%` }}
+                    onClick={() => {
+                      if (!drawMode) {
+                        setSelectedZoneId(zone.id);
+                      }
+                    }}
+                  >
+                    {zone.name}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div
@@ -1070,8 +1260,8 @@ export function StreamDetailPage({
             {liveWorkflowState !== "error" && !liveActivityDetected ? (
               <span>
                 {canMonitorLiveMotion
-                  ? "Monitoring saves the best activity frame automatically; correction still happens in Review."
-                  : detail.playback.message}
+                  ? "Zones are drawn over this live stream and used by monitoring."
+                  : "Zones are drawn over this live stream. Live monitoring is available when MockingBird serves the stream through a local bridge."}
               </span>
             ) : null}
           </div>
@@ -1352,15 +1542,15 @@ export function StreamDetailPage({
             <h2>Zones</h2>
             <span className="meta-text">
               {realLivePlayback
-                ? "Zone controls stay with this Stream; drawing over real video is not aligned yet."
+                ? "Zones are drawn over this live stream and used by monitoring."
                 : "User-authored context for outdoor activity"}
             </span>
             <button
               className="secondary-action"
-              disabled={realLivePlayback}
+              disabled={isSavingZone}
               onClick={drawMode ? cancelDrawMode : startDrawMode}
             >
-              {drawMode ? "Cancel draw" : "Draw new zone"}
+              {drawMode ? "Cancel draw" : realLivePlayback ? "Draw on live stream" : "Draw new zone"}
             </button>
           </div>
           <div className="zone-editor-grid">
@@ -1439,6 +1629,11 @@ export function StreamDetailPage({
                     <strong>{draftPolygon ? "New zone shape" : "Drawing zone"}</strong>
                     <StatusPill label={draftPolygon ? "Ready" : "Draw"} tone="quiet" />
                   </div>
+                  {realLivePlayback ? (
+                    <span className="meta-text">
+                      Drag a rectangle over the live camera surface, then name and save it here.
+                    </span>
+                  ) : null}
                   <label>
                     Name
                     <input

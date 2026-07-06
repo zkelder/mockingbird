@@ -2332,6 +2332,7 @@ a.secondary-action {
 }
 
 .stream-live-frame {
+  position: relative;
   display: grid;
   min-height: 360px;
   max-height: 70vh;
@@ -2342,6 +2343,18 @@ a.secondary-action {
   aspect-ratio: 16 / 9;
 }
 
+.stream-live-frame.draw-mode,
+.stream-live-zone-surface.draw-mode {
+  cursor: crosshair;
+}
+
+.stream-live-media-layer {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
 .stream-live-frame img,
 .stream-live-frame video {
   width: 100%;
@@ -2350,10 +2363,35 @@ a.secondary-action {
   object-fit: contain;
 }
 
+.stream-live-zone-surface {
+  position: absolute;
+  z-index: 2;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.stream-live-zone-surface .zone-shape,
+.stream-live-zone-surface .live-zone-label,
+.stream-live-zone-surface.draw-mode {
+  pointer-events: auto;
+}
+
+.stream-live-zone-surface.draw-mode .zone-shape {
+  cursor: crosshair;
+}
+
+.stream-live-zone-surface.draw-mode .live-zone-label {
+  pointer-events: none;
+}
+
 .stream-live-placeholder {
   display: grid;
   gap: 8px;
+  width: 100%;
+  height: 100%;
   padding: 24px;
+  place-items: center;
   color: #edf6ef;
   text-align: center;
 }
@@ -2600,13 +2638,35 @@ a.secondary-action {
   position: absolute;
   z-index: 1;
   translate: -50% -50%;
+  max-width: min(180px, 46%);
+  overflow: hidden;
+  border: 0;
   border-radius: 999px;
   padding: 5px 9px;
   background: rgb(255 255 255 / 0.9);
   color: #203126;
+  cursor: pointer;
   font-size: 0.82rem;
   font-weight: 800;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.live-zone-label {
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.28);
+}
+
+.zone-label-privacy,
+.zone-label-ignore {
+  color: #ffffff;
+}
+
+.zone-label-privacy {
+  background: rgb(80 72 132 / 0.94);
+}
+
+.zone-label-ignore {
+  background: rgb(163 73 63 / 0.94);
 }
 
 .zone-label-selected {

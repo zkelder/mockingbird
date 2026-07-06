@@ -38,6 +38,8 @@ transcoding, or production provider infrastructure.
 - MockingBird-served Live view can run page-started live monitoring that compares
   recent live frames, saves the best activity frame as evidence, and offers an
   explicit low-confidence Review Queue handoff without creating truth or exports.
+- Stream Detail can draw and edit user-authored Zones directly over the real
+  live stream, and monitoring uses those Zones when available.
 - The `external_url` still-image preview/save/evidence path works.
 - Manual bounded Snapshot watch works for `external_url` while the page is open.
 - The `folder_import_future` preview/import/evidence path works.
@@ -222,6 +224,11 @@ Dataset Exports.
 - [ ] Confirm Windows DirectShow playback shows bridge playback when camera name
       and Windows `ffmpeg.exe` path are available, or a clear setup state when
       they are not.
+- [ ] Open Stream Detail, open Live view, and confirm existing Zones render over
+      the real camera surface.
+- [ ] Draw or edit a feeder/ignore/privacy Zone over the live stream and save it.
+- [ ] Refresh Stream Detail and confirm the Zone remains aligned to the live
+      surface.
 - [ ] With a MockingBird-served Live view open, click `Start monitoring`.
 - [ ] Confirm monitoring compares recent live frames from this stream.
 - [ ] Move in front of the camera or move an object in frame.
