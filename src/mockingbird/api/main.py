@@ -3115,8 +3115,6 @@ async def start_live_stream_motion_monitor(
         evaluate_request,
         evaluation_cadence_seconds=request.interval_seconds,
     )
-    if result.activity_detected:
-        get_live_camera_session_manager().stop_monitor(stream_id)
     return result
 
 
@@ -4620,11 +4618,24 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
     session_running = (
         session_snapshot is not None and session_snapshot.status in {"starting", "running"}
     )
-    cached_frame = live_frame_cache.get_latest_frame(configuration.stream_id)
-    if session_running and cached_frame is not None and configuration.live_stream_type in {
+    if session_running and configuration.live_stream_type in {
         local_camera_bridge.LOCAL_USB_STREAM_TYPE,
         windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE,
     }:
+        # The active session owns the camera process; capture must reuse its cache.
+        cached_frame = get_live_camera_session_manager().capture_latest_frame(
+            configuration.stream_id,
+        )
+        if cached_frame is None:
+            return LocalCameraFrameCaptureResponse(
+                **common,
+                status="unavailable",
+                message="No fresh session frame available; camera session is still running.",
+                capture_source="unavailable",
+                warnings=[
+                    "MockingBird will not start a second camera process while the session is running."
+                ],
+            )
         playback_type = configuration.live_stream_type
         camera_label = (
             configuration.windows_camera_name
@@ -4648,8 +4659,9 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
             media_asset_id=media_asset.id,
             status="saved",
             message=(
-                "Saved current live frame as local media only. It will not appear "
-                "in Bird Log until you create/review activity."
+                "Captured current frame; camera and monitoring are still running."
+                if session_snapshot.monitor_running
+                else "Captured current frame from the running camera session."
             ),
             file_name=media_asset.filename,
             relative_path=media_asset.filename,
@@ -4662,11 +4674,8 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
     if session_running:
         return LocalCameraFrameCaptureResponse(
             **common,
-            status="capture_failed",
-            message=(
-                "Camera session is running, but no fresh session frame is available yet. "
-                "Wait for live frames before capturing."
-            ),
+            status="unavailable",
+            message="No fresh session frame available; camera session is still running.",
             capture_source="unavailable",
             warnings=[
                 "MockingBird will not start a second camera process while the session is running."

@@ -107,6 +107,32 @@ class LiveCameraSessionManager:
             session = self._sessions.get(stream_id)
         return session.snapshot() if session is not None else None
 
+    def get_latest_frame_for_capture(
+        self,
+        stream_id: str,
+        *,
+        max_age_seconds: float = live_frame_cache.DEFAULT_MAX_AGE_SECONDS,
+    ) -> live_frame_cache.LiveFrame | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None or not session.is_active:
+            return None
+        return live_frame_cache.get_latest_frame(
+            stream_id,
+            max_age_seconds=max_age_seconds,
+        )
+
+    def capture_latest_frame(
+        self,
+        stream_id: str,
+        *,
+        max_age_seconds: float = live_frame_cache.DEFAULT_MAX_AGE_SECONDS,
+    ) -> live_frame_cache.LiveFrame | None:
+        return self.get_latest_frame_for_capture(
+            stream_id,
+            max_age_seconds=max_age_seconds,
+        )
+
     def start_monitor(
         self,
         stream_id: str,
@@ -347,7 +373,8 @@ class _LiveCameraSession:
                     break
                 result = dict(evaluate())
                 if result.get("activity_detected") is True:
-                    break
+                    # Activity is evidence state; only explicit stop/session stop ends monitoring.
+                    continue
         except Exception as error:  # pragma: no cover - defensive around monitor callbacks.
             with self._lock:
                 self.last_error = str(error)

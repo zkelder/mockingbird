@@ -964,11 +964,11 @@ export function StreamDetailPage({
         await refreshSavedImages();
       }
       if (supportsBackendLiveSession(detail.playback)) {
-        await refreshLiveCameraSessionStatus(detail);
+        const status = await refreshLiveCameraSessionStatus(detail);
+        setIsLiveMonitoring(status?.monitor_running ?? true);
       }
       setLiveMotionResult(result);
       setLiveMonitorState(liveMonitorStateFor(result));
-      setIsLiveMonitoring(!result.activity_detected);
     } catch (caught) {
       setLiveMonitorState("failed");
       setLiveMotionError(
@@ -1087,6 +1087,7 @@ export function StreamDetailPage({
     if (!detail || !supportsFrameCapture(detail.playback)) {
       return;
     }
+    const wasLiveMonitoring = isLiveMonitoring || Boolean(liveSession?.monitor_running);
     setIsCapturingFrame(true);
     setCaptureError(null);
     setCaptureResult(null);
@@ -1094,7 +1095,10 @@ export function StreamDetailPage({
       const result = await apiClient.captureLocalCameraFrame(detail.stream.id);
       setCaptureResult(result);
       if (supportsBackendLiveSession(detail.playback)) {
-        await refreshLiveCameraSessionStatus(detail);
+        const status = await refreshLiveCameraSessionStatus(detail);
+        if (wasLiveMonitoring && status?.monitor_running) {
+          setIsLiveMonitoring(true);
+        }
       }
       if (result.status !== "saved") {
         setCaptureError(result.message);
@@ -1404,9 +1408,16 @@ export function StreamDetailPage({
       motionResult.created_evidence.length === 0,
   );
   const captureSuccessMessage =
-    captureResult?.capture_source === "live_camera_session"
+    captureResult?.capture_source === "live_camera_session" &&
+    (isLiveMonitoring || liveSession?.monitor_running)
+      ? "Captured current frame; camera and monitoring are still running."
+      : captureResult?.capture_source === "live_camera_session"
       ? "Saved current session frame. It will not appear in Bird Log until you create/review activity."
       : "Saved one local camera frame. It will not appear in Bird Log until you create/review activity.";
+  const showManualSavedFrameComparison = Boolean(
+    !isLiveMonitoring &&
+      (captureSaved || motionResult || motionError || savedImageError || isLoadingSavedImages),
+  );
   const captureButtonLabel =
     isCapturingFrame
       ? "Capturing..."
@@ -2130,6 +2141,9 @@ export function StreamDetailPage({
                   <strong>Last checked</strong> {liveLastChecked ?? "not yet"}
                 </span>
                 <span>
+                  <strong>Monitor</strong> {isLiveMonitoring ? "running" : "not running"}
+                </span>
+                <span>
                   <strong>Sensitivity</strong> {liveSensitivityLabel}
                 </span>
                 <span>
@@ -2250,7 +2264,15 @@ export function StreamDetailPage({
                       Open saved best frame
                     </a>
                   ) : null}
-                  {!liveReviewActivityCreated ? (
+                  {isLiveMonitoring ? (
+                    <button
+                      className="secondary-action"
+                      onClick={() => void stopLiveMonitoring()}
+                      type="button"
+                    >
+                      Stop monitoring
+                    </button>
+                  ) : !liveReviewActivityCreated ? (
                     <button
                       className="secondary-action"
                       disabled={
@@ -2327,7 +2349,7 @@ export function StreamDetailPage({
                   <strong>{captureError}</strong>
                 </div>
               ) : null}
-              {captureSaved || motionResult || motionError || savedImageError || isLoadingSavedImages ? (
+              {showManualSavedFrameComparison ? (
                 <div className="stream-live-fallback-panel">
                   <div>
                     <strong>Manual saved-frame comparison</strong>
