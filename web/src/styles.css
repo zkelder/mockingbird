@@ -2256,11 +2256,11 @@ a.secondary-action {
 
 .stream-live-hero {
   display: grid;
-  gap: 12px;
+  gap: 14px;
   overflow: hidden;
   border: 1px solid #1f352a;
   border-radius: 8px;
-  padding: 12px;
+  padding: 14px;
   background: #0f1714;
   color: #f4faf5;
 }
@@ -2272,28 +2272,69 @@ a.secondary-action {
   gap: 12px;
 }
 
-.stream-live-toolbar > div:first-child {
+.stream-live-title,
+.stream-live-secondary-copy,
+.stream-live-fallback-panel > div:first-child {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .stream-live-toolbar span,
 .stream-live-hint,
-.stream-live-message span {
+.stream-live-state-card span,
+.stream-live-inline-status span,
+.stream-live-secondary-copy span,
+.stream-live-fallback-panel span,
+.stream-live-activity-body p,
+.stream-live-activity-facts span {
   color: #c9d8ce;
   font-size: 0.9rem;
+}
+
+.stream-live-eyebrow {
+  color: #9db4a5;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .stream-live-badges {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
+}
+
+.stream-live-meta-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  border: 1px solid #263b31;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #14201b;
+}
+
+.stream-live-meta-grid span {
+  display: inline-flex;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  color: #c9d8ce;
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.stream-live-primary-actions {
+  justify-content: flex-start;
 }
 
 .stream-live-frame {
   display: grid;
-  min-height: 420px;
+  min-height: 360px;
+  max-height: 70vh;
   overflow: hidden;
   place-items: center;
   border-radius: 8px;
@@ -2317,18 +2358,84 @@ a.secondary-action {
   text-align: center;
 }
 
-.stream-live-message {
+.stream-live-state-card,
+.stream-live-secondary-panel,
+.stream-live-inline-status,
+.stream-live-fallback-panel {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   border: 1px solid #466d57;
   border-radius: 8px;
-  padding: 9px 10px;
+  padding: 10px 12px;
   background: #17251e;
 }
 
-.stream-live-message.is-error {
+.stream-live-state-card.is-error,
+.stream-live-inline-status.is-error {
   border-color: #b56b5e;
   background: #2d1916;
+}
+
+.stream-live-secondary-panel {
+  border-color: #2b4437;
+  background: #111d18;
+}
+
+.stream-live-fallback-panel {
+  border-color: #32483c;
+  background: #13211b;
+}
+
+.stream-live-activity-card {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
+  gap: 14px;
+  border: 1px solid #647d42;
+  border-radius: 8px;
+  padding: 12px;
+  background: #172315;
+}
+
+.stream-live-activity-media {
+  display: grid;
+  min-height: 150px;
+  overflow: hidden;
+  place-items: center;
+  border-radius: 8px;
+  background: #060906;
+  aspect-ratio: 4 / 3;
+}
+
+.stream-live-activity-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.stream-live-activity-media div,
+.stream-live-activity-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.stream-live-activity-body p {
+  margin: 0;
+}
+
+.stream-live-activity-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stream-live-activity-facts span {
+  display: inline-flex;
+  gap: 5px;
+  border: 1px solid #31483b;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #102019;
 }
 
 .stream-live-actions {
@@ -5458,6 +5565,14 @@ a.secondary-action {
   .stream-live-badges,
   .stream-live-actions {
     justify-content: flex-start;
+  }
+
+  .stream-live-activity-card {
+    grid-template-columns: 1fr;
+  }
+
+  .stream-live-activity-media {
+    min-height: 180px;
   }
 
   .stream-live-frame {

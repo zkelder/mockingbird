@@ -841,6 +841,53 @@ export function StreamDetailPage({
       : liveViewOpen
         ? "Capture current frame"
         : "Capture frame";
+  const liveActivityDetected = Boolean(liveMotionResult?.activity_detected);
+  const liveReviewActivityCreated = Boolean(
+    liveMotionResult?.review_activity_created ||
+      liveReviewQueueItemId ||
+      liveMotionResult?.created_evidence.length,
+  );
+  const liveActivityZone = liveMotionResult?.strongest_zone_id
+    ? detail.zones.find((zone) => zone.id === liveMotionResult.strongest_zone_id)
+    : null;
+  const liveActivityAreaLabel =
+    liveActivityZone?.name ??
+    liveMotionResult?.strongest_activity_area_label ??
+    (liveMotionResult?.uses_auto_regions ? "Activity area" : "Unzoned activity");
+  const liveBestFrameUrl = liveMotionResult?.best_media_asset_id
+    ? apiClient.mediaFileUrl(liveMotionResult.best_media_asset_id)
+    : null;
+  const liveBestFrameTime = liveMotionResult?.best_frame_captured_at
+    ? formatDateTime(liveMotionResult.best_frame_captured_at)
+    : null;
+  const liveWorkflowState =
+    liveViewError || liveMotionError
+      ? "error"
+      : liveReviewActivityCreated
+        ? "review_created"
+        : liveActivityDetected
+          ? "activity"
+          : isLiveMonitoring
+            ? "monitoring"
+            : liveViewOpen && liveViewState === "streaming"
+              ? "streaming"
+              : liveViewState === "opening"
+                ? "opening"
+                : "ready";
+  const liveWorkflowMessage =
+    liveWorkflowState === "error"
+      ? liveViewError ?? liveMotionError ?? "Live camera needs attention."
+      : liveWorkflowState === "review_created"
+        ? "Review activity created. Open Review to confirm/correct."
+        : liveWorkflowState === "activity"
+          ? "Activity detected. Best frame saved for review."
+          : liveWorkflowState === "monitoring"
+            ? "Watching recent live frames for activity."
+            : liveWorkflowState === "streaming"
+              ? "Live camera is running."
+              : liveWorkflowState === "opening"
+                ? "Opening live view..."
+                : "Open live view to start camera stream.";
 
   return (
     <div className="page-stack">
@@ -876,29 +923,91 @@ export function StreamDetailPage({
       {realLivePlayback ? (
         <section className="stream-live-hero" aria-label={`${detail.stream.name} live stream`}>
           <div className="stream-live-toolbar">
-            <div>
-              <strong>Live camera stream</strong>
-              <span>
-                {detail.playback.message} Zones remain below until real-video overlay alignment is
-                implemented.
-              </span>
+            <div className="stream-live-title">
+              <span className="stream-live-eyebrow">{sourceDisplay}</span>
+              <strong>Live camera</strong>
+              <span>{detail.stream.name}</span>
             </div>
             <div className="stream-live-badges">
-              <StatusPill label={formatLabel(detail.playback.status)} tone="good" />
-              <StatusPill label={formatLabel(detail.playback.playback_kind)} tone="quiet" />
-              {detail.playback.local_camera_device_display ? (
-                <StatusPill label={detail.playback.local_camera_device_display} tone="quiet" />
-              ) : null}
-              {detail.playback.windows_camera_name_display ? (
-                <StatusPill label={detail.playback.windows_camera_name_display} tone="quiet" />
-              ) : null}
-              {detail.playback.windows_ffmpeg_binary_display ? (
-                <StatusPill label={detail.playback.windows_ffmpeg_binary_display} tone="quiet" />
-              ) : null}
               <StatusPill label={liveViewStatusLabel} tone={liveViewTone} />
               <StatusPill label={liveMonitorStatusLabel} tone={liveMonitorTone} />
+              {streamReviewCount > 0 ? (
+                <StatusPill label={`${streamReviewCount} needs review`} tone="review" />
+              ) : (
+                <StatusPill label="Review clear" tone="good" />
+              )}
             </div>
           </div>
+
+          <div className="stream-live-meta-grid">
+            <span>
+              <strong>Playback</strong> {formatLabel(detail.playback.playback_kind)}
+            </span>
+            {detail.playback.local_camera_device_display ? (
+              <span>
+                <strong>Camera</strong> {detail.playback.local_camera_device_display}
+              </span>
+            ) : null}
+            {detail.playback.windows_camera_name_display ? (
+              <span>
+                <strong>Camera</strong> {detail.playback.windows_camera_name_display}
+              </span>
+            ) : null}
+            {detail.playback.live_stream_url_display ? (
+              <span>
+                <strong>Stream URL</strong> {detail.playback.live_stream_url_display}
+              </span>
+            ) : null}
+            {detail.playback.windows_ffmpeg_binary_display ? (
+              <span>
+                <strong>Bridge</strong> {detail.playback.windows_ffmpeg_binary_display}
+              </span>
+            ) : null}
+          </div>
+
+          {liveActivityDetected || liveReviewActivityCreated ? null : (
+            <div className="detail-actions stream-live-actions stream-live-primary-actions">
+              {!liveViewOpen ? (
+                <button
+                  className="primary-action"
+                  disabled={!liveUrl || isCapturingFrame}
+                  onClick={openLiveView}
+                  type="button"
+                >
+                  Open Live view
+                </button>
+              ) : isLiveMonitoring ? (
+                <>
+                  <button className="primary-action" onClick={stopLiveMonitoring} type="button">
+                    Stop monitoring
+                  </button>
+                  <button className="secondary-action" onClick={stopLiveView} type="button">
+                    Stop Live view
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    className="primary-action"
+                    disabled={
+                      !liveViewOpen || !liveUrl || !canMonitorLiveMotion || isEvaluatingLiveMotion
+                    }
+                    onClick={startLiveMonitoring}
+                    type="button"
+                  >
+                    {isEvaluatingLiveMotion ? "Checking..." : "Start monitoring"}
+                  </button>
+                  <button className="secondary-action" onClick={stopLiveView} type="button">
+                    Stop Live view
+                  </button>
+                  <button className="secondary-action" onClick={refreshLiveView} type="button">
+                    Refresh stream
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="stream-live-frame">
             {liveViewOpen && liveUrl ? (
               detail.playback.playback_kind === "browser_video" ||
@@ -944,112 +1053,183 @@ export function StreamDetailPage({
                 <strong>{liveUrl ? "Live camera ready" : "Live camera unavailable"}</strong>
                 <span>
                   {liveUrl
-                    ? "Open Live view to start the stream request."
+                    ? "Open Live view to start camera stream."
                     : detail.playback.setup_hint ?? detail.playback.message}
                 </span>
               </div>
             )}
           </div>
-          {liveViewState === "opening" ? (
-            <div className="stream-live-message">Opening camera...</div>
-          ) : null}
-          {liveViewError ? (
-            <div className="stream-live-message is-error">
-              <strong>{liveViewError}</strong>
-              {liveHelpText ? <span>{liveHelpText}</span> : null}
-            </div>
-          ) : liveHelpText ? (
-            <span className="stream-live-hint">{liveHelpText}</span>
-          ) : null}
-          {liveMotionError ? (
-            <div className="stream-live-message is-error">
-              <strong>{liveMotionError}</strong>
-            </div>
-          ) : null}
-          {isLiveMonitoring || isEvaluatingLiveMotion || liveMotionResult ? (
-            <div className="stream-live-message">
-              <strong>
-                {liveMotionResult?.activity_detected
-                  ? "Activity detected"
-                  : isLiveMonitoring
-                    ? "Watching live video"
-                    : liveMonitorStatusLabel}
-              </strong>
+
+          <div
+            className={`stream-live-state-card${
+              liveWorkflowState === "error" ? " is-error" : ""
+            }`}
+          >
+            <strong>{liveWorkflowMessage}</strong>
+            {liveWorkflowState === "error" && liveHelpText ? <span>{liveHelpText}</span> : null}
+            {liveWorkflowState !== "error" && !liveActivityDetected ? (
               <span>
-                {liveMotionResult?.message ??
-                  "Monitoring compares recent live frames from this stream."}
+                {canMonitorLiveMotion
+                  ? "Monitoring saves the best activity frame automatically; correction still happens in Review."
+                  : detail.playback.message}
               </span>
-              <span>
-                Captured frames are saved evidence. Bird Log updates after review.
-              </span>
-              {liveMotionResult?.strongest_activity_area_label ? (
-                <span>Activity area: {liveMotionResult.strongest_activity_area_label}</span>
-              ) : null}
-              <div className="detail-actions stream-live-actions">
-                {liveMotionResult?.best_media_asset_id ? (
-                  <a
-                    className="secondary-action"
-                    href={apiClient.mediaFileUrl(liveMotionResult.best_media_asset_id)}
-                  >
-                    Open saved best frame
-                  </a>
-                ) : null}
-                {canCreateLiveReviewActivity ? (
-                  <button
-                    className="primary-action"
-                    disabled={isCreatingLiveReviewActivity}
-                    onClick={() => void evaluateLiveMotion(true)}
-                    type="button"
-                  >
-                    {isCreatingLiveReviewActivity ? "Creating..." : "Create review activity"}
-                  </button>
-                ) : null}
-                {liveReviewQueueItemId || streamReviewCount > 0 ? (
-                  <button className="secondary-action" onClick={onOpenReview} type="button">
-                    Open Review Queue
-                  </button>
-                ) : null}
+            ) : null}
+          </div>
+
+          {liveActivityDetected ? (
+            <div className="stream-live-activity-card">
+              <div className="stream-live-activity-media">
+                {liveBestFrameUrl ? (
+                  <img alt="Saved best activity frame" src={liveBestFrameUrl} />
+                ) : (
+                  <div>
+                    <strong>Best frame</strong>
+                    <span>Saved frame unavailable</span>
+                  </div>
+                )}
               </div>
-              {liveMotionResult?.warnings.length ? (
-                <span>{liveMotionResult.warnings[0]}</span>
-              ) : null}
-            </div>
-          ) : null}
-          {captureResult ? (
-            <div
-              className={`stream-live-message${
-                captureResult.status === "saved" ? "" : " is-error"
-              }`}
-            >
-              <strong>
-                {captureSaved ? captureSuccessMessage : captureResult.message}
-              </strong>
-              {captureSaved ? (
-                <>
+              <div className="stream-live-activity-body">
+                <div className="item-title-row">
+                  <strong>
+                    {liveReviewActivityCreated ? "Review activity created" : "Activity detected"}
+                  </strong>
+                  <StatusPill
+                    label={liveReviewActivityCreated ? "Needs review" : "Saved evidence"}
+                    tone="review"
+                  />
+                </div>
+                <p>
+                  {liveReviewActivityCreated
+                    ? "Open Review to confirm or correct the activity."
+                    : "Create a review activity to send this saved frame into the correction flow."}
+                </p>
+                <div className="stream-live-activity-facts">
                   <span>
-                    Saved images for this stream: {savedImageCount}
-                    {latestSavedImage
-                      ? ` · Latest ${latestSavedImage.original_filename || latestSavedImage.filename}`
-                      : ""}
+                    <strong>Area</strong> {liveActivityAreaLabel}
                   </span>
-                  <span>Bird Log shows reviewed activity, not raw captures.</span>
-                  <div className="detail-actions stream-live-actions">
-                    {captureResult.media_asset_id ? (
-                      <a
-                        className="secondary-action"
-                        href={apiClient.mediaFileUrl(captureResult.media_asset_id)}
-                      >
-                        Open saved frame
-                      </a>
-                    ) : null}
+                  <span>
+                    <strong>Detected</strong> {liveBestFrameTime ?? "Recent live frame"}
+                  </span>
+                  <span>
+                    <strong>Bird Log</strong> after review
+                  </span>
+                </div>
+                <div className="detail-actions stream-live-actions">
+                  {liveReviewActivityCreated ? (
+                    <button className="primary-action" onClick={onOpenReview} type="button">
+                      Open Review Queue
+                    </button>
+                  ) : null}
+                  {!liveReviewActivityCreated && canCreateLiveReviewActivity ? (
                     <button
-                      className="secondary-action"
-                      disabled={isCapturingFrame}
-                      onClick={handleCaptureFrame}
+                      className="primary-action"
+                      disabled={isCreatingLiveReviewActivity}
+                      onClick={() => void evaluateLiveMotion(true)}
                       type="button"
                     >
-                      {isCapturingFrame ? "Capturing..." : "Capture another frame"}
+                      {isCreatingLiveReviewActivity ? "Creating..." : "Create review activity"}
                     </button>
+                  ) : null}
+                  {liveBestFrameUrl ? (
+                    <a className="secondary-action" href={liveBestFrameUrl}>
+                      Open saved best frame
+                    </a>
+                  ) : null}
+                  {!liveReviewActivityCreated ? (
+                    <button
+                      className="secondary-action"
+                      disabled={!liveViewOpen || !liveUrl || !canMonitorLiveMotion}
+                      onClick={startLiveMonitoring}
+                      type="button"
+                    >
+                      Continue monitoring
+                    </button>
+                  ) : null}
+                  {!liveReviewActivityCreated && streamReviewCount > 0 ? (
+                    <button className="text-action" onClick={onOpenReview} type="button">
+                      Open Review Queue
+                    </button>
+                  ) : null}
+                </div>
+                {liveMotionResult?.warnings.length ? (
+                  <span className="stream-live-hint">{liveMotionResult.warnings[0]}</span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {canCaptureFrame ? (
+            <div className="stream-live-secondary-panel">
+              <div className="stream-live-secondary-copy">
+                <strong>Manual capture</strong>
+                <span>
+                  Manual snapshot for evidence/debug. Monitoring saves best frames automatically
+                  when activity is detected.
+                </span>
+              </div>
+              <div className="detail-actions stream-live-actions">
+                <button
+                  className="secondary-action"
+                  disabled={isCapturingFrame}
+                  onClick={handleCaptureFrame}
+                  type="button"
+                >
+                  {captureButtonLabel}
+                </button>
+                {captureResult?.media_asset_id ? (
+                  <a
+                    className="secondary-action"
+                    href={apiClient.mediaFileUrl(captureResult.media_asset_id)}
+                  >
+                    Open saved frame
+                  </a>
+                ) : null}
+              </div>
+              {captureResult ? (
+                <div
+                  className={`stream-live-inline-status${
+                    captureResult.status === "saved" ? "" : " is-error"
+                  }`}
+                >
+                  <strong>{captureSaved ? captureSuccessMessage : captureResult.message}</strong>
+                  {captureSaved ? (
+                    <span>
+                      Saved images for this stream: {savedImageCount}
+                      {latestSavedImage
+                        ? ` · Latest ${latestSavedImage.original_filename || latestSavedImage.filename}`
+                        : ""}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              {captureError && !captureResult ? (
+                <div className="stream-live-inline-status is-error">
+                  <strong>{captureError}</strong>
+                </div>
+              ) : null}
+              {captureSaved || motionResult || motionError || savedImageError || isLoadingSavedImages ? (
+                <div className="stream-live-fallback-panel">
+                  <div>
+                    <strong>Manual saved-frame comparison</strong>
+                    <span>
+                      Fallback comparison stays secondary to live monitoring and still requires
+                      review before Bird Log or export.
+                    </span>
+                  </div>
+                  {savedImageError ? (
+                    <div className="stream-live-inline-status is-error">
+                      <strong>{savedImageError}</strong>
+                    </div>
+                  ) : null}
+                  {isLoadingSavedImages ? (
+                    <span className="stream-live-hint">Refreshing saved images...</span>
+                  ) : null}
+                  {motionError ? (
+                    <div className="stream-live-inline-status is-error">
+                      <strong>{motionError}</strong>
+                    </div>
+                  ) : null}
+                  <div className="detail-actions stream-live-actions">
                     <button
                       className="secondary-action"
                       disabled={!canCheckMotion || isCheckingMotion || isCreatingReviewActivity}
@@ -1065,130 +1245,59 @@ export function StreamDetailPage({
                     ) : null}
                   </div>
                   {!canCheckMotion ? (
-                    <span>Motion checks compare two saved frames from this stream.</span>
+                    <span className="stream-live-hint">
+                      Motion checks compare two saved frames from this stream.
+                    </span>
                   ) : (
-                    <span>
-                      Fallback comparison uses the two most recent saved frames:{" "}
+                    <span className="stream-live-hint">
+                      Comparing:{" "}
                       {motionPair
                         .map((asset) => asset.original_filename || asset.filename)
                         .join(" -> ")}
                     </span>
                   )}
-                </>
+                  {motionResult ? (
+                    <div className="stream-live-inline-status">
+                      <strong>
+                        {motionResult.activity_detected
+                          ? "Manual comparison found candidate activity."
+                          : "Manual comparison found no activity yet."}
+                      </strong>
+                      <span>
+                        {motionResult.activity_detected
+                          ? "Create review activity explicitly before correction, Bird Log, or export."
+                          : "Captured frames remain saved media until activity is reviewed."}
+                      </span>
+                      {motionResult.session_message ? (
+                        <span>{motionResult.session_message}</span>
+                      ) : null}
+                      <div className="detail-actions stream-live-actions">
+                        {canCreateReviewActivity ? (
+                          <button
+                            className="primary-action"
+                            disabled={isCreatingReviewActivity}
+                            onClick={() => void handleCheckMotion(true)}
+                            type="button"
+                          >
+                            {isCreatingReviewActivity ? "Creating..." : "Create review activity"}
+                          </button>
+                        ) : null}
+                        {motionCreatedEvidence ? (
+                          <button
+                            className="secondary-action"
+                            onClick={() => onOpenMotionEvidence(motionCreatedEvidence.id)}
+                            type="button"
+                          >
+                            Open review activity
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           ) : null}
-          {captureSaved && savedImageError ? (
-            <div className="stream-live-message is-error">
-              <strong>{savedImageError}</strong>
-            </div>
-          ) : null}
-          {captureSaved && isLoadingSavedImages ? (
-            <span className="stream-live-hint">Refreshing saved images...</span>
-          ) : null}
-          {captureSaved && motionError ? (
-            <div className="stream-live-message is-error">
-              <strong>{motionError}</strong>
-            </div>
-          ) : null}
-          {captureSaved && motionResult ? (
-            <div className="stream-live-message">
-              <strong>
-                {motionResult.activity_detected
-                  ? "Motion found candidate activity."
-                  : "No motion activity found yet."}
-              </strong>
-              <span>
-                {motionResult.activity_detected
-                  ? "Create review activity explicitly, then review/correct before Bird Log or export."
-                  : "Captured frames remain saved media until activity is reviewed."}
-              </span>
-              {motionResult.session_message ? <span>{motionResult.session_message}</span> : null}
-              <div className="detail-actions stream-live-actions">
-                {canCreateReviewActivity ? (
-                  <button
-                    className="primary-action"
-                    disabled={isCreatingReviewActivity}
-                    onClick={() => void handleCheckMotion(true)}
-                    type="button"
-                  >
-                    {isCreatingReviewActivity ? "Creating..." : "Create review activity"}
-                  </button>
-                ) : null}
-                {motionCreatedEvidence ? (
-                  <button
-                    className="secondary-action"
-                    onClick={() => onOpenMotionEvidence(motionCreatedEvidence.id)}
-                    type="button"
-                  >
-                    Open review activity
-                  </button>
-                ) : null}
-                {streamReviewItems.length > 0 ? (
-                  <button className="secondary-action" onClick={onOpenReview} type="button">
-                    Open Review Queue
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-          {captureError && !captureResult ? (
-            <div className="stream-live-message is-error">
-              <strong>{captureError}</strong>
-            </div>
-          ) : null}
-          <div className="detail-actions stream-live-actions">
-            {liveViewOpen ? (
-              <>
-                <button className="secondary-action" onClick={stopLiveView} type="button">
-                  Stop Live view
-                </button>
-                <button className="secondary-action" onClick={refreshLiveView} type="button">
-                  Refresh stream
-                </button>
-              </>
-            ) : (
-              <button
-                className="primary-action"
-                disabled={!liveUrl || isCapturingFrame}
-                onClick={openLiveView}
-                type="button"
-              >
-                Open Live view
-              </button>
-            )}
-            {isLiveMonitoring ? (
-              <button className="secondary-action" onClick={stopLiveMonitoring} type="button">
-                Stop monitoring
-              </button>
-            ) : (
-              <button
-                className={liveViewOpen ? "primary-action" : "secondary-action"}
-                disabled={
-                  !liveViewOpen || !liveUrl || !canMonitorLiveMotion || isEvaluatingLiveMotion
-                }
-                onClick={startLiveMonitoring}
-                type="button"
-              >
-                {isEvaluatingLiveMotion ? "Checking..." : "Start monitoring"}
-              </button>
-            )}
-            {canCaptureFrame ? (
-              <button
-                className="secondary-action"
-                disabled={isCapturingFrame}
-                onClick={handleCaptureFrame}
-                type="button"
-              >
-                {captureButtonLabel}
-              </button>
-            ) : null}
-          </div>
-          <span className="stream-live-hint">
-            {canMonitorLiveMotion
-              ? "Monitoring compares recent live frames from this stream. Captured frames are saved evidence for fallback review."
-              : "Live monitoring is available when MockingBird serves the live stream through a local bridge."}
-          </span>
         </section>
       ) : (
         <StreamPanel
