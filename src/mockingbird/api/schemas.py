@@ -1462,10 +1462,17 @@ class LiveMotionEvaluateResponse(BaseModel):
     pixel_delta_threshold: float | None = None
     min_changed_ratio: float | None = None
     strongest_zone_min_changed_ratio: float | None = None
+    requested_threshold: float | None = None
+    effective_threshold_used: float | None = None
     threshold_used: float | None = None
+    threshold_source: str | None = None
+    fine_motion_applied: bool = False
     changed_pixels: int | None = Field(default=None, ge=0)
     total_pixels: int | None = Field(default=None, ge=0)
+    total_scored_pixels: int | None = Field(default=None, ge=0)
     mean_delta: float | None = None
+    margin_to_threshold: float | None = None
+    near_miss: bool = False
     frame_pair_sequences: list[int] = Field(default_factory=list)
     feeder_threshold_applied: bool = False
     focus_zone_id: str | None = None

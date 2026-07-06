@@ -1477,10 +1477,14 @@ export function StreamDetailPage({
   const liveSensitivityLabel = liveMonitorSensitivitySettings[liveMonitorSensitivity].label;
   const liveStrongestChangeLabel = formatPercent(liveMotionResult?.strongest_changed_ratio);
   const liveStrongestThresholdLabel = formatPercent(
+    liveMotionResult?.effective_threshold_used ??
     liveMotionResult?.threshold_used ??
       liveMotionResult?.strongest_zone_min_changed_ratio ??
       liveMotionResult?.min_changed_ratio,
   );
+  const liveThresholdSourceLabel = liveMotionResult?.threshold_source
+    ? formatLabel(liveMotionResult.threshold_source)
+    : "Requested";
   const liveStrongestPairLabel =
     liveMotionResult?.frame_pair_sequences?.length === 2
       ? `${liveMotionResult.frame_pair_sequences[0]}->${liveMotionResult.frame_pair_sequences[1]}`
@@ -1489,9 +1493,14 @@ export function StreamDetailPage({
         ? `${liveMotionResult.strongest_frame_start_sequence}->${liveMotionResult.strongest_frame_end_sequence}`
         : "n/a";
   const liveChangedPixelsLabel =
-    liveMotionResult?.changed_pixels != null && liveMotionResult.total_pixels != null
-      ? `${liveMotionResult.changed_pixels}/${liveMotionResult.total_pixels}`
+    liveMotionResult?.changed_pixels != null &&
+    (liveMotionResult.total_scored_pixels ?? liveMotionResult.total_pixels) != null
+      ? `${liveMotionResult.changed_pixels}/${
+          liveMotionResult.total_scored_pixels ?? liveMotionResult.total_pixels
+        }`
       : "n/a";
+  const liveFineMotionLabel = liveMotionResult?.fine_motion_applied ? "applied" : "standard";
+  const liveMarginLabel = formatPercent(liveMotionResult?.margin_to_threshold);
   const liveMeanDeltaLabel =
     liveMotionResult?.mean_delta != null ? liveMotionResult.mean_delta.toFixed(1) : "n/a";
   const liveCadenceLabel =
@@ -1932,12 +1941,26 @@ export function StreamDetailPage({
                   <strong>Changed pixels</strong> {liveChangedPixelsLabel}
                 </span>
                 <span>
+                  <strong>Fine motion</strong> {liveFineMotionLabel}
+                </span>
+                <span>
+                  <strong>Threshold source</strong> {liveThresholdSourceLabel}
+                </span>
+                <span>
+                  <strong>Margin</strong> {liveMarginLabel}
+                </span>
+                <span>
                   <strong>Mean delta</strong> {liveMeanDeltaLabel}
                 </span>
                 <span>
                   <strong>Frame pair</strong> {liveStrongestPairLabel}
                 </span>
               </div>
+              {liveMotionResult?.near_miss ? (
+                <span className="stream-live-hint">
+                  Near miss: tighten the feeder Zone, use feeder focus, or move the camera closer.
+                </span>
+              ) : null}
               {liveQualityWarnings.length > 0 ? (
                 <div className="stream-live-suppressed-list">
                   <strong>Image quality</strong>

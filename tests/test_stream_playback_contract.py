@@ -257,6 +257,7 @@ def patch_live_motion_decoder(
         frame_bytes: bytes,
         *,
         content_type: str,
+        max_dimension: int = 32,
     ) -> SavedMediaFrame:
         frame = frames_by_bytes[frame_bytes]
         return SavedMediaFrame(width=len(frame[0]), height=len(frame), frame=frame)
@@ -785,6 +786,52 @@ async def test_live_motion_evaluation_uses_strongest_recent_frame_pair(
     assert await product_counts(client) == before
 
 
+async def test_live_motion_decodes_live_frames_at_fine_motion_resolution(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-fine-resolution-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-fine-resolution-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    requested_max_dimensions: list[int] = []
+    patch_camera_processes_to_fail(monkeypatch)
+
+    def fake_load_image_frame_plane_bytes(
+        frame_bytes: bytes,
+        *,
+        content_type: str,
+        max_dimension: int = 32,
+    ) -> SavedMediaFrame:
+        requested_max_dimensions.append(max_dimension)
+        assert frame_bytes in {frame_0, frame_1}
+        return SavedMediaFrame(width=64, height=64, frame=blank_frame(width=64, height=64))
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.load_image_frame_plane_bytes",
+        fake_load_image_frame_plane_bytes,
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.003,
+            "pixel_delta_threshold": 10,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    assert requested_max_dimensions == [64, 64]
+
+
 async def test_live_motion_high_sensitivity_detects_smaller_feeder_motion_than_normal(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -797,7 +844,11 @@ async def test_live_motion_high_sensitivity_detects_smaller_feeder_motion_than_n
         monkeypatch,
         {
             frame_0: blank_frame(width=100, height=100),
-            frame_1: frame_with([(30, 40), (31, 41)], width=100, height=100),
+            frame_1: frame_with(
+                [(30, 40), (30, 41), (31, 40), (31, 41)],
+                width=100,
+                height=100,
+            ),
         },
     )
     live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
@@ -825,6 +876,15 @@ async def test_live_motion_high_sensitivity_detects_smaller_feeder_motion_than_n
     assert normal["strongest_zone_name"] == "Feeder"
     assert normal["strongest_changed_ratio"] > 0
     assert normal["strongest_zone_min_changed_ratio"] == 0.006
+    assert normal["requested_threshold"] == 0.012
+    assert normal["effective_threshold_used"] == 0.006
+    assert normal["threshold_source"] == "feeder_fine"
+    assert normal["fine_motion_applied"] is True
+    assert normal["changed_pixels"] == 4
+    assert normal["total_scored_pixels"] == 924
+    assert normal["near_miss"] is True
+    assert normal["margin_to_threshold"] < 0
+    assert "Near miss in Feeder" in normal["message"]
     assert normal["strongest_frame_start_sequence"] is None
     assert normal["strongest_frame_end_sequence"] is None
     assert normal["best_media_asset_id"] is None
@@ -845,13 +905,94 @@ async def test_live_motion_high_sensitivity_detects_smaller_feeder_motion_than_n
     assert high["activity_detected"] is True
     assert high["strongest_zone_name"] == "Feeder"
     assert high["strongest_zone_type"] == "feeder"
-    assert high["strongest_zone_min_changed_ratio"] == 0.0015
+    assert high["strongest_zone_min_changed_ratio"] == pytest.approx(0.001)
+    assert high["requested_threshold"] == 0.003
+    assert high["effective_threshold_used"] == pytest.approx(0.001)
+    assert high["threshold_used"] == pytest.approx(0.001)
+    assert high["threshold_source"] == "high_feeder_fine"
+    assert high["fine_motion_applied"] is True
+    assert high["changed_pixels"] == 4
+    assert high["total_scored_pixels"] == 924
+    assert high["near_miss"] is False
+    assert high["margin_to_threshold"] > 0
+    assert "Small feeder motion detected" in high["message"]
     assert high["strongest_frame_start_sequence"] == 1
     assert high["strongest_frame_end_sequence"] == 2
     assert high["best_frame_sequence"] == 2
     assert high["best_media_asset_id"] is None
     assert high["review_activity_created"] is False
     assert high["creates_truth"] is False
+    assert await product_counts(client) == before
+
+
+async def test_live_motion_does_not_broaden_small_yard_motion_thresholds(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-small-ground-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-small-ground-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(width=100, height=100),
+            frame_1: frame_with(
+                [(70, 20), (70, 21), (71, 20), (71, 21)],
+                width=100,
+                height=100,
+            ),
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+    before = await product_counts(client)
+
+    normal_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.012,
+            "pixel_delta_threshold": 18,
+            "min_triggered_frames": 1,
+        },
+    )
+    high_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.003,
+            "pixel_delta_threshold": 10,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert normal_response.status_code == 200
+    normal = normal_response.json()
+    assert normal["activity_detected"] is False
+    assert normal["strongest_zone_name"] == "Ground below feeder"
+    assert normal["strongest_zone_type"] == "ground"
+    assert normal["threshold_source"] == "requested"
+    assert normal["fine_motion_applied"] is False
+    assert normal["effective_threshold_used"] == 0.012
+    assert normal["changed_pixels"] == 4
+    assert normal["total_scored_pixels"] == 2736
+
+    assert high_response.status_code == 200
+    high = high_response.json()
+    assert high["activity_detected"] is False
+    assert high["strongest_zone_name"] == "Ground below feeder"
+    assert high["strongest_zone_type"] == "ground"
+    assert high["threshold_source"] == "requested"
+    assert high["fine_motion_applied"] is False
+    assert high["effective_threshold_used"] == 0.003
+    assert high["effective_threshold_used"] > 0.001
     assert await product_counts(client) == before
 
 
@@ -2256,6 +2397,136 @@ async def test_stored_live_activity_review_handoff_keeps_camera_running_and_trut
     assert bird_log_labels[0]["label"] == "northern_cardinal"
     corrected_counts = await product_counts(client)
     assert corrected_counts["review_labels"] == after_create["review_labels"] + 1
+
+
+async def test_small_feeder_activity_capture_and_review_handoff_keep_monitor_running(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8session-small-feeder-0\xff\xd9"
+    frame_1 = b"\xff\xd8session-small-feeder-1\xff\xd9"
+    fake_process = FakeFfmpegProcess([frame_0, frame_1])
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, **kwargs: fake_process,
+    )
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(width=100, height=100),
+            frame_1: frame_with(
+                [(30, 40), (30, 41), (31, 40), (31, 41)],
+                width=100,
+                height=100,
+            ),
+        },
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    before = await product_counts(client)
+    before_labels = (await client.get("/api/review-labels")).json()
+
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
+
+    monitor_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/start",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.003,
+            "pixel_delta_threshold": 10,
+            "min_triggered_frames": 1,
+            "interval_seconds": 10,
+        },
+    )
+
+    assert monitor_response.status_code == 200
+    monitor = monitor_response.json()
+    assert monitor["activity_detected"] is True
+    assert monitor["strongest_zone_name"] == "Feeder"
+    assert monitor["fine_motion_applied"] is True
+    assert monitor["threshold_source"] == "high_feeder_fine"
+    assert monitor["best_media_asset_id"].startswith("media-asset-")
+    status_after_motion = (
+        await client.get(f"/api/streams/{STREAM_ID}/live-session/status")
+    ).json()
+    assert status_after_motion["status"] == "running"
+    assert status_after_motion["monitor_running"] is True
+    assert status_after_motion["last_activity"]["best_media_asset_id"] == monitor[
+        "best_media_asset_id"
+    ]
+
+    def fail_if_one_shot_capture_runs(*args: object, **kwargs: object) -> bytes:
+        raise AssertionError("Capture after small feeder activity must reuse session frames")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.capture_local_camera_frame",
+        fail_if_one_shot_capture_runs,
+    )
+    capture_response = await client.post(
+        f"/api/streams/{STREAM_ID}/local-camera/capture-frame"
+    )
+
+    assert capture_response.status_code == 200
+    capture = capture_response.json()
+    assert capture["status"] == "saved"
+    assert capture["capture_source"] == "live_camera_session"
+    status_after_capture = (
+        await client.get(f"/api/streams/{STREAM_ID}/live-session/status")
+    ).json()
+    assert status_after_capture["status"] == "running"
+    assert status_after_capture["monitor_running"] is True
+    assert status_after_capture["last_activity"]["best_media_asset_id"] == monitor[
+        "best_media_asset_id"
+    ]
+
+    create_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/review-activity"
+    )
+
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["review_activity_created"] is True
+    assert created["motion_evidence_id"].startswith("motion-evidence-")
+    assert created["event_id"].startswith("event-motion-")
+    assert created["visit_id"].startswith("visit-motion-")
+    assert created["review_queue_item_id"] == f"review-queue-{created['visit_id']}"
+    assert created["creates_truth"] is False
+    status_after_handoff = (
+        await client.get(f"/api/streams/{STREAM_ID}/live-session/status")
+    ).json()
+    assert status_after_handoff["status"] == "running"
+    assert status_after_handoff["monitor_running"] is True
+    assert status_after_handoff["last_motion_result"]["review_activity_created"] is True
+
+    labels_after_handoff = (await client.get("/api/review-labels")).json()
+    assert labels_after_handoff == before_labels
+    after_handoff = await product_counts(client)
+    assert after_handoff["media_assets"] == before["media_assets"] + 2
+    assert after_handoff["motion_evidence"] == before["motion_evidence"] + 1
+    assert after_handoff["events"] == before["events"] + 1
+    assert after_handoff["visits"] == before["visits"] + 1
+    assert after_handoff["review_labels"] == before["review_labels"]
+    assert after_handoff["dataset_exports"] == before["dataset_exports"]
+
+    correction_response = await client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": created["visit_id"],
+            "label": "northern_cardinal",
+            "notes": "Confirmed small feeder activity.",
+        },
+    )
+    assert correction_response.status_code == 201
+    corrected_counts = await product_counts(client)
+    assert corrected_counts["review_labels"] == after_handoff["review_labels"] + 1
 
 
 async def test_playback_status_does_not_start_local_camera_bridge_process(

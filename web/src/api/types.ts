@@ -1418,10 +1418,17 @@ export interface LiveMotionEvaluateResponse {
   pixel_delta_threshold?: number | null;
   min_changed_ratio?: number | null;
   strongest_zone_min_changed_ratio?: number | null;
+  requested_threshold?: number | null;
+  effective_threshold_used?: number | null;
   threshold_used?: number | null;
+  threshold_source?: string | null;
+  fine_motion_applied: boolean;
   changed_pixels?: number | null;
   total_pixels?: number | null;
+  total_scored_pixels?: number | null;
   mean_delta?: number | null;
+  margin_to_threshold?: number | null;
+  near_miss: boolean;
   frame_pair_sequences: number[];
   feeder_threshold_applied: boolean;
   focus_zone_id?: string | null;

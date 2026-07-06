@@ -930,6 +930,15 @@ class _LiveActivitySuggestion:
 
 
 @dataclass(frozen=True)
+class _LiveMotionZoneScoringPolicy:
+    min_changed_ratio: float
+    pixel_delta_threshold: float
+    min_changed_pixels: int
+    threshold_source: str
+    fine_motion_applied: bool
+
+
+@dataclass(frozen=True)
 class _AutoMotionCluster:
     cells: list[_AutoMotionCell]
     start_frame_index: int
@@ -941,6 +950,10 @@ class _AutoMotionCluster:
     top: float
     right: float
     bottom: float
+
+
+_BIRD_FINE_MOTION_ZONE_TYPES = {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}
+_LIVE_FINE_MOTION_MAX_DIMENSION = 64
 
 
 def _motion_zone_from_bounds(
@@ -1109,13 +1122,56 @@ def _live_zone_min_changed_ratio(
     zone_type: ZoneType | None,
     base_min_changed_ratio: float,
     focus_applied: bool = False,
+    pixel_delta_threshold: float = 25.0,
 ) -> float:
-    ratio = base_min_changed_ratio
-    if zone_type in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}:
-        ratio = max(0.001, ratio * 0.5)
+    return _live_motion_zone_scoring_policy(
+        zone_type=zone_type,
+        base_min_changed_ratio=base_min_changed_ratio,
+        pixel_delta_threshold=pixel_delta_threshold,
+        focus_applied=focus_applied,
+    ).min_changed_ratio
+
+
+def _live_motion_zone_scoring_policy(
+    *,
+    zone_type: ZoneType | None,
+    base_min_changed_ratio: float,
+    pixel_delta_threshold: float,
+    focus_applied: bool = False,
+) -> _LiveMotionZoneScoringPolicy:
+    if zone_type not in _BIRD_FINE_MOTION_ZONE_TYPES:
+        return _LiveMotionZoneScoringPolicy(
+            min_changed_ratio=base_min_changed_ratio,
+            pixel_delta_threshold=pixel_delta_threshold,
+            min_changed_pixels=1,
+            threshold_source="requested",
+            fine_motion_applied=False,
+        )
+
+    threshold = max(0.001, base_min_changed_ratio * 0.5)
+    effective_pixel_delta = pixel_delta_threshold
+    threshold_source = f"{zone_type.value}_fine"
+    high_sensitivity = base_min_changed_ratio <= 0.004 or pixel_delta_threshold <= 12
+    if high_sensitivity:
+        threshold = max(0.0008, min(threshold, base_min_changed_ratio / 3.0))
+        effective_pixel_delta = min(pixel_delta_threshold, 8.0)
+        threshold_source = f"high_{zone_type.value}_fine"
+
     if focus_applied:
-        ratio = max(0.0005, ratio * 0.5)
-    return ratio
+        threshold = max(0.0005, threshold * 0.5)
+        threshold_source = (
+            f"high_{zone_type.value}_focus_fine"
+            if high_sensitivity
+            else f"{zone_type.value}_focus_fine"
+        )
+
+    return _LiveMotionZoneScoringPolicy(
+        min_changed_ratio=threshold,
+        pixel_delta_threshold=effective_pixel_delta,
+        min_changed_pixels=2,
+        threshold_source=threshold_source,
+        fine_motion_applied=True,
+    )
 
 
 def _live_motion_sampler_result(
@@ -1144,19 +1200,29 @@ def _live_motion_sampler_result(
             zone_model = zones_by_id.get(zone.zone_id)
             zone_type = zone_model.zone_type if zone_model is not None else None
             zone_focus_applied = focus_zone_id is not None and zone.zone_id == focus_zone_id
-            scores.append(
-                score_zone_motion(
-                    frames[pair_index],
-                    frames[pair_index + 1],
-                    motion_zone_by_id[zone.zone_id],
-                    pixel_delta_threshold=config.pixel_delta_threshold,
-                    min_changed_ratio=_live_zone_min_changed_ratio(
-                        zone_type=zone_type,
-                        base_min_changed_ratio=config.min_changed_ratio,
-                        focus_applied=zone_focus_applied,
-                    ),
-                )
+            scoring_policy = _live_motion_zone_scoring_policy(
+                zone_type=zone_type,
+                base_min_changed_ratio=config.min_changed_ratio,
+                pixel_delta_threshold=config.pixel_delta_threshold,
+                focus_applied=zone_focus_applied,
             )
+            score = score_zone_motion(
+                frames[pair_index],
+                frames[pair_index + 1],
+                motion_zone_by_id[zone.zone_id],
+                pixel_delta_threshold=scoring_policy.pixel_delta_threshold,
+                min_changed_ratio=scoring_policy.min_changed_ratio,
+            )
+            if score.triggered and score.changed_pixels < scoring_policy.min_changed_pixels:
+                score = MotionScore(
+                    zone_id=score.zone_id,
+                    changed_pixels=score.changed_pixels,
+                    total_pixels=score.total_pixels,
+                    changed_ratio=score.changed_ratio,
+                    mean_delta=score.mean_delta,
+                    triggered=False,
+                )
+            scores.append(score)
         triggered_zone_ids = [score.zone_id for score in scores if score.triggered]
         strongest_score = max(scores, key=lambda score: score.changed_ratio, default=None)
         frame_scores.append(
@@ -1209,6 +1275,73 @@ def _strongest_live_motion_score(
                 best_score = score
                 best_frame_index = frame_score.frame_index
     return best_score, best_frame_index
+
+
+def _live_motion_margin_to_threshold(
+    *,
+    strongest_changed_ratio: float,
+    effective_threshold: float | None,
+) -> float | None:
+    if effective_threshold is None:
+        return None
+    return strongest_changed_ratio - effective_threshold
+
+
+def _live_motion_near_miss(
+    *,
+    activity_detected: bool,
+    strongest_score: MotionScoreResponse | None,
+    effective_threshold: float | None,
+    scoring_policy: _LiveMotionZoneScoringPolicy | None,
+) -> bool:
+    if activity_detected or strongest_score is None or effective_threshold is None:
+        return False
+    if scoring_policy is not None and strongest_score.changed_pixels < scoring_policy.min_changed_pixels:
+        return False
+    return (
+        strongest_score.changed_ratio < effective_threshold
+        and strongest_score.changed_ratio >= effective_threshold * 0.6
+    )
+
+
+def _format_motion_percent(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    percent = value * 100
+    return f"{percent:.2f}%"
+
+
+def _live_motion_diagnostic_message(
+    *,
+    activity_detected: bool,
+    near_miss: bool,
+    strongest_zone_name: str | None,
+    strongest_changed_ratio: float,
+    effective_threshold: float | None,
+    fine_motion_applied: bool,
+) -> str | None:
+    if strongest_zone_name is None or effective_threshold is None:
+        return None
+
+    changed = _format_motion_percent(strongest_changed_ratio)
+    threshold = _format_motion_percent(effective_threshold)
+    if activity_detected and fine_motion_applied:
+        return (
+            f"Small feeder motion detected - {strongest_zone_name} changed {changed}, "
+            f"threshold {threshold}."
+        )
+    if near_miss:
+        return (
+            f"Near miss in {strongest_zone_name} - tighten zone, use feeder focus, "
+            f"or move camera closer. {strongest_zone_name} changed {changed}, "
+            f"threshold {threshold}."
+        )
+    if not activity_detected:
+        return (
+            f"No activity yet - {strongest_zone_name} changed {changed}, "
+            f"threshold {threshold}."
+        )
+    return None
 
 
 def _live_motion_quality_warnings(
@@ -2538,6 +2671,7 @@ def _evaluate_live_stream_motion(
             decoded = load_image_frame_plane_bytes(
                 cached_frame.frame_bytes,
                 content_type=cached_frame.content_type,
+                max_dimension=_LIVE_FINE_MOTION_MAX_DIMENSION,
             )
             decoded_frames.append(decoded)
             frame_summaries.append(
@@ -2689,14 +2823,53 @@ def _evaluate_live_stream_motion(
     strongest_zone = zones_by_id.get(strongest_zone_id) if strongest_zone_id else None
     strongest_zone_name = strongest_zone.name if strongest_zone else None
     strongest_zone_type = strongest_zone.zone_type if strongest_zone else None
-    strongest_zone_min_changed_ratio = _live_zone_min_changed_ratio(
-        zone_type=strongest_zone_type,
-        base_min_changed_ratio=request.min_changed_ratio,
-        focus_applied=focus_zone is not None and strongest_zone_id == focus_zone.id,
-    ) if strongest_zone_id else None
+    strongest_focus_applied = focus_zone is not None and strongest_zone_id == focus_zone.id
+    strongest_scoring_policy = (
+        _live_motion_zone_scoring_policy(
+            zone_type=strongest_zone_type,
+            base_min_changed_ratio=request.min_changed_ratio,
+            pixel_delta_threshold=request.pixel_delta_threshold,
+            focus_applied=strongest_focus_applied,
+        )
+        if strongest_zone_id
+        else None
+    )
+    strongest_zone_min_changed_ratio = (
+        strongest_scoring_policy.min_changed_ratio
+        if strongest_scoring_policy is not None
+        else None
+    )
+    effective_threshold_used = (
+        strongest_scoring_policy.min_changed_ratio
+        if strongest_scoring_policy is not None
+        else request.min_changed_ratio
+    )
     strongest_score, strongest_score_frame_index = _strongest_live_motion_score(
         frame_score_responses,
         strongest_zone_id=strongest_zone_id,
+    )
+    activity_detected = bool(motion_candidates)
+    margin_to_threshold = _live_motion_margin_to_threshold(
+        strongest_changed_ratio=strongest_changed_ratio,
+        effective_threshold=effective_threshold_used,
+    )
+    near_miss = _live_motion_near_miss(
+        activity_detected=activity_detected,
+        strongest_score=strongest_score,
+        effective_threshold=effective_threshold_used,
+        scoring_policy=strongest_scoring_policy,
+    )
+    diagnostic_message = _live_motion_diagnostic_message(
+        activity_detected=activity_detected,
+        near_miss=near_miss,
+        strongest_zone_name=strongest_zone_name,
+        strongest_changed_ratio=strongest_changed_ratio,
+        effective_threshold=effective_threshold_used,
+        fine_motion_applied=(
+            strongest_scoring_policy.fine_motion_applied
+            if strongest_scoring_policy is not None
+            else False
+        ),
     )
     diagnostic_frame_start_sequence, diagnostic_frame_end_sequence = (
         _live_motion_pair_sequences(cached_frames, strongest_score_frame_index)
@@ -2881,6 +3054,17 @@ def _evaluate_live_stream_motion(
                         "frames_considered": len(cached_frames),
                         "pixel_delta_threshold": request.pixel_delta_threshold,
                         "min_changed_ratio": request.min_changed_ratio,
+                        "effective_threshold_used": effective_threshold_used,
+                        "threshold_source": (
+                            strongest_scoring_policy.threshold_source
+                            if strongest_scoring_policy is not None
+                            else "requested"
+                        ),
+                        "fine_motion_applied": (
+                            strongest_scoring_policy.fine_motion_applied
+                            if strongest_scoring_policy is not None
+                            else False
+                        ),
                         "min_triggered_frames": request.min_triggered_frames,
                         "max_gap_frames": request.max_gap_frames,
                         "frame_sequence_start": cached_frames[0].sequence,
@@ -2944,7 +3128,6 @@ def _evaluate_live_stream_motion(
         if review_event_id
         else None
     )
-    activity_detected = bool(motion_candidates)
     status = "activity_detected" if activity_detected else "no_activity"
     live_session_status = _live_motion_session_status(
         activity_detected=activity_detected,
@@ -2954,15 +3137,14 @@ def _evaluate_live_stream_motion(
         session_recommendation
     )
     existing_review_activity_reference = session_recommendation.existing_activity_reference
-    message = (
-        f"{activity_summary} Best frame was saved for explicit review."
-        if activity_detected and best_media_asset_id
-        else activity_summary
-        if activity_detected
-        else activity_summary
-        if suppressed_zone_summaries
-        else "Watching live video. No activity detected yet."
-    )
+    if activity_detected and best_media_asset_id:
+        message = f"{diagnostic_message or activity_summary} Best frame was saved for explicit review."
+    elif activity_detected:
+        message = diagnostic_message or activity_summary
+    elif suppressed_zone_summaries:
+        message = activity_summary
+    else:
+        message = diagnostic_message or "Watching live video. No activity detected yet."
     if review_activity_created:
         message = (
             f"Review activity created for {strongest_zone_name or 'live motion'}. "
@@ -3006,14 +3188,25 @@ def _evaluate_live_stream_motion(
         suppressed_zone_summaries=suppressed_zone_summaries,
         activity_summary=activity_summary,
         strongest_changed_ratio=strongest_changed_ratio,
-        threshold_used=(
-            strongest_zone_min_changed_ratio
-            if strongest_zone_min_changed_ratio is not None
-            else request.min_changed_ratio
+        requested_threshold=request.min_changed_ratio,
+        effective_threshold_used=effective_threshold_used,
+        threshold_used=effective_threshold_used,
+        threshold_source=(
+            strongest_scoring_policy.threshold_source
+            if strongest_scoring_policy is not None
+            else "requested"
+        ),
+        fine_motion_applied=(
+            strongest_scoring_policy.fine_motion_applied
+            if strongest_scoring_policy is not None
+            else False
         ),
         changed_pixels=strongest_score.changed_pixels if strongest_score else None,
         total_pixels=strongest_score.total_pixels if strongest_score else None,
+        total_scored_pixels=strongest_score.total_pixels if strongest_score else None,
         mean_delta=strongest_score.mean_delta if strongest_score else None,
+        margin_to_threshold=margin_to_threshold,
+        near_miss=near_miss,
         frame_pair_sequences=(
             [diagnostic_frame_start_sequence, diagnostic_frame_end_sequence]
             if diagnostic_frame_start_sequence is not None
@@ -3157,6 +3350,10 @@ def _record_live_motion_session_result(response: LiveMotionEvaluateResponse) -> 
                 if response.threshold_used is not None
                 else response.min_changed_ratio
             ),
+            "threshold_source": response.threshold_source,
+            "fine_motion_applied": response.fine_motion_applied,
+            "near_miss": response.near_miss,
+            "margin_to_threshold": response.margin_to_threshold,
             "suppressed_zone_summaries": [
                 summary.model_dump(mode="json")
                 for summary in response.suppressed_zone_summaries
