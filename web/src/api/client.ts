@@ -44,6 +44,8 @@ import type {
   LocalDataStatus,
   MediaAsset,
   MediaImportResult,
+  LiveMotionEvaluateRequest,
+  LiveMotionEvaluateResponse,
   MockSpeciesSuggestionRequest,
   ModelAdapter,
   ModelReadinessSummary,
@@ -280,6 +282,14 @@ export const apiClient = {
       `/api/streams/${encodeURIComponent(streamId)}/local-camera/capture-frame`,
       {
         method: "POST",
+      },
+    ),
+  evaluateLiveMotion: (streamId: string, payload: LiveMotionEvaluateRequest = {}) =>
+    request<LiveMotionEvaluateResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/live-motion/evaluate`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
       },
     ),
   getStreamZones: (streamId: string) => request<Zone[]>(`/api/streams/${streamId}/zones`),

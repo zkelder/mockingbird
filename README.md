@@ -119,6 +119,12 @@ local camera JPEG frames are motion-check compatible without adding package
 dependencies. After capture, Stream Detail refreshes saved images and points to
 explicit frame comparison / review actions; Bird Log continues to show reviewed
 activity, not raw captures.
+Live camera monitoring is the primary motion path for MockingBird-served live
+streams. While Live view is open, Start monitoring compares recent frames from
+the in-memory live stream cache, saves the strongest activity frame as local
+evidence, and offers an explicit review activity handoff. It is page-started
+and bounded, not a persistent scheduler, and it creates no reviewed truth,
+Bird Log entry, export, or model result by itself.
 The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
 count, and motion readiness. Camera Monitoring Core can now start and stop an

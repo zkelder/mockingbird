@@ -50,6 +50,9 @@ from mockingbird.api.schemas import (
     FolderImportPreviewRequest,
     FolderImportResult,
     LocalDataStatus,
+    LiveMotionEvaluateRequest,
+    LiveMotionEvaluateResponse,
+    LiveMotionFrameSummary,
     MediaAsset,
     MediaImportResult,
     ModelAdapter,
@@ -167,6 +170,7 @@ from mockingbird.sampler import (
 from mockingbird.sampler.saved_media_frames import (
     SavedMediaFrame,
     SavedMediaFrameDecodeError,
+    load_image_frame_plane_bytes,
     load_saved_image_frame_plane,
 )
 from mockingbird.source_providers import external_url_preview
@@ -1824,6 +1828,365 @@ async def evaluate_saved_media_motion(
             "explicit review/correction."
         ),
     )
+
+
+@app.post(
+    "/api/streams/{stream_id}/live-motion/evaluate",
+    response_model=LiveMotionEvaluateResponse,
+)
+async def evaluate_live_stream_motion(
+    stream_id: str,
+    payload: LiveMotionEvaluateRequest | None = None,
+) -> LiveMotionEvaluateResponse:
+    # Live monitoring reads frames already emitted by the active Live view request.
+    # It does not open another camera process, create truth, or create exports.
+    request = payload or LiveMotionEvaluateRequest()
+    repository = get_repository()
+    stream = repository.get_stream(stream_id)
+    if stream is None:
+        raise _not_found("Stream", stream_id)
+
+    cached_frames = live_frame_cache.get_recent_frames(
+        stream.id,
+        max_age_seconds=request.max_age_seconds,
+        max_frames=request.max_frames,
+    )
+    common = {
+        "stream_id": stream.id,
+        "source_id": stream.source_id,
+        "creates_event": False,
+        "creates_visit": False,
+        "creates_truth": False,
+        "creates_export": False,
+        "local_first_note": (
+            "Monitoring compares recent live frames from this stream. Bird Log, "
+            "analytics, and exports update only after explicit review/correction."
+        ),
+    }
+    if not cached_frames:
+        has_stale_frames = stream.id in set(live_frame_cache.iter_cached_stream_ids())
+        return LiveMotionEvaluateResponse(
+            **common,
+            status="no_recent_frames" if has_stale_frames else "waiting_for_live_frames",
+            activity_detected=False,
+            frames_considered=0,
+            message=(
+                "No recent live frames are available. Keep Live view open and retry."
+                if has_stale_frames
+                else "Open Live view and wait for live frames before monitoring."
+            ),
+        )
+    if len(cached_frames) < 2:
+        return LiveMotionEvaluateResponse(
+            **common,
+            status="not_enough_frames",
+            activity_detected=False,
+            frames_considered=len(cached_frames),
+            message="Waiting for at least two recent live frames from this stream.",
+        )
+
+    decoded_frames: list[SavedMediaFrame] = []
+    frame_summaries: list[LiveMotionFrameSummary] = []
+    try:
+        for cached_frame in cached_frames:
+            decoded = load_image_frame_plane_bytes(
+                cached_frame.frame_bytes,
+                content_type=cached_frame.content_type,
+            )
+            decoded_frames.append(decoded)
+            frame_summaries.append(
+                LiveMotionFrameSummary(
+                    sequence=cached_frame.sequence,
+                    captured_at=cached_frame.captured_at,
+                    width=decoded.width,
+                    height=decoded.height,
+                )
+            )
+    except SavedMediaFrameDecodeError:
+        return LiveMotionEvaluateResponse(
+            **common,
+            status="decode_failed",
+            activity_detected=False,
+            frames_considered=len(cached_frames),
+            message="Recent live frames could not be decoded for motion.",
+            warnings=[
+                "Live monitoring needs decodable JPEG/PNG/WebP frames from the active stream."
+            ],
+        )
+
+    all_zones = repository.zones_for_stream(stream.id)
+    warnings: list[str] = []
+    reviewable_zones: list[Zone] = []
+    for zone in all_zones:
+        if not zone.is_active:
+            warnings.append(f"Inactive Zone skipped: {zone.name}.")
+            continue
+        if zone.zone_type.value in {"privacy", "ignore"}:
+            warnings.append(
+                f"{zone.zone_type.value.replace('_', ' ').title()} Zone skipped: {zone.name}."
+            )
+            continue
+        reviewable_zones.append(zone)
+
+    blocked_zones = [
+        zone
+        for zone in all_zones
+        if zone.is_active and zone.zone_type.value in {"privacy", "ignore"}
+    ]
+    uses_auto_regions = not reviewable_zones
+    region_source = "auto_regions" if uses_auto_regions else "user_zones"
+    suppressed_auto_region_count = 0
+    debug_cell_zones: list[MotionZoneInput] = []
+    auto_cells: list[_AutoMotionCell] = []
+    activity_areas: list[MotionActivityAreaResponse] = [
+        _activity_area_from_zone(zone) for zone in reviewable_zones
+    ]
+
+    if uses_auto_regions:
+        warnings.append(
+            "No active reviewable Zones found; automatic activity areas were used."
+        )
+        # Auto cells are motion-only; classifier/model runs belong on a reviewed session crop.
+        auto_cells, suppressed_auto_region_count = _auto_motion_cells(
+            decoded_frames[0].frame,
+            blocked_zones,
+        )
+        if suppressed_auto_region_count > 0:
+            warnings.append("Privacy/ignore areas were skipped.")
+        if not auto_cells:
+            raise HTTPException(
+                status_code=400,
+                detail="Privacy/ignore Zones leave no automatic activity areas to check.",
+            )
+        motion_zones = [_motion_zone_from_auto_cell(cell) for cell in auto_cells]
+        debug_cell_zones = motion_zones
+    else:
+        motion_zones = [_motion_zone_from_zone(zone) for zone in reviewable_zones]
+
+    sampler_config = SamplerConfig(
+        pixel_delta_threshold=request.pixel_delta_threshold,
+        min_changed_ratio=request.min_changed_ratio,
+        min_triggered_frames=request.min_triggered_frames,
+        max_gap_frames=request.max_gap_frames,
+        frame_index_start=cached_frames[0].sequence,
+        create_motion_evidence=request.create_review_activity,
+    )
+    try:
+        sampler_result = evaluate_sampled_frame_sequence(
+            [frame.frame for frame in decoded_frames],
+            [_sampler_zone_from_payload(zone) for zone in motion_zones],
+            sampler_config,
+        )
+    except ValueError as error:
+        raise _motion_evaluation_error(error) from error
+
+    frame_score_responses = [
+        _motion_frame_score_response(frame_score)
+        for frame_score in sampler_result.frame_scores
+    ]
+    motion_candidates = sampler_result.candidates
+    if uses_auto_regions:
+        motion_candidates, activity_areas = _auto_activity_clusters(
+            frame_score_responses,
+            auto_cells,
+            sampler_config,
+        )
+        motion_zones = [_activity_area_zone_input(area) for area in activity_areas]
+
+    candidate_responses = [
+        _motion_candidate_response(candidate)
+        for candidate in motion_candidates
+    ]
+    raw_strongest_zone_id, raw_strongest_changed_ratio = _strongest_motion_summary(
+        frame_score_responses,
+    )
+    best_candidate = _best_motion_candidate(motion_candidates)
+    if uses_auto_regions:
+        strongest_zone_id = best_candidate.zone_id if best_candidate else None
+        strongest_changed_ratio = (
+            best_candidate.peak_changed_ratio
+            if best_candidate
+            else raw_strongest_changed_ratio
+        )
+    else:
+        strongest_zone_id = raw_strongest_zone_id
+        strongest_changed_ratio = raw_strongest_changed_ratio
+
+    activity_area_by_id = {area.area_id: area for area in activity_areas}
+    strongest_activity_area = (
+        activity_area_by_id.get(best_candidate.zone_id)
+        if best_candidate
+        else (activity_area_by_id.get(strongest_zone_id) if strongest_zone_id else None)
+    )
+    best_live_frame = (
+        next(
+            (
+                cached_frame
+                for cached_frame in cached_frames
+                if cached_frame.sequence == best_candidate.best_frame_index
+            ),
+            None,
+        )
+        if best_candidate
+        else None
+    )
+    best_media_asset_id: str | None = None
+    if best_candidate and best_live_frame and (request.save_best_frame or request.create_review_activity):
+        configuration = repository.get_stream_live_playback_config(stream.id)
+        try:
+            media_asset = repository.create_live_motion_frame_media_asset(
+                source_id=stream.source_id,
+                stream_id=stream.id,
+                content=best_live_frame.frame_bytes,
+                content_type=best_live_frame.content_type,
+                captured_at=best_live_frame.captured_at,
+                frame_sequence=best_live_frame.sequence,
+                playback_type=configuration.live_stream_type if configuration else None,
+                note="Saved from live monitoring activity detection.",
+            )
+        except ValueError as error:
+            raise _media_import_error(error) from error
+        best_media_asset_id = media_asset.id
+
+    session_region_kind = "auto_area" if uses_auto_regions else "zone"
+    session_region_id = _activity_session_region_id(strongest_activity_area)
+    existing_session_references = (
+        _motion_evidence_session_references(
+            repository.list_motion_evidence(zone_id=best_candidate.zone_id)
+        )
+        if best_candidate and not uses_auto_regions
+        else []
+    )
+    can_create_review_activity = (
+        bool(best_candidate)
+        and not uses_auto_regions
+        and best_media_asset_id is not None
+    )
+    session_recommendation = recommend_activity_session(
+        source_id=stream.source_id,
+        stream_id=stream.id,
+        region_kind=session_region_kind,
+        region_id=session_region_id,
+        activity_at=best_live_frame.captured_at if best_live_frame else None,
+        activity_detected=bool(motion_candidates),
+        review_activity_available=can_create_review_activity,
+        best_snapshot_media_asset_id=best_media_asset_id,
+        existing_activities=existing_session_references,
+    )
+    review_activity_available = (
+        can_create_review_activity and session_recommendation.should_create_review_activity
+    )
+
+    created_evidence: list[MotionEvidenceResponse] = []
+    if request.create_review_activity and motion_candidates and uses_auto_regions:
+        warnings.append(
+            "Automatic activity areas can detect motion now; review activity creation "
+            "still requires a named Zone in this build."
+        )
+    elif (
+        request.create_review_activity
+        and motion_candidates
+        and not session_recommendation.should_create_review_activity
+    ):
+        warnings.append(
+            "This looks like the same recent activity, so MockingBird did not create "
+            "another review item."
+        )
+    elif request.create_review_activity and best_candidate and best_live_frame:
+        try:
+            created_evidence.append(
+                repository.create_motion_evidence(
+                    MotionEvidenceCreateRequest(
+                        source_id=stream.source_id,
+                        stream_id=stream.id,
+                        zone_id=best_candidate.zone_id,
+                        start_frame_index=best_candidate.start_frame_index,
+                        end_frame_index=best_candidate.end_frame_index,
+                        best_frame_index=best_candidate.best_frame_index,
+                        start_time=_live_frame_timestamp(
+                            cached_frames,
+                            best_candidate.start_frame_index,
+                        ),
+                        end_time=_live_frame_timestamp(
+                            cached_frames,
+                            best_candidate.end_frame_index,
+                        ),
+                        best_frame_time=best_live_frame.captured_at.isoformat(),
+                        peak_changed_ratio=best_candidate.peak_changed_ratio,
+                        triggered_frame_count=best_candidate.triggered_frame_count,
+                        scoring_config={
+                            "source": "live_stream_motion",
+                            "frames_considered": len(cached_frames),
+                            "pixel_delta_threshold": request.pixel_delta_threshold,
+                            "min_changed_ratio": request.min_changed_ratio,
+                            "min_triggered_frames": request.min_triggered_frames,
+                            "max_gap_frames": request.max_gap_frames,
+                            "frame_sequence_start": cached_frames[0].sequence,
+                        },
+                        snapshot_media_asset_id=best_media_asset_id,
+                        notes=request.notes
+                        or "Live stream motion monitor created pending review activity.",
+                    )
+                )
+            )
+        except ValueError as error:
+            raise _motion_evidence_error(error) from error
+
+    if created_evidence:
+        review_activity_available = False
+    activity_detected = bool(motion_candidates)
+    status = "activity_detected" if activity_detected else "no_activity"
+    message = (
+        "Activity detected from recent live frames. Best frame was saved for explicit review."
+        if activity_detected and best_media_asset_id
+        else "Activity detected from recent live frames."
+        if activity_detected
+        else "Watching live video. No activity detected yet."
+    )
+    if created_evidence:
+        message = "Review activity is ready from live motion evidence."
+
+    return LiveMotionEvaluateResponse(
+        **common,
+        status=status,
+        activity_detected=activity_detected,
+        frames_considered=len(cached_frames),
+        frames=frame_summaries,
+        frame_scores=frame_score_responses,
+        candidates=candidate_responses,
+        activity_areas=activity_areas,
+        region_source=region_source,
+        uses_auto_regions=uses_auto_regions,
+        strongest_zone_id=strongest_zone_id,
+        strongest_activity_area=strongest_activity_area,
+        strongest_activity_area_id=(
+            strongest_activity_area.area_id if strongest_activity_area else None
+        ),
+        strongest_activity_area_label=(
+            strongest_activity_area.label if strongest_activity_area else None
+        ),
+        strongest_changed_ratio=strongest_changed_ratio,
+        best_frame_sequence=best_live_frame.sequence if best_live_frame else None,
+        best_frame_captured_at=best_live_frame.captured_at if best_live_frame else None,
+        best_media_asset_id=best_media_asset_id,
+        can_create_review_activity=can_create_review_activity,
+        review_activity_available=review_activity_available,
+        review_activity_created=bool(created_evidence),
+        created_evidence=created_evidence,
+        debug_cell_zones=debug_cell_zones,
+        message=message,
+        warnings=warnings,
+    )
+
+
+def _live_frame_timestamp(
+    frames: list[live_frame_cache.LiveFrame],
+    frame_sequence: int | None,
+) -> str | None:
+    if frame_sequence is None:
+        return None
+    frame = next((candidate for candidate in frames if candidate.sequence == frame_sequence), None)
+    return frame.captured_at.isoformat() if frame else None
 
 
 @app.post("/api/motion/evidence", response_model=MotionEvidenceResponse, status_code=201)

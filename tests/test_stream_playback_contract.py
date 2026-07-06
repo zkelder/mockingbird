@@ -20,6 +20,7 @@ from mockingbird.playback import (
     windows_camera_bridge,
 )
 from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.sampler.saved_media_frames import SavedMediaFrame
 from mockingbird.storage.models import CameraSourceModel, StreamModel
 
 pytestmark = pytest.mark.anyio
@@ -83,7 +84,7 @@ class FakeFfmpegProcess:
 
 
 def test_live_frame_cache_returns_fresh_latest_frame() -> None:
-    captured_at = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    captured_at = datetime.now(UTC)
     frame_bytes = b"\xff\xd8live-frame\xff\xd9"
 
     frame = live_frame_cache.store_latest_frame(
@@ -103,7 +104,7 @@ def test_live_frame_cache_returns_fresh_latest_frame() -> None:
 
 
 def test_live_frame_cache_ignores_stale_frame() -> None:
-    captured_at = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    captured_at = datetime.now(UTC)
     live_frame_cache.store_latest_frame(
         STREAM_ID,
         b"\xff\xd8stale-frame\xff\xd9",
@@ -117,6 +118,64 @@ def test_live_frame_cache_ignores_stale_frame() -> None:
     )
 
     assert cached is None
+
+
+def blank_frame(*, width: int = 4, height: int = 4) -> list[list[int]]:
+    return [[0 for _x in range(width)] for _y in range(height)]
+
+
+def frame_with(
+    points: list[tuple[int, int]],
+    *,
+    width: int = 4,
+    height: int = 4,
+) -> list[list[int]]:
+    frame = blank_frame(width=width, height=height)
+    for y, x in points:
+        frame[y][x] = 255
+    return frame
+
+
+def test_live_frame_cache_returns_bounded_recent_frames() -> None:
+    captured_at = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    for index in range(live_frame_cache.DEFAULT_MAX_FRAMES + 3):
+        live_frame_cache.store_latest_frame(
+            STREAM_ID,
+            f"\xff\xd8frame-{index}\xff\xd9".encode("latin1"),
+            captured_at=captured_at + timedelta(seconds=index),
+        )
+
+    recent = live_frame_cache.get_recent_frames(
+        STREAM_ID,
+        max_age_seconds=120,
+        now=captured_at + timedelta(seconds=30),
+    )
+
+    assert len(recent) == live_frame_cache.DEFAULT_MAX_FRAMES
+    assert [frame.sequence for frame in recent] == list(range(4, 24))
+    assert recent[-1].frame_bytes == b"\xff\xd8frame-22\xff\xd9"
+
+
+def test_live_frame_cache_recent_frames_ignore_stale_frames() -> None:
+    captured_at = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        b"\xff\xd8stale-frame\xff\xd9",
+        captured_at=captured_at,
+    )
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        b"\xff\xd8fresh-frame\xff\xd9",
+        captured_at=captured_at + timedelta(seconds=10),
+    )
+
+    recent = live_frame_cache.get_recent_frames(
+        STREAM_ID,
+        max_age_seconds=5,
+        now=captured_at + timedelta(seconds=12),
+    )
+
+    assert [frame.frame_bytes for frame in recent] == [b"\xff\xd8fresh-frame\xff\xd9"]
 
 
 async def product_counts(client: httpx.AsyncClient) -> dict[str, int]:
@@ -142,6 +201,50 @@ async def product_counts(client: httpx.AsyncClient) -> dict[str, int]:
         "detection_proposals": len(responses["detection_proposals"].json()),
         "dataset_exports": len(responses["dataset_exports"].json()),
     }
+
+
+def patch_live_motion_decoder(
+    monkeypatch: pytest.MonkeyPatch,
+    frames_by_bytes: dict[bytes, list[list[int]]],
+) -> None:
+    def fake_load_image_frame_plane_bytes(
+        frame_bytes: bytes,
+        *,
+        content_type: str,
+    ) -> SavedMediaFrame:
+        frame = frames_by_bytes[frame_bytes]
+        return SavedMediaFrame(width=len(frame[0]), height=len(frame), frame=frame)
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.load_image_frame_plane_bytes",
+        fake_load_image_frame_plane_bytes,
+    )
+
+
+def patch_camera_processes_to_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_if_called(*args: object, **kwargs: object) -> object:
+        raise AssertionError("Live motion evaluation must not start a camera process")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.capture_local_camera_frame",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.start_windows_dshow_mjpeg_process",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.capture_windows_dshow_frame",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.rtsp_bridge.start_rtsp_mjpeg_process",
+        fail_if_called,
+    )
 
 
 async def configure_external_url_live_stream(
@@ -251,6 +354,176 @@ async def test_playback_contract_does_not_claim_live_playback(client: httpx.Asyn
     playback = response.json()
     assert playback["supports_live_playback"] is False
     assert playback["playback_kind"] in {"demo_panel", "placeholder"}
+
+
+async def test_live_motion_evaluation_waits_for_live_frames(client: httpx.AsyncClient) -> None:
+    response = await client.post(f"/api/streams/{STREAM_ID}/live-motion/evaluate", json={})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "waiting_for_live_frames"
+    assert result["activity_detected"] is False
+    assert result["frames_considered"] == 0
+    assert result["best_media_asset_id"] is None
+    assert result["creates_truth"] is False
+    assert result["creates_export"] is False
+
+
+async def test_live_motion_evaluation_requires_two_fresh_frames(client: httpx.AsyncClient) -> None:
+    live_frame_cache.store_latest_frame(STREAM_ID, b"\xff\xd8only-frame\xff\xd9")
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/live-motion/evaluate", json={})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "not_enough_frames"
+    assert result["activity_detected"] is False
+    assert result["frames_considered"] == 1
+
+
+async def test_live_motion_evaluation_reports_no_recent_frames_for_stale_cache(
+    client: httpx.AsyncClient,
+) -> None:
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        b"\xff\xd8stale-live-frame\xff\xd9",
+        captured_at=datetime.now(UTC) - timedelta(seconds=30),
+    )
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={"max_age_seconds": 5},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "no_recent_frames"
+    assert result["activity_detected"] is False
+    assert result["frames_considered"] == 0
+
+
+async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_only(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-motion-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-motion-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(),
+            frame_1: frame_with([(1, 1), (1, 2), (2, 1), (2, 2)]),
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "activity_detected"
+    assert result["activity_detected"] is True
+    assert result["frames_considered"] == 2
+    assert result["best_frame_sequence"] == 2
+    assert result["best_media_asset_id"].startswith("media-asset-")
+    assert result["can_create_review_activity"] is True
+    assert result["review_activity_available"] is True
+    assert result["review_activity_created"] is False
+    assert result["created_evidence"] == []
+    assert result["creates_event"] is False
+    assert result["creates_visit"] is False
+    assert result["creates_truth"] is False
+    assert result["creates_export"] is False
+    assert result["strongest_zone_id"] == "zone-feeder"
+
+    media_response = await client.get(f"/api/media/{result['best_media_asset_id']}")
+    assert media_response.status_code == 200
+    media_asset = media_response.json()
+    assert media_asset["source_id"] == SOURCE_ID
+    assert media_asset["stream_id"] == STREAM_ID
+    assert media_asset["content_type"] == "image/jpeg"
+    assert "Saved best live motion frame from active stream." in media_asset["notes"]
+    assert "Creates no Events, Visits, ReviewLabels, exports, or truth." in media_asset["notes"]
+    saved_path = Path(media_asset["local_path"]).resolve()
+    assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
+    assert saved_path.read_bytes() == frame_1
+
+    after = await product_counts(client)
+    assert after["media_assets"] == before["media_assets"] + 1
+    for key in before:
+        if key != "media_assets":
+            assert after[key] == before[key]
+
+
+async def test_live_motion_review_handoff_is_explicit_pending_evidence_only(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-review-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-review-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(),
+            frame_1: frame_with([(1, 1), (1, 2), (2, 1), (2, 2)]),
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": True,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "activity_detected"
+    assert result["activity_detected"] is True
+    assert result["review_activity_created"] is True
+    assert result["review_activity_available"] is False
+    assert len(result["created_evidence"]) == 1
+    evidence = result["created_evidence"][0]
+    assert evidence["status"] == "pending"
+    assert evidence["zone_id"] == "zone-feeder"
+    assert evidence["snapshot_media_asset_id"] == result["best_media_asset_id"]
+    assert evidence["promoted_event_id"] is None
+    assert evidence["promoted_visit_id"] is None
+
+    after = await product_counts(client)
+    assert after["media_assets"] == before["media_assets"] + 1
+    assert after["motion_evidence"] == before["motion_evidence"] + 1
+    for key in ("events", "visits", "review_labels", "dataset_exports"):
+        assert after[key] == before[key]
 
 
 async def test_external_url_without_live_stream_reports_needs_stream_url(

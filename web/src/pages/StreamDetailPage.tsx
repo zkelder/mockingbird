@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   Event,
   LocalCameraFrameCaptureResponse,
+  LiveMotionEvaluateResponse,
   MediaAsset,
   MotionEvaluateSavedMediaResponse,
   Point,
@@ -56,6 +57,14 @@ interface ZoneDraft {
 }
 
 type LiveViewState = "idle" | "opening" | "streaming" | "failed" | "no_frames";
+type LiveMonitorState =
+  | "idle"
+  | "waiting"
+  | "watching"
+  | "activity"
+  | "no_activity"
+  | "failed"
+  | "stopped";
 
 function playbackTone(status: StreamPlaybackStatus["status"]): "good" | "review" | "quiet" {
   if (status === "demo" || status === "live_ready") {
@@ -108,6 +117,14 @@ function isWindowsDshowBridgePlayback(status?: StreamPlaybackStatus | null): boo
 function hasRealLivePlayback(status?: StreamPlaybackStatus | null): boolean {
   return (
     isBrowserPlayablePlayback(status) ||
+    isRtspBridgePlayback(status) ||
+    isLocalCameraBridgePlayback(status) ||
+    isWindowsDshowBridgePlayback(status)
+  );
+}
+
+function supportsLiveMotionMonitoring(status?: StreamPlaybackStatus | null): boolean {
+  return (
     isRtspBridgePlayback(status) ||
     isLocalCameraBridgePlayback(status) ||
     isWindowsDshowBridgePlayback(status)
@@ -231,13 +248,29 @@ export function StreamDetailPage({
   const [motionError, setMotionError] = useState<string | null>(null);
   const [isCheckingMotion, setIsCheckingMotion] = useState(false);
   const [isCreatingReviewActivity, setIsCreatingReviewActivity] = useState(false);
+  const [liveMonitorState, setLiveMonitorState] = useState<LiveMonitorState>("idle");
+  const [liveMotionResult, setLiveMotionResult] = useState<LiveMotionEvaluateResponse | null>(null);
+  const [liveMotionError, setLiveMotionError] = useState<string | null>(null);
+  const [isLiveMonitoring, setIsLiveMonitoring] = useState(false);
+  const [isEvaluatingLiveMotion, setIsEvaluatingLiveMotion] = useState(false);
+  const [isCreatingLiveReviewActivity, setIsCreatingLiveReviewActivity] = useState(false);
+  const liveMonitorIntervalRef = useRef<number | null>(null);
+  const liveMotionInFlightRef = useRef(false);
 
   const selectedZone = detail?.zones.find((zone) => zone.id === selectedZoneId) ?? null;
+
+  function clearLiveMonitorInterval() {
+    if (liveMonitorIntervalRef.current !== null) {
+      window.clearInterval(liveMonitorIntervalRef.current);
+      liveMonitorIntervalRef.current = null;
+    }
+  }
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadStreamDetail() {
+      clearLiveMonitorInterval();
       setIsLoading(true);
       setError(null);
       setZoneError(null);
@@ -259,6 +292,12 @@ export function StreamDetailPage({
       setMotionError(null);
       setIsCheckingMotion(false);
       setIsCreatingReviewActivity(false);
+      setLiveMonitorState("idle");
+      setLiveMotionResult(null);
+      setLiveMotionError(null);
+      setIsLiveMonitoring(false);
+      setIsEvaluatingLiveMotion(false);
+      setIsCreatingLiveReviewActivity(false);
       try {
         const stream = await apiClient.getStream(streamId);
         const [playback, setupReview, zones, events] = await Promise.all([
@@ -295,8 +334,15 @@ export function StreamDetailPage({
 
     return () => {
       isMounted = false;
+      clearLiveMonitorInterval();
     };
   }, [streamId]);
+
+  useEffect(() => {
+    return () => {
+      clearLiveMonitorInterval();
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -389,6 +435,7 @@ export function StreamDetailPage({
   }
 
   function stopLiveView() {
+    stopLiveMonitoring();
     setLiveViewOpen(false);
     setLiveViewState("idle");
     setLiveViewError(null);
@@ -402,6 +449,104 @@ export function StreamDetailPage({
     setLiveViewState("opening");
     setLiveViewError(null);
     setLiveViewReloadToken((current) => current + 1);
+  }
+
+  function liveMonitorStateFor(result: LiveMotionEvaluateResponse): LiveMonitorState {
+    if (result.activity_detected) {
+      return "activity";
+    }
+    if (
+      result.status === "waiting_for_live_frames" ||
+      result.status === "no_recent_frames" ||
+      result.status === "not_enough_frames"
+    ) {
+      return "waiting";
+    }
+    if (result.status === "no_activity") {
+      return "watching";
+    }
+    return "no_activity";
+  }
+
+  async function evaluateLiveMotion(createReviewActivity: boolean) {
+    if (!detail) {
+      return;
+    }
+    if (liveMotionInFlightRef.current && !createReviewActivity) {
+      return;
+    }
+    liveMotionInFlightRef.current = true;
+    setLiveMotionError(null);
+    if (createReviewActivity) {
+      setIsCreatingLiveReviewActivity(true);
+    } else {
+      setIsEvaluatingLiveMotion(true);
+    }
+    try {
+      const result = await apiClient.evaluateLiveMotion(detail.stream.id, {
+        save_best_frame: true,
+        create_review_activity: createReviewActivity,
+        min_triggered_frames: 1,
+        notes: createReviewActivity
+          ? "User created review activity from live stream motion monitoring."
+          : null,
+      });
+      setLiveMotionResult(result);
+      setLiveMonitorState(liveMonitorStateFor(result));
+      if (result.best_media_asset_id) {
+        await refreshSavedImages();
+      }
+      if (result.activity_detected && !createReviewActivity) {
+        clearLiveMonitorInterval();
+        setIsLiveMonitoring(false);
+      }
+    } catch (caught) {
+      setLiveMonitorState("failed");
+      setLiveMotionError(
+        caught instanceof Error ? caught.message : "Could not monitor live motion.",
+      );
+    } finally {
+      liveMotionInFlightRef.current = false;
+      if (createReviewActivity) {
+        setIsCreatingLiveReviewActivity(false);
+      } else {
+        setIsEvaluatingLiveMotion(false);
+      }
+    }
+  }
+
+  function startLiveMonitoring() {
+    if (!detail) {
+      return;
+    }
+    if (!supportsLiveMotionMonitoring(detail.playback)) {
+      setLiveMonitorState("failed");
+      setLiveMotionError("Live monitoring is available when MockingBird serves this live stream.");
+      return;
+    }
+    if (!liveViewOpen || !liveUrl) {
+      setLiveMonitorState("failed");
+      setLiveMotionError("Open Live view before starting live monitoring.");
+      return;
+    }
+    clearLiveMonitorInterval();
+    setLiveMotionResult(null);
+    setLiveMotionError(null);
+    setLiveMonitorState("waiting");
+    setIsLiveMonitoring(true);
+    void evaluateLiveMotion(false);
+    liveMonitorIntervalRef.current = window.setInterval(() => {
+      void evaluateLiveMotion(false);
+    }, 2000);
+  }
+
+  function stopLiveMonitoring() {
+    clearLiveMonitorInterval();
+    setIsLiveMonitoring(false);
+    liveMotionInFlightRef.current = false;
+    setLiveMonitorState((current) =>
+      current === "idle" || current === "activity" ? current : "stopped",
+    );
   }
 
   async function refreshSavedImages(): Promise<MediaAsset[]> {
@@ -630,8 +775,31 @@ export function StreamDetailPage({
       : liveViewState === "streaming"
         ? "good"
         : "quiet";
+  const liveMonitorStatusLabel =
+    liveMonitorState === "waiting"
+      ? "Waiting"
+      : liveMonitorState === "watching"
+        ? "Watching"
+        : liveMonitorState === "activity"
+          ? "Activity detected"
+          : liveMonitorState === "failed"
+            ? "Failed"
+            : liveMonitorState === "stopped"
+              ? "Stopped"
+              : liveMonitorState === "no_activity"
+                ? "No activity"
+                : "Monitor idle";
+  const liveMonitorTone =
+    liveMonitorState === "activity"
+      ? "review"
+      : liveMonitorState === "watching"
+        ? "good"
+        : liveMonitorState === "failed"
+          ? "review"
+          : "quiet";
   const sourceDisplay = detail.setupReview?.provider_display_name ?? "Source";
   const liveHelpText = liveTroubleshootingText(detail.playback);
+  const canMonitorLiveMotion = supportsLiveMotionMonitoring(detail.playback);
   const canCaptureFrame = supportsFrameCapture(detail.playback);
   const captureSaved = captureResult?.status === "saved";
   const latestSavedImage = savedImageAssets[0] ?? null;
@@ -642,6 +810,12 @@ export function StreamDetailPage({
     ? "Compare captured frames"
     : "Capture another frame to check motion";
   const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
+  const liveMotionCreatedEvidence = liveMotionResult?.created_evidence[0] ?? null;
+  const canCreateLiveReviewActivity = Boolean(
+    liveMotionResult?.activity_detected &&
+      liveMotionResult.review_activity_available &&
+      liveMotionResult.created_evidence.length === 0,
+  );
   const canCreateReviewActivity = Boolean(
     motionResult?.activity_detected &&
       motionResult.can_create_review_activity &&
@@ -713,6 +887,7 @@ export function StreamDetailPage({
                 <StatusPill label={detail.playback.windows_ffmpeg_binary_display} tone="quiet" />
               ) : null}
               <StatusPill label={liveViewStatusLabel} tone={liveViewTone} />
+              <StatusPill label={liveMonitorStatusLabel} tone={liveMonitorTone} />
             </div>
           </div>
           <div className="stream-live-frame">
@@ -777,6 +952,69 @@ export function StreamDetailPage({
           ) : liveHelpText ? (
             <span className="stream-live-hint">{liveHelpText}</span>
           ) : null}
+          {liveMotionError ? (
+            <div className="stream-live-message is-error">
+              <strong>{liveMotionError}</strong>
+            </div>
+          ) : null}
+          {isLiveMonitoring || isEvaluatingLiveMotion || liveMotionResult ? (
+            <div className="stream-live-message">
+              <strong>
+                {liveMotionResult?.activity_detected
+                  ? "Activity detected"
+                  : isLiveMonitoring
+                    ? "Watching live video"
+                    : liveMonitorStatusLabel}
+              </strong>
+              <span>
+                {liveMotionResult?.message ??
+                  "Monitoring compares recent live frames from this stream."}
+              </span>
+              <span>
+                Captured frames are saved evidence. Bird Log updates after reviewed activity.
+              </span>
+              {liveMotionResult?.strongest_activity_area_label ? (
+                <span>Activity area: {liveMotionResult.strongest_activity_area_label}</span>
+              ) : null}
+              <div className="detail-actions stream-live-actions">
+                {liveMotionResult?.best_media_asset_id ? (
+                  <a
+                    className="secondary-action"
+                    href={apiClient.mediaFileUrl(liveMotionResult.best_media_asset_id)}
+                  >
+                    Open saved best frame
+                  </a>
+                ) : null}
+                {canCreateLiveReviewActivity ? (
+                  <button
+                    className="primary-action"
+                    disabled={isCreatingLiveReviewActivity}
+                    onClick={() => void evaluateLiveMotion(true)}
+                    type="button"
+                  >
+                    {isCreatingLiveReviewActivity ? "Creating..." : "Create review activity"}
+                  </button>
+                ) : null}
+                {liveMotionCreatedEvidence ? (
+                  <button
+                    className="secondary-action"
+                    onClick={() => onOpenMotionEvidence(liveMotionCreatedEvidence.id)}
+                    type="button"
+                  >
+                    Open review activity
+                  </button>
+                ) : null}
+                {streamReviewItems.length > 0 ? (
+                  <button className="secondary-action" onClick={onOpenReview} type="button">
+                    Open Review Queue
+                  </button>
+                ) : null}
+              </div>
+              {liveMotionResult?.warnings.length ? (
+                <span>{liveMotionResult.warnings[0]}</span>
+              ) : null}
+            </div>
+          ) : null}
           {captureResult ? (
             <div
               className={`stream-live-message${
@@ -813,7 +1051,7 @@ export function StreamDetailPage({
                       {isCapturingFrame ? "Capturing..." : "Capture another frame"}
                     </button>
                     <button
-                      className="primary-action"
+                      className="secondary-action"
                       disabled={!canCheckMotion || isCheckingMotion || isCreatingReviewActivity}
                       onClick={() => void handleCheckMotion(false)}
                       type="button"
@@ -830,7 +1068,7 @@ export function StreamDetailPage({
                     <span>Motion checks compare two saved frames from this stream.</span>
                   ) : (
                     <span>
-                      Comparing the two most recent saved frames:{" "}
+                      Fallback comparison uses the two most recent saved frames:{" "}
                       {motionPair
                         .map((asset) => asset.original_filename || asset.filename)
                         .join(" -> ")}
@@ -919,6 +1157,22 @@ export function StreamDetailPage({
                 Open Live view
               </button>
             )}
+            {isLiveMonitoring ? (
+              <button className="secondary-action" onClick={stopLiveMonitoring} type="button">
+                Stop monitoring
+              </button>
+            ) : (
+              <button
+                className={liveViewOpen ? "primary-action" : "secondary-action"}
+                disabled={
+                  !liveViewOpen || !liveUrl || !canMonitorLiveMotion || isEvaluatingLiveMotion
+                }
+                onClick={startLiveMonitoring}
+                type="button"
+              >
+                {isEvaluatingLiveMotion ? "Checking..." : "Start monitoring"}
+              </button>
+            )}
             {canCaptureFrame ? (
               <button
                 className="secondary-action"
@@ -930,11 +1184,11 @@ export function StreamDetailPage({
               </button>
             ) : null}
           </div>
-          {canCaptureFrame ? (
-            <span className="stream-live-hint">
-              Save one frame from this live camera for motion/review.
-            </span>
-          ) : null}
+          <span className="stream-live-hint">
+            {canMonitorLiveMotion
+              ? "Monitoring compares recent live frames from this stream. Captured frames are saved evidence for fallback review."
+              : "Live monitoring is available when MockingBird serves the live stream through a local bridge."}
+          </span>
         </section>
       ) : (
         <StreamPanel

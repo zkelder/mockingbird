@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 import struct
 import subprocess
@@ -49,11 +50,39 @@ def load_saved_image_frame_plane(
     )
 
 
+def load_image_frame_plane_bytes(
+    data: bytes,
+    *,
+    content_type: str,
+    max_dimension: int = 32,
+) -> SavedMediaFrame:
+    """Load live image bytes as a bounded grayscale frame plane."""
+
+    if content_type not in SUPPORTED_CONTENT_TYPES:
+        raise SavedMediaFrameDecodeError("unsupported_image_content_type")
+    if max_dimension < 2:
+        raise SavedMediaFrameDecodeError("invalid_frame_size")
+    if not data:
+        raise SavedMediaFrameDecodeError("missing_media_file")
+
+    if content_type == "image/png":
+        return _load_png_frame_data(data, max_dimension=max_dimension)
+    return _load_bytes_with_optional_pillow(
+        data,
+        content_type=content_type,
+        max_dimension=max_dimension,
+    )
+
+
 def _load_png_frame(path: Path, *, max_dimension: int) -> SavedMediaFrame:
     try:
         data = path.read_bytes()
     except OSError as error:
         raise SavedMediaFrameDecodeError("missing_media_file") from error
+    return _load_png_frame_data(data, max_dimension=max_dimension)
+
+
+def _load_png_frame_data(data: bytes, *, max_dimension: int) -> SavedMediaFrame:
     if not data.startswith(PNG_SIGNATURE):
         raise SavedMediaFrameDecodeError("invalid_png")
 
@@ -164,6 +193,44 @@ def _load_with_optional_pillow(
     return SavedMediaFrame(width=width, height=height, frame=frame)
 
 
+def _load_bytes_with_optional_pillow(
+    data: bytes,
+    *,
+    content_type: str,
+    max_dimension: int,
+) -> SavedMediaFrame:
+    try:
+        from PIL import Image
+    except ImportError as error:
+        return _load_bytes_with_ffmpeg(data, max_dimension=max_dimension, cause=error)
+
+    try:
+        with Image.open(BytesIO(data)) as image:
+            if image.format and content_type == "image/webp" and image.format.upper() != "WEBP":
+                raise SavedMediaFrameDecodeError("invalid_image")
+            gray = image.convert("L")
+            width, height = gray.size
+            if width < 1 or height < 1:
+                raise SavedMediaFrameDecodeError("invalid_image_dimensions")
+            out_width, out_height = _scaled_dimensions(
+                width,
+                height,
+                max_dimension=max_dimension,
+            )
+            resized = gray.resize((out_width, out_height))
+            pixels = list(resized.getdata())
+    except SavedMediaFrameDecodeError:
+        raise
+    except OSError as error:
+        return _load_bytes_with_ffmpeg(data, max_dimension=max_dimension, cause=error)
+
+    frame = [
+        pixels[row_index * out_width : (row_index + 1) * out_width]
+        for row_index in range(out_height)
+    ]
+    return SavedMediaFrame(width=width, height=height, frame=frame)
+
+
 def _load_with_ffmpeg(
     path: Path,
     *,
@@ -193,6 +260,52 @@ def _load_with_ffmpeg(
     try:
         completed = subprocess.run(
             command,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+    except FileNotFoundError as error:
+        raise SavedMediaFrameDecodeError("image_decoder_unavailable") from (cause or error)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise SavedMediaFrameDecodeError("image_decode_failed") from (cause or error)
+
+    try:
+        return _load_pgm_frame(completed.stdout)
+    except SavedMediaFrameDecodeError as error:
+        raise SavedMediaFrameDecodeError("image_decode_failed") from error
+
+
+def _load_bytes_with_ffmpeg(
+    data: bytes,
+    *,
+    max_dimension: int,
+    cause: BaseException | None = None,
+) -> SavedMediaFrame:
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-frames:v",
+        "1",
+        "-vf",
+        (
+            f"scale='min(iw,{max_dimension})':'min(ih,{max_dimension})':"
+            "force_original_aspect_ratio=decrease,format=gray"
+        ),
+        "-f",
+        "image2pipe",
+        "-vcodec",
+        "pgm",
+        "pipe:1",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            input=data,
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

@@ -103,6 +103,16 @@ class LocalCameraFrameCaptureStatus(str, Enum):
     capture_failed = "capture_failed"
 
 
+class LiveMotionEvaluationStatus(str, Enum):
+    evaluated = "evaluated"
+    waiting_for_live_frames = "waiting_for_live_frames"
+    no_recent_frames = "no_recent_frames"
+    not_enough_frames = "not_enough_frames"
+    decode_failed = "decode_failed"
+    activity_detected = "activity_detected"
+    no_activity = "no_activity"
+
+
 class ZoneType(str, Enum):
     feeder = "feeder"
     birdbath = "birdbath"
@@ -1315,6 +1325,60 @@ class MotionEvaluateSavedMediaResponse(BaseModel):
     strongest_zone_id: str | None = None
     strongest_changed_ratio: float = 0.0
     best_media_asset_id: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    local_first_note: str
+
+
+class LiveMotionEvaluateRequest(BaseModel):
+    save_best_frame: bool = True
+    create_review_activity: bool = False
+    pixel_delta_threshold: float = Field(default=25.0, ge=0)
+    min_changed_ratio: float = Field(default=0.02, ge=0, le=1)
+    min_triggered_frames: int = Field(default=1, ge=1)
+    max_gap_frames: int = Field(default=1, ge=0)
+    max_age_seconds: float = Field(default=20.0, ge=1, le=60)
+    max_frames: int = Field(default=20, ge=2, le=30)
+    notes: str | None = None
+
+
+class LiveMotionFrameSummary(BaseModel):
+    sequence: int = Field(ge=1)
+    captured_at: datetime
+    width: int = Field(ge=1)
+    height: int = Field(ge=1)
+
+
+class LiveMotionEvaluateResponse(BaseModel):
+    # Live motion uses the active stream cache only; review correction remains truth.
+    stream_id: str
+    source_id: str
+    status: LiveMotionEvaluationStatus
+    activity_detected: bool
+    frames_considered: int = Field(ge=0)
+    frames: list[LiveMotionFrameSummary] = Field(default_factory=list)
+    frame_scores: list[MotionFrameScoreResponse] = Field(default_factory=list)
+    candidates: list[MotionCandidateResponse] = Field(default_factory=list)
+    activity_areas: list[MotionActivityAreaResponse] = Field(default_factory=list)
+    region_source: str = "user_zones"
+    uses_auto_regions: bool = False
+    strongest_zone_id: str | None = None
+    strongest_activity_area: MotionActivityAreaResponse | None = None
+    strongest_activity_area_id: str | None = None
+    strongest_activity_area_label: str | None = None
+    strongest_changed_ratio: float = 0.0
+    best_frame_sequence: int | None = None
+    best_frame_captured_at: datetime | None = None
+    best_media_asset_id: str | None = None
+    can_create_review_activity: bool = False
+    review_activity_available: bool = False
+    review_activity_created: bool = False
+    created_evidence: list[MotionEvidenceResponse] = Field(default_factory=list)
+    debug_cell_zones: list[MotionZoneInput] = Field(default_factory=list)
+    creates_event: bool = False
+    creates_visit: bool = False
+    creates_truth: bool = False
+    creates_export: bool = False
+    message: str
     warnings: list[str] = Field(default_factory=list)
     local_first_note: str
 

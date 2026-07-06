@@ -66,6 +66,14 @@ export type LocalCameraFrameCaptureStatus =
   | "camera_not_configured"
   | "capture_failed";
 export type LocalCameraFrameCaptureSource = "live_frame_cache" | "one_shot_ffmpeg";
+export type LiveMotionEvaluationStatus =
+  | "evaluated"
+  | "waiting_for_live_frames"
+  | "no_recent_frames"
+  | "not_enough_frames"
+  | "decode_failed"
+  | "activity_detected"
+  | "no_activity";
 
 export type ZoneType =
   | "feeder"
@@ -1276,6 +1284,59 @@ export interface MotionEvaluateSavedMediaResponse {
   strongest_zone_id?: string | null;
   strongest_changed_ratio: number;
   best_media_asset_id?: string | null;
+  warnings: string[];
+  local_first_note: string;
+}
+
+export interface LiveMotionEvaluateRequest {
+  save_best_frame?: boolean;
+  create_review_activity?: boolean;
+  pixel_delta_threshold?: number;
+  min_changed_ratio?: number;
+  min_triggered_frames?: number;
+  max_gap_frames?: number;
+  max_age_seconds?: number;
+  max_frames?: number;
+  notes?: string | null;
+}
+
+export interface LiveMotionFrameSummary {
+  sequence: number;
+  captured_at: string;
+  width: number;
+  height: number;
+}
+
+export interface LiveMotionEvaluateResponse {
+  stream_id: string;
+  source_id: string;
+  status: LiveMotionEvaluationStatus;
+  activity_detected: boolean;
+  frames_considered: number;
+  frames: LiveMotionFrameSummary[];
+  frame_scores: MotionFrameScoreResponse[];
+  candidates: MotionCandidateResponse[];
+  activity_areas: MotionActivityArea[];
+  region_source: "user_zones" | "auto_regions" | string;
+  uses_auto_regions: boolean;
+  strongest_zone_id?: string | null;
+  strongest_activity_area?: MotionActivityArea | null;
+  strongest_activity_area_id?: string | null;
+  strongest_activity_area_label?: string | null;
+  strongest_changed_ratio: number;
+  best_frame_sequence?: number | null;
+  best_frame_captured_at?: string | null;
+  best_media_asset_id?: string | null;
+  can_create_review_activity: boolean;
+  review_activity_available: boolean;
+  review_activity_created: boolean;
+  created_evidence: MotionEvidence[];
+  debug_cell_zones: MotionZoneInput[];
+  creates_event: boolean;
+  creates_visit: boolean;
+  creates_truth: boolean;
+  creates_export: boolean;
+  message: string;
   warnings: string[];
   local_first_note: string;
 }

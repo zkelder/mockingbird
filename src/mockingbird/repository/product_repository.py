@@ -3092,6 +3092,69 @@ class ProductRepository:
                 session.flush()
                 return _media_asset_from_model(asset_model)
 
+    def create_live_motion_frame_media_asset(
+        self,
+        *,
+        source_id: str,
+        stream_id: str,
+        content: bytes,
+        captured_at: datetime,
+        frame_sequence: int,
+        content_type: str = "image/jpeg",
+        playback_type: str | None = None,
+        note: str | None = None,
+    ) -> MediaAsset:
+        if not content:
+            raise ValueError("empty_file")
+
+        media_type = SUPPORTED_MEDIA_CONTENT_TYPES.get(content_type)
+        extension = EXTERNAL_URL_PREVIEW_EXTENSIONS.get(content_type)
+        if media_type != "image" or extension is None:
+            raise ValueError("unsupported_content_type")
+
+        with self.session_factory() as session:
+            with session.begin():
+                source_model = session.get(CameraSourceModel, source_id)
+                if source_model is None:
+                    raise ValueError("missing_source")
+
+                stream_model = session.get(StreamModel, stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+                if stream_model.source_id != source_id:
+                    raise ValueError("stream_source_mismatch")
+
+                media_id = self._next_id(session, MediaAssetModel, "media-asset")
+                original_filename = f"live-motion-best-frame-{media_id}{extension}"
+                filename = f"{media_id}-live-motion-best-frame{extension}"
+                filename, local_path = self._write_media_file(filename, content)
+                notes = self._live_motion_frame_media_notes(
+                    source_id=source_id,
+                    stream_id=stream_id,
+                    captured_at=captured_at,
+                    content_type=content_type,
+                    bytes_written=len(content),
+                    frame_sequence=frame_sequence,
+                    playback_type=playback_type,
+                    note=note,
+                )
+                asset_model = MediaAssetModel(
+                    id=media_id,
+                    source_id=source_id,
+                    stream_id=stream_id,
+                    filename=filename,
+                    content_type=content_type,
+                    media_type=media_type,
+                    local_path=str(local_path),
+                    original_filename=original_filename,
+                    file_size_bytes=len(content),
+                    created_at=captured_at,
+                    notes=notes,
+                )
+                session.add(asset_model)
+                session.flush()
+                return _media_asset_from_model(asset_model)
+
     def create_motion_evidence_from_saved_media(
         self,
         media_asset_id: str,
@@ -5695,6 +5758,36 @@ class ProductRepository:
         cleaned_camera_label = _clean_optional_text(camera_label)
         if cleaned_camera_label is not None:
             lines.append(f"camera={cleaned_camera_label}")
+        return "\n".join(lines)
+
+    def _live_motion_frame_media_notes(
+        self,
+        *,
+        source_id: str,
+        stream_id: str,
+        captured_at: datetime,
+        content_type: str,
+        bytes_written: int,
+        frame_sequence: int,
+        playback_type: str | None,
+        note: str | None,
+    ) -> str:
+        lines = [
+            "Saved best live motion frame from active stream.",
+            "Creates no Events, Visits, ReviewLabels, exports, or truth.",
+            f"source_id={source_id}",
+            f"stream_id={stream_id}",
+            f"captured_at={captured_at.isoformat()}",
+            f"content_type={content_type}",
+            f"bytes_written={bytes_written}",
+            f"frame_sequence={frame_sequence}",
+        ]
+        cleaned_playback_type = _clean_optional_text(playback_type)
+        if cleaned_playback_type is not None:
+            lines.append(f"playback_type={cleaned_playback_type}")
+        cleaned_note = _clean_optional_text(note)
+        if cleaned_note is not None:
+            lines.append(f"note={cleaned_note}")
         return "\n".join(lines)
 
     def _preview_folder_import_for_path(self, folder: Path) -> FolderImportPreview:

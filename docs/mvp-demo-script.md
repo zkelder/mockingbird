@@ -35,6 +35,9 @@ transcoding, or production provider infrastructure.
   and optional Windows `ffmpeg.exe` path.
 - Local camera Live view can save one explicit still frame as a local saved
   image without creating truth or exports.
+- MockingBird-served Live view can run page-started live monitoring that compares
+  recent live frames, saves the best activity frame as evidence, and offers an
+  explicit review handoff without creating truth or exports.
 - The `external_url` still-image preview/save/evidence path works.
 - Manual bounded Snapshot watch works for `external_url` while the page is open.
 - The `folder_import_future` preview/import/evidence path works.
@@ -58,7 +61,7 @@ transcoding, or production provider infrastructure.
 - Persistent RTSP transcoding or production stream infrastructure.
 - Pi camera/libcamera, cellular, or field-camera agent setup.
 - USB/browser camera capture.
-- Continuous monitoring.
+- Persistent/background continuous monitoring.
 - Background workers.
 - Folder watchers.
 - Video decoding.
@@ -219,6 +222,13 @@ Dataset Exports.
 - [ ] Confirm Windows DirectShow playback shows bridge playback when camera name
       and Windows `ffmpeg.exe` path are available, or a clear setup state when
       they are not.
+- [ ] With a MockingBird-served Live view open, click `Start monitoring`.
+- [ ] Confirm monitoring compares recent live frames from this stream.
+- [ ] Move in front of the camera or move an object in frame.
+- [ ] Confirm activity is detected, the best live frame is saved, and review
+      activity remains an explicit handoff.
+- [ ] Confirm Bird Log does not update until later review/correction.
+- [ ] Click `Stop monitoring` and confirm Live view can remain open.
 - [ ] From a local camera Live view, click `Capture frame`.
 - [ ] Confirm one saved image appears for the Stream and no ReviewLabel/export
       truth is created.
@@ -229,8 +239,8 @@ Dataset Exports.
 - [ ] Capture a second local camera frame and confirm `Compare captured frames`
       becomes available from the capture handoff.
 - [ ] Run the frame comparison from the capture handoff and confirm captured
-      JPEG frames decode for motion, while review activity, Bird Log, and
-      export still require explicit later actions.
+      JPEG frames decode as fallback saved evidence, while review activity,
+      Bird Log, and export still require explicit later actions.
 - [ ] Confirm Source health / Camera status is visible for the selected Stream.
 - [ ] Confirm Field test readiness appears and shows the next step for this
       Stream.

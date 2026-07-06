@@ -1073,6 +1073,10 @@ Current work:
   only, motion checks compare two or more saved frames, captured local camera
   JPEGs are motion-check compatible, and Bird Log still requires reviewed
   correction truth.
+- Live Stream Motion Monitor 1: active MockingBird-served Live view requests
+  keep a bounded rolling frame cache, Start monitoring compares recent live
+  frames, detected activity can save the strongest live frame as local evidence,
+  and review activity remains an explicit handoff before correction truth.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — local camera capture browser smoke validation
@@ -1098,6 +1102,10 @@ Validation:
 - Captured frame handoff preserves the truth boundary: Bird Log shows reviewed
   activity only, and motion/review/export require explicit user actions after
   capture.
+- Live Stream Motion Monitor compares recent cached live frames from the active
+  Live view; it starts no second camera process, adds no persistent scheduler,
+  saves best-frame evidence only on detected activity, and creates no
+  ReviewLabel, Bird Log, analytics/export truth, or model output automatically.
 - The bridge stores no media, creates no Events/Visits, ReviewLabels,
   DetectionProposals, MotionEvidence, dataset exports, analytics truth, workers,
   schedulers, captures table, or source adapter records.
