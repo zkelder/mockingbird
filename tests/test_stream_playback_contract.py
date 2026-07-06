@@ -178,6 +178,41 @@ def test_live_frame_cache_recent_frames_ignore_stale_frames() -> None:
     assert [frame.frame_bytes for frame in recent] == [b"\xff\xd8fresh-frame\xff\xd9"]
 
 
+def test_live_frame_cache_status_reports_recent_frame_diagnostics() -> None:
+    captured_at = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        b"\xff\xd8frame-1\xff\xd9",
+        captured_at=captured_at,
+    )
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        b"\xff\xd8frame-2\xff\xd9",
+        captured_at=captured_at + timedelta(seconds=2),
+    )
+    newest = live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        b"\xff\xd8frame-3\xff\xd9",
+        captured_at=captured_at + timedelta(seconds=4),
+    )
+
+    status = live_frame_cache.get_cache_status(
+        STREAM_ID,
+        max_age_seconds=3,
+        max_frames=3,
+        now=captured_at + timedelta(seconds=5),
+    )
+
+    assert status.stream_id == STREAM_ID
+    assert status.recent_frame_count == 2
+    assert status.newest_frame_age_ms == 1000
+    assert status.oldest_frame_age_ms == 5000
+    assert status.newest_frame_sequence == newest.sequence
+    assert status.buffer_capacity == 3
+    assert status.fresh_enough is True
+    assert status.last_frame_at == newest.captured_at
+
+
 async def product_counts(client: httpx.AsyncClient) -> dict[str, int]:
     responses = {
         "events": await client.get("/api/events"),
@@ -368,8 +403,14 @@ async def test_live_motion_evaluation_waits_for_live_frames(client: httpx.AsyncC
     assert response.status_code == 200
     result = response.json()
     assert result["status"] == "waiting_for_live_frames"
+    assert result["session_status"] == "waiting_for_frames"
     assert result["activity_detected"] is False
+    assert result["frames_available"] == 0
     assert result["frames_considered"] == 0
+    assert result["recent_frame_count"] == 0
+    assert result["fresh_enough"] is False
+    assert result["evaluated_at"]
+    assert result["last_evaluation_message"] == result["message"]
     assert result["best_media_asset_id"] is None
     assert result["creates_truth"] is False
     assert result["creates_export"] is False
@@ -383,8 +424,13 @@ async def test_live_motion_evaluation_requires_two_fresh_frames(client: httpx.As
     assert response.status_code == 200
     result = response.json()
     assert result["status"] == "not_enough_frames"
+    assert result["session_status"] == "waiting_for_frames"
     assert result["activity_detected"] is False
+    assert result["frames_available"] == 1
     assert result["frames_considered"] == 1
+    assert result["recent_frame_count"] == 1
+    assert result["newest_frame_sequence"] == 1
+    assert result["fresh_enough"] is False
 
 
 async def test_live_motion_evaluation_reports_no_recent_frames_for_stale_cache(
@@ -404,8 +450,38 @@ async def test_live_motion_evaluation_reports_no_recent_frames_for_stale_cache(
     assert response.status_code == 200
     result = response.json()
     assert result["status"] == "no_recent_frames"
+    assert result["session_status"] == "no_recent_frames"
     assert result["activity_detected"] is False
+    assert result["frames_available"] == 0
     assert result["frames_considered"] == 0
+    assert result["recent_frame_count"] == 0
+    assert result["newest_frame_age_ms"] is not None
+    assert result["newest_frame_age_ms"] >= 30000
+    assert result["last_frame_at"] is not None
+
+
+async def test_live_motion_evaluation_reports_decode_failed(
+    client: httpx.AsyncClient,
+) -> None:
+    captured_at = datetime.now(UTC)
+    live_frame_cache.store_latest_frame(STREAM_ID, b"not-an-image-1", captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        b"not-an-image-2",
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/live-motion/evaluate", json={})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "decode_failed"
+    assert result["session_status"] == "decode_failed"
+    assert result["activity_detected"] is False
+    assert result["frames_available"] == 2
+    assert result["frames_considered"] == 2
+    assert result["last_error"] == "Recent live frames could not be decoded for motion."
+    assert result["last_evaluation_message"] == result["last_error"]
 
 
 async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_only(
@@ -446,7 +522,12 @@ async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_on
     result = response.json()
     assert result["status"] == "activity_detected"
     assert result["activity_detected"] is True
+    assert result["evaluated_at"]
+    assert result["frames_available"] == 2
     assert result["frames_considered"] == 2
+    assert result["recent_frame_count"] == 2
+    assert result["newest_frame_sequence"] == 2
+    assert result["fresh_enough"] is True
     assert result["best_frame_sequence"] == 2
     assert result["best_media_asset_id"].startswith("media-asset-")
     assert result["can_create_review_activity"] is True
@@ -461,6 +542,8 @@ async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_on
     assert result["strongest_zone_name"] == "Feeder"
     assert result["strongest_zone_type"] == "feeder"
     assert result["activity_summary"] == "Activity detected in Feeder."
+    assert result["session_status"] == "activity_detected"
+    assert result["last_evaluation_message"] == result["message"]
     assert result["suppressed_zone_summaries"] == []
 
     media_response = await client.get(f"/api/media/{result['best_media_asset_id']}")
@@ -521,6 +604,7 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
     result = response.json()
     assert result["status"] == "activity_detected"
     assert result["activity_detected"] is True
+    assert result["session_status"] == "activity_detected"
     assert result["review_activity_created"] is True
     assert result["review_activity_reused"] is False
     assert result["review_activity_available"] is False
@@ -729,6 +813,10 @@ async def test_live_motion_review_handoff_reuses_existing_review_candidate(
     duplicate = duplicate_response.json()
     assert duplicate["review_activity_created"] is False
     assert duplicate["review_activity_reused"] is True
+    assert duplicate["session_status"] == "cooldown"
+    assert duplicate["existing_review_activity_reference"] == first["motion_evidence_id"]
+    assert duplicate["cooldown_remaining_seconds"] is not None
+    assert duplicate["best_media_asset_id"] is None
     assert duplicate["motion_evidence_id"] == first["motion_evidence_id"]
     assert duplicate["event_id"] == first["event_id"]
     assert duplicate["visit_id"] == first["visit_id"]
@@ -736,6 +824,7 @@ async def test_live_motion_review_handoff_reuses_existing_review_candidate(
 
     after_duplicate = await product_counts(client)
     assert after_duplicate["motion_evidence"] == after_first["motion_evidence"]
+    assert after_duplicate["media_assets"] == after_first["media_assets"]
     assert after_duplicate["events"] == after_first["events"]
     assert after_duplicate["visits"] == after_first["visits"]
     assert after_duplicate["review_labels"] == after_first["review_labels"]

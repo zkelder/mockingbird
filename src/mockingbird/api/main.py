@@ -1047,6 +1047,58 @@ def _motion_activity_summary(
     return "No activity detected."
 
 
+def _live_frame_cache_response_fields(
+    status: live_frame_cache.LiveFrameCacheStatus,
+) -> dict[str, int | bool | datetime | None]:
+    return {
+        "frames_available": status.recent_frame_count,
+        "recent_frame_count": status.recent_frame_count,
+        "newest_frame_age_ms": status.newest_frame_age_ms,
+        "oldest_frame_age_ms": status.oldest_frame_age_ms,
+        "newest_frame_sequence": status.newest_frame_sequence,
+        "buffer_capacity": status.buffer_capacity,
+        "fresh_enough": status.fresh_enough,
+        "last_frame_at": status.last_frame_at,
+    }
+
+
+def _live_motion_session_status(
+    *,
+    activity_detected: bool,
+    duplicate_status: str | None,
+    waiting_status: str | None = None,
+) -> str:
+    if waiting_status:
+        return waiting_status
+    if duplicate_status in {"ongoing_activity", "cooldown_suppressed"}:
+        return "cooldown"
+    if activity_detected:
+        return "activity_detected"
+    return "watching"
+
+
+def _live_motion_cooldown_remaining_seconds(
+    session_recommendation,
+) -> int | None:
+    if session_recommendation.session_status not in {
+        "ongoing_activity",
+        "cooldown_suppressed",
+    }:
+        return None
+    age = session_recommendation.debug.get("existing_activity_age_seconds")
+    if not isinstance(age, (int, float)):
+        return None
+    if session_recommendation.session_status == "ongoing_activity":
+        remaining = session_recommendation.quiet_period_seconds - float(age)
+    else:
+        remaining = (
+            session_recommendation.quiet_period_seconds
+            + session_recommendation.cooldown_seconds
+            - float(age)
+        )
+    return max(0, int(remaining + 0.999))
+
+
 def _auto_motion_cells(
     frame: list[list[int | float]],
     blocked_zones: list[Zone],
@@ -1963,14 +2015,24 @@ async def evaluate_live_stream_motion(
     if stream is None:
         raise _not_found("Stream", stream_id)
 
+    evaluated_at = datetime.now(UTC)
+    cache_status = live_frame_cache.get_cache_status(
+        stream.id,
+        max_age_seconds=request.max_age_seconds,
+        max_frames=request.max_frames,
+        now=evaluated_at,
+    )
     cached_frames = live_frame_cache.get_recent_frames(
         stream.id,
         max_age_seconds=request.max_age_seconds,
         max_frames=request.max_frames,
+        now=evaluated_at,
     )
     common = {
         "stream_id": stream.id,
         "source_id": stream.source_id,
+        "evaluated_at": evaluated_at,
+        **_live_frame_cache_response_fields(cache_status),
         "creates_event": False,
         "creates_visit": False,
         "creates_truth": False,
@@ -1982,24 +2044,30 @@ async def evaluate_live_stream_motion(
     }
     if not cached_frames:
         has_stale_frames = stream.id in set(live_frame_cache.iter_cached_stream_ids())
+        message = (
+            "No recent live frames are available. Keep Live view open and retry."
+            if has_stale_frames
+            else "Open Live view and wait for live frames before monitoring."
+        )
         return LiveMotionEvaluateResponse(
             **common,
             status="no_recent_frames" if has_stale_frames else "waiting_for_live_frames",
+            session_status="no_recent_frames" if has_stale_frames else "waiting_for_frames",
             activity_detected=False,
             frames_considered=0,
-            message=(
-                "No recent live frames are available. Keep Live view open and retry."
-                if has_stale_frames
-                else "Open Live view and wait for live frames before monitoring."
-            ),
+            message=message,
+            last_evaluation_message=message,
         )
     if len(cached_frames) < 2:
+        message = "Waiting for at least two recent live frames from this stream."
         return LiveMotionEvaluateResponse(
             **common,
             status="not_enough_frames",
+            session_status="waiting_for_frames",
             activity_detected=False,
             frames_considered=len(cached_frames),
-            message="Waiting for at least two recent live frames from this stream.",
+            message=message,
+            last_evaluation_message=message,
         )
 
     decoded_frames: list[SavedMediaFrame] = []
@@ -2020,12 +2088,16 @@ async def evaluate_live_stream_motion(
                 )
             )
     except SavedMediaFrameDecodeError:
+        message = "Recent live frames could not be decoded for motion."
         return LiveMotionEvaluateResponse(
             **common,
             status="decode_failed",
+            session_status="decode_failed",
             activity_detected=False,
             frames_considered=len(cached_frames),
-            message="Recent live frames could not be decoded for motion.",
+            message=message,
+            last_evaluation_message=message,
+            last_error=message,
             warnings=[
                 "Live monitoring needs decodable JPEG/PNG/WebP frames from the active stream."
             ],
@@ -2165,8 +2237,35 @@ async def evaluate_live_stream_motion(
         if best_candidate
         else None
     )
+    session_region_kind = "auto_area" if uses_auto_regions else "zone"
+    session_region_id = _activity_session_region_id(strongest_activity_area)
+    existing_session_references = (
+        _motion_evidence_session_references(
+            repository.list_motion_evidence(zone_id=best_candidate.zone_id)
+        )
+        if best_candidate and not uses_auto_regions
+        else []
+    )
+    has_reviewable_live_activity = bool(best_candidate) and not uses_auto_regions
+    session_recommendation = recommend_activity_session(
+        source_id=stream.source_id,
+        stream_id=stream.id,
+        region_kind=session_region_kind,
+        region_id=session_region_id,
+        activity_at=best_live_frame.captured_at if best_live_frame else None,
+        activity_detected=bool(motion_candidates),
+        review_activity_available=has_reviewable_live_activity,
+        best_snapshot_media_asset_id=None,
+        existing_activities=existing_session_references,
+    )
     best_media_asset_id: str | None = None
-    if best_candidate and best_live_frame and (request.save_best_frame or request.create_review_activity):
+    should_save_best_frame = (
+        bool(best_candidate)
+        and best_live_frame is not None
+        and (request.save_best_frame or request.create_review_activity)
+        and session_recommendation.session_status == "new_activity"
+    )
+    if should_save_best_frame:
         configuration = repository.get_stream_live_playback_config(stream.id)
         try:
             media_asset = repository.create_live_motion_frame_media_asset(
@@ -2182,31 +2281,10 @@ async def evaluate_live_stream_motion(
         except ValueError as error:
             raise _media_import_error(error) from error
         best_media_asset_id = media_asset.id
-
-    session_region_kind = "auto_area" if uses_auto_regions else "zone"
-    session_region_id = _activity_session_region_id(strongest_activity_area)
-    existing_session_references = (
-        _motion_evidence_session_references(
-            repository.list_motion_evidence(zone_id=best_candidate.zone_id)
-        )
-        if best_candidate and not uses_auto_regions
-        else []
-    )
     can_create_review_activity = (
-        bool(best_candidate)
-        and not uses_auto_regions
+        has_reviewable_live_activity
         and best_media_asset_id is not None
-    )
-    session_recommendation = recommend_activity_session(
-        source_id=stream.source_id,
-        stream_id=stream.id,
-        region_kind=session_region_kind,
-        region_id=session_region_id,
-        activity_at=best_live_frame.captured_at if best_live_frame else None,
-        activity_detected=bool(motion_candidates),
-        review_activity_available=can_create_review_activity,
-        best_snapshot_media_asset_id=best_media_asset_id,
-        existing_activities=existing_session_references,
+        and session_recommendation.session_status == "new_activity"
     )
     review_activity_available = (
         can_create_review_activity and session_recommendation.should_create_review_activity
@@ -2338,6 +2416,14 @@ async def evaluate_live_stream_motion(
     )
     activity_detected = bool(motion_candidates)
     status = "activity_detected" if activity_detected else "no_activity"
+    live_session_status = _live_motion_session_status(
+        activity_detected=activity_detected,
+        duplicate_status=session_recommendation.session_status,
+    )
+    cooldown_remaining_seconds = _live_motion_cooldown_remaining_seconds(
+        session_recommendation
+    )
+    existing_review_activity_reference = session_recommendation.existing_activity_reference
     message = (
         f"{activity_summary} Best frame was saved for explicit review."
         if activity_detected and best_media_asset_id
@@ -2354,6 +2440,12 @@ async def evaluate_live_stream_motion(
         )
     elif review_activity_reused and review_queue_item_id:
         message = "Review activity is already ready in Review Queue."
+    elif live_session_status == "cooldown":
+        message = (
+            "Activity already captured — waiting for quiet period."
+            if session_recommendation.session_status == "ongoing_activity"
+            else "Cooldown active for this activity area."
+        )
     response_common = {
         **common,
         "creates_event": review_event_id is not None and review_activity_created,
@@ -2392,6 +2484,10 @@ async def evaluate_live_stream_motion(
         review_activity_available=review_activity_available,
         review_activity_created=review_activity_created,
         review_activity_reused=review_activity_reused,
+        existing_review_activity_reference=existing_review_activity_reference,
+        session_status=live_session_status,
+        cooldown_remaining_seconds=cooldown_remaining_seconds,
+        last_evaluation_message=message,
         motion_evidence_id=review_motion_evidence.id if review_motion_evidence else None,
         event_id=review_event_id,
         visit_id=review_visit_id,

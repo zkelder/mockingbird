@@ -26,6 +26,18 @@ class LiveFrame:
         return max(0, int((reference - self.captured_at).total_seconds() * 1000))
 
 
+@dataclass(frozen=True)
+class LiveFrameCacheStatus:
+    stream_id: str
+    recent_frame_count: int
+    newest_frame_age_ms: int | None
+    oldest_frame_age_ms: int | None
+    newest_frame_sequence: int | None
+    buffer_capacity: int
+    fresh_enough: bool
+    last_frame_at: datetime | None
+
+
 _RECENT_FRAMES: dict[str, deque[LiveFrame]] = {}
 _NEXT_SEQUENCE: dict[str, int] = {}
 
@@ -86,6 +98,47 @@ def get_recent_frames(
     return fresh_frames[-max_frames:]
 
 
+def get_cache_status(
+    stream_id: str,
+    *,
+    max_age_seconds: float = DEFAULT_RECENT_MAX_AGE_SECONDS,
+    max_frames: int = DEFAULT_MAX_FRAMES,
+    now: datetime | None = None,
+) -> LiveFrameCacheStatus:
+    frames = _RECENT_FRAMES.get(stream_id)
+    reference = now or datetime.now(UTC)
+    if not frames:
+        return LiveFrameCacheStatus(
+            stream_id=stream_id,
+            recent_frame_count=0,
+            newest_frame_age_ms=None,
+            oldest_frame_age_ms=None,
+            newest_frame_sequence=None,
+            buffer_capacity=max_frames,
+            fresh_enough=False,
+            last_frame_at=None,
+        )
+
+    cached_frames = list(frames)[-max_frames:]
+    fresh_frames = [
+        frame
+        for frame in cached_frames
+        if (reference - frame.captured_at).total_seconds() <= max_age_seconds
+    ]
+    newest_frame = cached_frames[-1]
+    oldest_frame = cached_frames[0]
+    return LiveFrameCacheStatus(
+        stream_id=stream_id,
+        recent_frame_count=len(fresh_frames),
+        newest_frame_age_ms=newest_frame.age_ms(reference),
+        oldest_frame_age_ms=oldest_frame.age_ms(reference),
+        newest_frame_sequence=newest_frame.sequence,
+        buffer_capacity=max_frames,
+        fresh_enough=len(fresh_frames) >= 2,
+        last_frame_at=newest_frame.captured_at,
+    )
+
+
 def iter_cached_stream_ids() -> Iterable[str]:
     return _RECENT_FRAMES.keys()
 
@@ -105,8 +158,10 @@ __all__ = [
     "DEFAULT_MAX_FRAMES",
     "DEFAULT_RECENT_MAX_AGE_SECONDS",
     "LiveFrame",
+    "LiveFrameCacheStatus",
     "clear_all_frames",
     "clear_latest_frame",
+    "get_cache_status",
     "get_recent_frames",
     "get_latest_frame",
     "iter_cached_stream_ids",

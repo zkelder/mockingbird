@@ -1368,8 +1368,17 @@ class LiveMotionEvaluateResponse(BaseModel):
     stream_id: str
     source_id: str
     status: LiveMotionEvaluationStatus
+    evaluated_at: datetime
     activity_detected: bool
+    frames_available: int = Field(ge=0)
     frames_considered: int = Field(ge=0)
+    recent_frame_count: int = Field(ge=0)
+    newest_frame_age_ms: int | None = None
+    oldest_frame_age_ms: int | None = None
+    newest_frame_sequence: int | None = None
+    buffer_capacity: int = Field(default=20, ge=1)
+    fresh_enough: bool = False
+    last_frame_at: datetime | None = None
     frames: list[LiveMotionFrameSummary] = Field(default_factory=list)
     frame_scores: list[MotionFrameScoreResponse] = Field(default_factory=list)
     candidates: list[MotionCandidateResponse] = Field(default_factory=list)
@@ -1395,6 +1404,11 @@ class LiveMotionEvaluateResponse(BaseModel):
     review_activity_available: bool = False
     review_activity_created: bool = False
     review_activity_reused: bool = False
+    existing_review_activity_reference: str | None = None
+    session_status: str = "watching"
+    cooldown_remaining_seconds: int | None = None
+    last_evaluation_message: str | None = None
+    last_error: str | None = None
     motion_evidence_id: str | None = None
     event_id: str | None = None
     visit_id: str | None = None

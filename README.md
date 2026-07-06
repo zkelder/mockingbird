@@ -132,6 +132,9 @@ exports still begin only after Review Queue correction.
 Live motion results name the strongest user-authored Zone when one triggered,
 report ignored/privacy Zone suppression, and keep raw motion out of Bird Log
 until explicit review/correction.
+Live monitoring also reports recent-frame health, last evaluation status, and
+quiet/cooldown state so repeated activity does not keep saving frames or
+creating duplicate review candidates.
 When the user clicks `Create review activity`, live motion creates an uncertain
 needs-review Event/Visit candidate from MotionEvidence with the saved best frame
 attached. The Review Queue is where that low-confidence activity is confirmed or

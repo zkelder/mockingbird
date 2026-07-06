@@ -1089,6 +1089,9 @@ Current work:
 - Zone-Aware Live Monitor Polish 1: live motion responses and Stream Detail
   copy name the strongest user-authored Zone, report ignored/privacy
   suppression, and keep Review Queue and Bird Log correction-gated.
+- Live Monitor Reliability 1: live monitoring reports recent-frame diagnostics,
+  last evaluation status, and quiet/cooldown duplicate suppression while
+  remaining user-started, in-memory, and review-truth gated.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — live zone overlay browser smoke validation and

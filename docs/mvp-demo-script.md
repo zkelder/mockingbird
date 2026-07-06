@@ -230,7 +230,8 @@ Dataset Exports.
 - [ ] Refresh Stream Detail and confirm the Zone remains aligned to the live
       surface.
 - [ ] With a MockingBird-served Live view open, click `Start monitoring`.
-- [ ] Confirm monitoring compares recent live frames from this stream.
+- [ ] Confirm monitoring compares recent live frames from this stream and shows
+      recent frame count plus last checked time.
 - [ ] Move in front of the camera or move an object in frame.
 - [ ] Confirm activity is detected, the best live frame is saved, and review
       activity remains an explicit handoff.
@@ -239,6 +240,9 @@ Dataset Exports.
       that Zone.
 - [ ] If motion occurs only in an ignore/privacy Zone, confirm the UI reports
       ignored motion and no review activity or Bird Log entry is created.
+- [ ] Keep moving or click `Create review activity` twice and confirm duplicate
+      activity shows a quiet/cooldown state instead of creating duplicate review
+      candidates.
 - [ ] Click `Create review activity` and confirm Review Queue shows an
       uncertain needs-review activity with the saved best frame and Zone name.
 - [ ] Confirm Bird Log does not update until later review/correction.

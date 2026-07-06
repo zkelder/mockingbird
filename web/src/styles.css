@@ -2450,6 +2450,52 @@ a.secondary-action {
   background: #2d1916;
 }
 
+.stream-live-monitor-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stream-live-monitor-facts span {
+  display: inline-flex;
+  gap: 5px;
+  border: 1px solid #31483b;
+  border-radius: 8px;
+  padding: 5px 7px;
+  background: #102019;
+}
+
+.stream-live-state-card.is-error .stream-live-monitor-facts span {
+  border-color: #6c3c35;
+  background: #211310;
+}
+
+.stream-live-sensitivity {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid #466d57;
+  border-radius: 8px;
+  background: #102019;
+}
+
+.stream-live-sensitivity button {
+  border: 0;
+  border-right: 1px solid #466d57;
+  border-radius: 0;
+  padding: 8px 10px;
+  background: transparent;
+  color: #dcefe2;
+}
+
+.stream-live-sensitivity button:last-child {
+  border-right: 0;
+}
+
+.stream-live-sensitivity button.selected {
+  background: #dcefe2;
+  color: #102019;
+}
+
 .stream-live-secondary-panel {
   border-color: #2b4437;
   background: #111d18;

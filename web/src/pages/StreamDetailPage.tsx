@@ -74,10 +74,22 @@ type LiveMonitorState =
   | "idle"
   | "waiting"
   | "watching"
+  | "cooldown"
   | "activity"
   | "no_activity"
   | "failed"
   | "stopped";
+type LiveMonitorSensitivity = "low" | "normal" | "high";
+
+const liveMonitorSensitivitySettings: Record<
+  LiveMonitorSensitivity,
+  { label: string; min_changed_ratio: number; pixel_delta_threshold: number }
+> = {
+  low: { label: "Low", min_changed_ratio: 0.04, pixel_delta_threshold: 35 },
+  normal: { label: "Normal", min_changed_ratio: 0.02, pixel_delta_threshold: 25 },
+  high: { label: "High", min_changed_ratio: 0.01, pixel_delta_threshold: 15 },
+};
+const liveMonitorSensitivityOptions: LiveMonitorSensitivity[] = ["low", "normal", "high"];
 
 function playbackTone(status: StreamPlaybackStatus["status"]): "good" | "review" | "quiet" {
   if (status === "demo" || status === "live_ready") {
@@ -220,6 +232,16 @@ function suppressedZoneMessage(
   } other ignore/privacy zone${summaries.length === 2 ? "" : "s"}.`;
 }
 
+function formatAgeMs(ageMs: number | null | undefined): string {
+  if (ageMs == null) {
+    return "n/a";
+  }
+  if (ageMs < 1000) {
+    return `${ageMs} ms`;
+  }
+  return `${Math.round(ageMs / 1000)}s ago`;
+}
+
 function pointFromPointer(event: ReactPointerEvent<HTMLElement>): Point {
   const rect = event.currentTarget.getBoundingClientRect();
   const x = (event.clientX - rect.left) / rect.width;
@@ -352,6 +374,8 @@ export function StreamDetailPage({
   const [isLiveMonitoring, setIsLiveMonitoring] = useState(false);
   const [isEvaluatingLiveMotion, setIsEvaluatingLiveMotion] = useState(false);
   const [isCreatingLiveReviewActivity, setIsCreatingLiveReviewActivity] = useState(false);
+  const [liveMonitorSensitivity, setLiveMonitorSensitivity] =
+    useState<LiveMonitorSensitivity>("normal");
   const liveMonitorIntervalRef = useRef<number | null>(null);
   const liveMotionInFlightRef = useRef(false);
 
@@ -557,6 +581,12 @@ export function StreamDetailPage({
   }
 
   function liveMonitorStateFor(result: LiveMotionEvaluateResponse): LiveMonitorState {
+    if (result.status === "decode_failed" || result.session_status === "error") {
+      return "failed";
+    }
+    if (result.session_status === "cooldown") {
+      return "cooldown";
+    }
     if (result.activity_detected) {
       return "activity";
     }
@@ -588,9 +618,12 @@ export function StreamDetailPage({
       setIsEvaluatingLiveMotion(true);
     }
     try {
+      const sensitivitySettings = liveMonitorSensitivitySettings[liveMonitorSensitivity];
       const result = await apiClient.evaluateLiveMotion(detail.stream.id, {
         save_best_frame: true,
         create_review_activity: createReviewActivity,
+        min_changed_ratio: sensitivitySettings.min_changed_ratio,
+        pixel_delta_threshold: sensitivitySettings.pixel_delta_threshold,
         min_triggered_frames: 1,
         notes: createReviewActivity
           ? "User created review activity from live stream motion monitoring."
@@ -1016,11 +1049,27 @@ export function StreamDetailPage({
   const liveBestFrameTime = liveMotionResult?.best_frame_captured_at
     ? formatDateTime(liveMotionResult.best_frame_captured_at)
     : null;
+  const liveLastChecked = liveMotionResult?.evaluated_at
+    ? formatDateTime(liveMotionResult.evaluated_at)
+    : null;
+  const liveLastActivity = liveMotionResult?.activity_detected
+    ? `${liveBestFrameTime ?? liveLastChecked ?? "Recent check"} / ${liveActivityAreaLabel}`
+    : null;
+  const liveCooldownLabel =
+    liveMotionResult?.session_status === "cooldown"
+      ? liveMotionResult.cooldown_remaining_seconds != null
+        ? `${liveMotionResult.cooldown_remaining_seconds}s remaining`
+        : "waiting for quiet period"
+      : null;
+  const liveLastError = liveMotionResult?.last_error ?? liveMotionError ?? null;
+  const showLiveMonitorFacts = Boolean(isLiveMonitoring || liveMotionResult);
   const liveWorkflowState =
-    liveViewError || liveMotionError
+    liveViewError || liveMotionError || liveMotionResult?.last_error
       ? "error"
       : liveReviewActivityCreated
         ? "review_created"
+        : liveMotionResult?.session_status === "cooldown"
+          ? "cooldown"
         : liveActivityDetected
           ? "activity"
           : liveSuppressedZones.length > 0
@@ -1034,9 +1083,11 @@ export function StreamDetailPage({
                 : "ready";
   const liveWorkflowMessage =
     liveWorkflowState === "error"
-      ? liveViewError ?? liveMotionError ?? "Live camera needs attention."
+      ? liveViewError ?? liveMotionError ?? liveMotionResult?.last_error ?? "Live camera needs attention."
       : liveWorkflowState === "review_created"
         ? "Review activity created. Open Review to confirm/correct."
+        : liveWorkflowState === "cooldown"
+          ? liveMotionResult?.last_evaluation_message ?? "Cooldown active."
         : liveWorkflowState === "activity"
           ? liveMotionResult?.activity_summary ?? "Activity detected."
           : liveWorkflowState === "ignored"
@@ -1177,6 +1228,21 @@ export function StreamDetailPage({
                   </button>
                 </>
               )}
+              {liveViewOpen ? (
+                <div className="stream-live-sensitivity" aria-label="Monitoring sensitivity">
+                  {liveMonitorSensitivityOptions.map((option) => (
+                    <button
+                      className={liveMonitorSensitivity === option ? "selected" : ""}
+                      disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                      key={option}
+                      onClick={() => setLiveMonitorSensitivity(option)}
+                      type="button"
+                    >
+                      {liveMonitorSensitivitySettings[option].label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <button
                 className={drawMode ? "primary-action" : "secondary-action"}
                 disabled={
@@ -1346,6 +1412,39 @@ export function StreamDetailPage({
                   ? "Zones are drawn over this live stream and used by monitoring."
                   : "Zones are drawn over this live stream. Live monitoring is available when MockingBird serves the stream through a local bridge."}
               </span>
+            ) : null}
+            {showLiveMonitorFacts ? (
+              <div className="stream-live-monitor-facts">
+                <span>
+                  <strong>Recent frames</strong>{" "}
+                  {liveMotionResult
+                    ? `${liveMotionResult.recent_frame_count}/${liveMotionResult.buffer_capacity}`
+                    : "waiting"}
+                </span>
+                <span>
+                  <strong>Newest frame</strong>{" "}
+                  {formatAgeMs(liveMotionResult?.newest_frame_age_ms)}
+                </span>
+                <span>
+                  <strong>Last checked</strong> {liveLastChecked ?? "not yet"}
+                </span>
+                <span>
+                  <strong>Last activity</strong> {liveLastActivity ?? "none yet"}
+                </span>
+                <span>
+                  <strong>Strongest zone</strong> {liveStrongestZoneName ?? "none yet"}
+                </span>
+                {liveCooldownLabel ? (
+                  <span>
+                    <strong>Cooldown</strong> {liveCooldownLabel}
+                  </span>
+                ) : null}
+                {liveLastError ? (
+                  <span>
+                    <strong>Last error</strong> {liveLastError}
+                  </span>
+                ) : null}
+              </div>
             ) : null}
           </div>
 
