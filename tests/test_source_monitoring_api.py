@@ -458,6 +458,9 @@ async def test_monitor_status_reports_review_activity_available_for_user_zone_ac
     assert tick_state.last_activity_detected is True
     assert status["last_activity_detected"] is True
     assert status["last_activity_area"]["zone_id"] == "zone-feeder"
+    assert status["last_activity_area"]["zone_name"] == "Feeder"
+    assert status["last_activity_area"]["zone_type"] == "feeder"
+    assert status["last_activity_area"]["activity_summary"] == "Activity detected in Feeder."
     assert status["review_activity_available"] is True
     assert status["review_activity_created"] is False
     assert status["review_activity_unavailable_reason"] is None
@@ -465,7 +468,7 @@ async def test_monitor_status_reports_review_activity_available_for_user_zone_ac
     assert len(status["last_motion_media_asset_ids"]) == 3
     assert status["best_snapshot_media_asset_id"] == status["last_motion_media_asset_ids"][-1]
     assert status["crop_plan"]["source_media_asset_id"] == status["best_snapshot_media_asset_id"]
-    assert status["message"] == "Activity detected. Create review activity when ready."
+    assert status["message"] == "Activity detected in Feeder. Create review activity when ready."
 
 
 async def test_monitor_review_activity_create_is_explicit_pending_evidence_only(

@@ -1208,6 +1208,15 @@ export interface MotionActivityArea {
   cell_ids: string[];
 }
 
+export interface MotionSuppressedZoneSummary {
+  zone_id: string;
+  zone_name: string;
+  zone_type: ZoneType;
+  reason: string;
+  triggered_frame_count: number;
+  peak_changed_ratio: number;
+}
+
 export interface MotionCropBoxNormalized {
   left: number;
   top: number;
@@ -1257,9 +1266,13 @@ export interface MotionEvaluateSavedMediaResponse {
   activity_areas: MotionActivityArea[];
   region_source: "user_zones" | "auto_regions" | string;
   uses_auto_regions: boolean;
+  strongest_zone_name?: string | null;
+  strongest_zone_type?: ZoneType | null;
   strongest_activity_area_id?: string | null;
   strongest_activity_area_label?: string | null;
+  suppressed_zone_summaries: MotionSuppressedZoneSummary[];
   suppressed_auto_region_count: number;
+  activity_summary?: string | null;
   can_create_review_activity: boolean;
   review_activity_created: boolean;
   creation_skipped_reason?: string | null;
@@ -1320,9 +1333,13 @@ export interface LiveMotionEvaluateResponse {
   region_source: "user_zones" | "auto_regions" | string;
   uses_auto_regions: boolean;
   strongest_zone_id?: string | null;
+  strongest_zone_name?: string | null;
+  strongest_zone_type?: ZoneType | null;
   strongest_activity_area?: MotionActivityArea | null;
   strongest_activity_area_id?: string | null;
   strongest_activity_area_label?: string | null;
+  suppressed_zone_summaries: MotionSuppressedZoneSummary[];
+  activity_summary?: string | null;
   strongest_changed_ratio: number;
   best_frame_sequence?: number | null;
   best_frame_captured_at?: string | null;
@@ -1595,6 +1612,8 @@ export interface ReviewQueueItem {
   event_id?: string | null;
   visit_id?: string | null;
   primary_zone_id?: string | null;
+  primary_zone_name?: string | null;
+  primary_zone_type?: ZoneType | null;
   suggested_label?: string | null;
   media_asset?: MediaAsset | null;
   review_status: ReviewStatus;

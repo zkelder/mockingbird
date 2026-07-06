@@ -445,6 +445,8 @@ def test_review_queue_includes_bird_visit_needing_review() -> None:
     assert bird_item["stream_id"] == STREAM_ID
     assert bird_item["event_id"] == BIRD_EVENT_ID
     assert bird_item["primary_zone_id"] == FEEDER_ZONE_ID
+    assert bird_item["primary_zone_name"] == "Feeder"
+    assert bird_item["primary_zone_type"] == "feeder"
     assert bird_item["suggested_label"] == "northern_cardinal"
     assert bird_item["review_status"] == "needs_review"
     assert "Confirm or correct" in bird_item["reason"]

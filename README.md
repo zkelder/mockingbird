@@ -129,6 +129,9 @@ Stream Detail can now draw and edit user-authored Zones directly over the real
 live stream surface. Monitoring uses those same active feeder, birdbath, ground,
 perch, yard, driveway, privacy, and ignore Zones when available; Bird Log and
 exports still begin only after Review Queue correction.
+Live motion results name the strongest user-authored Zone when one triggered,
+report ignored/privacy Zone suppression, and keep raw motion out of Bird Log
+until explicit review/correction.
 When the user clicks `Create review activity`, live motion creates an uncertain
 needs-review Event/Visit candidate from MotionEvidence with the saved best frame
 attached. The Review Queue is where that low-confidence activity is confirmed or

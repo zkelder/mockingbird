@@ -38,6 +38,7 @@ interface BirdLogEntry {
   sourceName: string;
   streamName: string;
   zoneName?: string | null;
+  zoneType?: string | null;
   mediaAsset?: MediaAsset | null;
   targetType: BirdLogTargetType;
   targetId: string;
@@ -116,6 +117,7 @@ function reviewedEntryFromVisit(
     sourceName: streamSourceName(detail.stream.id, [detail.stream], sources, detail.media_asset),
     streamName: detail.stream.name,
     zoneName: detail.primary_zone?.name ?? null,
+    zoneType: detail.primary_zone?.zone_type ?? null,
     mediaAsset: detail.media_asset,
     targetType: "visit",
     targetId: detail.visit.id,
@@ -137,6 +139,7 @@ function reviewedEntryFromEvent(
     sourceName: streamSourceName(detail.stream.id, [detail.stream], sources, detail.media_asset),
     streamName: detail.stream.name,
     zoneName: detail.primary_zone?.name ?? null,
+    zoneType: detail.primary_zone?.zone_type ?? null,
     mediaAsset: detail.media_asset,
     targetType: "event",
     targetId: detail.event.id,
@@ -193,6 +196,7 @@ function entrySearchText(entry: BirdLogEntry): string {
     entry.sourceName,
     entry.streamName,
     entry.zoneName ?? "",
+    entry.zoneType ?? "",
     entry.mediaAsset?.original_filename ?? "",
   ]
     .join(" ")
@@ -499,7 +503,13 @@ export function BirdLogPage({
                           </div>
                           <div>
                             <span>Zone</span>
-                            <strong>{entry.zoneName ?? "No zone"}</strong>
+                            <strong>
+                              {entry.zoneName
+                                ? `${entry.zoneName}${
+                                    entry.zoneType ? ` (${formatLabel(entry.zoneType)})` : ""
+                                  }`
+                                : "No zone"}
+                            </strong>
                           </div>
                         </div>
                         <div className="bird-log-actions">

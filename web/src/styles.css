@@ -2497,6 +2497,13 @@ a.secondary-action {
   margin: 0;
 }
 
+.stream-live-activity-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .stream-live-activity-facts {
   display: flex;
   flex-wrap: wrap;
@@ -2510,6 +2517,24 @@ a.secondary-action {
   border-radius: 8px;
   padding: 6px 8px;
   background: #102019;
+}
+
+.stream-live-suppressed-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  border: 1px dashed #795548;
+  border-radius: 8px;
+  padding: 8px;
+  background: #241714;
+}
+
+.stream-live-suppressed-list span {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: rgb(184 98 82 / 0.22);
 }
 
 .stream-live-actions {

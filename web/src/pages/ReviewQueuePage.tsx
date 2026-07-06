@@ -120,6 +120,15 @@ function reviewQueueTargetId(item: ReviewQueueItem): string {
   return item.visit_id ?? item.event_id ?? item.id.replace(/^review-queue-/, "");
 }
 
+function reviewItemZoneLabel(item: ReviewQueueItem): string {
+  if (item.primary_zone_name) {
+    return item.primary_zone_type
+      ? `${item.primary_zone_name} (${formatLabel(item.primary_zone_type)})`
+      : item.primary_zone_name;
+  }
+  return item.primary_zone_id ?? "No zone";
+}
+
 function isBulkCorrectionEligible(item: ReviewQueueItem): boolean {
   return item.review_status === "needs_review";
 }
@@ -150,6 +159,8 @@ function reviewQueueSearchText(item: ReviewQueueItem, taxonomyLabels: TaxonomyLa
     item.event_id ?? "",
     item.visit_id ?? "",
     item.primary_zone_id ?? "",
+    item.primary_zone_name ?? "",
+    item.primary_zone_type ?? "",
     suggestedLabel,
     displayTaxonomyLabel(suggestedLabel || "unknown", taxonomyLabels),
     item.reason,
@@ -1443,6 +1454,7 @@ export function ReviewQueuePage({
           const latestItemCorrection = itemReviewLabels[0] ?? null;
           const previousItemCorrections = itemReviewLabels.slice(1);
           const itemEvidenceProposals = reviewEvidenceProposals(item, detectionProposals);
+          const itemSourceStreamMetadata = filterMetadataByItemId.get(item.id);
           return (
             <article className="queue-card" key={item.id}>
               <div className="item-title-row">
@@ -1494,8 +1506,11 @@ export function ReviewQueuePage({
                 <span>
                   Suggested: {displayTaxonomyLabel(item.suggested_label ?? "unknown", taxonomyLabels)}
                 </span>
+                <span>Source: {itemSourceStreamMetadata?.sourceId ?? "n/a"}</span>
+                <span>Stream: {itemSourceStreamMetadata?.streamId ?? item.stream_id}</span>
                 <span>Event: {item.event_id ?? "n/a"}</span>
                 <span>Visit: {item.visit_id ?? "n/a"}</span>
+                <span>Zone: {reviewItemZoneLabel(item)}</span>
                 {item.visit_id ? <span>Species suggestions: Visit detail</span> : null}
                 {item.media_asset ? <span>Imported media attached</span> : null}
               </div>
@@ -1522,7 +1537,7 @@ export function ReviewQueuePage({
                   <div className="data-row">
                     <span>Stream / Zone</span>
                     <strong>{item.stream_id}</strong>
-                    <small>{item.primary_zone_id ?? "No zone"}</small>
+                    <small>{reviewItemZoneLabel(item)}</small>
                   </div>
                   <div className="data-row">
                     <span>Suggested label</span>

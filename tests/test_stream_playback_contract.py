@@ -458,6 +458,10 @@ async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_on
     assert result["creates_truth"] is False
     assert result["creates_export"] is False
     assert result["strongest_zone_id"] == "zone-feeder"
+    assert result["strongest_zone_name"] == "Feeder"
+    assert result["strongest_zone_type"] == "feeder"
+    assert result["activity_summary"] == "Activity detected in Feeder."
+    assert result["suppressed_zone_summaries"] == []
 
     media_response = await client.get(f"/api/media/{result['best_media_asset_id']}")
     assert media_response.status_code == 200
@@ -530,6 +534,10 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
     assert result["creates_visit"] is True
     assert result["creates_truth"] is False
     assert result["creates_export"] is False
+    assert result["strongest_zone_name"] == "Feeder"
+    assert result["strongest_zone_type"] == "feeder"
+    assert result["activity_summary"] == "Activity detected in Feeder."
+    assert "Review activity created for Feeder" in result["message"]
     assert len(result["created_evidence"]) == 1
     evidence = result["created_evidence"][0]
     assert evidence["id"] == result["motion_evidence_id"]
@@ -549,9 +557,18 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
     assert queue_item["event_id"] == result["event_id"]
     assert queue_item["visit_id"] == result["visit_id"]
     assert queue_item["primary_zone_id"] == "zone-feeder"
+    assert queue_item["primary_zone_name"] == "Feeder"
+    assert queue_item["primary_zone_type"] == "feeder"
     assert queue_item["suggested_label"] == "unknown_animal"
     assert queue_item["review_status"] == "needs_review"
     assert queue_item["media_asset"]["id"] == result["best_media_asset_id"]
+
+    event_detail_response = await client.get(f"/api/events/{result['event_id']}/detail")
+    assert event_detail_response.status_code == 200
+    event_detail = event_detail_response.json()
+    assert event_detail["event"]["title"] == "Live motion activity in Feeder"
+    assert event_detail["primary_zone"]["name"] == "Feeder"
+    assert event_detail["primary_zone"]["zone_type"] == "feeder"
 
     visit_detail_response = await client.get(f"/api/visits/{result['visit_id']}/detail")
     assert visit_detail_response.status_code == 200
@@ -587,6 +604,12 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
     assert correction["review_label"]["target_id"] == result["visit_id"]
     assert correction["visit"]["review_status"] == "reviewed"
     assert correction["visit"]["reviewed_label"] == "northern_cardinal"
+    corrected_visit_detail_response = await client.get(f"/api/visits/{result['visit_id']}/detail")
+    assert corrected_visit_detail_response.status_code == 200
+    corrected_visit_detail = corrected_visit_detail_response.json()
+    assert corrected_visit_detail["primary_zone"]["name"] == "Feeder"
+    assert corrected_visit_detail["primary_zone"]["zone_type"] == "feeder"
+    assert corrected_visit_detail["media_asset"]["id"] == result["best_media_asset_id"]
     corrected_counts = await product_counts(client)
     assert corrected_counts["review_labels"] == after["review_labels"] + 1
     corrected_coverage = await dataset_coverage(client)
@@ -596,6 +619,64 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
     )
     corrected_queue = (await client.get("/api/review-queue")).json()
     assert all(item["id"] != result["review_queue_item_id"] for item in corrected_queue)
+
+
+async def test_live_motion_reports_ignored_zone_without_review_activity(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-ignore-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-ignore-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(),
+            frame_1: frame_with([(0, 0)]),
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": True,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["activity_detected"] is False
+    assert result["status"] == "no_activity"
+    assert result["review_activity_created"] is False
+    assert result["review_activity_available"] is False
+    assert result["best_media_asset_id"] is None
+    assert result["motion_evidence_id"] is None
+    assert result["event_id"] is None
+    assert result["visit_id"] is None
+    assert result["creates_event"] is False
+    assert result["creates_visit"] is False
+    assert result["creates_truth"] is False
+    assert result["creates_export"] is False
+    assert result["activity_summary"] == "Motion ignored in Driveway edge ignore zone."
+    assert result["message"] == "Motion ignored in Driveway edge ignore zone."
+    assert len(result["suppressed_zone_summaries"]) == 1
+    suppressed = result["suppressed_zone_summaries"][0]
+    assert suppressed["zone_id"] == "zone-ignore-driveway-edge"
+    assert suppressed["zone_name"] == "Driveway edge ignore zone"
+    assert suppressed["zone_type"] == "ignore"
+    assert suppressed["reason"] == "ignore_zone"
+    assert await product_counts(client) == before
 
 
 async def test_live_motion_review_handoff_reuses_existing_review_candidate(

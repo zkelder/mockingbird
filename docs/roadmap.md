@@ -1086,6 +1086,9 @@ Current work:
   Zone polygons directly over the real live camera surface. Monitoring continues
   to use the same user-authored Zone records, including privacy and ignore
   boundaries, without creating truth.
+- Zone-Aware Live Monitor Polish 1: live motion responses and Stream Detail
+  copy name the strongest user-authored Zone, report ignored/privacy
+  suppression, and keep Review Queue and Bird Log correction-gated.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — live zone overlay browser smoke validation and

@@ -6451,6 +6451,7 @@ class ProductRepository:
                 continue
 
             event = self._event_from_model(session, event_model)
+            zone_id, zone_name, zone_type = self._zone_context(session, event.primary_zone_id)
             queue.append(
                 ReviewQueueItem(
                     id=f"review-queue-{visit.id}",
@@ -6459,7 +6460,9 @@ class ProductRepository:
                     stream_id=event.stream_id,
                     event_id=event.id,
                     visit_id=visit.id,
-                    primary_zone_id=event.primary_zone_id,
+                    primary_zone_id=zone_id,
+                    primary_zone_name=zone_name,
+                    primary_zone_type=zone_type,
                     suggested_label=visit.species_guess or visit.subject_label,
                     media_asset=self._media_asset_for_path_from_session(
                         session,
@@ -6476,6 +6479,7 @@ class ProductRepository:
             event = self._event_from_model(session, event_model)
             if event.review_status != ReviewStatus.needs_review or event.id in visit_event_ids:
                 continue
+            zone_id, zone_name, zone_type = self._zone_context(session, event.primary_zone_id)
 
             queue.append(
                 ReviewQueueItem(
@@ -6485,7 +6489,9 @@ class ProductRepository:
                     stream_id=event.stream_id,
                     event_id=event.id,
                     visit_id=None,
-                    primary_zone_id=event.primary_zone_id,
+                    primary_zone_id=zone_id,
+                    primary_zone_name=zone_name,
+                    primary_zone_type=zone_type,
                     suggested_label=event.detections[0].label if event.detections else None,
                     review_status=event.review_status,
                     reason="Review detected outdoor activity and correct the event meaning.",

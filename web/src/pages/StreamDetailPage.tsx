@@ -200,6 +200,26 @@ function liveZoneLabel(zone: Zone, expanded: boolean): string {
   return expanded ? zone.name : formatLabel(zone.zone_type);
 }
 
+function suppressedZoneDisplay(
+  summary: LiveMotionEvaluateResponse["suppressed_zone_summaries"][number],
+): string {
+  return `${summary.zone_name} (${formatLabel(summary.zone_type)})`;
+}
+
+function suppressedZoneMessage(
+  summaries: LiveMotionEvaluateResponse["suppressed_zone_summaries"],
+): string | null {
+  if (!summaries.length) {
+    return null;
+  }
+  if (summaries.length === 1) {
+    return `Motion ignored in ${summaries[0].zone_name}.`;
+  }
+  return `Motion ignored in ${summaries[0].zone_name} and ${
+    summaries.length - 1
+  } other ignore/privacy zone${summaries.length === 2 ? "" : "s"}.`;
+}
+
 function pointFromPointer(event: ReactPointerEvent<HTMLElement>): Point {
   const rect = event.currentTarget.getBoundingClientRect();
   const x = (event.clientX - rect.left) / rect.width;
@@ -967,10 +987,29 @@ export function StreamDetailPage({
   const liveActivityZone = liveMotionResult?.strongest_zone_id
     ? detail.zones.find((zone) => zone.id === liveMotionResult.strongest_zone_id)
     : null;
+  const liveStrongestZoneName =
+    liveMotionResult?.strongest_zone_name ?? liveActivityZone?.name ?? null;
+  const liveStrongestZoneType =
+    liveMotionResult?.strongest_zone_type ?? liveActivityZone?.zone_type ?? null;
+  const liveSuppressedZones = liveMotionResult?.suppressed_zone_summaries ?? [];
+  const liveSuppressedMessage =
+    liveMotionResult?.activity_detected === false
+      ? liveMotionResult.activity_summary ?? suppressedZoneMessage(liveSuppressedZones)
+      : suppressedZoneMessage(liveSuppressedZones);
   const liveActivityAreaLabel =
-    liveActivityZone?.name ??
+    liveStrongestZoneName ??
     liveMotionResult?.strongest_activity_area_label ??
-    (liveMotionResult?.uses_auto_regions ? "Activity area" : "Unzoned activity");
+    (liveMotionResult?.uses_auto_regions ? "auto area" : "unzoned activity");
+  const liveActivityTitle =
+    liveReviewActivityCreated
+      ? `Review activity created for ${liveActivityAreaLabel}`
+      : `Activity detected in ${liveActivityAreaLabel}`;
+  const liveBestFrameMessage =
+    liveMotionResult?.best_media_asset_id && liveStrongestZoneName
+      ? `Best frame saved from ${liveStrongestZoneName}.`
+      : liveMotionResult?.best_media_asset_id
+        ? "Best frame saved from the strongest live activity area."
+        : "Best frame is unavailable.";
   const liveBestFrameUrl = liveMotionResult?.best_media_asset_id
     ? apiClient.mediaFileUrl(liveMotionResult.best_media_asset_id)
     : null;
@@ -984,6 +1023,8 @@ export function StreamDetailPage({
         ? "review_created"
         : liveActivityDetected
           ? "activity"
+          : liveSuppressedZones.length > 0
+            ? "ignored"
           : isLiveMonitoring
             ? "monitoring"
             : liveViewOpen && liveViewState === "streaming"
@@ -997,7 +1038,9 @@ export function StreamDetailPage({
       : liveWorkflowState === "review_created"
         ? "Review activity created. Open Review to confirm/correct."
         : liveWorkflowState === "activity"
-          ? "Activity detected. Best frame saved for review."
+          ? liveMotionResult?.activity_summary ?? "Activity detected."
+          : liveWorkflowState === "ignored"
+            ? liveSuppressedMessage ?? "Motion ignored in privacy/ignore zone."
           : liveWorkflowState === "monitoring"
             ? "Watching recent live frames for activity."
             : liveWorkflowState === "streaming"
@@ -1321,29 +1364,55 @@ export function StreamDetailPage({
               <div className="stream-live-activity-body">
                 <div className="item-title-row">
                   <strong>
-                    {liveReviewActivityCreated ? "Review activity created" : "Activity detected"}
+                    {liveActivityTitle}
                   </strong>
-                  <StatusPill
-                    label={liveReviewActivityCreated ? "Needs review" : "Saved evidence"}
-                    tone="review"
-                  />
+                  <div className="stream-live-activity-pills">
+                    {liveStrongestZoneType ? (
+                      <StatusPill label={formatLabel(liveStrongestZoneType)} tone="quiet" />
+                    ) : null}
+                    <StatusPill
+                      label={liveReviewActivityCreated ? "Needs review" : "Saved evidence"}
+                      tone="review"
+                    />
+                  </div>
                 </div>
                 <p>
                   {liveReviewActivityCreated
-                    ? "Open Review to confirm or correct the activity."
-                    : "Create a review activity to send this saved frame into the correction flow."}
+                    ? `Open Review to confirm or correct the activity in ${liveActivityAreaLabel}.`
+                    : liveMotionResult?.uses_auto_regions
+                      ? "Automatic activity areas are evidence only; add or select a named Zone before review activity."
+                      : `${liveBestFrameMessage} Create a review activity to send it into the correction flow.`}
                 </p>
                 <div className="stream-live-activity-facts">
                   <span>
                     <strong>Area</strong> {liveActivityAreaLabel}
                   </span>
+                  {liveStrongestZoneType ? (
+                    <span>
+                      <strong>Zone type</strong> {formatLabel(liveStrongestZoneType)}
+                    </span>
+                  ) : null}
                   <span>
                     <strong>Detected</strong> {liveBestFrameTime ?? "Recent live frame"}
+                  </span>
+                  <span>
+                    <strong>Best frame</strong>{" "}
+                    {liveMotionResult?.best_media_asset_id ? "saved" : "unavailable"}
                   </span>
                   <span>
                     <strong>Bird Log</strong> after review
                   </span>
                 </div>
+                {liveSuppressedZones.length > 0 ? (
+                  <div className="stream-live-suppressed-list">
+                    <strong>Suppressed motion</strong>
+                    {liveSuppressedZones.map((summary) => (
+                      <span key={summary.zone_id}>
+                        Ignored motion in {suppressedZoneDisplay(summary)}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="detail-actions stream-live-actions">
                   {liveReviewActivityCreated ? (
                     <button className="primary-action" onClick={onOpenReview} type="button">

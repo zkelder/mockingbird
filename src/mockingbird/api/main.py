@@ -83,6 +83,7 @@ from mockingbird.api.schemas import (
     MotionExtractCandidatesResponse,
     MotionFrameScoreResponse,
     MotionScoreResponse,
+    MotionSuppressedZoneSummaryResponse,
     MotionZoneInput,
     ReviewLabel,
     ReviewCorrectionCreate,
@@ -951,6 +952,101 @@ def _activity_area_zone_input(area: MotionActivityAreaResponse) -> MotionZoneInp
     )
 
 
+def _suppressed_zone_reason(zone: Zone) -> str:
+    if zone.zone_type.value == "privacy":
+        return "privacy_zone"
+    if zone.zone_type.value == "ignore":
+        return "ignore_zone"
+    return "suppressed_zone"
+
+
+def _zone_motion_summary_label(summaries: list[MotionSuppressedZoneSummaryResponse]) -> str:
+    if not summaries:
+        return ""
+    if len(summaries) == 1:
+        return summaries[0].zone_name
+    other_count = len(summaries) - 1
+    return (
+        f"{summaries[0].zone_name} and {other_count} other ignored/privacy "
+        f"zone{'s' if other_count != 1 else ''}"
+    )
+
+
+def _motion_suppressed_zone_summaries(
+    frames: list[list[list[int | float]]],
+    blocked_zones: list[Zone],
+    config: SamplerConfig,
+) -> list[MotionSuppressedZoneSummaryResponse]:
+    if not frames or not blocked_zones:
+        return []
+
+    suppressed_config = SamplerConfig(
+        pixel_delta_threshold=config.pixel_delta_threshold,
+        min_changed_ratio=config.min_changed_ratio,
+        min_triggered_frames=config.min_triggered_frames,
+        max_gap_frames=config.max_gap_frames,
+        frame_index_start=config.frame_index_start,
+        create_motion_evidence=False,
+    )
+    try:
+        result = evaluate_sampled_frame_sequence(
+            frames,
+            [
+                _sampler_zone_from_payload(_motion_zone_from_zone(zone))
+                for zone in blocked_zones
+            ],
+            suppressed_config,
+        )
+    except ValueError:
+        return []
+
+    zones_by_id = {zone.id: zone for zone in blocked_zones}
+    summaries: list[MotionSuppressedZoneSummaryResponse] = []
+    for candidate in result.candidates:
+        zone = zones_by_id.get(candidate.zone_id)
+        if zone is None:
+            continue
+        summaries.append(
+            MotionSuppressedZoneSummaryResponse(
+                zone_id=zone.id,
+                zone_name=zone.name,
+                zone_type=zone.zone_type,
+                reason=_suppressed_zone_reason(zone),
+                triggered_frame_count=candidate.triggered_frame_count,
+                peak_changed_ratio=candidate.peak_changed_ratio,
+            )
+        )
+
+    return sorted(
+        summaries,
+        key=lambda summary: (summary.peak_changed_ratio, summary.triggered_frame_count),
+        reverse=True,
+    )
+
+
+def _motion_activity_summary(
+    *,
+    activity_detected: bool,
+    strongest_zone_name: str | None,
+    strongest_activity_area_label: str | None,
+    uses_auto_regions: bool,
+    suppressed_zone_summaries: list[MotionSuppressedZoneSummaryResponse],
+) -> str:
+    if activity_detected:
+        if strongest_zone_name:
+            return f"Activity detected in {strongest_zone_name}."
+        if uses_auto_regions:
+            return "Activity detected in auto area."
+        if strongest_activity_area_label:
+            return f"Activity detected in {strongest_activity_area_label}."
+        return "Activity detected."
+
+    if suppressed_zone_summaries:
+        return f"Motion ignored in {_zone_motion_summary_label(suppressed_zone_summaries)}."
+
+    return "No activity detected."
+
+
 def _auto_motion_cells(
     frame: list[list[int | float]],
     blocked_zones: list[Zone],
@@ -1610,6 +1706,11 @@ async def evaluate_saved_media_motion(
         frame_index_start=payload.frame_index_start,
         create_motion_evidence=payload.create_motion_evidence,
     )
+    suppressed_zone_summaries = _motion_suppressed_zone_summaries(
+        [frame.frame for frame in frames],
+        blocked_zones,
+        sampler_config,
+    )
     try:
         sampler_result = evaluate_sampled_frame_sequence(
             [frame.frame for frame in frames],
@@ -1668,6 +1769,18 @@ async def evaluate_saved_media_motion(
     strongest_activity_area = (
         session_activity_area
         or (activity_area_by_id.get(strongest_zone_id) if strongest_zone_id else None)
+    )
+    strongest_zone = zones_by_id.get(strongest_zone_id) if strongest_zone_id else None
+    strongest_zone_name = strongest_zone.name if strongest_zone else None
+    strongest_zone_type = strongest_zone.zone_type if strongest_zone else None
+    activity_summary = _motion_activity_summary(
+        activity_detected=bool(motion_candidates),
+        strongest_zone_name=strongest_zone_name,
+        strongest_activity_area_label=(
+            strongest_activity_area.label if strongest_activity_area else None
+        ),
+        uses_auto_regions=uses_auto_regions,
+        suppressed_zone_summaries=suppressed_zone_summaries,
     )
     best_activity_at = _media_datetime_for_frame(
         frame_summaries,
@@ -1790,13 +1903,17 @@ async def evaluate_saved_media_motion(
         activity_areas=activity_areas,
         region_source=region_source,
         uses_auto_regions=uses_auto_regions,
+        strongest_zone_name=strongest_zone_name,
+        strongest_zone_type=strongest_zone_type,
         strongest_activity_area_id=(
             strongest_activity_area.area_id if strongest_activity_area else None
         ),
         strongest_activity_area_label=(
             strongest_activity_area.label if strongest_activity_area else None
         ),
+        suppressed_zone_summaries=suppressed_zone_summaries,
         suppressed_auto_region_count=suppressed_auto_region_count,
+        activity_summary=activity_summary,
         can_create_review_activity=can_create_review_activity,
         review_activity_created=bool(created_evidence),
         creation_skipped_reason=creation_skipped_reason,
@@ -1915,6 +2032,7 @@ async def evaluate_live_stream_motion(
         )
 
     all_zones = repository.zones_for_stream(stream.id)
+    zones_by_id = {zone.id: zone for zone in all_zones}
     warnings: list[str] = []
     reviewable_zones: list[Zone] = []
     for zone in all_zones:
@@ -1971,6 +2089,11 @@ async def evaluate_live_stream_motion(
         frame_index_start=cached_frames[0].sequence,
         create_motion_evidence=request.create_review_activity,
     )
+    suppressed_zone_summaries = _motion_suppressed_zone_summaries(
+        [frame.frame for frame in decoded_frames],
+        blocked_zones,
+        sampler_config,
+    )
     try:
         sampler_result = evaluate_sampled_frame_sequence(
             [frame.frame for frame in decoded_frames],
@@ -2017,6 +2140,18 @@ async def evaluate_live_stream_motion(
         activity_area_by_id.get(best_candidate.zone_id)
         if best_candidate
         else (activity_area_by_id.get(strongest_zone_id) if strongest_zone_id else None)
+    )
+    strongest_zone = zones_by_id.get(strongest_zone_id) if strongest_zone_id else None
+    strongest_zone_name = strongest_zone.name if strongest_zone else None
+    strongest_zone_type = strongest_zone.zone_type if strongest_zone else None
+    activity_summary = _motion_activity_summary(
+        activity_detected=bool(motion_candidates),
+        strongest_zone_name=strongest_zone_name,
+        strongest_activity_area_label=(
+            strongest_activity_area.label if strongest_activity_area else None
+        ),
+        uses_auto_regions=uses_auto_regions,
+        suppressed_zone_summaries=suppressed_zone_summaries,
     )
     best_live_frame = (
         next(
@@ -2204,14 +2339,19 @@ async def evaluate_live_stream_motion(
     activity_detected = bool(motion_candidates)
     status = "activity_detected" if activity_detected else "no_activity"
     message = (
-        "Activity detected from recent live frames. Best frame was saved for explicit review."
+        f"{activity_summary} Best frame was saved for explicit review."
         if activity_detected and best_media_asset_id
-        else "Activity detected from recent live frames."
+        else activity_summary
         if activity_detected
+        else activity_summary
+        if suppressed_zone_summaries
         else "Watching live video. No activity detected yet."
     )
     if review_activity_created:
-        message = "Review activity created. Bird Log updates after review."
+        message = (
+            f"Review activity created for {strongest_zone_name or 'live motion'}. "
+            "Bird Log updates after review."
+        )
     elif review_activity_reused and review_queue_item_id:
         message = "Review activity is already ready in Review Queue."
     response_common = {
@@ -2232,6 +2372,8 @@ async def evaluate_live_stream_motion(
         region_source=region_source,
         uses_auto_regions=uses_auto_regions,
         strongest_zone_id=strongest_zone_id,
+        strongest_zone_name=strongest_zone_name,
+        strongest_zone_type=strongest_zone_type,
         strongest_activity_area=strongest_activity_area,
         strongest_activity_area_id=(
             strongest_activity_area.area_id if strongest_activity_area else None
@@ -2239,6 +2381,8 @@ async def evaluate_live_stream_motion(
         strongest_activity_area_label=(
             strongest_activity_area.label if strongest_activity_area else None
         ),
+        suppressed_zone_summaries=suppressed_zone_summaries,
+        activity_summary=activity_summary,
         strongest_changed_ratio=strongest_changed_ratio,
         best_frame_sequence=best_live_frame.sequence if best_live_frame else None,
         best_frame_captured_at=best_live_frame.captured_at if best_live_frame else None,
@@ -2852,10 +2996,21 @@ async def _monitor_evaluate_saved_media(
             "strongest_changed_ratio": result.strongest_changed_ratio,
             "source": strongest_area.source if strongest_area else None,
             "zone_id": strongest_area.zone_id if strongest_area else None,
+            "zone_name": result.strongest_zone_name,
+            "zone_type": (
+                result.strongest_zone_type.value
+                if result.strongest_zone_type is not None
+                else None
+            ),
             "left": strongest_area.left if strongest_area else None,
             "top": strongest_area.top if strongest_area else None,
             "right": strongest_area.right if strongest_area else None,
             "bottom": strongest_area.bottom if strongest_area else None,
+            "activity_summary": result.activity_summary,
+            "suppressed_zone_summaries": [
+                summary.model_dump(mode="json")
+                for summary in result.suppressed_zone_summaries
+            ],
         }
     created_evidence = result.created_evidence[0] if result.created_evidence else None
     unavailable_reason = _monitor_review_unavailable_reason(result)
@@ -2945,7 +3100,19 @@ def _monitor_status_message(state: SourceMonitorState) -> str:
     if state.review_activity_created and state.review_activity_motion_evidence_id:
         return "Review activity is ready."
     if state.review_activity_available:
-        return "Activity detected. Create review activity when ready."
+        area_label = (
+            (
+                state.last_activity_area.get("zone_name")
+                or state.last_activity_area.get("label")
+            )
+            if state.last_activity_area
+            else None
+        )
+        return (
+            f"Activity detected in {area_label}. Create review activity when ready."
+            if area_label
+            else "Activity detected. Create review activity when ready."
+        )
     if state.review_activity_unavailable_reason == "auto_region_requires_named_zone":
         return (
             "Activity detected in an automatic area. Add or select a named zone to "
@@ -2961,7 +3128,19 @@ def _monitor_status_message(state: SourceMonitorState) -> str:
         return "Capture at least two snapshots before creating review activity."
     if state.status == "monitoring":
         if state.last_activity_detected is True:
-            return "Monitoring is active. Activity detected on the latest motion check."
+            area_label = (
+                (
+                    state.last_activity_area.get("zone_name")
+                    or state.last_activity_area.get("label")
+                )
+                if state.last_activity_area
+                else None
+            )
+            return (
+                f"Monitoring is active. Activity detected in {area_label}."
+                if area_label
+                else "Monitoring is active. Activity detected on the latest motion check."
+            )
         if state.last_activity_detected is False:
             return "Monitoring is active. No activity detected on the latest motion check."
         return "Monitoring is active."

@@ -1262,6 +1262,15 @@ class MotionActivityAreaResponse(BaseModel):
     cell_ids: list[str] = Field(default_factory=list)
 
 
+class MotionSuppressedZoneSummaryResponse(BaseModel):
+    zone_id: str
+    zone_name: str
+    zone_type: ZoneType
+    reason: str
+    triggered_frame_count: int = Field(ge=0)
+    peak_changed_ratio: float = 0.0
+
+
 class MotionCropBoxNormalizedResponse(BaseModel):
     left: float
     top: float
@@ -1298,9 +1307,15 @@ class MotionEvaluateSavedMediaResponse(BaseModel):
     activity_areas: list[MotionActivityAreaResponse] = Field(default_factory=list)
     region_source: str
     uses_auto_regions: bool = False
+    strongest_zone_name: str | None = None
+    strongest_zone_type: ZoneType | None = None
     strongest_activity_area_id: str | None = None
     strongest_activity_area_label: str | None = None
+    suppressed_zone_summaries: list[MotionSuppressedZoneSummaryResponse] = Field(
+        default_factory=list
+    )
     suppressed_auto_region_count: int = Field(default=0, ge=0)
+    activity_summary: str | None = None
     can_create_review_activity: bool = True
     review_activity_created: bool = False
     creation_skipped_reason: str | None = None
@@ -1362,9 +1377,15 @@ class LiveMotionEvaluateResponse(BaseModel):
     region_source: str = "user_zones"
     uses_auto_regions: bool = False
     strongest_zone_id: str | None = None
+    strongest_zone_name: str | None = None
+    strongest_zone_type: ZoneType | None = None
     strongest_activity_area: MotionActivityAreaResponse | None = None
     strongest_activity_area_id: str | None = None
     strongest_activity_area_label: str | None = None
+    suppressed_zone_summaries: list[MotionSuppressedZoneSummaryResponse] = Field(
+        default_factory=list
+    )
+    activity_summary: str | None = None
     strongest_changed_ratio: float = 0.0
     best_frame_sequence: int | None = None
     best_frame_captured_at: datetime | None = None
@@ -1589,6 +1610,8 @@ class ReviewQueueItem(BaseModel):
     event_id: str | None = None
     visit_id: str | None = None
     primary_zone_id: str | None = None
+    primary_zone_name: str | None = None
+    primary_zone_type: ZoneType | None = None
     suggested_label: str | None = None
     media_asset: MediaAsset | None = None
     review_status: ReviewStatus
