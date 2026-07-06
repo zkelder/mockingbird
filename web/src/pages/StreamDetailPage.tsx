@@ -49,8 +49,6 @@ const zoneTypeOptions: ZoneType[] = [
   "ignore",
 ];
 
-const LIVE_CAPTURE_RELEASE_DELAY_MS = 750;
-
 interface ZoneDraft {
   name: string;
   zone_type: ZoneType;
@@ -118,10 +116,6 @@ function hasRealLivePlayback(status?: StreamPlaybackStatus | null): boolean {
 
 function supportsFrameCapture(status?: StreamPlaybackStatus | null): boolean {
   return isLocalCameraBridgePlayback(status) || isWindowsDshowBridgePlayback(status);
-}
-
-function waitForCameraRelease(): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, LIVE_CAPTURE_RELEASE_DELAY_MS));
 }
 
 function streamImageMediaAssets(mediaAssets: MediaAsset[], streamId: string): MediaAsset[] {
@@ -219,8 +213,6 @@ export function StreamDetailPage({
   const [liveViewError, setLiveViewError] = useState<string | null>(null);
   const [captureResult, setCaptureResult] = useState<LocalCameraFrameCaptureResponse | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
-  const [captureInfoMessage, setCaptureInfoMessage] = useState<string | null>(null);
-  const [captureStoppedLiveView, setCaptureStoppedLiveView] = useState(false);
   const [isCapturingFrame, setIsCapturingFrame] = useState(false);
   const [savedImageAssets, setSavedImageAssets] = useState<MediaAsset[]>([]);
   const [savedImageError, setSavedImageError] = useState<string | null>(null);
@@ -249,8 +241,6 @@ export function StreamDetailPage({
       setLiveViewError(null);
       setCaptureResult(null);
       setCaptureError(null);
-      setCaptureInfoMessage(null);
-      setCaptureStoppedLiveView(false);
       setIsCapturingFrame(false);
       setSavedImageAssets([]);
       setSavedImageError(null);
@@ -385,7 +375,6 @@ export function StreamDetailPage({
     setLiveViewOpen(true);
     setLiveViewState("opening");
     setLiveViewError(null);
-    setCaptureStoppedLiveView(false);
     setLiveViewReloadToken((current) => current + 1);
   }
 
@@ -424,17 +413,8 @@ export function StreamDetailPage({
     }
     setIsCapturingFrame(true);
     setCaptureError(null);
-    setCaptureInfoMessage(null);
     setCaptureResult(null);
     try {
-      if (liveViewOpen) {
-        setLiveViewOpen(false);
-        setLiveViewState("idle");
-        setLiveViewError(null);
-        setCaptureStoppedLiveView(true);
-        setCaptureInfoMessage("Stopped Live view temporarily so the camera can capture a frame.");
-        await waitForCameraRelease();
-      }
       const result = await apiClient.captureLocalCameraFrame(detail.stream.id);
       setCaptureResult(result);
       if (result.status !== "saved") {
@@ -654,12 +634,15 @@ export function StreamDetailPage({
       motionResult.should_create_review_activity &&
       motionResult.created_evidence.length === 0,
   );
-  const openLiveViewLabel = captureStoppedLiveView ? "Reopen Live view" : "Open Live view";
+  const captureSuccessMessage =
+    captureResult?.capture_source === "live_frame_cache"
+      ? "Saved current live frame. It will not appear in Bird Log until you create/review activity."
+      : "Saved one local camera frame. It will not appear in Bird Log until you create/review activity.";
   const captureButtonLabel =
     isCapturingFrame
       ? "Capturing..."
       : liveViewOpen
-        ? "Stop Live view and capture frame"
+        ? "Capture current frame"
         : "Capture frame";
 
   return (
@@ -780,11 +763,6 @@ export function StreamDetailPage({
           ) : liveHelpText ? (
             <span className="stream-live-hint">{liveHelpText}</span>
           ) : null}
-          {captureInfoMessage ? (
-            <div className="stream-live-message">
-              <strong>{captureInfoMessage}</strong>
-            </div>
-          ) : null}
           {captureResult ? (
             <div
               className={`stream-live-message${
@@ -792,9 +770,7 @@ export function StreamDetailPage({
               }`}
             >
               <strong>
-                {captureSaved
-                  ? "Saved local camera frame. It will not appear in Bird Log until you create/review activity."
-                  : captureResult.message}
+                {captureSaved ? captureSuccessMessage : captureResult.message}
               </strong>
               {captureSaved ? (
                 <>
@@ -919,7 +895,7 @@ export function StreamDetailPage({
                 onClick={openLiveView}
                 type="button"
               >
-                {openLiveViewLabel}
+                Open Live view
               </button>
             )}
             {canCaptureFrame ? (

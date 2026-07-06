@@ -581,6 +581,8 @@ class LocalCameraFrameCaptureResponse(BaseModel):
     relative_path: str | None = None
     bytes_written: int = Field(default=0, ge=0)
     content_type: str | None = None
+    capture_source: str | None = None
+    live_frame_age_ms: int | None = Field(default=None, ge=0)
     creates_truth: bool = False
     creates_event: bool = False
     creates_visit: bool = False

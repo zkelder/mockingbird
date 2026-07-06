@@ -150,7 +150,12 @@ from mockingbird.monitoring import (
     SourceMonitorOptions,
     SourceMonitorState,
 )
-from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
+from mockingbird.playback import (
+    live_frame_cache,
+    local_camera_bridge,
+    rtsp_bridge,
+    windows_camera_bridge,
+)
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.sampler import (
     SamplerConfig,
@@ -2832,7 +2837,10 @@ async def get_stream_rtsp_mjpeg_bridge(stream_id: str) -> StreamingResponse:
         raise HTTPException(status_code=502, detail="RTSP live view failed to start.") from None
 
     return StreamingResponse(
-        rtsp_bridge.iter_multipart_mjpeg(process),
+        rtsp_bridge.iter_multipart_mjpeg(
+            process,
+            on_frame=lambda frame: live_frame_cache.store_latest_frame(stream_id, frame),
+        ),
         media_type=f"multipart/x-mixed-replace; boundary={rtsp_bridge.MJPEG_BOUNDARY}",
     )
 
@@ -2890,7 +2898,10 @@ async def get_stream_local_mjpeg_bridge(stream_id: str) -> StreamingResponse:
         ) from None
 
     return StreamingResponse(
-        local_camera_bridge.iter_multipart_mjpeg(process),
+        local_camera_bridge.iter_multipart_mjpeg(
+            process,
+            on_frame=lambda frame: live_frame_cache.store_latest_frame(stream_id, frame),
+        ),
         media_type=(
             f"multipart/x-mixed-replace; boundary={local_camera_bridge.MJPEG_BOUNDARY}"
         ),
@@ -2954,7 +2965,10 @@ async def get_stream_windows_dshow_mjpeg_bridge(stream_id: str) -> StreamingResp
         ) from None
 
     return StreamingResponse(
-        windows_camera_bridge.iter_multipart_mjpeg(process),
+        windows_camera_bridge.iter_multipart_mjpeg(
+            process,
+            on_frame=lambda frame: live_frame_cache.store_latest_frame(stream_id, frame),
+        ),
         media_type=(
             f"multipart/x-mixed-replace; boundary={windows_camera_bridge.MJPEG_BOUNDARY}"
         ),
@@ -2985,6 +2999,45 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
             status="unsupported",
             message="Capture frame requires a local camera Source provider.",
             warnings=["This Stream is not configured for local camera playback."],
+        )
+
+    cached_frame = live_frame_cache.get_latest_frame(configuration.stream_id)
+    if cached_frame is not None and configuration.live_stream_type in {
+        local_camera_bridge.LOCAL_USB_STREAM_TYPE,
+        windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE,
+    }:
+        playback_type = configuration.live_stream_type
+        camera_label = (
+            configuration.windows_camera_name
+            if playback_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE
+            else configuration.local_camera_device
+        )
+        try:
+            media_asset = repository.create_local_camera_frame_media_asset(
+                source_id=configuration.source_id,
+                stream_id=configuration.stream_id,
+                content=cached_frame.frame_bytes,
+                captured_at=cached_frame.captured_at,
+                playback_type=playback_type,
+                camera_label=camera_label,
+            )
+        except ValueError as error:
+            raise _media_import_error(error) from error
+
+        return LocalCameraFrameCaptureResponse(
+            **common,
+            media_asset_id=media_asset.id,
+            status="saved",
+            message=(
+                "Saved current live frame as local media only. It will not appear "
+                "in Bird Log until you create/review activity."
+            ),
+            file_name=media_asset.filename,
+            relative_path=media_asset.filename,
+            bytes_written=media_asset.file_size_bytes,
+            content_type=media_asset.content_type,
+            capture_source="live_frame_cache",
+            live_frame_age_ms=cached_frame.age_ms(),
         )
 
     if configuration.live_stream_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
@@ -3030,8 +3083,10 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
                 **common,
                 status="capture_failed",
                 message=(
-                    "Camera is busy. Stop Live view or other camera apps, then retry capture."
+                    "Camera is busy or did not return a frame. Close other camera apps, "
+                    "or open Live view until a frame appears and retry capture."
                 ),
+                capture_source="one_shot_ffmpeg",
                 warnings=[
                     "Check the camera name and confirm Windows privacy permissions."
                 ],
@@ -3073,8 +3128,10 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
                 **common,
                 status="capture_failed",
                 message=(
-                    "Camera is busy. Stop Live view or other camera apps, then retry capture."
+                    "Camera is busy or did not return a frame. Close other camera apps, "
+                    "or open Live view until a frame appears and retry capture."
                 ),
+                capture_source="one_shot_ffmpeg",
                 warnings=["Confirm the local camera device path is available."],
             )
         playback_type = local_camera_bridge.LOCAL_USB_STREAM_TYPE
@@ -3103,13 +3160,14 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
         media_asset_id=media_asset.id,
         status="saved",
         message=(
-            "Saved local camera frame. It will not appear in Bird Log until you "
-            "create/review activity."
+            "Saved one local camera frame directly because Live view was not streaming. "
+            "It will not appear in Bird Log until you create/review activity."
         ),
         file_name=media_asset.filename,
         relative_path=media_asset.filename,
         bytes_written=media_asset.file_size_bytes,
         content_type=media_asset.content_type,
+        capture_source="one_shot_ffmpeg",
     )
 
 

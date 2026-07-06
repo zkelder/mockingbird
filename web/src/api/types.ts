@@ -65,6 +65,7 @@ export type LocalCameraFrameCaptureStatus =
   | "ffmpeg_missing"
   | "camera_not_configured"
   | "capture_failed";
+export type LocalCameraFrameCaptureSource = "live_frame_cache" | "one_shot_ffmpeg";
 
 export type ZoneType =
   | "feeder"
@@ -413,6 +414,8 @@ export interface LocalCameraFrameCaptureResponse {
   relative_path?: string | null;
   bytes_written: number;
   content_type?: string | null;
+  capture_source?: LocalCameraFrameCaptureSource | null;
+  live_frame_age_ms?: number | null;
   creates_truth: boolean;
   creates_event: boolean;
   creates_visit: boolean;

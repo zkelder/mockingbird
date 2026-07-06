@@ -85,6 +85,7 @@ def iter_multipart_mjpeg(
     *,
     boundary: str = MJPEG_BOUNDARY,
     chunk_size: int = 64 * 1024,
+    on_frame: Callable[[bytes], None] | None = None,
 ) -> Iterator[bytes]:
     stdout = process.stdout
     if stdout is None:
@@ -98,7 +99,7 @@ def iter_multipart_mjpeg(
             if not chunk:
                 break
             buffer.extend(chunk)
-            yield from _extract_multipart_frames(buffer, boundary)
+            yield from _extract_multipart_frames(buffer, boundary, on_frame=on_frame)
     finally:
         _stop_process(process)
 
@@ -107,7 +108,12 @@ def _read_stdout(stdout: BinaryIO, chunk_size: int) -> bytes:
     return stdout.read(chunk_size)
 
 
-def _extract_multipart_frames(buffer: bytearray, boundary: str) -> Iterator[bytes]:
+def _extract_multipart_frames(
+    buffer: bytearray,
+    boundary: str,
+    *,
+    on_frame: Callable[[bytes], None] | None = None,
+) -> Iterator[bytes]:
     while True:
         start = buffer.find(b"\xff\xd8")
         if start < 0:
@@ -122,6 +128,8 @@ def _extract_multipart_frames(buffer: bytearray, boundary: str) -> Iterator[byte
 
         frame = bytes(buffer[start : end + 2])
         del buffer[: end + 2]
+        if on_frame is not None:
+            on_frame(frame)
         header = (
             f"--{boundary}\r\n"
             "Content-Type: image/jpeg\r\n"

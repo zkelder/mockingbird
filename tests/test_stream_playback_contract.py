@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -12,7 +13,12 @@ from mockingbird.api.main import (
     get_stream_windows_dshow_mjpeg_bridge,
 )
 from mockingbird.api.schemas import SourceKind, SourceStatus
-from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
+from mockingbird.playback import (
+    live_frame_cache,
+    local_camera_bridge,
+    rtsp_bridge,
+    windows_camera_bridge,
+)
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import CameraSourceModel, StreamModel
 
@@ -24,12 +30,14 @@ STREAM_ID = "stream-backyard-feeder"
 
 @pytest.fixture(autouse=True)
 def isolated_repository(tmp_path: Path) -> ProductRepository:
+    live_frame_cache.clear_all_frames()
     repository = ProductRepository(
         db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
         media_root=tmp_path / "media",
     )
     configure_repository(repository)
     yield repository
+    live_frame_cache.clear_all_frames()
     configure_repository(None)
 
 
@@ -72,6 +80,43 @@ class FakeFfmpegProcess:
 
     def kill(self) -> None:
         self.killed = True
+
+
+def test_live_frame_cache_returns_fresh_latest_frame() -> None:
+    captured_at = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    frame_bytes = b"\xff\xd8live-frame\xff\xd9"
+
+    frame = live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_bytes,
+        captured_at=captured_at,
+    )
+
+    cached = live_frame_cache.get_latest_frame(
+        STREAM_ID,
+        now=captured_at + timedelta(seconds=1),
+    )
+    assert cached == frame
+    assert cached is not None
+    assert cached.frame_bytes == frame_bytes
+    assert cached.age_ms(captured_at + timedelta(seconds=1)) == 1000
+
+
+def test_live_frame_cache_ignores_stale_frame() -> None:
+    captured_at = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        b"\xff\xd8stale-frame\xff\xd9",
+        captured_at=captured_at,
+    )
+
+    cached = live_frame_cache.get_latest_frame(
+        STREAM_ID,
+        max_age_seconds=5,
+        now=captured_at + timedelta(seconds=6),
+    )
+
+    assert cached is None
 
 
 async def product_counts(client: httpx.AsyncClient) -> dict[str, int]:
@@ -419,7 +464,9 @@ async def test_rtsp_bridge_endpoint_streams_mocked_mjpeg_without_creating_truth(
     )
     monkeypatch.setattr(
         "mockingbird.api.main.rtsp_bridge.iter_multipart_mjpeg",
-        lambda process: iter([b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg_frame]),
+        lambda process, **kwargs: iter(
+            [b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg_frame]
+        ),
     )
     await configure_external_url_live_stream(
         client,
@@ -530,6 +577,22 @@ def test_local_camera_multipart_generator_cleans_up_when_no_frames_arrive() -> N
     assert fake_process.terminated is True
     assert fake_process.waited is True
     assert fake_process.killed is False
+
+
+def test_local_camera_multipart_generator_updates_latest_frame_cache() -> None:
+    fake_process = FakeFfmpegProcess([b"noise\xff\xd8local-live-frame\xff\xd9"])
+
+    chunks = list(
+        local_camera_bridge.iter_multipart_mjpeg(
+            fake_process,
+            on_frame=lambda frame: live_frame_cache.store_latest_frame(STREAM_ID, frame),
+        )
+    )
+
+    cached = live_frame_cache.get_latest_frame(STREAM_ID)
+    assert len(chunks) == 1
+    assert cached is not None
+    assert cached.frame_bytes == b"\xff\xd8local-live-frame\xff\xd9"
 
 
 async def test_local_usb_playback_reports_not_configured_without_device(
@@ -682,7 +745,9 @@ async def test_local_camera_bridge_endpoint_streams_mocked_mjpeg_without_creatin
     )
     monkeypatch.setattr(
         "mockingbird.api.main.local_camera_bridge.iter_multipart_mjpeg",
-        lambda process: iter([b"--frame\r\nContent-Type: image/jpeg\r\n\r\njpeg"]),
+        lambda process, **kwargs: iter(
+            [b"--frame\r\nContent-Type: image/jpeg\r\n\r\njpeg"]
+        ),
     )
     await configure_local_usb_camera(client, device="/dev/video0")
     before = await product_counts(client)
@@ -910,7 +975,7 @@ async def test_windows_dshow_bridge_endpoint_streams_mocked_mjpeg_without_creati
     )
     monkeypatch.setattr(
         "mockingbird.api.main.windows_camera_bridge.iter_multipart_mjpeg",
-        lambda process: iter(
+        lambda process, **kwargs: iter(
             [
                 b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg_frame_one,
                 b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg_frame_two,
@@ -944,6 +1009,104 @@ async def test_windows_dshow_bridge_endpoint_streams_mocked_mjpeg_without_creati
         )
     ]
     assert await product_counts(client) == before
+
+
+async def test_windows_dshow_capture_frame_uses_fresh_live_cache_without_ffmpeg(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    live_frame = b"\xff\xd8cached-windows-live-frame\xff\xd9"
+
+    def fail_if_one_shot_capture_runs(*args: object, **kwargs: object) -> bytes:
+        raise AssertionError("Cached live frame capture must not start one-shot ffmpeg")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.capture_windows_dshow_frame",
+        fail_if_one_shot_capture_runs,
+    )
+    await configure_windows_dshow_camera(
+        client,
+        camera_name="EMEET SmartCam S600",
+        ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, live_frame)
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/local-camera/capture-frame")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "saved"
+    assert body["message"] == (
+        "Saved current live frame as local media only. It will not appear "
+        "in Bird Log until you create/review activity."
+    )
+    assert body["capture_source"] == "live_frame_cache"
+    assert body["live_frame_age_ms"] >= 0
+    assert body["content_type"] == "image/jpeg"
+    assert body["bytes_written"] == len(live_frame)
+    assert body["creates_event"] is False
+    assert body["creates_visit"] is False
+    assert body["creates_truth"] is False
+    assert body["creates_export"] is False
+
+    media_response = await client.get(f"/api/media/{body['media_asset_id']}")
+    assert media_response.status_code == 200
+    media_asset = media_response.json()
+    assert "playback_type=windows_dshow" in media_asset["notes"]
+    saved_path = Path(media_asset["local_path"]).resolve()
+    assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
+    assert saved_path.read_bytes() == live_frame
+
+    after = await product_counts(client)
+    assert after["media_assets"] == before["media_assets"] + 1
+    for key in before:
+        if key != "media_assets":
+            assert after[key] == before[key]
+
+
+async def test_windows_dshow_capture_frame_ignores_stale_live_cache_and_falls_back(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale_frame = b"\xff\xd8stale-windows-live-frame\xff\xd9"
+    fallback_frame = b"\xff\xd8fallback-windows-frame\xff\xd9"
+    captured_args: list[str] = []
+
+    def fake_capture(camera_name: str, **kwargs: object) -> bytes:
+        captured_args.append(camera_name)
+        return fallback_frame
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.capture_windows_dshow_frame",
+        fake_capture,
+    )
+    await configure_windows_dshow_camera(
+        client,
+        camera_name="EMEET SmartCam S600",
+        ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+    )
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        stale_frame,
+        captured_at=datetime.now(UTC) - timedelta(seconds=30),
+    )
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/local-camera/capture-frame")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "saved"
+    assert body["capture_source"] == "one_shot_ffmpeg"
+    assert body["live_frame_age_ms"] is None
+    assert captured_args == ["EMEET SmartCam S600"]
+    media_response = await client.get(f"/api/media/{body['media_asset_id']}")
+    assert media_response.status_code == 200
+    saved_path = Path(media_response.json()["local_path"]).resolve()
+    assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
+    assert saved_path.read_bytes() == fallback_frame
 
 
 async def test_windows_dshow_capture_frame_creates_one_media_asset_only(
@@ -983,9 +1146,11 @@ async def test_windows_dshow_capture_frame_creates_one_media_asset_only(
     body = response.json()
     assert body["status"] == "saved"
     assert body["message"] == (
-        "Saved local camera frame. It will not appear in Bird Log until you "
-        "create/review activity."
+        "Saved one local camera frame directly because Live view was not streaming. "
+        "It will not appear in Bird Log until you create/review activity."
     )
+    assert body["capture_source"] == "one_shot_ffmpeg"
+    assert body["live_frame_age_ms"] is None
     assert body["stream_id"] == STREAM_ID
     assert body["source_id"] == SOURCE_ID
     assert body["media_asset_id"].startswith("media-asset-")
@@ -1034,6 +1199,57 @@ async def test_windows_dshow_capture_frame_creates_one_media_asset_only(
         assert after[key] == before[key]
 
 
+async def test_local_usb_capture_frame_uses_fresh_live_cache_without_ffmpeg(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    live_frame = b"\xff\xd8cached-local-live-frame\xff\xd9"
+
+    def fail_if_one_shot_capture_runs(*args: object, **kwargs: object) -> bytes:
+        raise AssertionError("Cached live frame capture must not start one-shot ffmpeg")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.capture_local_camera_frame",
+        fail_if_one_shot_capture_runs,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    live_frame_cache.store_latest_frame(STREAM_ID, live_frame)
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/local-camera/capture-frame")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "saved"
+    assert body["message"] == (
+        "Saved current live frame as local media only. It will not appear "
+        "in Bird Log until you create/review activity."
+    )
+    assert body["capture_source"] == "live_frame_cache"
+    assert body["live_frame_age_ms"] >= 0
+    assert body["content_type"] == "image/jpeg"
+    assert body["bytes_written"] == len(live_frame)
+    assert body["creates_event"] is False
+    assert body["creates_visit"] is False
+    assert body["creates_truth"] is False
+    assert body["creates_export"] is False
+
+    media_response = await client.get(f"/api/media/{body['media_asset_id']}")
+    assert media_response.status_code == 200
+    media_asset = media_response.json()
+    assert "playback_type=local_usb" in media_asset["notes"]
+    saved_path = Path(media_asset["local_path"]).resolve()
+    assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
+    assert saved_path.read_bytes() == live_frame
+
+    after = await product_counts(client)
+    assert after["media_assets"] == before["media_assets"] + 1
+    for key in before:
+        if key != "media_assets":
+            assert after[key] == before[key]
+
+
 async def test_local_usb_capture_frame_creates_one_media_asset_only(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -1069,9 +1285,11 @@ async def test_local_usb_capture_frame_creates_one_media_asset_only(
     body = response.json()
     assert body["status"] == "saved"
     assert body["message"] == (
-        "Saved local camera frame. It will not appear in Bird Log until you "
-        "create/review activity."
+        "Saved one local camera frame directly because Live view was not streaming. "
+        "It will not appear in Bird Log until you create/review activity."
     )
+    assert body["capture_source"] == "one_shot_ffmpeg"
+    assert body["live_frame_age_ms"] is None
     assert body["content_type"] == "image/jpeg"
     assert body["bytes_written"] == len(jpeg_frame)
     assert body["creates_event"] is False
@@ -1165,8 +1383,11 @@ async def test_local_camera_capture_reports_no_frame_as_capture_failed(
     body = response.json()
     assert body["status"] == "capture_failed"
     assert body["message"] == (
-        "Camera is busy. Stop Live view or other camera apps, then retry capture."
+        "Camera is busy or did not return a frame. Close other camera apps, "
+        "or open Live view until a frame appears and retry capture."
     )
+    assert body["capture_source"] == "one_shot_ffmpeg"
+    assert body["live_frame_age_ms"] is None
     assert body["bytes_written"] == 0
     assert await product_counts(client) == before
 
@@ -1365,6 +1586,22 @@ def test_windows_dshow_multipart_generator_emits_two_frames_and_stops_process() 
     assert fake_process.terminated is True
     assert fake_process.waited is True
     assert fake_process.killed is False
+
+
+def test_windows_dshow_multipart_generator_updates_latest_frame_cache() -> None:
+    fake_process = FakeFfmpegProcess([b"noise\xff\xd8windows-live-frame\xff\xd9"])
+
+    chunks = list(
+        windows_camera_bridge.iter_multipart_mjpeg(
+            fake_process,
+            on_frame=lambda frame: live_frame_cache.store_latest_frame(STREAM_ID, frame),
+        )
+    )
+
+    cached = live_frame_cache.get_latest_frame(STREAM_ID)
+    assert len(chunks) == 1
+    assert cached is not None
+    assert cached.frame_bytes == b"\xff\xd8windows-live-frame\xff\xd9"
 
 
 async def test_external_url_unknown_live_stream_type_reports_unsupported(
