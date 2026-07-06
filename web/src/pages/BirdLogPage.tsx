@@ -9,7 +9,6 @@ import type {
   VisitDetail,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
-import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
@@ -63,6 +62,19 @@ function compareDates(left?: string | null, right?: string | null): number {
   const leftTime = left ? new Date(left).getTime() : 0;
   const rightTime = right ? new Date(right).getTime() : 0;
   return leftTime - rightTime;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  const kib = bytes / 1024;
+  if (kib < 1024) {
+    return `${kib.toFixed(1)} KiB`;
+  }
+
+  return `${(kib / 1024).toFixed(1)} MiB`;
 }
 
 function seenTimestamp(
@@ -185,6 +197,39 @@ function entrySearchText(entry: BirdLogEntry): string {
   ]
     .join(" ")
     .toLowerCase();
+}
+
+function BirdLogMediaBlock({ asset }: { asset: MediaAsset }) {
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const fileUrl = apiClient.mediaFileUrl(asset.id);
+  const canPreviewImage =
+    !previewFailed && (asset.media_type === "image" || asset.content_type.startsWith("image/"));
+
+  useEffect(() => {
+    setPreviewFailed(false);
+  }, [asset.id]);
+
+  return (
+    <div className="bird-log-media">
+      <div className="bird-log-thumb">
+        {canPreviewImage ? (
+          <img alt={asset.original_filename} onError={() => setPreviewFailed(true)} src={fileUrl} />
+        ) : (
+          <div className="bird-log-thumb-fallback">
+            <strong>{formatLabel(asset.media_type)}</strong>
+            <span>{asset.content_type}</span>
+          </div>
+        )}
+      </div>
+      <div className="bird-log-media-facts">
+        <span className="bird-log-media-filename" title={asset.original_filename}>
+          {asset.original_filename}
+        </span>
+        <span>{asset.content_type}</span>
+        <span>{formatBytes(asset.file_size_bytes)}</span>
+      </div>
+    </div>
+  );
 }
 
 export function BirdLogPage({
@@ -398,69 +443,95 @@ export function BirdLogPage({
                 <StatusPill label={`${groupEntries.length} seen`} tone="quiet" />
               </div>
               <div className="bird-log-entry-list">
-                {groupEntries.map((entry) => (
-                  <article className="bird-log-entry" key={entry.id}>
-                    {entry.mediaAsset ? (
-                      <MediaAssetPreview asset={entry.mediaAsset} compact />
-                    ) : (
-                      <div className="bird-log-image-placeholder">
-                        <strong>Snapshot / Image</strong>
-                        <span>No source image attached</span>
-                      </div>
-                    )}
-                    <div className="bird-log-entry-body">
-                      <div className="item-title-row">
-                        <div>
-                          <span className="meta-text">Reviewed</span>
-                          <h3>{formatLabel(entry.label)}</h3>
+                {groupEntries.map((entry) => {
+                  const isFalsePositive = entry.label === "false_positive";
+
+                  return (
+                    <article
+                      className={`bird-log-entry${isFalsePositive ? " is-false-positive" : ""}`}
+                      key={entry.id}
+                    >
+                      {entry.mediaAsset ? (
+                        <BirdLogMediaBlock asset={entry.mediaAsset} />
+                      ) : (
+                        <div className="bird-log-image-placeholder">
+                          <strong>Snapshot / Image</strong>
+                          <span>No source image attached</span>
                         </div>
-                        <StatusPill label="Reviewed" tone="good" />
-                      </div>
-                      <p>{entry.title}</p>
-                      <div className="source-connection-meta">
-                        <span>
-                          Seen: {entry.timestamp ? formatDateTime(entry.timestamp) : "Unknown time"}
-                        </span>
-                        <span>Camera / Source: {entry.sourceName}</span>
-                        <span>Stream: {entry.streamName}</span>
-                        {entry.zoneName ? <span>Zone: {entry.zoneName}</span> : null}
-                      </div>
-                      <div className="bird-log-label-row">
-                        <span>Corrected label</span>
-                        <strong>{formatLabel(entry.label)}</strong>
-                        {entry.suggestedLabel ? (
-                          <small>Suggested: {formatLabel(entry.suggestedLabel)}</small>
-                        ) : null}
-                      </div>
-                      <div className="detail-actions">
-                        <button
-                          className="secondary-action"
-                          onClick={() =>
-                            entry.targetType === "visit"
-                              ? onOpenVisit(entry.targetId)
-                              : onOpenEvent(entry.targetId)
-                          }
-                          type="button"
-                        >
-                          View reviewed result
-                        </button>
-                        {entry.mediaAsset ? (
-                          <a
-                            className="inline-link"
-                            href={apiClient.mediaFileUrl(entry.mediaAsset.id)}
-                            rel="noreferrer"
-                            target="_blank"
+                      )}
+                      <div className="bird-log-entry-body">
+                        <div className="bird-log-entry-top">
+                          <div>
+                            <span className="meta-text">
+                              {isFalsePositive ? "Reviewed false positive" : "Reviewed result"}
+                            </span>
+                            <h3>{formatLabel(entry.label)}</h3>
+                            <p>{entry.title}</p>
+                          </div>
+                          <StatusPill label="Reviewed" tone="good" />
+                        </div>
+                        <div className="bird-log-result-row">
+                          <div>
+                            <span>Corrected label</span>
+                            <strong>{formatLabel(entry.label)}</strong>
+                          </div>
+                          {entry.suggestedLabel ? (
+                            <div>
+                              <span>Suggested</span>
+                              <strong>{formatLabel(entry.suggestedLabel)}</strong>
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="bird-log-meta-grid">
+                          <div>
+                            <span>Seen</span>
+                            <strong>
+                              {entry.timestamp ? formatDateTime(entry.timestamp) : "Unknown time"}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Source</span>
+                            <strong>{entry.sourceName}</strong>
+                          </div>
+                          <div>
+                            <span>Stream</span>
+                            <strong>{entry.streamName}</strong>
+                          </div>
+                          <div>
+                            <span>Zone</span>
+                            <strong>{entry.zoneName ?? "No zone"}</strong>
+                          </div>
+                        </div>
+                        <div className="bird-log-actions">
+                          <button
+                            className="secondary-action"
+                            onClick={() =>
+                              entry.targetType === "visit"
+                                ? onOpenVisit(entry.targetId)
+                                : onOpenEvent(entry.targetId)
+                            }
+                            type="button"
                           >
-                            View source image
-                          </a>
-                        ) : null}
-                        <button className="secondary-action" onClick={onOpenExports} type="button">
-                          Export reviewed data
-                        </button>
+                            View reviewed result
+                          </button>
+                          {entry.mediaAsset ? (
+                            <a
+                              className="inline-link"
+                              href={apiClient.mediaFileUrl(entry.mediaAsset.id)}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              View source image
+                            </a>
+                          ) : null}
+                          <button className="secondary-action" onClick={onOpenExports} type="button">
+                            Export reviewed data
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  </article>
-                ))}
+                    </article>
+                  );
+                })}
               </div>
             </section>
           ))}
