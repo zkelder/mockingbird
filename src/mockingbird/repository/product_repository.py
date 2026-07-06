@@ -6452,6 +6452,23 @@ class ProductRepository:
 
             event = self._event_from_model(session, event_model)
             zone_id, zone_name, zone_type = self._zone_context(session, event.primary_zone_id)
+            suggestion_model = session.scalars(
+                select(SpeciesSuggestionModel)
+                .where(
+                    SpeciesSuggestionModel.visit_id == visit.id,
+                    SpeciesSuggestionModel.status == SpeciesSuggestionStatus.pending.value,
+                )
+                .order_by(
+                    SpeciesSuggestionModel.created_at.desc(),
+                    SpeciesSuggestionModel.rank,
+                    SpeciesSuggestionModel.id.desc(),
+                )
+            ).first()
+            suggestion = (
+                _species_suggestion_from_model(suggestion_model)
+                if suggestion_model is not None
+                else None
+            )
             queue.append(
                 ReviewQueueItem(
                     id=f"review-queue-{visit.id}",
@@ -6463,7 +6480,17 @@ class ProductRepository:
                     primary_zone_id=zone_id,
                     primary_zone_name=zone_name,
                     primary_zone_type=zone_type,
-                    suggested_label=visit.species_guess or visit.subject_label,
+                    suggested_label=(
+                        suggestion.suggested_label
+                        if suggestion is not None
+                        else visit.species_guess or visit.subject_label
+                    ),
+                    suggestion_id=suggestion.id if suggestion is not None else None,
+                    suggestion_confidence=(
+                        suggestion.confidence if suggestion is not None else None
+                    ),
+                    suggestion_reason=suggestion.notes if suggestion is not None else None,
+                    suggestion_creates_truth=False,
                     media_asset=self._media_asset_for_path_from_session(
                         session,
                         visit.representative_media_path,

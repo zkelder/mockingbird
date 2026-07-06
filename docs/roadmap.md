@@ -1092,6 +1092,12 @@ Current work:
 - Live Monitor Reliability 1: live monitoring reports recent-frame diagnostics,
   last evaluation status, and quiet/cooldown duplicate suppression while
   remaining user-started, in-memory, and review-truth gated.
+- Live Activity Suggestion 1: explicit live motion review candidates now attach
+  low-confidence SpeciesSuggestion evidence from Zone context, while ReviewLabel,
+  Bird Log, and export truth still begin only after correction.
+- Live Monitor Review Reliability Fix: created live-motion candidates now refresh
+  and open the Review Queue item directly, while High sensitivity uses more
+  recent frame pairs and lower bird-zone thresholds with visible diagnostics.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — live zone overlay browser smoke validation and

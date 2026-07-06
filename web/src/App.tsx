@@ -487,7 +487,7 @@ export default function App() {
           onOpenVisit={openVisit}
           onOpenImport={() => setPage("import")}
           onOpenExports={() => setPage("exports")}
-          onOpenReview={() => openReviewQueue()}
+          onOpenReview={openReviewQueue}
           onOpenMotionEvidence={openMotionEvidence}
           onReviewActivityCreated={() => loadAppData({ showLoading: false })}
         />

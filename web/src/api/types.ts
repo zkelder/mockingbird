@@ -1350,6 +1350,11 @@ export interface LiveMotionEvaluateResponse {
   suppressed_zone_summaries: MotionSuppressedZoneSummary[];
   activity_summary?: string | null;
   strongest_changed_ratio: number;
+  pixel_delta_threshold?: number | null;
+  min_changed_ratio?: number | null;
+  strongest_zone_min_changed_ratio?: number | null;
+  strongest_frame_start_sequence?: number | null;
+  strongest_frame_end_sequence?: number | null;
   best_frame_sequence?: number | null;
   best_frame_captured_at?: string | null;
   best_media_asset_id?: string | null;
@@ -1358,6 +1363,7 @@ export interface LiveMotionEvaluateResponse {
   review_activity_available: boolean;
   review_activity_created: boolean;
   review_activity_reused: boolean;
+  review_activity_already_exists: boolean;
   existing_review_activity_reference?: string | null;
   session_status: string;
   cooldown_remaining_seconds?: number | null;
@@ -1369,6 +1375,10 @@ export interface LiveMotionEvaluateResponse {
   review_queue_item_id?: string | null;
   review_status?: ReviewStatus | null;
   suggested_label?: string | null;
+  suggestion_id?: string | null;
+  suggestion_confidence?: number | null;
+  suggestion_reason?: string | null;
+  suggestion_creates_truth: boolean;
   created_evidence: MotionEvidence[];
   debug_cell_zones: MotionZoneInput[];
   creates_event: boolean;
@@ -1629,6 +1639,10 @@ export interface ReviewQueueItem {
   primary_zone_name?: string | null;
   primary_zone_type?: ZoneType | null;
   suggested_label?: string | null;
+  suggestion_id?: string | null;
+  suggestion_confidence?: number | null;
+  suggestion_reason?: string | null;
+  suggestion_creates_truth: boolean;
   media_asset?: MediaAsset | null;
   review_status: ReviewStatus;
   reason: string;

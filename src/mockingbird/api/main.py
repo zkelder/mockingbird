@@ -132,6 +132,7 @@ from mockingbird.api.schemas import (
     Zone,
     ZoneCreate,
     ZoneMutationResult,
+    ZoneType,
     ZoneUpdate,
 )
 from mockingbird.motion import (
@@ -141,6 +142,7 @@ from mockingbird.motion import (
     MotionZone,
     extract_motion_candidates,
     score_frame_motion,
+    score_zone_motion,
 )
 from mockingbird.motion.activity_crop import ActivityCropPlan, plan_activity_crop
 from mockingbird.motion.activity_session import (
@@ -164,6 +166,7 @@ from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.sampler import (
     SamplerConfig,
     SamplerContext,
+    SamplerResult,
     SamplerZone,
     create_motion_evidence_from_sampler_result,
     evaluate_sampled_frame_sequence,
@@ -898,6 +901,13 @@ class _AutoMotionCell:
 
 
 @dataclass(frozen=True)
+class _LiveActivitySuggestion:
+    label: str
+    confidence: float
+    reason: str
+
+
+@dataclass(frozen=True)
 class _AutoMotionCluster:
     cells: list[_AutoMotionCell]
     start_frame_index: int
@@ -1045,6 +1055,123 @@ def _motion_activity_summary(
         return f"Motion ignored in {_zone_motion_summary_label(suppressed_zone_summaries)}."
 
     return "No activity detected."
+
+
+def _live_activity_suggestion_for_zone(
+    zone_type: ZoneType | None,
+    zone_name: str | None,
+) -> _LiveActivitySuggestion | None:
+    if zone_type in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}:
+        return _LiveActivitySuggestion(
+            label="unknown_bird",
+            confidence=0.30,
+            reason=(
+                f"Low-confidence live motion suggestion from {zone_name or 'bird-focused'} "
+                "Zone context. Confirm or correct in Review Queue."
+            ),
+        )
+    if zone_type in {ZoneType.ground, ZoneType.yard, ZoneType.driveway}:
+        return _LiveActivitySuggestion(
+            label="unknown_animal",
+            confidence=0.25,
+            reason=(
+                f"Low-confidence live motion suggestion from {zone_name or 'outdoor'} "
+                "Zone context. Confirm or correct in Review Queue."
+            ),
+        )
+    return None
+
+
+def _live_zone_min_changed_ratio(
+    *,
+    zone_type: ZoneType | None,
+    base_min_changed_ratio: float,
+) -> float:
+    if zone_type in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}:
+        return max(0.001, base_min_changed_ratio * 0.5)
+    return base_min_changed_ratio
+
+
+def _live_motion_sampler_result(
+    frames: list[list[list[int | float]]],
+    motion_zones: list[MotionZoneInput],
+    zones_by_id: dict[str, Zone],
+    config: SamplerConfig,
+) -> SamplerResult:
+    frame_scores: list[MotionFrameScore] = []
+    motion_zone_by_id = {
+        zone.zone_id: MotionZone(
+            zone_id=zone.zone_id,
+            left=zone.left,
+            top=zone.top,
+            right=zone.right,
+            bottom=zone.bottom,
+        )
+        for zone in motion_zones
+    }
+
+    for pair_index in range(len(frames) - 1):
+        scores: list[MotionScore] = []
+        for zone in motion_zones:
+            zone_model = zones_by_id.get(zone.zone_id)
+            zone_type = zone_model.zone_type if zone_model is not None else None
+            scores.append(
+                score_zone_motion(
+                    frames[pair_index],
+                    frames[pair_index + 1],
+                    motion_zone_by_id[zone.zone_id],
+                    pixel_delta_threshold=config.pixel_delta_threshold,
+                    min_changed_ratio=_live_zone_min_changed_ratio(
+                        zone_type=zone_type,
+                        base_min_changed_ratio=config.min_changed_ratio,
+                    ),
+                )
+            )
+        triggered_zone_ids = [score.zone_id for score in scores if score.triggered]
+        strongest_score = max(scores, key=lambda score: score.changed_ratio, default=None)
+        frame_scores.append(
+            MotionFrameScore(
+                frame_index=config.frame_index_start + pair_index + 1,
+                scores=scores,
+                triggered_zone_ids=triggered_zone_ids,
+                strongest_zone_id=strongest_score.zone_id if strongest_score else None,
+                strongest_changed_ratio=(
+                    strongest_score.changed_ratio if strongest_score else 0.0
+                ),
+            )
+        )
+
+    return SamplerResult(
+        frame_scores=frame_scores,
+        candidates=extract_motion_candidates(
+            frame_scores,
+            min_triggered_frames=config.min_triggered_frames,
+            max_gap_frames=config.max_gap_frames,
+        ),
+    )
+
+
+def _live_motion_pair_sequences(
+    frames: list[live_frame_cache.LiveFrame],
+    frame_sequence: int | None,
+) -> tuple[int | None, int | None]:
+    if frame_sequence is None:
+        return None, None
+    for index, frame in enumerate(frames):
+        if frame.sequence == frame_sequence:
+            previous = frames[index - 1].sequence if index > 0 else None
+            return previous, frame.sequence
+    return None, None
+
+
+def _latest_species_suggestion_for_visit(
+    repository: ProductRepository,
+    visit_id: str | None,
+) -> SpeciesSuggestionResponse | None:
+    if visit_id is None:
+        return None
+    suggestions = repository.list_species_suggestions(visit_id=visit_id)
+    return suggestions[-1] if suggestions else None
 
 
 def _live_frame_cache_response_fields(
@@ -2033,6 +2160,8 @@ async def evaluate_live_stream_motion(
         "source_id": stream.source_id,
         "evaluated_at": evaluated_at,
         **_live_frame_cache_response_fields(cache_status),
+        "pixel_delta_threshold": request.pixel_delta_threshold,
+        "min_changed_ratio": request.min_changed_ratio,
         "creates_event": False,
         "creates_visit": False,
         "creates_truth": False,
@@ -2167,9 +2296,10 @@ async def evaluate_live_stream_motion(
         sampler_config,
     )
     try:
-        sampler_result = evaluate_sampled_frame_sequence(
+        sampler_result = _live_motion_sampler_result(
             [frame.frame for frame in decoded_frames],
-            [_sampler_zone_from_payload(zone) for zone in motion_zones],
+            motion_zones,
+            zones_by_id,
             sampler_config,
         )
     except ValueError as error:
@@ -2216,6 +2346,10 @@ async def evaluate_live_stream_motion(
     strongest_zone = zones_by_id.get(strongest_zone_id) if strongest_zone_id else None
     strongest_zone_name = strongest_zone.name if strongest_zone else None
     strongest_zone_type = strongest_zone.zone_type if strongest_zone else None
+    strongest_zone_min_changed_ratio = _live_zone_min_changed_ratio(
+        zone_type=strongest_zone_type,
+        base_min_changed_ratio=request.min_changed_ratio,
+    ) if strongest_zone_id else None
     activity_summary = _motion_activity_summary(
         activity_detected=bool(motion_candidates),
         strongest_zone_name=strongest_zone_name,
@@ -2236,6 +2370,10 @@ async def evaluate_live_stream_motion(
         )
         if best_candidate
         else None
+    )
+    strongest_frame_start_sequence, strongest_frame_end_sequence = _live_motion_pair_sequences(
+        cached_frames,
+        best_candidate.best_frame_index if best_candidate else None,
     )
     session_region_kind = "auto_area" if uses_auto_regions else "zone"
     session_region_id = _activity_session_region_id(strongest_activity_area)
@@ -2296,6 +2434,11 @@ async def evaluate_live_stream_motion(
     review_visit_id: str | None = None
     review_activity_created = False
     review_activity_reused = False
+    review_activity_suggestion: SpeciesSuggestionResponse | None = None
+    live_activity_suggestion = _live_activity_suggestion_for_zone(
+        strongest_zone_type,
+        strongest_zone_name,
+    )
 
     def live_motion_promotion_payload() -> MotionEvidencePromoteRequest:
         area_label = strongest_activity_area.label if strongest_activity_area else None
@@ -2306,7 +2449,11 @@ async def evaluate_live_stream_motion(
         )
         return MotionEvidencePromoteRequest(
             event_title=event_title,
-            visit_label_hint="unknown_animal",
+            visit_label_hint=(
+                live_activity_suggestion.label
+                if live_activity_suggestion is not None
+                else "unknown_animal"
+            ),
             notes=request.notes
             or "Live stream motion monitor created an uncertain needs-review activity.",
             create_event=True,
@@ -2405,6 +2552,38 @@ async def evaluate_live_stream_motion(
         except ValueError as error:
             raise _motion_evidence_error(error) from error
 
+    if review_visit_id and review_motion_evidence:
+        if review_activity_created and live_activity_suggestion is not None:
+            try:
+                review_activity_suggestion = repository.create_species_suggestion(
+                    SpeciesSuggestionCreateRequest(
+                        source_id=stream.source_id,
+                        stream_id=stream.id,
+                        event_id=review_event_id,
+                        visit_id=review_visit_id,
+                        media_asset_id=(
+                            best_media_asset_id
+                            or review_motion_evidence.snapshot_media_asset_id
+                        ),
+                        motion_evidence_id=review_motion_evidence.id,
+                        adapter_id="live_motion_zone_suggester",
+                        adapter_name="Live motion zone suggester",
+                        suggested_label=live_activity_suggestion.label,
+                        confidence=live_activity_suggestion.confidence,
+                        rank=1,
+                        alternatives=[],
+                        evidence_region=None,
+                        notes=live_activity_suggestion.reason,
+                    )
+                )
+            except ValueError as error:
+                raise _species_suggestion_error(error) from error
+        elif review_activity_reused:
+            review_activity_suggestion = _latest_species_suggestion_for_visit(
+                repository,
+                review_visit_id,
+            )
+
     if review_motion_evidence:
         review_activity_available = False
     review_queue_item_id = (
@@ -2476,6 +2655,9 @@ async def evaluate_live_stream_motion(
         suppressed_zone_summaries=suppressed_zone_summaries,
         activity_summary=activity_summary,
         strongest_changed_ratio=strongest_changed_ratio,
+        strongest_zone_min_changed_ratio=strongest_zone_min_changed_ratio,
+        strongest_frame_start_sequence=strongest_frame_start_sequence,
+        strongest_frame_end_sequence=strongest_frame_end_sequence,
         best_frame_sequence=best_live_frame.sequence if best_live_frame else None,
         best_frame_captured_at=best_live_frame.captured_at if best_live_frame else None,
         best_media_asset_id=best_media_asset_id,
@@ -2484,6 +2666,7 @@ async def evaluate_live_stream_motion(
         review_activity_available=review_activity_available,
         review_activity_created=review_activity_created,
         review_activity_reused=review_activity_reused,
+        review_activity_already_exists=review_activity_reused,
         existing_review_activity_reference=existing_review_activity_reference,
         session_status=live_session_status,
         cooldown_remaining_seconds=cooldown_remaining_seconds,
@@ -2493,7 +2676,23 @@ async def evaluate_live_stream_motion(
         visit_id=review_visit_id,
         review_queue_item_id=review_queue_item_id,
         review_status="needs_review" if review_queue_item_id else None,
-        suggested_label="unknown_animal" if review_queue_item_id else None,
+        suggested_label=(
+            review_activity_suggestion.suggested_label
+            if review_activity_suggestion
+            else live_activity_suggestion.label
+            if review_queue_item_id and live_activity_suggestion is not None
+            else None
+        ),
+        suggestion_id=(
+            review_activity_suggestion.id if review_activity_suggestion else None
+        ),
+        suggestion_confidence=(
+            review_activity_suggestion.confidence if review_activity_suggestion else None
+        ),
+        suggestion_reason=(
+            review_activity_suggestion.notes if review_activity_suggestion else None
+        ),
+        suggestion_creates_truth=False,
         created_evidence=created_evidence,
         debug_cell_zones=debug_cell_zones,
         message=message,

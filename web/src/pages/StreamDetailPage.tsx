@@ -33,7 +33,13 @@ interface StreamDetailPageProps {
   onOpenVisit: (visitId: string) => void;
   onOpenImport: () => void;
   onOpenExports: () => void;
-  onOpenReview: () => void;
+  onOpenReview: (
+    context?: {
+      source?: "live-motion";
+      search?: string | null;
+      status?: "unreviewed" | "reviewed" | "all" | null;
+    } | null,
+  ) => void;
   onOpenMotionEvidence: (motionEvidenceId: string) => void;
   onReviewActivityCreated: () => Promise<void>;
 }
@@ -83,11 +89,35 @@ type LiveMonitorSensitivity = "low" | "normal" | "high";
 
 const liveMonitorSensitivitySettings: Record<
   LiveMonitorSensitivity,
-  { label: string; min_changed_ratio: number; pixel_delta_threshold: number }
+  {
+    label: string;
+    min_changed_ratio: number;
+    pixel_delta_threshold: number;
+    interval_ms: number;
+    max_frames: number;
+  }
 > = {
-  low: { label: "Low", min_changed_ratio: 0.04, pixel_delta_threshold: 35 },
-  normal: { label: "Normal", min_changed_ratio: 0.02, pixel_delta_threshold: 25 },
-  high: { label: "High", min_changed_ratio: 0.01, pixel_delta_threshold: 15 },
+  low: {
+    label: "Low",
+    min_changed_ratio: 0.035,
+    pixel_delta_threshold: 35,
+    interval_ms: 2500,
+    max_frames: 12,
+  },
+  normal: {
+    label: "Normal",
+    min_changed_ratio: 0.012,
+    pixel_delta_threshold: 18,
+    interval_ms: 1500,
+    max_frames: 20,
+  },
+  high: {
+    label: "High",
+    min_changed_ratio: 0.003,
+    pixel_delta_threshold: 10,
+    interval_ms: 750,
+    max_frames: 24,
+  },
 };
 const liveMonitorSensitivityOptions: LiveMonitorSensitivity[] = ["low", "normal", "high"];
 
@@ -240,6 +270,14 @@ function formatAgeMs(ageMs: number | null | undefined): string {
     return `${ageMs} ms`;
   }
   return `${Math.round(ageMs / 1000)}s ago`;
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (value == null) {
+    return "n/a";
+  }
+  const percent = value * 100;
+  return `${percent < 1 ? percent.toFixed(2) : percent.toFixed(1)}%`;
 }
 
 function pointFromPointer(event: ReactPointerEvent<HTMLElement>): Point {
@@ -624,19 +662,20 @@ export function StreamDetailPage({
         create_review_activity: createReviewActivity,
         min_changed_ratio: sensitivitySettings.min_changed_ratio,
         pixel_delta_threshold: sensitivitySettings.pixel_delta_threshold,
+        max_frames: sensitivitySettings.max_frames,
         min_triggered_frames: 1,
         notes: createReviewActivity
           ? "User created review activity from live stream motion monitoring."
           : null,
       });
-      setLiveMotionResult(result);
-      setLiveMonitorState(liveMonitorStateFor(result));
       if (result.best_media_asset_id) {
         await refreshSavedImages();
       }
       if (createReviewActivity && result.review_queue_item_id) {
         await onReviewActivityCreated();
       }
+      setLiveMotionResult(result);
+      setLiveMonitorState(liveMonitorStateFor(result));
       if (result.activity_detected && !createReviewActivity) {
         clearLiveMonitorInterval();
         setIsLiveMonitoring(false);
@@ -676,9 +715,10 @@ export function StreamDetailPage({
     setLiveMonitorState("waiting");
     setIsLiveMonitoring(true);
     void evaluateLiveMotion(false);
+    const sensitivitySettings = liveMonitorSensitivitySettings[liveMonitorSensitivity];
     liveMonitorIntervalRef.current = window.setInterval(() => {
       void evaluateLiveMotion(false);
-    }, 2000);
+    }, sensitivitySettings.interval_ms);
   }
 
   function stopLiveMonitoring() {
@@ -986,6 +1026,13 @@ export function StreamDetailPage({
     : "Capture another frame to check motion";
   const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
   const liveReviewQueueItemId = liveMotionResult?.review_queue_item_id ?? null;
+  const liveReviewQueueContext = liveReviewQueueItemId
+    ? {
+        source: "live-motion" as const,
+        search: liveReviewQueueItemId,
+        status: "unreviewed" as const,
+      }
+    : null;
   const hasLocalLiveReviewQueueItem = Boolean(
     liveReviewQueueItemId && !streamReviewItems.some((item) => item.id === liveReviewQueueItemId),
   );
@@ -1061,6 +1108,16 @@ export function StreamDetailPage({
         ? `${liveMotionResult.cooldown_remaining_seconds}s remaining`
         : "waiting for quiet period"
       : null;
+  const liveSensitivityLabel = liveMonitorSensitivitySettings[liveMonitorSensitivity].label;
+  const liveStrongestChangeLabel = formatPercent(liveMotionResult?.strongest_changed_ratio);
+  const liveStrongestThresholdLabel = formatPercent(
+    liveMotionResult?.strongest_zone_min_changed_ratio ?? liveMotionResult?.min_changed_ratio,
+  );
+  const liveStrongestPairLabel =
+    liveMotionResult?.strongest_frame_start_sequence &&
+    liveMotionResult?.strongest_frame_end_sequence
+      ? `${liveMotionResult.strongest_frame_start_sequence}->${liveMotionResult.strongest_frame_end_sequence}`
+      : "n/a";
   const liveLastError = liveMotionResult?.last_error ?? liveMotionError ?? null;
   const showLiveMonitorFacts = Boolean(isLiveMonitoring || liveMotionResult);
   const liveWorkflowState =
@@ -1125,7 +1182,7 @@ export function StreamDetailPage({
         </div>
         <div className="detail-actions">
           {streamReviewCount > 0 ? (
-            <button className="secondary-action" onClick={onOpenReview}>
+            <button className="secondary-action" onClick={() => onOpenReview()}>
               Review {streamReviewCount}
             </button>
           ) : null}
@@ -1429,10 +1486,22 @@ export function StreamDetailPage({
                   <strong>Last checked</strong> {liveLastChecked ?? "not yet"}
                 </span>
                 <span>
+                  <strong>Sensitivity</strong> {liveSensitivityLabel}
+                </span>
+                <span>
                   <strong>Last activity</strong> {liveLastActivity ?? "none yet"}
                 </span>
                 <span>
                   <strong>Strongest zone</strong> {liveStrongestZoneName ?? "none yet"}
+                </span>
+                <span>
+                  <strong>Strongest change</strong> {liveStrongestChangeLabel}
+                </span>
+                <span>
+                  <strong>Threshold</strong> {liveStrongestThresholdLabel}
+                </span>
+                <span>
+                  <strong>Frame pair</strong> {liveStrongestPairLabel}
                 </span>
                 {liveCooldownLabel ? (
                   <span>
@@ -1514,7 +1583,11 @@ export function StreamDetailPage({
                 ) : null}
                 <div className="detail-actions stream-live-actions">
                   {liveReviewActivityCreated ? (
-                    <button className="primary-action" onClick={onOpenReview} type="button">
+                    <button
+                      className="primary-action"
+                      onClick={() => onOpenReview(liveReviewQueueContext)}
+                      type="button"
+                    >
                       Open Review Queue
                     </button>
                   ) : null}
@@ -1544,7 +1617,7 @@ export function StreamDetailPage({
                     </button>
                   ) : null}
                   {!liveReviewActivityCreated && streamReviewCount > 0 ? (
-                    <button className="text-action" onClick={onOpenReview} type="button">
+                    <button className="text-action" onClick={() => onOpenReview()} type="button">
                       Open Review Queue
                     </button>
                   ) : null}
@@ -1637,7 +1710,11 @@ export function StreamDetailPage({
                       {isCheckingMotion ? "Comparing..." : motionActionLabel}
                     </button>
                     {streamReviewCount > 0 ? (
-                      <button className="secondary-action" onClick={onOpenReview} type="button">
+                      <button
+                        className="secondary-action"
+                        onClick={() => onOpenReview()}
+                        type="button"
+                      >
                         Open Review Queue
                       </button>
                     ) : null}
@@ -1912,7 +1989,7 @@ export function StreamDetailPage({
                     <span>{item.reason}</span>
                   </div>
                 ))}
-                <button className="secondary-action" onClick={onOpenReview}>
+                <button className="secondary-action" onClick={() => onOpenReview()}>
                   Open Review Queue
                 </button>
               </>

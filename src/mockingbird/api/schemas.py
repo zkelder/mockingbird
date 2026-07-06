@@ -1396,6 +1396,11 @@ class LiveMotionEvaluateResponse(BaseModel):
     )
     activity_summary: str | None = None
     strongest_changed_ratio: float = 0.0
+    pixel_delta_threshold: float | None = None
+    min_changed_ratio: float | None = None
+    strongest_zone_min_changed_ratio: float | None = None
+    strongest_frame_start_sequence: int | None = None
+    strongest_frame_end_sequence: int | None = None
     best_frame_sequence: int | None = None
     best_frame_captured_at: datetime | None = None
     best_media_asset_id: str | None = None
@@ -1404,6 +1409,7 @@ class LiveMotionEvaluateResponse(BaseModel):
     review_activity_available: bool = False
     review_activity_created: bool = False
     review_activity_reused: bool = False
+    review_activity_already_exists: bool = False
     existing_review_activity_reference: str | None = None
     session_status: str = "watching"
     cooldown_remaining_seconds: int | None = None
@@ -1415,6 +1421,10 @@ class LiveMotionEvaluateResponse(BaseModel):
     review_queue_item_id: str | None = None
     review_status: ReviewStatus | None = None
     suggested_label: str | None = None
+    suggestion_id: str | None = None
+    suggestion_confidence: float | None = Field(default=None, ge=0, le=1)
+    suggestion_reason: str | None = None
+    suggestion_creates_truth: bool = False
     created_evidence: list[MotionEvidenceResponse] = Field(default_factory=list)
     debug_cell_zones: list[MotionZoneInput] = Field(default_factory=list)
     creates_event: bool = False
@@ -1627,6 +1637,10 @@ class ReviewQueueItem(BaseModel):
     primary_zone_name: str | None = None
     primary_zone_type: ZoneType | None = None
     suggested_label: str | None = None
+    suggestion_id: str | None = None
+    suggestion_confidence: float | None = Field(default=None, ge=0, le=1)
+    suggestion_reason: str | None = None
+    suggestion_creates_truth: bool = False
     media_asset: MediaAsset | None = None
     review_status: ReviewStatus
     reason: str

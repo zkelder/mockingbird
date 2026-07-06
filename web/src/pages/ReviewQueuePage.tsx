@@ -42,7 +42,7 @@ export type ReviewStatusFilter = "unreviewed" | "reviewed" | "all";
 type LabelValidationStatus = "empty" | "suggested" | "recent" | "taxonomy" | "custom";
 
 export interface ReviewQueueInitialContext {
-  source?: "classifier-readiness";
+  source?: "classifier-readiness" | "live-motion";
   sourceLabel?: string | null;
   search?: string | null;
   correctionLabel?: string | null;
@@ -162,6 +162,9 @@ function reviewQueueSearchText(item: ReviewQueueItem, taxonomyLabels: TaxonomyLa
     item.primary_zone_name ?? "",
     item.primary_zone_type ?? "",
     suggestedLabel,
+    item.suggestion_id ?? "",
+    item.suggestion_confidence?.toString() ?? "",
+    item.suggestion_reason ?? "",
     displayTaxonomyLabel(suggestedLabel || "unknown", taxonomyLabels),
     item.reason,
     media?.id ?? "",
@@ -870,6 +873,12 @@ export function ReviewQueuePage({
     if (nextSearch) {
       setTextSearch(nextSearch);
     }
+    if (initialContext.source === "live-motion") {
+      setReviewFilter("all");
+      setTargetTypeFilter("all");
+      setEvidenceFilter("all");
+      setSourceStreamFilter("all");
+    }
     if (initialContext.status) {
       setReviewStatusFilter(initialContext.status);
     }
@@ -1502,15 +1511,22 @@ export function ReviewQueuePage({
                 {isUnknownBirdLabel(item.suggested_label, taxonomyLabels) ? (
                   <EvidenceBadge label="Unknown bird" tone="review" />
                 ) : null}
+                {item.suggestion_confidence != null ? (
+                  <EvidenceBadge label="Low-confidence suggestion" tone="quiet" />
+                ) : null}
                 <TaxonomyBadge label={suggestedTaxonomy} value={item.suggested_label} />
                 <span>
                   Suggested: {displayTaxonomyLabel(item.suggested_label ?? "unknown", taxonomyLabels)}
                 </span>
+                {item.suggestion_confidence != null ? (
+                  <span>Confidence: {formatConfidence(item.suggestion_confidence)}</span>
+                ) : null}
                 <span>Source: {itemSourceStreamMetadata?.sourceId ?? "n/a"}</span>
                 <span>Stream: {itemSourceStreamMetadata?.streamId ?? item.stream_id}</span>
                 <span>Event: {item.event_id ?? "n/a"}</span>
                 <span>Visit: {item.visit_id ?? "n/a"}</span>
                 <span>Zone: {reviewItemZoneLabel(item)}</span>
+                {item.suggestion_id ? <span>Suggestion: {item.suggestion_id}</span> : null}
                 {item.visit_id ? <span>Species suggestions: Visit detail</span> : null}
                 {item.media_asset ? <span>Imported media attached</span> : null}
               </div>
@@ -1542,7 +1558,19 @@ export function ReviewQueuePage({
                   <div className="data-row">
                     <span>Suggested label</span>
                     <strong>{displayTaxonomyLabel(item.suggested_label ?? "unknown", taxonomyLabels)}</strong>
-                    <small>Still unreviewed until correction submit</small>
+                    <small>
+                      {item.suggestion_confidence != null
+                        ? `Low-confidence ${formatConfidence(item.suggestion_confidence)}. `
+                        : ""}
+                      Suggestion only - confirm or correct.
+                    </small>
+                  </div>
+                  <div className="data-row">
+                    <span>Truth boundary</span>
+                    <strong>{item.suggestion_creates_truth ? "Creates truth" : "Evidence only"}</strong>
+                    <small>
+                      {item.suggestion_reason ?? "ReviewLabel truth is created by correction submit."}
+                    </small>
                   </div>
                 </div>
                 {item.media_asset ? (

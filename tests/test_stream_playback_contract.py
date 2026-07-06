@@ -541,6 +541,11 @@ async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_on
     assert result["strongest_zone_id"] == "zone-feeder"
     assert result["strongest_zone_name"] == "Feeder"
     assert result["strongest_zone_type"] == "feeder"
+    assert result["pixel_delta_threshold"] == 25.0
+    assert result["min_changed_ratio"] == 0.1
+    assert result["strongest_zone_min_changed_ratio"] == 0.05
+    assert result["strongest_frame_start_sequence"] == 1
+    assert result["strongest_frame_end_sequence"] == 2
     assert result["activity_summary"] == "Activity detected in Feeder."
     assert result["session_status"] == "activity_detected"
     assert result["last_evaluation_message"] == result["message"]
@@ -563,6 +568,131 @@ async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_on
     for key in before:
         if key != "media_assets":
             assert after[key] == before[key]
+
+
+async def test_live_motion_evaluation_uses_strongest_recent_frame_pair(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frames = [
+        b"\xff\xd8live-middle-pair-0\xff\xd9",
+        b"\xff\xd8live-middle-pair-1\xff\xd9",
+        b"\xff\xd8live-middle-pair-2\xff\xd9",
+        b"\xff\xd8live-middle-pair-3\xff\xd9",
+    ]
+    captured_at = datetime.now(UTC)
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frames[0]: blank_frame(),
+            frames[1]: blank_frame(),
+            frames[2]: frame_with([(1, 1), (1, 2), (2, 1), (2, 2)]),
+            frames[3]: frame_with([(1, 1), (1, 2), (2, 1), (2, 2)]),
+        },
+    )
+    for index, frame in enumerate(frames):
+        live_frame_cache.store_latest_frame(
+            STREAM_ID,
+            frame,
+            captured_at=captured_at + timedelta(seconds=index),
+        )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["activity_detected"] is True
+    assert result["frames_considered"] == 4
+    assert len(result["frame_scores"]) == 3
+    assert result["strongest_zone_id"] == "zone-feeder"
+    assert result["strongest_frame_start_sequence"] == 2
+    assert result["strongest_frame_end_sequence"] == 3
+    assert result["best_frame_sequence"] == 3
+    assert result["candidates"][0]["best_frame_index"] == 3
+    assert result["best_media_asset_id"] is None
+    assert result["review_activity_created"] is False
+    assert result["creates_truth"] is False
+    assert await product_counts(client) == before
+
+
+async def test_live_motion_high_sensitivity_detects_smaller_feeder_motion_than_normal(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-small-feeder-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-small-feeder-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(width=100, height=100),
+            frame_1: frame_with([(30, 40), (31, 41)], width=100, height=100),
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+    before = await product_counts(client)
+
+    normal_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.012,
+            "pixel_delta_threshold": 18,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert normal_response.status_code == 200
+    normal = normal_response.json()
+    assert normal["activity_detected"] is False
+    assert normal["strongest_zone_name"] == "Feeder"
+    assert normal["strongest_changed_ratio"] > 0
+    assert normal["strongest_zone_min_changed_ratio"] == 0.006
+    assert normal["strongest_frame_start_sequence"] is None
+    assert normal["strongest_frame_end_sequence"] is None
+    assert normal["best_media_asset_id"] is None
+
+    high_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.003,
+            "pixel_delta_threshold": 10,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert high_response.status_code == 200
+    high = high_response.json()
+    assert high["activity_detected"] is True
+    assert high["strongest_zone_name"] == "Feeder"
+    assert high["strongest_zone_type"] == "feeder"
+    assert high["strongest_zone_min_changed_ratio"] == 0.0015
+    assert high["strongest_frame_start_sequence"] == 1
+    assert high["strongest_frame_end_sequence"] == 2
+    assert high["best_frame_sequence"] == 2
+    assert high["best_media_asset_id"] is None
+    assert high["review_activity_created"] is False
+    assert high["creates_truth"] is False
+    assert await product_counts(client) == before
 
 
 async def test_live_motion_review_handoff_creates_needs_review_candidate(
@@ -607,19 +737,31 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
     assert result["session_status"] == "activity_detected"
     assert result["review_activity_created"] is True
     assert result["review_activity_reused"] is False
+    assert result["review_activity_already_exists"] is False
     assert result["review_activity_available"] is False
     assert result["motion_evidence_id"].startswith("motion-evidence-")
     assert result["event_id"].startswith("event-motion-")
     assert result["visit_id"].startswith("visit-motion-")
     assert result["review_queue_item_id"] == f"review-queue-{result['visit_id']}"
     assert result["review_status"] == "needs_review"
-    assert result["suggested_label"] == "unknown_animal"
+    assert result["suggested_label"] == "unknown_bird"
+    assert result["suggestion_id"].startswith("species-suggestion-")
+    assert result["suggestion_confidence"] == 0.30
+    assert "Low-confidence live motion suggestion from Feeder Zone context" in (
+        result["suggestion_reason"]
+    )
+    assert result["suggestion_creates_truth"] is False
     assert result["creates_event"] is True
     assert result["creates_visit"] is True
     assert result["creates_truth"] is False
     assert result["creates_export"] is False
     assert result["strongest_zone_name"] == "Feeder"
     assert result["strongest_zone_type"] == "feeder"
+    assert result["pixel_delta_threshold"] == 25.0
+    assert result["min_changed_ratio"] == 0.1
+    assert result["strongest_zone_min_changed_ratio"] == 0.05
+    assert result["strongest_frame_start_sequence"] == 1
+    assert result["strongest_frame_end_sequence"] == 2
     assert result["activity_summary"] == "Activity detected in Feeder."
     assert "Review activity created for Feeder" in result["message"]
     assert len(result["created_evidence"]) == 1
@@ -643,9 +785,28 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
     assert queue_item["primary_zone_id"] == "zone-feeder"
     assert queue_item["primary_zone_name"] == "Feeder"
     assert queue_item["primary_zone_type"] == "feeder"
-    assert queue_item["suggested_label"] == "unknown_animal"
+    assert queue_item["suggested_label"] == "unknown_bird"
+    assert queue_item["suggestion_id"] == result["suggestion_id"]
+    assert queue_item["suggestion_confidence"] == 0.30
+    assert "Confirm or correct in Review Queue" in queue_item["suggestion_reason"]
+    assert queue_item["suggestion_creates_truth"] is False
     assert queue_item["review_status"] == "needs_review"
     assert queue_item["media_asset"]["id"] == result["best_media_asset_id"]
+
+    suggestions_response = await client.get(
+        "/api/species-suggestions",
+        params={"visit_id": result["visit_id"]},
+    )
+    assert suggestions_response.status_code == 200
+    suggestions = suggestions_response.json()["species_suggestions"]
+    assert len(suggestions) == 1
+    suggestion = suggestions[0]
+    assert suggestion["id"] == result["suggestion_id"]
+    assert suggestion["suggested_label"] == "unknown_bird"
+    assert suggestion["confidence"] == 0.30
+    assert suggestion["status"] == "pending"
+    assert suggestion["media_asset_id"] == result["best_media_asset_id"]
+    assert suggestion["motion_evidence_id"] == result["motion_evidence_id"]
 
     event_detail_response = await client.get(f"/api/events/{result['event_id']}/detail")
     assert event_detail_response.status_code == 200
@@ -657,7 +818,7 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
     visit_detail_response = await client.get(f"/api/visits/{result['visit_id']}/detail")
     assert visit_detail_response.status_code == 200
     visit_detail = visit_detail_response.json()
-    assert visit_detail["visit"]["subject_label"] == "unknown_animal"
+    assert visit_detail["visit"]["subject_label"] == "unknown_bird"
     assert visit_detail["visit"]["confidence"] is None
     assert visit_detail["visit"]["reviewed_label"] is None
     assert visit_detail["visit"]["review_status"] == "needs_review"
@@ -668,6 +829,7 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
     assert after["motion_evidence"] == before["motion_evidence"] + 1
     assert after["events"] == before["events"] + 1
     assert after["visits"] == before["visits"] + 1
+    assert after["species_suggestions"] == before["species_suggestions"] + 1
     assert after["review_labels"] == before["review_labels"]
     assert after["dataset_exports"] == before["dataset_exports"]
     after_coverage = await dataset_coverage(client)
@@ -696,6 +858,7 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
     assert corrected_visit_detail["media_asset"]["id"] == result["best_media_asset_id"]
     corrected_counts = await product_counts(client)
     assert corrected_counts["review_labels"] == after["review_labels"] + 1
+    assert corrected_counts["species_suggestions"] == after["species_suggestions"]
     corrected_coverage = await dataset_coverage(client)
     assert (
         corrected_coverage["reviewed_record_count"]
@@ -703,6 +866,62 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
     )
     corrected_queue = (await client.get("/api/review-queue")).json()
     assert all(item["id"] != result["review_queue_item_id"] for item in corrected_queue)
+
+
+async def test_live_motion_review_handoff_suggests_unknown_animal_for_ground_zone(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-ground-review-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-ground-review-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(),
+            frame_1: frame_with([(3, 1), (3, 2)]),
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": True,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["review_activity_created"] is True
+    assert result["strongest_zone_name"] == "Ground below feeder"
+    assert result["strongest_zone_type"] == "ground"
+    assert result["suggested_label"] == "unknown_animal"
+    assert result["suggestion_confidence"] == 0.25
+    assert result["suggestion_creates_truth"] is False
+
+    queue = (await client.get("/api/review-queue")).json()
+    queue_item = next(item for item in queue if item["id"] == result["review_queue_item_id"])
+    assert queue_item["primary_zone_type"] == "ground"
+    assert queue_item["suggested_label"] == "unknown_animal"
+    assert queue_item["suggestion_id"] == result["suggestion_id"]
+    assert queue_item["suggestion_confidence"] == 0.25
+    assert queue_item["suggestion_creates_truth"] is False
+
+    after = await product_counts(client)
+    assert after["species_suggestions"] == before["species_suggestions"] + 1
+    assert after["review_labels"] == before["review_labels"]
+    assert after["dataset_exports"] == before["dataset_exports"]
 
 
 async def test_live_motion_reports_ignored_zone_without_review_activity(
@@ -748,6 +967,10 @@ async def test_live_motion_reports_ignored_zone_without_review_activity(
     assert result["motion_evidence_id"] is None
     assert result["event_id"] is None
     assert result["visit_id"] is None
+    assert result["suggestion_id"] is None
+    assert result["suggested_label"] is None
+    assert result["suggestion_confidence"] is None
+    assert result["suggestion_creates_truth"] is False
     assert result["creates_event"] is False
     assert result["creates_visit"] is False
     assert result["creates_truth"] is False
@@ -813,6 +1036,7 @@ async def test_live_motion_review_handoff_reuses_existing_review_candidate(
     duplicate = duplicate_response.json()
     assert duplicate["review_activity_created"] is False
     assert duplicate["review_activity_reused"] is True
+    assert duplicate["review_activity_already_exists"] is True
     assert duplicate["session_status"] == "cooldown"
     assert duplicate["existing_review_activity_reference"] == first["motion_evidence_id"]
     assert duplicate["cooldown_remaining_seconds"] is not None
@@ -821,12 +1045,17 @@ async def test_live_motion_review_handoff_reuses_existing_review_candidate(
     assert duplicate["event_id"] == first["event_id"]
     assert duplicate["visit_id"] == first["visit_id"]
     assert duplicate["review_queue_item_id"] == first["review_queue_item_id"]
+    assert duplicate["suggestion_id"] == first["suggestion_id"]
+    assert duplicate["suggested_label"] == first["suggested_label"]
+    assert duplicate["suggestion_confidence"] == first["suggestion_confidence"]
+    assert duplicate["suggestion_creates_truth"] is False
 
     after_duplicate = await product_counts(client)
     assert after_duplicate["motion_evidence"] == after_first["motion_evidence"]
     assert after_duplicate["media_assets"] == after_first["media_assets"]
     assert after_duplicate["events"] == after_first["events"]
     assert after_duplicate["visits"] == after_first["visits"]
+    assert after_duplicate["species_suggestions"] == after_first["species_suggestions"]
     assert after_duplicate["review_labels"] == after_first["review_labels"]
     queue_after_duplicate = (await client.get("/api/review-queue")).json()
     assert queue_after_duplicate == queue_after_first

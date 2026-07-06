@@ -137,8 +137,14 @@ quiet/cooldown state so repeated activity does not keep saving frames or
 creating duplicate review candidates.
 When the user clicks `Create review activity`, live motion creates an uncertain
 needs-review Event/Visit candidate from MotionEvidence with the saved best frame
-attached. The Review Queue is where that low-confidence activity is confirmed or
-corrected; ReviewLabel truth and Bird Log history begin only after correction.
+attached. It also adds a low-confidence SpeciesSuggestion from Zone context, such
+as unknown_bird for feeder/birdbath/perch activity or unknown_animal for
+ground/yard/driveway activity. The Review Queue is where that suggestion is
+confirmed or corrected; ReviewLabel truth and Bird Log history begin only after
+correction.
+The live monitor refreshes Review Queue state before opening a created review
+item, and High sensitivity checks more recent frame pairs with lower
+feeder/birdbath/perch thresholds for small, fast outdoor activity.
 The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
 count, and motion readiness. Camera Monitoring Core can now start and stop an

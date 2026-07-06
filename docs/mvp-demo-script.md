@@ -244,7 +244,11 @@ Dataset Exports.
       activity shows a quiet/cooldown state instead of creating duplicate review
       candidates.
 - [ ] Click `Create review activity` and confirm Review Queue shows an
-      uncertain needs-review activity with the saved best frame and Zone name.
+      uncertain needs-review activity with the saved best frame, Zone name, and
+      low-confidence suggestion.
+- [ ] Confirm `Open Review Queue` lands on the new needs-review item without a
+      browser reload, and High sensitivity shows strongest change/threshold
+      diagnostics for small feeder movement.
 - [ ] Confirm Bird Log does not update until later review/correction.
 - [ ] Click `Stop monitoring` and confirm Live view can remain open.
 - [ ] From a local camera Live view, click `Capture frame`.
