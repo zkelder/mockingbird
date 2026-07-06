@@ -368,6 +368,7 @@ export interface StreamPlaybackStatus {
   windows_camera_status?: string | null;
   windows_camera_name_display?: string | null;
   windows_ffmpeg_binary_display?: string | null;
+  camera_settings: Record<string, string>;
   bridged_mjpeg_url?: string | null;
 }
 
@@ -454,6 +455,7 @@ export interface LiveCameraSessionStatus {
   stop_reason?: string | null;
   max_runtime_seconds: number;
   persistent: boolean;
+  camera_settings: Record<string, unknown>;
   message: string;
   warnings: string[];
 }
@@ -1337,6 +1339,7 @@ export interface LiveMotionEvaluateRequest {
   max_gap_frames?: number;
   max_age_seconds?: number;
   max_frames?: number;
+  focus_zone_id?: string | null;
   notes?: string | null;
 }
 
@@ -1415,6 +1418,18 @@ export interface LiveMotionEvaluateResponse {
   pixel_delta_threshold?: number | null;
   min_changed_ratio?: number | null;
   strongest_zone_min_changed_ratio?: number | null;
+  threshold_used?: number | null;
+  changed_pixels?: number | null;
+  total_pixels?: number | null;
+  mean_delta?: number | null;
+  frame_pair_sequences: number[];
+  feeder_threshold_applied: boolean;
+  focus_zone_id?: string | null;
+  focus_zone_name?: string | null;
+  focus_zone_type?: ZoneType | null;
+  focus_applied: boolean;
+  evaluation_cadence_seconds?: number | null;
+  image_quality_warnings: string[];
   strongest_frame_start_sequence?: number | null;
   strongest_frame_end_sequence?: number | null;
   best_frame_sequence?: number | null;

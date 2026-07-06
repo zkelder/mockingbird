@@ -2395,6 +2395,20 @@ a.secondary-action {
   stroke-width: 1.6;
 }
 
+.stream-live-zone-surface .zone-motion-strongest {
+  fill-opacity: 0.62;
+  stroke: #f8d96c;
+  stroke-opacity: 1;
+  stroke-width: 2.2;
+}
+
+.stream-live-zone-surface .zone-motion-focus {
+  stroke: #9be7c4;
+  stroke-dasharray: 2 1.4;
+  stroke-opacity: 1;
+  stroke-width: 2;
+}
+
 .stream-live-zone-surface.draw-mode .zone-shape {
   fill-opacity: 0.64;
   stroke-opacity: 0.95;
@@ -2499,6 +2513,67 @@ a.secondary-action {
 .stream-live-secondary-panel {
   border-color: #2b4437;
   background: #111d18;
+}
+
+.stream-live-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stream-live-panel-header > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.stream-live-tuning-grid,
+.stream-live-calibration-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.stream-live-tuning-grid label,
+.stream-live-calibration-grid label {
+  display: grid;
+  gap: 4px;
+}
+
+.stream-live-tuning-grid span,
+.stream-live-calibration-grid span,
+.stream-live-panel-header span {
+  color: #c9d8ce;
+  font-size: 0.84rem;
+}
+
+.stream-live-tuning-grid input,
+.stream-live-calibration-grid select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #466d57;
+  border-radius: 8px;
+  padding: 8px 9px;
+  background: #0d1712;
+  color: #f4faf5;
+}
+
+.stream-live-debug-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #dcefe2;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.stream-live-debug-toggle input {
+  margin: 0;
+}
+
+.stream-live-hint.is-error {
+  color: #f3b2a7;
 }
 
 .stream-live-fallback-panel {

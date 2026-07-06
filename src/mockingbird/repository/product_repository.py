@@ -452,16 +452,72 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 label="Video size",
                 required=False,
                 secret=False,
-                description="Optional DirectShow video size.",
-                placeholder="640x480",
+                description="Fallback camera size when preview/capture sizes are not set.",
+                placeholder="1280x720",
+            ),
+            SourceProviderField(
+                key="preview_video_size",
+                label="Preview video size",
+                required=False,
+                secret=False,
+                description="Optional Live view / monitoring size passed to ffmpeg when supported.",
+                placeholder="1280x720",
+            ),
+            SourceProviderField(
+                key="capture_video_size",
+                label="Capture video size",
+                required=False,
+                secret=False,
+                description="Optional one-shot capture size passed to ffmpeg when supported.",
+                placeholder="1920x1080",
             ),
             SourceProviderField(
                 key="framerate",
                 label="Framerate",
                 required=False,
                 secret=False,
-                description="Optional DirectShow input framerate.",
-                placeholder="10",
+                description="Optional input framerate for Live view / monitoring and capture.",
+                placeholder="15",
+            ),
+            SourceProviderField(
+                key="input_format",
+                label="Input format",
+                required=False,
+                secret=False,
+                description="Optional camera input format passed to ffmpeg when supported.",
+                placeholder="mjpeg",
+            ),
+            SourceProviderField(
+                key="brightness",
+                label="Brightness",
+                required=False,
+                secret=False,
+                description="Calibration note only; adjust in the camera driver/app when needed.",
+                placeholder="driver setting",
+            ),
+            SourceProviderField(
+                key="contrast",
+                label="Contrast",
+                required=False,
+                secret=False,
+                description="Calibration note only; adjust in the camera driver/app when needed.",
+                placeholder="driver setting",
+            ),
+            SourceProviderField(
+                key="exposure",
+                label="Exposure",
+                required=False,
+                secret=False,
+                description="Calibration note only; adjust in the camera driver/app when needed.",
+                placeholder="driver setting",
+            ),
+            SourceProviderField(
+                key="zoom_mode",
+                label="Zoom / crop note",
+                required=False,
+                secret=False,
+                description="Calibration note for optical/digital framing outside MockingBird.",
+                placeholder="feeder framed tight",
             ),
             SourceProviderField(
                 key="display_name",
@@ -755,6 +811,13 @@ class StreamLivePlaybackConfig:
     windows_framerate: str | None = None
     camera_video_size: str | None = None
     camera_framerate: str | None = None
+    input_format: str | None = None
+    preview_video_size: str | None = None
+    capture_video_size: str | None = None
+    brightness: str | None = None
+    contrast: str | None = None
+    exposure: str | None = None
+    zoom_mode: str | None = None
 
 
 class MotionEvidenceModel(Base):
@@ -2307,7 +2370,10 @@ class ProductRepository:
                 live_url or "",
             )
             video_size = (config.get("video_size") or "").strip() or None
+            preview_video_size = (config.get("preview_video_size") or "").strip() or None
+            capture_video_size = (config.get("capture_video_size") or "").strip() or None
             framerate = (config.get("framerate") or "").strip() or None
+            input_format = (config.get("input_format") or "").strip() or None
             if (
                 provider_key == "local_usb"
                 and live_type != windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE
@@ -2333,10 +2399,17 @@ class ProductRepository:
                 windows_ffmpeg_binary_path=(
                     (config.get("ffmpeg_binary_path") or "").strip() or None
                 ),
-                windows_video_size=video_size,
+                windows_video_size=preview_video_size or video_size,
                 windows_framerate=framerate,
-                camera_video_size=video_size,
+                camera_video_size=capture_video_size or video_size,
                 camera_framerate=framerate,
+                input_format=input_format,
+                preview_video_size=preview_video_size,
+                capture_video_size=capture_video_size,
+                brightness=(config.get("brightness") or "").strip() or None,
+                contrast=(config.get("contrast") or "").strip() or None,
+                exposure=(config.get("exposure") or "").strip() or None,
+                zoom_mode=(config.get("zoom_mode") or "").strip() or None,
             )
 
     def streams_for_source(self, source_id: str) -> list[Stream]:
@@ -8351,6 +8424,7 @@ def _windows_dshow_stream_playback_status(
         "windows_camera_status": bridge_status,
         "windows_camera_name_display": camera_name or None,
         "windows_ffmpeg_binary_display": ffmpeg_binary_path or None,
+        "camera_settings": _local_camera_settings_preview(config),
     }
 
     if bridge_status == "available":
@@ -8430,6 +8504,7 @@ def _local_usb_stream_playback_status(
         "local_camera_bridge_available": bridge_status == "available",
         "local_camera_status": bridge_status,
         "local_camera_device_display": device or None,
+        "camera_settings": _local_camera_settings_preview(config),
     }
 
     if bridge_status == "available":
@@ -8482,6 +8557,25 @@ def _local_usb_stream_playback_status(
         setup_hint="Install ffmpeg on the MockingBird host, then refresh Live view.",
         supports_live_playback=False,
     )
+
+
+def _local_camera_settings_preview(config: dict[str, str]) -> dict[str, str]:
+    keys = (
+        "video_size",
+        "preview_video_size",
+        "capture_video_size",
+        "framerate",
+        "input_format",
+        "brightness",
+        "contrast",
+        "exposure",
+        "zoom_mode",
+    )
+    return {
+        key: value
+        for key in keys
+        if (value := (config.get(key) or "").strip())
+    }
 
 
 def _external_url_stream_playback_status(

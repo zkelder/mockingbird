@@ -1103,10 +1103,14 @@ Current work:
 - Live Monitor Review Reliability Fix: created live-motion candidates now refresh
   and open the Review Queue item directly, while High sensitivity uses more
   recent frame pairs and lower bird-zone thresholds with visible diagnostics.
+- Camera Controls + Motion Calibration 1: Stream Detail can save local camera
+  tuning metadata for preview/capture size, framerate, and input format, apply
+  supported settings to backend camera sessions/capture, focus live motion
+  scoring on a selected Zone, show strongest-zone diagnostics, and warn on
+  simple overexposed/underexposed/low-contrast frame conditions.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
-- Next likely phase: Phase 23 — live zone overlay browser smoke validation and
-  field-test polish.
+- Next likely phase: Phase 23 — live camera field-test validation polish.
 
 Validation:
 
@@ -1128,6 +1132,9 @@ Validation:
   configured camera size/framerate when present, and creates no Events, Visits,
   ReviewLabels, MotionEvidence, dataset exports, analytics truth, or reviewed
   truth by itself.
+- Camera tuning applies only safe ffmpeg bridge arguments for size, framerate,
+  and input format. Brightness, contrast, exposure, and zoom/crop notes are
+  calibration metadata unless a bridge can safely apply them later.
 - Captured frame handoff preserves the truth boundary: Bird Log shows reviewed
   activity only, and motion/review/export require explicit user actions after
   capture.
@@ -1137,6 +1144,9 @@ Validation:
   Review Queue candidates only after explicit user action. ReviewLabel truth,
   Bird Log history, analytics/export truth, and model output are not created
   automatically.
+- Motion focus uses existing normalized Zone coordinates and changes scoring
+  diagnostics only; it does not create fake Zones, ReviewLabels, Bird Log
+  history, exports, or model output.
 - Live Zone Overlay keeps coordinates normalized to the visible live stream
   surface, uses existing Zone create/update routes, and stores no adapter-specific
   or fake auto-zone model.

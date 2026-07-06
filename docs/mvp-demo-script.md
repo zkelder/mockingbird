@@ -230,6 +230,10 @@ Dataset Exports.
       they are not.
 - [ ] Open Stream Detail and click `Start camera` for a MockingBird-served
       local camera or RTSP stream.
+- [ ] For local camera sources, save Camera tuning values such as preview size
+      `1280x720`, framerate `10` or `15`, and input format `mjpeg` when useful.
+- [ ] Confirm saved tuning asks for an explicit camera restart before applying
+      active session settings.
 - [ ] Open Live view and confirm existing Zones render over the real camera
       surface.
 - [ ] Draw or edit a feeder/ignore/privacy Zone over the live stream and save it.
@@ -240,9 +244,14 @@ Dataset Exports.
 - [ ] Click `Start monitoring`.
 - [ ] Confirm monitoring compares recent backend session frames from this Stream
       and shows recent frame count plus last checked time.
+- [ ] Set Motion calibration focus to the Feeder Zone and enable High
+      sensitivity for small feeder movement when needed.
 - [ ] Move in front of the camera or move an object in frame.
 - [ ] Confirm activity is detected, the best live frame is saved, and review
       activity remains an explicit handoff.
+- [ ] Confirm diagnostics show strongest Zone change, threshold, changed pixels,
+      frame pair, focus state, cadence, and any overexposed/low-contrast image
+      warning.
 - [ ] Confirm live monitoring names the triggered Zone, such as
       `Activity detected in Feeder`, and says the best frame was saved from
       that Zone.

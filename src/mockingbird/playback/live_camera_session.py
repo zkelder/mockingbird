@@ -43,6 +43,7 @@ class LiveCameraSessionSnapshot:
     last_error: str | None
     stop_reason: str | None
     max_runtime_seconds: int
+    camera_settings: dict[str, Any]
     persistent: bool = False
 
     @property
@@ -206,6 +207,7 @@ class _LiveCameraSession:
         self.last_motion_result: dict[str, Any] | None = None
         self.last_error: str | None = None
         self.stop_reason: str | None = None
+        self.camera_settings = _camera_settings_from_config(config)
         self.status = "starting"
         self._stop_event = threading.Event()
         self._monitor_stop_event = threading.Event()
@@ -330,6 +332,7 @@ class _LiveCameraSession:
                 last_error=self.last_error,
                 stop_reason=self.stop_reason,
                 max_runtime_seconds=self.max_runtime_seconds,
+                camera_settings=dict(self.camera_settings),
                 persistent=False,
             )
 
@@ -413,15 +416,40 @@ def _start_process(config: Any) -> subprocess.Popen[bytes]:
         return local_camera_bridge.start_local_camera_mjpeg_process(
             config.local_camera_device or "",
             camera_format=config.local_camera_format,
+            input_format=config.input_format,
+            video_size=config.preview_video_size or config.camera_video_size,
+            input_frame_rate=config.windows_framerate or config.camera_framerate,
         )
     if config.live_stream_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
         return windows_camera_bridge.start_windows_dshow_mjpeg_process(
             config.windows_camera_name or "",
             ffmpeg_binary_path=config.windows_ffmpeg_binary_path,
+            input_format=config.input_format,
             video_size=config.windows_video_size,
             framerate=config.windows_framerate,
         )
     raise ValueError("unsupported_live_camera_session_type")
+
+
+def _camera_settings_from_config(config: Any) -> dict[str, Any]:
+    keys = (
+        "input_format",
+        "preview_video_size",
+        "capture_video_size",
+        "windows_video_size",
+        "windows_framerate",
+        "camera_video_size",
+        "camera_framerate",
+        "brightness",
+        "contrast",
+        "exposure",
+        "zoom_mode",
+    )
+    return {
+        key: value
+        for key in keys
+        if (value := getattr(config, key, None)) is not None
+    }
 
 
 def _extract_jpeg_frames(buffer: bytearray) -> list[bytes]:

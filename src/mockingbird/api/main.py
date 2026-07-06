@@ -1108,10 +1108,14 @@ def _live_zone_min_changed_ratio(
     *,
     zone_type: ZoneType | None,
     base_min_changed_ratio: float,
+    focus_applied: bool = False,
 ) -> float:
+    ratio = base_min_changed_ratio
     if zone_type in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}:
-        return max(0.001, base_min_changed_ratio * 0.5)
-    return base_min_changed_ratio
+        ratio = max(0.001, ratio * 0.5)
+    if focus_applied:
+        ratio = max(0.0005, ratio * 0.5)
+    return ratio
 
 
 def _live_motion_sampler_result(
@@ -1119,6 +1123,8 @@ def _live_motion_sampler_result(
     motion_zones: list[MotionZoneInput],
     zones_by_id: dict[str, Zone],
     config: SamplerConfig,
+    *,
+    focus_zone_id: str | None = None,
 ) -> SamplerResult:
     frame_scores: list[MotionFrameScore] = []
     motion_zone_by_id = {
@@ -1137,6 +1143,7 @@ def _live_motion_sampler_result(
         for zone in motion_zones:
             zone_model = zones_by_id.get(zone.zone_id)
             zone_type = zone_model.zone_type if zone_model is not None else None
+            zone_focus_applied = focus_zone_id is not None and zone.zone_id == focus_zone_id
             scores.append(
                 score_zone_motion(
                     frames[pair_index],
@@ -1146,6 +1153,7 @@ def _live_motion_sampler_result(
                     min_changed_ratio=_live_zone_min_changed_ratio(
                         zone_type=zone_type,
                         base_min_changed_ratio=config.min_changed_ratio,
+                        focus_applied=zone_focus_applied,
                     ),
                 )
             )
@@ -1184,6 +1192,68 @@ def _live_motion_pair_sequences(
             previous = frames[index - 1].sequence if index > 0 else None
             return previous, frame.sequence
     return None, None
+
+
+def _strongest_live_motion_score(
+    frame_scores: list[MotionFrameScoreResponse],
+    *,
+    strongest_zone_id: str | None,
+) -> tuple[MotionScoreResponse | None, int | None]:
+    best_score: MotionScoreResponse | None = None
+    best_frame_index: int | None = None
+    for frame_score in frame_scores:
+        for score in frame_score.scores:
+            if strongest_zone_id is not None and score.zone_id != strongest_zone_id:
+                continue
+            if best_score is None or score.changed_ratio > best_score.changed_ratio:
+                best_score = score
+                best_frame_index = frame_score.frame_index
+    return best_score, best_frame_index
+
+
+def _live_motion_quality_warnings(
+    frames: list[SavedMediaFrame],
+    zones: list[Zone],
+) -> list[str]:
+    if not frames:
+        return []
+
+    latest_pixels = [pixel for row in frames[-1].frame for pixel in row]
+    if not latest_pixels:
+        return []
+
+    warnings: list[str] = []
+    mean_value = sum(latest_pixels) / len(latest_pixels)
+    contrast_range = max(latest_pixels) - min(latest_pixels)
+    mean_delta = sum(abs(pixel - mean_value) for pixel in latest_pixels) / len(latest_pixels)
+
+    if mean_value >= 235 and contrast_range <= 35:
+        warnings.append("Camera image appears overexposed; motion may be harder to detect.")
+    elif mean_value <= 20 and contrast_range <= 35:
+        warnings.append("Camera image appears underexposed; motion may be harder to detect.")
+    if contrast_range <= 14 or mean_delta <= 5:
+        warnings.append("Camera image appears low contrast; motion may be harder to detect.")
+
+    for zone in zones:
+        if zone.zone_type not in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}:
+            continue
+        if _zone_bounding_area(zone) < 0.05:
+            warnings.append(
+                f"{zone.name} is small in frame; use tighter framing or focus for monitoring."
+            )
+            break
+
+    return warnings
+
+
+def _zone_bounding_area(zone: Zone) -> float:
+    if not zone.polygon:
+        return 0.0
+    min_x = min(point.x for point in zone.polygon)
+    max_x = max(point.x for point in zone.polygon)
+    min_y = min(point.y for point in zone.polygon)
+    max_y = max(point.y for point in zone.polygon)
+    return max(0.0, max_x - min_x) * max(0.0, max_y - min_y)
 
 
 def _latest_species_suggestion_for_visit(
@@ -1227,6 +1297,7 @@ def _live_camera_session_response(
             max_runtime_seconds=live_camera_session.DEFAULT_MAX_RUNTIME_SECONDS,
             persistent=False,
             monitor_running=False,
+            camera_settings=_camera_settings_from_live_config(configuration),
             message=message or "Camera session is stopped.",
             warnings=warnings or [],
         )
@@ -1249,6 +1320,7 @@ def _live_camera_session_response(
         stop_reason=snapshot.stop_reason,
         max_runtime_seconds=snapshot.max_runtime_seconds,
         persistent=snapshot.persistent,
+        camera_settings=snapshot.camera_settings,
         message=message or _live_camera_session_message(snapshot),
         warnings=warnings or [],
     )
@@ -1266,6 +1338,29 @@ def _live_camera_session_message(
     if snapshot.status == "failed":
         return snapshot.last_error or "Camera session failed."
     return "Camera session is stopped."
+
+
+def _camera_settings_from_live_config(
+    configuration: StreamLivePlaybackConfig,
+) -> dict[str, Any]:
+    keys = (
+        "input_format",
+        "preview_video_size",
+        "capture_video_size",
+        "windows_video_size",
+        "windows_framerate",
+        "camera_video_size",
+        "camera_framerate",
+        "brightness",
+        "contrast",
+        "exposure",
+        "zoom_mode",
+    )
+    return {
+        key: value
+        for key in keys
+        if (value := getattr(configuration, key, None)) is not None
+    }
 
 
 def _camera_session_response_fields(
@@ -2346,6 +2441,8 @@ async def evaluate_live_stream_motion(
 def _evaluate_live_stream_motion(
     stream_id: str,
     payload: LiveMotionEvaluateRequest | None = None,
+    *,
+    evaluation_cadence_seconds: float | None = None,
 ) -> LiveMotionEvaluateResponse:
     # Live monitoring reads backend session/cache frames only. It does not open
     # another camera process, create truth, or create exports.
@@ -2470,6 +2567,8 @@ def _evaluate_live_stream_motion(
     all_zones = repository.zones_for_stream(stream.id)
     zones_by_id = {zone.id: zone for zone in all_zones}
     warnings: list[str] = []
+    image_quality_warnings = _live_motion_quality_warnings(decoded_frames, all_zones)
+    warnings.extend(image_quality_warnings)
     reviewable_zones: list[Zone] = []
     for zone in all_zones:
         if not zone.is_active:
@@ -2492,6 +2591,14 @@ def _evaluate_live_stream_motion(
     suppressed_auto_region_count = 0
     debug_cell_zones: list[MotionZoneInput] = []
     auto_cells: list[_AutoMotionCell] = []
+    focus_zone: Zone | None = None
+    if request.focus_zone_id and not uses_auto_regions:
+        candidate_focus_zone = zones_by_id.get(request.focus_zone_id)
+        if candidate_focus_zone in reviewable_zones:
+            focus_zone = candidate_focus_zone
+            reviewable_zones = [candidate_focus_zone]
+        else:
+            warnings.append("Monitoring focus Zone was unavailable; all Zones were checked.")
     activity_areas: list[MotionActivityAreaResponse] = [
         _activity_area_from_zone(zone) for zone in reviewable_zones
     ]
@@ -2536,6 +2643,7 @@ def _evaluate_live_stream_motion(
             motion_zones,
             zones_by_id,
             sampler_config,
+            focus_zone_id=focus_zone.id if focus_zone else None,
         )
     except ValueError as error:
         raise _motion_evaluation_error(error) from error
@@ -2584,7 +2692,15 @@ def _evaluate_live_stream_motion(
     strongest_zone_min_changed_ratio = _live_zone_min_changed_ratio(
         zone_type=strongest_zone_type,
         base_min_changed_ratio=request.min_changed_ratio,
+        focus_applied=focus_zone is not None and strongest_zone_id == focus_zone.id,
     ) if strongest_zone_id else None
+    strongest_score, strongest_score_frame_index = _strongest_live_motion_score(
+        frame_score_responses,
+        strongest_zone_id=strongest_zone_id,
+    )
+    diagnostic_frame_start_sequence, diagnostic_frame_end_sequence = (
+        _live_motion_pair_sequences(cached_frames, strongest_score_frame_index)
+    )
     activity_summary = _motion_activity_summary(
         activity_detected=bool(motion_candidates),
         strongest_zone_name=strongest_zone_name,
@@ -2890,6 +3006,31 @@ def _evaluate_live_stream_motion(
         suppressed_zone_summaries=suppressed_zone_summaries,
         activity_summary=activity_summary,
         strongest_changed_ratio=strongest_changed_ratio,
+        threshold_used=(
+            strongest_zone_min_changed_ratio
+            if strongest_zone_min_changed_ratio is not None
+            else request.min_changed_ratio
+        ),
+        changed_pixels=strongest_score.changed_pixels if strongest_score else None,
+        total_pixels=strongest_score.total_pixels if strongest_score else None,
+        mean_delta=strongest_score.mean_delta if strongest_score else None,
+        frame_pair_sequences=(
+            [diagnostic_frame_start_sequence, diagnostic_frame_end_sequence]
+            if diagnostic_frame_start_sequence is not None
+            and diagnostic_frame_end_sequence is not None
+            else []
+        ),
+        feeder_threshold_applied=(
+            strongest_zone_type in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}
+            if strongest_zone_type is not None
+            else False
+        ),
+        focus_zone_id=focus_zone.id if focus_zone else None,
+        focus_zone_name=focus_zone.name if focus_zone else None,
+        focus_zone_type=focus_zone.zone_type if focus_zone else None,
+        focus_applied=focus_zone is not None,
+        evaluation_cadence_seconds=evaluation_cadence_seconds,
+        image_quality_warnings=image_quality_warnings,
         strongest_zone_min_changed_ratio=strongest_zone_min_changed_ratio,
         strongest_frame_start_sequence=strongest_frame_start_sequence,
         strongest_frame_end_sequence=strongest_frame_end_sequence,
@@ -2951,17 +3092,29 @@ async def start_live_stream_motion_monitor(
     )
     snapshot = get_live_camera_session_manager().status(stream_id)
     if snapshot is None or snapshot.status not in {"starting", "running"}:
-        return _evaluate_live_stream_motion(stream_id, evaluate_request)
+        return _evaluate_live_stream_motion(
+            stream_id,
+            evaluate_request,
+            evaluation_cadence_seconds=request.interval_seconds,
+        )
 
     def monitor_evaluate() -> dict[str, Any]:
-        return _evaluate_live_stream_motion(stream_id, evaluate_request).model_dump(mode="json")
+        return _evaluate_live_stream_motion(
+            stream_id,
+            evaluate_request,
+            evaluation_cadence_seconds=request.interval_seconds,
+        ).model_dump(mode="json")
 
     get_live_camera_session_manager().start_monitor(
         stream_id,
         monitor_evaluate,
         interval_seconds=request.interval_seconds,
     )
-    result = _evaluate_live_stream_motion(stream_id, evaluate_request)
+    result = _evaluate_live_stream_motion(
+        stream_id,
+        evaluate_request,
+        evaluation_cadence_seconds=request.interval_seconds,
+    )
     if result.activity_detected:
         get_live_camera_session_manager().stop_monitor(stream_id)
     return result
@@ -3002,8 +3155,8 @@ def _record_live_motion_session_result(response: LiveMotionEvaluateResponse) -> 
             "end_frame_sequence": response.strongest_frame_end_sequence,
             "strongest_changed_ratio": response.strongest_changed_ratio,
             "threshold_used": (
-                response.strongest_zone_min_changed_ratio
-                if response.strongest_zone_min_changed_ratio is not None
+                response.threshold_used
+                if response.threshold_used is not None
                 else response.min_changed_ratio
             ),
             "suppressed_zone_summaries": [
@@ -4555,6 +4708,7 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
             frame = windows_camera_bridge.capture_windows_dshow_frame(
                 configuration.windows_camera_name or "",
                 ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
+                input_format=configuration.input_format,
                 video_size=configuration.camera_video_size,
                 framerate=configuration.camera_framerate,
             )
@@ -4600,6 +4754,7 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
             frame = local_camera_bridge.capture_local_camera_frame(
                 configuration.local_camera_device or "",
                 camera_format=configuration.local_camera_format,
+                input_format=configuration.input_format,
                 video_size=configuration.camera_video_size,
                 input_frame_rate=configuration.camera_framerate,
             )

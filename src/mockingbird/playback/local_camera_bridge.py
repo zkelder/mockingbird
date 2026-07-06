@@ -58,7 +58,7 @@ def build_local_camera_mjpeg_command(
     input_format: str | None = None,
     ffmpeg_binary: str = "ffmpeg",
     video_size: str | None = None,
-    input_frame_rate: int | None = None,
+    input_frame_rate: str | int | None = None,
     output_frame_rate: int = 5,
     quality: int = 5,
 ) -> list[str]:
@@ -79,8 +79,11 @@ def build_local_camera_mjpeg_command(
         command.extend(["-input_format", normalized_input_format])
     if video_size:
         command.extend(["-video_size", video_size])
-    if input_frame_rate:
-        command.extend(["-framerate", str(input_frame_rate)])
+    normalized_framerate = (
+        str(input_frame_rate).strip() if input_frame_rate is not None else ""
+    )
+    if normalized_framerate:
+        command.extend(["-framerate", normalized_framerate])
     command.extend(
         [
             "-i",
@@ -105,9 +108,18 @@ def start_local_camera_mjpeg_process(
     device: str,
     *,
     camera_format: str | None = None,
+    input_format: str | None = None,
+    video_size: str | None = None,
+    input_frame_rate: str | int | None = None,
     popen_factory: PopenFactory = subprocess.Popen,
 ) -> subprocess.Popen[bytes]:
-    command = build_local_camera_mjpeg_command(device, camera_format=camera_format)
+    command = build_local_camera_mjpeg_command(
+        device,
+        camera_format=camera_format,
+        input_format=input_format,
+        video_size=video_size,
+        input_frame_rate=input_frame_rate,
+    )
     return popen_factory(
         command,
         stdout=subprocess.PIPE,
@@ -169,6 +181,7 @@ def start_local_camera_frame_capture_process(
     device: str,
     *,
     camera_format: str | None = None,
+    input_format: str | None = None,
     video_size: str | None = None,
     input_frame_rate: str | int | None = None,
     popen_factory: PopenFactory = subprocess.Popen,
@@ -176,6 +189,7 @@ def start_local_camera_frame_capture_process(
     command = build_local_camera_frame_capture_command(
         device,
         camera_format=camera_format,
+        input_format=input_format,
         video_size=video_size,
         input_frame_rate=input_frame_rate,
     )
@@ -191,6 +205,7 @@ def capture_local_camera_frame(
     device: str,
     *,
     camera_format: str | None = None,
+    input_format: str | None = None,
     video_size: str | None = None,
     input_frame_rate: str | int | None = None,
     popen_factory: PopenFactory = subprocess.Popen,
@@ -198,6 +213,7 @@ def capture_local_camera_frame(
     process = start_local_camera_frame_capture_process(
         device,
         camera_format=camera_format,
+        input_format=input_format,
         video_size=video_size,
         input_frame_rate=input_frame_rate,
         popen_factory=popen_factory,

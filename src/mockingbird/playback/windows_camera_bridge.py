@@ -95,6 +95,7 @@ def build_windows_dshow_mjpeg_command(
     camera_name: str,
     *,
     ffmpeg_binary_path: str | None = None,
+    input_format: str | None = None,
     video_size: str | None = None,
     framerate: str | int | None = None,
     output_frame_rate: int = 5,
@@ -107,9 +108,12 @@ def build_windows_dshow_mjpeg_command(
         "dshow",
     ]
     normalized_video_size = normalize_optional_text(video_size)
+    normalized_input_format = normalize_optional_text(input_format)
     normalized_framerate = normalize_optional_text(
         str(framerate) if framerate is not None else None
     )
+    if normalized_input_format:
+        command.extend(["-input_format", normalized_input_format])
     if normalized_video_size:
         command.extend(["-video_size", normalized_video_size])
     if normalized_framerate:
@@ -138,6 +142,7 @@ def start_windows_dshow_mjpeg_process(
     camera_name: str,
     *,
     ffmpeg_binary_path: str | None = None,
+    input_format: str | None = None,
     video_size: str | None = None,
     framerate: str | int | None = None,
     popen_factory: PopenFactory = subprocess.Popen,
@@ -145,6 +150,7 @@ def start_windows_dshow_mjpeg_process(
     command = build_windows_dshow_mjpeg_command(
         camera_name,
         ffmpeg_binary_path=ffmpeg_binary_path,
+        input_format=input_format,
         video_size=video_size,
         framerate=framerate,
     )
@@ -160,6 +166,7 @@ def build_windows_dshow_frame_capture_command(
     camera_name: str,
     *,
     ffmpeg_binary_path: str | None = None,
+    input_format: str | None = None,
     video_size: str | None = None,
     framerate: str | int | None = None,
 ) -> list[str]:
@@ -171,9 +178,12 @@ def build_windows_dshow_frame_capture_command(
         "dshow",
     ]
     normalized_video_size = normalize_optional_text(video_size)
+    normalized_input_format = normalize_optional_text(input_format)
     normalized_framerate = normalize_optional_text(
         str(framerate) if framerate is not None else None
     )
+    if normalized_input_format:
+        command.extend(["-input_format", normalized_input_format])
     if normalized_video_size:
         command.extend(["-video_size", normalized_video_size])
     if normalized_framerate:
@@ -199,6 +209,7 @@ def start_windows_dshow_frame_capture_process(
     camera_name: str,
     *,
     ffmpeg_binary_path: str | None = None,
+    input_format: str | None = None,
     video_size: str | None = None,
     framerate: str | int | None = None,
     popen_factory: PopenFactory = subprocess.Popen,
@@ -206,6 +217,7 @@ def start_windows_dshow_frame_capture_process(
     command = build_windows_dshow_frame_capture_command(
         camera_name,
         ffmpeg_binary_path=ffmpeg_binary_path,
+        input_format=input_format,
         video_size=video_size,
         framerate=framerate,
     )
@@ -221,6 +233,7 @@ def capture_windows_dshow_frame(
     camera_name: str,
     *,
     ffmpeg_binary_path: str | None = None,
+    input_format: str | None = None,
     video_size: str | None = None,
     framerate: str | int | None = None,
     popen_factory: PopenFactory = subprocess.Popen,
@@ -228,6 +241,7 @@ def capture_windows_dshow_frame(
     process = start_windows_dshow_frame_capture_process(
         camera_name,
         ffmpeg_binary_path=ffmpeg_binary_path,
+        input_format=input_format,
         video_size=video_size,
         framerate=framerate,
         popen_factory=popen_factory,

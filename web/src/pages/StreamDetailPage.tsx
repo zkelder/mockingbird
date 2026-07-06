@@ -16,6 +16,7 @@ import type {
   MotionEvaluateSavedMediaResponse,
   Point,
   ReviewQueueItem,
+  SourceProviderConfiguration,
   SourceSetupReviewResponse,
   Stream,
   StreamPlaybackStatus,
@@ -76,6 +77,19 @@ interface MediaRenderSize {
   height: number;
 }
 
+type CameraTuningKey =
+  | "video_size"
+  | "preview_video_size"
+  | "capture_video_size"
+  | "framerate"
+  | "input_format"
+  | "brightness"
+  | "contrast"
+  | "exposure"
+  | "zoom_mode";
+
+type CameraTuningDraft = Record<CameraTuningKey, string>;
+
 type LiveViewState = "idle" | "opening" | "streaming" | "failed" | "no_frames";
 type LiveMonitorState =
   | "idle"
@@ -121,6 +135,54 @@ const liveMonitorSensitivitySettings: Record<
   },
 };
 const liveMonitorSensitivityOptions: LiveMonitorSensitivity[] = ["low", "normal", "high"];
+
+const cameraTuningKeys: CameraTuningKey[] = [
+  "video_size",
+  "preview_video_size",
+  "capture_video_size",
+  "framerate",
+  "input_format",
+  "brightness",
+  "contrast",
+  "exposure",
+  "zoom_mode",
+];
+
+const emptyCameraTuningDraft: CameraTuningDraft = {
+  video_size: "",
+  preview_video_size: "",
+  capture_video_size: "",
+  framerate: "",
+  input_format: "",
+  brightness: "",
+  contrast: "",
+  exposure: "",
+  zoom_mode: "",
+};
+
+const cameraTuningLabels: Record<CameraTuningKey, string> = {
+  video_size: "Fallback size",
+  preview_video_size: "Preview size",
+  capture_video_size: "Capture size",
+  framerate: "Framerate",
+  input_format: "Input format",
+  brightness: "Brightness note",
+  contrast: "Contrast note",
+  exposure: "Exposure note",
+  zoom_mode: "Zoom/crop note",
+};
+
+const cameraTuningPlaceholders: Record<CameraTuningKey, string> = {
+  video_size: "1280x720",
+  preview_video_size: "1280x720",
+  capture_video_size: "1920x1080",
+  framerate: "15",
+  input_format: "mjpeg",
+  brightness: "driver setting",
+  contrast: "driver setting",
+  exposure: "driver setting",
+  zoom_mode: "feeder framed tight",
+};
 
 function playbackTone(status: StreamPlaybackStatus["status"]): "good" | "review" | "quiet" {
   if (status === "demo" || status === "live_ready") {
@@ -217,6 +279,49 @@ function latestMotionPair(mediaAssets: MediaAsset[]): MediaAsset[] {
   const capturedFrames = mediaAssets.filter(isCapturedCameraFrame);
   const sourceAssets = capturedFrames.length >= 2 ? capturedFrames : mediaAssets;
   return oldestFirstMediaAssets(sourceAssets.slice(0, 2));
+}
+
+function safeConfigValue(
+  config: SourceProviderConfiguration | null,
+  key: string,
+): string {
+  const value = config?.safe_config_preview[key];
+  if (!value || value === "not_configured" || value === "configured") {
+    return "";
+  }
+  return value;
+}
+
+function cameraTuningDraftFromConfig(
+  config: SourceProviderConfiguration | null,
+): CameraTuningDraft {
+  return {
+    ...emptyCameraTuningDraft,
+    ...Object.fromEntries(
+      cameraTuningKeys.map((key) => [key, safeConfigValue(config, key)]),
+    ),
+  };
+}
+
+function providerConfigPayload(
+  config: SourceProviderConfiguration | null,
+  draft: CameraTuningDraft,
+): Record<string, string | null> {
+  const payload: Record<string, string | null> = {};
+  for (const [key, value] of Object.entries(config?.safe_config_preview ?? {})) {
+    if (value && value !== "not_configured" && value !== "configured") {
+      payload[key] = value;
+    }
+  }
+  for (const key of cameraTuningKeys) {
+    const value = draft[key].trim();
+    if (value) {
+      payload[key] = value;
+    } else {
+      delete payload[key];
+    }
+  }
+  return payload;
 }
 
 function isReviewableZone(zone: Zone): boolean {
@@ -423,6 +528,16 @@ export function StreamDetailPage({
   const [isCreatingLiveReviewActivity, setIsCreatingLiveReviewActivity] = useState(false);
   const [liveMonitorSensitivity, setLiveMonitorSensitivity] =
     useState<LiveMonitorSensitivity>("normal");
+  const [sourceProviderConfig, setSourceProviderConfig] =
+    useState<SourceProviderConfiguration | null>(null);
+  const [cameraTuningDraft, setCameraTuningDraft] = useState<CameraTuningDraft>({
+    ...emptyCameraTuningDraft,
+  });
+  const [cameraTuningMessage, setCameraTuningMessage] = useState<string | null>(null);
+  const [cameraTuningError, setCameraTuningError] = useState<string | null>(null);
+  const [isSavingCameraTuning, setIsSavingCameraTuning] = useState(false);
+  const [liveMotionFocusZoneId, setLiveMotionFocusZoneId] = useState("");
+  const [showLiveMotionDebug, setShowLiveMotionDebug] = useState(false);
   const liveMotionInFlightRef = useRef(false);
 
   const selectedZone = detail?.zones.find((zone) => zone.id === selectedZoneId) ?? null;
@@ -491,11 +606,19 @@ export function StreamDetailPage({
       setIsLiveMonitoring(false);
       setIsEvaluatingLiveMotion(false);
       setIsCreatingLiveReviewActivity(false);
+      setSourceProviderConfig(null);
+      setCameraTuningDraft({ ...emptyCameraTuningDraft });
+      setCameraTuningMessage(null);
+      setCameraTuningError(null);
+      setIsSavingCameraTuning(false);
+      setLiveMotionFocusZoneId("");
+      setShowLiveMotionDebug(false);
       try {
         const stream = await apiClient.getStream(streamId);
-        const [playback, setupReview, zones, events] = await Promise.all([
+        const [playback, setupReview, providerConfiguration, zones, events] = await Promise.all([
           apiClient.getStreamPlaybackStatus(streamId),
           apiClient.getSourceSetupReview(stream.source_id),
+          apiClient.getSourceProviderConfiguration(stream.source_id),
           apiClient.getStreamZones(streamId),
           apiClient.getStreamEvents(streamId),
         ]);
@@ -511,6 +634,8 @@ export function StreamDetailPage({
             events,
             visitsByEvent: Object.fromEntries(visitPairs),
           });
+          setSourceProviderConfig(providerConfiguration);
+          setCameraTuningDraft(cameraTuningDraftFromConfig(providerConfiguration));
         }
       } catch (caught) {
         if (isMounted) {
@@ -632,8 +757,74 @@ export function StreamDetailPage({
     });
   }, [selectedZone]);
 
+  useEffect(() => {
+    if (!detail || !liveMotionFocusZoneId) {
+      return;
+    }
+    if (!detail.zones.some((zone) => zone.id === liveMotionFocusZoneId && isReviewableZone(zone))) {
+      setLiveMotionFocusZoneId("");
+    }
+  }, [detail, liveMotionFocusZoneId]);
+
   function replaceZones(zones: Zone[]) {
     setDetail((current) => (current ? { ...current, zones } : current));
+  }
+
+  function updateCameraTuningDraft(key: CameraTuningKey, value: string) {
+    setCameraTuningDraft((current) => ({ ...current, [key]: value }));
+    setCameraTuningMessage(null);
+    setCameraTuningError(null);
+  }
+
+  async function handleSaveCameraTuning(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!detail || !sourceProviderConfig) {
+      return;
+    }
+    setIsSavingCameraTuning(true);
+    setCameraTuningError(null);
+    setCameraTuningMessage(null);
+    try {
+      const updatedConfig = await apiClient.updateSourceProviderConfiguration(
+        detail.stream.source_id,
+        {
+          provider_key: sourceProviderConfig.provider_key,
+          config: providerConfigPayload(sourceProviderConfig, cameraTuningDraft),
+        },
+      );
+      const [playback, setupReview] = await Promise.all([
+        apiClient.getStreamPlaybackStatus(detail.stream.id),
+        apiClient.getSourceSetupReview(detail.stream.source_id),
+      ]);
+      setSourceProviderConfig(updatedConfig);
+      setCameraTuningDraft(cameraTuningDraftFromConfig(updatedConfig));
+      setDetail((current) =>
+        current ? { ...current, playback, setupReview } : current,
+      );
+      setCameraTuningMessage(
+        liveSessionRunning
+          ? "Saved. Restart camera to apply session settings."
+          : "Saved. Settings apply next time the camera starts.",
+      );
+    } catch (caught) {
+      setCameraTuningError(
+        caught instanceof Error ? caught.message : "Could not save camera tuning.",
+      );
+    } finally {
+      setIsSavingCameraTuning(false);
+    }
+  }
+
+  async function restartLiveCameraSession() {
+    if (!detail || !supportsBackendLiveSession(detail.playback)) {
+      return;
+    }
+    setCameraTuningError(null);
+    setCameraTuningMessage(null);
+    await stopLiveMonitoring();
+    await stopLiveCameraSession();
+    await startLiveCameraSession(true);
+    setCameraTuningMessage("Camera restarted with saved settings.");
   }
 
   async function startLiveCameraSession(openViewAfterStart = false) {
@@ -765,6 +956,7 @@ export function StreamDetailPage({
         pixel_delta_threshold: sensitivitySettings.pixel_delta_threshold,
         max_frames: sensitivitySettings.max_frames,
         min_triggered_frames: 1,
+        focus_zone_id: liveMotionFocusZoneId || null,
         interval_seconds: sensitivitySettings.interval_ms / 1000,
         notes: null,
       });
@@ -1274,13 +1466,42 @@ export function StreamDetailPage({
   const liveSensitivityLabel = liveMonitorSensitivitySettings[liveMonitorSensitivity].label;
   const liveStrongestChangeLabel = formatPercent(liveMotionResult?.strongest_changed_ratio);
   const liveStrongestThresholdLabel = formatPercent(
-    liveMotionResult?.strongest_zone_min_changed_ratio ?? liveMotionResult?.min_changed_ratio,
+    liveMotionResult?.threshold_used ??
+      liveMotionResult?.strongest_zone_min_changed_ratio ??
+      liveMotionResult?.min_changed_ratio,
   );
   const liveStrongestPairLabel =
-    liveMotionResult?.strongest_frame_start_sequence &&
-    liveMotionResult?.strongest_frame_end_sequence
-      ? `${liveMotionResult.strongest_frame_start_sequence}->${liveMotionResult.strongest_frame_end_sequence}`
+    liveMotionResult?.frame_pair_sequences?.length === 2
+      ? `${liveMotionResult.frame_pair_sequences[0]}->${liveMotionResult.frame_pair_sequences[1]}`
+      : liveMotionResult?.strongest_frame_start_sequence &&
+          liveMotionResult?.strongest_frame_end_sequence
+        ? `${liveMotionResult.strongest_frame_start_sequence}->${liveMotionResult.strongest_frame_end_sequence}`
+        : "n/a";
+  const liveChangedPixelsLabel =
+    liveMotionResult?.changed_pixels != null && liveMotionResult.total_pixels != null
+      ? `${liveMotionResult.changed_pixels}/${liveMotionResult.total_pixels}`
       : "n/a";
+  const liveMeanDeltaLabel =
+    liveMotionResult?.mean_delta != null ? liveMotionResult.mean_delta.toFixed(1) : "n/a";
+  const liveCadenceLabel =
+    liveMotionResult?.evaluation_cadence_seconds != null
+      ? `${liveMotionResult.evaluation_cadence_seconds.toFixed(2)}s`
+      : `${liveMonitorSensitivitySettings[liveMonitorSensitivity].interval_ms / 1000}s`;
+  const liveQualityWarnings = liveMotionResult?.image_quality_warnings ?? [];
+  const reviewableLiveZones = detail.zones.filter(isReviewableZone);
+  const feederFocusZone = reviewableLiveZones.find((zone) => zone.zone_type === "feeder");
+  const liveFocusZone =
+    reviewableLiveZones.find((zone) => zone.id === liveMotionFocusZoneId) ?? null;
+  const liveFocusLabel =
+    liveMotionResult?.focus_zone_name ??
+    liveFocusZone?.name ??
+    (liveMotionFocusZoneId ? "Selected Zone" : "All Zones");
+  const cameraSettingRows = Object.entries(
+    (liveSession?.camera_settings ?? detail.playback.camera_settings ?? {}) as Record<
+      string,
+      unknown
+    >,
+  ).filter(([, value]) => value != null && String(value).trim());
   const liveLastError =
     liveMotionResult?.last_error ?? liveMotionError ?? liveSessionError ?? null;
   const showLiveMonitorFacts = Boolean(isLiveMonitoring || liveMotionResult || liveSession);
@@ -1569,6 +1790,154 @@ export function StreamDetailPage({
             </div>
           )}
 
+          {backendLiveSessionSupported && sourceProviderConfig?.provider_key === "local_usb" ? (
+            <form className="stream-live-secondary-panel" onSubmit={handleSaveCameraTuning}>
+              <div className="stream-live-panel-header">
+                <div>
+                  <strong>Camera tuning</strong>
+                  <span>Preview 1280x720 at 10-15fps is a good feeder starting point.</span>
+                </div>
+                <div className="detail-actions stream-live-actions">
+                  <button
+                    className="secondary-action"
+                    disabled={isSavingCameraTuning}
+                    type="submit"
+                  >
+                    {isSavingCameraTuning ? "Saving..." : "Save settings"}
+                  </button>
+                  {backendLiveSessionSupported ? (
+                    <button
+                      className="secondary-action"
+                      disabled={isSavingCameraTuning || isStartingLiveSession || isStoppingLiveSession}
+                      onClick={() => void restartLiveCameraSession()}
+                      type="button"
+                    >
+                      Restart camera
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <div className="stream-live-tuning-grid">
+                {cameraTuningKeys.map((key) => (
+                  <label key={key}>
+                    <span>{cameraTuningLabels[key]}</span>
+                    <input
+                      value={cameraTuningDraft[key]}
+                      onChange={(event) => updateCameraTuningDraft(key, event.target.value)}
+                      placeholder={cameraTuningPlaceholders[key]}
+                    />
+                  </label>
+                ))}
+              </div>
+              {cameraSettingRows.length > 0 ? (
+                <div className="stream-live-monitor-facts">
+                  {cameraSettingRows.map(([key, value]) => (
+                    <span key={key}>
+                      <strong>{formatLabel(key)}</strong> {String(value)}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <span className="stream-live-hint">
+                Size, framerate, and input format are passed to ffmpeg when supported.
+                Brightness, contrast, exposure, and zoom notes may need the camera driver app.
+              </span>
+              {cameraTuningMessage ? (
+                <span className="stream-live-hint">{cameraTuningMessage}</span>
+              ) : null}
+              {cameraTuningError ? (
+                <span className="stream-live-hint is-error">{cameraTuningError}</span>
+              ) : null}
+            </form>
+          ) : null}
+
+          {canMonitorLiveMotion ? (
+            <div className="stream-live-secondary-panel">
+              <div className="stream-live-panel-header">
+                <div>
+                  <strong>Motion calibration</strong>
+                  <span>
+                    Strongest {liveStrongestZoneName ?? "area"} change {liveStrongestChangeLabel},
+                    threshold {liveStrongestThresholdLabel}.
+                  </span>
+                </div>
+                <label className="stream-live-debug-toggle">
+                  <input
+                    checked={showLiveMotionDebug}
+                    onChange={(event) => setShowLiveMotionDebug(event.target.checked)}
+                    type="checkbox"
+                  />
+                  Show motion debug
+                </label>
+              </div>
+              <div className="stream-live-calibration-grid">
+                <label>
+                  <span>Monitoring focus</span>
+                  <select
+                    disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                    value={liveMotionFocusZoneId}
+                    onChange={(event) => setLiveMotionFocusZoneId(event.target.value)}
+                  >
+                    <option value="">All reviewable Zones</option>
+                    {reviewableLiveZones.map((zone) => (
+                      <option key={zone.id} value={zone.id}>
+                        {zone.name} ({formatLabel(zone.zone_type)})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="detail-actions stream-live-actions">
+                  {feederFocusZone ? (
+                    <button
+                      className="secondary-action"
+                      disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                      onClick={() => setLiveMotionFocusZoneId(feederFocusZone.id)}
+                      type="button"
+                    >
+                      Use Feeder Zone
+                    </button>
+                  ) : null}
+                  <button
+                    className="secondary-action"
+                    disabled={isLiveMonitoring || isEvaluatingLiveMotion || !liveMotionFocusZoneId}
+                    onClick={() => setLiveMotionFocusZoneId("")}
+                    type="button"
+                  >
+                    Clear focus
+                  </button>
+                </div>
+              </div>
+              <div className="stream-live-monitor-facts">
+                <span>
+                  <strong>Focus</strong> {liveFocusLabel}
+                </span>
+                <span>
+                  <strong>Sensitivity</strong> {liveSensitivityLabel}
+                </span>
+                <span>
+                  <strong>Cadence</strong> {liveCadenceLabel}
+                </span>
+                <span>
+                  <strong>Changed pixels</strong> {liveChangedPixelsLabel}
+                </span>
+                <span>
+                  <strong>Mean delta</strong> {liveMeanDeltaLabel}
+                </span>
+                <span>
+                  <strong>Frame pair</strong> {liveStrongestPairLabel}
+                </span>
+              </div>
+              {liveQualityWarnings.length > 0 ? (
+                <div className="stream-live-suppressed-list">
+                  <strong>Image quality</strong>
+                  {liveQualityWarnings.map((warning) => (
+                    <span key={warning}>{warning}</span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className={`stream-live-frame${drawMode ? " draw-mode" : ""}`}>
             <div className="stream-live-media-layer">
               {liveViewOpen && liveUrl ? (
@@ -1661,7 +2030,15 @@ export function StreamDetailPage({
                     key={zone.id}
                     className={`zone-shape zone-${zone.zone_type}${
                       selectedZoneId === zone.id ? " zone-selected" : ""
-                    }${zone.is_active ? "" : " zone-inactive"}`}
+                    }${zone.is_active ? "" : " zone-inactive"}${
+                      showLiveMotionDebug && liveMotionResult?.strongest_zone_id === zone.id
+                        ? " zone-motion-strongest"
+                        : ""
+                    }${
+                      showLiveMotionDebug && liveMotionFocusZoneId === zone.id
+                        ? " zone-motion-focus"
+                        : ""
+                    }`}
                     points={polygonPoints(zone.polygon)}
                     aria-label={`Select ${zone.name}`}
                     role="button"

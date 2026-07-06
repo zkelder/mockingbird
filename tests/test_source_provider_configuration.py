@@ -100,8 +100,12 @@ async def test_provider_definitions_return_contract_keys_and_field_metadata(
     assert local_usb_fields["windows_camera_name"]["required"] is False
     assert local_usb_fields["windows_camera_name"]["placeholder"] == "EMEET SmartCam S600"
     assert local_usb_fields["ffmpeg_binary_path"]["placeholder"] == "/mnt/c/ffmpeg/bin/ffmpeg.exe"
-    assert local_usb_fields["video_size"]["placeholder"] == "640x480"
-    assert local_usb_fields["framerate"]["placeholder"] == "10"
+    assert local_usb_fields["video_size"]["placeholder"] == "1280x720"
+    assert local_usb_fields["preview_video_size"]["placeholder"] == "1280x720"
+    assert local_usb_fields["capture_video_size"]["placeholder"] == "1920x1080"
+    assert local_usb_fields["framerate"]["placeholder"] == "15"
+    assert local_usb_fields["input_format"]["placeholder"] == "mjpeg"
+    assert local_usb_fields["brightness"]["required"] is False
 
     folder_definition = next(
         definition
@@ -149,6 +153,52 @@ async def test_patch_unknown_provider_key_is_rejected(client: httpx.AsyncClient)
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Unknown source provider key."
+
+
+async def test_local_camera_provider_configuration_stores_tuning_metadata(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    before = await product_counts(client)
+    response = await client.patch(
+        f"/api/sources/{SOURCE_ID}/provider-configuration",
+        json={
+            "provider_key": "local_usb",
+            "config": {
+                "live_stream_type": "windows_dshow",
+                "windows_camera_name": "EMEET SmartCam S600",
+                "ffmpeg_binary_path": "/mnt/c/ffmpeg/bin/ffmpeg.exe",
+                "video_size": "640x480",
+                "preview_video_size": "1280x720",
+                "capture_video_size": "1920x1080",
+                "framerate": "15",
+                "input_format": "mjpeg",
+                "brightness": "driver-app",
+                "contrast": "driver-app",
+                "exposure": "manual-low",
+                "zoom_mode": "feeder-framed",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    configuration = response.json()
+    assert configuration["provider_key"] == "local_usb"
+    assert configuration["missing_fields"] == []
+    preview = configuration["safe_config_preview"]
+    assert preview["preview_video_size"] == "1280x720"
+    assert preview["capture_video_size"] == "1920x1080"
+    assert preview["framerate"] == "15"
+    assert preview["input_format"] == "mjpeg"
+    assert preview["brightness"] == "driver-app"
+    assert "Live view" in configuration["message"]
+
+    with isolated_repository.session_factory() as session:
+        stored = session.get(SourceProviderConfigurationModel, SOURCE_ID)
+        assert stored is not None
+        assert '"input_format": "mjpeg"' in stored.config_json
+        assert '"preview_video_size": "1280x720"' in stored.config_json
+    assert await product_counts(client) == before
 
 
 async def test_patch_provider_configuration_saves_metadata_and_redacts_secret(

@@ -316,6 +316,15 @@ async def configure_local_usb_camera(
     *,
     device: str | None,
     camera_format: str = "v4l2",
+    video_size: str | None = None,
+    preview_video_size: str | None = None,
+    capture_video_size: str | None = None,
+    framerate: str | None = None,
+    input_format: str | None = None,
+    brightness: str | None = None,
+    contrast: str | None = None,
+    exposure: str | None = None,
+    zoom_mode: str | None = None,
 ) -> None:
     response = await client.patch(
         f"/api/sources/{SOURCE_ID}/provider-configuration",
@@ -325,6 +334,15 @@ async def configure_local_usb_camera(
                 "live_stream_type": "local_usb",
                 "local_camera_device": device,
                 "local_camera_format": camera_format,
+                "video_size": video_size,
+                "preview_video_size": preview_video_size,
+                "capture_video_size": capture_video_size,
+                "framerate": framerate,
+                "input_format": input_format,
+                "brightness": brightness,
+                "contrast": contrast,
+                "exposure": exposure,
+                "zoom_mode": zoom_mode,
             },
         },
     )
@@ -337,7 +355,10 @@ async def configure_windows_dshow_camera(
     camera_name: str | None,
     ffmpeg_binary_path: str | None = None,
     video_size: str | None = None,
+    preview_video_size: str | None = None,
+    capture_video_size: str | None = None,
     framerate: str | None = None,
+    input_format: str | None = None,
 ) -> None:
     response = await client.patch(
         f"/api/sources/{SOURCE_ID}/provider-configuration",
@@ -348,7 +369,10 @@ async def configure_windows_dshow_camera(
                 "windows_camera_name": camera_name,
                 "ffmpeg_binary_path": ffmpeg_binary_path,
                 "video_size": video_size,
+                "preview_video_size": preview_video_size,
+                "capture_video_size": capture_video_size,
                 "framerate": framerate,
+                "input_format": input_format,
             },
         },
     )
@@ -441,7 +465,13 @@ async def test_live_motion_evaluation_waits_for_live_frames(client: httpx.AsyncC
 async def test_live_motion_evaluation_requires_camera_session_for_backend_camera_stream(
     client: httpx.AsyncClient,
 ) -> None:
-    await configure_local_usb_camera(client, device="/dev/video0")
+    await configure_local_usb_camera(
+        client,
+        device="/dev/video0",
+        capture_video_size="1920x1080",
+        framerate="15",
+        input_format="mjpeg",
+    )
     before = await product_counts(client)
 
     response = await client.post(f"/api/streams/{STREAM_ID}/live-motion/evaluate", json={})
@@ -591,6 +621,13 @@ async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_on
     assert result["pixel_delta_threshold"] == 25.0
     assert result["min_changed_ratio"] == 0.1
     assert result["strongest_zone_min_changed_ratio"] == 0.05
+    assert result["threshold_used"] == 0.05
+    assert result["changed_pixels"] == 4
+    assert result["total_pixels"] == 6
+    assert result["mean_delta"] == 170.0
+    assert result["frame_pair_sequences"] == [1, 2]
+    assert result["feeder_threshold_applied"] is True
+    assert result["focus_applied"] is False
     assert result["strongest_frame_start_sequence"] == 1
     assert result["strongest_frame_end_sequence"] == 2
     assert result["activity_summary"] == "Activity detected in Feeder."
@@ -631,7 +668,7 @@ async def test_live_motion_evaluation_uses_backend_session_frames_without_browse
     )
     monkeypatch.setattr(
         "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
-        lambda device, camera_format=None: fake_process,
+        lambda device, **kwargs: fake_process,
     )
     patch_live_motion_decoder(
         monkeypatch,
@@ -813,6 +850,110 @@ async def test_live_motion_high_sensitivity_detects_smaller_feeder_motion_than_n
     assert high["best_media_asset_id"] is None
     assert high["review_activity_created"] is False
     assert high["creates_truth"] is False
+    assert await product_counts(client) == before
+
+
+async def test_live_motion_focus_zone_limits_scoring_region(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-focus-zone-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-focus-zone-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(),
+            frame_1: frame_with([(3, 1), (3, 2), (3, 3)]),
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+    before = await product_counts(client)
+
+    unfocused_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+    assert unfocused_response.status_code == 200
+    unfocused = unfocused_response.json()
+    assert unfocused["activity_detected"] is True
+    assert unfocused["strongest_zone_id"] == "zone-ground"
+    assert unfocused["focus_applied"] is False
+
+    focused_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+            "focus_zone_id": "zone-feeder",
+        },
+    )
+    assert focused_response.status_code == 200
+    focused = focused_response.json()
+    assert focused["activity_detected"] is False
+    assert focused["focus_applied"] is True
+    assert focused["focus_zone_id"] == "zone-feeder"
+    assert focused["focus_zone_name"] == "Feeder"
+    assert focused["strongest_zone_id"] == "zone-feeder"
+    assert focused["threshold_used"] == 0.025
+    assert focused["creates_truth"] is False
+    assert await product_counts(client) == before
+
+
+async def test_live_motion_reports_simple_image_quality_warnings(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-overexposed-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-overexposed-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    overexposed_frame = [[250 for _x in range(8)] for _y in range(8)]
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: overexposed_frame,
+            frame_1: overexposed_frame,
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["activity_detected"] is False
+    assert any("overexposed" in warning for warning in result["image_quality_warnings"])
+    assert any("low contrast" in warning for warning in result["image_quality_warnings"])
+    assert result["image_quality_warnings"][0] in result["warnings"]
+    assert result["creates_truth"] is False
     assert await product_counts(client) == before
 
 
@@ -1670,7 +1811,7 @@ async def test_local_camera_bridge_endpoint_streams_mocked_mjpeg_without_creatin
     )
     monkeypatch.setattr(
         "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
-        lambda device, camera_format=None: started_devices.append(device) or fake_process,
+        lambda device, **kwargs: started_devices.append(device) or fake_process,
     )
     monkeypatch.setattr(
         "mockingbird.api.main.local_camera_bridge.iter_multipart_mjpeg",
@@ -1701,21 +1842,31 @@ async def test_live_camera_session_start_reuses_single_reader_and_reports_status
     session_frame = b"\xff\xd8session-frame-one\xff\xd9"
     fake_process = FakeFfmpegProcess([b"noise" + session_frame])
     started_devices: list[str] = []
+    started_kwargs: list[dict[str, object]] = []
 
     monkeypatch.setattr(
         "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
         lambda: True,
     )
 
-    def fake_start(device: str, camera_format: str | None = None) -> FakeFfmpegProcess:
+    def fake_start(device: str, **kwargs: object) -> FakeFfmpegProcess:
         started_devices.append(device)
+        started_kwargs.append(dict(kwargs))
         return fake_process
 
     monkeypatch.setattr(
         "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
         fake_start,
     )
-    await configure_local_usb_camera(client, device="/dev/video0")
+    await configure_local_usb_camera(
+        client,
+        device="/dev/video0",
+        preview_video_size="1280x720",
+        capture_video_size="1920x1080",
+        framerate="15",
+        input_format="mjpeg",
+        brightness="driver-app",
+    )
     before = await product_counts(client)
 
     response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
@@ -1728,6 +1879,10 @@ async def test_live_camera_session_start_reuses_single_reader_and_reports_status
     assert started["status"] == "running"
     assert started["persistent"] is False
     assert started["max_runtime_seconds"] >= 1
+    assert started["camera_settings"]["input_format"] == "mjpeg"
+    assert started["camera_settings"]["preview_video_size"] == "1280x720"
+    assert started["camera_settings"]["capture_video_size"] == "1920x1080"
+    assert started["camera_settings"]["brightness"] == "driver-app"
     assert started["message"] == (
         "Camera session is running. Live view, capture, and monitoring share these frames."
     )
@@ -1747,6 +1902,9 @@ async def test_live_camera_session_start_reuses_single_reader_and_reports_status
     assert duplicate["status"] == "running"
     assert duplicate["frame_count"] >= 1
     assert started_devices == ["/dev/video0"]
+    assert started_kwargs[0]["input_format"] == "mjpeg"
+    assert started_kwargs[0]["video_size"] == "1280x720"
+    assert started_kwargs[0]["input_frame_rate"] == "15"
 
     stop_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/stop")
 
@@ -1772,7 +1930,7 @@ async def test_live_camera_session_mjpeg_uses_existing_session_without_new_reade
         lambda: True,
     )
 
-    def fake_start(device: str, camera_format: str | None = None) -> FakeFfmpegProcess:
+    def fake_start(device: str, **kwargs: object) -> FakeFfmpegProcess:
         nonlocal start_count
         start_count += 1
         return fake_process
@@ -1828,7 +1986,7 @@ async def test_backend_monitor_survives_hidden_live_view_until_camera_stop(
         lambda: True,
     )
 
-    def fake_start(device: str, camera_format: str | None = None) -> FakeFfmpegProcess:
+    def fake_start(device: str, **kwargs: object) -> FakeFfmpegProcess:
         nonlocal start_count
         start_count += 1
         return fake_process
@@ -1931,7 +2089,7 @@ async def test_stored_live_activity_review_handoff_keeps_camera_running_and_trut
     )
     monkeypatch.setattr(
         "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
-        lambda device, camera_format=None: fake_process,
+        lambda device, **kwargs: fake_process,
     )
     patch_live_motion_decoder(
         monkeypatch,
@@ -2106,7 +2264,7 @@ async def test_playback_status_does_not_start_local_camera_bridge_process(
         lambda: True,
     )
 
-    def fail_if_started(device: str, camera_format: str | None = None):  # noqa: ANN202
+    def fail_if_started(device: str, **kwargs: object):  # noqa: ANN202
         raise AssertionError("Playback status must not start local camera ffmpeg")
 
     monkeypatch.setattr(
@@ -2289,16 +2447,17 @@ async def test_windows_dshow_bridge_endpoint_streams_mocked_mjpeg_without_creati
     jpeg_frame_one = b"\xff\xd8windows-frame-one\xff\xd9"
     jpeg_frame_two = b"\xff\xd8windows-frame-two\xff\xd9"
     fake_process = object()
-    started: list[tuple[str, str | None, str | None, str | None]] = []
+    started: list[tuple[str, str | None, str | None, str | None, str | None]] = []
 
     def fake_start(
         camera_name: str,
         *,
         ffmpeg_binary_path: str | None = None,
+        input_format: str | None = None,
         video_size: str | None = None,
         framerate: str | None = None,
     ) -> object:
-        started.append((camera_name, ffmpeg_binary_path, video_size, framerate))
+        started.append((camera_name, ffmpeg_binary_path, input_format, video_size, framerate))
         return fake_process
 
     monkeypatch.setattr(
@@ -2319,7 +2478,9 @@ async def test_windows_dshow_bridge_endpoint_streams_mocked_mjpeg_without_creati
         camera_name="EMEET SmartCam S600",
         ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
         video_size="640x480",
-        framerate="10",
+        preview_video_size="1280x720",
+        framerate="15",
+        input_format="mjpeg",
     )
     before = await product_counts(client)
 
@@ -2336,8 +2497,9 @@ async def test_windows_dshow_bridge_endpoint_streams_mocked_mjpeg_without_creati
         (
             "EMEET SmartCam S600",
             "/mnt/c/ffmpeg/bin/ffmpeg.exe",
-            "640x480",
-            "10",
+            "mjpeg",
+            "1280x720",
+            "15",
         )
     ]
     assert await product_counts(client) == before
@@ -2451,16 +2613,17 @@ async def test_windows_dshow_capture_frame_creates_one_media_asset_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     jpeg_frame = b"\xff\xd8captured-windows-frame\xff\xd9"
-    captured_args: list[tuple[str, str | None, str | None, str | None]] = []
+    captured_args: list[tuple[str, str | None, str | None, str | None, str | None]] = []
 
     def fake_capture(
         camera_name: str,
         *,
         ffmpeg_binary_path: str | None = None,
+        input_format: str | None = None,
         video_size: str | None = None,
         framerate: str | None = None,
     ) -> bytes:
-        captured_args.append((camera_name, ffmpeg_binary_path, video_size, framerate))
+        captured_args.append((camera_name, ffmpeg_binary_path, input_format, video_size, framerate))
         return jpeg_frame
 
     monkeypatch.setattr(
@@ -2472,7 +2635,9 @@ async def test_windows_dshow_capture_frame_creates_one_media_asset_only(
         camera_name="EMEET SmartCam S600",
         ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
         video_size="1280x720",
+        capture_video_size="1920x1080",
         framerate="10",
+        input_format="mjpeg",
     )
     before = await product_counts(client)
 
@@ -2502,7 +2667,8 @@ async def test_windows_dshow_capture_frame_creates_one_media_asset_only(
         (
             "EMEET SmartCam S600",
             "/mnt/c/ffmpeg/bin/ffmpeg.exe",
-            "1280x720",
+            "mjpeg",
+            "1920x1080",
             "10",
         )
     ]
@@ -2557,7 +2723,13 @@ async def test_local_usb_capture_without_session_ignores_fresh_cache_and_uses_on
         "mockingbird.api.main.local_camera_bridge.capture_local_camera_frame",
         fake_capture,
     )
-    await configure_local_usb_camera(client, device="/dev/video0")
+    await configure_local_usb_camera(
+        client,
+        device="/dev/video0",
+        capture_video_size="1920x1080",
+        framerate="15",
+        input_format="mjpeg",
+    )
     live_frame_cache.store_latest_frame(STREAM_ID, live_frame)
     before = await product_counts(client)
 
@@ -2609,7 +2781,7 @@ async def test_local_usb_capture_frame_uses_running_session_frame_without_one_sh
     )
     monkeypatch.setattr(
         "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
-        lambda device, camera_format=None: fake_process,
+        lambda device, **kwargs: fake_process,
     )
     await configure_local_usb_camera(client, device="/dev/video0")
     start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
@@ -2656,7 +2828,7 @@ async def test_local_usb_capture_frame_creates_one_media_asset_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     jpeg_frame = b"\xff\xd8captured-local-frame\xff\xd9"
-    captured_args: list[tuple[str, str | None, str | None, str | None]] = []
+    captured_args: list[tuple[str, str | None, str | None, str | None, str | None]] = []
 
     monkeypatch.setattr(
         "mockingbird.api.main.local_camera_bridge.local_camera_status",
@@ -2667,17 +2839,24 @@ async def test_local_usb_capture_frame_creates_one_media_asset_only(
         device: str,
         *,
         camera_format: str | None = None,
+        input_format: str | None = None,
         video_size: str | None = None,
         input_frame_rate: str | None = None,
     ) -> bytes:
-        captured_args.append((device, camera_format, video_size, input_frame_rate))
+        captured_args.append((device, camera_format, input_format, video_size, input_frame_rate))
         return jpeg_frame
 
     monkeypatch.setattr(
         "mockingbird.api.main.local_camera_bridge.capture_local_camera_frame",
         fake_capture,
     )
-    await configure_local_usb_camera(client, device="/dev/video0")
+    await configure_local_usb_camera(
+        client,
+        device="/dev/video0",
+        capture_video_size="1920x1080",
+        framerate="15",
+        input_format="mjpeg",
+    )
     before = await product_counts(client)
 
     response = await client.post(f"/api/streams/{STREAM_ID}/local-camera/capture-frame")
@@ -2697,7 +2876,7 @@ async def test_local_usb_capture_frame_creates_one_media_asset_only(
     assert body["creates_visit"] is False
     assert body["creates_truth"] is False
     assert body["creates_export"] is False
-    assert captured_args == [("/dev/video0", "v4l2", None, None)]
+    assert captured_args == [("/dev/video0", "v4l2", "mjpeg", "1920x1080", "15")]
 
     media_response = await client.get(f"/api/media/{body['media_asset_id']}")
     assert media_response.status_code == 200
@@ -2797,6 +2976,7 @@ def test_windows_dshow_command_uses_list_args_and_safe_camera_name() -> None:
     command = windows_camera_bridge.build_windows_dshow_mjpeg_command(
         "EMEET SmartCam S600",
         ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+        input_format="mjpeg",
         video_size="640x480",
         framerate="10",
     )
@@ -2805,6 +2985,8 @@ def test_windows_dshow_command_uses_list_args_and_safe_camera_name() -> None:
         "/mnt/c/ffmpeg/bin/ffmpeg.exe",
         "-f",
         "dshow",
+        "-input_format",
+        "mjpeg",
         "-video_size",
         "640x480",
         "-framerate",
@@ -2838,6 +3020,7 @@ def test_windows_dshow_frame_capture_command_uses_list_args() -> None:
     command = windows_camera_bridge.build_windows_dshow_frame_capture_command(
         "EMEET SmartCam S600",
         ffmpeg_binary_path="/mnt/c/ffmpeg/bin/ffmpeg.exe",
+        input_format="mjpeg",
         video_size="1280x720",
         framerate="10",
     )
@@ -2846,6 +3029,8 @@ def test_windows_dshow_frame_capture_command_uses_list_args() -> None:
         "/mnt/c/ffmpeg/bin/ffmpeg.exe",
         "-f",
         "dshow",
+        "-input_format",
+        "mjpeg",
         "-video_size",
         "1280x720",
         "-framerate",

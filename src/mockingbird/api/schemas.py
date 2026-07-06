@@ -527,6 +527,7 @@ class StreamPlaybackStatus(BaseModel):
     windows_camera_status: str | None = None
     windows_camera_name_display: str | None = None
     windows_ffmpeg_binary_display: str | None = None
+    camera_settings: dict[str, str] = Field(default_factory=dict)
     bridged_mjpeg_url: str | None = None
 
 
@@ -621,6 +622,7 @@ class LiveCameraSessionStatusResponse(BaseModel):
     stop_reason: str | None = None
     max_runtime_seconds: int = Field(default=1800, ge=1)
     persistent: bool = False
+    camera_settings: dict[str, Any] = Field(default_factory=dict)
     message: str
     warnings: list[str] = Field(default_factory=list)
 
@@ -1378,6 +1380,7 @@ class LiveMotionEvaluateRequest(BaseModel):
     max_gap_frames: int = Field(default=1, ge=0)
     max_age_seconds: float = Field(default=20.0, ge=1, le=60)
     max_frames: int = Field(default=20, ge=2, le=30)
+    focus_zone_id: str | None = None
     notes: str | None = None
 
 
@@ -1459,6 +1462,18 @@ class LiveMotionEvaluateResponse(BaseModel):
     pixel_delta_threshold: float | None = None
     min_changed_ratio: float | None = None
     strongest_zone_min_changed_ratio: float | None = None
+    threshold_used: float | None = None
+    changed_pixels: int | None = Field(default=None, ge=0)
+    total_pixels: int | None = Field(default=None, ge=0)
+    mean_delta: float | None = None
+    frame_pair_sequences: list[int] = Field(default_factory=list)
+    feeder_threshold_applied: bool = False
+    focus_zone_id: str | None = None
+    focus_zone_name: str | None = None
+    focus_zone_type: ZoneType | None = None
+    focus_applied: bool = False
+    evaluation_cadence_seconds: float | None = None
+    image_quality_warnings: list[str] = Field(default_factory=list)
     strongest_frame_start_sequence: int | None = None
     strongest_frame_end_sequence: int | None = None
     best_frame_sequence: int | None = None
