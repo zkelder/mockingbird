@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import sys
+from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,6 +40,7 @@ from mockingbird.api.schemas import (
     ExternalUrlPreviewSaveRequest,
     ExternalUrlPreviewSaveResponse,
     LocalCameraFrameCaptureResponse,
+    LiveCameraSessionStatusResponse,
     Event,
     EventDetail,
     FolderImportCreate,
@@ -53,6 +55,8 @@ from mockingbird.api.schemas import (
     LiveMotionEvaluateRequest,
     LiveMotionEvaluateResponse,
     LiveMotionFrameSummary,
+    LiveMotionMonitorStartRequest,
+    LiveMotionReviewActivityResponse,
     MediaAsset,
     MediaImportResult,
     ModelAdapter,
@@ -157,12 +161,13 @@ from mockingbird.monitoring import (
     SourceMonitorState,
 )
 from mockingbird.playback import (
+    live_camera_session,
     live_frame_cache,
     local_camera_bridge,
     rtsp_bridge,
     windows_camera_bridge,
 )
-from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.repository.product_repository import ProductRepository, StreamLivePlaybackConfig
 from mockingbird.sampler import (
     SamplerConfig,
     SamplerContext,
@@ -201,6 +206,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("shutdown")
+def _stop_live_camera_sessions_on_shutdown() -> None:
+    if _live_camera_session_manager is not None:
+        _live_camera_session_manager.stop_all(reason="api_shutdown")
 
 
 def _patch_testclient_for_pytest() -> None:
@@ -288,6 +299,7 @@ _patch_testclient_for_pytest()
 
 _repository: ProductRepository | None = None
 _source_monitor_manager: SourceMonitorManager | None = None
+_live_camera_session_manager: live_camera_session.LiveCameraSessionManager | None = None
 
 
 def get_repository() -> ProductRepository:
@@ -298,10 +310,13 @@ def get_repository() -> ProductRepository:
 
 
 def configure_repository(repository: ProductRepository | None) -> None:
-    global _repository, _source_monitor_manager
+    global _repository, _source_monitor_manager, _live_camera_session_manager
     if _source_monitor_manager is not None:
         _source_monitor_manager.cancel_all()
         _source_monitor_manager = None
+    if _live_camera_session_manager is not None:
+        _live_camera_session_manager.stop_all(reason="repository_reconfigured")
+        _live_camera_session_manager = None
     _repository = repository
 
 
@@ -314,6 +329,13 @@ def get_source_monitor_manager() -> SourceMonitorManager:
             evaluate_saved_media=_monitor_evaluate_saved_media,
         )
     return _source_monitor_manager
+
+
+def get_live_camera_session_manager() -> live_camera_session.LiveCameraSessionManager:
+    global _live_camera_session_manager
+    if _live_camera_session_manager is None:
+        _live_camera_session_manager = live_camera_session.LiveCameraSessionManager()
+    return _live_camera_session_manager
 
 
 def _not_found(product_type: str, product_id: str) -> HTTPException:
@@ -1187,6 +1209,190 @@ def _live_frame_cache_response_fields(
         "fresh_enough": status.fresh_enough,
         "last_frame_at": status.last_frame_at,
     }
+
+
+def _live_camera_session_response(
+    snapshot: live_camera_session.LiveCameraSessionSnapshot | None,
+    configuration: StreamLivePlaybackConfig,
+    *,
+    message: str | None = None,
+    warnings: list[str] | None = None,
+) -> LiveCameraSessionStatusResponse:
+    if snapshot is None:
+        return LiveCameraSessionStatusResponse(
+            stream_id=configuration.stream_id,
+            source_id=configuration.source_id,
+            playback_kind=configuration.live_stream_type,
+            status="stopped",
+            max_runtime_seconds=live_camera_session.DEFAULT_MAX_RUNTIME_SECONDS,
+            persistent=False,
+            monitor_running=False,
+            message=message or "Camera session is stopped.",
+            warnings=warnings or [],
+        )
+    return LiveCameraSessionStatusResponse(
+        stream_id=snapshot.stream_id,
+        source_id=snapshot.source_id,
+        playback_kind=snapshot.playback_kind,
+        status=snapshot.status,
+        started_at=snapshot.started_at,
+        last_frame_at=snapshot.last_frame_at,
+        latest_frame_age_ms=snapshot.latest_frame_age_ms,
+        newest_frame_age_ms=snapshot.latest_frame_age_ms,
+        frame_count=snapshot.frame_count,
+        clients_connected=snapshot.clients_connected,
+        monitor_running=snapshot.monitor_running,
+        last_motion_evaluation_at=snapshot.last_motion_evaluation_at,
+        last_activity=snapshot.last_activity,
+        last_motion_result=snapshot.last_motion_result,
+        last_error=snapshot.last_error,
+        stop_reason=snapshot.stop_reason,
+        max_runtime_seconds=snapshot.max_runtime_seconds,
+        persistent=snapshot.persistent,
+        message=message or _live_camera_session_message(snapshot),
+        warnings=warnings or [],
+    )
+
+
+def _live_camera_session_message(
+    snapshot: live_camera_session.LiveCameraSessionSnapshot,
+) -> str:
+    if snapshot.status == "running":
+        return "Camera session is running. Live view, capture, and monitoring share these frames."
+    if snapshot.status == "starting":
+        return "Camera session is starting."
+    if snapshot.status == "stopping":
+        return "Camera session is stopping."
+    if snapshot.status == "failed":
+        return snapshot.last_error or "Camera session failed."
+    return "Camera session is stopped."
+
+
+def _camera_session_response_fields(
+    snapshot: live_camera_session.LiveCameraSessionSnapshot | None,
+) -> dict[str, int | str | None]:
+    return {
+        "camera_session_status": snapshot.status if snapshot else "stopped",
+        "camera_session_frame_count": snapshot.frame_count if snapshot else 0,
+        "camera_session_clients_connected": snapshot.clients_connected if snapshot else 0,
+        "camera_session_latest_frame_age_ms": (
+            snapshot.latest_frame_age_ms if snapshot else None
+        ),
+        "camera_session_runtime_limit_seconds": (
+            snapshot.max_runtime_seconds if snapshot else None
+        ),
+    }
+
+
+def _validate_live_camera_session_config(
+    configuration: StreamLivePlaybackConfig,
+    *,
+    expected_kind: str | None = None,
+) -> None:
+    live_type = configuration.live_stream_type
+    target_kind = expected_kind or live_type
+    if target_kind == "rtsp":
+        if configuration.provider_key != "external_url":
+            raise HTTPException(
+                status_code=400,
+                detail="RTSP bridge requires an external_url Source provider.",
+            )
+        if not configuration.live_stream_url:
+            raise HTTPException(status_code=400, detail="Live stream URL is not configured.")
+        if live_type != "rtsp":
+            raise HTTPException(status_code=400, detail="RTSP bridge requires RTSP stream type.")
+        if not rtsp_bridge.validate_rtsp_url(configuration.live_stream_url):
+            raise HTTPException(
+                status_code=400,
+                detail="RTSP bridge requires an rtsp:// or rtsps:// stream URL.",
+            )
+        if not rtsp_bridge.is_ffmpeg_available():
+            raise HTTPException(
+                status_code=503,
+                detail="RTSP bridge unavailable: ffmpeg not found.",
+            )
+        return
+
+    if target_kind == local_camera_bridge.LOCAL_USB_STREAM_TYPE:
+        if configuration.provider_key != "local_usb":
+            raise HTTPException(
+                status_code=400,
+                detail="Local camera bridge requires a local_usb Source provider.",
+            )
+        if live_type != local_camera_bridge.LOCAL_USB_STREAM_TYPE:
+            raise HTTPException(
+                status_code=400,
+                detail="Local camera bridge requires local USB playback type.",
+            )
+        bridge_status = local_camera_bridge.local_camera_status(
+            device=configuration.local_camera_device,
+            camera_format=configuration.local_camera_format,
+        )
+        if bridge_status == "device_missing":
+            raise HTTPException(
+                status_code=400,
+                detail="Choose a local camera device such as /dev/video0.",
+            )
+        if bridge_status == "invalid_device":
+            raise HTTPException(
+                status_code=400,
+                detail="Local camera device path must look like /dev/video0.",
+            )
+        if bridge_status == "unsupported_platform":
+            raise HTTPException(
+                status_code=400,
+                detail="Local camera bridge currently supports Linux /dev/video* devices.",
+            )
+        if bridge_status == "ffmpeg_missing":
+            raise HTTPException(
+                status_code=503,
+                detail="Local camera bridge unavailable: ffmpeg not found.",
+            )
+        return
+
+    if target_kind == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+        if configuration.provider_key != "local_usb":
+            raise HTTPException(
+                status_code=400,
+                detail="Windows DirectShow bridge requires a local camera Source provider.",
+            )
+        if live_type != windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+            raise HTTPException(
+                status_code=400,
+                detail="Windows DirectShow bridge requires windows_dshow playback type.",
+            )
+        bridge_status = windows_camera_bridge.windows_camera_status(
+            camera_name=configuration.windows_camera_name,
+            ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
+        )
+        if bridge_status == "camera_name_missing":
+            raise HTTPException(
+                status_code=400,
+                detail="Choose a Windows DirectShow camera name.",
+            )
+        if bridge_status == "unsupported_host":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Windows DirectShow requires Windows ffmpeg.exe or running the API on Windows."
+                ),
+            )
+        if bridge_status == "ffmpeg_missing":
+            raise HTTPException(
+                status_code=503,
+                detail="Windows DirectShow bridge unavailable: ffmpeg not found.",
+            )
+        if bridge_status == "ffmpeg_failed":
+            raise HTTPException(
+                status_code=502,
+                detail="Windows DirectShow camera unavailable or playback failed.",
+            )
+        return
+
+    raise HTTPException(
+        status_code=400,
+        detail="Backend camera sessions require RTSP, local_usb, or windows_dshow playback.",
+    )
 
 
 def _live_motion_session_status(
@@ -2134,13 +2340,22 @@ async def evaluate_live_stream_motion(
     stream_id: str,
     payload: LiveMotionEvaluateRequest | None = None,
 ) -> LiveMotionEvaluateResponse:
-    # Live monitoring reads frames already emitted by the active Live view request.
-    # It does not open another camera process, create truth, or create exports.
+    return _evaluate_live_stream_motion(stream_id, payload)
+
+
+def _evaluate_live_stream_motion(
+    stream_id: str,
+    payload: LiveMotionEvaluateRequest | None = None,
+) -> LiveMotionEvaluateResponse:
+    # Live monitoring reads backend session/cache frames only. It does not open
+    # another camera process, create truth, or create exports.
     request = payload or LiveMotionEvaluateRequest()
     repository = get_repository()
     stream = repository.get_stream(stream_id)
     if stream is None:
         raise _not_found("Stream", stream_id)
+    configuration = repository.get_stream_live_playback_config(stream_id)
+    session_snapshot = get_live_camera_session_manager().status(stream_id)
 
     evaluated_at = datetime.now(UTC)
     cache_status = live_frame_cache.get_cache_status(
@@ -2160,6 +2375,7 @@ async def evaluate_live_stream_motion(
         "source_id": stream.source_id,
         "evaluated_at": evaluated_at,
         **_live_frame_cache_response_fields(cache_status),
+        **_camera_session_response_fields(session_snapshot),
         "pixel_delta_threshold": request.pixel_delta_threshold,
         "min_changed_ratio": request.min_changed_ratio,
         "creates_event": False,
@@ -2173,6 +2389,25 @@ async def evaluate_live_stream_motion(
     }
     if not cached_frames:
         has_stale_frames = stream.id in set(live_frame_cache.iter_cached_stream_ids())
+        session_required = (
+            configuration is not None
+            and live_camera_session.is_session_supported(configuration)
+            and (
+                session_snapshot is None
+                or session_snapshot.status not in {"starting", "running"}
+            )
+        )
+        if session_required:
+            message = "Start camera session before monitoring."
+            return LiveMotionEvaluateResponse(
+                **common,
+                status="start_session_required",
+                session_status="waiting_for_session",
+                activity_detected=False,
+                frames_considered=0,
+                message=message,
+                last_evaluation_message=message,
+            )
         message = (
             "No recent live frames are available. Keep Live view open and retry."
             if has_stale_frames
@@ -2631,7 +2866,7 @@ async def evaluate_live_stream_motion(
         "creates_visit": review_visit_id is not None and review_activity_created,
     }
 
-    return LiveMotionEvaluateResponse(
+    response = LiveMotionEvaluateResponse(
         **response_common,
         status=status,
         activity_detected=activity_detected,
@@ -2697,6 +2932,346 @@ async def evaluate_live_stream_motion(
         debug_cell_zones=debug_cell_zones,
         message=message,
         warnings=warnings,
+    )
+    _record_live_motion_session_result(response)
+    return response
+
+
+@app.post(
+    "/api/streams/{stream_id}/live-motion/start",
+    response_model=LiveMotionEvaluateResponse,
+)
+async def start_live_stream_motion_monitor(
+    stream_id: str,
+    payload: LiveMotionMonitorStartRequest | None = None,
+) -> LiveMotionEvaluateResponse:
+    request = payload or LiveMotionMonitorStartRequest()
+    evaluate_request = LiveMotionEvaluateRequest(
+        **request.model_dump(exclude={"interval_seconds"})
+    )
+    snapshot = get_live_camera_session_manager().status(stream_id)
+    if snapshot is None or snapshot.status not in {"starting", "running"}:
+        return _evaluate_live_stream_motion(stream_id, evaluate_request)
+
+    def monitor_evaluate() -> dict[str, Any]:
+        return _evaluate_live_stream_motion(stream_id, evaluate_request).model_dump(mode="json")
+
+    get_live_camera_session_manager().start_monitor(
+        stream_id,
+        monitor_evaluate,
+        interval_seconds=request.interval_seconds,
+    )
+    result = _evaluate_live_stream_motion(stream_id, evaluate_request)
+    if result.activity_detected:
+        get_live_camera_session_manager().stop_monitor(stream_id)
+    return result
+
+
+@app.post(
+    "/api/streams/{stream_id}/live-motion/stop",
+    response_model=LiveCameraSessionStatusResponse,
+)
+async def stop_live_stream_motion_monitor(stream_id: str) -> LiveCameraSessionStatusResponse:
+    configuration = _stream_live_playback_config_or_404(stream_id)
+    snapshot = get_live_camera_session_manager().stop_monitor(stream_id)
+    return _live_camera_session_response(
+        snapshot,
+        configuration,
+        message="Live monitoring stopped.",
+    )
+
+
+def _record_live_motion_session_result(response: LiveMotionEvaluateResponse) -> None:
+    last_activity: dict[str, Any] | None = None
+    if response.activity_detected and response.best_media_asset_id:
+        zone_type = (
+            response.strongest_zone_type.value
+            if response.strongest_zone_type is not None
+            else None
+        )
+        last_activity = {
+            "detected_at": response.evaluated_at,
+            "stream_id": response.stream_id,
+            "source_id": response.source_id,
+            "zone_id": response.strongest_zone_id,
+            "zone_name": response.strongest_zone_name,
+            "zone_type": zone_type,
+            "best_media_asset_id": response.best_media_asset_id,
+            "best_frame_sequence": response.best_frame_sequence,
+            "start_frame_sequence": response.strongest_frame_start_sequence,
+            "end_frame_sequence": response.strongest_frame_end_sequence,
+            "strongest_changed_ratio": response.strongest_changed_ratio,
+            "threshold_used": (
+                response.strongest_zone_min_changed_ratio
+                if response.strongest_zone_min_changed_ratio is not None
+                else response.min_changed_ratio
+            ),
+            "suppressed_zone_summaries": [
+                summary.model_dump(mode="json")
+                for summary in response.suppressed_zone_summaries
+            ],
+            "review_activity_created": response.review_activity_created,
+            "motion_evidence_id": response.motion_evidence_id,
+            "event_id": response.event_id,
+            "visit_id": response.visit_id,
+            "review_queue_item_id": response.review_queue_item_id,
+            "suggested_label": response.suggested_label,
+            "suggestion_id": response.suggestion_id,
+            "suggestion_confidence": response.suggestion_confidence,
+            "creates_truth": False,
+        }
+    get_live_camera_session_manager().record_motion_result(
+        response.stream_id,
+        response.model_dump(mode="json"),
+        last_activity=last_activity,
+    )
+
+
+def _live_motion_review_activity_response(
+    *,
+    stream_id: str,
+    source_id: str | None,
+    status: str,
+    message: str,
+    activity_detected: bool = False,
+    review_activity_created: bool = False,
+    review_activity_reused: bool = False,
+    review_activity_already_exists: bool = False,
+    media_asset_id: str | None = None,
+    motion_evidence_id: str | None = None,
+    event_id: str | None = None,
+    visit_id: str | None = None,
+    suggested_label: str | None = None,
+    suggestion_id: str | None = None,
+    suggestion_confidence: float | None = None,
+    warnings: list[str] | None = None,
+) -> LiveMotionReviewActivityResponse:
+    review_queue_item_id = (
+        f"review-queue-{visit_id}" if visit_id else f"review-queue-{event_id}" if event_id else None
+    )
+    return LiveMotionReviewActivityResponse(
+        stream_id=stream_id,
+        source_id=source_id,
+        status=status,
+        activity_detected=activity_detected,
+        review_activity_created=review_activity_created,
+        review_activity_reused=review_activity_reused,
+        review_activity_already_exists=review_activity_already_exists,
+        already_exists=review_activity_already_exists,
+        motion_evidence_id=motion_evidence_id,
+        event_id=event_id,
+        visit_id=visit_id,
+        media_asset_id=media_asset_id,
+        review_queue_item_id=review_queue_item_id,
+        suggested_label=suggested_label,
+        suggestion_id=suggestion_id,
+        suggestion_confidence=suggestion_confidence,
+        review_status="needs_review" if review_queue_item_id else None,
+        creates_event=event_id is not None and review_activity_created,
+        creates_visit=visit_id is not None and review_activity_created,
+        creates_truth=False,
+        creates_export=False,
+        message=message,
+        warnings=warnings or [],
+    )
+
+
+@app.post(
+    "/api/streams/{stream_id}/live-motion/review-activity",
+    response_model=LiveMotionReviewActivityResponse,
+)
+async def create_live_stream_motion_review_activity(
+    stream_id: str,
+) -> LiveMotionReviewActivityResponse:
+    repository = get_repository()
+    stream = repository.get_stream(stream_id)
+    if stream is None:
+        raise _not_found("Stream", stream_id)
+    snapshot = get_live_camera_session_manager().status(stream_id)
+    activity = snapshot.last_activity if snapshot is not None else None
+    if not activity:
+        return _live_motion_review_activity_response(
+            stream_id=stream.id,
+            source_id=stream.source_id,
+            status="no_activity",
+            message="No stored live activity is ready for review.",
+            warnings=["Start monitoring and wait for activity before creating review."],
+        )
+
+    existing_motion_evidence_id = activity.get("motion_evidence_id")
+    existing_event_id = activity.get("event_id")
+    existing_visit_id = activity.get("visit_id")
+    if existing_motion_evidence_id:
+        return _live_motion_review_activity_response(
+            stream_id=stream.id,
+            source_id=stream.source_id,
+            status="already_exists",
+            message="Review activity is already ready in Review Queue.",
+            activity_detected=True,
+            review_activity_reused=True,
+            review_activity_already_exists=True,
+            media_asset_id=activity.get("best_media_asset_id"),
+            motion_evidence_id=existing_motion_evidence_id,
+            event_id=existing_event_id,
+            visit_id=existing_visit_id,
+            suggested_label=activity.get("suggested_label"),
+            suggestion_id=activity.get("suggestion_id"),
+            suggestion_confidence=activity.get("suggestion_confidence"),
+        )
+
+    zone_id = activity.get("zone_id")
+    best_media_asset_id = activity.get("best_media_asset_id")
+    if not zone_id or not best_media_asset_id:
+        return _live_motion_review_activity_response(
+            stream_id=stream.id,
+            source_id=stream.source_id,
+            status="unavailable",
+            message="Stored live activity is missing named Zone or best-frame evidence.",
+            activity_detected=True,
+            media_asset_id=best_media_asset_id,
+            warnings=["Create review activity requires a named Zone and saved best frame."],
+        )
+
+    zone_name = activity.get("zone_name")
+    zone_type = activity.get("zone_type")
+    live_activity_suggestion = _live_activity_suggestion_for_zone(
+        ZoneType(zone_type) if zone_type else None,
+        zone_name,
+    )
+    try:
+        pending_evidence = repository.create_motion_evidence(
+            MotionEvidenceCreateRequest(
+                source_id=stream.source_id,
+                stream_id=stream.id,
+                zone_id=zone_id,
+                start_frame_index=activity.get("start_frame_sequence"),
+                end_frame_index=activity.get("end_frame_sequence"),
+                best_frame_index=activity.get("best_frame_sequence"),
+                best_frame_time=str(activity.get("detected_at")) if activity.get("detected_at") else None,
+                peak_changed_ratio=activity.get("strongest_changed_ratio", 0.0),
+                triggered_frame_count=1,
+                scoring_config={
+                    "source": "live_stream_motion_session_activity",
+                    "threshold_used": activity.get("threshold_used"),
+                    "creates_truth": False,
+                },
+                snapshot_media_asset_id=best_media_asset_id,
+                notes="Live stream motion monitor created pending review evidence.",
+            )
+        )
+        promoted = repository.promote_motion_evidence(
+            pending_evidence.id,
+            MotionEvidencePromoteRequest(
+                event_title=(
+                    f"Live motion activity in {zone_name}"
+                    if zone_name
+                    else "Live motion activity"
+                ),
+                visit_label_hint=(
+                    live_activity_suggestion.label
+                    if live_activity_suggestion is not None
+                    else "unknown_animal"
+                ),
+                notes="User created review activity from stored live stream motion.",
+                create_event=True,
+                create_visit=True,
+                attach_snapshot_media_asset_id=best_media_asset_id,
+            ),
+        )
+    except ValueError as error:
+        raise _motion_evidence_error(error) from error
+
+    if promoted is None:
+        raise HTTPException(status_code=409, detail="Live review activity could not be created.")
+
+    suggestion: SpeciesSuggestionResponse | None = None
+    if promoted.visit_id and live_activity_suggestion is not None:
+        try:
+            suggestion = repository.create_species_suggestion(
+                SpeciesSuggestionCreateRequest(
+                    source_id=stream.source_id,
+                    stream_id=stream.id,
+                    event_id=promoted.event_id,
+                    visit_id=promoted.visit_id,
+                    media_asset_id=best_media_asset_id,
+                    motion_evidence_id=promoted.evidence.id,
+                    adapter_id="live_motion_zone_suggester",
+                    adapter_name="Live motion zone suggester",
+                    suggested_label=live_activity_suggestion.label,
+                    confidence=live_activity_suggestion.confidence,
+                    rank=1,
+                    alternatives=[],
+                    evidence_region=None,
+                    notes=live_activity_suggestion.reason,
+                )
+            )
+        except ValueError as error:
+            raise _species_suggestion_error(error) from error
+
+    updates = {
+        "review_activity_created": True,
+        "motion_evidence_id": promoted.evidence.id,
+        "event_id": promoted.event_id,
+        "visit_id": promoted.visit_id,
+        "review_queue_item_id": (
+            f"review-queue-{promoted.visit_id}"
+            if promoted.visit_id
+            else f"review-queue-{promoted.event_id}"
+            if promoted.event_id
+            else None
+        ),
+        "suggested_label": suggestion.suggested_label if suggestion else None,
+        "suggestion_id": suggestion.id if suggestion else None,
+        "suggestion_confidence": suggestion.confidence if suggestion else None,
+        "creates_truth": False,
+    }
+    manager = get_live_camera_session_manager()
+    snapshot = manager.update_last_activity(stream_id, updates)
+    if snapshot is not None and snapshot.last_motion_result is not None:
+        updated_result = dict(snapshot.last_motion_result)
+        updated_result.update(
+            {
+                "review_activity_created": True,
+                "review_activity_available": False,
+                "review_activity_reused": False,
+                "review_activity_already_exists": False,
+                "motion_evidence_id": promoted.evidence.id,
+                "event_id": promoted.event_id,
+                "visit_id": promoted.visit_id,
+                "review_queue_item_id": updates["review_queue_item_id"],
+                "review_status": "needs_review",
+                "suggested_label": updates["suggested_label"],
+                "suggestion_id": updates["suggestion_id"],
+                "suggestion_confidence": updates["suggestion_confidence"],
+                "message": "Review activity created. Bird Log updates after review.",
+                "last_evaluation_message": (
+                    "Review activity created. Bird Log updates after review."
+                ),
+                "creates_event": True,
+                "creates_visit": True,
+                "creates_truth": False,
+                "creates_export": False,
+            }
+        )
+        manager.record_motion_result(
+            stream_id,
+            updated_result,
+            last_activity={**(snapshot.last_activity or {}), **updates},
+        )
+    return _live_motion_review_activity_response(
+        stream_id=stream.id,
+        source_id=stream.source_id,
+        status="created",
+        message="Review activity created. Bird Log updates after review.",
+        activity_detected=True,
+        review_activity_created=True,
+        media_asset_id=best_media_asset_id,
+        motion_evidence_id=promoted.evidence.id,
+        event_id=promoted.event_id,
+        visit_id=promoted.visit_id,
+        suggested_label=suggestion.suggested_label if suggestion else None,
+        suggestion_id=suggestion.id if suggestion else None,
+        suggestion_confidence=suggestion.confidence if suggestion else None,
     )
 
 
@@ -3733,88 +4308,98 @@ async def get_stream_playback_status(stream_id: str) -> StreamPlaybackStatus:
     return status
 
 
-@app.get("/api/streams/{stream_id}/live/rtsp-mjpeg")
-async def get_stream_rtsp_mjpeg_bridge(stream_id: str) -> StreamingResponse:
+def _stream_live_playback_config_or_404(stream_id: str) -> StreamLivePlaybackConfig:
     configuration = get_repository().get_stream_live_playback_config(stream_id)
     if configuration is None:
         raise _not_found("Stream", stream_id)
-    if configuration.provider_key != "external_url":
-        raise HTTPException(
-            status_code=400,
-            detail="RTSP bridge requires an external_url Source provider.",
-        )
-    if not configuration.live_stream_url:
-        raise HTTPException(status_code=400, detail="Live stream URL is not configured.")
-    if configuration.live_stream_type != "rtsp":
-        raise HTTPException(status_code=400, detail="RTSP bridge requires RTSP stream type.")
-    if not rtsp_bridge.validate_rtsp_url(configuration.live_stream_url):
-        raise HTTPException(
-            status_code=400,
-            detail="RTSP bridge requires an rtsp:// or rtsps:// stream URL.",
-        )
-    if not rtsp_bridge.is_ffmpeg_available():
-        raise HTTPException(status_code=503, detail="RTSP bridge unavailable: ffmpeg not found.")
+    return configuration
 
+
+@app.post(
+    "/api/streams/{stream_id}/live-session/start",
+    response_model=LiveCameraSessionStatusResponse,
+)
+async def start_stream_live_camera_session(stream_id: str) -> LiveCameraSessionStatusResponse:
+    configuration = _stream_live_playback_config_or_404(stream_id)
+    _validate_live_camera_session_config(configuration)
     try:
-        process = rtsp_bridge.start_rtsp_mjpeg_process(configuration.live_stream_url)
+        snapshot = get_live_camera_session_manager().start(configuration)
+    except (OSError, ValueError):
+        raise HTTPException(
+            status_code=502,
+            detail="Camera session failed to start.",
+        ) from None
+    return _live_camera_session_response(snapshot, configuration)
+
+
+@app.post(
+    "/api/streams/{stream_id}/live-session/stop",
+    response_model=LiveCameraSessionStatusResponse,
+)
+async def stop_stream_live_camera_session(stream_id: str) -> LiveCameraSessionStatusResponse:
+    configuration = _stream_live_playback_config_or_404(stream_id)
+    snapshot = get_live_camera_session_manager().stop(stream_id)
+    return _live_camera_session_response(
+        snapshot,
+        configuration,
+        message="Camera session stopped.",
+    )
+
+
+@app.get(
+    "/api/streams/{stream_id}/live-session/status",
+    response_model=LiveCameraSessionStatusResponse,
+)
+async def get_stream_live_camera_session_status(
+    stream_id: str,
+) -> LiveCameraSessionStatusResponse:
+    configuration = _stream_live_playback_config_or_404(stream_id)
+    snapshot = get_live_camera_session_manager().status(stream_id)
+    return _live_camera_session_response(snapshot, configuration)
+
+
+@app.get("/api/streams/{stream_id}/live-session/mjpeg")
+async def get_stream_live_camera_session_mjpeg(stream_id: str) -> StreamingResponse:
+    configuration = _stream_live_playback_config_or_404(stream_id)
+    _validate_live_camera_session_config(configuration)
+    snapshot = get_live_camera_session_manager().status(stream_id)
+    if snapshot is None or snapshot.status not in {"starting", "running"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Start camera session before opening live view.",
+        )
+    return StreamingResponse(
+        get_live_camera_session_manager().iter_mjpeg(stream_id),
+        media_type=(
+            f"multipart/x-mixed-replace; boundary={live_camera_session.MJPEG_BOUNDARY}"
+        ),
+    )
+
+
+@app.get("/api/streams/{stream_id}/live/rtsp-mjpeg")
+async def get_stream_rtsp_mjpeg_bridge(stream_id: str) -> StreamingResponse:
+    configuration = _stream_live_playback_config_or_404(stream_id)
+    _validate_live_camera_session_config(configuration, expected_kind="rtsp")
+    try:
+        get_live_camera_session_manager().start(configuration)
     except (OSError, ValueError):
         raise HTTPException(status_code=502, detail="RTSP live view failed to start.") from None
 
     return StreamingResponse(
-        rtsp_bridge.iter_multipart_mjpeg(
-            process,
-            on_frame=lambda frame: live_frame_cache.store_latest_frame(stream_id, frame),
-        ),
-        media_type=f"multipart/x-mixed-replace; boundary={rtsp_bridge.MJPEG_BOUNDARY}",
+        get_live_camera_session_manager().iter_mjpeg(stream_id),
+        media_type=f"multipart/x-mixed-replace; boundary={live_camera_session.MJPEG_BOUNDARY}",
     )
 
 
 @app.get("/api/streams/{stream_id}/live/local-mjpeg")
 async def get_stream_local_mjpeg_bridge(stream_id: str) -> StreamingResponse:
-    configuration = get_repository().get_stream_live_playback_config(stream_id)
-    if configuration is None:
-        raise _not_found("Stream", stream_id)
-    if configuration.provider_key != "local_usb":
-        raise HTTPException(
-            status_code=400,
-            detail="Local camera bridge requires a local_usb Source provider.",
-        )
-    if configuration.live_stream_type != local_camera_bridge.LOCAL_USB_STREAM_TYPE:
-        raise HTTPException(
-            status_code=400,
-            detail="Local camera bridge requires local USB playback type.",
-        )
-
-    bridge_status = local_camera_bridge.local_camera_status(
-        device=configuration.local_camera_device,
-        camera_format=configuration.local_camera_format,
+    configuration = _stream_live_playback_config_or_404(stream_id)
+    _validate_live_camera_session_config(
+        configuration,
+        expected_kind=local_camera_bridge.LOCAL_USB_STREAM_TYPE,
     )
-    if bridge_status == "device_missing":
-        raise HTTPException(
-            status_code=400,
-            detail="Choose a local camera device such as /dev/video0.",
-        )
-    if bridge_status == "invalid_device":
-        raise HTTPException(
-            status_code=400,
-            detail="Local camera device path must look like /dev/video0.",
-        )
-    if bridge_status == "unsupported_platform":
-        raise HTTPException(
-            status_code=400,
-            detail="Local camera bridge currently supports Linux /dev/video* devices.",
-        )
-    if bridge_status == "ffmpeg_missing":
-        raise HTTPException(
-            status_code=503,
-            detail="Local camera bridge unavailable: ffmpeg not found.",
-        )
-
     try:
-        process = local_camera_bridge.start_local_camera_mjpeg_process(
-            configuration.local_camera_device or "",
-            camera_format=configuration.local_camera_format,
-        )
+        get_live_camera_session_manager().start(configuration)
     except (OSError, ValueError):
         raise HTTPException(
             status_code=502,
@@ -3822,66 +4407,22 @@ async def get_stream_local_mjpeg_bridge(stream_id: str) -> StreamingResponse:
         ) from None
 
     return StreamingResponse(
-        local_camera_bridge.iter_multipart_mjpeg(
-            process,
-            on_frame=lambda frame: live_frame_cache.store_latest_frame(stream_id, frame),
-        ),
+        get_live_camera_session_manager().iter_mjpeg(stream_id),
         media_type=(
-            f"multipart/x-mixed-replace; boundary={local_camera_bridge.MJPEG_BOUNDARY}"
+            f"multipart/x-mixed-replace; boundary={live_camera_session.MJPEG_BOUNDARY}"
         ),
     )
 
 
 @app.get("/api/streams/{stream_id}/live/windows-dshow-mjpeg")
 async def get_stream_windows_dshow_mjpeg_bridge(stream_id: str) -> StreamingResponse:
-    configuration = get_repository().get_stream_live_playback_config(stream_id)
-    if configuration is None:
-        raise _not_found("Stream", stream_id)
-    if configuration.provider_key != "local_usb":
-        raise HTTPException(
-            status_code=400,
-            detail="Windows DirectShow bridge requires a local camera Source provider.",
-        )
-    if configuration.live_stream_type != windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
-        raise HTTPException(
-            status_code=400,
-            detail="Windows DirectShow bridge requires windows_dshow playback type.",
-        )
-
-    bridge_status = windows_camera_bridge.windows_camera_status(
-        camera_name=configuration.windows_camera_name,
-        ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
+    configuration = _stream_live_playback_config_or_404(stream_id)
+    _validate_live_camera_session_config(
+        configuration,
+        expected_kind=windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE,
     )
-    if bridge_status == "camera_name_missing":
-        raise HTTPException(
-            status_code=400,
-            detail="Choose a Windows DirectShow camera name.",
-        )
-    if bridge_status == "unsupported_host":
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Windows DirectShow requires Windows ffmpeg.exe or running the API on Windows."
-            ),
-        )
-    if bridge_status == "ffmpeg_missing":
-        raise HTTPException(
-            status_code=503,
-            detail="Windows DirectShow bridge unavailable: ffmpeg not found.",
-        )
-    if bridge_status == "ffmpeg_failed":
-        raise HTTPException(
-            status_code=502,
-            detail="Windows DirectShow camera unavailable or playback failed.",
-        )
-
     try:
-        process = windows_camera_bridge.start_windows_dshow_mjpeg_process(
-            configuration.windows_camera_name or "",
-            ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
-            video_size=configuration.windows_video_size,
-            framerate=configuration.windows_framerate,
-        )
+        get_live_camera_session_manager().start(configuration)
     except (OSError, ValueError):
         raise HTTPException(
             status_code=502,
@@ -3889,12 +4430,9 @@ async def get_stream_windows_dshow_mjpeg_bridge(stream_id: str) -> StreamingResp
         ) from None
 
     return StreamingResponse(
-        windows_camera_bridge.iter_multipart_mjpeg(
-            process,
-            on_frame=lambda frame: live_frame_cache.store_latest_frame(stream_id, frame),
-        ),
+        get_live_camera_session_manager().iter_mjpeg(stream_id),
         media_type=(
-            f"multipart/x-mixed-replace; boundary={windows_camera_bridge.MJPEG_BOUNDARY}"
+            f"multipart/x-mixed-replace; boundary={live_camera_session.MJPEG_BOUNDARY}"
         ),
     )
 
@@ -3925,8 +4463,12 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
             warnings=["This Stream is not configured for local camera playback."],
         )
 
+    session_snapshot = get_live_camera_session_manager().status(configuration.stream_id)
+    session_running = (
+        session_snapshot is not None and session_snapshot.status in {"starting", "running"}
+    )
     cached_frame = live_frame_cache.get_latest_frame(configuration.stream_id)
-    if cached_frame is not None and configuration.live_stream_type in {
+    if session_running and cached_frame is not None and configuration.live_stream_type in {
         local_camera_bridge.LOCAL_USB_STREAM_TYPE,
         windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE,
     }:
@@ -3960,8 +4502,22 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
             relative_path=media_asset.filename,
             bytes_written=media_asset.file_size_bytes,
             content_type=media_asset.content_type,
-            capture_source="live_frame_cache",
+            capture_source="live_camera_session",
             live_frame_age_ms=cached_frame.age_ms(),
+        )
+
+    if session_running:
+        return LocalCameraFrameCaptureResponse(
+            **common,
+            status="capture_failed",
+            message=(
+                "Camera session is running, but no fresh session frame is available yet. "
+                "Wait for live frames before capturing."
+            ),
+            capture_source="unavailable",
+            warnings=[
+                "MockingBird will not start a second camera process while the session is running."
+            ],
         )
 
     if configuration.live_stream_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:

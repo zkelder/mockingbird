@@ -10,6 +10,7 @@ import { apiClient } from "../api/client";
 import type {
   Event,
   LocalCameraFrameCaptureResponse,
+  LiveCameraSessionStatus,
   LiveMotionEvaluateResponse,
   MediaAsset,
   MotionEvaluateSavedMediaResponse,
@@ -186,6 +187,10 @@ function supportsLiveMotionMonitoring(status?: StreamPlaybackStatus | null): boo
   );
 }
 
+function supportsBackendLiveSession(status?: StreamPlaybackStatus | null): boolean {
+  return supportsLiveMotionMonitoring(status);
+}
+
 function supportsFrameCapture(status?: StreamPlaybackStatus | null): boolean {
   return isLocalCameraBridgePlayback(status) || isWindowsDshowBridgePlayback(status);
 }
@@ -320,13 +325,13 @@ function containedMediaRectStyle(size: MediaRenderSize | null): CSSProperties {
 
 function liveStreamUrl(playback: StreamPlaybackStatus, streamId: string): string | null {
   if (isWindowsDshowBridgePlayback(playback)) {
-    return apiClient.windowsDshowMjpegBridgeUrl(streamId);
+    return apiClient.liveCameraSessionMjpegUrl(streamId);
   }
   if (isLocalCameraBridgePlayback(playback)) {
-    return apiClient.localCameraMjpegBridgeUrl(streamId);
+    return apiClient.liveCameraSessionMjpegUrl(streamId);
   }
   if (isRtspBridgePlayback(playback)) {
-    return apiClient.rtspMjpegBridgeUrl(streamId);
+    return apiClient.liveCameraSessionMjpegUrl(streamId);
   }
   if (isBrowserPlayablePlayback(playback)) {
     return playback.preview_url ?? null;
@@ -396,6 +401,10 @@ export function StreamDetailPage({
   const [liveViewError, setLiveViewError] = useState<string | null>(null);
   const [liveMediaSize, setLiveMediaSize] = useState<MediaRenderSize | null>(null);
   const [showLiveZones, setShowLiveZones] = useState(true);
+  const [liveSession, setLiveSession] = useState<LiveCameraSessionStatus | null>(null);
+  const [liveSessionError, setLiveSessionError] = useState<string | null>(null);
+  const [isStartingLiveSession, setIsStartingLiveSession] = useState(false);
+  const [isStoppingLiveSession, setIsStoppingLiveSession] = useState(false);
   const [captureResult, setCaptureResult] = useState<LocalCameraFrameCaptureResponse | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [isCapturingFrame, setIsCapturingFrame] = useState(false);
@@ -414,15 +423,34 @@ export function StreamDetailPage({
   const [isCreatingLiveReviewActivity, setIsCreatingLiveReviewActivity] = useState(false);
   const [liveMonitorSensitivity, setLiveMonitorSensitivity] =
     useState<LiveMonitorSensitivity>("normal");
-  const liveMonitorIntervalRef = useRef<number | null>(null);
   const liveMotionInFlightRef = useRef(false);
 
   const selectedZone = detail?.zones.find((zone) => zone.id === selectedZoneId) ?? null;
 
-  function clearLiveMonitorInterval() {
-    if (liveMonitorIntervalRef.current !== null) {
-      window.clearInterval(liveMonitorIntervalRef.current);
-      liveMonitorIntervalRef.current = null;
+  async function refreshLiveCameraSessionStatus(
+    currentDetail: StreamDetailState | null = detail,
+  ): Promise<LiveCameraSessionStatus | null> {
+    if (!currentDetail || !supportsBackendLiveSession(currentDetail.playback)) {
+      setLiveSession(null);
+      return null;
+    }
+    try {
+      const status = await apiClient.getLiveCameraSessionStatus(currentDetail.stream.id);
+      setLiveSession(status);
+      setIsLiveMonitoring(status.monitor_running);
+      if (status.last_motion_result) {
+        setLiveMotionResult(status.last_motion_result);
+        setLiveMonitorState(liveMonitorStateFor(status.last_motion_result));
+      } else if (status.monitor_running) {
+        setLiveMonitorState((current) => (current === "idle" ? "waiting" : current));
+      }
+      setLiveSessionError(null);
+      return status;
+    } catch (caught) {
+      setLiveSessionError(
+        caught instanceof Error ? caught.message : "Could not read camera session status.",
+      );
+      return null;
     }
   }
 
@@ -430,7 +458,6 @@ export function StreamDetailPage({
     let isMounted = true;
 
     async function loadStreamDetail() {
-      clearLiveMonitorInterval();
       setIsLoading(true);
       setError(null);
       setZoneError(null);
@@ -444,6 +471,10 @@ export function StreamDetailPage({
       setLiveViewError(null);
       setLiveMediaSize(null);
       setShowLiveZones(true);
+      setLiveSession(null);
+      setLiveSessionError(null);
+      setIsStartingLiveSession(false);
+      setIsStoppingLiveSession(false);
       setCaptureResult(null);
       setCaptureError(null);
       setIsCapturingFrame(false);
@@ -496,15 +527,8 @@ export function StreamDetailPage({
 
     return () => {
       isMounted = false;
-      clearLiveMonitorInterval();
     };
   }, [streamId]);
-
-  useEffect(() => {
-    return () => {
-      clearLiveMonitorInterval();
-    };
-  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -545,6 +569,29 @@ export function StreamDetailPage({
     setLiveViewState("idle");
     setLiveViewError(null);
   }, [detail]);
+
+  useEffect(() => {
+    if (!detail || !supportsBackendLiveSession(detail.playback)) {
+      return;
+    }
+    let isMounted = true;
+
+    async function pollStatus() {
+      if (!isMounted) {
+        return;
+      }
+      await refreshLiveCameraSessionStatus(detail);
+    }
+
+    void pollStatus();
+    const interval = window.setInterval(() => {
+      void pollStatus();
+    }, 3000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(interval);
+    };
+  }, [detail?.stream.id, detail?.playback.playback_kind, detail?.playback.status]);
 
   useEffect(() => {
     if (!liveViewOpen || liveViewState !== "opening") {
@@ -589,7 +636,61 @@ export function StreamDetailPage({
     setDetail((current) => (current ? { ...current, zones } : current));
   }
 
+  async function startLiveCameraSession(openViewAfterStart = false) {
+    if (!detail || !supportsBackendLiveSession(detail.playback)) {
+      return;
+    }
+    setIsStartingLiveSession(true);
+    setLiveSessionError(null);
+    setLiveViewError(null);
+    try {
+      const status = await apiClient.startLiveCameraSession(detail.stream.id);
+      setLiveSession(status);
+      if (openViewAfterStart) {
+        setLiveViewOpen(true);
+        setLiveViewState("opening");
+        setLiveMediaSize(null);
+        setLiveViewReloadToken((current) => current + 1);
+      }
+    } catch (caught) {
+      setLiveSessionError(
+        caught instanceof Error ? caught.message : "Could not start camera session.",
+      );
+    } finally {
+      setIsStartingLiveSession(false);
+    }
+  }
+
+  async function stopLiveCameraSession() {
+    if (!detail || !supportsBackendLiveSession(detail.playback)) {
+      return;
+    }
+    setIsStoppingLiveSession(true);
+    setLiveSessionError(null);
+    await stopLiveMonitoring();
+    setDrawMode(false);
+    setDraftPolygon(null);
+    setDrawStart(null);
+    setLiveViewOpen(false);
+    setLiveViewState("idle");
+    setLiveViewError(null);
+    try {
+      const status = await apiClient.stopLiveCameraSession(detail.stream.id);
+      setLiveSession(status);
+    } catch (caught) {
+      setLiveSessionError(
+        caught instanceof Error ? caught.message : "Could not stop camera session.",
+      );
+    } finally {
+      setIsStoppingLiveSession(false);
+    }
+  }
+
   function openLiveView() {
+    if (detail && supportsBackendLiveSession(detail.playback) && liveSession?.status !== "running") {
+      setLiveViewError("Start camera session before opening live view.");
+      return;
+    }
     setLiveViewOpen(true);
     setLiveViewState("opening");
     setLiveViewError(null);
@@ -598,7 +699,6 @@ export function StreamDetailPage({
   }
 
   function stopLiveView() {
-    stopLiveMonitoring();
     setDrawMode(false);
     setDraftPolygon(null);
     setDrawStart(null);
@@ -608,6 +708,10 @@ export function StreamDetailPage({
   }
 
   function refreshLiveView() {
+    if (detail && supportsBackendLiveSession(detail.playback) && liveSession?.status !== "running") {
+      setLiveViewError("Start camera session before reconnecting live view.");
+      return;
+    }
     if (!liveViewOpen) {
       openLiveView();
       return;
@@ -629,6 +733,7 @@ export function StreamDetailPage({
       return "activity";
     }
     if (
+      result.status === "start_session_required" ||
       result.status === "waiting_for_live_frames" ||
       result.status === "no_recent_frames" ||
       result.status === "not_enough_frames"
@@ -641,45 +746,37 @@ export function StreamDetailPage({
     return "no_activity";
   }
 
-  async function evaluateLiveMotion(createReviewActivity: boolean) {
+  async function startBackendLiveMonitoring() {
     if (!detail) {
       return;
     }
-    if (liveMotionInFlightRef.current && !createReviewActivity) {
+    if (liveMotionInFlightRef.current) {
       return;
     }
     liveMotionInFlightRef.current = true;
     setLiveMotionError(null);
-    if (createReviewActivity) {
-      setIsCreatingLiveReviewActivity(true);
-    } else {
-      setIsEvaluatingLiveMotion(true);
-    }
+    setIsEvaluatingLiveMotion(true);
     try {
       const sensitivitySettings = liveMonitorSensitivitySettings[liveMonitorSensitivity];
-      const result = await apiClient.evaluateLiveMotion(detail.stream.id, {
+      const result = await apiClient.startLiveMotionMonitor(detail.stream.id, {
         save_best_frame: true,
-        create_review_activity: createReviewActivity,
+        create_review_activity: false,
         min_changed_ratio: sensitivitySettings.min_changed_ratio,
         pixel_delta_threshold: sensitivitySettings.pixel_delta_threshold,
         max_frames: sensitivitySettings.max_frames,
         min_triggered_frames: 1,
-        notes: createReviewActivity
-          ? "User created review activity from live stream motion monitoring."
-          : null,
+        interval_seconds: sensitivitySettings.interval_ms / 1000,
+        notes: null,
       });
       if (result.best_media_asset_id) {
         await refreshSavedImages();
       }
-      if (createReviewActivity && result.review_queue_item_id) {
-        await onReviewActivityCreated();
+      if (supportsBackendLiveSession(detail.playback)) {
+        await refreshLiveCameraSessionStatus(detail);
       }
       setLiveMotionResult(result);
       setLiveMonitorState(liveMonitorStateFor(result));
-      if (result.activity_detected && !createReviewActivity) {
-        clearLiveMonitorInterval();
-        setIsLiveMonitoring(false);
-      }
+      setIsLiveMonitoring(!result.activity_detected);
     } catch (caught) {
       setLiveMonitorState("failed");
       setLiveMotionError(
@@ -687,15 +784,57 @@ export function StreamDetailPage({
       );
     } finally {
       liveMotionInFlightRef.current = false;
-      if (createReviewActivity) {
-        setIsCreatingLiveReviewActivity(false);
-      } else {
-        setIsEvaluatingLiveMotion(false);
-      }
+      setIsEvaluatingLiveMotion(false);
     }
   }
 
-  function startLiveMonitoring() {
+  async function createLiveReviewActivity() {
+    if (!detail) {
+      return;
+    }
+    setIsCreatingLiveReviewActivity(true);
+    setLiveMotionError(null);
+    try {
+      const result = await apiClient.createLiveMotionReviewActivity(detail.stream.id);
+      if (result.review_queue_item_id) {
+        setLiveMotionResult((current) =>
+          current
+            ? {
+                ...current,
+                review_activity_created: result.review_activity_created,
+                review_activity_reused: result.review_activity_reused,
+                review_activity_already_exists: result.review_activity_already_exists,
+                review_activity_available: false,
+                motion_evidence_id: result.motion_evidence_id,
+                event_id: result.event_id,
+                visit_id: result.visit_id,
+                review_queue_item_id: result.review_queue_item_id,
+                review_status: result.review_status,
+                suggested_label: result.suggested_label,
+                suggestion_id: result.suggestion_id,
+                suggestion_confidence: result.suggestion_confidence,
+                best_media_asset_id: result.media_asset_id ?? current.best_media_asset_id,
+                media_asset_id: result.media_asset_id ?? current.media_asset_id,
+                message: result.message,
+                last_evaluation_message: result.message,
+              }
+            : current,
+        );
+        await onReviewActivityCreated();
+      } else {
+        setLiveMotionError(result.message);
+      }
+      await refreshLiveCameraSessionStatus(detail);
+    } catch (caught) {
+      setLiveMotionError(
+        caught instanceof Error ? caught.message : "Could not create review activity.",
+      );
+    } finally {
+      setIsCreatingLiveReviewActivity(false);
+    }
+  }
+
+  async function startLiveMonitoring() {
     if (!detail) {
       return;
     }
@@ -704,25 +843,34 @@ export function StreamDetailPage({
       setLiveMotionError("Live monitoring is available when MockingBird serves this live stream.");
       return;
     }
-    if (!liveViewOpen || !liveUrl) {
+    if (supportsBackendLiveSession(detail.playback) && liveSession?.status !== "running") {
       setLiveMonitorState("failed");
-      setLiveMotionError("Open Live view before starting live monitoring.");
+      setLiveMotionError("Start camera session before monitoring.");
       return;
     }
-    clearLiveMonitorInterval();
+    if (!supportsBackendLiveSession(detail.playback)) {
+      setLiveMonitorState("failed");
+      setLiveMotionError("Live monitoring requires a backend camera session.");
+      return;
+    }
     setLiveMotionResult(null);
     setLiveMotionError(null);
     setLiveMonitorState("waiting");
     setIsLiveMonitoring(true);
-    void evaluateLiveMotion(false);
-    const sensitivitySettings = liveMonitorSensitivitySettings[liveMonitorSensitivity];
-    liveMonitorIntervalRef.current = window.setInterval(() => {
-      void evaluateLiveMotion(false);
-    }, sensitivitySettings.interval_ms);
+    await startBackendLiveMonitoring();
   }
 
-  function stopLiveMonitoring() {
-    clearLiveMonitorInterval();
+  async function stopLiveMonitoring() {
+    if (detail && supportsBackendLiveSession(detail.playback)) {
+      try {
+        const status = await apiClient.stopLiveMotionMonitor(detail.stream.id);
+        setLiveSession(status);
+      } catch (caught) {
+        setLiveMotionError(
+          caught instanceof Error ? caught.message : "Could not stop live monitoring.",
+        );
+      }
+    }
     setIsLiveMonitoring(false);
     liveMotionInFlightRef.current = false;
     setLiveMonitorState((current) =>
@@ -753,6 +901,9 @@ export function StreamDetailPage({
     try {
       const result = await apiClient.captureLocalCameraFrame(detail.stream.id);
       setCaptureResult(result);
+      if (supportsBackendLiveSession(detail.playback)) {
+        await refreshLiveCameraSessionStatus(detail);
+      }
       if (result.status !== "saved") {
         setCaptureError(result.message);
       } else {
@@ -972,10 +1123,16 @@ export function StreamDetailPage({
     detail.setupReview?.provider_key === "manual_media" &&
     detail.setupReview.readiness_level === "metadata_ready";
   const realLivePlayback = hasRealLivePlayback(detail.playback);
+  const backendLiveSessionSupported = supportsBackendLiveSession(detail.playback);
+  const liveSessionRunning = liveSession?.status === "running";
+  const liveSessionStarting = liveSession?.status === "starting";
+  const liveSessionFailed = liveSession?.status === "failed";
   const liveUrl = liveStreamUrl(detail.playback, detail.stream.id);
   const liveElementKey = `${liveUrl ?? "no-live-url"}-${liveViewReloadToken}`;
   const liveViewStatusLabel =
-    liveViewState === "streaming"
+    backendLiveSessionSupported && liveSessionRunning && !liveViewOpen
+      ? "Session running"
+      : liveViewState === "streaming"
       ? "Streaming"
       : liveViewState === "opening"
         ? "Opening"
@@ -985,9 +1142,9 @@ export function StreamDetailPage({
             ? "No frames"
             : "Ready";
   const liveViewTone =
-    liveViewState === "failed" || liveViewState === "no_frames"
+    liveSessionFailed || liveViewState === "failed" || liveViewState === "no_frames"
       ? "review"
-      : liveViewState === "streaming"
+      : liveViewState === "streaming" || liveSessionRunning
         ? "good"
         : "quiet";
   const liveMonitorStatusLabel =
@@ -1016,6 +1173,12 @@ export function StreamDetailPage({
   const liveHelpText = liveTroubleshootingText(detail.playback);
   const canMonitorLiveMotion = supportsLiveMotionMonitoring(detail.playback);
   const canCaptureFrame = supportsFrameCapture(detail.playback);
+  const liveSessionRuntimeLimit =
+    liveSession?.max_runtime_seconds != null
+      ? `${Math.round(liveSession.max_runtime_seconds / 60)}m max`
+      : "30m max";
+  const liveSessionNewestFrameLabel = formatAgeMs(liveSession?.latest_frame_age_ms);
+  const liveSessionFrameCount = liveSession?.frame_count ?? 0;
   const captureSaved = captureResult?.status === "saved";
   const latestSavedImage = savedImageAssets[0] ?? null;
   const savedImageCount = savedImageAssets.length;
@@ -1049,13 +1212,13 @@ export function StreamDetailPage({
       motionResult.created_evidence.length === 0,
   );
   const captureSuccessMessage =
-    captureResult?.capture_source === "live_frame_cache"
-      ? "Saved current live frame. It will not appear in Bird Log until you create/review activity."
+    captureResult?.capture_source === "live_camera_session"
+      ? "Saved current session frame. It will not appear in Bird Log until you create/review activity."
       : "Saved one local camera frame. It will not appear in Bird Log until you create/review activity.";
   const captureButtonLabel =
     isCapturingFrame
       ? "Capturing..."
-      : liveViewOpen
+      : liveViewOpen || liveSessionRunning
         ? "Capture current frame"
         : "Capture frame";
   const liveActivityDetected = Boolean(liveMotionResult?.activity_detected);
@@ -1118,10 +1281,11 @@ export function StreamDetailPage({
     liveMotionResult?.strongest_frame_end_sequence
       ? `${liveMotionResult.strongest_frame_start_sequence}->${liveMotionResult.strongest_frame_end_sequence}`
       : "n/a";
-  const liveLastError = liveMotionResult?.last_error ?? liveMotionError ?? null;
-  const showLiveMonitorFacts = Boolean(isLiveMonitoring || liveMotionResult);
+  const liveLastError =
+    liveMotionResult?.last_error ?? liveMotionError ?? liveSessionError ?? null;
+  const showLiveMonitorFacts = Boolean(isLiveMonitoring || liveMotionResult || liveSession);
   const liveWorkflowState =
-    liveViewError || liveMotionError || liveMotionResult?.last_error
+    liveViewError || liveMotionError || liveSessionError || liveMotionResult?.last_error
       ? "error"
       : liveReviewActivityCreated
         ? "review_created"
@@ -1135,12 +1299,18 @@ export function StreamDetailPage({
             ? "monitoring"
             : liveViewOpen && liveViewState === "streaming"
               ? "streaming"
-              : liveViewState === "opening"
+              : liveSessionRunning
+                ? "streaming"
+              : liveViewState === "opening" || liveSessionStarting
                 ? "opening"
                 : "ready";
   const liveWorkflowMessage =
     liveWorkflowState === "error"
-      ? liveViewError ?? liveMotionError ?? liveMotionResult?.last_error ?? "Live camera needs attention."
+      ? liveViewError ??
+        liveMotionError ??
+        liveSessionError ??
+        liveMotionResult?.last_error ??
+        "Live camera needs attention."
       : liveWorkflowState === "review_created"
         ? "Review activity created. Open Review to confirm/correct."
         : liveWorkflowState === "cooldown"
@@ -1152,10 +1322,16 @@ export function StreamDetailPage({
           : liveWorkflowState === "monitoring"
             ? "Watching recent live frames for activity."
             : liveWorkflowState === "streaming"
-              ? "Live camera is running."
+              ? backendLiveSessionSupported
+                ? "Camera session is running."
+                : "Live camera is running."
               : liveWorkflowState === "opening"
-                ? "Opening live view..."
-                : "Open Live view to draw zones on the camera stream.";
+                ? backendLiveSessionSupported
+                  ? "Starting camera session..."
+                  : "Opening live view..."
+                : backendLiveSessionSupported
+                  ? "Start camera session to draw zones and monitor activity."
+                  : "Open Live view to draw zones on the camera stream.";
   const liveOverlayStyle = containedMediaRectStyle(liveMediaSize);
   const livePlaybackNeedsAttention =
     liveViewOpen &&
@@ -1243,11 +1419,33 @@ export function StreamDetailPage({
                 <strong>Bridge</strong> {detail.playback.windows_ffmpeg_binary_display}
               </span>
             ) : null}
+            {backendLiveSessionSupported ? (
+              <>
+                <span>
+                  <strong>Session</strong> {formatLabel(liveSession?.status ?? "stopped")}
+                </span>
+                <span>
+                  <strong>Frames</strong> {liveSessionFrameCount}
+                </span>
+                <span>
+                  <strong>Runtime</strong> {liveSessionRuntimeLimit}
+                </span>
+              </>
+            ) : null}
           </div>
 
           {liveActivityDetected || liveReviewActivityCreated ? null : (
             <div className="detail-actions stream-live-actions stream-live-primary-actions">
-              {!liveViewOpen ? (
+              {backendLiveSessionSupported && !liveSessionRunning ? (
+                <button
+                  className="primary-action"
+                  disabled={!liveUrl || isStartingLiveSession || isStoppingLiveSession}
+                  onClick={() => void startLiveCameraSession(true)}
+                  type="button"
+                >
+                  {isStartingLiveSession ? "Starting..." : "Start camera"}
+                </button>
+              ) : !backendLiveSessionSupported && !liveViewOpen ? (
                 <button
                   className="primary-action"
                   disabled={!liveUrl || isCapturingFrame}
@@ -1258,34 +1456,81 @@ export function StreamDetailPage({
                 </button>
               ) : isLiveMonitoring ? (
                 <>
-                  <button className="primary-action" onClick={stopLiveMonitoring} type="button">
+                  <button
+                    className="primary-action"
+                    onClick={() => void stopLiveMonitoring()}
+                    type="button"
+                  >
                     Stop monitoring
                   </button>
-                  <button className="secondary-action" onClick={stopLiveView} type="button">
-                    Stop Live view
-                  </button>
+                  {liveViewOpen ? (
+                    <button className="secondary-action" onClick={stopLiveView} type="button">
+                      Hide live view
+                    </button>
+                  ) : (
+                    <button className="secondary-action" onClick={openLiveView} type="button">
+                      Open live view
+                    </button>
+                  )}
+                  {backendLiveSessionSupported ? (
+                    <button
+                      className="secondary-action"
+                      disabled={isStoppingLiveSession}
+                      onClick={() => void stopLiveCameraSession()}
+                      type="button"
+                    >
+                      {isStoppingLiveSession ? "Stopping..." : "Stop camera"}
+                    </button>
+                  ) : null}
                 </>
               ) : (
                 <>
                   <button
                     className="primary-action"
                     disabled={
-                      !liveViewOpen || !liveUrl || !canMonitorLiveMotion || isEvaluatingLiveMotion
+                      !liveUrl ||
+                      !canMonitorLiveMotion ||
+                      isEvaluatingLiveMotion ||
+                      (backendLiveSessionSupported && !liveSessionRunning) ||
+                      (!backendLiveSessionSupported && !liveViewOpen)
                     }
-                    onClick={startLiveMonitoring}
+                    onClick={() => void startLiveMonitoring()}
                     type="button"
                   >
                     {isEvaluatingLiveMotion ? "Checking..." : "Start monitoring"}
                   </button>
-                  <button className="secondary-action" onClick={stopLiveView} type="button">
-                    Stop Live view
-                  </button>
-                  <button className="secondary-action" onClick={refreshLiveView} type="button">
-                    Refresh stream
-                  </button>
+                  {liveViewOpen ? (
+                    <button className="secondary-action" onClick={stopLiveView} type="button">
+                      Hide live view
+                    </button>
+                  ) : (
+                    <button
+                      className="secondary-action"
+                      disabled={backendLiveSessionSupported && !liveSessionRunning}
+                      onClick={openLiveView}
+                      type="button"
+                    >
+                      Open live view
+                    </button>
+                  )}
+                  {liveViewOpen ? (
+                    <button className="secondary-action" onClick={refreshLiveView} type="button">
+                      Reconnect stream
+                    </button>
+                  ) : null}
+                  {backendLiveSessionSupported ? (
+                    <button
+                      className="secondary-action"
+                      disabled={isStoppingLiveSession}
+                      onClick={() => void stopLiveCameraSession()}
+                      type="button"
+                    >
+                      {isStoppingLiveSession ? "Stopping..." : "Stop camera"}
+                    </button>
+                  ) : null}
                 </>
               )}
-              {liveViewOpen ? (
+              {liveViewOpen || liveSessionRunning ? (
                 <div className="stream-live-sensitivity" aria-label="Monitoring sensitivity">
                   {liveMonitorSensitivityOptions.map((option) => (
                     <button
@@ -1379,10 +1624,18 @@ export function StreamDetailPage({
                 )
               ) : (
                 <div className="stream-live-placeholder">
-                  <strong>{liveUrl ? "Live camera ready" : "Live camera unavailable"}</strong>
+                  <strong>
+                    {liveUrl
+                      ? backendLiveSessionSupported && !liveSessionRunning
+                        ? "Camera session stopped"
+                        : "Live camera ready"
+                      : "Live camera unavailable"}
+                  </strong>
                   <span>
                     {liveUrl
-                      ? "Open Live view to draw zones on the camera stream."
+                      ? backendLiveSessionSupported && !liveSessionRunning
+                        ? "Start camera session to feed live view, capture, and monitoring."
+                        : "Open Live view to draw zones on the camera stream."
                       : detail.playback.setup_hint ?? detail.playback.message}
                   </span>
                 </div>
@@ -1472,6 +1725,20 @@ export function StreamDetailPage({
             ) : null}
             {showLiveMonitorFacts ? (
               <div className="stream-live-monitor-facts">
+                {backendLiveSessionSupported ? (
+                  <>
+                    <span>
+                      <strong>Camera session</strong>{" "}
+                      {formatLabel(liveSession?.status ?? "stopped")}
+                    </span>
+                    <span>
+                      <strong>Session frames</strong> {liveSessionFrameCount}
+                    </span>
+                    <span>
+                      <strong>Session newest</strong> {liveSessionNewestFrameLabel}
+                    </span>
+                  </>
+                ) : null}
                 <span>
                   <strong>Recent frames</strong>{" "}
                   {liveMotionResult
@@ -1595,7 +1862,7 @@ export function StreamDetailPage({
                     <button
                       className="primary-action"
                       disabled={isCreatingLiveReviewActivity}
-                      onClick={() => void evaluateLiveMotion(true)}
+                      onClick={() => void createLiveReviewActivity()}
                       type="button"
                     >
                       {isCreatingLiveReviewActivity ? "Creating..." : "Create review activity"}
@@ -1609,8 +1876,13 @@ export function StreamDetailPage({
                   {!liveReviewActivityCreated ? (
                     <button
                       className="secondary-action"
-                      disabled={!liveViewOpen || !liveUrl || !canMonitorLiveMotion}
-                      onClick={startLiveMonitoring}
+                      disabled={
+                        !liveUrl ||
+                        !canMonitorLiveMotion ||
+                        (backendLiveSessionSupported && !liveSessionRunning) ||
+                        (!backendLiveSessionSupported && !liveViewOpen)
+                      }
+                      onClick={() => void startLiveMonitoring()}
                       type="button"
                     >
                       Continue monitoring

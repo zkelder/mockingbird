@@ -1057,11 +1057,15 @@ Current work:
 - Stream playback reports Windows DirectShow bridge states for available,
   missing camera name, missing ffmpeg, unsupported WSL/Linux host path, and
   request-time ffmpeg failures.
-- The backend exposes `GET /api/streams/{stream_id}/live/local-mjpeg` for
-  request-scoped local camera MJPEG streaming.
+- The backend exposes `GET /api/streams/{stream_id}/live/local-mjpeg` as a
+  compatibility endpoint for local camera MJPEG streaming.
 - The backend exposes
-  `GET /api/streams/{stream_id}/live/windows-dshow-mjpeg` for request-scoped
-  Windows DirectShow MJPEG streaming.
+  `GET /api/streams/{stream_id}/live/windows-dshow-mjpeg` as a compatibility
+  endpoint for Windows DirectShow MJPEG streaming.
+- Backend-Owned Live Camera Session 1: Stream Detail can start/stop one bounded
+  in-memory backend camera session per Stream. Live view, capture, and live
+  monitoring share the same session frames; legacy bridge endpoints remain
+  compatibility shims over the same session.
 - Local Camera Frame Capture 1: the backend exposes
   `POST /api/streams/{stream_id}/local-camera/capture-frame` so local USB or
   Windows DirectShow playback can save one user-triggered JPEG frame as a local
@@ -1081,7 +1085,8 @@ Current work:
 - Live Motion Review Handoff Fix: explicit `Create review activity` promotes
   live MotionEvidence into an uncertain needs-review Event/Visit candidate with
   the saved best frame attached, returns Review Queue ids, and creates no
-  ReviewLabel, Bird Log history, export, model output, or reviewed truth.
+  ReviewLabel, Bird Log history, export, model output, or reviewed truth. It
+  uses stored session activity without stopping or restarting the camera.
 - Live Video Zone Overlay 1: Stream Detail renders and edits existing normalized
   Zone polygons directly over the real live camera surface. Monitoring continues
   to use the same user-authored Zone records, including privacy and ignore
@@ -1108,8 +1113,11 @@ Validation:
 - The bridge uses system `ffmpeg` only when available on the MockingBird host;
   no package dependency, bundled runtime, model file, or download behavior is
   added.
-- `ffmpeg` starts only for an active local camera Live view HTTP request and is
-  stopped when the response ends or the client disconnects.
+- Backend camera sessions start only after an explicit user action, are
+  in-memory and bounded, do not survive API restart, and never start on API
+  startup.
+- `ffmpeg` is owned by the session and stops on explicit Stop camera, API
+  shutdown, runtime limit, or failure.
 - The local camera bridge accepts only Linux `/dev/video*` device paths in this
   phase and reports unsupported platform/device states honestly.
 - Windows DirectShow uses optional Windows `ffmpeg.exe`; when the API runs in
@@ -1123,11 +1131,11 @@ Validation:
 - Captured frame handoff preserves the truth boundary: Bird Log shows reviewed
   activity only, and motion/review/export require explicit user actions after
   capture.
-- Live Stream Motion Monitor compares recent cached live frames from the active
-  Live view; it starts no second camera process, adds no persistent scheduler,
-  saves best-frame evidence only on detected activity, and creates Review Queue
-  candidates only after explicit user action. ReviewLabel truth, Bird Log
-  history, analytics/export truth, and model output are not created
+- Live Stream Motion Monitor compares recent cached frames from the backend
+  camera session; it starts no second camera process, adds no persistent
+  scheduler, saves best-frame evidence only on detected activity, and creates
+  Review Queue candidates only after explicit user action. ReviewLabel truth,
+  Bird Log history, analytics/export truth, and model output are not created
   automatically.
 - Live Zone Overlay keeps coordinates normalized to the visible live stream
   surface, uses existing Zone create/update routes, and stores no adapter-specific

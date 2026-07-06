@@ -97,19 +97,21 @@ The Streams page now also supports a first Live view path for browser-playable
 stream URLs configured on an `external_url` Source. MJPEG uses a browser image
 stream; browser video and direct browser-supported HLS use the native video
 element without a new dependency. RTSP URLs can use the optional local bridge
-when system `ffmpeg` is installed on the MockingBird host. That bridge starts
-only for the active Live view request, returns MJPEG to the browser, stores no
-media, and creates no review truth or exports.
+when system `ffmpeg` is installed on the MockingBird host. MockingBird-served
+RTSP/local USB/Windows DirectShow streams now use a user-started backend camera
+session: one bounded in-memory reader per Stream feeds Live view, capture, and
+live monitoring. Sessions are not persistent workers and do not start on API
+startup.
 MockingBird also has a first local USB/webcam Live view path through the
 `local_usb` provider. Linux `/dev/video0`-style devices are the first supported
-target, using optional system `ffmpeg` only while the browser Live view is open.
+target, using optional system `ffmpeg` through the backend camera session.
 If `ffmpeg` or the device path is unavailable, the app reports that local camera
 playback is unavailable without affecting setup, review, export, or monitoring.
 Windows webcams can use the same `local_usb` provider with `windows_dshow` and
 an optional Windows `ffmpeg.exe` DirectShow bridge. If the API runs in WSL,
 configure a Windows ffmpeg path such as `/mnt/c/ffmpeg/bin/ffmpeg.exe`; WSL USB
-passthrough is not the recommended webcam path. This Live view starts ffmpeg
-only for the active request and creates no media, truth, or exports.
+passthrough is not the recommended webcam path. This Live view creates no media,
+truth, or exports by itself.
 Local camera Live view can also capture one user-triggered still frame into the
 existing saved-image pipeline. Captured frames use configured camera settings
 when present, save as local JPEG MediaAssets, and create no Events, Visits,
@@ -118,13 +120,15 @@ motion checks compare two or more saved frames from the same Stream. Captured
 local camera JPEG frames are motion-check compatible without adding package
 dependencies. After capture, Stream Detail refreshes saved images and points to
 explicit frame comparison / review actions; Bird Log continues to show reviewed
-activity, not raw captures.
+activity, not raw captures. When a backend camera session is running, capture
+uses the latest session frame instead of starting a second camera process.
 Live camera monitoring is the primary motion path for MockingBird-served live
-streams. While Live view is open, Start monitoring compares recent frames from
-the in-memory live stream cache, saves the strongest activity frame as local
-evidence, and offers an explicit review activity handoff. It is page-started
-and bounded, not a persistent scheduler, and it creates no reviewed truth,
-Bird Log entry, export, or model result by itself.
+streams. With a backend camera session running, Start monitoring compares recent
+session frames from the in-memory live stream cache, saves the strongest
+activity frame as local evidence, and offers an explicit review activity
+handoff. Leaving or hiding Stream Detail does not immediately stop the camera
+session; Stop camera is explicit, and the bounded session still creates no
+reviewed truth, Bird Log entry, export, or model result by itself.
 Stream Detail can now draw and edit user-authored Zones directly over the real
 live stream surface. Monitoring uses those same active feeder, birdbath, ground,
 perch, yard, driveway, privacy, and ignore Zones when available; Bird Log and
@@ -141,7 +145,8 @@ attached. It also adds a low-confidence SpeciesSuggestion from Zone context, suc
 as unknown_bird for feeder/birdbath/perch activity or unknown_animal for
 ground/yard/driveway activity. The Review Queue is where that suggestion is
 confirmed or corrected; ReviewLabel truth and Bird Log history begin only after
-correction.
+correction. Creating review activity uses the stored live activity and does not
+stop or restart the camera session.
 The live monitor refreshes Review Queue state before opening a created review
 item, and High sensitivity checks more recent frame pairs with lower
 feeder/birdbath/perch thresholds for small, fast outdoor activity.

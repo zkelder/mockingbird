@@ -41,11 +41,14 @@ import type {
   LegacyFolderImportPreviewRequest,
   HealthStatus,
   LocalCameraFrameCaptureResponse,
+  LiveCameraSessionStatus,
   LocalDataStatus,
   MediaAsset,
   MediaImportResult,
   LiveMotionEvaluateRequest,
   LiveMotionEvaluateResponse,
+  LiveMotionMonitorStartRequest,
+  LiveMotionReviewActivityResponse,
   MockSpeciesSuggestionRequest,
   ModelAdapter,
   ModelReadinessSummary,
@@ -277,6 +280,26 @@ export const apiClient = {
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live/local-mjpeg`,
   windowsDshowMjpegBridgeUrl: (streamId: string) =>
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live/windows-dshow-mjpeg`,
+  startLiveCameraSession: (streamId: string) =>
+    request<LiveCameraSessionStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/live-session/start`,
+      {
+        method: "POST",
+      },
+    ),
+  stopLiveCameraSession: (streamId: string) =>
+    request<LiveCameraSessionStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/live-session/stop`,
+      {
+        method: "POST",
+      },
+    ),
+  getLiveCameraSessionStatus: (streamId: string) =>
+    request<LiveCameraSessionStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/live-session/status`,
+    ),
+  liveCameraSessionMjpegUrl: (streamId: string) =>
+    `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live-session/mjpeg`,
   captureLocalCameraFrame: (streamId: string) =>
     request<LocalCameraFrameCaptureResponse>(
       `/api/streams/${encodeURIComponent(streamId)}/local-camera/capture-frame`,
@@ -290,6 +313,31 @@ export const apiClient = {
       {
         method: "POST",
         body: JSON.stringify(payload),
+      },
+    ),
+  startLiveMotionMonitor: (
+    streamId: string,
+    payload: LiveMotionMonitorStartRequest = {},
+  ) =>
+    request<LiveMotionEvaluateResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/live-motion/start`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+  stopLiveMotionMonitor: (streamId: string) =>
+    request<LiveCameraSessionStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/live-motion/stop`,
+      {
+        method: "POST",
+      },
+    ),
+  createLiveMotionReviewActivity: (streamId: string) =>
+    request<LiveMotionReviewActivityResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/live-motion/review-activity`,
+      {
+        method: "POST",
       },
     ),
   getStreamZones: (streamId: string) => request<Zone[]>(`/api/streams/${streamId}/zones`),

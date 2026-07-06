@@ -35,9 +35,12 @@ transcoding, or production provider infrastructure.
   and optional Windows `ffmpeg.exe` path.
 - Local camera Live view can save one explicit still frame as a local saved
   image without creating truth or exports.
-- MockingBird-served Live view can run page-started live monitoring that compares
-  recent live frames, saves the best activity frame as evidence, and offers an
-  explicit low-confidence Review Queue handoff without creating truth or exports.
+- MockingBird-served local camera/RTSP streams can use a user-started backend
+  camera session where Live view, capture, and monitoring share the same recent
+  frames.
+- Backend-session live monitoring saves the best activity frame as evidence and
+  offers an explicit low-confidence Review Queue handoff without creating truth
+  or exports.
 - Stream Detail can draw and edit user-authored Zones directly over the real
   live stream, and monitoring uses those Zones when available.
 - The `external_url` still-image preview/save/evidence path works.
@@ -64,6 +67,7 @@ transcoding, or production provider infrastructure.
 - Pi camera/libcamera, cellular, or field-camera agent setup.
 - USB/browser camera capture.
 - Persistent/background continuous monitoring.
+- Persistent camera sessions across API restart.
 - Background workers.
 - Folder watchers.
 - Video decoding.
@@ -224,14 +228,18 @@ Dataset Exports.
 - [ ] Confirm Windows DirectShow playback shows bridge playback when camera name
       and Windows `ffmpeg.exe` path are available, or a clear setup state when
       they are not.
-- [ ] Open Stream Detail, open Live view, and confirm existing Zones render over
-      the real camera surface.
+- [ ] Open Stream Detail and click `Start camera` for a MockingBird-served
+      local camera or RTSP stream.
+- [ ] Open Live view and confirm existing Zones render over the real camera
+      surface.
 - [ ] Draw or edit a feeder/ignore/privacy Zone over the live stream and save it.
 - [ ] Refresh Stream Detail and confirm the Zone remains aligned to the live
       surface.
-- [ ] With a MockingBird-served Live view open, click `Start monitoring`.
-- [ ] Confirm monitoring compares recent live frames from this stream and shows
-      recent frame count plus last checked time.
+- [ ] Hide Live view and confirm the camera session status remains running.
+- [ ] Reopen Live view and confirm it reconnects to the same session stream.
+- [ ] Click `Start monitoring`.
+- [ ] Confirm monitoring compares recent backend session frames from this Stream
+      and shows recent frame count plus last checked time.
 - [ ] Move in front of the camera or move an object in frame.
 - [ ] Confirm activity is detected, the best live frame is saved, and review
       activity remains an explicit handoff.
@@ -250,12 +258,14 @@ Dataset Exports.
       browser reload, and High sensitivity shows strongest change/threshold
       diagnostics for small feeder movement.
 - [ ] Confirm Bird Log does not update until later review/correction.
-- [ ] Click `Stop monitoring` and confirm Live view can remain open.
-- [ ] From a local camera Live view, click `Capture frame`.
+- [ ] Click `Stop monitoring` and confirm the camera session can remain running.
+- [ ] From a running local camera session, click `Capture frame`.
 - [ ] Confirm one saved image appears for the Stream and no ReviewLabel/export
       truth is created.
 - [ ] Confirm the capture success says the frame will not appear in Bird Log
       until activity is created/reviewed.
+- [ ] Click `Stop camera`, then `Start camera` again, and confirm Live view can
+      reconnect.
 - [ ] Confirm the motion action is disabled/helpful after one capture and says
       to capture another frame before checking motion.
 - [ ] Capture a second local camera frame and confirm `Compare captured frames`

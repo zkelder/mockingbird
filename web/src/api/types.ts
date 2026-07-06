@@ -65,9 +65,13 @@ export type LocalCameraFrameCaptureStatus =
   | "ffmpeg_missing"
   | "camera_not_configured"
   | "capture_failed";
-export type LocalCameraFrameCaptureSource = "live_frame_cache" | "one_shot_ffmpeg";
+export type LocalCameraFrameCaptureSource =
+  | "live_camera_session"
+  | "one_shot_ffmpeg"
+  | "unavailable";
 export type LiveMotionEvaluationStatus =
   | "evaluated"
+  | "start_session_required"
   | "waiting_for_live_frames"
   | "no_recent_frames"
   | "not_enough_frames"
@@ -428,6 +432,29 @@ export interface LocalCameraFrameCaptureResponse {
   creates_event: boolean;
   creates_visit: boolean;
   creates_export: boolean;
+  warnings: string[];
+}
+
+export interface LiveCameraSessionStatus {
+  stream_id: string;
+  source_id?: string | null;
+  playback_kind?: string | null;
+  status: "stopped" | "starting" | "running" | "stopping" | "failed" | string;
+  started_at?: string | null;
+  last_frame_at?: string | null;
+  latest_frame_age_ms?: number | null;
+  newest_frame_age_ms?: number | null;
+  frame_count: number;
+  clients_connected: number;
+  monitor_running: boolean;
+  last_motion_evaluation_at?: string | null;
+  last_activity?: Record<string, unknown> | null;
+  last_motion_result?: LiveMotionEvaluateResponse | null;
+  last_error?: string | null;
+  stop_reason?: string | null;
+  max_runtime_seconds: number;
+  persistent: boolean;
+  message: string;
   warnings: string[];
 }
 
@@ -1313,6 +1340,36 @@ export interface LiveMotionEvaluateRequest {
   notes?: string | null;
 }
 
+export interface LiveMotionMonitorStartRequest extends LiveMotionEvaluateRequest {
+  interval_seconds?: number;
+}
+
+export interface LiveMotionReviewActivityResponse {
+  stream_id: string;
+  source_id?: string | null;
+  status: string;
+  activity_detected: boolean;
+  review_activity_created: boolean;
+  review_activity_reused: boolean;
+  review_activity_already_exists: boolean;
+  already_exists: boolean;
+  motion_evidence_id?: string | null;
+  event_id?: string | null;
+  visit_id?: string | null;
+  media_asset_id?: string | null;
+  review_queue_item_id?: string | null;
+  suggested_label?: string | null;
+  suggestion_id?: string | null;
+  suggestion_confidence?: number | null;
+  review_status?: ReviewStatus | null;
+  creates_event: boolean;
+  creates_visit: boolean;
+  creates_truth: boolean;
+  creates_export: boolean;
+  message: string;
+  warnings: string[];
+}
+
 export interface LiveMotionFrameSummary {
   sequence: number;
   captured_at: string;
@@ -1335,6 +1392,11 @@ export interface LiveMotionEvaluateResponse {
   buffer_capacity: number;
   fresh_enough: boolean;
   last_frame_at?: string | null;
+  camera_session_status?: string | null;
+  camera_session_frame_count: number;
+  camera_session_clients_connected: number;
+  camera_session_latest_frame_age_ms?: number | null;
+  camera_session_runtime_limit_seconds?: number | null;
   frames: LiveMotionFrameSummary[];
   frame_scores: MotionFrameScoreResponse[];
   candidates: MotionCandidateResponse[];

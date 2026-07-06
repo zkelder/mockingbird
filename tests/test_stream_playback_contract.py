@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -8,6 +9,8 @@ from mockingbird.api.main import (
     app,
     capture_stream_local_camera_frame,
     configure_repository,
+    get_live_camera_session_manager,
+    get_stream_live_camera_session_mjpeg,
     get_stream_local_mjpeg_bridge,
     get_stream_rtsp_mjpeg_bridge,
     get_stream_windows_dshow_mjpeg_bridge,
@@ -352,6 +355,25 @@ async def configure_windows_dshow_camera(
     assert response.status_code == 200
 
 
+async def wait_for_live_session_frame_count(
+    client: httpx.AsyncClient,
+    stream_id: str,
+    *,
+    minimum: int,
+) -> dict:
+    last_status: dict | None = None
+    for _index in range(40):
+        response = await client.get(f"/api/streams/{stream_id}/live-session/status")
+        assert response.status_code == 200
+        last_status = response.json()
+        if last_status["frame_count"] >= minimum:
+            return last_status
+        await asyncio.sleep(0.05)
+    assert last_status is not None
+    assert last_status["frame_count"] >= minimum
+    return last_status
+
+
 async def test_known_demo_stream_returns_playback_contract(client: httpx.AsyncClient) -> None:
     response = await client.get(f"/api/streams/{STREAM_ID}/playback")
 
@@ -414,6 +436,31 @@ async def test_live_motion_evaluation_waits_for_live_frames(client: httpx.AsyncC
     assert result["best_media_asset_id"] is None
     assert result["creates_truth"] is False
     assert result["creates_export"] is False
+
+
+async def test_live_motion_evaluation_requires_camera_session_for_backend_camera_stream(
+    client: httpx.AsyncClient,
+) -> None:
+    await configure_local_usb_camera(client, device="/dev/video0")
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/live-motion/evaluate", json={})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "start_session_required"
+    assert result["session_status"] == "waiting_for_session"
+    assert result["activity_detected"] is False
+    assert result["frames_available"] == 0
+    assert result["frames_considered"] == 0
+    assert result["camera_session_status"] == "stopped"
+    assert result["camera_session_frame_count"] == 0
+    assert result["message"] == "Start camera session before monitoring."
+    assert result["creates_event"] is False
+    assert result["creates_visit"] is False
+    assert result["creates_truth"] is False
+    assert result["creates_export"] is False
+    assert await product_counts(client) == before
 
 
 async def test_live_motion_evaluation_requires_two_fresh_frames(client: httpx.AsyncClient) -> None:
@@ -568,6 +615,80 @@ async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_on
     for key in before:
         if key != "media_assets":
             assert after[key] == before[key]
+
+
+async def test_live_motion_evaluation_uses_backend_session_frames_without_browser_request(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8session-motion-0\xff\xd9"
+    frame_1 = b"\xff\xd8session-motion-1\xff\xd9"
+    fake_process = FakeFfmpegProcess([frame_0, frame_1])
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, camera_format=None: fake_process,
+    )
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(),
+            frame_1: frame_with([(1, 1), (1, 2), (2, 1), (2, 2)]),
+        },
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    session_status = await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
+    assert session_status["status"] == "running"
+
+    def fail_if_started(*args: object, **kwargs: object) -> object:
+        raise AssertionError("Live motion evaluation must not start another camera process")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        fail_if_started,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.capture_local_camera_frame",
+        fail_if_started,
+    )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "activity_detected"
+    assert result["session_status"] == "activity_detected"
+    assert result["activity_detected"] is True
+    assert result["frames_available"] == 2
+    assert result["frames_considered"] == 2
+    assert result["camera_session_status"] == "running"
+    assert result["camera_session_frame_count"] >= 2
+    assert result["camera_session_latest_frame_age_ms"] >= 0
+    assert result["camera_session_runtime_limit_seconds"] >= 1
+    assert result["best_media_asset_id"] is None
+    assert result["review_activity_created"] is False
+    assert result["creates_event"] is False
+    assert result["creates_visit"] is False
+    assert result["creates_truth"] is False
+    assert result["creates_export"] is False
+    assert result["strongest_zone_id"] == "zone-feeder"
+    assert result["activity_summary"] == "Activity detected in Feeder."
+    assert await product_counts(client) == before
 
 
 async def test_live_motion_evaluation_uses_strongest_recent_frame_pair(
@@ -1573,6 +1694,409 @@ async def test_local_camera_bridge_endpoint_streams_mocked_mjpeg_without_creatin
     assert await product_counts(client) == before
 
 
+async def test_live_camera_session_start_reuses_single_reader_and_reports_status(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_frame = b"\xff\xd8session-frame-one\xff\xd9"
+    fake_process = FakeFfmpegProcess([b"noise" + session_frame])
+    started_devices: list[str] = []
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+
+    def fake_start(device: str, camera_format: str | None = None) -> FakeFfmpegProcess:
+        started_devices.append(device)
+        return fake_process
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        fake_start,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+
+    assert response.status_code == 200
+    started = response.json()
+    assert started["stream_id"] == STREAM_ID
+    assert started["source_id"] == SOURCE_ID
+    assert started["playback_kind"] == "local_usb"
+    assert started["status"] == "running"
+    assert started["persistent"] is False
+    assert started["max_runtime_seconds"] >= 1
+    assert started["message"] == (
+        "Camera session is running. Live view, capture, and monitoring share these frames."
+    )
+
+    status = await wait_for_live_session_frame_count(client, STREAM_ID, minimum=1)
+    assert status["status"] == "running"
+    assert status["frame_count"] >= 1
+    assert status["last_frame_at"] is not None
+    assert status["latest_frame_age_ms"] >= 0
+    assert status["clients_connected"] == 0
+    assert status["persistent"] is False
+
+    duplicate_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+
+    assert duplicate_response.status_code == 200
+    duplicate = duplicate_response.json()
+    assert duplicate["status"] == "running"
+    assert duplicate["frame_count"] >= 1
+    assert started_devices == ["/dev/video0"]
+
+    stop_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/stop")
+
+    assert stop_response.status_code == 200
+    stopped = stop_response.json()
+    assert stopped["status"] == "stopped"
+    assert stopped["stop_reason"] == "user_stopped"
+    assert fake_process.terminated is True
+    assert fake_process.waited is True
+    assert await product_counts(client) == before
+
+
+async def test_live_camera_session_mjpeg_uses_existing_session_without_new_reader(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_frame = b"\xff\xd8session-frame-one\xff\xd9"
+    fake_process = FakeFfmpegProcess([session_frame])
+    start_count = 0
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+
+    def fake_start(device: str, camera_format: str | None = None) -> FakeFfmpegProcess:
+        nonlocal start_count
+        start_count += 1
+        return fake_process
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        fake_start,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    before = await product_counts(client)
+
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    await wait_for_live_session_frame_count(client, STREAM_ID, minimum=1)
+
+    def fail_if_started(*args: object, **kwargs: object) -> object:
+        raise AssertionError("Session MJPEG must not start another camera reader")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        fail_if_started,
+    )
+
+    response = await get_stream_live_camera_session_mjpeg(STREAM_ID)
+
+    assert response.status_code == 200
+    assert response.media_type == (
+        f"multipart/x-mixed-replace; boundary={local_camera_bridge.MJPEG_BOUNDARY}"
+    )
+    stream = get_live_camera_session_manager().iter_mjpeg(STREAM_ID)
+    chunk = next(stream)
+    stream.close()
+    assert b"Content-Type: image/jpeg" in chunk
+    assert session_frame in chunk
+    status = await wait_for_live_session_frame_count(client, STREAM_ID, minimum=1)
+    assert status["status"] == "running"
+    assert status["clients_connected"] == 0
+    assert start_count == 1
+    assert await product_counts(client) == before
+
+
+async def test_backend_monitor_survives_hidden_live_view_until_camera_stop(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8monitor-no-activity-0\xff\xd9"
+    frame_1 = b"\xff\xd8monitor-no-activity-1\xff\xd9"
+    fake_process = FakeFfmpegProcess([frame_0, frame_1])
+    start_count = 0
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+
+    def fake_start(device: str, camera_format: str | None = None) -> FakeFfmpegProcess:
+        nonlocal start_count
+        start_count += 1
+        return fake_process
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        fake_start,
+    )
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(),
+            frame_1: blank_frame(),
+        },
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    before = await product_counts(client)
+
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
+
+    monitor_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/start",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+            "interval_seconds": 10,
+        },
+    )
+
+    assert monitor_response.status_code == 200
+    monitor = monitor_response.json()
+    assert monitor["activity_detected"] is False
+    assert monitor["status"] == "no_activity"
+
+    stream = get_live_camera_session_manager().iter_mjpeg(STREAM_ID)
+    chunk = next(stream)
+    stream.close()
+    assert frame_1 in chunk
+
+    status_response = await client.get(f"/api/streams/{STREAM_ID}/live-session/status")
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["status"] == "running"
+    assert status["clients_connected"] == 0
+    assert status["monitor_running"] is True
+    assert status["last_motion_result"]["status"] == "no_activity"
+
+    stop_monitor_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/stop"
+    )
+    assert stop_monitor_response.status_code == 200
+    stopped_monitor = stop_monitor_response.json()
+    assert stopped_monitor["status"] == "running"
+    assert stopped_monitor["monitor_running"] is False
+    assert fake_process.terminated is False
+
+    restart_monitor_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/start",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+            "interval_seconds": 10,
+        },
+    )
+    assert restart_monitor_response.status_code == 200
+    restarted_status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    assert restarted_status["status"] == "running"
+    assert restarted_status["monitor_running"] is True
+
+    stop_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/stop")
+
+    assert stop_response.status_code == 200
+    stopped = stop_response.json()
+    assert stopped["status"] == "stopped"
+    assert stopped["monitor_running"] is False
+    assert stopped["stop_reason"] == "user_stopped"
+    assert fake_process.terminated is True
+    assert fake_process.waited is True
+    assert start_count == 1
+    assert await product_counts(client) == before
+
+
+async def test_stored_live_activity_review_handoff_keeps_camera_running_and_truth_reviewed_only(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8session-review-activity-0\xff\xd9"
+    frame_1 = b"\xff\xd8session-review-activity-1\xff\xd9"
+    fake_process = FakeFfmpegProcess([frame_0, frame_1])
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, camera_format=None: fake_process,
+    )
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(),
+            frame_1: frame_with([(1, 1), (1, 2), (2, 1), (2, 2)]),
+        },
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
+
+    def fail_if_camera_reader_starts(*args: object, **kwargs: object) -> object:
+        raise AssertionError("Monitoring/review handoff must reuse the live session frames")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        fail_if_camera_reader_starts,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.capture_local_camera_frame",
+        fail_if_camera_reader_starts,
+    )
+
+    before = await product_counts(client)
+    before_queue = (await client.get("/api/review-queue")).json()
+    before_labels = (await client.get("/api/review-labels")).json()
+
+    monitor_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/start",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+            "interval_seconds": 10,
+        },
+    )
+
+    assert monitor_response.status_code == 200
+    monitor = monitor_response.json()
+    assert monitor["status"] == "activity_detected"
+    assert monitor["activity_detected"] is True
+    assert monitor["review_activity_available"] is True
+    assert monitor["review_activity_created"] is False
+    assert monitor["best_media_asset_id"].startswith("media-asset-")
+    assert monitor["strongest_zone_name"] == "Feeder"
+    assert monitor["creates_truth"] is False
+
+    status_response = await client.get(f"/api/streams/{STREAM_ID}/live-session/status")
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["status"] == "running"
+    assert status["monitor_running"] is False
+    assert status["last_activity"]["best_media_asset_id"] == monitor["best_media_asset_id"]
+    assert status["last_activity"]["review_activity_created"] is False
+    assert status["last_motion_result"]["review_activity_available"] is True
+
+    create_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/review-activity"
+    )
+
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["status"] == "created"
+    assert created["activity_detected"] is True
+    assert created["review_activity_created"] is True
+    assert created["review_activity_reused"] is False
+    assert created["review_activity_already_exists"] is False
+    assert created["media_asset_id"] == monitor["best_media_asset_id"]
+    assert created["motion_evidence_id"].startswith("motion-evidence-")
+    assert created["event_id"].startswith("event-motion-")
+    assert created["visit_id"].startswith("visit-motion-")
+    assert created["review_queue_item_id"] == f"review-queue-{created['visit_id']}"
+    assert created["review_status"] == "needs_review"
+    assert created["suggested_label"] == "unknown_bird"
+    assert created["suggestion_id"].startswith("species-suggestion-")
+    assert created["suggestion_confidence"] == 0.30
+    assert created["creates_event"] is True
+    assert created["creates_visit"] is True
+    assert created["creates_truth"] is False
+    assert created["creates_export"] is False
+
+    cached = live_frame_cache.get_latest_frame(STREAM_ID)
+    assert cached is not None
+    assert cached.frame_bytes == frame_1
+    post_create_status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    assert post_create_status["status"] == "running"
+    assert post_create_status["frame_count"] >= 2
+    assert post_create_status["last_activity"]["motion_evidence_id"] == created[
+        "motion_evidence_id"
+    ]
+    assert post_create_status["last_motion_result"]["review_activity_created"] is True
+    assert post_create_status["last_motion_result"]["review_queue_item_id"] == created[
+        "review_queue_item_id"
+    ]
+
+    queue = (await client.get("/api/review-queue")).json()
+    assert len(queue) == len(before_queue) + 1
+    queue_item = next(item for item in queue if item["id"] == created["review_queue_item_id"])
+    assert queue_item["visit_id"] == created["visit_id"]
+    assert queue_item["event_id"] == created["event_id"]
+    assert queue_item["primary_zone_id"] == "zone-feeder"
+    assert queue_item["suggested_label"] == "unknown_bird"
+    assert queue_item["media_asset"]["id"] == monitor["best_media_asset_id"]
+
+    after_create = await product_counts(client)
+    assert after_create["media_assets"] == before["media_assets"] + 1
+    assert after_create["motion_evidence"] == before["motion_evidence"] + 1
+    assert after_create["events"] == before["events"] + 1
+    assert after_create["visits"] == before["visits"] + 1
+    assert after_create["species_suggestions"] == before["species_suggestions"] + 1
+    assert after_create["review_labels"] == before["review_labels"]
+    assert after_create["dataset_exports"] == before["dataset_exports"]
+    labels_after_create = (await client.get("/api/review-labels")).json()
+    assert labels_after_create == before_labels
+    assert [
+        label
+        for label in labels_after_create
+        if label["target_type"] == "visit" and label["target_id"] == created["visit_id"]
+    ] == []
+
+    duplicate_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/review-activity"
+    )
+
+    assert duplicate_response.status_code == 200
+    duplicate = duplicate_response.json()
+    assert duplicate["status"] == "already_exists"
+    assert duplicate["review_activity_created"] is False
+    assert duplicate["review_activity_reused"] is True
+    assert duplicate["review_activity_already_exists"] is True
+    assert duplicate["motion_evidence_id"] == created["motion_evidence_id"]
+    assert duplicate["event_id"] == created["event_id"]
+    assert duplicate["visit_id"] == created["visit_id"]
+    assert duplicate["review_queue_item_id"] == created["review_queue_item_id"]
+    assert await product_counts(client) == after_create
+
+    correction_response = await client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": created["visit_id"],
+            "label": "northern_cardinal",
+            "notes": "Confirmed stored live activity.",
+        },
+    )
+
+    assert correction_response.status_code == 201
+    correction = correction_response.json()
+    assert correction["review_label"]["target_id"] == created["visit_id"]
+    assert correction["visit"]["review_status"] == "reviewed"
+    labels_after_correction = (await client.get("/api/review-labels")).json()
+    bird_log_labels = [
+        label
+        for label in labels_after_correction
+        if label["target_type"] == "visit" and label["target_id"] == created["visit_id"]
+    ]
+    assert len(bird_log_labels) == 1
+    assert bird_log_labels[0]["label"] == "northern_cardinal"
+    corrected_counts = await product_counts(client)
+    assert corrected_counts["review_labels"] == after_create["review_labels"] + 1
+
+
 async def test_playback_status_does_not_start_local_camera_bridge_process(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -1819,19 +2343,22 @@ async def test_windows_dshow_bridge_endpoint_streams_mocked_mjpeg_without_creati
     assert await product_counts(client) == before
 
 
-async def test_windows_dshow_capture_frame_uses_fresh_live_cache_without_ffmpeg(
+async def test_windows_dshow_capture_without_session_ignores_fresh_cache_and_uses_one_shot(
     client: httpx.AsyncClient,
     isolated_repository: ProductRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     live_frame = b"\xff\xd8cached-windows-live-frame\xff\xd9"
+    fallback_frame = b"\xff\xd8fallback-windows-live-frame\xff\xd9"
+    captured_args: list[str] = []
 
-    def fail_if_one_shot_capture_runs(*args: object, **kwargs: object) -> bytes:
-        raise AssertionError("Cached live frame capture must not start one-shot ffmpeg")
+    def fake_capture(camera_name: str, **kwargs: object) -> bytes:
+        captured_args.append(camera_name)
+        return fallback_frame
 
     monkeypatch.setattr(
         "mockingbird.api.main.windows_camera_bridge.capture_windows_dshow_frame",
-        fail_if_one_shot_capture_runs,
+        fake_capture,
     )
     await configure_windows_dshow_camera(
         client,
@@ -1847,17 +2374,18 @@ async def test_windows_dshow_capture_frame_uses_fresh_live_cache_without_ffmpeg(
     body = response.json()
     assert body["status"] == "saved"
     assert body["message"] == (
-        "Saved current live frame as local media only. It will not appear "
-        "in Bird Log until you create/review activity."
+        "Saved one local camera frame directly because Live view was not streaming. "
+        "It will not appear in Bird Log until you create/review activity."
     )
-    assert body["capture_source"] == "live_frame_cache"
-    assert body["live_frame_age_ms"] >= 0
+    assert body["capture_source"] == "one_shot_ffmpeg"
+    assert body["live_frame_age_ms"] is None
     assert body["content_type"] == "image/jpeg"
-    assert body["bytes_written"] == len(live_frame)
+    assert body["bytes_written"] == len(fallback_frame)
     assert body["creates_event"] is False
     assert body["creates_visit"] is False
     assert body["creates_truth"] is False
     assert body["creates_export"] is False
+    assert captured_args == ["EMEET SmartCam S600"]
 
     media_response = await client.get(f"/api/media/{body['media_asset_id']}")
     assert media_response.status_code == 200
@@ -1865,7 +2393,7 @@ async def test_windows_dshow_capture_frame_uses_fresh_live_cache_without_ffmpeg(
     assert "playback_type=windows_dshow" in media_asset["notes"]
     saved_path = Path(media_asset["local_path"]).resolve()
     assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
-    assert saved_path.read_bytes() == live_frame
+    assert saved_path.read_bytes() == fallback_frame
 
     after = await product_counts(client)
     assert after["media_assets"] == before["media_assets"] + 1
@@ -2007,19 +2535,27 @@ async def test_windows_dshow_capture_frame_creates_one_media_asset_only(
         assert after[key] == before[key]
 
 
-async def test_local_usb_capture_frame_uses_fresh_live_cache_without_ffmpeg(
+async def test_local_usb_capture_without_session_ignores_fresh_cache_and_uses_one_shot(
     client: httpx.AsyncClient,
     isolated_repository: ProductRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     live_frame = b"\xff\xd8cached-local-live-frame\xff\xd9"
+    fallback_frame = b"\xff\xd8fallback-local-live-frame\xff\xd9"
+    captured_args: list[str] = []
 
-    def fail_if_one_shot_capture_runs(*args: object, **kwargs: object) -> bytes:
-        raise AssertionError("Cached live frame capture must not start one-shot ffmpeg")
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.local_camera_status",
+        lambda **kwargs: "available",
+    )
+
+    def fake_capture(device: str, **kwargs: object) -> bytes:
+        captured_args.append(device)
+        return fallback_frame
 
     monkeypatch.setattr(
         "mockingbird.api.main.local_camera_bridge.capture_local_camera_frame",
-        fail_if_one_shot_capture_runs,
+        fake_capture,
     )
     await configure_local_usb_camera(client, device="/dev/video0")
     live_frame_cache.store_latest_frame(STREAM_ID, live_frame)
@@ -2031,17 +2567,18 @@ async def test_local_usb_capture_frame_uses_fresh_live_cache_without_ffmpeg(
     body = response.json()
     assert body["status"] == "saved"
     assert body["message"] == (
-        "Saved current live frame as local media only. It will not appear "
-        "in Bird Log until you create/review activity."
+        "Saved one local camera frame directly because Live view was not streaming. "
+        "It will not appear in Bird Log until you create/review activity."
     )
-    assert body["capture_source"] == "live_frame_cache"
-    assert body["live_frame_age_ms"] >= 0
+    assert body["capture_source"] == "one_shot_ffmpeg"
+    assert body["live_frame_age_ms"] is None
     assert body["content_type"] == "image/jpeg"
-    assert body["bytes_written"] == len(live_frame)
+    assert body["bytes_written"] == len(fallback_frame)
     assert body["creates_event"] is False
     assert body["creates_visit"] is False
     assert body["creates_truth"] is False
     assert body["creates_export"] is False
+    assert captured_args == ["/dev/video0"]
 
     media_response = await client.get(f"/api/media/{body['media_asset_id']}")
     assert media_response.status_code == 200
@@ -2049,7 +2586,63 @@ async def test_local_usb_capture_frame_uses_fresh_live_cache_without_ffmpeg(
     assert "playback_type=local_usb" in media_asset["notes"]
     saved_path = Path(media_asset["local_path"]).resolve()
     assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
-    assert saved_path.read_bytes() == live_frame
+    assert saved_path.read_bytes() == fallback_frame
+
+    after = await product_counts(client)
+    assert after["media_assets"] == before["media_assets"] + 1
+    for key in before:
+        if key != "media_assets":
+            assert after[key] == before[key]
+
+
+async def test_local_usb_capture_frame_uses_running_session_frame_without_one_shot(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_frame = b"\xff\xd8session-capture-frame\xff\xd9"
+    fake_process = FakeFfmpegProcess([session_frame])
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, camera_format=None: fake_process,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    await wait_for_live_session_frame_count(client, STREAM_ID, minimum=1)
+
+    def fail_if_one_shot_capture_runs(*args: object, **kwargs: object) -> bytes:
+        raise AssertionError("Capture must use the running camera session frame")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.capture_local_camera_frame",
+        fail_if_one_shot_capture_runs,
+    )
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/local-camera/capture-frame")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "saved"
+    assert body["capture_source"] == "live_camera_session"
+    assert body["live_frame_age_ms"] >= 0
+    assert body["bytes_written"] == len(session_frame)
+    assert body["creates_event"] is False
+    assert body["creates_visit"] is False
+    assert body["creates_truth"] is False
+    assert body["creates_export"] is False
+
+    media_response = await client.get(f"/api/media/{body['media_asset_id']}")
+    assert media_response.status_code == 200
+    saved_path = Path(media_response.json()["local_path"]).resolve()
+    assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
+    assert saved_path.read_bytes() == session_frame
 
     after = await product_counts(client)
     assert after["media_assets"] == before["media_assets"] + 1

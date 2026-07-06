@@ -105,6 +105,7 @@ class LocalCameraFrameCaptureStatus(str, Enum):
 
 class LiveMotionEvaluationStatus(str, Enum):
     evaluated = "evaluated"
+    start_session_required = "start_session_required"
     waiting_for_live_frames = "waiting_for_live_frames"
     no_recent_frames = "no_recent_frames"
     not_enough_frames = "not_enough_frames"
@@ -597,6 +598,30 @@ class LocalCameraFrameCaptureResponse(BaseModel):
     creates_event: bool = False
     creates_visit: bool = False
     creates_export: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class LiveCameraSessionStatusResponse(BaseModel):
+    # Backend-owned live camera sessions are user-started and in-memory only.
+    stream_id: str
+    source_id: str | None = None
+    playback_kind: str | None = None
+    status: str
+    started_at: datetime | None = None
+    last_frame_at: datetime | None = None
+    latest_frame_age_ms: int | None = Field(default=None, ge=0)
+    newest_frame_age_ms: int | None = Field(default=None, ge=0)
+    frame_count: int = Field(default=0, ge=0)
+    clients_connected: int = Field(default=0, ge=0)
+    monitor_running: bool = False
+    last_motion_evaluation_at: datetime | None = None
+    last_activity: dict[str, Any] | None = None
+    last_motion_result: dict[str, Any] | None = None
+    last_error: str | None = None
+    stop_reason: str | None = None
+    max_runtime_seconds: int = Field(default=1800, ge=1)
+    persistent: bool = False
+    message: str
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -1356,6 +1381,36 @@ class LiveMotionEvaluateRequest(BaseModel):
     notes: str | None = None
 
 
+class LiveMotionMonitorStartRequest(LiveMotionEvaluateRequest):
+    interval_seconds: float = Field(default=1.5, ge=0.25, le=10)
+
+
+class LiveMotionReviewActivityResponse(BaseModel):
+    stream_id: str
+    source_id: str | None = None
+    status: str
+    activity_detected: bool = False
+    review_activity_created: bool = False
+    review_activity_reused: bool = False
+    review_activity_already_exists: bool = False
+    already_exists: bool = False
+    motion_evidence_id: str | None = None
+    event_id: str | None = None
+    visit_id: str | None = None
+    media_asset_id: str | None = None
+    review_queue_item_id: str | None = None
+    suggested_label: str | None = None
+    suggestion_id: str | None = None
+    suggestion_confidence: float | None = None
+    review_status: ReviewStatus | None = None
+    creates_event: bool = False
+    creates_visit: bool = False
+    creates_truth: bool = False
+    creates_export: bool = False
+    message: str
+    warnings: list[str] = Field(default_factory=list)
+
+
 class LiveMotionFrameSummary(BaseModel):
     sequence: int = Field(ge=1)
     captured_at: datetime
@@ -1379,6 +1434,11 @@ class LiveMotionEvaluateResponse(BaseModel):
     buffer_capacity: int = Field(default=20, ge=1)
     fresh_enough: bool = False
     last_frame_at: datetime | None = None
+    camera_session_status: str | None = None
+    camera_session_frame_count: int = Field(default=0, ge=0)
+    camera_session_clients_connected: int = Field(default=0, ge=0)
+    camera_session_latest_frame_age_ms: int | None = Field(default=None, ge=0)
+    camera_session_runtime_limit_seconds: int | None = Field(default=None, ge=1)
     frames: list[LiveMotionFrameSummary] = Field(default_factory=list)
     frame_scores: list[MotionFrameScoreResponse] = Field(default_factory=list)
     candidates: list[MotionCandidateResponse] = Field(default_factory=list)
