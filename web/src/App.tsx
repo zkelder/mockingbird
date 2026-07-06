@@ -489,6 +489,7 @@ export default function App() {
           onOpenExports={() => setPage("exports")}
           onOpenReview={() => openReviewQueue()}
           onOpenMotionEvidence={openMotionEvidence}
+          onReviewActivityCreated={() => loadAppData({ showLoading: false })}
         />
       );
     }
@@ -541,7 +542,6 @@ export default function App() {
     if (page === "bird-log") {
       return (
         <BirdLogPage
-          reviewQueue={data.reviewQueue}
           sources={data.sources}
           streams={data.streams}
           onOpenEvent={openEvent}

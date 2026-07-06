@@ -972,7 +972,8 @@ Validation:
   ESP32, Pi, cellular, or live video behavior.
 - Monitoring review handoff creates pending review activity only after explicit
   user action, reuses existing activity for duplicates, and leaves automatic
-  activity areas result-only until a named Zone is available.
+  activity areas result-only until a named Zone is available. ReviewLabel truth
+  and Bird Log history still start only after correction.
 - Automatic activity areas become Zones only after explicit user action; privacy
   and ignore Zones keep future activity suppressed in those areas.
 
@@ -1077,6 +1078,10 @@ Current work:
   keep a bounded rolling frame cache, Start monitoring compares recent live
   frames, detected activity can save the strongest live frame as local evidence,
   and review activity remains an explicit handoff before correction truth.
+- Live Motion Review Handoff Fix: explicit `Create review activity` promotes
+  live MotionEvidence into an uncertain needs-review Event/Visit candidate with
+  the saved best frame attached, returns Review Queue ids, and creates no
+  ReviewLabel, Bird Log history, export, model output, or reviewed truth.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — local camera capture browser smoke validation
@@ -1104,8 +1109,10 @@ Validation:
   capture.
 - Live Stream Motion Monitor compares recent cached live frames from the active
   Live view; it starts no second camera process, adds no persistent scheduler,
-  saves best-frame evidence only on detected activity, and creates no
-  ReviewLabel, Bird Log, analytics/export truth, or model output automatically.
+  saves best-frame evidence only on detected activity, and creates Review Queue
+  candidates only after explicit user action. ReviewLabel truth, Bird Log
+  history, analytics/export truth, and model output are not created
+  automatically.
 - The bridge stores no media, creates no Events/Visits, ReviewLabels,
   DetectionProposals, MotionEvidence, dataset exports, analytics truth, workers,
   schedulers, captures table, or source adapter records.

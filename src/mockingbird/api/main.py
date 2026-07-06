@@ -2078,6 +2078,29 @@ async def evaluate_live_stream_motion(
     )
 
     created_evidence: list[MotionEvidenceResponse] = []
+    review_motion_evidence: MotionEvidenceResponse | None = None
+    review_event_id: str | None = None
+    review_visit_id: str | None = None
+    review_activity_created = False
+    review_activity_reused = False
+
+    def live_motion_promotion_payload() -> MotionEvidencePromoteRequest:
+        area_label = strongest_activity_area.label if strongest_activity_area else None
+        event_title = (
+            f"Live motion activity in {area_label}"
+            if area_label
+            else "Live motion activity"
+        )
+        return MotionEvidencePromoteRequest(
+            event_title=event_title,
+            visit_label_hint="unknown_animal",
+            notes=request.notes
+            or "Live stream motion monitor created an uncertain needs-review activity.",
+            create_event=True,
+            create_visit=True,
+            attach_snapshot_media_asset_id=best_media_asset_id,
+        )
+
     if request.create_review_activity and motion_candidates and uses_auto_regions:
         warnings.append(
             "Automatic activity areas can detect motion now; review activity creation "
@@ -2088,52 +2111,96 @@ async def evaluate_live_stream_motion(
         and motion_candidates
         and not session_recommendation.should_create_review_activity
     ):
-        warnings.append(
-            "This looks like the same recent activity, so MockingBird did not create "
-            "another review item."
+        existing_evidence = (
+            repository.get_motion_evidence(
+                session_recommendation.existing_activity_reference,
+            )
+            if session_recommendation.existing_activity_reference
+            else None
         )
+        if existing_evidence and existing_evidence.status == MotionEvidenceStatus.pending:
+            try:
+                promoted = repository.promote_motion_evidence(
+                    existing_evidence.id,
+                    live_motion_promotion_payload(),
+                )
+            except ValueError as error:
+                raise _motion_evidence_error(error) from error
+            if promoted is not None:
+                review_motion_evidence = promoted.evidence
+                review_event_id = promoted.event_id
+                review_visit_id = promoted.visit_id
+                created_evidence.append(promoted.evidence)
+                review_activity_created = True
+                review_activity_reused = True
+        elif existing_evidence:
+            review_motion_evidence = existing_evidence
+            review_event_id = existing_evidence.promoted_event_id
+            review_visit_id = existing_evidence.promoted_visit_id
+            review_activity_reused = True
+
+        if review_motion_evidence is None:
+            warnings.append(
+                "This looks like the same recent activity, so MockingBird did not create "
+                "another review item."
+            )
     elif request.create_review_activity and best_candidate and best_live_frame:
         try:
-            created_evidence.append(
-                repository.create_motion_evidence(
-                    MotionEvidenceCreateRequest(
-                        source_id=stream.source_id,
-                        stream_id=stream.id,
-                        zone_id=best_candidate.zone_id,
-                        start_frame_index=best_candidate.start_frame_index,
-                        end_frame_index=best_candidate.end_frame_index,
-                        best_frame_index=best_candidate.best_frame_index,
-                        start_time=_live_frame_timestamp(
-                            cached_frames,
-                            best_candidate.start_frame_index,
-                        ),
-                        end_time=_live_frame_timestamp(
-                            cached_frames,
-                            best_candidate.end_frame_index,
-                        ),
-                        best_frame_time=best_live_frame.captured_at.isoformat(),
-                        peak_changed_ratio=best_candidate.peak_changed_ratio,
-                        triggered_frame_count=best_candidate.triggered_frame_count,
-                        scoring_config={
-                            "source": "live_stream_motion",
-                            "frames_considered": len(cached_frames),
-                            "pixel_delta_threshold": request.pixel_delta_threshold,
-                            "min_changed_ratio": request.min_changed_ratio,
-                            "min_triggered_frames": request.min_triggered_frames,
-                            "max_gap_frames": request.max_gap_frames,
-                            "frame_sequence_start": cached_frames[0].sequence,
-                        },
-                        snapshot_media_asset_id=best_media_asset_id,
-                        notes=request.notes
-                        or "Live stream motion monitor created pending review activity.",
-                    )
+            pending_evidence = repository.create_motion_evidence(
+                MotionEvidenceCreateRequest(
+                    source_id=stream.source_id,
+                    stream_id=stream.id,
+                    zone_id=best_candidate.zone_id,
+                    start_frame_index=best_candidate.start_frame_index,
+                    end_frame_index=best_candidate.end_frame_index,
+                    best_frame_index=best_candidate.best_frame_index,
+                    start_time=_live_frame_timestamp(
+                        cached_frames,
+                        best_candidate.start_frame_index,
+                    ),
+                    end_time=_live_frame_timestamp(
+                        cached_frames,
+                        best_candidate.end_frame_index,
+                    ),
+                    best_frame_time=best_live_frame.captured_at.isoformat(),
+                    peak_changed_ratio=best_candidate.peak_changed_ratio,
+                    triggered_frame_count=best_candidate.triggered_frame_count,
+                    scoring_config={
+                        "source": "live_stream_motion",
+                        "frames_considered": len(cached_frames),
+                        "pixel_delta_threshold": request.pixel_delta_threshold,
+                        "min_changed_ratio": request.min_changed_ratio,
+                        "min_triggered_frames": request.min_triggered_frames,
+                        "max_gap_frames": request.max_gap_frames,
+                        "frame_sequence_start": cached_frames[0].sequence,
+                    },
+                    snapshot_media_asset_id=best_media_asset_id,
+                    notes=request.notes
+                    or "Live stream motion monitor created pending review evidence.",
                 )
             )
+            promoted = repository.promote_motion_evidence(
+                pending_evidence.id,
+                live_motion_promotion_payload(),
+            )
+            if promoted is not None:
+                review_motion_evidence = promoted.evidence
+                review_event_id = promoted.event_id
+                review_visit_id = promoted.visit_id
+                created_evidence.append(promoted.evidence)
+                review_activity_created = True
         except ValueError as error:
             raise _motion_evidence_error(error) from error
 
-    if created_evidence:
+    if review_motion_evidence:
         review_activity_available = False
+    review_queue_item_id = (
+        f"review-queue-{review_visit_id}"
+        if review_visit_id
+        else f"review-queue-{review_event_id}"
+        if review_event_id
+        else None
+    )
     activity_detected = bool(motion_candidates)
     status = "activity_detected" if activity_detected else "no_activity"
     message = (
@@ -2143,11 +2210,18 @@ async def evaluate_live_stream_motion(
         if activity_detected
         else "Watching live video. No activity detected yet."
     )
-    if created_evidence:
-        message = "Review activity is ready from live motion evidence."
+    if review_activity_created:
+        message = "Review activity created. Bird Log updates after review."
+    elif review_activity_reused and review_queue_item_id:
+        message = "Review activity is already ready in Review Queue."
+    response_common = {
+        **common,
+        "creates_event": review_event_id is not None and review_activity_created,
+        "creates_visit": review_visit_id is not None and review_activity_created,
+    }
 
     return LiveMotionEvaluateResponse(
-        **common,
+        **response_common,
         status=status,
         activity_detected=activity_detected,
         frames_considered=len(cached_frames),
@@ -2169,9 +2243,17 @@ async def evaluate_live_stream_motion(
         best_frame_sequence=best_live_frame.sequence if best_live_frame else None,
         best_frame_captured_at=best_live_frame.captured_at if best_live_frame else None,
         best_media_asset_id=best_media_asset_id,
+        media_asset_id=best_media_asset_id,
         can_create_review_activity=can_create_review_activity,
         review_activity_available=review_activity_available,
-        review_activity_created=bool(created_evidence),
+        review_activity_created=review_activity_created,
+        review_activity_reused=review_activity_reused,
+        motion_evidence_id=review_motion_evidence.id if review_motion_evidence else None,
+        event_id=review_event_id,
+        visit_id=review_visit_id,
+        review_queue_item_id=review_queue_item_id,
+        review_status="needs_review" if review_queue_item_id else None,
+        suggested_label="unknown_animal" if review_queue_item_id else None,
         created_evidence=created_evidence,
         debug_cell_zones=debug_cell_zones,
         message=message,

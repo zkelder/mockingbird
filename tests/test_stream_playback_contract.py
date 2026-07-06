@@ -203,6 +203,12 @@ async def product_counts(client: httpx.AsyncClient) -> dict[str, int]:
     }
 
 
+async def dataset_coverage(client: httpx.AsyncClient) -> dict:
+    response = await client.get("/api/dataset-coverage/summary")
+    assert response.status_code == 200
+    return response.json()
+
+
 def patch_live_motion_decoder(
     monkeypatch: pytest.MonkeyPatch,
     frames_by_bytes: dict[bytes, list[list[int]]],
@@ -472,7 +478,7 @@ async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_on
             assert after[key] == before[key]
 
 
-async def test_live_motion_review_handoff_is_explicit_pending_evidence_only(
+async def test_live_motion_review_handoff_creates_needs_review_candidate(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -494,6 +500,8 @@ async def test_live_motion_review_handoff_is_explicit_pending_evidence_only(
         captured_at=captured_at + timedelta(seconds=1),
     )
     before = await product_counts(client)
+    before_coverage = await dataset_coverage(client)
+    before_queue = (await client.get("/api/review-queue")).json()
 
     response = await client.post(
         f"/api/streams/{STREAM_ID}/live-motion/evaluate",
@@ -510,20 +518,148 @@ async def test_live_motion_review_handoff_is_explicit_pending_evidence_only(
     assert result["status"] == "activity_detected"
     assert result["activity_detected"] is True
     assert result["review_activity_created"] is True
+    assert result["review_activity_reused"] is False
     assert result["review_activity_available"] is False
+    assert result["motion_evidence_id"].startswith("motion-evidence-")
+    assert result["event_id"].startswith("event-motion-")
+    assert result["visit_id"].startswith("visit-motion-")
+    assert result["review_queue_item_id"] == f"review-queue-{result['visit_id']}"
+    assert result["review_status"] == "needs_review"
+    assert result["suggested_label"] == "unknown_animal"
+    assert result["creates_event"] is True
+    assert result["creates_visit"] is True
+    assert result["creates_truth"] is False
+    assert result["creates_export"] is False
     assert len(result["created_evidence"]) == 1
     evidence = result["created_evidence"][0]
-    assert evidence["status"] == "pending"
+    assert evidence["id"] == result["motion_evidence_id"]
+    assert evidence["status"] == "promoted"
     assert evidence["zone_id"] == "zone-feeder"
     assert evidence["snapshot_media_asset_id"] == result["best_media_asset_id"]
-    assert evidence["promoted_event_id"] is None
-    assert evidence["promoted_visit_id"] is None
+    assert evidence["promoted_event_id"] == result["event_id"]
+    assert evidence["promoted_visit_id"] == result["visit_id"]
+
+    queue_response = await client.get("/api/review-queue")
+    assert queue_response.status_code == 200
+    queue = queue_response.json()
+    assert len(queue) == len(before_queue) + 1
+    queue_item = next(item for item in queue if item["id"] == result["review_queue_item_id"])
+    assert queue_item["item_type"] == "visit"
+    assert queue_item["stream_id"] == STREAM_ID
+    assert queue_item["event_id"] == result["event_id"]
+    assert queue_item["visit_id"] == result["visit_id"]
+    assert queue_item["primary_zone_id"] == "zone-feeder"
+    assert queue_item["suggested_label"] == "unknown_animal"
+    assert queue_item["review_status"] == "needs_review"
+    assert queue_item["media_asset"]["id"] == result["best_media_asset_id"]
+
+    visit_detail_response = await client.get(f"/api/visits/{result['visit_id']}/detail")
+    assert visit_detail_response.status_code == 200
+    visit_detail = visit_detail_response.json()
+    assert visit_detail["visit"]["subject_label"] == "unknown_animal"
+    assert visit_detail["visit"]["confidence"] is None
+    assert visit_detail["visit"]["reviewed_label"] is None
+    assert visit_detail["visit"]["review_status"] == "needs_review"
+    assert visit_detail["media_asset"]["id"] == result["best_media_asset_id"]
 
     after = await product_counts(client)
     assert after["media_assets"] == before["media_assets"] + 1
     assert after["motion_evidence"] == before["motion_evidence"] + 1
-    for key in ("events", "visits", "review_labels", "dataset_exports"):
-        assert after[key] == before[key]
+    assert after["events"] == before["events"] + 1
+    assert after["visits"] == before["visits"] + 1
+    assert after["review_labels"] == before["review_labels"]
+    assert after["dataset_exports"] == before["dataset_exports"]
+    after_coverage = await dataset_coverage(client)
+    assert after_coverage["reviewed_record_count"] == before_coverage["reviewed_record_count"]
+
+    correction_response = await client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": result["visit_id"],
+            "label": "northern_cardinal",
+            "notes": "Confirmed live motion review candidate.",
+        },
+    )
+
+    assert correction_response.status_code == 201
+    correction = correction_response.json()
+    assert correction["review_label"]["target_id"] == result["visit_id"]
+    assert correction["visit"]["review_status"] == "reviewed"
+    assert correction["visit"]["reviewed_label"] == "northern_cardinal"
+    corrected_counts = await product_counts(client)
+    assert corrected_counts["review_labels"] == after["review_labels"] + 1
+    corrected_coverage = await dataset_coverage(client)
+    assert (
+        corrected_coverage["reviewed_record_count"]
+        == before_coverage["reviewed_record_count"] + 1
+    )
+    corrected_queue = (await client.get("/api/review-queue")).json()
+    assert all(item["id"] != result["review_queue_item_id"] for item in corrected_queue)
+
+
+async def test_live_motion_review_handoff_reuses_existing_review_candidate(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-review-duplicate-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-review-duplicate-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(),
+            frame_1: frame_with([(1, 1), (1, 2), (2, 1), (2, 2)]),
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+
+    first_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": True,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+    assert first_response.status_code == 200
+    first = first_response.json()
+    after_first = await product_counts(client)
+    queue_after_first = (await client.get("/api/review-queue")).json()
+
+    duplicate_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": True,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert duplicate_response.status_code == 200
+    duplicate = duplicate_response.json()
+    assert duplicate["review_activity_created"] is False
+    assert duplicate["review_activity_reused"] is True
+    assert duplicate["motion_evidence_id"] == first["motion_evidence_id"]
+    assert duplicate["event_id"] == first["event_id"]
+    assert duplicate["visit_id"] == first["visit_id"]
+    assert duplicate["review_queue_item_id"] == first["review_queue_item_id"]
+
+    after_duplicate = await product_counts(client)
+    assert after_duplicate["motion_evidence"] == after_first["motion_evidence"]
+    assert after_duplicate["events"] == after_first["events"]
+    assert after_duplicate["visits"] == after_first["visits"]
+    assert after_duplicate["review_labels"] == after_first["review_labels"]
+    queue_after_duplicate = (await client.get("/api/review-queue")).json()
+    assert queue_after_duplicate == queue_after_first
 
 
 async def test_external_url_without_live_stream_reports_needs_stream_url(

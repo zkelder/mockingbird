@@ -1327,9 +1327,17 @@ export interface LiveMotionEvaluateResponse {
   best_frame_sequence?: number | null;
   best_frame_captured_at?: string | null;
   best_media_asset_id?: string | null;
+  media_asset_id?: string | null;
   can_create_review_activity: boolean;
   review_activity_available: boolean;
   review_activity_created: boolean;
+  review_activity_reused: boolean;
+  motion_evidence_id?: string | null;
+  event_id?: string | null;
+  visit_id?: string | null;
+  review_queue_item_id?: string | null;
+  review_status?: ReviewStatus | null;
+  suggested_label?: string | null;
   created_evidence: MotionEvidence[];
   debug_cell_zones: MotionZoneInput[];
   creates_event: boolean;

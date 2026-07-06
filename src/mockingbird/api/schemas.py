@@ -1369,9 +1369,17 @@ class LiveMotionEvaluateResponse(BaseModel):
     best_frame_sequence: int | None = None
     best_frame_captured_at: datetime | None = None
     best_media_asset_id: str | None = None
+    media_asset_id: str | None = None
     can_create_review_activity: bool = False
     review_activity_available: bool = False
     review_activity_created: bool = False
+    review_activity_reused: bool = False
+    motion_evidence_id: str | None = None
+    event_id: str | None = None
+    visit_id: str | None = None
+    review_queue_item_id: str | None = None
+    review_status: ReviewStatus | None = None
+    suggested_label: str | None = None
     created_evidence: list[MotionEvidenceResponse] = Field(default_factory=list)
     debug_cell_zones: list[MotionZoneInput] = Field(default_factory=list)
     creates_event: bool = False

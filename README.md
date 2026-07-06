@@ -125,6 +125,10 @@ the in-memory live stream cache, saves the strongest activity frame as local
 evidence, and offers an explicit review activity handoff. It is page-started
 and bounded, not a persistent scheduler, and it creates no reviewed truth,
 Bird Log entry, export, or model result by itself.
+When the user clicks `Create review activity`, live motion creates an uncertain
+needs-review Event/Visit candidate from MotionEvidence with the saved best frame
+attached. The Review Queue is where that low-confidence activity is confirmed or
+corrected; ReviewLabel truth and Bird Log history begin only after correction.
 The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
 count, and motion readiness. Camera Monitoring Core can now start and stop an
@@ -133,9 +137,9 @@ existing still-image snapshot capture, saved-media motion checks, source health,
 and storage guardrails. It does not survive API restart and creates no automatic
 truth or exports.
 When monitoring detects user-zone-backed activity, the Streams page can offer an
-explicit `Create review activity` handoff to pending review activity. Automatic
-activity areas remain result-only until a named Zone is available, and
-correction/export truth stays user-confirmed.
+explicit `Create review activity` handoff to an uncertain Review Queue
+candidate. Automatic activity areas remain result-only until a named Zone is
+available, and correction/export truth stays user-confirmed.
 Users can explicitly mark a useful automatic activity area as a named Zone such
 as feeder, birdbath, ground, yard, driveway, ignore, or privacy. That creates a
 real stream Zone from the activity bounds so future checks can use the normal
@@ -151,8 +155,9 @@ warnings, and reviewed/export-linked media protection before and during
 monitoring. Snapshot watch remains an advanced bounded page-local test harness.
 This adds no deletion, cleanup, bundled media runtime, Pi/cellular behavior,
 model runtime, automatic truth, or automatic export behavior.
-Reviewed and needs-review observations are visible in the Bird Log, which turns
-captured or imported activity into a user-facing local history before export.
+Reviewed observations are visible in the Bird Log, which turns user-corrected
+activity into a local history before export. Raw captures, raw motion, and
+needs-review candidates stay out of the Bird Log until review/correction.
 Saved previews can now enter review as pending MotionEvidence through an
 explicit user action documented in
 [docs/saved-preview-review-evidence-handoff-design.md](docs/saved-preview-review-evidence-handoff-design.md);

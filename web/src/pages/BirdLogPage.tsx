@@ -5,10 +5,8 @@ import type {
   EventDetail,
   MediaAsset,
   ReviewLabel,
-  ReviewQueueItem,
   Stream,
   VisitDetail,
-  Zone,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
@@ -16,12 +14,11 @@ import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
 
-type BirdLogStatusFilter = "all" | "reviewed" | "needs_review";
-type BirdLogEntryStatus = "reviewed" | "needs_review";
+type BirdLogStatusFilter = "all" | "reviewed";
+type BirdLogEntryStatus = "reviewed";
 type BirdLogTargetType = "event" | "visit";
 
 interface BirdLogPageProps {
-  reviewQueue: ReviewQueueItem[];
   sources: CameraSource[];
   streams: Stream[];
   onOpenEvent: (eventId: string) => void;
@@ -49,13 +46,6 @@ interface BirdLogEntry {
 
 function targetKey(targetType: string, targetId: string): string {
   return `${targetType}:${targetId}`;
-}
-
-function reviewQueueTarget(item: ReviewQueueItem): { targetType: BirdLogTargetType; targetId: string } {
-  if (item.visit_id) {
-    return { targetType: "visit", targetId: item.visit_id };
-  }
-  return { targetType: "event", targetId: item.event_id ?? item.id.replace(/^review-queue-/, "") };
 }
 
 function latestLabelsByTarget(labels: ReviewLabel[]): ReviewLabel[] {
@@ -97,23 +87,6 @@ function streamSourceName(
   }
   const stream = streams.find((item) => item.id === streamId);
   return sources.find((source) => source.id === stream?.source_id)?.name ?? "Unknown camera";
-}
-
-function streamName(streamId: string, streams: Stream[]): string {
-  return streams.find((stream) => stream.id === streamId)?.name ?? "Unknown stream";
-}
-
-function zoneName(zoneId: string | null | undefined, zonesByStream: Record<string, Zone[]>): string | null {
-  if (!zoneId) {
-    return null;
-  }
-  for (const zones of Object.values(zonesByStream)) {
-    const zone = zones.find((item) => item.id === zoneId);
-    if (zone) {
-      return zone.name;
-    }
-  }
-  return formatLabel(zoneId);
 }
 
 function reviewedEntryFromVisit(
@@ -176,29 +149,6 @@ function fallbackReviewedEntry(
   };
 }
 
-function needsReviewEntry(
-  item: ReviewQueueItem,
-  streams: Stream[],
-  sources: CameraSource[],
-  zonesByStream: Record<string, Zone[]>,
-): BirdLogEntry {
-  const target = reviewQueueTarget(item);
-  return {
-    id: `needs-review-${item.id}`,
-    status: "needs_review",
-    label: item.suggested_label ?? "Unknown activity",
-    suggestedLabel: item.suggested_label,
-    title: item.title,
-    timestamp: item.media_asset?.created_at ?? null,
-    sourceName: streamSourceName(item.stream_id, streams, sources, item.media_asset),
-    streamName: streamName(item.stream_id, streams),
-    zoneName: zoneName(item.primary_zone_id, zonesByStream),
-    mediaAsset: item.media_asset,
-    targetType: target.targetType,
-    targetId: target.targetId,
-  };
-}
-
 function dateBucket(timestamp?: string | null): string {
   if (!timestamp) {
     return "Unknown date";
@@ -238,7 +188,6 @@ function entrySearchText(entry: BirdLogEntry): string {
 }
 
 export function BirdLogPage({
-  reviewQueue,
   sources,
   streams,
   onOpenEvent,
@@ -249,37 +198,11 @@ export function BirdLogPage({
   onOpenExports,
 }: BirdLogPageProps) {
   const [reviewedEntries, setReviewedEntries] = useState<BirdLogEntry[]>([]);
-  const [zonesByStream, setZonesByStream] = useState<Record<string, Zone[]>>({});
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<BirdLogStatusFilter>("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadZones() {
-      try {
-        const entries = await Promise.all(
-          streams.map(async (stream) => [stream.id, await apiClient.getStreamZones(stream.id)] as const),
-        );
-        if (isMounted) {
-          setZonesByStream(Object.fromEntries(entries));
-        }
-      } catch {
-        if (isMounted) {
-          setZonesByStream({});
-        }
-      }
-    }
-
-    void loadZones();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [streams]);
 
   useEffect(() => {
     let isMounted = true;
@@ -336,18 +259,10 @@ export function BirdLogPage({
   }, [sources, streams]);
 
   const entries = useMemo(() => {
-    const reviewedKeys = new Set(
-      reviewedEntries.map((entry) => targetKey(entry.targetType, entry.targetId)),
-    );
-    const needsReviewEntries = reviewQueue
-      .filter((item) => item.review_status === "needs_review")
-      .map((item) => needsReviewEntry(item, streams, sources, zonesByStream))
-      .filter((entry) => !reviewedKeys.has(targetKey(entry.targetType, entry.targetId)));
-
-    return [...reviewedEntries, ...needsReviewEntries].sort((left, right) =>
+    return [...reviewedEntries].sort((left, right) =>
       compareDates(right.timestamp, left.timestamp),
     );
-  }, [reviewQueue, reviewedEntries, sources, streams, zonesByStream]);
+  }, [reviewedEntries]);
 
   const sourceOptions = useMemo(
     () =>
@@ -377,17 +292,15 @@ export function BirdLogPage({
   }, [filteredEntries]);
 
   const reviewedCount = entries.filter((entry) => entry.status === "reviewed").length;
-  const needsReviewCount = entries.filter((entry) => entry.status === "needs_review").length;
   const uniqueLabels = new Set(entries.map((entry) => entry.label.trim()).filter(Boolean));
   const latestReviewed = entries.find((entry) => entry.status === "reviewed") ?? null;
-  const hasOnlyNeedsReview = reviewedCount === 0 && needsReviewCount > 0;
 
   return (
     <div className="page-stack">
       <PageHeader
         eyebrow="Reviewed activity history"
         title="Bird Log"
-        description="A local history of reviewed and needs-review bird or outdoor activity from captured snapshots, imports, and corrections."
+        description="A local history of reviewed bird or outdoor activity created by user corrections."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenReview}>
@@ -408,10 +321,6 @@ export function BirdLogPage({
           <strong>{reviewedCount}</strong>
         </div>
         <div className="bird-log-summary-card">
-          <span>Needs review</span>
-          <strong>{needsReviewCount}</strong>
-        </div>
-        <div className="bird-log-summary-card">
           <span>Unique labels</span>
           <strong>{uniqueLabels.size}</strong>
         </div>
@@ -421,16 +330,6 @@ export function BirdLogPage({
           {latestReviewed?.timestamp ? <small>{formatDateTime(latestReviewed.timestamp)}</small> : null}
         </div>
       </section>
-
-      {hasOnlyNeedsReview ? (
-        <section className="notice-panel">
-          <strong>Review will build the Bird Log</strong>
-          <span>
-            Needs-review items are visible now. Correcting them in Review turns them into reviewed
-            observations for history and export.
-          </span>
-        </section>
-      ) : null}
 
       <section className="panel bird-log-filter-panel">
         <label>
@@ -449,7 +348,6 @@ export function BirdLogPage({
           >
             <option value="all">All</option>
             <option value="reviewed">Reviewed</option>
-            <option value="needs_review">Needs review</option>
           </select>
         </label>
         <label>
@@ -513,15 +411,10 @@ export function BirdLogPage({
                     <div className="bird-log-entry-body">
                       <div className="item-title-row">
                         <div>
-                          <span className="meta-text">
-                            {entry.status === "reviewed" ? "Reviewed" : "Needs review"}
-                          </span>
+                          <span className="meta-text">Reviewed</span>
                           <h3>{formatLabel(entry.label)}</h3>
                         </div>
-                        <StatusPill
-                          label={entry.status === "reviewed" ? "Reviewed" : "Needs review"}
-                          tone={entry.status === "reviewed" ? "good" : "review"}
-                        />
+                        <StatusPill label="Reviewed" tone="good" />
                       </div>
                       <p>{entry.title}</p>
                       <div className="source-connection-meta">
@@ -533,32 +426,24 @@ export function BirdLogPage({
                         {entry.zoneName ? <span>Zone: {entry.zoneName}</span> : null}
                       </div>
                       <div className="bird-log-label-row">
-                        <span>
-                          {entry.status === "reviewed" ? "Corrected label" : "Suggested label"}
-                        </span>
+                        <span>Corrected label</span>
                         <strong>{formatLabel(entry.label)}</strong>
-                        {entry.suggestedLabel && entry.status === "reviewed" ? (
+                        {entry.suggestedLabel ? (
                           <small>Suggested: {formatLabel(entry.suggestedLabel)}</small>
                         ) : null}
                       </div>
                       <div className="detail-actions">
-                        {entry.status === "needs_review" ? (
-                          <button className="primary-action" onClick={onOpenReview} type="button">
-                            Review item
-                          </button>
-                        ) : (
-                          <button
-                            className="secondary-action"
-                            onClick={() =>
-                              entry.targetType === "visit"
-                                ? onOpenVisit(entry.targetId)
-                                : onOpenEvent(entry.targetId)
-                            }
-                            type="button"
-                          >
-                            View reviewed result
-                          </button>
-                        )}
+                        <button
+                          className="secondary-action"
+                          onClick={() =>
+                            entry.targetType === "visit"
+                              ? onOpenVisit(entry.targetId)
+                              : onOpenEvent(entry.targetId)
+                          }
+                          type="button"
+                        >
+                          View reviewed result
+                        </button>
                         {entry.mediaAsset ? (
                           <a
                             className="inline-link"
@@ -569,11 +454,9 @@ export function BirdLogPage({
                             View source image
                           </a>
                         ) : null}
-                        {entry.status === "reviewed" ? (
-                          <button className="secondary-action" onClick={onOpenExports} type="button">
-                            Export reviewed data
-                          </button>
-                        ) : null}
+                        <button className="secondary-action" onClick={onOpenExports} type="button">
+                          Export reviewed data
+                        </button>
                       </div>
                     </div>
                   </article>

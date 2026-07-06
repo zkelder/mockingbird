@@ -37,7 +37,7 @@ transcoding, or production provider infrastructure.
   image without creating truth or exports.
 - MockingBird-served Live view can run page-started live monitoring that compares
   recent live frames, saves the best activity frame as evidence, and offers an
-  explicit review handoff without creating truth or exports.
+  explicit low-confidence Review Queue handoff without creating truth or exports.
 - The `external_url` still-image preview/save/evidence path works.
 - Manual bounded Snapshot watch works for `external_url` while the page is open.
 - The `folder_import_future` preview/import/evidence path works.
@@ -227,6 +227,8 @@ Dataset Exports.
 - [ ] Move in front of the camera or move an object in frame.
 - [ ] Confirm activity is detected, the best live frame is saved, and review
       activity remains an explicit handoff.
+- [ ] Click `Create review activity` and confirm Review Queue shows an
+      uncertain needs-review activity with the saved best frame.
 - [ ] Confirm Bird Log does not update until later review/correction.
 - [ ] Click `Stop monitoring` and confirm Live view can remain open.
 - [ ] From a local camera Live view, click `Capture frame`.
@@ -263,8 +265,8 @@ Dataset Exports.
 - [ ] Confirm Last checked, Last snapshot, snapshots saved, motion checks, and
       Last activity update over time.
 - [ ] If user-zone-backed activity appears, confirm `Create review activity`
-      is available, click it, and confirm `Review activity` opens the review
-      context without creating reviewed truth.
+      is available, click it, and confirm `Open Review Queue` shows an
+      unknown/low-confidence activity without creating reviewed truth.
 - [ ] If automatic activity areas appear without a named Zone, confirm the UI
       explains that review activity creation needs a named Zone in this build.
 - [ ] Choose Feeder, Birdbath, Ground, Yard, Driveway, Ignore, Privacy, or
@@ -300,8 +302,8 @@ Dataset Exports.
 - [ ] If no Zones exist, confirm automatic activity areas are used.
 - [ ] Confirm automatic activity areas are motion-only; do not run model analysis
       per activity area.
-- [ ] If activity is detected and review activity is available, click `Create review activity`, then `Review activity`.
-- [ ] Confirm no reviewed data is created until a later correction.
+- [ ] If activity is detected and review activity is available, click `Create review activity`, then `Open Review Queue`.
+- [ ] Confirm no reviewed data or Bird Log history is created until a later correction.
 - [ ] Confirm no capture starts before explicit Start watch, and Live view does
       not start monitoring or review activity.
 - [ ] Confirm Snapshot watch starts only after explicit Start watch and stops at
@@ -400,8 +402,8 @@ create proposal evidence only.
 - [ ] If no Zones exist, confirm automatic activity areas are used.
 - [ ] Confirm model analysis remains separate and is not run per automatic
       activity area.
-- [ ] If activity is detected and review activity is available, create and
-      review the activity before correction.
+- [ ] If activity is detected and review activity is available, create the
+      uncertain Review Queue activity before correction.
 - [ ] Confirm image status is visible before analyzing.
 - [ ] Confirm local detector readiness and analyze only if configured.
 - [ ] Otherwise use `Analyze image (demo)`.

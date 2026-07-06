@@ -28,6 +28,7 @@ interface StreamDetailPageProps {
   onOpenExports: () => void;
   onOpenReview: () => void;
   onOpenMotionEvidence: (motionEvidenceId: string) => void;
+  onReviewActivityCreated: () => Promise<void>;
 }
 
 interface StreamDetailState {
@@ -220,6 +221,7 @@ export function StreamDetailPage({
   onOpenExports,
   onOpenReview,
   onOpenMotionEvidence,
+  onReviewActivityCreated,
 }: StreamDetailPageProps) {
   const [detail, setDetail] = useState<StreamDetailState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -495,6 +497,9 @@ export function StreamDetailPage({
       setLiveMonitorState(liveMonitorStateFor(result));
       if (result.best_media_asset_id) {
         await refreshSavedImages();
+      }
+      if (createReviewActivity && result.review_queue_item_id) {
+        await onReviewActivityCreated();
       }
       if (result.activity_detected && !createReviewActivity) {
         clearLiveMonitorInterval();
@@ -810,7 +815,11 @@ export function StreamDetailPage({
     ? "Compare captured frames"
     : "Capture another frame to check motion";
   const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
-  const liveMotionCreatedEvidence = liveMotionResult?.created_evidence[0] ?? null;
+  const liveReviewQueueItemId = liveMotionResult?.review_queue_item_id ?? null;
+  const hasLocalLiveReviewQueueItem = Boolean(
+    liveReviewQueueItemId && !streamReviewItems.some((item) => item.id === liveReviewQueueItemId),
+  );
+  const streamReviewCount = streamReviewItems.length + (hasLocalLiveReviewQueueItem ? 1 : 0);
   const canCreateLiveReviewActivity = Boolean(
     liveMotionResult?.activity_detected &&
       liveMotionResult.review_activity_available &&
@@ -848,16 +857,16 @@ export function StreamDetailPage({
           </p>
         </div>
         <div className="detail-actions">
-          {streamReviewItems.length > 0 ? (
+          {streamReviewCount > 0 ? (
             <button className="secondary-action" onClick={onOpenReview}>
-              Review {streamReviewItems.length}
+              Review {streamReviewCount}
             </button>
           ) : null}
           <button className="secondary-action" onClick={onOpenExports}>
             Dataset Exports
           </button>
-          {streamReviewItems.length > 0 ? (
-            <StatusPill label={`${streamReviewItems.length} needs review`} tone="review" />
+          {streamReviewCount > 0 ? (
+            <StatusPill label={`${streamReviewCount} needs review`} tone="review" />
           ) : (
             <StatusPill label="Review clear" tone="good" />
           )}
@@ -971,7 +980,7 @@ export function StreamDetailPage({
                   "Monitoring compares recent live frames from this stream."}
               </span>
               <span>
-                Captured frames are saved evidence. Bird Log updates after reviewed activity.
+                Captured frames are saved evidence. Bird Log updates after review.
               </span>
               {liveMotionResult?.strongest_activity_area_label ? (
                 <span>Activity area: {liveMotionResult.strongest_activity_area_label}</span>
@@ -995,16 +1004,7 @@ export function StreamDetailPage({
                     {isCreatingLiveReviewActivity ? "Creating..." : "Create review activity"}
                   </button>
                 ) : null}
-                {liveMotionCreatedEvidence ? (
-                  <button
-                    className="secondary-action"
-                    onClick={() => onOpenMotionEvidence(liveMotionCreatedEvidence.id)}
-                    type="button"
-                  >
-                    Open review activity
-                  </button>
-                ) : null}
-                {streamReviewItems.length > 0 ? (
+                {liveReviewQueueItemId || streamReviewCount > 0 ? (
                   <button className="secondary-action" onClick={onOpenReview} type="button">
                     Open Review Queue
                   </button>
@@ -1058,7 +1058,7 @@ export function StreamDetailPage({
                     >
                       {isCheckingMotion ? "Comparing..." : motionActionLabel}
                     </button>
-                    {streamReviewItems.length > 0 ? (
+                    {streamReviewCount > 0 ? (
                       <button className="secondary-action" onClick={onOpenReview} type="button">
                         Open Review Queue
                       </button>
@@ -1386,8 +1386,14 @@ export function StreamDetailPage({
             <h2>Review hints</h2>
           </div>
           <div className="list-stack">
-            {streamReviewItems.length > 0 ? (
+            {streamReviewCount > 0 ? (
               <>
+                {hasLocalLiveReviewQueueItem ? (
+                  <div className="queue-mini">
+                    <strong>Live motion activity</strong>
+                    <span>Needs review. Bird Log updates after correction.</span>
+                  </div>
+                ) : null}
                 {streamReviewItems.map((item) => (
                   <div className="queue-mini" key={item.id}>
                     <strong>{item.title}</strong>
