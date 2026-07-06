@@ -2371,10 +2371,46 @@ a.secondary-action {
   pointer-events: none;
 }
 
+.stream-live-zone-surface.is-hidden {
+  display: none;
+}
+
 .stream-live-zone-surface .zone-shape,
 .stream-live-zone-surface .live-zone-label,
 .stream-live-zone-surface.draw-mode {
   pointer-events: auto;
+}
+
+.stream-live-zone-surface .zone-shape {
+  fill-opacity: 0.38;
+  filter: none;
+  stroke-opacity: 0.72;
+  stroke-width: 1;
+}
+
+.stream-live-zone-surface .zone-selected {
+  fill-opacity: 0.58;
+  filter: none;
+  stroke-opacity: 0.95;
+  stroke-width: 1.6;
+}
+
+.stream-live-zone-surface.draw-mode .zone-shape {
+  fill-opacity: 0.64;
+  stroke-opacity: 0.95;
+  stroke-width: 1.7;
+}
+
+.stream-live-zone-surface .zone-privacy,
+.stream-live-zone-surface .zone-ignore {
+  fill-opacity: 0.34;
+  stroke-opacity: 0.78;
+}
+
+.stream-live-zone-surface .zone-privacy.zone-selected,
+.stream-live-zone-surface .zone-ignore.zone-selected {
+  fill-opacity: 0.48;
+  stroke-opacity: 0.95;
 }
 
 .stream-live-zone-surface.draw-mode .zone-shape {
@@ -2634,6 +2670,13 @@ a.secondary-action {
   stroke-dasharray: 3 2;
 }
 
+.stream-live-zone-surface .zone-draft,
+.stream-live-zone-surface.draw-mode .zone-draft {
+  fill: rgb(255 255 255 / 0.18);
+  stroke-opacity: 1;
+  stroke-width: 1.8;
+}
+
 .zone-label {
   position: absolute;
   z-index: 1;
@@ -2653,7 +2696,16 @@ a.secondary-action {
 }
 
 .live-zone-label {
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.28);
+  translate: -50% 0;
+  max-width: min(112px, 36%);
+  border: 1px solid rgb(255 255 255 / 0.24);
+  padding: 3px 7px;
+  background: rgb(7 12 10 / 0.58);
+  color: #f1f7f2;
+  box-shadow: none;
+  font-size: 0.72rem;
+  line-height: 1.1;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.55);
 }
 
 .zone-label-privacy,
@@ -2677,6 +2729,34 @@ a.secondary-action {
 
 .zone-label-inactive {
   opacity: 0.65;
+}
+
+.stream-live-zone-surface.draw-mode .live-zone-label,
+.live-zone-label.zone-label-selected {
+  max-width: min(150px, 42%);
+  border-color: rgb(255 255 255 / 0.7);
+  padding: 4px 8px;
+  background: rgb(255 255 255 / 0.88);
+  color: #203126;
+  outline: 1px solid rgb(32 49 38 / 0.72);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.24);
+  text-shadow: none;
+}
+
+.live-zone-label.zone-label-privacy {
+  background: rgb(80 72 132 / 0.56);
+  color: #ffffff;
+}
+
+.live-zone-label.zone-label-ignore {
+  background: rgb(163 73 63 / 0.54);
+  color: #ffffff;
+}
+
+.live-zone-label.zone-label-selected.zone-label-privacy,
+.live-zone-label.zone-label-selected.zone-label-ignore {
+  background: rgb(255 255 255 / 0.88);
+  color: #203126;
 }
 
 .stream-panel-footer {

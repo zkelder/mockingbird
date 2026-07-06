@@ -180,16 +180,24 @@ function polygonPoints(points: Point[]): string {
   return points.map((point) => `${point.x * 100},${point.y * 100}`).join(" ");
 }
 
-function zoneCenter(zone: Zone): Point {
-  const total = zone.polygon.reduce(
-    (sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }),
-    { x: 0, y: 0 },
-  );
+function zoneLabelAnchor(zone: Zone): Point {
+  if (!zone.polygon.length) {
+    return { x: 0.5, y: 0.5 };
+  }
+
+  const minX = Math.min(...zone.polygon.map((point) => point.x));
+  const maxX = Math.max(...zone.polygon.map((point) => point.x));
+  const minY = Math.min(...zone.polygon.map((point) => point.y));
+  const labelX = minX + (maxX - minX) / 2;
 
   return {
-    x: total.x / zone.polygon.length,
-    y: total.y / zone.polygon.length,
+    x: Math.min(0.78, Math.max(0.22, labelX)),
+    y: Math.min(0.92, Math.max(0.03, minY + 0.02)),
   };
+}
+
+function liveZoneLabel(zone: Zone, expanded: boolean): string {
+  return expanded ? zone.name : formatLabel(zone.zone_type);
 }
 
 function pointFromPointer(event: ReactPointerEvent<HTMLElement>): Point {
@@ -307,6 +315,7 @@ export function StreamDetailPage({
   const [liveViewReloadToken, setLiveViewReloadToken] = useState(0);
   const [liveViewError, setLiveViewError] = useState<string | null>(null);
   const [liveMediaSize, setLiveMediaSize] = useState<MediaRenderSize | null>(null);
+  const [showLiveZones, setShowLiveZones] = useState(true);
   const [captureResult, setCaptureResult] = useState<LocalCameraFrameCaptureResponse | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [isCapturingFrame, setIsCapturingFrame] = useState(false);
@@ -352,6 +361,7 @@ export function StreamDetailPage({
       setLiveViewReloadToken(0);
       setLiveViewError(null);
       setLiveMediaSize(null);
+      setShowLiveZones(true);
       setCaptureResult(null);
       setCaptureError(null);
       setIsCapturingFrame(false);
@@ -735,9 +745,15 @@ export function StreamDetailPage({
   }
 
   function startDrawMode() {
-    if (detail && hasRealLivePlayback(detail.playback) && !liveViewOpen) {
-      setZoneError("Open Live view to draw zones on the camera stream.");
-      return;
+    if (detail && hasRealLivePlayback(detail.playback)) {
+      if (!liveViewOpen) {
+        setZoneError("Open Live view to draw zones on the camera stream.");
+        return;
+      }
+      if (liveViewState !== "streaming") {
+        setZoneError("Wait for the live stream to start before drawing zones.");
+        return;
+      }
     }
     setDrawMode(true);
     setDraftPolygon(null);
@@ -990,6 +1006,13 @@ export function StreamDetailPage({
                 ? "Opening live view..."
                 : "Open Live view to draw zones on the camera stream.";
   const liveOverlayStyle = containedMediaRectStyle(liveMediaSize);
+  const livePlaybackNeedsAttention =
+    liveViewOpen &&
+    (liveViewState === "opening" ||
+      liveViewState === "failed" ||
+      liveViewState === "no_frames" ||
+      Boolean(liveViewError));
+  const liveZonesVisible = (showLiveZones || drawMode) && !livePlaybackNeedsAttention;
   const activeZoneCount = detail.zones.filter((zone) => zone.is_active).length;
 
   return (
@@ -1113,11 +1136,24 @@ export function StreamDetailPage({
               )}
               <button
                 className={drawMode ? "primary-action" : "secondary-action"}
-                disabled={!liveViewOpen || isSavingZone}
+                disabled={
+                  drawMode
+                    ? isSavingZone
+                    : !liveViewOpen || liveViewState !== "streaming" || isSavingZone
+                }
                 onClick={drawMode ? cancelDrawMode : startDrawMode}
                 type="button"
               >
                 {drawMode ? "Cancel draw" : "Draw new zone"}
+              </button>
+              <button
+                aria-pressed={showLiveZones}
+                className="secondary-action"
+                disabled={drawMode || !detail.zones.length}
+                onClick={() => setShowLiveZones((current) => !current)}
+                type="button"
+              >
+                {showLiveZones ? "Hide zones" : "Show zones"}
               </button>
             </div>
           )}
@@ -1187,7 +1223,9 @@ export function StreamDetailPage({
               )}
             </div>
             <div
-              className={`stream-live-zone-surface${drawMode ? " draw-mode" : ""}`}
+              className={`stream-live-zone-surface${drawMode ? " draw-mode" : ""}${
+                liveZonesVisible ? "" : " is-hidden"
+              }`}
               style={liveOverlayStyle}
               onPointerDown={handleLiveDrawStart}
               onPointerMove={handleLiveDrawMove}
@@ -1228,7 +1266,8 @@ export function StreamDetailPage({
                 ) : null}
               </svg>
               {detail.zones.map((zone) => {
-                const center = zoneCenter(zone);
+                const anchor = zoneLabelAnchor(zone);
+                const expandedLabel = drawMode || selectedZoneId === zone.id;
                 return (
                   <button
                     className={`zone-label live-zone-label zone-label-${zone.zone_type}${
@@ -1236,14 +1275,15 @@ export function StreamDetailPage({
                     }${zone.is_active ? "" : " zone-label-inactive"}`}
                     key={zone.id}
                     type="button"
-                    style={{ left: `${center.x * 100}%`, top: `${center.y * 100}%` }}
+                    style={{ left: `${anchor.x * 100}%`, top: `${anchor.y * 100}%` }}
+                    title={`${zone.name} (${formatLabel(zone.zone_type)})`}
                     onClick={() => {
                       if (!drawMode) {
                         setSelectedZoneId(zone.id);
                       }
                     }}
                   >
-                    {zone.name}
+                    {liveZoneLabel(zone, expandedLabel)}
                   </button>
                 );
               })}
