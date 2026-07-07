@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { apiClient } from "../api/client";
 import type { MediaAsset } from "../api/types";
 import { formatDateTime } from "../utils";
@@ -6,6 +6,7 @@ import { formatDateTime } from "../utils";
 interface MediaAssetPreviewProps {
   asset: MediaAsset;
   compact?: boolean;
+  surfaceOverlay?: ReactNode;
 }
 
 function formatBytes(bytes: number): string {
@@ -21,7 +22,11 @@ function formatBytes(bytes: number): string {
   return `${(kib / 1024).toFixed(1)} MiB`;
 }
 
-export function MediaAssetPreview({ asset, compact = false }: MediaAssetPreviewProps) {
+export function MediaAssetPreview({
+  asset,
+  compact = false,
+  surfaceOverlay,
+}: MediaAssetPreviewProps) {
   const [previewFailed, setPreviewFailed] = useState(false);
   const fileUrl = apiClient.mediaFileUrl(asset.id);
   const canPreview = !previewFailed && (asset.media_type === "image" || asset.media_type === "video");
@@ -49,6 +54,7 @@ export function MediaAssetPreview({ asset, compact = false }: MediaAssetPreviewP
             <span>{asset.local_path}</span>
           </div>
         )}
+        {surfaceOverlay}
       </div>
       <div className="media-preview-meta">
         <strong>{asset.original_filename}</strong>

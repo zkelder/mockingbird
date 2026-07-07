@@ -1,6 +1,6 @@
 import pytest
 
-from mockingbird.motion.activity_crop import plan_activity_crop
+from mockingbird.motion.activity_crop import plan_activity_crop, plan_activity_crop_bounds
 
 
 def test_activity_crop_pads_and_clamps_to_image_bounds() -> None:
@@ -55,3 +55,19 @@ def test_activity_crop_invalid_bounds_fall_back_to_full_frame() -> None:
     assert plan.crop_box_pixels.top == 0
     assert plan.crop_box_pixels.right == 12
     assert plan.crop_box_pixels.bottom == 8
+
+
+def test_activity_crop_bounds_plan_without_frame_dimensions() -> None:
+    plan = plan_activity_crop_bounds(
+        left=0.36,
+        top=0.24,
+        right=0.64,
+        bottom=0.56,
+    )
+
+    assert plan.is_full_frame_fallback is False
+    assert plan.crop_box_normalized.left == pytest.approx(0.22)
+    assert plan.crop_box_normalized.top == pytest.approx(0.08)
+    assert plan.crop_box_normalized.right == pytest.approx(0.78)
+    assert plan.crop_box_normalized.bottom == pytest.approx(0.72)
+    assert plan.warning is None
