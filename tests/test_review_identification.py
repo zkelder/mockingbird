@@ -7,6 +7,7 @@ from mockingbird.api.main import app, configure_repository
 from mockingbird.detectors.local_image_detector import (
     LOCAL_IMAGE_DETECTOR_ID,
     LocalDetectorBox,
+    LocalDetectorOutputError,
     LocalDetectorProposal,
     LocalDetectorStatus,
 )
@@ -59,6 +60,23 @@ async def import_review_image(client: httpx.AsyncClient, *, title: str = "Review
             "notes": "Local image for Review Queue identification assist.",
         },
         files={"file": ("review-assist.png", b"review assist image bytes", "image/png")},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+async def import_review_video(client: httpx.AsyncClient, *, title: str = "Review assist video"):
+    response = await client.post(
+        "/api/media/import",
+        data={
+            "stream_id": STREAM_ID,
+            "zone_id": FEEDER_ZONE_ID,
+            "title": title,
+            "subject_label": "unknown_bird",
+            "species_guess": "unknown_bird",
+            "notes": "Unsupported video media for Review Queue identification assist.",
+        },
+        files={"file": ("review-assist.mp4", b"review assist video bytes", "video/mp4")},
     )
     assert response.status_code == 201
     return response.json()
@@ -131,7 +149,12 @@ async def test_review_identification_setup_required_without_adapter_creates_no_t
     assert identification["status"] == "setup_required"
     assert identification["adapter_id"] == LOCAL_IMAGE_DETECTOR_ID
     assert identification["can_run"] is False
+    assert identification["can_run_on_best_frame"] is False
     assert identification["creates_truth"] is False
+    assert identification["local_only"] is True
+    assert "image/png" in identification["supported_media_types"]
+    assert "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH" in identification["setup_hint"]
+    assert "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH" in identification["unavailable_reason"]
 
     response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
 
@@ -139,11 +162,40 @@ async def test_review_identification_setup_required_without_adapter_creates_no_t
     result = response.json()
     assert result["identification"]["status"] == "setup_required"
     assert result["identification"]["can_run"] is False
+    assert result["identification"]["created_proposal_ids"] == []
+    assert result["created_proposal_ids"] == []
     assert result["proposals"] == []
     assert result["detection_run"] is None
     assert result["creates_truth"] is False
     assert result["creates_export"] is False
     assert result["creates_review_label"] is False
+    assert await truth_snapshot(client) == before_truth
+    assert await detector_counts(client) == before_detection
+
+
+async def test_review_identification_unsupported_best_frame_returns_clean_state(
+    client: httpx.AsyncClient,
+) -> None:
+    imported = await import_review_video(client)
+    visit_id = imported["visit"]["id"]
+    before_truth = await truth_snapshot(client)
+    before_detection = await detector_counts(client)
+
+    queue_item = await review_queue_item_for_visit(client, visit_id)
+    identification = queue_item["identification"]
+    assert identification["status"] == "unsupported_media"
+    assert identification["can_run_on_best_frame"] is False
+    assert identification["unavailable_reason"] == "unsupported_media_type:video/mp4"
+
+    response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["identification"]["status"] == "unsupported_media"
+    assert result["identification"]["can_run"] is False
+    assert result["proposals"] == []
+    assert result["detection_run"] is None
+    assert result["creates_truth"] is False
     assert await truth_snapshot(client) == before_truth
     assert await detector_counts(client) == before_detection
 
@@ -184,6 +236,7 @@ async def test_review_identification_species_suggestion_summary_reuses_pending_s
     assert identification["suggestion"]["suggested_label"] == "blue_jay"
     assert identification["suggestion_count"] == 1
     assert identification["proposal_count"] == 0
+    assert identification["can_run_on_best_frame"] is False
     assert identification["creates_truth"] is False
     assert await truth_snapshot(client) == before_truth
 
@@ -212,12 +265,19 @@ async def test_review_identification_explicit_demo_adapter_creates_placeholder_p
     assert result["identification"]["status"] == "proposal_created"
     assert result["identification"]["adapter_id"] == DEMO_ADAPTER_ID
     assert result["identification"]["adapter_is_demo"] is True
+    assert result["identification"]["local_only"] is True
+    assert result["identification"]["can_run_on_best_frame"] is True
+    assert result["identification"]["supported_media_types"] == ["image", "video"]
+    assert result["identification"]["created_proposal_ids"] == [proposal["id"]]
+    assert result["created_proposal_ids"] == [proposal["id"]]
+    assert "Placeholder analyzer" in result["identification"]["message"]
     assert result["detection_run"]["source"] == "demo_rule"
     assert proposal["media_asset_id"] == media_asset_id
     assert proposal["event_id"] is None
     assert proposal["visit_id"] is None
     assert proposal["status"] == "proposed"
     assert proposal["label"] == "unknown_bird"
+    assert proposal["confidence"] == 0
     assert result["creates_truth"] is False
     assert after_detection["detection_run_count"] == before_detection["detection_run_count"] + 1
     assert (
@@ -228,6 +288,7 @@ async def test_review_identification_explicit_demo_adapter_creates_placeholder_p
 
     refreshed_item = await review_queue_item_for_visit(client, visit_id)
     assert refreshed_item["identification"]["status"] == "proposal_present"
+    assert refreshed_item["identification"]["adapter_is_demo"] is True
     assert refreshed_item["identification"]["proposal"]["id"] == proposal["id"]
 
     export_response = await client.post(
@@ -261,9 +322,11 @@ async def test_review_identification_available_detection_adapter_then_correction
     before_truth = await truth_snapshot(client)
 
     queue_item = await review_queue_item_for_visit(client, visit_id)
-    assert queue_item["identification"]["status"] == "ready"
+    assert queue_item["identification"]["status"] == "configured_available"
     assert queue_item["identification"]["adapter_id"] == LOCAL_IMAGE_DETECTOR_ID
     assert queue_item["identification"]["can_run"] is True
+    assert queue_item["identification"]["can_run_on_best_frame"] is True
+    assert "image/png" in queue_item["identification"]["supported_media_types"]
 
     response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
 
@@ -272,6 +335,7 @@ async def test_review_identification_available_detection_adapter_then_correction
     proposal = result["proposals"][0]
     assert result["identification"]["status"] == "proposal_created"
     assert result["identification"]["adapter_id"] == LOCAL_IMAGE_DETECTOR_ID
+    assert result["identification"]["created_proposal_ids"] == [proposal["id"]]
     assert result["detection_run"]["source"] == "future_model"
     assert proposal["label"] == "bird"
     assert proposal["bbox"] == {"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.25}
@@ -300,3 +364,32 @@ async def test_review_identification_available_detection_adapter_then_correction
 
     corrected_queue = (await client.get("/api/review-queue")).json()
     assert all(item["visit_id"] != visit_id for item in corrected_queue)
+
+
+async def test_review_identification_adapter_failure_is_clean_and_truth_safe(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mark_local_detector_available(monkeypatch)
+
+    def fail_detector(**_: object) -> list[LocalDetectorProposal]:
+        raise LocalDetectorOutputError("local_detector_failed")
+
+    monkeypatch.setattr(product_repository, "run_local_image_detector", fail_detector)
+    imported = await import_review_image(client, title="Review assist failure image")
+    visit_id = imported["visit"]["id"]
+    before_truth = await truth_snapshot(client)
+    before_detection = await detector_counts(client)
+
+    response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["identification"]["status"] == "failed"
+    assert result["identification"]["unavailable_reason"] == "local_detector_failed"
+    assert result["proposals"] == []
+    assert result["detection_run"] is None
+    assert result["creates_truth"] is False
+    assert result["creates_review_label"] is False
+    assert await truth_snapshot(client) == before_truth
+    assert await detector_counts(client) == before_detection

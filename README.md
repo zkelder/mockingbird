@@ -155,10 +155,13 @@ confirmed or corrected; ReviewLabel truth and Bird Log history begin only after
 correction. Creating review activity uses the stored live activity and does not
 stop or restart the camera session.
 Review Queue candidates with best-frame media can also show identification assist
-status. If an optional analyzer is configured, the user can run it explicitly to
-create suggestion/proposal evidence; if not, the queue reports setup-required or
-unavailable state. Accepting an assist result still goes through ReviewLabel
-correction before Bird Log, analytics, or exports change.
+status. If an optional local analyzer is configured, the user can run it
+explicitly against the best frame to create suggestion/proposal evidence; no
+model files are bundled or downloaded. If setup is missing, unsupported, or a
+run fails, the queue reports that state without creating fake evidence. Demo
+analyzer output is marked as placeholder evidence, not real species confidence.
+Accepting an assist result still goes through ReviewLabel correction before Bird
+Log, analytics, or exports change.
 The live monitor refreshes Review Queue state before opening a created review
 item, and High sensitivity checks more recent frame pairs with lower
 feeder/birdbath/perch thresholds for small, fast outdoor activity.

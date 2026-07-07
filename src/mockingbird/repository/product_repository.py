@@ -4651,7 +4651,7 @@ class ProductRepository:
                             event_id=None,
                             visit_id=None,
                             label=normalized_label,
-                            confidence=0.62,
+                            confidence=0.0,
                             bbox_json=None,
                             suggested_event_type="animal_visit",
                             suggested_subject_label=suggested_subject_label,
@@ -4661,8 +4661,9 @@ class ProductRepository:
                                 payload.notes.strip()
                                 if payload.notes and payload.notes.strip()
                                 else (
-                                    "Model adapter contract generated proposal evidence; "
-                                    "review and correction remain required."
+                                    "Placeholder analyzer generated proposal evidence; "
+                                    "no model inspected media and no species confidence "
+                                    "was produced. Review and correction remain required."
                                 )
                             ),
                             created_at=created_at,
@@ -5544,8 +5545,8 @@ class ProductRepository:
         notes = _clean_optional_text(request.notes)
         if notes is None:
             notes = (
-                "Demo identification assist placeholder; no model inspected media. "
-                "Proposal evidence only."
+                "Demo identification assist placeholder analyzer; no model inspected "
+                "media, no species confidence, and proposal evidence only."
                 if adapter is not None and adapter.kind == ModelAdapterKind.demo
                 else "Review Queue identification assist run; proposal evidence only."
             )
@@ -5584,12 +5585,20 @@ class ProductRepository:
             )
 
         if run_result.proposals:
+            created_proposal_ids = [proposal.id for proposal in run_result.proposals]
+            created_suggestion_ids: list[str] = []
             outcome_summary = refreshed_summary.model_copy(
                 update={
                     "status": ReviewIdentificationStatus.proposal_created,
                     "message": (
-                        f"{len(run_result.proposals)} identification proposal"
-                        f"{'' if len(run_result.proposals) == 1 else 's'} created as evidence only."
+                        "Placeholder analyzer created demo proposal evidence. No species "
+                        "confidence, ReviewLabel, Bird Log entry, or export was created."
+                        if summary.adapter_is_demo
+                        else (
+                            f"{len(run_result.proposals)} identification proposal"
+                            f"{'' if len(run_result.proposals) == 1 else 's'} "
+                            "created as evidence only."
+                        )
                     ),
                     "proposal": run_result.proposals[0],
                     "proposal_count": max(
@@ -5601,8 +5610,14 @@ class ProductRepository:
                     "adapter_kind": summary.adapter_kind,
                     "adapter_status": summary.adapter_status,
                     "adapter_is_demo": summary.adapter_is_demo,
+                    "local_only": summary.local_only,
+                    "supported_media_types": summary.supported_media_types,
                     "can_run": summary.can_run,
+                    "can_run_on_best_frame": summary.can_run_on_best_frame,
                     "setup_hint": summary.setup_hint,
+                    "unavailable_reason": None,
+                    "created_suggestion_ids": created_suggestion_ids,
+                    "created_proposal_ids": created_proposal_ids,
                 }
             )
         else:
@@ -5620,8 +5635,14 @@ class ProductRepository:
                     "adapter_kind": summary.adapter_kind,
                     "adapter_status": summary.adapter_status,
                     "adapter_is_demo": summary.adapter_is_demo,
+                    "local_only": summary.local_only,
+                    "supported_media_types": summary.supported_media_types,
                     "can_run": summary.can_run,
+                    "can_run_on_best_frame": summary.can_run_on_best_frame,
                     "setup_hint": summary.setup_hint,
+                    "unavailable_reason": None,
+                    "created_suggestion_ids": [],
+                    "created_proposal_ids": [],
                 }
             )
 
@@ -5668,6 +5689,8 @@ class ProductRepository:
             proposals=proposals or [],
             species_suggestion=identification.suggestion,
             review_queue_item=review_queue_item,
+            created_suggestion_ids=identification.created_suggestion_ids,
+            created_proposal_ids=identification.created_proposal_ids,
             creates_truth=False,
             creates_export=False,
             creates_review_label=False,
@@ -5710,12 +5733,22 @@ class ProductRepository:
             if suggestion_models
             else None
         )
+        proposal_model = proposal_models[0] if proposal_models else None
         proposal = (
-            _detection_proposal_from_model(proposal_models[0])
-            if proposal_models
+            _detection_proposal_from_model(proposal_model)
+            if proposal_model is not None
             else None
         )
-        adapter = self._select_review_identification_adapter(
+        proposal_adapter = (
+            _model_adapter_for_detection_run(session.get(DetectionRunModel, proposal_model.run_id))
+            if proposal_model is not None
+            else None
+        )
+        adapter = (
+            None
+            if requested_adapter_id is not None
+            else proposal_adapter
+        ) or self._select_review_identification_adapter(
             requested_adapter_id=requested_adapter_id,
             media_asset_model=media_asset_model,
         )
@@ -5736,6 +5769,8 @@ class ProductRepository:
             if adapter is not None
             else None
         )
+        supported_media_types = list(adapter.supported_media_types) if adapter is not None else []
+        unavailable_reason: str | None = None
 
         if suggestion is not None:
             status = ReviewIdentificationStatus.suggestion_present
@@ -5751,31 +5786,47 @@ class ProductRepository:
             )
         elif normalized_media_asset_id is None:
             status = ReviewIdentificationStatus.no_best_frame
+            unavailable_reason = "missing_best_frame"
             message = "Add or save a best frame before running identification assist."
         elif adapter is None:
-            status = ReviewIdentificationStatus.unavailable
+            status = ReviewIdentificationStatus.unavailable_no_adapter
+            unavailable_reason = "no_adapter_registered"
             message = "No identification adapter is registered for Review Queue assist."
         elif not adapter_supports_media:
-            status = ReviewIdentificationStatus.unavailable
+            status = ReviewIdentificationStatus.unsupported_media
+            unavailable_reason = (
+                f"unsupported_media_type:{media_asset_model.content_type}"
+                if media_asset_model is not None
+                else "unsupported_media_type"
+            )
             message = (
                 f"{adapter.name} does not support this candidate media type. "
                 "No evidence or truth was created."
             )
         elif can_run:
-            status = ReviewIdentificationStatus.ready
+            status = ReviewIdentificationStatus.configured_available
             message = (
-                "Demo identification assist can create placeholder proposal evidence "
-                "without media inspection."
+                "Placeholder analyzer can create demo proposal evidence without media inspection."
                 if adapter.kind == ModelAdapterKind.demo
                 else f"{adapter.name} is ready to run on this best frame."
             )
         elif adapter.status == ModelAdapterStatus.not_configured:
             status = ReviewIdentificationStatus.setup_required
+            unavailable_reason = (
+                adapter.configuration_status.status_reason
+                if adapter.configuration_status is not None
+                else "adapter_not_configured"
+            )
             message = (
                 f"{adapter.name} needs local setup before identification assist can run."
             )
         else:
             status = ReviewIdentificationStatus.unavailable
+            unavailable_reason = (
+                adapter.configuration_status.status_reason
+                if adapter.configuration_status is not None
+                else "adapter_unavailable"
+            )
             message = f"{adapter.name} is unavailable for identification assist."
 
         return ReviewIdentificationSummary(
@@ -5787,12 +5838,18 @@ class ProductRepository:
             adapter_kind=adapter.kind if adapter is not None else None,
             adapter_status=adapter.status if adapter is not None else None,
             adapter_is_demo=adapter.kind == ModelAdapterKind.demo if adapter is not None else False,
+            local_only=adapter.local_only if adapter is not None else True,
+            supported_media_types=supported_media_types,
             can_run=can_run,
+            can_run_on_best_frame=can_run,
             setup_hint=setup_hint,
+            unavailable_reason=unavailable_reason,
             suggestion=suggestion,
             proposal=proposal,
             suggestion_count=len(suggestion_models),
             proposal_count=len(proposal_models),
+            created_suggestion_ids=[],
+            created_proposal_ids=[],
             creates_truth=False,
             creates_export=False,
         )
@@ -5927,21 +5984,44 @@ class ProductRepository:
         error: ValueError,
     ) -> ReviewIdentificationSummary:
         reason = str(error)
-        setup_errors = {"local_detector_not_configured", "megadetector_not_configured"}
-        status = (
-            ReviewIdentificationStatus.setup_required
-            if reason in setup_errors
-            else ReviewIdentificationStatus.unavailable
-        )
+        setup_errors = {
+            "local_detector_not_configured",
+            "megadetector_not_configured",
+            "megadetector_model_file_missing",
+        }
+        unsupported_errors = {
+            "local_detector_unsupported_media_type",
+            "megadetector_unsupported_media_type",
+            "unsupported_media_type",
+        }
+        failed_errors = {
+            "local_detector_failed",
+            "local_detector_runtime_unavailable",
+            "megadetector_runtime_unavailable",
+            "missing_media_file",
+            "unsupported_detector_output",
+        }
+        if reason in setup_errors:
+            status = ReviewIdentificationStatus.setup_required
+            message = "Identification setup is required before this candidate can be analyzed."
+        elif reason in unsupported_errors:
+            status = ReviewIdentificationStatus.unsupported_media
+            message = "Identification adapter does not support this best-frame media type."
+        elif reason in failed_errors:
+            status = ReviewIdentificationStatus.failed
+            message = "Identification adapter failed cleanly. No truth or export data was created."
+        else:
+            status = ReviewIdentificationStatus.failed
+            message = "Identification adapter could not analyze this candidate. No truth was created."
         return summary.model_copy(
             update={
                 "status": status,
                 "can_run": False,
-                "message": (
-                    "Identification adapter setup is required before this candidate can be analyzed."
-                    if status == ReviewIdentificationStatus.setup_required
-                    else "Identification adapter could not analyze this candidate. No truth was created."
-                ),
+                "can_run_on_best_frame": False,
+                "message": message,
+                "unavailable_reason": reason,
+                "created_suggestion_ids": [],
+                "created_proposal_ids": [],
             }
         )
 

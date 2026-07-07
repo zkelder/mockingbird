@@ -93,12 +93,18 @@ export type ReviewStatus = "needs_review" | "reviewed" | "rejected";
 export type ReviewIdentificationStatus =
   | "suggestion_present"
   | "proposal_present"
+  | "configured_available"
   | "ready"
   | "setup_required"
+  | "unavailable_no_adapter"
   | "unavailable"
+  | "unsupported_media"
   | "no_best_frame"
+  | "running"
+  | "suggestion_created"
   | "proposal_created"
-  | "no_proposal";
+  | "no_proposal"
+  | "failed";
 export type ExportStatus = "ready" | "building" | "failed";
 export type DetectionSource = "manual" | "demo_rule" | "future_model" | "integration";
 export type DetectionRunStatus = "pending" | "completed" | "failed";
@@ -1797,12 +1803,18 @@ export interface ReviewIdentificationSummary {
   adapter_kind?: ModelAdapterKind | null;
   adapter_status?: ModelAdapterStatus | null;
   adapter_is_demo: boolean;
+  local_only: boolean;
+  supported_media_types: string[];
   can_run: boolean;
+  can_run_on_best_frame: boolean;
   setup_hint?: string | null;
+  unavailable_reason?: string | null;
   suggestion?: SpeciesSuggestion | null;
   proposal?: DetectionProposal | null;
   suggestion_count: number;
   proposal_count: number;
+  created_suggestion_ids: string[];
+  created_proposal_ids: string[];
   creates_truth: boolean;
   creates_export: boolean;
 }
@@ -1898,6 +1910,8 @@ export interface ReviewIdentificationResponse {
   proposals: DetectionProposal[];
   species_suggestion?: SpeciesSuggestion | null;
   review_queue_item?: ReviewQueueItem | null;
+  created_suggestion_ids: string[];
+  created_proposal_ids: string[];
   creates_truth: boolean;
   creates_export: boolean;
   creates_review_label: boolean;

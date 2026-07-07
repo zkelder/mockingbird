@@ -221,14 +221,32 @@ function reviewIdentificationStatusTone(
   if (
     identification.status === "suggestion_present" ||
     identification.status === "proposal_present" ||
+    identification.status === "suggestion_created" ||
     identification.status === "proposal_created"
   ) {
     return "review";
   }
-  if (identification.status === "ready") {
+  if (identification.status === "configured_available" || identification.status === "ready") {
     return "good";
   }
   return "quiet";
+}
+
+function reviewIdentificationStatusLabel(identification: ReviewIdentificationSummary): string {
+  if (identification.status === "configured_available") {
+    return "Configured available";
+  }
+  if (identification.status === "unavailable_no_adapter") {
+    return "No adapter";
+  }
+  if (identification.status === "unsupported_media") {
+    return "Unsupported media";
+  }
+  return formatLabel(identification.status);
+}
+
+function reviewIdentificationCanRun(identification: ReviewIdentificationSummary): boolean {
+  return identification.can_run_on_best_frame || identification.can_run;
 }
 
 function reviewIdentificationLabelValues(items: ReviewQueueItem[]): string[] {
@@ -1414,6 +1432,29 @@ export function ReviewQueuePage({
     }
   }
 
+  async function rejectIdentificationProposal(item: ReviewQueueItem) {
+    const proposalId = item.identification?.proposal?.id;
+    if (!proposalId) {
+      return;
+    }
+    setIdentifyingId(item.id);
+    setMessage(null);
+    try {
+      await apiClient.decideDetectionProposal(proposalId, {
+        decision: "reject",
+        notes: "Rejected from Review Queue identification assist.",
+      });
+      const refreshedQueue = await apiClient.getReviewQueue();
+      setQueueItems(refreshedQueue);
+      await refreshDetectionEvidence();
+      setMessage("Proposal rejected as evidence. No review truth was created.");
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Proposal could not be rejected.");
+    } finally {
+      setIdentifyingId(null);
+    }
+  }
+
   return (
     <div className="page-stack">
       <PageHeader
@@ -1846,8 +1887,9 @@ export function ReviewQueuePage({
                 ) : null}
                 {identification ? (
                   <EvidenceBadge
-                    label={`Identification ${formatLabel(identification.status)}`}
+                    label={`Identification ${reviewIdentificationStatusLabel(identification)}`}
                     tone={
+                      identification.status === "configured_available" ||
                       identification.status === "ready" ||
                       identification.status === "proposal_present" ||
                       identification.status === "suggestion_present"
@@ -1982,6 +2024,7 @@ export function ReviewQueuePage({
                   }))
                 }
                 onRejectSuggestion={() => void rejectIdentificationSuggestion(item)}
+                onRejectProposal={() => void rejectIdentificationProposal(item)}
                 onRun={() => void runIdentificationAssist(item)}
                 taxonomyLabels={taxonomyLabels}
               />
@@ -2085,6 +2128,7 @@ function IdentificationAssistPanel({
   isBusy,
   onAcceptLabel,
   onFillLabel,
+  onRejectProposal,
   onRejectSuggestion,
   onRun,
   taxonomyLabels,
@@ -2093,6 +2137,7 @@ function IdentificationAssistPanel({
   isBusy: boolean;
   onAcceptLabel: (label: string, suggestionId?: string | null) => void;
   onFillLabel: (label: string) => void;
+  onRejectProposal: () => void;
   onRejectSuggestion: () => void;
   onRun: () => void;
   taxonomyLabels: TaxonomyLabel[];
@@ -2101,14 +2146,26 @@ function IdentificationAssistPanel({
     return null;
   }
 
+  const proposalIsRejected = identification.proposal?.status === "rejected";
   const suggestedLabel =
     identification.suggestion?.suggested_label ??
-    identification.proposal?.suggested_species ??
-    identification.proposal?.suggested_subject_label ??
-    identification.proposal?.label ??
+    (!proposalIsRejected
+      ? identification.proposal?.suggested_species ??
+        identification.proposal?.suggested_subject_label ??
+        identification.proposal?.label
+      : null) ??
     null;
   const confidence = reviewIdentificationConfidence(identification);
   const suggestionId = identification.suggestion?.id ?? null;
+  const proposalId =
+    identification.proposal && identification.proposal.status === "proposed"
+      ? identification.proposal.id
+      : null;
+  const canRun = reviewIdentificationCanRun(identification);
+  const supportedMediaCopy =
+    identification.supported_media_types.length > 0
+      ? identification.supported_media_types.join(", ")
+      : "n/a";
 
   return (
     <div className="review-identification-assist">
@@ -2120,20 +2177,36 @@ function IdentificationAssistPanel({
           </span>
         </div>
         <StatusPill
-          label={formatLabel(identification.status)}
+          label={reviewIdentificationStatusLabel(identification)}
           tone={reviewIdentificationStatusTone(identification)}
         />
       </div>
       <div className="review-identification-grid">
         <div className="data-row">
           <span>Adapter</span>
-          <strong>{identification.adapter_name ?? "No adapter"}</strong>
+          <strong>
+            {identification.adapter_name ??
+              (identification.status === "setup_required"
+                ? "Identification setup required"
+                : "No adapter")}
+          </strong>
           <small>
             {identification.adapter_is_demo
-              ? "Demo placeholder"
+              ? "Placeholder analyzer"
               : identification.adapter_status
-                ? formatLabel(identification.adapter_status)
+                ? `${formatLabel(identification.adapter_status)}${
+                    identification.local_only ? " / local" : ""
+                  }`
                 : "Unavailable"}
+          </small>
+        </div>
+        <div className="data-row">
+          <span>Best frame</span>
+          <strong>{identification.media_asset_id ?? "No best frame"}</strong>
+          <small>
+            {identification.can_run_on_best_frame
+              ? "Runnable media"
+              : identification.unavailable_reason ?? `Supports ${supportedMediaCopy}`}
           </small>
         </div>
         <div className="data-row">
@@ -2142,7 +2215,11 @@ function IdentificationAssistPanel({
             {suggestedLabel ? displayTaxonomyLabel(suggestedLabel, taxonomyLabels) : "No suggestion"}
           </strong>
           <small>
-            {confidence != null ? `${formatConfidence(confidence)} confidence. ` : ""}
+            {identification.adapter_is_demo
+              ? "Placeholder evidence; no species confidence. "
+              : confidence != null
+                ? `${formatConfidence(confidence)} confidence. `
+                : ""}
             {identification.suggestion_count} suggestion
             {identification.suggestion_count === 1 ? "" : "s"} /{" "}
             {identification.proposal_count} proposal
@@ -2151,27 +2228,35 @@ function IdentificationAssistPanel({
         </div>
         <div className="data-row">
           <span>Status</span>
-          <strong>{formatLabel(identification.status)}</strong>
+          <strong>{reviewIdentificationStatusLabel(identification)}</strong>
           <small>{identification.message}</small>
         </div>
         <div className="data-row">
           <span>Truth boundary</span>
           <strong>{identification.creates_truth ? "Creates truth" : "Evidence only"}</strong>
           <small>
-            {identification.setup_hint ??
-              "Accepting still creates a ReviewLabel through correction."}
+            {identification.status === "failed"
+              ? identification.unavailable_reason ?? "Failed cleanly"
+              : identification.setup_hint ??
+                "Accepting still creates a ReviewLabel through correction."}
           </small>
         </div>
       </div>
       <div className="review-identification-actions">
-        <button
-          className="secondary-action"
-          disabled={!identification.can_run || isBusy}
-          onClick={onRun}
-          type="button"
-        >
-          {isBusy ? "Running..." : identification.adapter_is_demo ? "Run demo assist" : "Run assist"}
-        </button>
+        {canRun ? (
+          <button
+            className="secondary-action"
+            disabled={isBusy}
+            onClick={onRun}
+            type="button"
+          >
+            {isBusy
+              ? "Running..."
+              : identification.adapter_is_demo
+                ? "Run demo placeholder"
+                : "Run identification"}
+          </button>
+        ) : null}
         {suggestedLabel ? (
           <>
             <button
@@ -2200,6 +2285,16 @@ function IdentificationAssistPanel({
             type="button"
           >
             Reject suggestion
+          </button>
+        ) : null}
+        {proposalId ? (
+          <button
+            className="secondary-action"
+            disabled={isBusy}
+            onClick={onRejectProposal}
+            type="button"
+          >
+            Reject proposal
           </button>
         ) : null}
       </div>

@@ -1112,6 +1112,11 @@ Current work:
   now summarize pending SpeciesSuggestion and DetectionProposal evidence, can run
   an explicitly available identification adapter, and keep accepting/correcting
   through ReviewLabel truth only.
+- Review Identification Adapter Quality 1: identification assist now reports
+  explicit adapter readiness/setup/unsupported/failed states, runs configured
+  optional local image adapters against review best frames, marks demo analyzer
+  output as placeholder evidence, and still creates no ReviewLabel, Bird Log,
+  export, or automatic truth.
 - Unattended Monitoring Review Handoff 1: Stream Detail can explicitly enable
   auto-created Review Queue candidates for completed live activity sessions
   after a quiet period. It reuses the existing needs-review Event/Visit handoff,
@@ -1155,9 +1160,10 @@ Validation:
   Bird Log history, analytics/export truth, and model output are not created
   automatically.
 - Identification assist can create or reuse suggestion/proposal evidence only.
-  Adapter unavailable/setup states are visible in Review Queue, demo paths are
-  labeled as placeholder evidence, and Bird Log/export truth still requires a
-  ReviewLabel correction.
+  Adapter setup-required, unsupported-media, unavailable, and failed states are
+  visible in Review Queue; optional local adapters require user configuration
+  and do not download or bundle models; demo paths are labeled as placeholder
+  evidence; and Bird Log/export truth still requires a ReviewLabel correction.
 - Unattended monitoring is user-enabled and defaults off. It may automatically
   create or reuse one needs-review Event/Visit candidate per completed live
   activity session after quiet/min-detection gates, but it does not create

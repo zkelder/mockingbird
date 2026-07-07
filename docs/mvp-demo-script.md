@@ -46,8 +46,9 @@ transcoding, or production provider infrastructure.
   truth still wait for explicit correction, and identification assist remains a
   later explicit review action.
 - Review Queue can show identification assist state on best-frame candidates:
-  setup-required/unavailable when no analyzer is configured, or suggestion/proposal
-  evidence when one is available or already present.
+  setup-required/unavailable/unsupported/failed when an optional local analyzer
+  cannot run, or suggestion/proposal evidence when one is available or already
+  present. Demo analyzer output is placeholder evidence only.
 - Stream Detail can draw and edit user-authored Zones directly over the real
   live stream, and monitoring uses those Zones when available.
 - The `external_url` still-image preview/save/evidence path works.
@@ -389,6 +390,10 @@ lifecycle status, but reuse is still user-triggered and evidence-only.
 Optional local detector runs require an explicit local model path, can use an
 optional labels path and confidence threshold, do not download models, and
 create proposal evidence only.
+Review Identification Assist uses those same optional local adapter boundaries:
+no model files are bundled or downloaded, setup-required and failed states are
+shown cleanly, demo analyzer output is placeholder evidence only, and Bird Log
+history still starts only after ReviewLabel correction.
 
 ## Step 1 - Dashboard MVP Readiness
 

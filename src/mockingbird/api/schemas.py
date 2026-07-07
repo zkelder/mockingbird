@@ -145,12 +145,18 @@ class ReviewQueueBulkCorrectionResultStatus(str, Enum):
 class ReviewIdentificationStatus(str, Enum):
     suggestion_present = "suggestion_present"
     proposal_present = "proposal_present"
+    configured_available = "configured_available"
     ready = "ready"
     setup_required = "setup_required"
+    unavailable_no_adapter = "unavailable_no_adapter"
     unavailable = "unavailable"
+    unsupported_media = "unsupported_media"
     no_best_frame = "no_best_frame"
+    running = "running"
+    suggestion_created = "suggestion_created"
     proposal_created = "proposal_created"
     no_proposal = "no_proposal"
+    failed = "failed"
 
 
 class ExportStatus(str, Enum):
@@ -1793,12 +1799,18 @@ class ReviewIdentificationSummary(BaseModel):
     adapter_kind: ModelAdapterKind | None = None
     adapter_status: ModelAdapterStatus | None = None
     adapter_is_demo: bool = False
+    local_only: bool = True
+    supported_media_types: list[str] = Field(default_factory=list)
     can_run: bool = False
+    can_run_on_best_frame: bool = False
     setup_hint: str | None = None
+    unavailable_reason: str | None = None
     suggestion: SpeciesSuggestionResponse | None = None
     proposal: DetectionProposal | None = None
     suggestion_count: int = Field(default=0, ge=0)
     proposal_count: int = Field(default=0, ge=0)
+    created_suggestion_ids: list[str] = Field(default_factory=list)
+    created_proposal_ids: list[str] = Field(default_factory=list)
     creates_truth: bool = False
     creates_export: bool = False
 
@@ -1914,6 +1926,8 @@ class ReviewIdentificationResponse(BaseModel):
     proposals: list[DetectionProposal] = Field(default_factory=list)
     species_suggestion: SpeciesSuggestionResponse | None = None
     review_queue_item: ReviewQueueItem | None = None
+    created_suggestion_ids: list[str] = Field(default_factory=list)
+    created_proposal_ids: list[str] = Field(default_factory=list)
     creates_truth: bool = False
     creates_export: bool = False
     creates_review_label: bool = False
