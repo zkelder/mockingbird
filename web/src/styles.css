@@ -1710,7 +1710,7 @@ a.secondary-action {
 }
 
 .review-candidate-context {
-  grid-template-columns: minmax(140px, 190px) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
   align-items: start;
   border-block: 1px solid #dce3d8;
   padding: 12px 0;
@@ -1720,12 +1720,32 @@ a.secondary-action {
   grid-template-columns: 1fr;
 }
 
+.review-candidate-media,
+.review-candidate-body {
+  min-width: 0;
+}
+
 .review-candidate-media .media-preview {
   height: 100%;
+  min-width: 0;
 }
 
 .review-candidate-media .media-preview-surface {
   aspect-ratio: 4 / 3;
+}
+
+.review-candidate-media .media-preview-meta {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  font-size: 0.8rem;
+}
+
+.review-candidate-media .media-preview-meta strong,
+.review-candidate-media .media-preview-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .review-candidate-summary-row,
@@ -2859,6 +2879,28 @@ a.secondary-action {
   align-items: flex-start;
   white-space: normal;
   line-height: 1.35;
+}
+
+.stream-live-bird-motion-toggle {
+  align-items: flex-start;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.stream-live-field-guidance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stream-live-field-guidance span {
+  border: 1px solid #31483b;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #102019;
+  color: #c9d8ce;
+  font-size: 0.84rem;
+  font-weight: 750;
 }
 
 .stream-live-debug-details {
@@ -4668,6 +4710,7 @@ a.secondary-action {
 .media-preview-surface {
   position: relative;
   display: grid;
+  min-width: 0;
   min-height: 220px;
   place-items: center;
   overflow: hidden;
@@ -4696,12 +4739,20 @@ a.secondary-action {
 .media-preview-meta {
   grid-template-columns: minmax(0, 1fr) repeat(3, auto);
   align-items: center;
+  min-width: 0;
   color: #627168;
   font-size: 0.88rem;
 }
 
+.media-preview-meta strong,
+.media-preview-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .media-preview-meta strong {
-  overflow-wrap: anywhere;
   color: #24382d;
 }
 

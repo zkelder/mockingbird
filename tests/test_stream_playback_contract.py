@@ -895,7 +895,7 @@ async def test_live_motion_decodes_live_frames_at_fine_motion_resolution(
     assert requested_max_dimensions == [64, 64]
 
 
-async def test_live_motion_high_sensitivity_detects_smaller_feeder_motion_than_normal(
+async def test_live_motion_bird_sized_feeder_mode_lowers_only_bird_zone_thresholds(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -922,6 +922,17 @@ async def test_live_motion_high_sensitivity_detects_smaller_feeder_motion_than_n
     )
     before = await product_counts(client)
 
+    standard_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "bird_sized_feeder_motion": False,
+            "min_changed_ratio": 0.012,
+            "pixel_delta_threshold": 18,
+            "min_triggered_frames": 1,
+        },
+    )
     normal_response = await client.post(
         f"/api/streams/{STREAM_ID}/live-motion/evaluate",
         json={
@@ -933,6 +944,20 @@ async def test_live_motion_high_sensitivity_detects_smaller_feeder_motion_than_n
         },
     )
 
+    assert standard_response.status_code == 200
+    standard = standard_response.json()
+    assert standard["activity_detected"] is False
+    assert standard["strongest_zone_name"] == "Feeder"
+    assert standard["strongest_changed_ratio"] > 0
+    assert standard["strongest_zone_min_changed_ratio"] == 0.012
+    assert standard["requested_threshold"] == 0.012
+    assert standard["effective_threshold_used"] == 0.012
+    assert standard["threshold_source"] == "requested"
+    assert standard["fine_motion_applied"] is False
+    assert standard["bird_sized_feeder_motion"] is False
+    assert standard["changed_pixels"] == 4
+    assert standard["total_scored_pixels"] == 924
+
     assert normal_response.status_code == 200
     normal = normal_response.json()
     assert normal["activity_detected"] is False
@@ -941,13 +966,15 @@ async def test_live_motion_high_sensitivity_detects_smaller_feeder_motion_than_n
     assert normal["strongest_zone_min_changed_ratio"] == 0.006
     assert normal["requested_threshold"] == 0.012
     assert normal["effective_threshold_used"] == 0.006
-    assert normal["threshold_source"] == "feeder_fine"
+    assert normal["threshold_source"] == "bird_feeder_fine"
     assert normal["fine_motion_applied"] is True
+    assert normal["bird_sized_feeder_motion"] is True
     assert normal["changed_pixels"] == 4
     assert normal["total_scored_pixels"] == 924
     assert normal["near_miss"] is True
     assert normal["margin_to_threshold"] < 0
-    assert "Near miss in Feeder" in normal["message"]
+    assert "No bird-sized activity yet" in normal["message"]
+    assert "threshold 0.60%" in normal["message"]
     assert normal["strongest_frame_start_sequence"] is None
     assert normal["strongest_frame_end_sequence"] is None
     assert normal["best_media_asset_id"] is None
@@ -972,13 +999,14 @@ async def test_live_motion_high_sensitivity_detects_smaller_feeder_motion_than_n
     assert high["requested_threshold"] == 0.003
     assert high["effective_threshold_used"] == pytest.approx(0.001)
     assert high["threshold_used"] == pytest.approx(0.001)
-    assert high["threshold_source"] == "high_feeder_fine"
+    assert high["threshold_source"] == "bird_feeder_high_fine"
     assert high["fine_motion_applied"] is True
+    assert high["bird_sized_feeder_motion"] is True
     assert high["changed_pixels"] == 4
     assert high["total_scored_pixels"] == 924
     assert high["near_miss"] is False
     assert high["margin_to_threshold"] > 0
-    assert "Small feeder motion detected" in high["message"]
+    assert "Bird-sized motion detected" in high["message"]
     assert high["strongest_frame_start_sequence"] == 1
     assert high["strongest_frame_end_sequence"] == 2
     assert high["best_frame_sequence"] == 2
@@ -1043,6 +1071,7 @@ async def test_live_motion_does_not_broaden_small_yard_motion_thresholds(
     assert normal["strongest_zone_type"] == "ground"
     assert normal["threshold_source"] == "requested"
     assert normal["fine_motion_applied"] is False
+    assert normal["bird_sized_feeder_motion"] is True
     assert normal["effective_threshold_used"] == 0.012
     assert normal["changed_pixels"] == 4
     assert normal["total_scored_pixels"] == 2736
@@ -1054,6 +1083,7 @@ async def test_live_motion_does_not_broaden_small_yard_motion_thresholds(
     assert high["strongest_zone_type"] == "ground"
     assert high["threshold_source"] == "requested"
     assert high["fine_motion_applied"] is False
+    assert high["bird_sized_feeder_motion"] is True
     assert high["effective_threshold_used"] == 0.003
     assert high["effective_threshold_used"] > 0.001
     assert await product_counts(client) == before
@@ -1451,6 +1481,77 @@ async def test_live_motion_reports_ignored_zone_without_review_activity(
     assert suppressed["zone_name"] == "Driveway edge ignore zone"
     assert suppressed["zone_type"] == "ignore"
     assert suppressed["reason"] == "ignore_zone"
+    assert await product_counts(client) == before
+
+
+async def test_live_motion_suppresses_candidate_when_ignore_zone_is_strongest(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-ignore-strongest-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-ignore-strongest-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(width=100, height=100),
+            frame_1: frame_with(
+                [
+                    (30, 40),
+                    (30, 41),
+                    (31, 40),
+                    (31, 41),
+                    (20, 1),
+                    (20, 2),
+                    (20, 3),
+                    (20, 4),
+                    (20, 5),
+                    (20, 6),
+                    (20, 7),
+                    (20, 8),
+                    (20, 9),
+                    (20, 10),
+                ],
+                width=100,
+                height=100,
+            ),
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": True,
+            "bird_sized_feeder_motion": True,
+            "min_changed_ratio": 0.001,
+            "pixel_delta_threshold": 10,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["activity_detected"] is False
+    assert result["review_activity_created"] is False
+    assert result["motion_evidence_id"] is None
+    assert result["event_id"] is None
+    assert result["visit_id"] is None
+    assert result["best_media_asset_id"] is None
+    assert result["strongest_zone_id"] == "zone-ignore-driveway-edge"
+    assert result["activity_summary"] == "Motion ignored in Driveway edge ignore zone."
+    assert any(
+        "review candidate suppressed" in warning for warning in result["warnings"]
+    )
+    assert result["creates_truth"] is False
     assert await product_counts(client) == before
 
 
@@ -2890,7 +2991,7 @@ async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(
     )
     assert queue_item["suggested_label"] == "unknown_bird"
     assert queue_item["fine_motion_applied"] is True
-    assert queue_item["threshold_source"] == "high_feeder_fine"
+    assert queue_item["threshold_source"] == "bird_feeder_high_fine"
 
     duplicate_response = await client.post(
         f"/api/streams/{STREAM_ID}/live-motion/review-activity"
@@ -2984,7 +3085,7 @@ async def test_small_feeder_activity_capture_and_review_handoff_keep_monitor_run
     assert monitor["activity_detected"] is True
     assert monitor["strongest_zone_name"] == "Feeder"
     assert monitor["fine_motion_applied"] is True
-    assert monitor["threshold_source"] == "high_feeder_fine"
+    assert monitor["threshold_source"] == "bird_feeder_high_fine"
     assert monitor["best_media_asset_id"] is None
     assert monitor["activity_session_id"].startswith("live-activity-")
     assert monitor["activity_detection_count"] == 1

@@ -1139,12 +1139,14 @@ def _live_zone_min_changed_ratio(
     base_min_changed_ratio: float,
     focus_applied: bool = False,
     pixel_delta_threshold: float = 25.0,
+    bird_sized_feeder_motion: bool = True,
 ) -> float:
     return _live_motion_zone_scoring_policy(
         zone_type=zone_type,
         base_min_changed_ratio=base_min_changed_ratio,
         pixel_delta_threshold=pixel_delta_threshold,
         focus_applied=focus_applied,
+        bird_sized_feeder_motion=bird_sized_feeder_motion,
     ).min_changed_ratio
 
 
@@ -1154,8 +1156,9 @@ def _live_motion_zone_scoring_policy(
     base_min_changed_ratio: float,
     pixel_delta_threshold: float,
     focus_applied: bool = False,
+    bird_sized_feeder_motion: bool = True,
 ) -> _LiveMotionZoneScoringPolicy:
-    if zone_type not in _BIRD_FINE_MOTION_ZONE_TYPES:
+    if not bird_sized_feeder_motion or zone_type not in _BIRD_FINE_MOTION_ZONE_TYPES:
         return _LiveMotionZoneScoringPolicy(
             min_changed_ratio=base_min_changed_ratio,
             pixel_delta_threshold=pixel_delta_threshold,
@@ -1166,19 +1169,19 @@ def _live_motion_zone_scoring_policy(
 
     threshold = max(0.001, base_min_changed_ratio * 0.5)
     effective_pixel_delta = pixel_delta_threshold
-    threshold_source = f"{zone_type.value}_fine"
+    threshold_source = f"bird_{zone_type.value}_fine"
     high_sensitivity = base_min_changed_ratio <= 0.004 or pixel_delta_threshold <= 12
     if high_sensitivity:
         threshold = max(0.0008, min(threshold, base_min_changed_ratio / 3.0))
         effective_pixel_delta = min(pixel_delta_threshold, 8.0)
-        threshold_source = f"high_{zone_type.value}_fine"
+        threshold_source = f"bird_{zone_type.value}_high_fine"
 
     if focus_applied:
         threshold = max(0.0005, threshold * 0.5)
         threshold_source = (
-            f"high_{zone_type.value}_focus_fine"
+            f"bird_{zone_type.value}_high_focus_fine"
             if high_sensitivity
-            else f"{zone_type.value}_focus_fine"
+            else f"bird_{zone_type.value}_focus_fine"
         )
 
     return _LiveMotionZoneScoringPolicy(
@@ -1197,6 +1200,7 @@ def _live_motion_sampler_result(
     config: SamplerConfig,
     *,
     focus_zone_id: str | None = None,
+    bird_sized_feeder_motion: bool = True,
 ) -> SamplerResult:
     frame_scores: list[MotionFrameScore] = []
     motion_zone_by_id = {
@@ -1221,6 +1225,7 @@ def _live_motion_sampler_result(
                 base_min_changed_ratio=config.min_changed_ratio,
                 pixel_delta_threshold=config.pixel_delta_threshold,
                 focus_applied=zone_focus_applied,
+                bird_sized_feeder_motion=bird_sized_feeder_motion,
             )
             score = score_zone_motion(
                 frames[pair_index],
@@ -1312,7 +1317,10 @@ def _live_motion_near_miss(
 ) -> bool:
     if activity_detected or strongest_score is None or effective_threshold is None:
         return False
-    if scoring_policy is not None and strongest_score.changed_pixels < scoring_policy.min_changed_pixels:
+    if (
+        scoring_policy is not None
+        and strongest_score.changed_pixels < scoring_policy.min_changed_pixels
+    ):
         return False
     return (
         strongest_score.changed_ratio < effective_threshold
@@ -1332,6 +1340,7 @@ def _live_motion_diagnostic_message(
     activity_detected: bool,
     near_miss: bool,
     strongest_zone_name: str | None,
+    strongest_zone_type: ZoneType | None,
     strongest_changed_ratio: float,
     effective_threshold: float | None,
     fine_motion_applied: bool,
@@ -1343,21 +1352,76 @@ def _live_motion_diagnostic_message(
     threshold = _format_motion_percent(effective_threshold)
     if activity_detected and fine_motion_applied:
         return (
-            f"Small feeder motion detected - {strongest_zone_name} changed {changed}, "
+            f"Bird-sized motion detected - {strongest_zone_name} changed {changed}, "
             f"threshold {threshold}."
         )
     if near_miss:
+        prefix = (
+            "No bird-sized activity yet"
+            if fine_motion_applied
+            and strongest_zone_type in _BIRD_FINE_MOTION_ZONE_TYPES
+            else f"Near miss in {strongest_zone_name}"
+        )
         return (
-            f"Near miss in {strongest_zone_name} - tighten zone, use feeder focus, "
-            f"or move camera closer. {strongest_zone_name} changed {changed}, "
-            f"threshold {threshold}."
+            f"{prefix} - {strongest_zone_name} changed {changed}, "
+            f"threshold {threshold}. Try tighter feeder zone or move camera closer."
         )
     if not activity_detected:
+        prefix = (
+            "No bird-sized activity yet"
+            if fine_motion_applied
+            and strongest_zone_type in _BIRD_FINE_MOTION_ZONE_TYPES
+            else "No activity yet"
+        )
         return (
-            f"No activity yet - {strongest_zone_name} changed {changed}, "
-            f"threshold {threshold}."
+            f"{prefix} - {strongest_zone_name} changed {changed}, "
+            f"threshold {threshold}. Try tighter zones or adjust camera framing."
         )
     return None
+
+
+def _live_motion_zone_context_warnings(
+    *,
+    strongest_zone: Zone | None,
+    reviewable_zones: list[Zone],
+) -> list[str]:
+    if strongest_zone is None:
+        return []
+
+    warnings: list[str] = []
+    bird_zones_available = any(
+        zone.zone_type in _BIRD_FINE_MOTION_ZONE_TYPES for zone in reviewable_zones
+    )
+    if bird_zones_available and strongest_zone.zone_type in {
+        ZoneType.ground,
+        ZoneType.yard,
+        ZoneType.driveway,
+    }:
+        warnings.append(
+            f"Strongest motion is in {strongest_zone.name}, not a feeder/birdbath/perch "
+            "Zone. For birds, draw a tight Feeder Zone around the perch or feeding ports."
+        )
+
+    if strongest_zone.zone_type in {ZoneType.yard, ZoneType.driveway} and (
+        _zone_bounding_area(strongest_zone) >= 0.25
+    ):
+        warnings.append(
+            f"{strongest_zone.name} covers a broad background area; use Ignore zones for "
+            "road, cars, or background movement."
+        )
+
+    return warnings
+
+
+def _live_motion_ignore_suppression_warning(
+    summary: MotionSuppressedZoneSummaryResponse,
+) -> str:
+    zone_kind = summary.zone_type.value.replace("_", " ")
+    article = "an" if zone_kind[0].lower() in {"a", "e", "i", "o", "u"} else "a"
+    return (
+        f"Strongest motion is in {summary.zone_name}; review candidate suppressed "
+        f"because it is {article} {zone_kind} Zone."
+    )
 
 
 def _live_motion_quality_warnings(
@@ -2914,6 +2978,7 @@ def _evaluate_live_stream_motion(
         ),
         "pixel_delta_threshold": request.pixel_delta_threshold,
         "min_changed_ratio": request.min_changed_ratio,
+        "bird_sized_feeder_motion": request.bird_sized_feeder_motion,
         "creates_event": False,
         "creates_visit": False,
         "creates_truth": False,
@@ -3084,6 +3149,7 @@ def _evaluate_live_stream_motion(
             zones_by_id,
             sampler_config,
             focus_zone_id=focus_zone.id if focus_zone else None,
+            bird_sized_feeder_motion=request.bird_sized_feeder_motion,
         )
     except ValueError as error:
         raise _motion_evaluation_error(error) from error
@@ -3101,6 +3167,18 @@ def _evaluate_live_stream_motion(
         )
         motion_zones = [_activity_area_zone_input(area) for area in activity_areas]
 
+    best_candidate = _best_motion_candidate(motion_candidates)
+    strongest_suppressed_zone = suppressed_zone_summaries[0] if suppressed_zone_summaries else None
+    suppressed_strongest_motion = (
+        strongest_suppressed_zone is not None
+        and best_candidate is not None
+        and strongest_suppressed_zone.peak_changed_ratio >= best_candidate.peak_changed_ratio
+    )
+    if suppressed_strongest_motion and strongest_suppressed_zone is not None:
+        motion_candidates = []
+        best_candidate = None
+        warnings.append(_live_motion_ignore_suppression_warning(strongest_suppressed_zone))
+
     candidate_responses = [
         _motion_candidate_response(candidate)
         for candidate in motion_candidates
@@ -3108,7 +3186,6 @@ def _evaluate_live_stream_motion(
     raw_strongest_zone_id, raw_strongest_changed_ratio = _strongest_motion_summary(
         frame_score_responses,
     )
-    best_candidate = _best_motion_candidate(motion_candidates)
     if uses_auto_regions:
         strongest_zone_id = best_candidate.zone_id if best_candidate else None
         strongest_changed_ratio = (
@@ -3116,6 +3193,9 @@ def _evaluate_live_stream_motion(
             if best_candidate
             else raw_strongest_changed_ratio
         )
+    elif suppressed_strongest_motion and strongest_suppressed_zone is not None:
+        strongest_zone_id = strongest_suppressed_zone.zone_id
+        strongest_changed_ratio = strongest_suppressed_zone.peak_changed_ratio
     else:
         strongest_zone_id = raw_strongest_zone_id
         strongest_changed_ratio = raw_strongest_changed_ratio
@@ -3136,6 +3216,7 @@ def _evaluate_live_stream_motion(
             base_min_changed_ratio=request.min_changed_ratio,
             pixel_delta_threshold=request.pixel_delta_threshold,
             focus_applied=strongest_focus_applied,
+            bird_sized_feeder_motion=request.bird_sized_feeder_motion,
         )
         if strongest_zone_id
         else None
@@ -3169,6 +3250,7 @@ def _evaluate_live_stream_motion(
         activity_detected=activity_detected,
         near_miss=near_miss,
         strongest_zone_name=strongest_zone_name,
+        strongest_zone_type=strongest_zone_type,
         strongest_changed_ratio=strongest_changed_ratio,
         effective_threshold=effective_threshold_used,
         fine_motion_applied=(
@@ -3176,6 +3258,12 @@ def _evaluate_live_stream_motion(
             if strongest_scoring_policy is not None
             else False
         ),
+    )
+    warnings.extend(
+        _live_motion_zone_context_warnings(
+            strongest_zone=strongest_zone,
+            reviewable_zones=reviewable_zones,
+        )
     )
     diagnostic_frame_start_sequence, diagnostic_frame_end_sequence = (
         _live_motion_pair_sequences(cached_frames, strongest_score_frame_index)
@@ -3310,6 +3398,7 @@ def _evaluate_live_stream_motion(
                     if strongest_scoring_policy is not None
                     else False
                 ),
+                "bird_sized_feeder_motion": request.bird_sized_feeder_motion,
                 "image_quality_warnings": image_quality_warnings,
                 "near_miss": near_miss,
                 "margin_to_threshold": margin_to_threshold,
@@ -3539,6 +3628,7 @@ def _evaluate_live_stream_motion(
                             if strongest_scoring_policy is not None
                             else False
                         ),
+                        "bird_sized_feeder_motion": request.bird_sized_feeder_motion,
                         "min_triggered_frames": request.min_triggered_frames,
                         "max_gap_frames": request.max_gap_frames,
                         "frame_sequence_start": cached_frames[0].sequence,

@@ -1466,6 +1466,7 @@ class MotionEvaluateSavedMediaResponse(BaseModel):
 class LiveMotionEvaluateRequest(BaseModel):
     save_best_frame: bool = True
     create_review_activity: bool = False
+    bird_sized_feeder_motion: bool = True
     pixel_delta_threshold: float = Field(default=25.0, ge=0)
     min_changed_ratio: float = Field(default=0.02, ge=0, le=1)
     min_triggered_frames: int = Field(default=1, ge=1)
@@ -1566,6 +1567,7 @@ class LiveMotionEvaluateResponse(BaseModel):
     threshold_used: float | None = None
     threshold_source: str | None = None
     fine_motion_applied: bool = False
+    bird_sized_feeder_motion: bool = True
     changed_pixels: int | None = Field(default=None, ge=0)
     total_pixels: int | None = Field(default=None, ge=0)
     total_scored_pixels: int | None = Field(default=None, ge=0)

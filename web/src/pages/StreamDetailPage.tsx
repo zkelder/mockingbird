@@ -531,6 +531,7 @@ export function StreamDetailPage({
   const [autoReviewMinDetections, setAutoReviewMinDetections] = useState(1);
   const [liveMonitorSensitivity, setLiveMonitorSensitivity] =
     useState<LiveMonitorSensitivity>("normal");
+  const [birdSizedFeederMotion, setBirdSizedFeederMotion] = useState(true);
   const [sourceProviderConfig, setSourceProviderConfig] =
     useState<SourceProviderConfiguration | null>(null);
   const [cameraTuningDraft, setCameraTuningDraft] = useState<CameraTuningDraft>({
@@ -565,6 +566,7 @@ export function StreamDetailPage({
       if (status.last_motion_result) {
         setLiveMotionResult(status.last_motion_result);
         setLiveMonitorState(liveMonitorStateFor(status.last_motion_result));
+        setBirdSizedFeederMotion(status.last_motion_result.bird_sized_feeder_motion);
       } else if (status.monitor_running) {
         setLiveMonitorState((current) => (current === "idle" ? "waiting" : current));
       }
@@ -622,6 +624,7 @@ export function StreamDetailPage({
       setIsLiveMonitoring(false);
       setIsEvaluatingLiveMotion(false);
       setIsCreatingLiveReviewActivity(false);
+      setBirdSizedFeederMotion(true);
       setSourceProviderConfig(null);
       setCameraTuningDraft({ ...emptyCameraTuningDraft });
       setCameraTuningMessage(null);
@@ -968,6 +971,7 @@ export function StreamDetailPage({
       const result = await apiClient.startLiveMotionMonitor(detail.stream.id, {
         save_best_frame: true,
         create_review_activity: false,
+        bird_sized_feeder_motion: birdSizedFeederMotion,
         min_changed_ratio: sensitivitySettings.min_changed_ratio,
         pixel_delta_threshold: sensitivitySettings.pixel_delta_threshold,
         max_frames: sensitivitySettings.max_frames,
@@ -1593,6 +1597,8 @@ export function StreamDetailPage({
         }`
       : "n/a";
   const liveFineMotionLabel = liveMotionResult?.fine_motion_applied ? "applied" : "standard";
+  const liveBirdSizedMotionLabel =
+    (liveMotionResult?.bird_sized_feeder_motion ?? birdSizedFeederMotion) ? "on" : "off";
   const liveMarginLabel = formatPercent(liveMotionResult?.margin_to_threshold);
   const liveMeanDeltaLabel =
     liveMotionResult?.mean_delta != null ? liveMotionResult.mean_delta.toFixed(1) : "n/a";
@@ -1601,6 +1607,8 @@ export function StreamDetailPage({
       ? `${liveMotionResult.evaluation_cadence_seconds.toFixed(2)}s`
       : `${liveMonitorSensitivitySettings[liveMonitorSensitivity].interval_ms / 1000}s`;
   const liveQualityWarnings = liveMotionResult?.image_quality_warnings ?? [];
+  const liveMotionGuidanceWarnings =
+    liveMotionResult?.warnings.filter((warning) => !liveQualityWarnings.includes(warning)) ?? [];
   const reviewableLiveZones = detail.zones.filter(isReviewableZone);
   const feederFocusZone = reviewableLiveZones.find((zone) => zone.zone_type === "feeder");
   const liveFocusZone =
@@ -2001,6 +2009,21 @@ export function StreamDetailPage({
                   Show motion overlay
                 </label>
               </div>
+              <div className="stream-live-field-guidance">
+                <span>For birds, draw a tight Feeder Zone around the perch/feeding ports.</span>
+                <span>Use Ignore zones for road/cars/background movement.</span>
+                <span>Use Ground Zone separately for ground activity.</span>
+                <span>If birds are still missed, move/zoom camera so feeder fills more of the frame.</span>
+              </div>
+              <label className="stream-live-debug-toggle stream-live-bird-motion-toggle">
+                <input
+                  checked={birdSizedFeederMotion}
+                  disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                  onChange={(event) => setBirdSizedFeederMotion(event.target.checked)}
+                  type="checkbox"
+                />
+                Bird-sized feeder motion for Feeder/Birdbath/Perch zones.
+              </label>
               <label className="stream-live-debug-toggle stream-live-auto-review-toggle">
                 <input
                   checked={autoCreateLiveReviews}
@@ -2147,6 +2170,9 @@ export function StreamDetailPage({
                     <strong>Changed pixels</strong> {liveChangedPixelsLabel}
                   </span>
                   <span>
+                    <strong>Bird-sized</strong> {liveBirdSizedMotionLabel}
+                  </span>
+                  <span>
                     <strong>Fine motion</strong> {liveFineMotionLabel}
                   </span>
                   <span>
@@ -2171,6 +2197,14 @@ export function StreamDetailPage({
                   <div className="stream-live-suppressed-list">
                     <strong>Image quality</strong>
                     {liveQualityWarnings.map((warning) => (
+                      <span key={warning}>{warning}</span>
+                    ))}
+                  </div>
+                ) : null}
+                {liveMotionGuidanceWarnings.length ? (
+                  <div className="stream-live-suppressed-list">
+                    <strong>Motion guidance</strong>
+                    {liveMotionGuidanceWarnings.map((warning) => (
                       <span key={warning}>{warning}</span>
                     ))}
                   </div>

@@ -1411,6 +1411,7 @@ export interface MotionEvaluateSavedMediaResponse {
 export interface LiveMotionEvaluateRequest {
   save_best_frame?: boolean;
   create_review_activity?: boolean;
+  bird_sized_feeder_motion?: boolean;
   pixel_delta_threshold?: number;
   min_changed_ratio?: number;
   min_triggered_frames?: number;
@@ -1508,6 +1509,7 @@ export interface LiveMotionEvaluateResponse {
   threshold_used?: number | null;
   threshold_source?: string | null;
   fine_motion_applied: boolean;
+  bird_sized_feeder_motion: boolean;
   changed_pixels?: number | null;
   total_pixels?: number | null;
   total_scored_pixels?: number | null;
