@@ -41,6 +41,10 @@ transcoding, or production provider infrastructure.
 - Backend-session live monitoring saves the best activity frame as evidence and
   offers an explicit low-confidence Review Queue handoff without creating truth
   or exports.
+- Feeder/birdbath/perch activity uses bounded in-memory burst tracking: near
+  misses may show tentative session counts, confirmed activity can become
+  review-ready, and only one selected best frame is persisted during Review
+  Queue handoff.
 - User-enabled unattended monitoring can auto-create Review Queue candidates
   from completed live activity sessions only. Bird Log, exports, and reviewed
   truth still wait for explicit correction, and identification assist remains a
@@ -263,6 +267,10 @@ Dataset Exports.
 - [ ] Move in front of the camera or move an object in frame.
 - [ ] Confirm activity is detected, the best live frame is saved, and review
       activity remains an explicit handoff.
+- [ ] Confirm feeder activity status shows detection, near-miss, evaluated-frame,
+      candidate-frame, and saved-candidate counts without adding Bird Log truth.
+- [ ] Confirm near-threshold feeder movement can show a tentative burst, but it
+      does not become review-ready until confirmed activity is detected.
 - [ ] Confirm diagnostics show strongest Zone change, threshold, changed pixels,
       frame pair, focus state, cadence, and any overexposed/low-contrast image
       warning.
@@ -278,6 +286,8 @@ Dataset Exports.
       context, Zone/session diagnostics, and optional identification-assist
       status, but no identification run, ReviewLabel, Bird Log entry, export, or
       reviewed truth is created.
+- [ ] Confirm status messages announce activity start or review-candidate
+      readiness as transitions rather than repeating on every evaluated frame.
 - [ ] Keep moving or click `Create review activity` twice and confirm duplicate
       activity shows a quiet/cooldown state instead of creating duplicate review
       candidates.

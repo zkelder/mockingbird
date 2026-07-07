@@ -2841,6 +2841,238 @@ async def test_unattended_monitoring_respects_min_detection_gate(
     assert after_manual["review_labels"] == before["review_labels"]
 
 
+async def test_feeder_near_miss_starts_tentative_burst_before_confirmed_activity(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8near-miss-burst-0\xff\xd9"
+    frame_1 = b"\xff\xd8near-miss-burst-1\xff\xd9"
+    frame_2 = b"\xff\xd8near-miss-burst-2\xff\xd9"
+    frame_3 = b"\xff\xd8near-miss-burst-3\xff\xd9"
+    fake_process = FakeFfmpegProcess([frame_0, frame_1])
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, **kwargs: fake_process,
+    )
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(width=100, height=100),
+            frame_1: frame_with(
+                [(30, 40), (30, 41), (31, 40), (31, 41)],
+                width=100,
+                height=100,
+            ),
+            frame_2: blank_frame(width=100, height=100),
+            frame_3: frame_with(
+                [
+                    (30, 40),
+                    (30, 41),
+                    (30, 42),
+                    (31, 40),
+                    (31, 41),
+                    (31, 42),
+                    (32, 40),
+                    (32, 41),
+                    (32, 42),
+                ],
+                width=100,
+                height=100,
+            ),
+        },
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
+    before = await product_counts(client)
+
+    near_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/start",
+        json={
+            "save_best_frame": True,
+            "auto_create_review_candidates": True,
+            "auto_review_quiet_seconds": 30,
+            "min_changed_ratio": 0.012,
+            "pixel_delta_threshold": 18,
+            "min_triggered_frames": 1,
+            "interval_seconds": 10,
+        },
+    )
+    assert near_response.status_code == 200
+    near = near_response.json()
+    assert near["activity_detected"] is False
+    assert near["near_miss"] is True
+    assert near["activity_session_id"].startswith("live-activity-")
+    assert near["activity_detection_count"] == 0
+    assert near["activity_near_miss_count"] == 1
+    assert near["activity_candidate_frame_count"] == 1
+    assert near["activity_saved_candidate_count"] == 0
+    assert near["activity_review_state"] == "tentative_burst"
+    assert near["activity_ready_for_review"] is False
+    assert near["activity_manual_review_needed"] is False
+    assert near["review_activity_available"] is False
+    assert near["review_queue_item_id"] is None
+    assert near["notification_event"] is None
+    assert await product_counts(client) == before
+
+    status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    assert status["current_activity_session_id"] == near["activity_session_id"]
+    assert status["activity_review_state"] == "tentative_burst"
+    assert status["activity_detection_count"] == 0
+    assert status["activity_near_miss_count"] == 1
+    assert status["auto_review_created_count"] == 0
+
+    review_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/review-activity"
+    )
+    assert review_response.status_code == 200
+    review = review_response.json()
+    assert review["status"] == "unavailable"
+    assert review["review_activity_created"] is False
+    assert review["media_asset_id"] is None
+    assert await product_counts(client) == before
+
+    captured_at = datetime.fromisoformat(near["activity_last_seen_at"])
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_2,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_3,
+        captured_at=captured_at + timedelta(seconds=2),
+    )
+    confirmed_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.003,
+            "pixel_delta_threshold": 10,
+            "min_triggered_frames": 1,
+        },
+    )
+    assert confirmed_response.status_code == 200
+    confirmed = confirmed_response.json()
+    assert confirmed["activity_detected"] is True
+    assert confirmed["activity_session_id"] == near["activity_session_id"]
+    assert confirmed["activity_detection_count"] == 1
+    assert confirmed["activity_near_miss_count"] == 1
+    assert confirmed["activity_candidate_frame_count"] == 2
+    assert confirmed["activity_saved_candidate_count"] == 0
+    assert confirmed["notification_event"] == "activity_started"
+    assert confirmed["best_media_asset_id"] is None
+    assert await product_counts(client) == before
+
+
+async def test_live_activity_burst_candidate_frames_are_bounded_and_notifications_do_not_spam(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initial_0 = b"\xff\xd8bounded-burst-initial-0\xff\xd9"
+    initial_1 = b"\xff\xd8bounded-burst-initial-1\xff\xd9"
+    fake_process = FakeFfmpegProcess([initial_0, initial_1])
+    frames_by_bytes = {
+        initial_0: blank_frame(width=100, height=100),
+        initial_1: frame_with(
+            [(30, 40), (30, 41), (31, 40), (31, 41)],
+            width=100,
+            height=100,
+        ),
+    }
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, **kwargs: fake_process,
+    )
+
+    for index in range(35):
+        blank = f"\xff\xd8bounded-burst-blank-{index}\xff\xd9".encode()
+        motion = f"\xff\xd8bounded-burst-motion-{index}\xff\xd9".encode()
+        frames_by_bytes[blank] = blank_frame(width=100, height=100)
+        frames_by_bytes[motion] = frame_with(
+            [
+                (30, 40),
+                (30, 41),
+                (31, 40),
+                (31, 41),
+                (32, 40),
+                (32, 41),
+            ],
+            width=100,
+            height=100,
+        )
+    patch_live_motion_decoder(monkeypatch, frames_by_bytes)
+    await configure_local_usb_camera(client, device="/dev/video0")
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
+    before = await product_counts(client)
+
+    first_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": True,
+            "min_changed_ratio": 0.003,
+            "pixel_delta_threshold": 10,
+            "min_triggered_frames": 1,
+        },
+    )
+    assert first_response.status_code == 200
+    first = first_response.json()
+    assert first["notification_event"] == "activity_started"
+
+    captured_at = datetime.fromisoformat(first["best_frame_captured_at"])
+    last_result = first
+    for index in range(35):
+        blank = f"\xff\xd8bounded-burst-blank-{index}\xff\xd9".encode()
+        motion = f"\xff\xd8bounded-burst-motion-{index}\xff\xd9".encode()
+        live_frame_cache.store_latest_frame(
+            STREAM_ID,
+            blank,
+            captured_at=captured_at + timedelta(seconds=index * 0.1),
+        )
+        live_frame_cache.store_latest_frame(
+            STREAM_ID,
+            motion,
+            captured_at=captured_at + timedelta(seconds=index * 0.1 + 0.05),
+        )
+        response = await client.post(
+            f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+            json={
+                "save_best_frame": True,
+                "create_review_activity": False,
+                "min_changed_ratio": 0.003,
+                "pixel_delta_threshold": 10,
+                "min_triggered_frames": 1,
+            },
+        )
+        assert response.status_code == 200
+        last_result = response.json()
+        assert last_result["notification_event"] is None
+
+    assert last_result["activity_session_id"] == first["activity_session_id"]
+    assert last_result["activity_detection_count"] == 36
+    assert last_result["activity_candidate_frame_count"] == 30
+    assert last_result["activity_frames_evaluated_count"] > last_result[
+        "activity_candidate_frame_count"
+    ]
+    assert last_result["activity_saved_candidate_count"] == 0
+    assert last_result["best_media_asset_id"] is None
+    assert await product_counts(client) == before
+
+
 async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

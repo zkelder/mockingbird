@@ -1425,7 +1425,7 @@ export function ReviewQueuePage({
         targetType: result.review_label.target_type,
       });
       setMessage(
-        `Correction saved as local dataset truth. ${result.review_queue_count} item${
+        `Added to Bird Log. Correction saved as local dataset truth. ${result.review_queue_count} item${
           result.review_queue_count === 1 ? "" : "s"
         } still need review.`,
       );
@@ -1899,6 +1899,12 @@ export function ReviewQueuePage({
                     {item.detection_count > 0 ? (
                       <span>{detectionCountLabel(item.detection_count)}</span>
                     ) : null}
+                    {item.near_miss_count > 0 ? (
+                      <span>{item.near_miss_count} near miss{item.near_miss_count === 1 ? "" : "es"}</span>
+                    ) : null}
+                    {item.candidate_frame_count > 0 ? (
+                      <span>{item.candidate_frame_count} candidate frame{item.candidate_frame_count === 1 ? "" : "s"}</span>
+                    ) : null}
                     {item.best_changed_ratio != null ? (
                       <span>Best change {formatPercent(item.best_changed_ratio)}</span>
                     ) : null}
@@ -1953,6 +1959,8 @@ export function ReviewQueuePage({
                           Changed pixels: {item.best_changed_pixels ?? "n/a"} /{" "}
                           {item.best_total_scored_pixels ?? "n/a"}
                         </span>
+                        <span>Frames evaluated: {item.frames_evaluated_count}</span>
+                        <span>Saved candidates: {item.saved_candidate_count}</span>
                         <span>Threshold: {item.effective_threshold_used ?? "n/a"}</span>
                         <span>Threshold source: {item.threshold_source ?? "n/a"}</span>
                         <span>Fine motion: {item.fine_motion_applied ? "Applied" : "Not applied"}</span>

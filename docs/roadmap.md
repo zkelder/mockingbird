@@ -1140,6 +1140,13 @@ Current work:
   candidates, and Review Queue handoff. Motion Evidence is framed as Advanced
   Evidence, Model Adapters are framed as optional Analyzers, and Bird Log copy
   remains reviewed-corrections-only without changing truth semantics.
+- Feeder Activity Capture Pipeline 1: feeder/birdbath/perch live monitoring can
+  maintain a bounded in-memory burst for confirmed and near-threshold activity,
+  report accurate detection/near-miss/frame/candidate counts, emit transition
+  status for activity start and review-candidate readiness, and persist only one
+  best candidate frame during explicit or unattended Review Queue handoff.
+  Tentative near-miss-only sessions are visible but not review-ready, and Bird
+  Log/export truth still begins only after ReviewLabel correction.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — live camera field-test validation polish.
@@ -1188,6 +1195,11 @@ Validation:
   activity session after quiet/min-detection gates, but it does not create
   ReviewLabels, reviewed Visits, Bird Log entries, analytics/export truth,
   model output, or identification results automatically.
+- Feeder activity bursts are in-memory and capped. Near-miss-only activity can
+  update session status and counts but cannot create review candidates, media
+  assets, Events, Visits, Bird Log entries, reviewed truth, exports, or model
+  output. Confirmed sessions persist only the selected best frame as evidence
+  when handed to Review Queue.
 - Motion focus uses existing normalized Zone coordinates and changes scoring
   diagnostics only; it does not create fake Zones, ReviewLabels, Bird Log
   history, exports, or model output.

@@ -6116,6 +6116,10 @@ class ProductRepository:
                 "activity_started_at": None,
                 "activity_last_seen_at": None,
                 "detection_count": 0,
+                "near_miss_count": 0,
+                "frames_evaluated_count": 0,
+                "candidate_frame_count": 0,
+                "saved_candidate_count": 0,
                 "best_frame_sequence": None,
                 "best_changed_ratio": None,
                 "best_changed_pixels": None,
@@ -6137,6 +6141,16 @@ class ProductRepository:
             "detection_count": (
                 _optional_int(config.get("detection_count"))
                 or evidence.triggered_frame_count
+            ),
+            "near_miss_count": _optional_int(config.get("near_miss_count")) or 0,
+            "frames_evaluated_count": (
+                _optional_int(config.get("frames_evaluated_count")) or 0
+            ),
+            "candidate_frame_count": (
+                _optional_int(config.get("candidate_frame_count")) or 0
+            ),
+            "saved_candidate_count": (
+                _optional_int(config.get("saved_candidate_count")) or 0
             ),
             "best_frame_sequence": evidence.best_frame_index,
             "best_changed_ratio": (

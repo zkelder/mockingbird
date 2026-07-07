@@ -9,6 +9,7 @@ import re
 import subprocess
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -23,6 +24,9 @@ MJPEG_BOUNDARY = "frame"
 DEFAULT_MAX_RUNTIME_SECONDS = 30 * 60
 DEFAULT_AUTO_REVIEW_QUIET_SECONDS = 30
 DEFAULT_AUTO_REVIEW_MIN_DETECTIONS = 1
+DEFAULT_ACTIVITY_MAX_CANDIDATE_FRAMES = 30
+DEFAULT_ACTIVITY_MAX_SAVED_CANDIDATES = 1
+DEFAULT_ACTIVITY_MAX_SESSION_SECONDS = 5 * 60
 SUPPORTED_SESSION_TYPES = {
     "rtsp",
     local_camera_bridge.LOCAL_USB_STREAM_TYPE,
@@ -86,6 +90,10 @@ class LiveActivitySessionSnapshot:
     started_at: datetime
     last_seen_at: datetime
     detection_count: int
+    near_miss_count: int
+    frames_evaluated_count: int
+    candidate_frame_count: int
+    saved_candidate_count: int
     completed_at: datetime | None
     ready_for_review: bool
     review_state: str
@@ -119,6 +127,9 @@ class LiveActivitySessionSnapshot:
     suggested_label: str | None
     suggestion_id: str | None
     suggestion_confidence: float | None
+    session_duration_seconds: float
+    manual_review_needed: bool
+    notification_event: str | None
     creates_truth: bool = False
 
     def as_dict(self) -> dict[str, Any]:
@@ -135,6 +146,10 @@ class LiveActivitySessionSnapshot:
             "started_at": self.started_at,
             "last_seen_at": self.last_seen_at,
             "detection_count": self.detection_count,
+            "near_miss_count": self.near_miss_count,
+            "frames_evaluated_count": self.frames_evaluated_count,
+            "candidate_frame_count": self.candidate_frame_count,
+            "saved_candidate_count": self.saved_candidate_count,
             "completed_at": self.completed_at,
             "ready_for_review": self.ready_for_review,
             "review_state": self.review_state,
@@ -168,6 +183,9 @@ class LiveActivitySessionSnapshot:
             "suggested_label": self.suggested_label,
             "suggestion_id": self.suggestion_id,
             "suggestion_confidence": self.suggestion_confidence,
+            "session_duration_seconds": self.session_duration_seconds,
+            "manual_review_needed": self.manual_review_needed,
+            "notification_event": self.notification_event,
             "creates_truth": self.creates_truth,
         }
 
@@ -179,6 +197,20 @@ class LiveActivityBestFrame:
     content_type: str | None
     captured_at: datetime | None
     sequence: int | None
+
+
+@dataclass(frozen=True)
+class _LiveActivityCandidateFrame:
+    sequence: int | None
+    captured_at: datetime
+    score: float | None
+    changed_ratio: float | None
+    changed_pixels: int | None
+    total_scored_pixels: int | None
+    near_miss: bool
+    activity_detected: bool
+    frame_bytes: bytes | None
+    content_type: str | None
 
 
 class LiveCameraSessionManager:
@@ -604,6 +636,8 @@ class _LiveCameraSession:
             if (
                 existing is None
                 or (now - existing.last_seen_at).total_seconds() > quiet_window_seconds
+                or (now - existing.started_at).total_seconds()
+                > DEFAULT_ACTIVITY_MAX_SESSION_SECONDS
             ):
                 existing = _LiveActivitySession.from_detection(
                     values,
@@ -661,6 +695,10 @@ class _LiveCameraSession:
             if activity is None:
                 return None
             activity.best_media_asset_id = media_asset_id
+            activity.saved_candidate_count = min(
+                DEFAULT_ACTIVITY_MAX_SAVED_CANDIDATES,
+                max(activity.saved_candidate_count, 1),
+            )
             snapshot = activity.snapshot()
             self.last_activity = snapshot.as_dict()
             return snapshot
@@ -886,6 +924,8 @@ class _LiveActivitySession:
     started_at: datetime
     last_seen_at: datetime
     detection_count: int
+    near_miss_count: int
+    frames_evaluated_count: int
     completed_at: datetime | None
     ready_for_review: bool
     start_frame_sequence: int | None
@@ -910,6 +950,10 @@ class _LiveActivitySession:
     image_quality_warnings: list[str]
     near_miss: bool
     margin_to_threshold: float | None
+    candidate_frames: deque[_LiveActivityCandidateFrame]
+    saved_candidate_count: int = 0
+    notification_event: str | None = None
+    _emitted_notification_events: set[str] | None = None
     review_activity_created: bool = False
     motion_evidence_id: str | None = None
     event_id: str | None = None
@@ -945,6 +989,8 @@ class _LiveActivitySession:
             started_at=now,
             last_seen_at=now,
             detection_count=0,
+            near_miss_count=0,
+            frames_evaluated_count=0,
             completed_at=None,
             ready_for_review=False,
             start_frame_sequence=None,
@@ -969,6 +1015,8 @@ class _LiveActivitySession:
             image_quality_warnings=[],
             near_miss=False,
             margin_to_threshold=None,
+            candidate_frames=deque(maxlen=DEFAULT_ACTIVITY_MAX_CANDIDATE_FRAMES),
+            _emitted_notification_events=set(),
         )
         session.record_detection(
             values,
@@ -986,7 +1034,20 @@ class _LiveActivitySession:
         frame_bytes: bytes | None,
         frame_content_type: str | None,
     ) -> None:
-        self.detection_count += 1
+        activity_detected = bool(values.get("activity_detected", True))
+        near_miss = bool(values.get("near_miss"))
+        if activity_detected:
+            if self.detection_count == 0:
+                self._emit_notification_once("activity_started")
+            else:
+                self.notification_event = None
+            self.detection_count += 1
+        elif near_miss:
+            self.near_miss_count += 1
+            self.notification_event = None
+        else:
+            self.notification_event = None
+        self.frames_evaluated_count += max(1, int(values.get("frames_evaluated_count") or 1))
         self.last_seen_at = now
         self.completed_at = None
         self.ready_for_review = False
@@ -1001,9 +1062,23 @@ class _LiveActivitySession:
         self.threshold_source = _optional_str(values.get("threshold_source"))
         self.fine_motion_applied = bool(values.get("fine_motion_applied"))
         self.image_quality_warnings = list(values.get("image_quality_warnings") or [])
-        self.near_miss = bool(values.get("near_miss"))
+        self.near_miss = near_miss
         self.margin_to_threshold = _optional_float(values.get("margin_to_threshold"))
         candidate_score = _optional_float(values.get("best_score"))
+        self._append_candidate_frame(
+            _LiveActivityCandidateFrame(
+                sequence=_optional_int(values.get("best_frame_sequence")),
+                captured_at=_coerce_datetime(values.get("best_frame_captured_at")) or now,
+                score=candidate_score,
+                changed_ratio=self.current_changed_ratio,
+                changed_pixels=self.current_changed_pixels,
+                total_scored_pixels=self.current_total_scored_pixels,
+                near_miss=near_miss,
+                activity_detected=activity_detected,
+                frame_bytes=frame_bytes,
+                content_type=frame_content_type,
+            )
+        )
         if self.best_score is None or (
             candidate_score is not None and candidate_score > self.best_score
         ):
@@ -1022,6 +1097,21 @@ class _LiveActivitySession:
             self.best_frame_width = _optional_int(values.get("best_frame_width"))
             self.best_frame_height = _optional_int(values.get("best_frame_height"))
 
+    def _append_candidate_frame(self, candidate: _LiveActivityCandidateFrame) -> None:
+        # Burst candidates are in-memory evidence only and capped per activity session.
+        self.candidate_frames.append(candidate)
+
+    def _emit_notification_once(self, event: str) -> None:
+        emitted = self._emitted_notification_events
+        if emitted is None:
+            emitted = set()
+            self._emitted_notification_events = emitted
+        if event in emitted:
+            self.notification_event = None
+            return
+        emitted.add(event)
+        self.notification_event = event
+
     def mark_review_created(self, values: Mapping[str, Any]) -> None:
         self.review_activity_created = True
         self.ready_for_review = True
@@ -1035,6 +1125,11 @@ class _LiveActivitySession:
         self.suggestion_id = _optional_str(values.get("suggestion_id"))
         self.suggestion_confidence = _optional_float(values.get("suggestion_confidence"))
         self.creates_truth = False
+        self.saved_candidate_count = min(
+            DEFAULT_ACTIVITY_MAX_SAVED_CANDIDATES,
+            max(self.saved_candidate_count, 1 if self.best_media_asset_id else 0),
+        )
+        self._emit_notification_once("review_candidate_ready")
 
     def mark_ready_for_review(self, *, quiet_seconds: int) -> None:
         if self.review_activity_created:
@@ -1049,6 +1144,8 @@ class _LiveActivitySession:
     def review_state(self) -> str:
         if self.review_activity_created:
             return "review_candidate_created"
+        if self.detection_count == 0 and self.near_miss_count > 0:
+            return "tentative_burst"
         if self.ready_for_review:
             return "ready_for_review"
         return "waiting_for_quiet"
@@ -1067,6 +1164,10 @@ class _LiveActivitySession:
             started_at=self.started_at,
             last_seen_at=self.last_seen_at,
             detection_count=self.detection_count,
+            near_miss_count=self.near_miss_count,
+            frames_evaluated_count=self.frames_evaluated_count,
+            candidate_frame_count=len(self.candidate_frames),
+            saved_candidate_count=self.saved_candidate_count,
             completed_at=self.completed_at,
             ready_for_review=self.ready_for_review,
             review_state=self.review_state,
@@ -1102,6 +1203,16 @@ class _LiveActivitySession:
             suggested_label=self.suggested_label,
             suggestion_id=self.suggestion_id,
             suggestion_confidence=self.suggestion_confidence,
+            session_duration_seconds=max(
+                0.0,
+                (self.last_seen_at - self.started_at).total_seconds(),
+            ),
+            manual_review_needed=(
+                self.ready_for_review
+                and self.detection_count > 0
+                and not self.review_activity_created
+            ),
+            notification_event=self.notification_event,
             creates_truth=False,
         )
 

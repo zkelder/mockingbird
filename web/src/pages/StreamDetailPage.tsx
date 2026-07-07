@@ -542,8 +542,11 @@ export function StreamDetailPage({
   const [isSavingCameraTuning, setIsSavingCameraTuning] = useState(false);
   const [liveMotionFocusZoneId, setLiveMotionFocusZoneId] = useState("");
   const [showLiveMotionDebug, setShowLiveMotionDebug] = useState(false);
+  const [liveStatusNotice, setLiveStatusNotice] = useState<string | null>(null);
   const liveMotionInFlightRef = useRef(false);
   const lastAutoReviewQueueItemRef = useRef<string | null>(null);
+  const lastActivityNoticeRef = useRef<string | null>(null);
+  const lastReviewNoticeRef = useRef<string | null>(null);
 
   const selectedZone = detail?.zones.find((zone) => zone.id === selectedZoneId) ?? null;
 
@@ -561,6 +564,7 @@ export function StreamDetailPage({
       setAutoCreateLiveReviews(status.auto_create_review_candidates);
       setAutoReviewQuietSeconds(status.auto_review_quiet_seconds);
       setAutoReviewMinDetections(status.auto_review_min_detections);
+      handleLiveStatusNoticeFromStatus(status);
       if (status.last_motion_result) {
         setLiveMotionResult(status.last_motion_result);
         setLiveMonitorState(liveMonitorStateFor(status.last_motion_result));
@@ -582,6 +586,55 @@ export function StreamDetailPage({
         caught instanceof Error ? caught.message : "Could not read camera session status.",
       );
       return null;
+    }
+  }
+
+  function handleLiveStatusNoticeFromStatus(status: LiveCameraSessionStatus) {
+    const activity = (status.current_activity_session ?? status.last_activity ?? null) as
+      | Record<string, unknown>
+      | null;
+    const activityId =
+      status.current_activity_session_id ??
+      (typeof activity?.activity_session_id === "string" ? activity.activity_session_id : null);
+    const reviewQueueItemId =
+      status.activity_review_queue_item_id ??
+      status.last_auto_review_queue_item_id ??
+      (typeof activity?.review_queue_item_id === "string" ? activity.review_queue_item_id : null);
+
+    if (status.notification_event === "activity_started" && activityId) {
+      if (lastActivityNoticeRef.current !== activityId) {
+        lastActivityNoticeRef.current = activityId;
+        setLiveStatusNotice("Feeder activity started.");
+      }
+      return;
+    }
+    if (
+      (status.notification_event === "review_candidate_ready" || reviewQueueItemId) &&
+      reviewQueueItemId
+    ) {
+      if (lastReviewNoticeRef.current !== reviewQueueItemId) {
+        lastReviewNoticeRef.current = reviewQueueItemId;
+        setLiveStatusNotice("Review candidate ready.");
+      }
+    }
+  }
+
+  function handleLiveStatusNoticeFromResult(result: LiveMotionEvaluateResponse) {
+    if (result.notification_event === "activity_started" && result.activity_session_id) {
+      if (lastActivityNoticeRef.current !== result.activity_session_id) {
+        lastActivityNoticeRef.current = result.activity_session_id;
+        setLiveStatusNotice("Feeder activity started.");
+      }
+      return;
+    }
+    if (
+      (result.notification_event === "review_candidate_ready" || result.review_queue_item_id) &&
+      result.review_queue_item_id
+    ) {
+      if (lastReviewNoticeRef.current !== result.review_queue_item_id) {
+        lastReviewNoticeRef.current = result.review_queue_item_id;
+        setLiveStatusNotice("Review candidate ready.");
+      }
     }
   }
 
@@ -630,6 +683,9 @@ export function StreamDetailPage({
       setIsSavingCameraTuning(false);
       setLiveMotionFocusZoneId("");
       setShowLiveMotionDebug(false);
+      setLiveStatusNotice(null);
+      lastActivityNoticeRef.current = null;
+      lastReviewNoticeRef.current = null;
       try {
         const stream = await apiClient.getStream(streamId);
         const [playback, setupReview, providerConfiguration, zones, events] = await Promise.all([
@@ -989,6 +1045,7 @@ export function StreamDetailPage({
         setIsLiveMonitoring(status?.monitor_running ?? true);
       }
       setLiveMotionResult(result);
+      handleLiveStatusNoticeFromResult(result);
       setLiveMonitorState(liveMonitorStateFor(result));
     } catch (caught) {
       setLiveMonitorState("failed");
@@ -1038,6 +1095,10 @@ export function StreamDetailPage({
               }
             : current,
         );
+        if (lastReviewNoticeRef.current !== result.review_queue_item_id) {
+          lastReviewNoticeRef.current = result.review_queue_item_id;
+          setLiveStatusNotice("Review candidate ready.");
+        }
         await onReviewActivityCreated();
       } else {
         setLiveMotionError(result.message);
@@ -1499,9 +1560,41 @@ export function StreamDetailPage({
     liveStrongestZoneName ??
     liveMotionResult?.strongest_activity_area_label ??
     (liveMotionResult?.uses_auto_regions ? "auto area" : "unzoned activity");
+  const liveActivityDetectionCount =
+    liveMotionResult?.activity_detection_count ??
+    liveSession?.activity_detection_count ??
+    liveSessionActivityNumber("detection_count") ??
+    0;
+  const liveActivityNearMissCount =
+    liveMotionResult?.activity_near_miss_count ??
+    liveSession?.activity_near_miss_count ??
+    liveSessionActivityNumber("near_miss_count") ??
+    0;
+  const liveActivityFramesEvaluatedCount =
+    liveMotionResult?.activity_frames_evaluated_count ??
+    liveSession?.activity_frames_evaluated_count ??
+    liveSessionActivityNumber("frames_evaluated_count") ??
+    0;
+  const liveActivityCandidateFrameCount =
+    liveMotionResult?.activity_candidate_frame_count ??
+    liveSession?.activity_candidate_frame_count ??
+    liveSessionActivityNumber("candidate_frame_count") ??
+    0;
+  const liveActivitySavedCandidateCount =
+    liveMotionResult?.activity_saved_candidate_count ??
+    liveSession?.activity_saved_candidate_count ??
+    liveSessionActivityNumber("saved_candidate_count") ??
+    0;
+  const liveActivityManualReviewNeeded = Boolean(
+    liveMotionResult?.activity_manual_review_needed ??
+      liveSession?.activity_manual_review_needed ??
+      liveSessionActivity?.manual_review_needed,
+  );
   const liveActivityTitle =
     liveReviewActivityCreated
       ? `Review activity created for ${liveActivityAreaLabel}`
+      : liveActivityDetectionCount === 0 && liveActivityNearMissCount > 0
+        ? `Possible activity near ${liveActivityAreaLabel}`
       : `Activity detected in ${liveActivityAreaLabel}`;
   const liveBestMediaAssetId =
     liveMotionResult?.best_media_asset_id ?? liveSessionActivityString("best_media_asset_id");
@@ -1516,11 +1609,6 @@ export function StreamDetailPage({
   const liveBestFrameUrl = liveBestMediaAssetId
     ? apiClient.mediaFileUrl(liveBestMediaAssetId)
     : null;
-  const liveActivityDetectionCount =
-    liveMotionResult?.activity_detection_count ??
-    liveSession?.activity_detection_count ??
-    liveSessionActivityNumber("detection_count") ??
-    0;
   const liveActivityBestChangeLabel = formatPercent(
     liveMotionResult?.activity_best_changed_ratio ??
       liveSession?.activity_best_changed_ratio ??
@@ -1549,8 +1637,12 @@ export function StreamDetailPage({
       ? liveMotionResult.cooldown_remaining_seconds != null
         ? `${liveMotionResult.cooldown_remaining_seconds}s remaining`
         : "waiting for quiet period"
+      : liveMotionResult?.activity_quiet_remaining_seconds != null
+        ? `${liveMotionResult.activity_quiet_remaining_seconds}s remaining`
       : liveSession?.activity_cooldown_remaining_seconds != null
         ? `${liveSession.activity_cooldown_remaining_seconds}s remaining`
+        : liveSession?.activity_quiet_remaining_seconds != null
+          ? `${liveSession.activity_quiet_remaining_seconds}s remaining`
       : null;
   const liveActivityReviewState =
     liveMotionResult?.activity_review_state ??
@@ -1907,6 +1999,11 @@ export function StreamDetailPage({
                 </span>
               ) : null}
             </div>
+            {liveStatusNotice ? (
+              <div className="stream-live-inline-status">
+                <strong>{liveStatusNotice}</strong>
+              </div>
+            ) : null}
             <div className="stream-live-zone-actions">
               <button
                 className={drawMode ? "primary-action" : "secondary-action"}
@@ -2416,6 +2513,15 @@ export function StreamDetailPage({
                     : "waiting"}
                 </span>
                 <span>
+                  <strong>Activity frames</strong> {liveActivityFramesEvaluatedCount}
+                </span>
+                <span>
+                  <strong>Candidates</strong> {liveActivityCandidateFrameCount}
+                </span>
+                <span>
+                  <strong>Near misses</strong> {liveActivityNearMissCount}
+                </span>
+                <span>
                   <strong>Newest frame</strong>{" "}
                   {formatAgeMs(liveMotionResult?.newest_frame_age_ms)}
                 </span>
@@ -2507,11 +2613,30 @@ export function StreamDetailPage({
                     <strong>Detected</strong> {liveBestFrameTime ?? "Recent live frame"}
                   </span>
                   <span>
-                    <strong>Detections</strong> {liveActivityDetectionCount || 1}
+                    <strong>Detections</strong> {liveActivityDetectionCount}
+                  </span>
+                  <span>
+                    <strong>Near misses</strong> {liveActivityNearMissCount}
+                  </span>
+                  <span>
+                    <strong>Candidate frames</strong> {liveActivityCandidateFrameCount}
+                  </span>
+                  <span>
+                    <strong>Saved candidates</strong> {liveActivitySavedCandidateCount}
                   </span>
                   <span>
                     <strong>State</strong> {liveActivityReviewStateLabel}
                   </span>
+                  {liveCooldownLabel ? (
+                    <span>
+                      <strong>Quiet</strong> {liveCooldownLabel}
+                    </span>
+                  ) : null}
+                  {liveActivityManualReviewNeeded ? (
+                    <span>
+                      <strong>Review</strong> manual review needed
+                    </span>
+                  ) : null}
                   <span>
                     <strong>Best frame</strong>{" "}
                     {liveBestMediaAssetId

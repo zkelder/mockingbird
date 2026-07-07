@@ -662,9 +662,16 @@ class LiveCameraSessionStatusResponse(BaseModel):
     activity_started_at: datetime | None = None
     activity_last_seen_at: datetime | None = None
     activity_detection_count: int = Field(default=0, ge=0)
+    activity_near_miss_count: int = Field(default=0, ge=0)
+    activity_frames_evaluated_count: int = Field(default=0, ge=0)
+    activity_candidate_frame_count: int = Field(default=0, ge=0)
+    activity_saved_candidate_count: int = Field(default=0, ge=0)
+    activity_session_duration_seconds: float = Field(default=0.0, ge=0)
     activity_completed_at: datetime | None = None
     activity_ready_for_review: bool = False
+    activity_manual_review_needed: bool = False
     activity_review_state: str | None = None
+    activity_quiet_remaining_seconds: int | None = Field(default=None, ge=0)
     activity_best_frame_sequence: int | None = Field(default=None, ge=0)
     activity_best_score: float | None = None
     activity_best_changed_ratio: float | None = Field(default=None, ge=0)
@@ -680,6 +687,7 @@ class LiveCameraSessionStatusResponse(BaseModel):
     activity_event_id: str | None = None
     activity_visit_id: str | None = None
     activity_review_queue_item_id: str | None = None
+    notification_event: str | None = None
     last_activity: dict[str, Any] | None = None
     last_motion_result: dict[str, Any] | None = None
     last_error: str | None = None
@@ -1592,10 +1600,16 @@ class LiveMotionEvaluateResponse(BaseModel):
     activity_started_at: datetime | None = None
     activity_last_seen_at: datetime | None = None
     activity_detection_count: int = Field(default=0, ge=0)
+    activity_near_miss_count: int = Field(default=0, ge=0)
+    activity_frames_evaluated_count: int = Field(default=0, ge=0)
+    activity_candidate_frame_count: int = Field(default=0, ge=0)
+    activity_saved_candidate_count: int = Field(default=0, ge=0)
+    activity_session_duration_seconds: float = Field(default=0.0, ge=0)
     activity_completed_at: datetime | None = None
     activity_ready_for_review: bool = False
     activity_review_state: str | None = None
     activity_quiet_remaining_seconds: int | None = Field(default=None, ge=0)
+    activity_manual_review_needed: bool = False
     activity_best_frame_sequence: int | None = Field(default=None, ge=0)
     activity_best_score: float | None = None
     activity_best_changed_ratio: float | None = Field(default=None, ge=0)
@@ -1623,6 +1637,7 @@ class LiveMotionEvaluateResponse(BaseModel):
     last_auto_review_event_id: str | None = None
     last_auto_review_visit_id: str | None = None
     last_auto_review_queue_item_id: str | None = None
+    notification_event: str | None = None
     last_evaluation_message: str | None = None
     last_error: str | None = None
     motion_evidence_id: str | None = None
@@ -1901,6 +1916,10 @@ class ReviewQueueItem(BaseModel):
     activity_started_at: datetime | None = None
     activity_last_seen_at: datetime | None = None
     detection_count: int = Field(default=0, ge=0)
+    near_miss_count: int = Field(default=0, ge=0)
+    frames_evaluated_count: int = Field(default=0, ge=0)
+    candidate_frame_count: int = Field(default=0, ge=0)
+    saved_candidate_count: int = Field(default=0, ge=0)
     best_frame_sequence: int | None = Field(default=None, ge=0)
     best_changed_ratio: float | None = Field(default=None, ge=0)
     best_changed_pixels: int | None = Field(default=None, ge=0)

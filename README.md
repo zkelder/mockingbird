@@ -139,6 +139,12 @@ until explicit review/correction.
 Live monitoring also reports recent-frame health, last evaluation status, and
 quiet/cooldown state so repeated activity does not keep saving frames or
 creating duplicate review candidates.
+For feeder, birdbath, and perch Zones, live monitoring keeps a bounded
+in-memory burst around confirmed or near-threshold activity. Near misses can
+start a tentative activity session for status/counting, but only confirmed
+activity can become review-ready. The review handoff persists at most one best
+candidate frame as evidence; raw burst frames, status notifications, and counts
+do not create Bird Log entries or reviewed truth.
 Users can explicitly enable unattended monitoring to auto-create Review Queue
 candidates from completed live activity sessions after the quiet period. This
 creates needs-review Event/Visit candidates only; it does not create

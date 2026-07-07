@@ -1511,15 +1511,22 @@ def _live_activity_session_status_fields(
         "activity_started_at": activity.get("started_at"),
         "activity_last_seen_at": activity.get("last_seen_at"),
         "activity_detection_count": activity.get("detection_count") or 0,
+        "activity_near_miss_count": activity.get("near_miss_count") or 0,
+        "activity_frames_evaluated_count": activity.get("frames_evaluated_count") or 0,
+        "activity_candidate_frame_count": activity.get("candidate_frame_count") or 0,
+        "activity_saved_candidate_count": activity.get("saved_candidate_count") or 0,
+        "activity_session_duration_seconds": activity.get("session_duration_seconds") or 0.0,
         "activity_completed_at": activity.get("completed_at"),
         "activity_ready_for_review": _live_activity_ready_for_review(
             activity,
             quiet_seconds=quiet_seconds,
         ),
+        "activity_manual_review_needed": bool(activity.get("manual_review_needed")),
         "activity_review_state": _live_activity_review_state(
             activity,
             quiet_seconds=quiet_seconds,
         ),
+        "activity_quiet_remaining_seconds": quiet_remaining_seconds,
         "activity_best_frame_sequence": activity.get("best_frame_sequence"),
         "activity_best_score": activity.get("best_score"),
         "activity_best_changed_ratio": activity.get("best_changed_ratio"),
@@ -1537,6 +1544,7 @@ def _live_activity_session_status_fields(
         "activity_event_id": activity.get("event_id"),
         "activity_visit_id": activity.get("visit_id"),
         "activity_review_queue_item_id": activity.get("review_queue_item_id"),
+        "notification_event": activity.get("notification_event"),
     }
 
 
@@ -1556,6 +1564,11 @@ def _live_activity_evaluate_fields(
         "activity_started_at": activity.get("started_at"),
         "activity_last_seen_at": activity.get("last_seen_at"),
         "activity_detection_count": activity.get("detection_count") or 0,
+        "activity_near_miss_count": activity.get("near_miss_count") or 0,
+        "activity_frames_evaluated_count": activity.get("frames_evaluated_count") or 0,
+        "activity_candidate_frame_count": activity.get("candidate_frame_count") or 0,
+        "activity_saved_candidate_count": activity.get("saved_candidate_count") or 0,
+        "activity_session_duration_seconds": activity.get("session_duration_seconds") or 0.0,
         "activity_completed_at": activity.get("completed_at"),
         "activity_ready_for_review": _live_activity_ready_for_review(
             activity,
@@ -1566,6 +1579,7 @@ def _live_activity_evaluate_fields(
             quiet_seconds=quiet_seconds,
         ),
         "activity_quiet_remaining_seconds": quiet_remaining_seconds,
+        "activity_manual_review_needed": bool(activity.get("manual_review_needed")),
         "activity_best_frame_sequence": activity.get("best_frame_sequence"),
         "activity_best_score": activity.get("best_score"),
         "activity_best_changed_ratio": activity.get("best_changed_ratio"),
@@ -1575,6 +1589,7 @@ def _live_activity_evaluate_fields(
         "activity_threshold_source": activity.get("threshold_source"),
         "activity_fine_motion_applied": bool(activity.get("fine_motion_applied")),
         "activity_near_miss": bool(activity.get("near_miss")),
+        "notification_event": activity.get("notification_event"),
     }
 
 
@@ -1597,6 +1612,8 @@ def _live_activity_ready_for_review(
 ) -> bool:
     if activity.get("review_activity_created"):
         return True
+    if int(activity.get("detection_count") or 0) <= 0:
+        return False
     if activity.get("ready_for_review"):
         return True
     quiet_remaining_seconds = _live_activity_quiet_remaining_seconds(
@@ -1613,6 +1630,10 @@ def _live_activity_review_state(
 ) -> str:
     if activity.get("review_activity_created"):
         return "review_candidate_created"
+    if int(activity.get("detection_count") or 0) <= 0 and int(
+        activity.get("near_miss_count") or 0
+    ) > 0:
+        return "tentative_burst"
     if _live_activity_ready_for_review(activity, quiet_seconds=quiet_seconds):
         return "ready_for_review"
     return "waiting_for_quiet"
@@ -3302,6 +3323,26 @@ def _evaluate_live_stream_motion(
         if best_live_frame is not None
         else None
     )
+    burst_live_frame = best_live_frame
+    burst_live_frame_summary = best_live_frame_summary
+    if burst_live_frame is None and strongest_score_frame_index is not None:
+        burst_live_frame = next(
+            (
+                cached_frame
+                for cached_frame in cached_frames
+                if cached_frame.sequence == strongest_score_frame_index
+            ),
+            None,
+        )
+        burst_live_frame_summary = next(
+            (
+                frame_summary
+                for frame_summary in frame_summaries
+                if burst_live_frame is not None
+                and frame_summary.sequence == burst_live_frame.sequence
+            ),
+            None,
+        )
     strongest_frame_start_sequence, strongest_frame_end_sequence = _live_motion_pair_sequences(
         cached_frames,
         best_candidate.best_frame_index if best_candidate else None,
@@ -3316,6 +3357,13 @@ def _evaluate_live_stream_motion(
         else []
     )
     has_reviewable_live_activity = bool(best_candidate) and not uses_auto_regions
+    feeder_burst_signal = (
+        not uses_auto_regions
+        and strongest_zone_type in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}
+        and strongest_zone_id is not None
+        and burst_live_frame is not None
+        and (activity_detected or near_miss)
+    )
     session_recommendation = recommend_activity_session(
         source_id=stream.source_id,
         stream_id=stream.id,
@@ -3331,10 +3379,14 @@ def _evaluate_live_stream_motion(
     live_activity_session_active = (
         session_snapshot is not None
         and session_snapshot.status in {"starting", "running"}
-        and activity_detected
-        and best_live_frame is not None
+        and feeder_burst_signal
     )
     if live_activity_session_active:
+        burst_start_sequence, burst_end_sequence = (
+            (strongest_frame_start_sequence, strongest_frame_end_sequence)
+            if best_candidate is not None
+            else (diagnostic_frame_start_sequence, diagnostic_frame_end_sequence)
+        )
         activity_snapshot = get_live_camera_session_manager().record_activity_detection(
             stream.id,
             {
@@ -3345,24 +3397,24 @@ def _evaluate_live_stream_motion(
                 ),
                 "region_kind": session_region_kind,
                 "region_id": session_region_id,
-                "zone_id": best_candidate.zone_id
-                if best_candidate is not None and not uses_auto_regions
-                else None,
+                "zone_id": strongest_zone_id if not uses_auto_regions else None,
                 "zone_name": strongest_zone_name
                 or (strongest_activity_area.label if strongest_activity_area else None),
                 "zone_type": strongest_zone_type.value
                 if strongest_zone_type is not None
                 else None,
-                "last_seen_at": best_live_frame.captured_at,
-                "start_frame_sequence": strongest_frame_start_sequence,
-                "end_frame_sequence": strongest_frame_end_sequence,
-                "best_frame_sequence": best_live_frame.sequence,
-                "best_frame_captured_at": best_live_frame.captured_at,
+                "last_seen_at": burst_live_frame.captured_at,
+                "activity_detected": activity_detected,
+                "frames_evaluated_count": len(cached_frames),
+                "start_frame_sequence": burst_start_sequence,
+                "end_frame_sequence": burst_end_sequence,
+                "best_frame_sequence": burst_live_frame.sequence,
+                "best_frame_captured_at": burst_live_frame.captured_at,
                 "best_frame_width": (
-                    best_live_frame_summary.width if best_live_frame_summary else None
+                    burst_live_frame_summary.width if burst_live_frame_summary else None
                 ),
                 "best_frame_height": (
-                    best_live_frame_summary.height if best_live_frame_summary else None
+                    burst_live_frame_summary.height if burst_live_frame_summary else None
                 ),
                 "best_score": _live_activity_best_frame_score(
                     changed_ratio=strongest_changed_ratio,
@@ -3403,8 +3455,8 @@ def _evaluate_live_stream_motion(
                 "near_miss": near_miss,
                 "margin_to_threshold": margin_to_threshold,
             },
-            frame_bytes=best_live_frame.frame_bytes,
-            frame_content_type=best_live_frame.content_type,
+            frame_bytes=burst_live_frame.frame_bytes,
+            frame_content_type=burst_live_frame.content_type,
             quiet_window_seconds=active_quiet_seconds,
         )
         live_activity_session = (
@@ -3592,6 +3644,21 @@ def _evaluate_live_stream_motion(
                                 ),
                                 "detection_count": int(
                                     live_activity_session.get("detection_count") or 1
+                                ),
+                                "near_miss_count": int(
+                                    live_activity_session.get("near_miss_count") or 0
+                                ),
+                                "frames_evaluated_count": int(
+                                    live_activity_session.get("frames_evaluated_count")
+                                    or 0
+                                ),
+                                "candidate_frame_count": int(
+                                    live_activity_session.get("candidate_frame_count")
+                                    or 0
+                                ),
+                                "saved_candidate_count": int(
+                                    live_activity_session.get("saved_candidate_count")
+                                    or 0
                                 ),
                             }
                             if live_activity_session is not None
@@ -4100,6 +4167,21 @@ def _create_live_stream_motion_review_activity(
             suggestion_confidence=activity.get("suggestion_confidence"),
         )
 
+    if int(activity.get("detection_count") or 0) <= 0:
+        return _live_motion_review_activity_response(
+            stream_id=stream.id,
+            source_id=stream.source_id,
+            status="unavailable",
+            message="Stored live activity needs confirmed activity before review.",
+            activity_detected=False,
+            activity_session_id=activity.get("activity_session_id"),
+            activity_detection_count=0,
+            activity_started_at=_live_activity_datetime(activity.get("started_at")),
+            activity_last_seen_at=_live_activity_datetime(activity.get("last_seen_at")),
+            media_asset_id=activity.get("best_media_asset_id"),
+            warnings=["Near-miss-only activity remains status evidence, not review activity."],
+        )
+
     zone_id = activity.get("zone_id")
     best_media_asset_id = activity.get("best_media_asset_id")
     if zone_id and not best_media_asset_id and activity.get("activity_session_id"):
@@ -4154,6 +4236,10 @@ def _create_live_stream_motion_review_activity(
                     "source": "live_stream_motion_session_activity",
                     "activity_session_id": activity.get("activity_session_id"),
                     "detection_count": activity.get("detection_count") or 1,
+                    "near_miss_count": activity.get("near_miss_count") or 0,
+                    "frames_evaluated_count": activity.get("frames_evaluated_count") or 0,
+                    "candidate_frame_count": activity.get("candidate_frame_count") or 0,
+                    "saved_candidate_count": activity.get("saved_candidate_count") or 0,
                     "activity_started_at": str(activity.get("started_at"))
                     if activity.get("started_at")
                     else "",
@@ -4286,12 +4372,27 @@ def _create_live_stream_motion_review_activity(
                 "media_asset_id": best_media_asset_id,
                 "activity_session_id": activity.get("activity_session_id"),
                 "activity_detection_count": activity.get("detection_count") or 1,
+                "activity_near_miss_count": activity.get("near_miss_count") or 0,
+                "activity_frames_evaluated_count": (
+                    activity.get("frames_evaluated_count") or 0
+                ),
+                "activity_candidate_frame_count": (
+                    activity.get("candidate_frame_count") or 0
+                ),
+                "activity_saved_candidate_count": (
+                    activity.get("saved_candidate_count") or 0
+                ),
+                "activity_session_duration_seconds": (
+                    activity.get("session_duration_seconds") or 0.0
+                ),
                 "activity_started_at": activity.get("started_at"),
                 "activity_last_seen_at": activity.get("last_seen_at"),
                 "activity_completed_at": activity.get("completed_at"),
                 "activity_ready_for_review": True,
+                "activity_manual_review_needed": False,
                 "activity_review_state": "review_candidate_created",
                 "activity_quiet_remaining_seconds": None,
+                "notification_event": "review_candidate_ready",
                 "suggested_label": updates["suggested_label"],
                 "suggestion_id": updates["suggestion_id"],
                 "suggestion_confidence": updates["suggestion_confidence"],
