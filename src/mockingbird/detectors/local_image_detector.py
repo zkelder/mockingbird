@@ -18,8 +18,9 @@ MODEL_PATH_ENV = "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH"
 LABELS_PATH_ENV = "MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH"
 CONFIDENCE_THRESHOLD_ENV = "MOCKINGBIRD_LOCAL_DETECTOR_CONFIDENCE_THRESHOLD"
 LOCAL_DETECTOR_SETUP_HINT = (
-    f"Set {MODEL_PATH_ENV} to a local ONNX image detector file. "
+    f"Set {MODEL_PATH_ENV} to a local model file. "
     f"Optionally set {LABELS_PATH_ENV} to a newline-delimited labels file. "
+    "No model files are bundled or downloaded automatically. "
     "Detector outputs stay as proposal evidence until user review."
 )
 

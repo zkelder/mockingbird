@@ -96,16 +96,23 @@ def checklist_by_id(summary: dict) -> dict[str, dict]:
 
 async def test_model_readiness_summary_shape_and_read_only_behavior(
     client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH", raising=False)
+    monkeypatch.delenv("MOCKINGBIRD_MEGADETECTOR_MODEL_PATH", raising=False)
     runs_before = (await client.get("/api/detection-runs")).json()
+    labels_before = (await client.get("/api/review-labels")).json()
 
     response = await client.get("/api/model-readiness/summary")
 
     runs_after = (await client.get("/api/detection-runs")).json()
+    labels_after = (await client.get("/api/review-labels")).json()
     assert response.status_code == 200
     assert runs_after == runs_before
+    assert labels_after == labels_before
     summary = response.json()
     checklist = checklist_by_id(summary)
+    setup_by_id = {item["adapter_id"]: item for item in summary["adapter_setup"]}
     assert summary["reviewed_record_count"] == 1
     assert summary["export_ready_count"] == 1
     assert summary["dataset_quality_issue_count"] == 1
@@ -113,6 +120,28 @@ async def test_model_readiness_summary_shape_and_read_only_behavior(
     assert summary["ready_for_first_detector_spike"] is False
     assert "does not run ML or inspect media" in summary["local_first_note"]
     assert "DetectionProposal evidence" in summary["local_first_note"]
+    assert {"demo_rule_detector", "local_image_detector", "megadetector"}.issubset(
+        setup_by_id
+    )
+    assert setup_by_id["demo_rule_detector"]["status"] == "demo"
+    assert setup_by_id["demo_rule_detector"]["is_demo"] is True
+    assert setup_by_id["demo_rule_detector"]["can_run_on_review_best_frame"] is True
+    assert setup_by_id["demo_rule_detector"]["creates_truth"] is False
+    assert setup_by_id["local_image_detector"]["status"] == "setup_required"
+    assert setup_by_id["local_image_detector"]["required_env_var"] == (
+        "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH"
+    )
+    assert "local model file" in setup_by_id["local_image_detector"]["model_path_hint"]
+    assert "No model files are bundled or downloaded" in setup_by_id[
+        "local_image_detector"
+    ]["setup_hint"]
+    assert setup_by_id["local_image_detector"]["can_run"] is False
+    assert setup_by_id["local_image_detector"]["creates_truth"] is False
+    assert setup_by_id["megadetector"]["status"] == "setup_required"
+    assert setup_by_id["megadetector"]["required_env_var"] == (
+        "MOCKINGBIRD_MEGADETECTOR_MODEL_PATH"
+    )
+    assert setup_by_id["megadetector"]["creates_truth"] is False
     assert {"reviewed-local-dataset", "dataset-qa-high-issues", "adapter-evidence-contract"}.issubset(
         checklist
     )

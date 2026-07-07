@@ -7,6 +7,7 @@ from mockingbird.api.main import app, configure_repository
 from mockingbird.detectors.local_image_detector import (
     LOCAL_IMAGE_DETECTOR_ID,
     LocalDetectorBox,
+    LocalDetectorOutputError,
     LocalDetectorProposal,
     LocalDetectorStatus,
 )
@@ -210,6 +211,29 @@ async def test_local_detector_errors_prefer_media_validation_before_config(
     assert "image/jpeg" in unsupported_response.json()["detail"]
     assert "image/png" in unsupported_response.json()["detail"]
     assert "image/webp" in unsupported_response.json()["detail"]
+
+
+async def test_local_detector_failure_returns_clean_error_without_truth(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mark_local_detector_available(monkeypatch)
+
+    def fail_detector(**_: object) -> list[LocalDetectorProposal]:
+        raise LocalDetectorOutputError("local_detector_failed")
+
+    monkeypatch.setattr(product_repository, "run_local_image_detector", fail_detector)
+    media_asset = (await import_image(client)).json()["media_asset"]
+    before_status = (await client.get("/api/settings/local-data")).json()
+
+    response = await run_local_detector(client, media_asset["id"])
+
+    after_status = (await client.get("/api/settings/local-data")).json()
+    assert response.status_code == 400
+    assert "failed cleanly" in response.json()["detail"]
+    assert after_status["detection_run_count"] == before_status["detection_run_count"]
+    assert after_status["detection_proposal_count"] == before_status["detection_proposal_count"]
+    assert after_status["review_label_count"] == before_status["review_label_count"]
 
 
 async def test_local_detector_proposals_are_evidence_only_until_conversion(
