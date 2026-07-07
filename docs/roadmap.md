@@ -1147,6 +1147,10 @@ Current work:
   best candidate frame during explicit or unattended Review Queue handoff.
   Tentative near-miss-only sessions are visible but not review-ready, and Bird
   Log/export truth still begins only after ReviewLabel correction.
+- Auto-create Toggle Reliability Fix: Stream Detail can select auto-create
+  before monitoring starts as a pending setting, apply it on Start monitoring,
+  and update active monitor settings without starting cameras, evaluating
+  motion, creating ReviewLabels, updating Bird Log, or exporting data.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — live camera field-test validation polish.

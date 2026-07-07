@@ -321,6 +321,25 @@ class LiveCameraSessionManager:
         session.stop_monitor()
         return session.snapshot()
 
+    def update_monitor_settings(
+        self,
+        stream_id: str,
+        *,
+        auto_create_review_candidates: bool,
+        auto_review_quiet_seconds: int = DEFAULT_AUTO_REVIEW_QUIET_SECONDS,
+        auto_review_min_detections: int = DEFAULT_AUTO_REVIEW_MIN_DETECTIONS,
+    ) -> LiveCameraSessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        session.update_monitor_settings(
+            auto_create_review_candidates=auto_create_review_candidates,
+            auto_review_quiet_seconds=auto_review_quiet_seconds,
+            auto_review_min_detections=auto_review_min_detections,
+        )
+        return session.snapshot()
+
     def record_motion_result(
         self,
         stream_id: str,
@@ -587,6 +606,19 @@ class _LiveCameraSession:
                 daemon=True,
             )
             self._monitor_thread.start()
+
+    def update_monitor_settings(
+        self,
+        *,
+        auto_create_review_candidates: bool,
+        auto_review_quiet_seconds: int = DEFAULT_AUTO_REVIEW_QUIET_SECONDS,
+        auto_review_min_detections: int = DEFAULT_AUTO_REVIEW_MIN_DETECTIONS,
+    ) -> None:
+        with self._lock:
+            self.auto_create_review_candidates = bool(auto_create_review_candidates)
+            self.auto_review_quiet_seconds = max(1, int(auto_review_quiet_seconds))
+            self.auto_review_min_detections = max(1, int(auto_review_min_detections))
+            self.auto_review_last_error = None
 
     def stop_monitor(self) -> None:
         with self._lock:

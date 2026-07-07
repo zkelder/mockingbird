@@ -49,6 +49,9 @@ transcoding, or production provider infrastructure.
   from completed live activity sessions only. Bird Log, exports, and reviewed
   truth still wait for explicit correction, and identification assist remains a
   later explicit review action.
+- Auto-create can be selected before monitoring starts; the checkbox is a
+  pending setting until Start monitoring applies it, and toggling it never
+  creates Bird Log truth by itself.
 - Review Queue can show identification assist state on best-frame candidates:
   setup-required/unavailable/unsupported/failed when an optional local analyzer
   cannot run, or suggestion/proposal evidence when one is available or already

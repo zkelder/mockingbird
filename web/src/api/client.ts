@@ -47,6 +47,7 @@ import type {
   MediaImportResult,
   LiveMotionEvaluateRequest,
   LiveMotionEvaluateResponse,
+  LiveMotionMonitorSettingsRequest,
   LiveMotionMonitorStartRequest,
   LiveMotionReviewActivityResponse,
   MockSpeciesSuggestionRequest,
@@ -323,6 +324,17 @@ export const apiClient = {
   ) =>
     request<LiveMotionEvaluateResponse>(
       `/api/streams/${encodeURIComponent(streamId)}/live-motion/start`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+  updateLiveMotionMonitorSettings: (
+    streamId: string,
+    payload: LiveMotionMonitorSettingsRequest = {},
+  ) =>
+    request<LiveCameraSessionStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/live-motion/settings`,
       {
         method: "POST",
         body: JSON.stringify(payload),

@@ -152,6 +152,9 @@ ReviewLabels, update Bird Log, run identification assist, export data, or mark
 truth. The current unattended mode is in-memory and user-started: the API
 process, backend camera session, and monitor must remain running, but the
 browser does not need to keep the live view visible.
+Stream Detail lets users choose auto-create before monitoring starts; that
+pending choice is applied when monitoring starts, and running monitor changes
+update monitor settings without creating truth.
 When the user clicks `Create review activity`, live motion creates an uncertain
 needs-review Event/Visit candidate from MotionEvidence with the saved best frame
 attached. It also adds a low-confidence SpeciesSuggestion from Zone context, such

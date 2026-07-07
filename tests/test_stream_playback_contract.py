@@ -2382,6 +2382,115 @@ async def test_backend_monitor_survives_hidden_live_view_until_camera_stop(
     assert await product_counts(client) == before
 
 
+async def test_live_motion_settings_do_not_start_camera_or_create_truth(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_count = 0
+
+    def fake_start(device: str, **kwargs: object) -> FakeFfmpegProcess:
+        nonlocal start_count
+        start_count += 1
+        return FakeFfmpegProcess([])
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        fake_start,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/settings",
+        json={
+            "auto_create_review_candidates": True,
+            "auto_review_quiet_seconds": 12,
+            "auto_review_min_detections": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    status = response.json()
+    assert status["status"] == "stopped"
+    assert status["monitor_running"] is False
+    assert status["auto_create_review_candidates"] is False
+    assert start_count == 0
+    assert await product_counts(client) == before
+
+
+async def test_live_motion_settings_update_running_monitor_without_truth(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8settings-update-0\xff\xd9"
+    frame_1 = b"\xff\xd8settings-update-1\xff\xd9"
+    fake_process = FakeFfmpegProcess([frame_0, frame_1])
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, **kwargs: fake_process,
+    )
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(),
+            frame_1: blank_frame(),
+        },
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
+    before = await product_counts(client)
+
+    monitor_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/start",
+        json={
+            "save_best_frame": False,
+            "auto_create_review_candidates": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+            "interval_seconds": 10,
+        },
+    )
+    assert monitor_response.status_code == 200
+    monitor = monitor_response.json()
+    assert monitor["auto_create_review_candidates"] is False
+
+    settings_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/settings",
+        json={
+            "auto_create_review_candidates": True,
+            "auto_review_quiet_seconds": 12,
+            "auto_review_min_detections": 2,
+        },
+    )
+    assert settings_response.status_code == 200
+    settings = settings_response.json()
+    assert settings["status"] == "running"
+    assert settings["monitor_running"] is True
+    assert settings["auto_create_review_candidates"] is True
+    assert settings["auto_review_quiet_seconds"] == 12
+    assert settings["auto_review_min_detections"] == 2
+    assert await product_counts(client) == before
+
+    status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    assert status["monitor_running"] is True
+    assert status["auto_create_review_candidates"] is True
+    assert status["auto_review_quiet_seconds"] == 12
+    assert status["auto_review_min_detections"] == 2
+    assert status["auto_review_created_count"] == 0
+    assert await product_counts(client) == before
+
+
 async def test_stored_live_activity_review_handoff_keeps_camera_running_and_truth_reviewed_only(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

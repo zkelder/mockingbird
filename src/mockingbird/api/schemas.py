@@ -1492,6 +1492,12 @@ class LiveMotionMonitorStartRequest(LiveMotionEvaluateRequest):
     auto_review_min_detections: int = Field(default=1, ge=1, le=100)
 
 
+class LiveMotionMonitorSettingsRequest(BaseModel):
+    auto_create_review_candidates: bool = False
+    auto_review_quiet_seconds: int = Field(default=30, ge=1, le=300)
+    auto_review_min_detections: int = Field(default=1, ge=1, le=100)
+
+
 class LiveMotionReviewActivityResponse(BaseModel):
     stream_id: str
     source_id: str | None = None

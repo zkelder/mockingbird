@@ -2679,6 +2679,17 @@ a.secondary-action {
   margin: 0;
 }
 
+.stream-live-primary-toggle > span {
+  display: grid;
+  gap: 2px;
+}
+
+.stream-live-primary-toggle > span span {
+  color: #aebfb4;
+  font-size: 0.78rem;
+  font-weight: 550;
+}
+
 .stream-live-frame {
   position: relative;
   display: grid;

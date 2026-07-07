@@ -56,6 +56,7 @@ from mockingbird.api.schemas import (
     LiveMotionEvaluateRequest,
     LiveMotionEvaluateResponse,
     LiveMotionFrameSummary,
+    LiveMotionMonitorSettingsRequest,
     LiveMotionMonitorStartRequest,
     LiveMotionReviewActivityResponse,
     MediaAsset,
@@ -3993,6 +3994,33 @@ async def start_live_stream_motion_monitor(
     )
     _maybe_auto_create_live_review_candidate(stream_id)
     return result
+
+
+@app.post(
+    "/api/streams/{stream_id}/live-motion/settings",
+    response_model=LiveCameraSessionStatusResponse,
+)
+async def update_live_stream_motion_monitor_settings(
+    stream_id: str,
+    payload: LiveMotionMonitorSettingsRequest | None = None,
+) -> LiveCameraSessionStatusResponse:
+    request = payload or LiveMotionMonitorSettingsRequest()
+    configuration = _stream_live_playback_config_or_404(stream_id)
+    snapshot = get_live_camera_session_manager().update_monitor_settings(
+        stream_id,
+        auto_create_review_candidates=request.auto_create_review_candidates,
+        auto_review_quiet_seconds=request.auto_review_quiet_seconds,
+        auto_review_min_detections=request.auto_review_min_detections,
+    )
+    return _live_camera_session_response(
+        snapshot,
+        configuration,
+        message=(
+            "Live monitor settings updated."
+            if snapshot is not None
+            else "No active camera session; settings will apply when monitoring starts."
+        ),
+    )
 
 
 @app.post(

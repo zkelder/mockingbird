@@ -136,6 +136,45 @@ const liveMonitorSensitivitySettings: Record<
 };
 const liveMonitorSensitivityOptions: LiveMonitorSensitivity[] = ["low", "normal", "high"];
 
+function pendingAutoCreateReviewCandidatesStorageKey(streamId: string) {
+  return `mockingbird:${streamId}:pending-auto-create-review-candidates`;
+}
+
+function readPendingAutoCreateReviewCandidates(streamId: string): boolean | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  let value: string | null = null;
+  try {
+    value = window.sessionStorage.getItem(
+      pendingAutoCreateReviewCandidatesStorageKey(streamId),
+    );
+  } catch {
+    return null;
+  }
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  return null;
+}
+
+function writePendingAutoCreateReviewCandidates(streamId: string, value: boolean) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(
+      pendingAutoCreateReviewCandidatesStorageKey(streamId),
+      value ? "true" : "false",
+    );
+  } catch {
+    return;
+  }
+}
+
 const cameraTuningKeys: CameraTuningKey[] = [
   "video_size",
   "preview_video_size",
@@ -526,7 +565,15 @@ export function StreamDetailPage({
   const [isLiveMonitoring, setIsLiveMonitoring] = useState(false);
   const [isEvaluatingLiveMotion, setIsEvaluatingLiveMotion] = useState(false);
   const [isCreatingLiveReviewActivity, setIsCreatingLiveReviewActivity] = useState(false);
-  const [autoCreateLiveReviews, setAutoCreateLiveReviews] = useState(false);
+  const [
+    pendingAutoCreateReviewCandidates,
+    setPendingAutoCreateReviewCandidates,
+  ] = useState(() => readPendingAutoCreateReviewCandidates(streamId) ?? false);
+  const [
+    backendAutoCreateReviewCandidates,
+    setBackendAutoCreateReviewCandidates,
+  ] = useState<boolean | null>(null);
+  const [isUpdatingAutoCreate, setIsUpdatingAutoCreate] = useState(false);
   const [autoReviewQuietSeconds, setAutoReviewQuietSeconds] = useState(30);
   const [autoReviewMinDetections, setAutoReviewMinDetections] = useState(1);
   const [liveMonitorSensitivity, setLiveMonitorSensitivity] =
@@ -561,7 +608,18 @@ export function StreamDetailPage({
       const status = await apiClient.getLiveCameraSessionStatus(currentDetail.stream.id);
       setLiveSession(status);
       setIsLiveMonitoring(status.monitor_running);
-      setAutoCreateLiveReviews(status.auto_create_review_candidates);
+      setBackendAutoCreateReviewCandidates(status.auto_create_review_candidates);
+      if (
+        status.monitor_running ||
+        (readPendingAutoCreateReviewCandidates(status.stream_id) == null &&
+          status.status !== "stopped")
+      ) {
+        setPendingAutoCreateReviewCandidates(status.auto_create_review_candidates);
+        writePendingAutoCreateReviewCandidates(
+          status.stream_id,
+          status.auto_create_review_candidates,
+        );
+      }
       setAutoReviewQuietSeconds(status.auto_review_quiet_seconds);
       setAutoReviewMinDetections(status.auto_review_min_detections);
       handleLiveStatusNoticeFromStatus(status);
@@ -638,6 +696,47 @@ export function StreamDetailPage({
     }
   }
 
+  async function handleAutoCreateReviewCandidatesChange(enabled: boolean) {
+    setPendingAutoCreateReviewCandidates(enabled);
+    writePendingAutoCreateReviewCandidates(streamId, enabled);
+    const monitorRunning = Boolean(liveSession?.monitor_running || isLiveMonitoring);
+    if (!detail || !supportsBackendLiveSession(detail.playback) || !monitorRunning) {
+      setLiveStatusNotice("Auto-create will apply when monitoring starts.");
+      return;
+    }
+
+    setIsUpdatingAutoCreate(true);
+    setLiveMotionError(null);
+    try {
+      const status = await apiClient.updateLiveMotionMonitorSettings(detail.stream.id, {
+        auto_create_review_candidates: enabled,
+        auto_review_quiet_seconds: autoReviewQuietSeconds,
+        auto_review_min_detections: autoReviewMinDetections,
+      });
+      setLiveSession(status);
+      setIsLiveMonitoring(status.monitor_running);
+      setBackendAutoCreateReviewCandidates(status.auto_create_review_candidates);
+      if (status.monitor_running) {
+        setPendingAutoCreateReviewCandidates(status.auto_create_review_candidates);
+        writePendingAutoCreateReviewCandidates(
+          status.stream_id,
+          status.auto_create_review_candidates,
+        );
+      }
+      setLiveStatusNotice(
+        `Auto-create ${status.auto_create_review_candidates ? "enabled" : "disabled"}.`,
+      );
+    } catch (caught) {
+      setLiveMotionError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not update auto-create monitoring settings.",
+      );
+    } finally {
+      setIsUpdatingAutoCreate(false);
+    }
+  }
+
   useEffect(() => {
     let isMounted = true;
 
@@ -675,6 +774,11 @@ export function StreamDetailPage({
       setIsLiveMonitoring(false);
       setIsEvaluatingLiveMotion(false);
       setIsCreatingLiveReviewActivity(false);
+      setPendingAutoCreateReviewCandidates(
+        readPendingAutoCreateReviewCandidates(streamId) ?? false,
+      );
+      setBackendAutoCreateReviewCandidates(null);
+      setIsUpdatingAutoCreate(false);
       setBirdSizedFeederMotion(true);
       setSourceProviderConfig(null);
       setCameraTuningDraft({ ...emptyCameraTuningDraft });
@@ -1032,11 +1136,18 @@ export function StreamDetailPage({
         min_triggered_frames: 1,
         focus_zone_id: liveMotionFocusZoneId || null,
         interval_seconds: sensitivitySettings.interval_ms / 1000,
-        auto_create_review_candidates: autoCreateLiveReviews,
+        auto_create_review_candidates: pendingAutoCreateReviewCandidates,
         auto_review_quiet_seconds: autoReviewQuietSeconds,
         auto_review_min_detections: autoReviewMinDetections,
         notes: null,
       });
+      setBackendAutoCreateReviewCandidates(result.auto_create_review_candidates);
+      if (result.auto_create_review_candidates === pendingAutoCreateReviewCandidates) {
+        writePendingAutoCreateReviewCandidates(
+          detail.stream.id,
+          result.auto_create_review_candidates,
+        );
+      }
       if (result.best_media_asset_id) {
         await refreshSavedImages();
       }
@@ -1144,6 +1255,12 @@ export function StreamDetailPage({
       try {
         const status = await apiClient.stopLiveMotionMonitor(detail.stream.id);
         setLiveSession(status);
+        setBackendAutoCreateReviewCandidates(status.auto_create_review_candidates);
+        setPendingAutoCreateReviewCandidates(status.auto_create_review_candidates);
+        writePendingAutoCreateReviewCandidates(
+          status.stream_id,
+          status.auto_create_review_candidates,
+        );
       } catch (caught) {
         setLiveMotionError(
           caught instanceof Error ? caught.message : "Could not stop live monitoring.",
@@ -1653,8 +1770,18 @@ export function StreamDetailPage({
     : liveActivityDetected
       ? "Active session"
       : "Watching";
-  const liveAutoReviewEnabled =
-    liveSession?.auto_create_review_candidates ?? liveMotionResult?.auto_create_review_candidates ?? autoCreateLiveReviews;
+  const liveAutoReviewBackendValue =
+    backendAutoCreateReviewCandidates ??
+    liveSession?.auto_create_review_candidates ??
+    liveMotionResult?.auto_create_review_candidates;
+  const liveAutoReviewEnabled = liveMonitorRunning
+    ? liveAutoReviewBackendValue ?? pendingAutoCreateReviewCandidates
+    : pendingAutoCreateReviewCandidates;
+  const liveAutoReviewStatusText = isUpdatingAutoCreate
+    ? "Updating auto-create..."
+    : liveMonitorRunning
+      ? `Auto-create ${liveAutoReviewEnabled ? "enabled" : "disabled"}.`
+      : "Will apply when monitoring starts.";
   const liveAutoReviewCount =
     liveSession?.auto_review_created_count ?? liveMotionResult?.auto_review_created_count ?? 0;
   const liveAutoReviewLastCreated = liveSession?.last_auto_review_created_at
@@ -1957,14 +2084,23 @@ export function StreamDetailPage({
                   {isEvaluatingLiveMotion ? "Starting..." : "Start monitoring"}
                 </button>
               )}
-              <label className="stream-live-primary-toggle">
+              <label className="stream-live-primary-toggle stream-live-auto-review-toggle">
                 <input
                   checked={liveAutoReviewEnabled}
-                  disabled={liveMonitorRunning || isEvaluatingLiveMotion}
-                  onChange={(event) => setAutoCreateLiveReviews(event.target.checked)}
+                  disabled={isUpdatingAutoCreate}
+                  onChange={(event) =>
+                    void handleAutoCreateReviewCandidatesChange(event.target.checked)
+                  }
                   type="checkbox"
                 />
-                Auto-create
+                <span>
+                  <strong>Auto-create Review Queue candidates</strong>
+                  <span>
+                    Creates Review Queue items from completed activity sessions. Does not
+                    update Bird Log.
+                  </span>
+                  <span>{liveAutoReviewStatusText}</span>
+                </span>
               </label>
               {streamReviewCount > 0 ? (
                 <button

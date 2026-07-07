@@ -1437,6 +1437,12 @@ export interface LiveMotionMonitorStartRequest extends LiveMotionEvaluateRequest
   auto_review_min_detections?: number;
 }
 
+export interface LiveMotionMonitorSettingsRequest {
+  auto_create_review_candidates?: boolean;
+  auto_review_quiet_seconds?: number;
+  auto_review_min_detections?: number;
+}
+
 export interface LiveMotionReviewActivityResponse {
   stream_id: string;
   source_id?: string | null;
