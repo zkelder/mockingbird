@@ -169,9 +169,9 @@ export function EventDetailPage({
 
       {isMotionEvidenceEvent ? (
         <section className="notice-panel">
-          <strong>Promoted Motion Evidence</strong>
+          <strong>Promoted activity evidence</strong>
           <span>
-            Created from promoted MotionEvidence.{" "}
+            Created from promoted activity evidence.{" "}
             {hasWebhookEvidence
               ? "This Event came from evidence created from generic webhook metadata. "
               : ""}
@@ -202,7 +202,7 @@ export function EventDetailPage({
               ? "This Event came from evidence created from generic webhook metadata."
               : detail.media_asset
               ? mediaProvenance
-              : "Created from promoted MotionEvidence without attached media."}{" "}
+              : "Created from promoted activity evidence without attached media."}{" "}
             {eventReviewBoundaryCopy}
           </p>
           <div className="promoted-review-context-grid">
@@ -217,10 +217,10 @@ export function EventDetailPage({
               }
               detail={detail.primary_zone?.id}
             />
-            <ContextItem label="Evidence source" value="Promoted MotionEvidence" />
+            <ContextItem label="Evidence source" value="Promoted activity evidence" />
             {detail.motion_evidence ? (
               <ContextItem
-                label="MotionEvidence"
+                label="Advanced evidence"
                 value={detail.motion_evidence.id}
                 detail={formatLabel(detail.motion_evidence.status)}
               />
@@ -431,11 +431,11 @@ export function EventDetailPage({
       <section className="split-grid">
         <div className="panel">
           <div className="section-heading">
-            <h2>Detections as evidence</h2>
+            <h2>Suggestions as evidence</h2>
             <EvidenceBadge label="Not dataset truth" />
           </div>
           <p className="evidence-panel-copy">
-            Proposal and detection labels help explain why this case exists. Review labels and
+            Suggestion labels help explain why this case exists. Review labels and
             corrections decide what exports and analytics count as truth.
           </p>
           <div className="evidence-list">
@@ -524,11 +524,11 @@ export function EventDetailPage({
       {detail.detection_proposals.length > 0 ? (
         <section className="panel">
           <div className="section-heading">
-            <h2>Proposal provenance</h2>
+            <h2>Suggestion provenance</h2>
             <EvidenceBadge label="Evidence source" />
           </div>
           <p className="evidence-panel-copy">
-            This event came from proposal evidence. Its proposal label and confidence explain the
+            This event came from suggestion evidence. Its suggested label and confidence explain the
             source, while reviewed corrections decide dataset truth.
           </p>
           <div className="evidence-list">
@@ -571,14 +571,14 @@ function SourceEvidenceTracePanel({
         <div>
           <h2>Source evidence trace</h2>
           <span className="meta-text">
-            This Event is linked back to the MotionEvidence that created review context.
+            This Event is linked back to the activity evidence that created review context.
           </span>
         </div>
         <EvidenceBadge label="Evidence trace" tone="evidence" />
       </div>
       <div className="motion-review-context-grid">
         <ContextItem
-          label="MotionEvidence"
+          label="Advanced evidence"
           value={motionEvidence.id}
           detail={formatLabel(motionEvidence.status)}
         />
@@ -591,7 +591,7 @@ function SourceEvidenceTracePanel({
           value={motionEvidence.promoted_visit_id ?? "not linked"}
         />
         <ContextItem
-          label="Source media"
+          label="Best frame"
           value={motionEvidence.snapshot_media_asset_id ?? mediaAsset?.id ?? "none"}
         />
         <ContextItem label="Stream" value={motionEvidence.stream_id ?? "none"} />
@@ -610,7 +610,7 @@ function SourceEvidenceTracePanel({
           onClick={() => onOpenMotionEvidence(motionEvidence.id)}
           type="button"
         >
-          Open evidence
+          Open advanced evidence
         </button>
         {motionEvidence.promoted_visit_id ? (
           <button

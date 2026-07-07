@@ -243,7 +243,7 @@ image media. Optional `MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH` may point to a
 local labels file when supported. Detector runs create `DetectionProposal`
 evidence only; use the demo proposal action when the local detector is not
 configured.
-The Model Adapters page shows the Local Detector setup/readiness panel with
+The Analyzers page shows the Local Detector setup/readiness panel with
 the exact local env vars, supported image media types, runtime readiness, and a
 link back to Streams. It also summarizes every registered analyzer, including
 demo and MegaDetector-family setup states. Optional local analyzers require

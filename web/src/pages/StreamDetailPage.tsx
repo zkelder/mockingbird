@@ -1646,7 +1646,7 @@ export function StreamDetailPage({
         liveMotionResult?.last_error ??
         "Live camera needs attention."
       : liveWorkflowState === "review_created"
-        ? "Review activity created. Open Review to confirm/correct."
+        ? "Review activity created. Open Review Queue to confirm or correct."
         : liveWorkflowState === "cooldown"
           ? liveMotionResult?.last_evaluation_message ?? "Cooldown active."
         : liveWorkflowState === "activity"
@@ -1686,14 +1686,14 @@ export function StreamDetailPage({
           />
           <h1>{detail.stream.name}</h1>
           <p>
-            {detail.stream.description} Draw zones, inspect events, and turn corrections into local
-            dataset records.
+            {detail.stream.description} Start the camera, monitor activity, review candidates, and
+            turn corrections into local dataset records.
           </p>
         </div>
         <div className="detail-actions">
           {streamReviewCount > 0 ? (
             <button className="secondary-action" onClick={() => onOpenReview()}>
-              Review {streamReviewCount}
+              Review Queue {streamReviewCount}
             </button>
           ) : null}
           <button className="secondary-action" onClick={onOpenExports}>
@@ -1766,6 +1766,24 @@ export function StreamDetailPage({
                 </span>
               </>
             ) : null}
+          </div>
+
+          <div className="stream-live-workflow-strip" aria-label="Camera workflow">
+            <span className={liveSessionRunning ? "is-active" : ""}>
+              <strong>1</strong> Camera {liveSessionRunning ? "running" : "stopped"}
+            </span>
+            <span className={liveViewOpen ? "is-active" : ""}>
+              <strong>2</strong> Live view {liveViewOpen ? "visible" : "hidden"}
+            </span>
+            <span className={isLiveMonitoring ? "is-active" : ""}>
+              <strong>3</strong> Monitoring {isLiveMonitoring ? "on" : "off"}
+            </span>
+            <span className={liveAutoReviewEnabled ? "is-active" : ""}>
+              <strong>4</strong> Auto-create {liveAutoReviewEnabled ? "on" : "off"}
+            </span>
+            <span className={streamReviewCount > 0 ? "is-active" : ""}>
+              <strong>5</strong> Review Queue {streamReviewCount > 0 ? streamReviewCount : "clear"}
+            </span>
           </div>
 
           {liveActivityDetected || liveReviewActivityCreated ? null : (
@@ -1968,10 +1986,10 @@ export function StreamDetailPage({
             <div className="stream-live-secondary-panel">
               <div className="stream-live-panel-header">
                 <div>
-                  <strong>Motion calibration</strong>
+                  <strong>Review candidate handoff</strong>
                   <span>
-                    Strongest {liveStrongestZoneName ?? "area"} change {liveStrongestChangeLabel},
-                    threshold {liveStrongestThresholdLabel}.
+                    Monitoring can create needs-review activity candidates. Corrections still
+                    decide Bird Log and export truth.
                   </span>
                 </div>
                 <label className="stream-live-debug-toggle">
@@ -1980,7 +1998,7 @@ export function StreamDetailPage({
                     onChange={(event) => setShowLiveMotionDebug(event.target.checked)}
                     type="checkbox"
                   />
-                  Show motion debug
+                  Show motion overlay
                 </label>
               </div>
               <label className="stream-live-debug-toggle stream-live-auto-review-toggle">
@@ -1993,106 +2011,12 @@ export function StreamDetailPage({
                 Auto-create Review Queue items from completed activity sessions. Does not mark truth
                 or update Bird Log.
               </label>
-              <div className="stream-live-calibration-grid">
-                <label>
-                  <span>Monitoring focus</span>
-                  <select
-                    disabled={isLiveMonitoring || isEvaluatingLiveMotion}
-                    value={liveMotionFocusZoneId}
-                    onChange={(event) => setLiveMotionFocusZoneId(event.target.value)}
-                  >
-                    <option value="">All reviewable Zones</option>
-                    {reviewableLiveZones.map((zone) => (
-                      <option key={zone.id} value={zone.id}>
-                        {zone.name} ({formatLabel(zone.zone_type)})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Quiet period</span>
-                  <input
-                    disabled={isLiveMonitoring || isEvaluatingLiveMotion}
-                    min={1}
-                    max={300}
-                    onChange={(event) =>
-                      setAutoReviewQuietSeconds(
-                        Math.max(1, Math.min(300, Number(event.target.value) || 30)),
-                      )
-                    }
-                    type="number"
-                    value={autoReviewQuietSeconds}
-                  />
-                </label>
-                <label>
-                  <span>Min detections</span>
-                  <input
-                    disabled={isLiveMonitoring || isEvaluatingLiveMotion}
-                    min={1}
-                    max={100}
-                    onChange={(event) =>
-                      setAutoReviewMinDetections(
-                        Math.max(1, Math.min(100, Number(event.target.value) || 1)),
-                      )
-                    }
-                    type="number"
-                    value={autoReviewMinDetections}
-                  />
-                </label>
-                <div className="detail-actions stream-live-actions">
-                  {feederFocusZone ? (
-                    <button
-                      className="secondary-action"
-                      disabled={isLiveMonitoring || isEvaluatingLiveMotion}
-                      onClick={() => setLiveMotionFocusZoneId(feederFocusZone.id)}
-                      type="button"
-                    >
-                      Use Feeder Zone
-                    </button>
-                  ) : null}
-                  <button
-                    className="secondary-action"
-                    disabled={isLiveMonitoring || isEvaluatingLiveMotion || !liveMotionFocusZoneId}
-                    onClick={() => setLiveMotionFocusZoneId("")}
-                    type="button"
-                  >
-                    Clear focus
-                  </button>
-                </div>
-              </div>
               <div className="stream-live-monitor-facts">
-                <span>
-                  <strong>Focus</strong> {liveFocusLabel}
-                </span>
-                <span>
-                  <strong>Sensitivity</strong> {liveSensitivityLabel}
-                </span>
-                <span>
-                  <strong>Cadence</strong> {liveCadenceLabel}
-                </span>
-                <span>
-                  <strong>Changed pixels</strong> {liveChangedPixelsLabel}
-                </span>
-                <span>
-                  <strong>Fine motion</strong> {liveFineMotionLabel}
-                </span>
-                <span>
-                  <strong>Threshold source</strong> {liveThresholdSourceLabel}
-                </span>
-                <span>
-                  <strong>Margin</strong> {liveMarginLabel}
-                </span>
-                <span>
-                  <strong>Mean delta</strong> {liveMeanDeltaLabel}
-                </span>
-                <span>
-                  <strong>Frame pair</strong> {liveStrongestPairLabel}
-                </span>
                 <span>
                   <strong>Auto-create</strong> {liveAutoReviewEnabled ? "on" : "off"}
                 </span>
                 <span>
-                  <strong>Auto count</strong> {liveAutoReviewCount}
+                  <strong>Created</strong> {liveAutoReviewCount}
                 </span>
                 <span>
                   <strong>Activity state</strong> {liveActivityReviewStateLabel}
@@ -2130,19 +2054,128 @@ export function StreamDetailPage({
               {liveAutoReviewError ? (
                 <span className="stream-live-hint is-error">{liveAutoReviewError}</span>
               ) : null}
-              {liveMotionResult?.near_miss ? (
-                <span className="stream-live-hint">
-                  Near miss: tighten the feeder Zone, use feeder focus, or move the camera closer.
-                </span>
-              ) : null}
-              {liveQualityWarnings.length > 0 ? (
-                <div className="stream-live-suppressed-list">
-                  <strong>Image quality</strong>
-                  {liveQualityWarnings.map((warning) => (
-                    <span key={warning}>{warning}</span>
-                  ))}
+              <details
+                className="stream-live-debug-details"
+                open={showLiveMotionDebug}
+                onToggle={(event) => setShowLiveMotionDebug(event.currentTarget.open)}
+              >
+                <summary>Motion calibration diagnostics</summary>
+                <div className="stream-live-calibration-grid">
+                  <label>
+                    <span>Monitoring focus</span>
+                    <select
+                      disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                      value={liveMotionFocusZoneId}
+                      onChange={(event) => setLiveMotionFocusZoneId(event.target.value)}
+                    >
+                      <option value="">All reviewable Zones</option>
+                      {reviewableLiveZones.map((zone) => (
+                        <option key={zone.id} value={zone.id}>
+                          {zone.name} ({formatLabel(zone.zone_type)})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Quiet period</span>
+                    <input
+                      disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                      min={1}
+                      max={300}
+                      onChange={(event) =>
+                        setAutoReviewQuietSeconds(
+                          Math.max(1, Math.min(300, Number(event.target.value) || 30)),
+                        )
+                      }
+                      type="number"
+                      value={autoReviewQuietSeconds}
+                    />
+                  </label>
+                  <label>
+                    <span>Min detections</span>
+                    <input
+                      disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                      min={1}
+                      max={100}
+                      onChange={(event) =>
+                        setAutoReviewMinDetections(
+                          Math.max(1, Math.min(100, Number(event.target.value) || 1)),
+                        )
+                      }
+                      type="number"
+                      value={autoReviewMinDetections}
+                    />
+                  </label>
+                  <div className="detail-actions stream-live-actions">
+                    {feederFocusZone ? (
+                      <button
+                        className="secondary-action"
+                        disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                        onClick={() => setLiveMotionFocusZoneId(feederFocusZone.id)}
+                        type="button"
+                      >
+                        Use Feeder Zone
+                      </button>
+                    ) : null}
+                    <button
+                      className="secondary-action"
+                      disabled={isLiveMonitoring || isEvaluatingLiveMotion || !liveMotionFocusZoneId}
+                      onClick={() => setLiveMotionFocusZoneId("")}
+                      type="button"
+                    >
+                      Clear focus
+                    </button>
+                  </div>
                 </div>
-              ) : null}
+                <div className="stream-live-monitor-facts">
+                  <span>
+                    <strong>Focus</strong> {liveFocusLabel}
+                  </span>
+                  <span>
+                    <strong>Sensitivity</strong> {liveSensitivityLabel}
+                  </span>
+                  <span>
+                    <strong>Cadence</strong> {liveCadenceLabel}
+                  </span>
+                  <span>
+                    <strong>Strongest change</strong> {liveStrongestChangeLabel}
+                  </span>
+                  <span>
+                    <strong>Threshold</strong> {liveStrongestThresholdLabel}
+                  </span>
+                  <span>
+                    <strong>Changed pixels</strong> {liveChangedPixelsLabel}
+                  </span>
+                  <span>
+                    <strong>Fine motion</strong> {liveFineMotionLabel}
+                  </span>
+                  <span>
+                    <strong>Threshold source</strong> {liveThresholdSourceLabel}
+                  </span>
+                  <span>
+                    <strong>Margin</strong> {liveMarginLabel}
+                  </span>
+                  <span>
+                    <strong>Mean delta</strong> {liveMeanDeltaLabel}
+                  </span>
+                  <span>
+                    <strong>Frame pair</strong> {liveStrongestPairLabel}
+                  </span>
+                </div>
+                {liveMotionResult?.near_miss ? (
+                  <span className="stream-live-hint">
+                    Near miss: tighten the feeder Zone, use feeder focus, or move the camera closer.
+                  </span>
+                ) : null}
+                {liveQualityWarnings.length > 0 ? (
+                  <div className="stream-live-suppressed-list">
+                    <strong>Image quality</strong>
+                    {liveQualityWarnings.map((warning) => (
+                      <span key={warning}>{warning}</span>
+                    ))}
+                  </div>
+                ) : null}
+              </details>
             </div>
           ) : null}
 
@@ -2309,7 +2342,9 @@ export function StreamDetailPage({
               </span>
             ) : null}
             {showLiveMonitorFacts ? (
-              <div className="stream-live-monitor-facts">
+              <details className="stream-live-debug-details stream-live-state-debug">
+                <summary>Frame cache diagnostics</summary>
+                <div className="stream-live-monitor-facts">
                 {backendLiveSessionSupported ? (
                   <>
                     <span>
@@ -2368,7 +2403,8 @@ export function StreamDetailPage({
                     <strong>Last error</strong> {liveLastError}
                   </span>
                 ) : null}
-              </div>
+                </div>
+              </details>
             ) : null}
           </div>
 
@@ -2396,14 +2432,14 @@ export function StreamDetailPage({
                       <StatusPill label={formatLabel(liveStrongestZoneType)} tone="quiet" />
                     ) : null}
                     <StatusPill
-                      label={liveReviewActivityCreated ? "Needs review" : "Visit session"}
+                      label={liveReviewActivityCreated ? "Review candidate" : "Activity session"}
                       tone="review"
                     />
                   </div>
                 </div>
                 <p>
                   {liveReviewActivityCreated
-                    ? `Open Review to confirm or correct the activity in ${liveActivityAreaLabel}.`
+                    ? `Open Review Queue to confirm or correct the activity in ${liveActivityAreaLabel}.`
                     : liveMotionResult?.uses_auto_regions
                       ? "Automatic activity areas are evidence only; add or select a named Zone before review activity."
                       : `${liveBestFrameMessage} Create a review activity to send it into the correction flow.`}
@@ -2518,9 +2554,9 @@ export function StreamDetailPage({
           {canCaptureFrame ? (
             <div className="stream-live-secondary-panel">
               <div className="stream-live-secondary-copy">
-                <strong>Manual capture</strong>
+                  <strong>Capture current frame</strong>
                 <span>
-                  Manual snapshot for evidence/debug. Monitoring saves best frames automatically
+                  Manual capture is secondary to monitoring. Monitoring saves best frames automatically
                   when activity is detected.
                 </span>
               </div>
@@ -2567,7 +2603,7 @@ export function StreamDetailPage({
               {showManualSavedFrameComparison ? (
                 <div className="stream-live-fallback-panel">
                   <div>
-                    <strong>Manual saved-frame comparison</strong>
+                    <strong>Saved-frame comparison</strong>
                     <span>
                       Fallback comparison stays secondary to live monitoring and still requires
                       review before Bird Log or export.
@@ -2649,7 +2685,7 @@ export function StreamDetailPage({
                             onClick={() => onOpenMotionEvidence(motionCreatedEvidence.id)}
                             type="button"
                           >
-                            Open review activity
+                            Open advanced evidence
                           </button>
                         ) : null}
                       </div>
@@ -2858,14 +2894,14 @@ export function StreamDetailPage({
 
         <div className="panel">
           <div className="section-heading">
-            <h2>Review hints</h2>
+            <h2>Review Queue</h2>
           </div>
           <div className="list-stack">
             {streamReviewCount > 0 ? (
               <>
                 {hasLocalLiveReviewQueueItem ? (
                   <div className="queue-mini">
-                    <strong>Live motion activity</strong>
+                    <strong>Live activity candidate</strong>
                     <span>Needs review. Bird Log updates after correction.</span>
                   </div>
                 ) : null}

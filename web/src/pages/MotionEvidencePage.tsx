@@ -624,9 +624,9 @@ export function MotionEvidencePage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Developer tool"
-        title="Motion Evidence Review"
-        description="Inspect and promote internal activity evidence for testing. The normal product loop is Cameras/Streams → Review → Bird Log → Export."
+        eyebrow="Advanced evidence"
+        title="Advanced Evidence"
+        description="Used for debugging activity detection and review handoff. The normal product loop is Cameras/Streams → Review Queue → Bird Log → Export."
         actions={
           <button className="secondary-action" onClick={onOpenReview}>
             Review Queue
@@ -635,9 +635,9 @@ export function MotionEvidencePage({
       />
 
       <section className="notice-panel">
-        <strong>Test harness — evidence before truth</strong>
+        <strong>Advanced evidence before truth</strong>
         <span>
-          Promote useful evidence only when validating the internal flow; correct Visits for
+          Promote useful evidence only when validating the internal flow; correct Review Queue items for
           dataset truth.
         </span>
       </section>
@@ -645,7 +645,7 @@ export function MotionEvidencePage({
       <section className="panel motion-workflow-panel">
         <div>
           <h2>Workflow</h2>
-          <p>Create, attach media, promote, then correct.</p>
+          <p>Create, attach best frame, promote, then correct in Review Queue.</p>
         </div>
         <div className="motion-workflow-steps" aria-label="Motion Evidence workflow">
           {motionWorkflowSteps.map((step) => (
@@ -676,7 +676,7 @@ export function MotionEvidencePage({
       <section className="panel motion-create-panel">
         <div className="section-heading">
           <div>
-            <h2>Create manual motion evidence</h2>
+            <h2>Create manual activity evidence</h2>
             <span className="meta-text">
               Manual evidence creation is for local testing before stream sampling is wired in.
               It creates pending MotionEvidence only; it does not create labels, reviewed
@@ -1206,11 +1206,11 @@ export function MotionEvidencePage({
         </div>
       </section>
 
-      {isLoading ? <div className="panel">Loading Motion Evidence...</div> : null}
+      {isLoading ? <div className="panel">Loading advanced evidence...</div> : null}
 
       {!isLoading && sortedEvidence.length === 0 ? (
         <EmptyState
-          title={hasFilters ? "No Motion Evidence matches this filter." : "No Motion Evidence yet."}
+                title={hasFilters ? "No advanced evidence matches this filter." : "No advanced evidence yet."}
           description={
             hasFilters
               ? "Try another status or zone, or review explicit media handoff results."
@@ -1221,7 +1221,7 @@ export function MotionEvidencePage({
 
       {!isLoading && sortedEvidence.length > 0 ? (
         <div className="motion-evidence-layout">
-          <section className="motion-evidence-list" aria-label="Motion Evidence list">
+          <section className="motion-evidence-list" aria-label="Advanced evidence list">
             {sortedEvidence.map((item) => (
               <article
                 className={

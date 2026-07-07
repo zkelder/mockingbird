@@ -20,6 +20,7 @@ interface MotionEvidenceDetailPageProps {
   onOpenMotionEvidence: () => void;
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
+  onOpenReview: () => void;
 }
 
 interface WebhookEvidenceProvenance {
@@ -39,6 +40,7 @@ export function MotionEvidenceDetailPage({
   onOpenMotionEvidence,
   onOpenEvent,
   onOpenVisit,
+  onOpenReview,
 }: MotionEvidenceDetailPageProps) {
   const [evidence, setEvidence] = useState<MotionEvidence | null>(null);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
@@ -159,17 +161,17 @@ export function MotionEvidenceDetailPage({
         : "local motion evidence";
 
   if (isLoading) {
-    return <div className="panel">Loading MotionEvidence detail...</div>;
+    return <div className="panel">Loading advanced evidence detail...</div>;
   }
 
   if (error || !evidence) {
     return (
       <div className="error-panel">
-        <strong>MotionEvidence detail is unavailable.</strong>
-        <span>{error ?? "No MotionEvidence record was found."}</span>
+        <strong>Advanced evidence detail is unavailable.</strong>
+        <span>{error ?? "No evidence record was found."}</span>
         <div className="detail-actions">
           <button className="secondary-action" onClick={onOpenMotionEvidence} type="button">
-            Back to Motion Evidence
+            Back to Advanced Evidence
           </button>
         </div>
       </div>
@@ -179,19 +181,24 @@ export function MotionEvidenceDetailPage({
   return (
     <div className="page-stack motion-evidence-detail-page">
       <PageHeader
-        eyebrow="Developer tool"
-        title={`MotionEvidence ${evidence.id}`}
-        description="Inspect internal evidence behind review context. This is a developer detail page; evidence is not truth."
+        eyebrow="Advanced evidence"
+        title={`Advanced evidence ${evidence.id}`}
+        description="Used for debugging activity detection and review handoff. Normal review happens in Review Queue; evidence is not truth."
         actions={
-          <button className="secondary-action" onClick={onOpenMotionEvidence} type="button">
-            Back to Motion Evidence
-          </button>
+          <>
+            <button className="secondary-action" onClick={onOpenReview} type="button">
+              Review Queue
+            </button>
+            <button className="secondary-action" onClick={onOpenMotionEvidence} type="button">
+              Back to Advanced Evidence
+            </button>
+          </>
         }
       />
 
       <section className="notice-panel motion-status-note">
         <div>
-          <strong>Developer detail — evidence is not truth</strong>
+          <strong>Advanced detail — evidence is not truth</strong>
           <span>Corrections create dataset-grade truth for Bird Log, analytics, and exports.</span>
         </div>
         <StatusPill label={formatLabel(evidence.status)} tone={statusTone(evidence.status)} />

@@ -96,7 +96,7 @@ const initialData: AppData = {
 const productNavItems: Array<{ page: Page; label: string }> = [
   { page: "dashboard", label: "Overview" },
   { page: "streams", label: "Cameras / Streams" },
-  { page: "review", label: "Review" },
+  { page: "review", label: "Review Queue" },
   { page: "bird-log", label: "Bird Log" },
   { page: "exports", label: "Exports / Data" },
 ];
@@ -106,9 +106,9 @@ const advancedNavItems: Array<{ page: Page; label: string }> = [
   { page: "folder-import", label: "Folder Import" },
   { page: "analytics", label: "Analytics" },
   { page: "saved-media-retention", label: "Saved Media Retention" },
-  { page: "motion-evidence", label: "Motion Evidence" },
+  { page: "motion-evidence", label: "Advanced Evidence" },
   { page: "detection-proposals", label: "Detection Proposals" },
-  { page: "model-adapters", label: "Model Adapters" },
+  { page: "model-adapters", label: "Analyzers" },
   { page: "species-suggestions", label: "Species Suggestions" },
   { page: "classifier-readiness", label: "Classifier Readiness" },
   { page: "classifier-manifest", label: "Classifier Manifest" },
@@ -436,6 +436,7 @@ export default function App() {
           sources={data.sources}
           streams={data.streams}
           onOpenMotionEvidence={() => setPage("motion-evidence")}
+          onOpenReview={() => openReviewQueue()}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
         />

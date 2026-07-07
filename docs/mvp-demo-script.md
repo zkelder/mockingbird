@@ -214,7 +214,7 @@ Dataset Exports.
 
 - [ ] Start the API.
 - [ ] Start the frontend.
-- [ ] Open Model Adapters.
+- [ ] Open Analyzers.
 - [ ] Confirm the Local Detector setup panel shows
       `MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH`,
       `MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH`, and
@@ -409,7 +409,7 @@ history still starts only after ReviewLabel correction.
       optional RTSP/local camera bridge playback.
 - [ ] Confirm next action links exist.
 - [ ] Confirm truth-boundary copy is visible.
-- [ ] Open Model Adapters and confirm Local Detector setup guidance is visible
+- [ ] Open Analyzers and confirm Local Detector setup guidance is visible
       without configuring or running a model.
 - [ ] For a real local model smoke check, configure the local model path if you
       have one, restart the API, capture/import an image, run Analyze image from

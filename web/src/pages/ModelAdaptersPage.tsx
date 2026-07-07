@@ -116,7 +116,7 @@ export function ModelAdaptersPage({
           : nextMediaAssets[0]?.id ?? "",
       );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load model adapters.");
+      setError(caught instanceof Error ? caught.message : "Could not load analyzers.");
     } finally {
       if (showLoading) {
         setIsLoading(false);
@@ -131,19 +131,19 @@ export function ModelAdaptersPage({
   async function submitAdapterRun(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedAdapter) {
-      setError("Choose a model adapter.");
+      setError("Choose an analyzer.");
       return;
     }
     if (!selectedMedia) {
-      setError("Import local media before running an adapter contract.");
+      setError("Import local media before running an analyzer check.");
       return;
     }
     if (!selectedAdapterAvailable) {
-      setError("Selected adapter is not available for a local evidence run.");
+      setError("Selected analyzer is not available for a local evidence run.");
       return;
     }
     if (!selectedAdapterSupportsMedia) {
-      setError("Selected adapter does not support this media type.");
+      setError("Selected analyzer does not support this media type.");
       return;
     }
 
@@ -172,7 +172,7 @@ export function ModelAdaptersPage({
       await onProposalChanged();
       await loadPageData({ showLoading: false });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Adapter run could not be created.");
+      setError(caught instanceof Error ? caught.message : "Analyzer run could not be created.");
     } finally {
       setIsSubmitting(false);
     }
@@ -182,24 +182,24 @@ export function ModelAdaptersPage({
     <div className="page-stack">
       <PageHeader
         eyebrow="Advanced setup"
-        title="Model Adapters"
-        description="Developer-facing adapter readiness and evidence tests. Model suggestions are not review truth and are secondary to the Cameras → Review → Bird Log → Export loop."
+        title="Analyzers"
+        description="Optional local analyzers and evidence checks. Suggestions are not review truth and stay secondary to the Cameras → Review Queue → Bird Log → Export loop."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenImport}>
               Import Media
             </button>
             <button className="secondary-action" onClick={onOpenDetectionProposals}>
-              Detection Proposals
+              Suggestion Evidence
             </button>
           </>
         }
       />
 
       <section className="notice-panel">
-        <strong>Advanced setup — not the product center</strong>
+        <strong>Optional analyzers — not the product center</strong>
         <span>
-          Adapter runs are optional evidence checks for development. Camera monitoring and review
+          Analyzer runs are optional evidence checks. Camera monitoring and Review Queue correction
           remain the product path.
         </span>
       </section>
@@ -208,9 +208,9 @@ export function ModelAdaptersPage({
       {error ? <div className="error-panel">{error}</div> : null}
 
       <section className="notice-panel">
-        <strong>Model adapters create evidence, not truth</strong>
+        <strong>Analyzers create suggestion evidence, not truth</strong>
         <span>
-          The demo adapter simulates evidence, while local detector wrappers run only when configured
+          The demo analyzer simulates evidence, while local detector wrappers run only when configured
           with local model files. MegaDetector-family outputs remain animal/person/vehicle evidence;
           species truth stays in review and correction.
         </span>
@@ -270,7 +270,7 @@ export function ModelAdaptersPage({
               </strong>
             </div>
             <div>
-              <span className="meta-text">Adapter evidence</span>
+              <span className="meta-text">Analyzer evidence</span>
               <strong>
                 {modelReadiness.adapter_reviewed_count}/{modelReadiness.adapter_proposal_count} reviewed ·{" "}
                 {formatMatchRate(modelReadiness.adapter_match_rate)}
@@ -301,7 +301,7 @@ export function ModelAdaptersPage({
               Dataset Exports
             </button>
             <button className="secondary-action" onClick={onOpenDetectionProposals}>
-              Detection Proposals
+              Suggestion Evidence
             </button>
           </div>
         </section>
@@ -311,7 +311,7 @@ export function ModelAdaptersPage({
         <section className="panel adapter-evaluation-panel">
           <div className="section-heading">
             <div>
-              <h2>Adapter evidence readiness</h2>
+              <h2>Analyzer evidence readiness</h2>
               <span className="meta-text">
                 {evaluation.local_first_note} Generated {formatDateTime(evaluation.generated_at)}.
               </span>
@@ -360,8 +360,8 @@ export function ModelAdaptersPage({
             ))}
             {evaluation.items.length === 0 ? (
               <EmptyState
-                title="No adapter evidence to evaluate"
-                description="Adapter proposals will appear here after they are created, converted, rejected, and corrected through the normal review loop."
+                title="No analyzer evidence to evaluate"
+                description="Analyzer suggestions will appear here after they are created, converted, rejected, and corrected through the normal review loop."
               />
             ) : null}
           </div>
@@ -371,7 +371,7 @@ export function ModelAdaptersPage({
       <section className="split-grid">
         <div className="panel adapter-list-panel">
           <div className="section-heading">
-            <h2>Available adapters</h2>
+            <h2>Available analyzers</h2>
             <EvidenceBadge label="Under the product" tone="quiet" />
           </div>
           <div className="adapter-list">
@@ -399,7 +399,7 @@ export function ModelAdaptersPage({
                     label={adapter.creates_review_truth ? "Writes truth" : "Evidence only"}
                     tone={adapter.creates_review_truth ? "review" : "truth"}
                   />
-                  {adapter.local_only ? <EvidenceBadge label="Local-only adapter" tone="quiet" /> : null}
+                  {adapter.local_only ? <EvidenceBadge label="Local-only analyzer" tone="quiet" /> : null}
                 </div>
                 <small>
                   Media: {adapter.supported_media_types.map(formatLabel).join(", ")} · Labels:{" "}
@@ -409,7 +409,7 @@ export function ModelAdaptersPage({
             ))}
             {!isLoading && adapters.length === 0 ? (
               <EmptyState
-                title="No model adapters available"
+                title="No analyzers available"
                 description="Future detector hooks will appear here when contract definitions are available."
               />
             ) : null}
@@ -418,11 +418,11 @@ export function ModelAdaptersPage({
 
         <form className="panel adapter-run-form" onSubmit={submitAdapterRun}>
           <div className="section-heading">
-            <h2>Run adapter contract</h2>
-            <EvidenceBadge label="Proposal evidence only" />
+            <h2>Run analyzer check</h2>
+            <EvidenceBadge label="Suggestion evidence only" />
           </div>
           <label>
-            Adapter
+            Analyzer
             <select
               disabled={adapters.length === 0}
               value={selectedAdapterId}
@@ -436,7 +436,7 @@ export function ModelAdaptersPage({
             </select>
           </label>
           <label>
-            Media asset
+            Best frame / saved image
             <select
               disabled={mediaAssets.length === 0}
               value={selectedMediaId}
@@ -471,7 +471,7 @@ export function ModelAdaptersPage({
             <textarea
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
-              placeholder="optional adapter run context"
+              placeholder="optional analyzer run context"
             />
           </label>
           <button
@@ -485,18 +485,18 @@ export function ModelAdaptersPage({
             }
             type="submit"
           >
-            {isSubmitting ? "Creating evidence..." : "Create proposal evidence"}
+            {isSubmitting ? "Creating evidence..." : "Create suggestion evidence"}
           </button>
           {selectedAdapter && !selectedAdapterAvailable ? (
             <span className="meta-text">
-              Configure the adapter locally before running it. Evidence remains separate from truth.
+              Configure the analyzer locally before running it. Evidence remains separate from truth.
             </span>
           ) : null}
           {selectedAdapter && selectedMedia && !selectedAdapterSupportsMedia ? (
-            <span className="meta-text">Choose supported imported media for this adapter.</span>
+            <span className="meta-text">Choose supported imported media for this analyzer.</span>
           ) : null}
           {!selectedMedia && !isLoading ? (
-            <span className="meta-text">Import local media before running adapter contracts.</span>
+            <span className="meta-text">Import local media before running analyzer checks.</span>
           ) : null}
         </form>
       </section>
@@ -505,7 +505,7 @@ export function ModelAdaptersPage({
         <section className="panel adapter-result-panel">
           <div className="section-heading">
             <div>
-              <h2>Adapter proposals created</h2>
+              <h2>Analyzer suggestions created</h2>
               <span className="meta-text">{result.local_first_note}</span>
             </div>
             <StatusPill label={`${result.review_queue_count} needs review`} tone="review" />
@@ -517,7 +517,7 @@ export function ModelAdaptersPage({
               <span className="meta-text">{formatDateTime(result.detection_run.created_at)}</span>
             </div>
             <div>
-              <span className="meta-text">Adapter truth behavior</span>
+              <span className="meta-text">Analyzer truth behavior</span>
               <strong>{result.adapter.creates_review_truth ? "Writes truth" : "Evidence only"}</strong>
               <span className="meta-text">Corrected labels are dataset truth.</span>
             </div>
@@ -532,15 +532,15 @@ export function ModelAdaptersPage({
                     <EvidenceBadge label="Needs review/correction" tone="review" />
                   </div>
                   <p>
-                    Suggested subject: {formatLabel(proposal.suggested_subject_label)}
-                    {proposal.suggested_species ? ` · Species guess: ${formatLabel(proposal.suggested_species)}` : ""}
+                    Suggested label: {formatLabel(proposal.suggested_subject_label)}
+                    {proposal.suggested_species ? ` · Species suggestion: ${formatLabel(proposal.suggested_species)}` : ""}
                   </p>
                 </div>
               </article>
             ))}
           </div>
           <button className="secondary-action" onClick={onOpenDetectionProposals}>
-            Open Detection Proposals
+            Open Suggestion Evidence
           </button>
         </section>
       ) : null}
@@ -570,7 +570,7 @@ function LocalDetectorSetupPanel({
     <section className="panel local-detector-setup-panel">
       <div className="section-heading">
         <div>
-          <h2>Local Detector setup</h2>
+          <h2>Local analyzer setup</h2>
           <span className="meta-text">
             Configure local files yourself, then run the detector explicitly from saved media.
           </span>
@@ -580,16 +580,16 @@ function LocalDetectorSetupPanel({
 
       {!adapter && !isLoading ? (
         <div className="error-panel">
-          <strong>Local detector adapter status is unavailable.</strong>
+          <strong>Local detector analyzer status is unavailable.</strong>
           <span>
-            The app remains usable. Demo proposal evidence is still available for smoke testing.
+            The app remains usable. Demo suggestion evidence is still available for smoke testing.
           </span>
         </div>
       ) : null}
 
       <div className="local-detector-setup-grid">
         <SetupStatusRow
-          label="Adapter"
+          label="Analyzer"
           value={adapter ? `${adapter.name} (${adapter.id})` : LOCAL_IMAGE_DETECTOR_ADAPTER_ID}
           ready={Boolean(adapter)}
         />
@@ -635,7 +635,7 @@ function LocalDetectorSetupPanel({
       <div className="local-detector-setup-copy">
         <div>
           <strong>Status reason</strong>
-          <span>{configuration?.status_reason ?? adapter?.notes ?? "Adapter status is loading."}</span>
+          <span>{configuration?.status_reason ?? adapter?.notes ?? "Analyzer status is loading."}</span>
         </div>
         <div>
           <strong>Setup hint</strong>
@@ -659,8 +659,8 @@ function LocalDetectorSetupPanel({
         <strong>Local-first detector boundary</strong>
         <span>
           Model files are not bundled. MockingBird does not download models. Configure a
-          local model path yourself. Outputs become DetectionProposal evidence only;
-          ReviewLabel correction remains truth. Demo proposal remains available for smoke
+          local model path yourself. Outputs become suggestion evidence only;
+          ReviewLabel correction remains truth. Demo suggestion remains available for smoke
           testing when the detector is not configured.
         </span>
       </div>
@@ -749,7 +749,7 @@ function RealModelSmokeCheck({
           <li>Restart the API so readiness updates.</li>
           <li>Capture or import an image.</li>
           <li>Open Cameras/Streams and click Analyze image on a saved image.</li>
-          <li>Confirm a Suggested label appears, then Review suggestion.</li>
+          <li>Confirm a suggested label appears, then review the suggestion.</li>
           <li>Correct label, confirm the item in Bird Log, then Export reviewed data.</li>
         </ol>
       </div>
@@ -762,7 +762,7 @@ function RealModelSmokeCheck({
           Import image
         </button>
         <button className="secondary-action" onClick={onOpenReview} type="button">
-          Review
+          Review Queue
         </button>
         <button className="secondary-action" onClick={onOpenBirdLog} type="button">
           Bird Log
@@ -840,7 +840,7 @@ function AdapterSetupSummaryCard({ setup }: { setup: ModelAdapterSetupSummary })
       </div>
       <div className="adapter-setup-summary-grid">
         <div>
-          <span>Adapter</span>
+          <span>Analyzer</span>
           <strong>{setup.adapter_id}</strong>
           <small>{formatLabel(setup.adapter_kind)}</small>
         </div>
@@ -885,7 +885,7 @@ function EvaluationItemCard({
           <StatusPill label={formatLabel(item.review_status)} tone={item.review_status === "reviewed" ? "good" : "review"} />
         </div>
         <p>
-          Proposal: {item.proposal_display_name ?? formatLabel(item.proposal_label)} · Reviewed:{" "}
+          Suggestion: {item.proposal_display_name ?? formatLabel(item.proposal_label)} · Reviewed:{" "}
           {item.reviewed_display_name ?? (item.reviewed_label ? formatLabel(item.reviewed_label) : "Not reviewed")} ·
           Confidence: {Math.round(item.proposal_confidence * 100)}%
         </p>
@@ -903,7 +903,7 @@ function EvaluationItemCard({
           </button>
         ) : null}
         <button className="secondary-action" onClick={onOpenDetectionProposals}>
-          Detection Proposals
+          Suggestion Evidence
         </button>
       </div>
     </article>

@@ -349,11 +349,11 @@ export function BirdLogPage({
       <PageHeader
         eyebrow="Reviewed activity history"
         title="Bird Log"
-        description="A local history of reviewed bird or outdoor activity created only by saved corrections."
+        description="A local history of reviewed corrections. Candidates and suggestions appear here only after correction."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenReview}>
-              Review
+              Review Queue
             </button>
             <button className="secondary-action" onClick={onOpenExports}>
               Export reviewed data
@@ -366,7 +366,7 @@ export function BirdLogPage({
 
       <section className="bird-log-summary-grid">
         <div className="bird-log-summary-card">
-          <span>Reviewed observations</span>
+          <span>Reviewed corrections</span>
           <strong>{reviewedCount}</strong>
         </div>
         <div className="bird-log-summary-card">
@@ -416,7 +416,7 @@ export function BirdLogPage({
 
       {!isLoading && entries.length === 0 ? (
         <EmptyState
-          title="No bird activity logged yet"
+          title="No reviewed activity logged yet"
           description="Live candidates, captures, and suggestions stay out of Bird Log until you correct a Review Queue item."
           action={
             <>
@@ -459,8 +459,8 @@ export function BirdLogPage({
                         <BirdLogMediaBlock asset={entry.mediaAsset} />
                       ) : (
                         <div className="bird-log-image-placeholder">
-                          <strong>Snapshot / Image</strong>
-                          <span>No source image attached</span>
+                          <strong>Best frame</strong>
+                          <span>No best frame attached</span>
                         </div>
                       )}
                       <div className="bird-log-entry-body">
@@ -531,7 +531,7 @@ export function BirdLogPage({
                               rel="noreferrer"
                               target="_blank"
                             >
-                              View source image
+                              Open best frame
                             </a>
                           ) : null}
                           <button className="secondary-action" onClick={onOpenExports} type="button">

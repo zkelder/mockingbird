@@ -421,7 +421,7 @@ export function VisitDetailPage({
 
       {isMotionEvidenceVisit ? (
         <section className="notice-panel">
-          <strong>Promoted Motion Evidence</strong>
+          <strong>Promoted activity evidence</strong>
           <span>
             {promotedEvidenceCopy} {visitCorrectionTruthCopy}
           </span>
@@ -470,7 +470,7 @@ export function VisitDetailPage({
             />
             {detail.motion_evidence ? (
               <ContextItem
-                label="MotionEvidence"
+                label="Advanced evidence"
                 value={detail.motion_evidence.id}
                 detail={formatLabel(detail.motion_evidence.status)}
               />
@@ -603,7 +603,7 @@ export function VisitDetailPage({
           <div>
             <h2>{isSpeciesVisit ? "Species review" : "Review correction"}</h2>
             <span className="meta-text">
-              Detection evidence is only a suggestion. Corrected species is local dataset truth.
+              Suggestion evidence is not truth. Corrected species is local dataset truth.
             </span>
           </div>
           <EvidenceBadge
@@ -689,12 +689,12 @@ export function VisitDetailPage({
       {detail.detection_proposals.length > 0 ? (
         <section className="panel">
           <div className="section-heading">
-            <h2>Proposal provenance</h2>
+            <h2>Suggestion provenance</h2>
             <EvidenceBadge label="Evidence source" />
           </div>
           <p className="evidence-panel-copy">
-            This visit started as proposal evidence. Use the correction form to set dataset truth;
-            the proposal remains supporting evidence.
+            This visit started as suggestion evidence. Use the correction form to set dataset truth;
+            the suggestion remains supporting evidence.
           </p>
           <div className="evidence-list">
             {detail.detection_proposals.map((proposal) => (
@@ -720,7 +720,7 @@ export function VisitDetailPage({
       <section className="split-grid">
         <div className="panel">
           <div className="section-heading">
-            <h2>Detections as evidence</h2>
+            <h2>Suggestions as evidence</h2>
             <EvidenceBadge label="Correction wins" tone="truth" />
           </div>
           <p className="evidence-panel-copy">
@@ -983,14 +983,14 @@ function SourceEvidenceTracePanel({
         <div>
           <h2>Source evidence trace</h2>
           <span className="meta-text">
-            This Visit is linked back to the MotionEvidence that created review context.
+            This Visit is linked back to the activity evidence that created review context.
           </span>
         </div>
         <EvidenceBadge label="Evidence trace" tone="evidence" />
       </div>
       <div className="motion-review-context-grid">
         <ContextItem
-          label="MotionEvidence"
+          label="Advanced evidence"
           value={motionEvidence.id}
           detail={formatLabel(motionEvidence.status)}
         />
@@ -1003,7 +1003,7 @@ function SourceEvidenceTracePanel({
           value={motionEvidence.promoted_visit_id ?? "not linked"}
         />
         <ContextItem
-          label="Source media"
+          label="Best frame"
           value={motionEvidence.snapshot_media_asset_id ?? mediaAsset?.id ?? "none"}
         />
         <ContextItem label="Stream" value={motionEvidence.stream_id ?? "none"} />
@@ -1022,7 +1022,7 @@ function SourceEvidenceTracePanel({
           onClick={() => onOpenMotionEvidence(motionEvidence.id)}
           type="button"
         >
-          Open evidence
+          Open advanced evidence
         </button>
         {motionEvidence.promoted_event_id ? (
           <button

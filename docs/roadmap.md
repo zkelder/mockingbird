@@ -1134,6 +1134,12 @@ Current work:
   creates no ReviewLabels, Bird Log history, export truth, or automatic
   identification run, and remains in-memory while the user-started camera
   session and monitor are running.
+- MVP Flow Cleanup 1: the main UI now presents the product-first path as
+  Cameras/Streams -> Review Queue -> Bird Log -> Exports, with Stream Detail
+  emphasizing camera session, live view, monitoring, auto-created review
+  candidates, and Review Queue handoff. Motion Evidence is framed as Advanced
+  Evidence, Model Adapters are framed as optional Analyzers, and Bird Log copy
+  remains reviewed-corrections-only without changing truth semantics.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — live camera field-test validation polish.

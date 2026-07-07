@@ -2570,6 +2570,45 @@ a.secondary-action {
   overflow-wrap: anywhere;
 }
 
+.stream-live-workflow-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stream-live-workflow-strip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid #2b4437;
+  border-radius: 8px;
+  padding: 8px 9px;
+  background: #101b16;
+  color: #c9d8ce;
+  font-size: 0.84rem;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.stream-live-workflow-strip span.is-active {
+  border-color: #78b68f;
+  background: #1a3025;
+  color: #f4faf5;
+}
+
+.stream-live-workflow-strip strong {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 999px;
+  background: #dcefe2;
+  color: #102019;
+  font-size: 0.75rem;
+}
+
 .stream-live-primary-actions {
   justify-content: flex-start;
 }
@@ -2820,6 +2859,31 @@ a.secondary-action {
   align-items: flex-start;
   white-space: normal;
   line-height: 1.35;
+}
+
+.stream-live-debug-details {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #31483b;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #0f1a15;
+}
+
+.stream-live-debug-details summary {
+  cursor: pointer;
+  color: #dcefe2;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.stream-live-debug-details[open] summary {
+  margin-bottom: 10px;
+}
+
+.stream-live-state-debug {
+  border-color: #263b31;
+  background: #111d18;
 }
 
 .stream-live-hint.is-error {
@@ -6042,6 +6106,7 @@ a.secondary-action {
   .snapshot-watch-grid,
   .source-storage-grid,
   .source-stream-grid,
+  .stream-live-workflow-strip,
   .folder-import-control-grid,
   .folder-import-list-grid,
   .folder-import-summary-grid,

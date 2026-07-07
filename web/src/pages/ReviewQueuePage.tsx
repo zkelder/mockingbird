@@ -278,7 +278,7 @@ function reviewIdentificationStatusLabel(identification: ReviewIdentificationSum
     return "Configured available";
   }
   if (identification.status === "unavailable_no_adapter") {
-    return "No adapter";
+    return "No analyzer";
   }
   if (identification.status === "unsupported_media") {
     return "Unsupported media";
@@ -738,10 +738,10 @@ function sourceStreamFilterOptions(
 function reviewEvidenceFilterLabel(evidenceFilter: ReviewEvidenceFilter): string {
   const labels: Record<ReviewEvidenceFilter, string> = {
     all: "All evidence",
-    has_media: "Has media",
-    has_detection_proposal: "Has detection proposal",
+    has_media: "Has best frame",
+    has_detection_proposal: "Has suggestion evidence",
     has_motion_evidence: "Has activity evidence",
-    no_proposal_evidence: "No proposal evidence",
+    no_proposal_evidence: "No suggestion evidence",
   };
   return labels[evidenceFilter];
 }
@@ -1501,9 +1501,9 @@ export function ReviewQueuePage({
       const refreshedQueue = await apiClient.getReviewQueue();
       setQueueItems(refreshedQueue);
       await refreshDetectionEvidence();
-      setMessage("Proposal rejected as evidence. No review truth was created.");
+      setMessage("Suggestion evidence rejected. No review truth was created.");
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "Proposal could not be rejected.");
+      setMessage(caught instanceof Error ? caught.message : "Suggestion evidence could not be rejected.");
     } finally {
       setIdentifyingId(null);
     }
@@ -1561,9 +1561,9 @@ export function ReviewQueuePage({
         <section className="panel species-review-panel">
           <div className="section-heading">
             <div>
-              <h2>Species review work</h2>
+              <h2>Review candidates</h2>
               <span className="meta-text">
-                Detection evidence is only a suggestion. Corrected species is local dataset truth.
+                Suggestions are evidence only. Corrected labels are local dataset truth.
               </span>
             </div>
             <EvidenceBadge label={`${queueCounts.bird_species} bird/species`} tone="review" />
@@ -1579,20 +1579,20 @@ export function ReviewQueuePage({
               Search
               <input
                 onChange={(event) => setTextSearch(event.target.value)}
-                placeholder="label, id, stream, media, proposal"
+                placeholder="label, stream, source, zone, suggestion"
                 type="search"
                 value={textSearch}
               />
             </label>
             <label>
-              Target
+              Item type
               <select
                 onChange={(event) =>
                   setTargetTypeFilter(event.target.value as ReviewTargetFilter)
                 }
                 value={targetTypeFilter}
               >
-                <option value="all">All targets</option>
+                <option value="all">All item types</option>
                 <option value="visit">Visits</option>
                 <option value="event">Events</option>
               </select>
@@ -1606,10 +1606,10 @@ export function ReviewQueuePage({
                 value={evidenceFilter}
               >
                 <option value="all">All evidence states</option>
-                <option value="has_media">Has media</option>
-                <option value="has_detection_proposal">Has detection proposal</option>
+                <option value="has_media">Has best frame</option>
+                <option value="has_detection_proposal">Has suggestion evidence</option>
                 <option value="has_motion_evidence">Has activity evidence</option>
-                <option value="no_proposal_evidence">No proposal evidence</option>
+                <option value="no_proposal_evidence">No suggestion evidence</option>
               </select>
             </label>
             {sourceStreamOptions.length > 1 ? (
@@ -1811,6 +1811,7 @@ export function ReviewQueuePage({
           const isLiveActivity = isLiveActivityReviewItem(item);
           const hasActivityDiagnostics =
             isLiveActivity ||
+            item.focus_crop_available ||
             item.best_frame_sequence != null ||
             item.best_changed_ratio != null ||
             item.effective_threshold_used != null ||
@@ -1860,7 +1861,7 @@ export function ReviewQueuePage({
                       : "Bulk selection is unavailable for this item"}
               </label>
               <p>
-                {item.reason} Detection evidence is only a suggestion; your correction becomes local
+                {item.reason} Suggestion evidence is not truth; your correction becomes local
                 dataset truth.
               </p>
               <div
@@ -1905,7 +1906,7 @@ export function ReviewQueuePage({
                       <span>Best frame {item.best_frame_sequence}</span>
                     ) : null}
                     {item.best_media_asset_id ? (
-                      <span>Best media {item.best_media_asset_id}</span>
+                      <span>Best frame saved</span>
                     ) : null}
                   </div>
                   <div
@@ -1917,8 +1918,8 @@ export function ReviewQueuePage({
                     {item.focus_crop_available ? (
                       <>
                         <span>{formatLabel(item.focus_crop_source)} context</span>
-                        <span>{focusCropBoxLabel(item.focus_crop_box_normalized)}</span>
-                        <span>{focusCropPixelLabel(item)}</span>
+                        <span>Focus overlay on best frame</span>
+                        <span>Full frame stays available</span>
                       </>
                     ) : (
                       <span>
@@ -1955,6 +1956,12 @@ export function ReviewQueuePage({
                         <span>Threshold: {item.effective_threshold_used ?? "n/a"}</span>
                         <span>Threshold source: {item.threshold_source ?? "n/a"}</span>
                         <span>Fine motion: {item.fine_motion_applied ? "Applied" : "Not applied"}</span>
+                        {item.focus_crop_available ? (
+                          <>
+                            <span>{focusCropBoxLabel(item.focus_crop_box_normalized)}</span>
+                            <span>{focusCropPixelLabel(item)}</span>
+                          </>
+                        ) : null}
                       </div>
                     </details>
                   ) : null}
@@ -1962,7 +1969,7 @@ export function ReviewQueuePage({
               </div>
               <div className="queue-meta">
                 <EvidenceBadge
-                  label={fromDetectionEvidence ? "Converted proposal evidence" : "Review evidence"}
+                  label={fromDetectionEvidence ? "Converted suggestion evidence" : "Review candidate"}
                 />
                 {isLiveActivity ? <EvidenceBadge label="Live activity session" tone="review" /> : null}
                 {isSpeciesReview ? <EvidenceBadge label="Resolve species" tone="review" /> : null}
@@ -1990,35 +1997,43 @@ export function ReviewQueuePage({
                 ) : null}
                 <TaxonomyBadge label={suggestedTaxonomy} value={item.suggested_label} />
                 <span>
-                  Suggested: {displayTaxonomyLabel(item.suggested_label ?? "unknown", taxonomyLabels)}
+                  Suggestion: {displayTaxonomyLabel(item.suggested_label ?? "unknown", taxonomyLabels)}
                 </span>
                 {item.suggestion_confidence != null ? (
                   <span>Confidence: {formatConfidence(item.suggestion_confidence)}</span>
                 ) : null}
                 <span>Source: {sourceLabel}</span>
                 <span>Stream: {streamLabel}</span>
-                <span>Event: {item.event_id ?? "n/a"}</span>
-                <span>Visit: {item.visit_id ?? "n/a"}</span>
                 <span>Zone: {zoneLabel}</span>
-                {item.suggestion_id ? <span>Suggestion: {item.suggestion_id}</span> : null}
                 {item.visit_id ? <span>Species suggestions: Visit detail</span> : null}
-                {item.media_asset ? <span>Imported media attached</span> : null}
+                {item.media_asset ? <span>Best frame attached</span> : null}
               </div>
+              <details className="review-diagnostic-details">
+                <summary>Record details</summary>
+                <div className="review-diagnostic-grid">
+                  <span>Review item: {item.id}</span>
+                  <span>Target: {reviewQueueTargetType(item)} / {reviewQueueTargetId(item)}</span>
+                  <span>Event: {item.event_id ?? "n/a"}</span>
+                  <span>Visit: {item.visit_id ?? "n/a"}</span>
+                  <span>Best frame ID: {item.best_media_asset_id ?? "n/a"}</span>
+                  <span>Suggestion ID: {item.suggestion_id ?? "n/a"}</span>
+                </div>
+              </details>
               <div className="review-evidence-context">
                 <div className="section-heading">
                   <div>
-                    <h3>Evidence context</h3>
+                    <h3>Review candidate context</h3>
                     <span className="meta-text">
-                      Review source, media, and proposal evidence before saving correction truth.
+                      Review source, best frame, and suggestion evidence before saving correction truth.
                     </span>
                   </div>
                   <StatusPill label={formatLabel(item.review_status)} tone="review" />
                 </div>
                 <div className="review-evidence-grid">
                   <div className="data-row">
-                    <span>Media</span>
+                    <span>Best frame</span>
                     <strong>
-                      {item.media_asset?.original_filename ?? item.media_asset?.filename ?? "No media attached"}
+                      {item.media_asset?.original_filename ?? item.media_asset?.filename ?? "No best frame attached"}
                     </strong>
                     {item.media_asset ? (
                       <small>{formatLabel(item.media_asset.media_type)} / {item.media_asset.content_type}</small>
@@ -2030,7 +2045,7 @@ export function ReviewQueuePage({
                     <small>{sourceLabel} / {zoneLabel}</small>
                   </div>
                   <div className="data-row">
-                    <span>Suggested label</span>
+                    <span>Suggestion</span>
                     <strong>{displayTaxonomyLabel(item.suggested_label ?? "unknown", taxonomyLabels)}</strong>
                     <small>
                       {item.suggestion_confidence != null
@@ -2056,8 +2071,8 @@ export function ReviewQueuePage({
                           <div className="item-title-row">
                             <div>
                               <span className="meta-text">
-                                {relation === "linked" ? "Linked proposal" : "Same-media proposal"} -{" "}
-                                {run ? formatLabel(run.source) : "detection"} source
+                                {relation === "linked" ? "Linked suggestion" : "Same-frame suggestion"} -{" "}
+                                {run ? formatLabel(run.source) : "analyzer"} source
                               </span>
                               <h4>{displayTaxonomyLabel(proposal.label, taxonomyLabels)}</h4>
                             </div>
@@ -2066,28 +2081,35 @@ export function ReviewQueuePage({
                           <div className="review-proposal-facts">
                             <span>Confidence: {formatConfidence(proposal.confidence)}</span>
                             <span>
-                              Suggested:{" "}
+                              Suggestion:{" "}
                               {displayTaxonomyLabel(
                                 proposal.suggested_species ?? proposal.suggested_subject_label,
                                 taxonomyLabels,
                               )}
                             </span>
-                            <span>Proposal ID: {proposal.id}</span>
                           </div>
+                          <details className="review-diagnostic-details">
+                            <summary>Suggestion record</summary>
+                            <div className="review-diagnostic-grid">
+                              <span>Proposal ID: {proposal.id}</span>
+                              <span>Run ID: {proposal.run_id}</span>
+                              <span>Status: {formatLabel(proposal.status)}</span>
+                            </div>
+                          </details>
                           <p>Suggestions remain evidence. The correction form creates truth.</p>
                         </article>
                       );
                     })}
                     {itemEvidenceProposals.length > 3 ? (
                       <span className="meta-text">
-                        {itemEvidenceProposals.length - 3} more proposal evidence item
-                        {itemEvidenceProposals.length - 3 === 1 ? "" : "s"} available in advanced proposal tools.
+                        {itemEvidenceProposals.length - 3} more suggestion evidence item
+                        {itemEvidenceProposals.length - 3 === 1 ? "" : "s"} available in advanced tools.
                       </span>
                     ) : null}
                   </div>
                 ) : (
                   <span className="meta-text">
-                    No proposal evidence is linked to this review item yet.
+                    No suggestion evidence is linked to this review item yet.
                   </span>
                 )}
               </div>
@@ -2166,17 +2188,34 @@ export function ReviewQueuePage({
                       placeholder="optional review note"
                     />
                   </label>
-                  <button
-                    className="primary-action"
-                    disabled={savingId === item.id}
-                    onClick={() => void saveCorrection(item)}
-                  >
-                    {savingId === item.id
-                      ? "Saving..."
-                      : isSpeciesReview
-                        ? "Resolve species"
-                        : "Save correction"}
-                  </button>
+                  <div className="detail-actions">
+                    <button
+                      className="secondary-action"
+                      disabled={savingId === item.id}
+                      onClick={() =>
+                        void saveCorrectionWithLabel(
+                          item,
+                          "false_positive",
+                          draft.notes || "Marked false positive from Review Queue.",
+                        )
+                      }
+                      type="button"
+                    >
+                      Mark false positive
+                    </button>
+                    <button
+                      className="primary-action"
+                      disabled={savingId === item.id}
+                      onClick={() => void saveCorrection(item)}
+                      type="button"
+                    >
+                      {savingId === item.id
+                        ? "Saving..."
+                        : isSpeciesReview
+                          ? "Resolve species"
+                          : "Save correction"}
+                    </button>
+                  </div>
                 </div>
               )}
             </article>
@@ -2273,7 +2312,7 @@ function IdentificationAssistPanel({
         <div>
           <h3>Identification assist</h3>
           <span className="meta-text">
-            Suggestions and proposals stay evidence until correction.
+            Suggestions stay evidence until correction.
           </span>
         </div>
         <StatusPill
@@ -2283,12 +2322,12 @@ function IdentificationAssistPanel({
       </div>
       <div className="review-identification-grid">
         <div className="data-row">
-          <span>Adapter</span>
+          <span>Analyzer</span>
           <strong>
             {identification.adapter_name ??
               (identification.status === "setup_required"
                 ? "Identification setup required"
-                : "No adapter")}
+                : "No analyzer")}
           </strong>
           <small>
             {identification.adapter_is_demo
@@ -2327,7 +2366,7 @@ function IdentificationAssistPanel({
           </small>
         </div>
         <div className="data-row">
-          <span>Suggested label</span>
+          <span>Suggestion</span>
           <strong>
             {suggestedLabel ? displayTaxonomyLabel(suggestedLabel, taxonomyLabels) : "No suggestion"}
           </strong>
@@ -2337,10 +2376,8 @@ function IdentificationAssistPanel({
               : confidence != null
                 ? `${formatConfidence(confidence)} confidence. `
                 : ""}
-            {identification.suggestion_count} suggestion
-            {identification.suggestion_count === 1 ? "" : "s"} /{" "}
-            {identification.proposal_count} proposal
-            {identification.proposal_count === 1 ? "" : "s"}
+            {identification.suggestion_count + identification.proposal_count} suggestion evidence item
+            {identification.suggestion_count + identification.proposal_count === 1 ? "" : "s"}
           </small>
         </div>
         <div className="data-row">
@@ -2360,7 +2397,7 @@ function IdentificationAssistPanel({
         </div>
       </div>
       <details className="review-identification-setup-details" open={setupDetailsOpen}>
-        <summary>Adapter setup</summary>
+        <summary>Analyzer setup</summary>
         <div className="review-identification-setup-grid">
           <div className="data-row">
             <span>Status</span>
@@ -2385,7 +2422,7 @@ function IdentificationAssistPanel({
             <small>{identification.model_path_hint ?? "Demo analyzer requires no model file."}</small>
           </div>
           <div className="data-row">
-            <span>Media</span>
+            <span>Best frame media</span>
             <strong>{supportedMediaCopy}</strong>
             <small>{identification.media_asset_id ? "Best-frame compatibility is checked here." : "Readiness only."}</small>
           </div>
@@ -2451,7 +2488,7 @@ function IdentificationAssistPanel({
             onClick={onRejectProposal}
             type="button"
           >
-            Reject proposal
+            Reject suggestion evidence
           </button>
         ) : null}
       </div>
@@ -2546,7 +2583,7 @@ function CorrectionSuccessPanel({
       <div className="correction-success-boundary">
         <strong>This correction is local dataset truth.</strong>
         <span>
-          Detection proposals and media stay evidence. This correction now counts toward dataset
+          Suggestion evidence and best frames stay evidence. This correction now counts toward dataset
           coverage, classifier readiness, exports, and analytics.
         </span>
       </div>
@@ -2627,7 +2664,7 @@ function CorrectionAuditPanel({
               Latest {formatLabel(group.targetType)} correction -{" "}
               {formatDateTime(group.latest.created_at)}
             </span>
-            <span className="meta-text">Target: {group.targetId}</span>
+            <span className="meta-text">Record: {group.targetId}</span>
             {group.latest.notes ? <p>{group.latest.notes}</p> : null}
             {group.older.length > 0 ? (
               <details className="correction-history-details">
