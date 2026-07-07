@@ -8626,8 +8626,11 @@ class ProductRepository:
 
         species_counts: Counter[str] = Counter()
         for visit in visits:
-            label = visit.reviewed_label or visit.species_guess or visit.subject_label
-            species_counts[self._normalize_label_from_session(session, label)] += 1
+            if visit.review_status != ReviewStatus.reviewed or not visit.reviewed_label:
+                continue
+            species_counts[
+                self._normalize_label_from_session(session, visit.reviewed_label)
+            ] += 1
 
         visit_event_ids = {visit.event_id for visit in visits}
         for label in review_labels:

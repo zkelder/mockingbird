@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from math import ceil
 import sys
 from typing import Any
 
@@ -1428,15 +1429,30 @@ def _live_frame_cache_response_fields(
 
 def _live_activity_session_status_fields(
     activity: dict[str, Any] | None,
+    *,
+    quiet_seconds: int = DEFAULT_QUIET_PERIOD_SECONDS,
 ) -> dict[str, Any]:
     if not activity:
         return {}
+    quiet_remaining_seconds = _live_activity_quiet_remaining_seconds(
+        activity,
+        quiet_seconds=quiet_seconds,
+    )
     return {
         "current_activity_session": activity,
         "current_activity_session_id": activity.get("activity_session_id"),
         "activity_started_at": activity.get("started_at"),
         "activity_last_seen_at": activity.get("last_seen_at"),
         "activity_detection_count": activity.get("detection_count") or 0,
+        "activity_completed_at": activity.get("completed_at"),
+        "activity_ready_for_review": _live_activity_ready_for_review(
+            activity,
+            quiet_seconds=quiet_seconds,
+        ),
+        "activity_review_state": _live_activity_review_state(
+            activity,
+            quiet_seconds=quiet_seconds,
+        ),
         "activity_best_frame_sequence": activity.get("best_frame_sequence"),
         "activity_best_score": activity.get("best_score"),
         "activity_best_changed_ratio": activity.get("best_changed_ratio"),
@@ -1446,9 +1462,7 @@ def _live_activity_session_status_fields(
         "activity_threshold_source": activity.get("threshold_source"),
         "activity_fine_motion_applied": bool(activity.get("fine_motion_applied")),
         "activity_near_miss": bool(activity.get("near_miss")),
-        "activity_cooldown_remaining_seconds": _live_activity_quiet_remaining_seconds(
-            activity
-        ),
+        "activity_cooldown_remaining_seconds": quiet_remaining_seconds,
         "activity_review_activity_created": bool(
             activity.get("review_activity_created")
         ),
@@ -1461,14 +1475,30 @@ def _live_activity_session_status_fields(
 
 def _live_activity_evaluate_fields(
     activity: dict[str, Any] | None,
+    *,
+    quiet_seconds: int = DEFAULT_QUIET_PERIOD_SECONDS,
 ) -> dict[str, Any]:
     if not activity:
         return {}
+    quiet_remaining_seconds = _live_activity_quiet_remaining_seconds(
+        activity,
+        quiet_seconds=quiet_seconds,
+    )
     return {
         "activity_session_id": activity.get("activity_session_id"),
         "activity_started_at": activity.get("started_at"),
         "activity_last_seen_at": activity.get("last_seen_at"),
         "activity_detection_count": activity.get("detection_count") or 0,
+        "activity_completed_at": activity.get("completed_at"),
+        "activity_ready_for_review": _live_activity_ready_for_review(
+            activity,
+            quiet_seconds=quiet_seconds,
+        ),
+        "activity_review_state": _live_activity_review_state(
+            activity,
+            quiet_seconds=quiet_seconds,
+        ),
+        "activity_quiet_remaining_seconds": quiet_remaining_seconds,
         "activity_best_frame_sequence": activity.get("best_frame_sequence"),
         "activity_best_score": activity.get("best_score"),
         "activity_best_changed_ratio": activity.get("best_changed_ratio"),
@@ -1481,12 +1511,44 @@ def _live_activity_evaluate_fields(
     }
 
 
-def _live_activity_quiet_remaining_seconds(activity: dict[str, Any]) -> int | None:
+def _live_activity_quiet_remaining_seconds(
+    activity: dict[str, Any],
+    *,
+    quiet_seconds: int = DEFAULT_QUIET_PERIOD_SECONDS,
+) -> int | None:
     last_seen = _live_activity_datetime(activity.get("last_seen_at"))
     if last_seen is None or activity.get("review_activity_created"):
         return None
     elapsed = max(0.0, (datetime.now(UTC) - last_seen).total_seconds())
-    return max(0, int(DEFAULT_QUIET_PERIOD_SECONDS - elapsed))
+    return max(0, int(ceil(max(1, quiet_seconds) - elapsed)))
+
+
+def _live_activity_ready_for_review(
+    activity: dict[str, Any],
+    *,
+    quiet_seconds: int = DEFAULT_QUIET_PERIOD_SECONDS,
+) -> bool:
+    if activity.get("review_activity_created"):
+        return True
+    if activity.get("ready_for_review"):
+        return True
+    quiet_remaining_seconds = _live_activity_quiet_remaining_seconds(
+        activity,
+        quiet_seconds=quiet_seconds,
+    )
+    return quiet_remaining_seconds == 0
+
+
+def _live_activity_review_state(
+    activity: dict[str, Any],
+    *,
+    quiet_seconds: int = DEFAULT_QUIET_PERIOD_SECONDS,
+) -> str:
+    if activity.get("review_activity_created"):
+        return "review_candidate_created"
+    if _live_activity_ready_for_review(activity, quiet_seconds=quiet_seconds):
+        return "ready_for_review"
+    return "waiting_for_quiet"
 
 
 def _live_activity_datetime(value: Any) -> datetime | None:
@@ -1517,6 +1579,12 @@ def _live_camera_session_response(
             max_runtime_seconds=live_camera_session.DEFAULT_MAX_RUNTIME_SECONDS,
             persistent=False,
             monitor_running=False,
+            auto_create_review_candidates=False,
+            auto_review_quiet_seconds=live_camera_session.DEFAULT_AUTO_REVIEW_QUIET_SECONDS,
+            auto_review_min_detections=(
+                live_camera_session.DEFAULT_AUTO_REVIEW_MIN_DETECTIONS
+            ),
+            auto_review_created_count=0,
             camera_settings=_camera_settings_from_live_config(configuration),
             message=message or "Camera session is stopped.",
             warnings=warnings or [],
@@ -1533,8 +1601,21 @@ def _live_camera_session_response(
         frame_count=snapshot.frame_count,
         clients_connected=snapshot.clients_connected,
         monitor_running=snapshot.monitor_running,
+        auto_create_review_candidates=snapshot.auto_create_review_candidates,
+        auto_review_quiet_seconds=snapshot.auto_review_quiet_seconds,
+        auto_review_min_detections=snapshot.auto_review_min_detections,
+        auto_review_created_count=snapshot.auto_review_created_count,
+        last_auto_review_created_at=snapshot.last_auto_review_created_at,
+        auto_review_last_error=snapshot.auto_review_last_error,
+        last_auto_review_motion_evidence_id=snapshot.last_auto_review_motion_evidence_id,
+        last_auto_review_event_id=snapshot.last_auto_review_event_id,
+        last_auto_review_visit_id=snapshot.last_auto_review_visit_id,
+        last_auto_review_queue_item_id=snapshot.last_auto_review_queue_item_id,
         last_motion_evaluation_at=snapshot.last_motion_evaluation_at,
-        **_live_activity_session_status_fields(snapshot.current_activity_session),
+        **_live_activity_session_status_fields(
+            snapshot.current_activity_session,
+            quiet_seconds=snapshot.auto_review_quiet_seconds,
+        ),
         last_activity=snapshot.last_activity,
         last_motion_result=snapshot.last_motion_result,
         last_error=snapshot.last_error,
@@ -2760,6 +2841,16 @@ def _evaluate_live_stream_motion(
         raise _not_found("Stream", stream_id)
     configuration = repository.get_stream_live_playback_config(stream_id)
     session_snapshot = get_live_camera_session_manager().status(stream_id)
+    active_quiet_seconds = (
+        session_snapshot.auto_review_quiet_seconds
+        if session_snapshot is not None
+        else live_camera_session.DEFAULT_AUTO_REVIEW_QUIET_SECONDS
+    )
+    active_min_detections = (
+        session_snapshot.auto_review_min_detections
+        if session_snapshot is not None
+        else live_camera_session.DEFAULT_AUTO_REVIEW_MIN_DETECTIONS
+    )
 
     evaluated_at = datetime.now(UTC)
     cache_status = live_frame_cache.get_cache_status(
@@ -2780,6 +2871,34 @@ def _evaluate_live_stream_motion(
         "evaluated_at": evaluated_at,
         **_live_frame_cache_response_fields(cache_status),
         **_camera_session_response_fields(session_snapshot),
+        "auto_create_review_candidates": (
+            session_snapshot.auto_create_review_candidates
+            if session_snapshot is not None
+            else False
+        ),
+        "auto_review_quiet_seconds": active_quiet_seconds,
+        "auto_review_min_detections": active_min_detections,
+        "auto_review_created_count": (
+            session_snapshot.auto_review_created_count if session_snapshot else 0
+        ),
+        "last_auto_review_created_at": (
+            session_snapshot.last_auto_review_created_at if session_snapshot else None
+        ),
+        "auto_review_last_error": (
+            session_snapshot.auto_review_last_error if session_snapshot else None
+        ),
+        "last_auto_review_motion_evidence_id": (
+            session_snapshot.last_auto_review_motion_evidence_id if session_snapshot else None
+        ),
+        "last_auto_review_event_id": (
+            session_snapshot.last_auto_review_event_id if session_snapshot else None
+        ),
+        "last_auto_review_visit_id": (
+            session_snapshot.last_auto_review_visit_id if session_snapshot else None
+        ),
+        "last_auto_review_queue_item_id": (
+            session_snapshot.last_auto_review_queue_item_id if session_snapshot else None
+        ),
         "pixel_delta_threshold": request.pixel_delta_threshold,
         "min_changed_ratio": request.min_changed_ratio,
         "creates_event": False,
@@ -3165,7 +3284,7 @@ def _evaluate_live_stream_motion(
             },
             frame_bytes=best_live_frame.frame_bytes,
             frame_content_type=best_live_frame.content_type,
-            quiet_window_seconds=DEFAULT_QUIET_PERIOD_SECONDS,
+            quiet_window_seconds=active_quiet_seconds,
         )
         live_activity_session = (
             activity_snapshot.as_dict() if activity_snapshot is not None else None
@@ -3575,7 +3694,10 @@ def _evaluate_live_stream_motion(
         best_frame_captured_at=best_live_frame.captured_at if best_live_frame else None,
         best_media_asset_id=best_media_asset_id,
         media_asset_id=best_media_asset_id,
-        **_live_activity_evaluate_fields(live_activity_session),
+        **_live_activity_evaluate_fields(
+            live_activity_session,
+            quiet_seconds=active_quiet_seconds,
+        ),
         can_create_review_activity=can_create_review_activity,
         review_activity_available=review_activity_available,
         review_activity_created=review_activity_created,
@@ -3626,7 +3748,16 @@ async def start_live_stream_motion_monitor(
 ) -> LiveMotionEvaluateResponse:
     request = payload or LiveMotionMonitorStartRequest()
     evaluate_request = LiveMotionEvaluateRequest(
-        **request.model_dump(exclude={"interval_seconds"})
+        **request.model_dump(
+            exclude={
+                "interval_seconds",
+                "auto_create_review_candidates",
+                "auto_review_quiet_seconds",
+                "auto_review_min_detections",
+                "create_review_activity",
+            }
+        ),
+        create_review_activity=False,
     )
     snapshot = get_live_camera_session_manager().status(stream_id)
     if snapshot is None or snapshot.status not in {"starting", "running"}:
@@ -3637,22 +3768,31 @@ async def start_live_stream_motion_monitor(
         )
 
     def monitor_evaluate() -> dict[str, Any]:
-        return _evaluate_live_stream_motion(
+        result = _evaluate_live_stream_motion(
             stream_id,
             evaluate_request,
             evaluation_cadence_seconds=request.interval_seconds,
-        ).model_dump(mode="json")
+        )
+        _maybe_auto_create_live_review_candidate(stream_id)
+        snapshot_after_auto = get_live_camera_session_manager().status(stream_id)
+        if snapshot_after_auto is not None and snapshot_after_auto.last_motion_result:
+            return dict(snapshot_after_auto.last_motion_result)
+        return result.model_dump(mode="json")
 
     get_live_camera_session_manager().start_monitor(
         stream_id,
         monitor_evaluate,
         interval_seconds=request.interval_seconds,
+        auto_create_review_candidates=request.auto_create_review_candidates,
+        auto_review_quiet_seconds=request.auto_review_quiet_seconds,
+        auto_review_min_detections=request.auto_review_min_detections,
     )
     result = _evaluate_live_stream_motion(
         stream_id,
         evaluate_request,
         evaluation_cadence_seconds=request.interval_seconds,
     )
+    _maybe_auto_create_live_review_candidate(stream_id)
     return result
 
 
@@ -3781,12 +3921,10 @@ def _live_motion_review_activity_response(
     )
 
 
-@app.post(
-    "/api/streams/{stream_id}/live-motion/review-activity",
-    response_model=LiveMotionReviewActivityResponse,
-)
-async def create_live_stream_motion_review_activity(
+def _create_live_stream_motion_review_activity(
     stream_id: str,
+    *,
+    auto_created: bool = False,
 ) -> LiveMotionReviewActivityResponse:
     repository = get_repository()
     stream = repository.get_stream(stream_id)
@@ -3909,7 +4047,11 @@ async def create_live_stream_motion_review_activity(
                     "creates_truth": False,
                 },
                 snapshot_media_asset_id=best_media_asset_id,
-                notes="Live stream motion monitor created pending review evidence.",
+                notes=(
+                    "Auto-created pending review evidence from completed live activity session."
+                    if auto_created
+                    else "Live stream motion monitor created pending review evidence."
+                ),
             )
         )
         promoted = repository.promote_motion_evidence(
@@ -3925,7 +4067,11 @@ async def create_live_stream_motion_review_activity(
                     if live_activity_suggestion is not None
                     else "unknown_animal"
                 ),
-                notes="User created review activity from stored live stream motion.",
+                notes=(
+                    "Auto-created review activity from completed live stream motion."
+                    if auto_created
+                    else "User created review activity from stored live stream motion."
+                ),
                 create_event=True,
                 create_visit=True,
                 attach_snapshot_media_asset_id=best_media_asset_id,
@@ -4002,12 +4148,28 @@ async def create_live_stream_motion_review_activity(
                 "visit_id": promoted.visit_id,
                 "review_queue_item_id": updates["review_queue_item_id"],
                 "review_status": "needs_review",
+                "best_media_asset_id": best_media_asset_id,
+                "media_asset_id": best_media_asset_id,
+                "activity_session_id": activity.get("activity_session_id"),
+                "activity_detection_count": activity.get("detection_count") or 1,
+                "activity_started_at": activity.get("started_at"),
+                "activity_last_seen_at": activity.get("last_seen_at"),
+                "activity_completed_at": activity.get("completed_at"),
+                "activity_ready_for_review": True,
+                "activity_review_state": "review_candidate_created",
+                "activity_quiet_remaining_seconds": None,
                 "suggested_label": updates["suggested_label"],
                 "suggestion_id": updates["suggestion_id"],
                 "suggestion_confidence": updates["suggestion_confidence"],
-                "message": "Review activity created. Bird Log updates after review.",
+                "message": (
+                    "Review activity auto-created. Bird Log updates after review."
+                    if auto_created
+                    else "Review activity created. Bird Log updates after review."
+                ),
                 "last_evaluation_message": (
-                    "Review activity created. Bird Log updates after review."
+                    "Review activity auto-created. Bird Log updates after review."
+                    if auto_created
+                    else "Review activity created. Bird Log updates after review."
                 ),
                 "creates_event": True,
                 "creates_visit": True,
@@ -4024,7 +4186,11 @@ async def create_live_stream_motion_review_activity(
         stream_id=stream.id,
         source_id=stream.source_id,
         status="created",
-        message="Review activity created. Bird Log updates after review.",
+        message=(
+            "Review activity auto-created. Bird Log updates after review."
+            if auto_created
+            else "Review activity created. Bird Log updates after review."
+        ),
         activity_detected=True,
         review_activity_created=True,
         activity_session_id=activity.get("activity_session_id"),
@@ -4039,6 +4205,93 @@ async def create_live_stream_motion_review_activity(
         suggestion_id=suggestion.id if suggestion else None,
         suggestion_confidence=suggestion.confidence if suggestion else None,
     )
+
+
+@app.post(
+    "/api/streams/{stream_id}/live-motion/review-activity",
+    response_model=LiveMotionReviewActivityResponse,
+)
+async def create_live_stream_motion_review_activity(
+    stream_id: str,
+) -> LiveMotionReviewActivityResponse:
+    return _create_live_stream_motion_review_activity(stream_id)
+
+
+def _refresh_live_activity_review_state(stream_id: str) -> dict[str, Any] | None:
+    manager = get_live_camera_session_manager()
+    snapshot = manager.status(stream_id)
+    if snapshot is None:
+        return None
+    activity = snapshot.current_activity_session or snapshot.last_activity
+    if not activity:
+        return None
+    activity_session_id = activity.get("activity_session_id")
+    if not activity_session_id:
+        return activity
+    quiet_seconds = snapshot.auto_review_quiet_seconds
+    if _live_activity_ready_for_review(activity, quiet_seconds=quiet_seconds):
+        updated = manager.mark_activity_ready_for_review(
+            stream_id,
+            str(activity_session_id),
+            quiet_seconds=quiet_seconds,
+        )
+        return updated.as_dict() if updated is not None else activity
+    return activity
+
+
+def _maybe_auto_create_live_review_candidate(
+    stream_id: str,
+) -> LiveMotionReviewActivityResponse | None:
+    manager = get_live_camera_session_manager()
+    snapshot = manager.status(stream_id)
+    if (
+        snapshot is None
+        or not snapshot.monitor_running
+        or not snapshot.auto_create_review_candidates
+    ):
+        return None
+
+    activity = _refresh_live_activity_review_state(stream_id)
+    if not activity or activity.get("review_activity_created"):
+        return None
+    if not _live_activity_ready_for_review(
+        activity,
+        quiet_seconds=snapshot.auto_review_quiet_seconds,
+    ):
+        return None
+    if int(activity.get("detection_count") or 0) < snapshot.auto_review_min_detections:
+        return None
+    if not activity.get("zone_id"):
+        manager.record_auto_review_error(
+            stream_id,
+            "Auto-create requires completed activity in a named reviewable Zone.",
+        )
+        return None
+
+    try:
+        result = _create_live_stream_motion_review_activity(
+            stream_id,
+            auto_created=True,
+        )
+    except HTTPException as error:
+        manager.record_auto_review_error(stream_id, str(error.detail))
+        return None
+
+    if result.review_activity_created and result.motion_evidence_id:
+        manager.record_auto_review_created(
+            stream_id,
+            {
+                "created_at": datetime.now(UTC),
+                "motion_evidence_id": result.motion_evidence_id,
+                "event_id": result.event_id,
+                "visit_id": result.visit_id,
+                "review_queue_item_id": result.review_queue_item_id,
+            },
+        )
+        return result
+    if result.status not in {"already_exists", "created"}:
+        manager.record_auto_review_error(stream_id, result.message)
+    return result
 
 
 def _live_frame_timestamp(
@@ -5120,6 +5373,8 @@ async def get_stream_live_camera_session_status(
     stream_id: str,
 ) -> LiveCameraSessionStatusResponse:
     configuration = _stream_live_playback_config_or_404(stream_id)
+    _refresh_live_activity_review_state(stream_id)
+    _maybe_auto_create_live_review_candidate(stream_id)
     snapshot = get_live_camera_session_manager().status(stream_id)
     return _live_camera_session_response(snapshot, configuration)
 

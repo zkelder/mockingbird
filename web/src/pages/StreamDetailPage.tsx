@@ -526,6 +526,9 @@ export function StreamDetailPage({
   const [isLiveMonitoring, setIsLiveMonitoring] = useState(false);
   const [isEvaluatingLiveMotion, setIsEvaluatingLiveMotion] = useState(false);
   const [isCreatingLiveReviewActivity, setIsCreatingLiveReviewActivity] = useState(false);
+  const [autoCreateLiveReviews, setAutoCreateLiveReviews] = useState(false);
+  const [autoReviewQuietSeconds, setAutoReviewQuietSeconds] = useState(30);
+  const [autoReviewMinDetections, setAutoReviewMinDetections] = useState(1);
   const [liveMonitorSensitivity, setLiveMonitorSensitivity] =
     useState<LiveMonitorSensitivity>("normal");
   const [sourceProviderConfig, setSourceProviderConfig] =
@@ -539,6 +542,7 @@ export function StreamDetailPage({
   const [liveMotionFocusZoneId, setLiveMotionFocusZoneId] = useState("");
   const [showLiveMotionDebug, setShowLiveMotionDebug] = useState(false);
   const liveMotionInFlightRef = useRef(false);
+  const lastAutoReviewQueueItemRef = useRef<string | null>(null);
 
   const selectedZone = detail?.zones.find((zone) => zone.id === selectedZoneId) ?? null;
 
@@ -553,11 +557,23 @@ export function StreamDetailPage({
       const status = await apiClient.getLiveCameraSessionStatus(currentDetail.stream.id);
       setLiveSession(status);
       setIsLiveMonitoring(status.monitor_running);
+      if (status.monitor_running) {
+        setAutoCreateLiveReviews(status.auto_create_review_candidates);
+        setAutoReviewQuietSeconds(status.auto_review_quiet_seconds);
+        setAutoReviewMinDetections(status.auto_review_min_detections);
+      }
       if (status.last_motion_result) {
         setLiveMotionResult(status.last_motion_result);
         setLiveMonitorState(liveMonitorStateFor(status.last_motion_result));
       } else if (status.monitor_running) {
         setLiveMonitorState((current) => (current === "idle" ? "waiting" : current));
+      }
+      if (
+        status.last_auto_review_queue_item_id &&
+        status.last_auto_review_queue_item_id !== lastAutoReviewQueueItemRef.current
+      ) {
+        lastAutoReviewQueueItemRef.current = status.last_auto_review_queue_item_id;
+        await onReviewActivityCreated();
       }
       setLiveSessionError(null);
       return status;
@@ -958,6 +974,9 @@ export function StreamDetailPage({
         min_triggered_frames: 1,
         focus_zone_id: liveMotionFocusZoneId || null,
         interval_seconds: sensitivitySettings.interval_ms / 1000,
+        auto_create_review_candidates: autoCreateLiveReviews,
+        auto_review_quiet_seconds: autoReviewQuietSeconds,
+        auto_review_min_detections: autoReviewMinDetections,
         notes: null,
       });
       if (result.best_media_asset_id) {
@@ -1389,7 +1408,22 @@ export function StreamDetailPage({
     ? "Compare captured frames"
     : "Capture another frame to check motion";
   const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
-  const liveReviewQueueItemId = liveMotionResult?.review_queue_item_id ?? null;
+  const liveSessionActivity = (liveSession?.current_activity_session ??
+    liveSession?.last_activity ??
+    null) as Record<string, unknown> | null;
+  const liveSessionActivityString = (key: string): string | null => {
+    const value = liveSessionActivity?.[key];
+    return typeof value === "string" && value ? value : null;
+  };
+  const liveSessionActivityNumber = (key: string): number | null => {
+    const value = liveSessionActivity?.[key];
+    return typeof value === "number" ? value : null;
+  };
+  const liveReviewQueueItemId =
+    liveMotionResult?.review_queue_item_id ??
+    liveSession?.activity_review_queue_item_id ??
+    liveSession?.last_auto_review_queue_item_id ??
+    liveSessionActivityString("review_queue_item_id");
   const liveReviewQueueContext = liveReviewQueueItemId
     ? {
         source: "live-motion" as const,
@@ -1429,9 +1463,14 @@ export function StreamDetailPage({
       : liveViewOpen || liveSessionRunning
         ? "Capture current frame"
         : "Capture frame";
-  const liveActivityDetected = Boolean(liveMotionResult?.activity_detected);
+  const liveActivityDetected = Boolean(
+    liveMotionResult?.activity_detected ||
+      liveSession?.current_activity_session_id ||
+      liveSessionActivity?.activity_session_id,
+  );
   const liveReviewActivityCreated = Boolean(
     liveMotionResult?.review_activity_created ||
+      liveSession?.activity_review_activity_created ||
       liveReviewQueueItemId ||
       liveMotionResult?.created_evidence.length,
   );
@@ -1439,9 +1478,13 @@ export function StreamDetailPage({
     ? detail.zones.find((zone) => zone.id === liveMotionResult.strongest_zone_id)
     : null;
   const liveStrongestZoneName =
-    liveMotionResult?.strongest_zone_name ?? liveActivityZone?.name ?? null;
+    liveMotionResult?.strongest_zone_name ??
+    liveActivityZone?.name ??
+    liveSessionActivityString("zone_name");
   const liveStrongestZoneType =
-    liveMotionResult?.strongest_zone_type ?? liveActivityZone?.zone_type ?? null;
+    liveMotionResult?.strongest_zone_type ??
+    liveActivityZone?.zone_type ??
+    (liveSessionActivityString("zone_type") as ZoneType | null);
   const liveSuppressedZones = liveMotionResult?.suppressed_zone_summaries ?? [];
   const liveSuppressedMessage =
     liveMotionResult?.activity_detected === false
@@ -1455,25 +1498,40 @@ export function StreamDetailPage({
     liveReviewActivityCreated
       ? `Review activity created for ${liveActivityAreaLabel}`
       : `Activity detected in ${liveActivityAreaLabel}`;
+  const liveBestMediaAssetId =
+    liveMotionResult?.best_media_asset_id ?? liveSessionActivityString("best_media_asset_id");
   const liveBestFrameMessage =
-    liveMotionResult?.best_media_asset_id && liveStrongestZoneName
+    liveBestMediaAssetId && liveStrongestZoneName
       ? `Best frame saved from ${liveStrongestZoneName}.`
-      : liveMotionResult?.best_media_asset_id
+      : liveBestMediaAssetId
         ? "Best frame saved from the strongest live activity area."
-        : liveMotionResult?.activity_session_id
+        : (liveMotionResult?.activity_session_id ?? liveSession?.current_activity_session_id)
           ? "Best frame selected for this visit session."
           : "Best frame is unavailable.";
-  const liveBestFrameUrl = liveMotionResult?.best_media_asset_id
-    ? apiClient.mediaFileUrl(liveMotionResult.best_media_asset_id)
+  const liveBestFrameUrl = liveBestMediaAssetId
+    ? apiClient.mediaFileUrl(liveBestMediaAssetId)
     : null;
-  const liveActivityDetectionCount = liveMotionResult?.activity_detection_count ?? 0;
+  const liveActivityDetectionCount =
+    liveMotionResult?.activity_detection_count ??
+    liveSession?.activity_detection_count ??
+    liveSessionActivityNumber("detection_count") ??
+    0;
   const liveActivityBestChangeLabel = formatPercent(
-    liveMotionResult?.activity_best_changed_ratio ?? liveMotionResult?.strongest_changed_ratio,
+    liveMotionResult?.activity_best_changed_ratio ??
+      liveSession?.activity_best_changed_ratio ??
+      liveSessionActivityNumber("best_changed_ratio") ??
+      liveMotionResult?.strongest_changed_ratio,
   );
   const liveActivityBestFrameSequence =
-    liveMotionResult?.activity_best_frame_sequence ?? liveMotionResult?.best_frame_sequence;
-  const liveBestFrameTime = liveMotionResult?.best_frame_captured_at
-    ? formatDateTime(liveMotionResult.best_frame_captured_at)
+    liveMotionResult?.activity_best_frame_sequence ??
+    liveSession?.activity_best_frame_sequence ??
+    liveSessionActivityNumber("best_frame_sequence") ??
+    liveMotionResult?.best_frame_sequence;
+  const liveBestFrameCapturedAt =
+    liveMotionResult?.best_frame_captured_at ??
+    liveSessionActivityString("best_frame_captured_at");
+  const liveBestFrameTime = liveBestFrameCapturedAt
+    ? formatDateTime(liveBestFrameCapturedAt)
     : null;
   const liveLastChecked = liveMotionResult?.evaluated_at
     ? formatDateTime(liveMotionResult.evaluated_at)
@@ -1486,7 +1544,29 @@ export function StreamDetailPage({
       ? liveMotionResult.cooldown_remaining_seconds != null
         ? `${liveMotionResult.cooldown_remaining_seconds}s remaining`
         : "waiting for quiet period"
+      : liveSession?.activity_cooldown_remaining_seconds != null
+        ? `${liveSession.activity_cooldown_remaining_seconds}s remaining`
       : null;
+  const liveActivityReviewState =
+    liveMotionResult?.activity_review_state ??
+    liveSession?.activity_review_state ??
+    liveSessionActivityString("review_state");
+  const liveActivityReviewStateLabel = liveActivityReviewState
+    ? formatLabel(liveActivityReviewState)
+    : liveActivityDetected
+      ? "Active session"
+      : "Watching";
+  const liveAutoReviewEnabled =
+    liveSession?.auto_create_review_candidates ?? liveMotionResult?.auto_create_review_candidates ?? autoCreateLiveReviews;
+  const liveAutoReviewCount =
+    liveSession?.auto_review_created_count ?? liveMotionResult?.auto_review_created_count ?? 0;
+  const liveAutoReviewLastCreated = liveSession?.last_auto_review_created_at
+    ? formatDateTime(liveSession.last_auto_review_created_at)
+    : liveMotionResult?.last_auto_review_created_at
+      ? formatDateTime(liveMotionResult.last_auto_review_created_at)
+      : null;
+  const liveAutoReviewError =
+    liveSession?.auto_review_last_error ?? liveMotionResult?.auto_review_last_error ?? null;
   const liveSensitivityLabel = liveMonitorSensitivitySettings[liveMonitorSensitivity].label;
   const liveStrongestChangeLabel = formatPercent(liveMotionResult?.strongest_changed_ratio);
   const liveStrongestThresholdLabel = formatPercent(
@@ -1903,6 +1983,16 @@ export function StreamDetailPage({
                   Show motion debug
                 </label>
               </div>
+              <label className="stream-live-debug-toggle stream-live-auto-review-toggle">
+                <input
+                  checked={autoCreateLiveReviews}
+                  disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                  onChange={(event) => setAutoCreateLiveReviews(event.target.checked)}
+                  type="checkbox"
+                />
+                Auto-create Review Queue items from completed activity sessions. Does not mark truth
+                or update Bird Log.
+              </label>
               <div className="stream-live-calibration-grid">
                 <label>
                   <span>Monitoring focus</span>
@@ -1918,6 +2008,36 @@ export function StreamDetailPage({
                       </option>
                     ))}
                   </select>
+                </label>
+                <label>
+                  <span>Quiet period</span>
+                  <input
+                    disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                    min={1}
+                    max={300}
+                    onChange={(event) =>
+                      setAutoReviewQuietSeconds(
+                        Math.max(1, Math.min(300, Number(event.target.value) || 30)),
+                      )
+                    }
+                    type="number"
+                    value={autoReviewQuietSeconds}
+                  />
+                </label>
+                <label>
+                  <span>Min detections</span>
+                  <input
+                    disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                    min={1}
+                    max={100}
+                    onChange={(event) =>
+                      setAutoReviewMinDetections(
+                        Math.max(1, Math.min(100, Number(event.target.value) || 1)),
+                      )
+                    }
+                    type="number"
+                    value={autoReviewMinDetections}
+                  />
                 </label>
                 <div className="detail-actions stream-live-actions">
                   {feederFocusZone ? (
@@ -1968,7 +2088,48 @@ export function StreamDetailPage({
                 <span>
                   <strong>Frame pair</strong> {liveStrongestPairLabel}
                 </span>
+                <span>
+                  <strong>Auto-create</strong> {liveAutoReviewEnabled ? "on" : "off"}
+                </span>
+                <span>
+                  <strong>Auto count</strong> {liveAutoReviewCount}
+                </span>
+                <span>
+                  <strong>Activity state</strong> {liveActivityReviewStateLabel}
+                </span>
+                <span>
+                  <strong>Quiet</strong>{" "}
+                  {liveCooldownLabel ??
+                    `${autoReviewQuietSeconds}s window / ${autoReviewMinDetections} min`}
+                </span>
               </div>
+              {liveAutoReviewLastCreated && liveReviewQueueItemId ? (
+                <div className="detail-actions stream-live-actions">
+                  <button
+                    className="secondary-action"
+                    onClick={() =>
+                      onOpenReview(
+                        liveReviewQueueContext ?? {
+                          source: "live-motion",
+                          search: liveReviewQueueItemId,
+                          status: "unreviewed",
+                        },
+                      )
+                    }
+                    type="button"
+                  >
+                    Open auto-created review
+                  </button>
+                  {liveAutoReviewLastCreated ? (
+                    <span className="stream-live-hint">
+                      Last auto-created candidate {liveAutoReviewLastCreated}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              {liveAutoReviewError ? (
+                <span className="stream-live-hint is-error">{liveAutoReviewError}</span>
+              ) : null}
               {liveMotionResult?.near_miss ? (
                 <span className="stream-live-hint">
                   Near miss: tighten the feeder Zone, use feeder focus, or move the camera closer.
@@ -2263,10 +2424,13 @@ export function StreamDetailPage({
                     <strong>Detections</strong> {liveActivityDetectionCount || 1}
                   </span>
                   <span>
+                    <strong>State</strong> {liveActivityReviewStateLabel}
+                  </span>
+                  <span>
                     <strong>Best frame</strong>{" "}
-                    {liveMotionResult?.best_media_asset_id
+                    {liveBestMediaAssetId
                       ? "saved"
-                      : liveMotionResult?.activity_session_id
+                      : (liveMotionResult?.activity_session_id ?? liveSession?.current_activity_session_id)
                         ? "selected"
                         : "unavailable"}
                   </span>

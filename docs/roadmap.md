@@ -1112,6 +1112,12 @@ Current work:
   now summarize pending SpeciesSuggestion and DetectionProposal evidence, can run
   an explicitly available identification adapter, and keep accepting/correcting
   through ReviewLabel truth only.
+- Unattended Monitoring Review Handoff 1: Stream Detail can explicitly enable
+  auto-created Review Queue candidates for completed live activity sessions
+  after a quiet period. It reuses the existing needs-review Event/Visit handoff,
+  creates no ReviewLabels, Bird Log history, export truth, or automatic
+  identification run, and remains in-memory while the user-started camera
+  session and monitor are running.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — live camera field-test validation polish.
@@ -1152,6 +1158,11 @@ Validation:
   Adapter unavailable/setup states are visible in Review Queue, demo paths are
   labeled as placeholder evidence, and Bird Log/export truth still requires a
   ReviewLabel correction.
+- Unattended monitoring is user-enabled and defaults off. It may automatically
+  create or reuse one needs-review Event/Visit candidate per completed live
+  activity session after quiet/min-detection gates, but it does not create
+  ReviewLabels, reviewed Visits, Bird Log entries, analytics/export truth,
+  model output, or identification results automatically.
 - Motion focus uses existing normalized Zone coordinates and changes scoring
   diagnostics only; it does not create fake Zones, ReviewLabels, Bird Log
   history, exports, or model output.

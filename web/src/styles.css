@@ -2668,6 +2668,7 @@ a.secondary-action {
 }
 
 .stream-live-tuning-grid input,
+.stream-live-calibration-grid input,
 .stream-live-calibration-grid select {
   width: 100%;
   min-width: 0;
@@ -2689,6 +2690,12 @@ a.secondary-action {
 
 .stream-live-debug-toggle input {
   margin: 0;
+}
+
+.stream-live-auto-review-toggle {
+  align-items: flex-start;
+  white-space: normal;
+  line-height: 1.35;
 }
 
 .stream-live-hint.is-error {

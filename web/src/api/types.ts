@@ -457,12 +457,25 @@ export interface LiveCameraSessionStatus {
   frame_count: number;
   clients_connected: number;
   monitor_running: boolean;
+  auto_create_review_candidates: boolean;
+  auto_review_quiet_seconds: number;
+  auto_review_min_detections: number;
+  auto_review_created_count: number;
+  last_auto_review_created_at?: string | null;
+  auto_review_last_error?: string | null;
+  last_auto_review_motion_evidence_id?: string | null;
+  last_auto_review_event_id?: string | null;
+  last_auto_review_visit_id?: string | null;
+  last_auto_review_queue_item_id?: string | null;
   last_motion_evaluation_at?: string | null;
   current_activity_session?: Record<string, unknown> | null;
   current_activity_session_id?: string | null;
   activity_started_at?: string | null;
   activity_last_seen_at?: string | null;
   activity_detection_count: number;
+  activity_completed_at?: string | null;
+  activity_ready_for_review: boolean;
+  activity_review_state?: string | null;
   activity_best_frame_sequence?: number | null;
   activity_best_score?: number | null;
   activity_best_changed_ratio?: number | null;
@@ -1374,6 +1387,9 @@ export interface LiveMotionEvaluateRequest {
 
 export interface LiveMotionMonitorStartRequest extends LiveMotionEvaluateRequest {
   interval_seconds?: number;
+  auto_create_review_candidates?: boolean;
+  auto_review_quiet_seconds?: number;
+  auto_review_min_detections?: number;
 }
 
 export interface LiveMotionReviewActivityResponse {
@@ -1480,6 +1496,10 @@ export interface LiveMotionEvaluateResponse {
   activity_started_at?: string | null;
   activity_last_seen_at?: string | null;
   activity_detection_count: number;
+  activity_completed_at?: string | null;
+  activity_ready_for_review: boolean;
+  activity_review_state?: string | null;
+  activity_quiet_remaining_seconds?: number | null;
   activity_best_frame_sequence?: number | null;
   activity_best_score?: number | null;
   activity_best_changed_ratio?: number | null;
@@ -1497,6 +1517,16 @@ export interface LiveMotionEvaluateResponse {
   existing_review_activity_reference?: string | null;
   session_status: string;
   cooldown_remaining_seconds?: number | null;
+  auto_create_review_candidates: boolean;
+  auto_review_quiet_seconds: number;
+  auto_review_min_detections: number;
+  auto_review_created_count: number;
+  last_auto_review_created_at?: string | null;
+  auto_review_last_error?: string | null;
+  last_auto_review_motion_evidence_id?: string | null;
+  last_auto_review_event_id?: string | null;
+  last_auto_review_visit_id?: string | null;
+  last_auto_review_queue_item_id?: string | null;
   last_evaluation_message?: string | null;
   last_error?: string | null;
   motion_evidence_id?: string | null;

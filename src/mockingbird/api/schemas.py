@@ -626,12 +626,25 @@ class LiveCameraSessionStatusResponse(BaseModel):
     frame_count: int = Field(default=0, ge=0)
     clients_connected: int = Field(default=0, ge=0)
     monitor_running: bool = False
+    auto_create_review_candidates: bool = False
+    auto_review_quiet_seconds: int = Field(default=30, ge=1)
+    auto_review_min_detections: int = Field(default=1, ge=1)
+    auto_review_created_count: int = Field(default=0, ge=0)
+    last_auto_review_created_at: datetime | None = None
+    auto_review_last_error: str | None = None
+    last_auto_review_motion_evidence_id: str | None = None
+    last_auto_review_event_id: str | None = None
+    last_auto_review_visit_id: str | None = None
+    last_auto_review_queue_item_id: str | None = None
     last_motion_evaluation_at: datetime | None = None
     current_activity_session: dict[str, Any] | None = None
     current_activity_session_id: str | None = None
     activity_started_at: datetime | None = None
     activity_last_seen_at: datetime | None = None
     activity_detection_count: int = Field(default=0, ge=0)
+    activity_completed_at: datetime | None = None
+    activity_ready_for_review: bool = False
+    activity_review_state: str | None = None
     activity_best_frame_sequence: int | None = Field(default=None, ge=0)
     activity_best_score: float | None = None
     activity_best_changed_ratio: float | None = Field(default=None, ge=0)
@@ -1420,6 +1433,9 @@ class LiveMotionEvaluateRequest(BaseModel):
 
 class LiveMotionMonitorStartRequest(LiveMotionEvaluateRequest):
     interval_seconds: float = Field(default=1.5, ge=0.25, le=10)
+    auto_create_review_candidates: bool = False
+    auto_review_quiet_seconds: int = Field(default=30, ge=1, le=300)
+    auto_review_min_detections: int = Field(default=1, ge=1, le=100)
 
 
 class LiveMotionReviewActivityResponse(BaseModel):
@@ -1529,6 +1545,10 @@ class LiveMotionEvaluateResponse(BaseModel):
     activity_started_at: datetime | None = None
     activity_last_seen_at: datetime | None = None
     activity_detection_count: int = Field(default=0, ge=0)
+    activity_completed_at: datetime | None = None
+    activity_ready_for_review: bool = False
+    activity_review_state: str | None = None
+    activity_quiet_remaining_seconds: int | None = Field(default=None, ge=0)
     activity_best_frame_sequence: int | None = Field(default=None, ge=0)
     activity_best_score: float | None = None
     activity_best_changed_ratio: float | None = Field(default=None, ge=0)
@@ -1546,6 +1566,16 @@ class LiveMotionEvaluateResponse(BaseModel):
     existing_review_activity_reference: str | None = None
     session_status: str = "watching"
     cooldown_remaining_seconds: int | None = None
+    auto_create_review_candidates: bool = False
+    auto_review_quiet_seconds: int = Field(default=30, ge=1)
+    auto_review_min_detections: int = Field(default=1, ge=1)
+    auto_review_created_count: int = Field(default=0, ge=0)
+    last_auto_review_created_at: datetime | None = None
+    auto_review_last_error: str | None = None
+    last_auto_review_motion_evidence_id: str | None = None
+    last_auto_review_event_id: str | None = None
+    last_auto_review_visit_id: str | None = None
+    last_auto_review_queue_item_id: str | None = None
     last_evaluation_message: str | None = None
     last_error: str | None = None
     motion_evidence_id: str | None = None

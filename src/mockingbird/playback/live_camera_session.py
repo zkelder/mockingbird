@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha1
 import re
 import subprocess
@@ -21,6 +21,8 @@ from mockingbird.playback import (
 
 MJPEG_BOUNDARY = "frame"
 DEFAULT_MAX_RUNTIME_SECONDS = 30 * 60
+DEFAULT_AUTO_REVIEW_QUIET_SECONDS = 30
+DEFAULT_AUTO_REVIEW_MIN_DETECTIONS = 1
 SUPPORTED_SESSION_TYPES = {
     "rtsp",
     local_camera_bridge.LOCAL_USB_STREAM_TYPE,
@@ -39,6 +41,16 @@ class LiveCameraSessionSnapshot:
     frame_count: int
     clients_connected: int
     monitor_running: bool
+    auto_create_review_candidates: bool
+    auto_review_quiet_seconds: int
+    auto_review_min_detections: int
+    auto_review_created_count: int
+    last_auto_review_created_at: datetime | None
+    auto_review_last_error: str | None
+    last_auto_review_motion_evidence_id: str | None
+    last_auto_review_event_id: str | None
+    last_auto_review_visit_id: str | None
+    last_auto_review_queue_item_id: str | None
     last_motion_evaluation_at: datetime | None
     current_activity_session: dict[str, Any] | None
     last_activity: dict[str, Any] | None
@@ -74,6 +86,9 @@ class LiveActivitySessionSnapshot:
     started_at: datetime
     last_seen_at: datetime
     detection_count: int
+    completed_at: datetime | None
+    ready_for_review: bool
+    review_state: str
     start_frame_sequence: int | None
     end_frame_sequence: int | None
     best_frame_sequence: int | None
@@ -118,6 +133,9 @@ class LiveActivitySessionSnapshot:
             "started_at": self.started_at,
             "last_seen_at": self.last_seen_at,
             "detection_count": self.detection_count,
+            "completed_at": self.completed_at,
+            "ready_for_review": self.ready_for_review,
+            "review_state": self.review_state,
             "start_frame_sequence": self.start_frame_sequence,
             "end_frame_sequence": self.end_frame_sequence,
             "best_frame_sequence": self.best_frame_sequence,
@@ -242,12 +260,21 @@ class LiveCameraSessionManager:
         evaluate: Callable[[], Mapping[str, Any]],
         *,
         interval_seconds: float,
+        auto_create_review_candidates: bool = False,
+        auto_review_quiet_seconds: int = DEFAULT_AUTO_REVIEW_QUIET_SECONDS,
+        auto_review_min_detections: int = DEFAULT_AUTO_REVIEW_MIN_DETECTIONS,
     ) -> LiveCameraSessionSnapshot | None:
         with self._lock:
             session = self._sessions.get(stream_id)
         if session is None:
             return None
-        session.start_monitor(evaluate, interval_seconds=interval_seconds)
+        session.start_monitor(
+            evaluate,
+            interval_seconds=interval_seconds,
+            auto_create_review_candidates=auto_create_review_candidates,
+            auto_review_quiet_seconds=auto_review_quiet_seconds,
+            auto_review_min_detections=auto_review_min_detections,
+        )
         return session.snapshot()
 
     def stop_monitor(self, stream_id: str) -> LiveCameraSessionSnapshot | None:
@@ -338,6 +365,46 @@ class LiveCameraSessionManager:
             return None
         return session.mark_activity_review_created(activity_session_id, values)
 
+    def mark_activity_ready_for_review(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+        *,
+        quiet_seconds: int,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.mark_activity_ready_for_review(
+            activity_session_id,
+            quiet_seconds=quiet_seconds,
+        )
+
+    def record_auto_review_created(
+        self,
+        stream_id: str,
+        values: Mapping[str, Any],
+    ) -> LiveCameraSessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        session.record_auto_review_created(values)
+        return session.snapshot()
+
+    def record_auto_review_error(
+        self,
+        stream_id: str,
+        error: str | None,
+    ) -> LiveCameraSessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        session.record_auto_review_error(error)
+        return session.snapshot()
+
     def update_last_activity(
         self,
         stream_id: str,
@@ -397,6 +464,16 @@ class _LiveCameraSession:
         self.frame_count = 0
         self.clients_connected = 0
         self.monitor_running = False
+        self.auto_create_review_candidates = False
+        self.auto_review_quiet_seconds = DEFAULT_AUTO_REVIEW_QUIET_SECONDS
+        self.auto_review_min_detections = DEFAULT_AUTO_REVIEW_MIN_DETECTIONS
+        self.auto_review_created_count = 0
+        self.last_auto_review_created_at: datetime | None = None
+        self.auto_review_last_error: str | None = None
+        self.last_auto_review_motion_evidence_id: str | None = None
+        self.last_auto_review_event_id: str | None = None
+        self.last_auto_review_visit_id: str | None = None
+        self.last_auto_review_queue_item_id: str | None = None
         self.last_motion_evaluation_at: datetime | None = None
         self.last_activity: dict[str, Any] | None = None
         self.last_motion_result: dict[str, Any] | None = None
@@ -452,10 +529,17 @@ class _LiveCameraSession:
         evaluate: Callable[[], Mapping[str, Any]],
         *,
         interval_seconds: float,
+        auto_create_review_candidates: bool = False,
+        auto_review_quiet_seconds: int = DEFAULT_AUTO_REVIEW_QUIET_SECONDS,
+        auto_review_min_detections: int = DEFAULT_AUTO_REVIEW_MIN_DETECTIONS,
     ) -> None:
         with self._lock:
             if self.status not in {"starting", "running"}:
                 raise ValueError("camera_session_not_running")
+            self.auto_create_review_candidates = bool(auto_create_review_candidates)
+            self.auto_review_quiet_seconds = max(1, int(auto_review_quiet_seconds))
+            self.auto_review_min_detections = max(1, int(auto_review_min_detections))
+            self.auto_review_last_error = None
             if self.monitor_running:
                 return
             self.monitor_running = True
@@ -591,6 +675,59 @@ class _LiveCameraSession:
             self.last_activity = snapshot.as_dict()
             return snapshot
 
+    def mark_activity_ready_for_review(
+        self,
+        activity_session_id: str,
+        *,
+        quiet_seconds: int,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            if activity is None:
+                return None
+            activity.mark_ready_for_review(quiet_seconds=quiet_seconds)
+            snapshot = activity.snapshot()
+            self.last_activity = snapshot.as_dict()
+            return snapshot
+
+    def record_auto_review_created(self, values: Mapping[str, Any]) -> None:
+        with self._lock:
+            created_at = _coerce_datetime(values.get("created_at")) or datetime.now(UTC)
+            self.auto_review_created_count += 1
+            self.last_auto_review_created_at = created_at
+            self.auto_review_last_error = None
+            self.last_auto_review_motion_evidence_id = _optional_str(
+                values.get("motion_evidence_id")
+            )
+            self.last_auto_review_event_id = _optional_str(values.get("event_id"))
+            self.last_auto_review_visit_id = _optional_str(values.get("visit_id"))
+            self.last_auto_review_queue_item_id = _optional_str(
+                values.get("review_queue_item_id")
+            )
+            if self.last_motion_result is not None:
+                self.last_motion_result.update(
+                    {
+                        "auto_review_created": True,
+                        "auto_review_created_count": self.auto_review_created_count,
+                        "last_auto_review_created_at": created_at,
+                        "auto_review_last_error": None,
+                        "last_auto_review_motion_evidence_id": (
+                            self.last_auto_review_motion_evidence_id
+                        ),
+                        "last_auto_review_event_id": self.last_auto_review_event_id,
+                        "last_auto_review_visit_id": self.last_auto_review_visit_id,
+                        "last_auto_review_queue_item_id": (
+                            self.last_auto_review_queue_item_id
+                        ),
+                    }
+                )
+
+    def record_auto_review_error(self, error: str | None) -> None:
+        with self._lock:
+            self.auto_review_last_error = error
+            if self.last_motion_result is not None:
+                self.last_motion_result["auto_review_last_error"] = error
+
     def _activity_session(
         self,
         activity_session_id: str | None,
@@ -628,6 +765,18 @@ class _LiveCameraSession:
                 frame_count=self.frame_count,
                 clients_connected=self.clients_connected,
                 monitor_running=self.monitor_running,
+                auto_create_review_candidates=self.auto_create_review_candidates,
+                auto_review_quiet_seconds=self.auto_review_quiet_seconds,
+                auto_review_min_detections=self.auto_review_min_detections,
+                auto_review_created_count=self.auto_review_created_count,
+                last_auto_review_created_at=self.last_auto_review_created_at,
+                auto_review_last_error=self.auto_review_last_error,
+                last_auto_review_motion_evidence_id=(
+                    self.last_auto_review_motion_evidence_id
+                ),
+                last_auto_review_event_id=self.last_auto_review_event_id,
+                last_auto_review_visit_id=self.last_auto_review_visit_id,
+                last_auto_review_queue_item_id=self.last_auto_review_queue_item_id,
                 last_motion_evaluation_at=self.last_motion_evaluation_at,
                 current_activity_session=(
                     current_activity.snapshot().as_dict()
@@ -733,6 +882,8 @@ class _LiveActivitySession:
     started_at: datetime
     last_seen_at: datetime
     detection_count: int
+    completed_at: datetime | None
+    ready_for_review: bool
     start_frame_sequence: int | None
     end_frame_sequence: int | None
     best_frame_sequence: int | None
@@ -788,6 +939,8 @@ class _LiveActivitySession:
             started_at=now,
             last_seen_at=now,
             detection_count=0,
+            completed_at=None,
+            ready_for_review=False,
             start_frame_sequence=None,
             end_frame_sequence=None,
             best_frame_sequence=None,
@@ -827,6 +980,8 @@ class _LiveActivitySession:
     ) -> None:
         self.detection_count += 1
         self.last_seen_at = now
+        self.completed_at = None
+        self.ready_for_review = False
         self.current_changed_ratio = _optional_float(values.get("changed_ratio"))
         self.current_changed_pixels = _optional_int(values.get("changed_pixels"))
         self.current_total_scored_pixels = _optional_int(
@@ -859,6 +1014,9 @@ class _LiveActivitySession:
 
     def mark_review_created(self, values: Mapping[str, Any]) -> None:
         self.review_activity_created = True
+        self.ready_for_review = True
+        if self.completed_at is None:
+            self.completed_at = self.last_seen_at
         self.motion_evidence_id = _optional_str(values.get("motion_evidence_id"))
         self.event_id = _optional_str(values.get("event_id"))
         self.visit_id = _optional_str(values.get("visit_id"))
@@ -867,6 +1025,23 @@ class _LiveActivitySession:
         self.suggestion_id = _optional_str(values.get("suggestion_id"))
         self.suggestion_confidence = _optional_float(values.get("suggestion_confidence"))
         self.creates_truth = False
+
+    def mark_ready_for_review(self, *, quiet_seconds: int) -> None:
+        if self.review_activity_created:
+            self.ready_for_review = True
+            if self.completed_at is None:
+                self.completed_at = self.last_seen_at
+            return
+        self.ready_for_review = True
+        self.completed_at = self.last_seen_at + _timedelta_seconds(quiet_seconds)
+
+    @property
+    def review_state(self) -> str:
+        if self.review_activity_created:
+            return "review_candidate_created"
+        if self.ready_for_review:
+            return "ready_for_review"
+        return "waiting_for_quiet"
 
     def snapshot(self) -> LiveActivitySessionSnapshot:
         return LiveActivitySessionSnapshot(
@@ -882,6 +1057,9 @@ class _LiveActivitySession:
             started_at=self.started_at,
             last_seen_at=self.last_seen_at,
             detection_count=self.detection_count,
+            completed_at=self.completed_at,
+            ready_for_review=self.ready_for_review,
+            review_state=self.review_state,
             start_frame_sequence=self.start_frame_sequence,
             end_frame_sequence=self.end_frame_sequence,
             best_frame_sequence=self.best_frame_sequence,
@@ -950,6 +1128,10 @@ def _optional_float(value: Any) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def _timedelta_seconds(seconds: int) -> timedelta:
+    return timedelta(seconds=max(1, int(seconds)))
 
 
 def _coerce_datetime(value: Any) -> datetime | None:

@@ -41,6 +41,10 @@ transcoding, or production provider infrastructure.
 - Backend-session live monitoring saves the best activity frame as evidence and
   offers an explicit low-confidence Review Queue handoff without creating truth
   or exports.
+- User-enabled unattended monitoring can auto-create Review Queue candidates
+  from completed live activity sessions only. Bird Log, exports, and reviewed
+  truth still wait for explicit correction, and identification assist remains a
+  later explicit review action.
 - Review Queue can show identification assist state on best-frame candidates:
   setup-required/unavailable when no analyzer is configured, or suggestion/proposal
   evidence when one is available or already present.
@@ -70,6 +74,7 @@ transcoding, or production provider infrastructure.
 - Pi camera/libcamera, cellular, or field-camera agent setup.
 - USB/browser camera capture.
 - Persistent/background continuous monitoring.
+- Persistent unattended monitoring daemons or API-start camera sessions.
 - Persistent camera sessions across API restart.
 - Background workers.
 - Folder watchers.
@@ -249,6 +254,9 @@ Dataset Exports.
       and shows recent frame count plus last checked time.
 - [ ] Set Motion calibration focus to the Feeder Zone and enable High
       sensitivity for small feeder movement when needed.
+- [ ] Optionally enable `Auto-create Review Queue items from completed activity
+      sessions`, confirm the quiet period/min detections are visible, and note
+      that the copy says it does not mark truth or update Bird Log.
 - [ ] Move in front of the camera or move an object in frame.
 - [ ] Confirm activity is detected, the best live frame is saved, and review
       activity remains an explicit handoff.
@@ -260,6 +268,12 @@ Dataset Exports.
       that Zone.
 - [ ] If motion occurs only in an ignore/privacy Zone, confirm the UI reports
       ignored motion and no review activity or Bird Log entry is created.
+- [ ] If auto-create is enabled, wait through the quiet period and confirm a
+      needs-review Review Queue item appears without clicking `Create review
+      activity`.
+- [ ] Confirm auto-created candidates show best frame, Zone/session diagnostics,
+      and optional identification-assist status, but no identification run,
+      ReviewLabel, Bird Log entry, export, or reviewed truth is created.
 - [ ] Keep moving or click `Create review activity` twice and confirm duplicate
       activity shows a quiet/cooldown state instead of creating duplicate review
       candidates.

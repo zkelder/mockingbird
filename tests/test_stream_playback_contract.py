@@ -2283,6 +2283,9 @@ async def test_stored_live_activity_review_handoff_keeps_camera_running_and_trut
     await configure_local_usb_camera(client, device="/dev/video0")
     start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
     assert start_response.status_code == 200
+    started = start_response.json()
+    assert started["auto_create_review_candidates"] is False
+    assert started["auto_review_created_count"] == 0
     await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
 
     def fail_if_camera_reader_starts(*args: object, **kwargs: object) -> object:
@@ -2446,6 +2449,270 @@ async def test_stored_live_activity_review_handoff_keeps_camera_running_and_trut
     assert bird_log_labels[0]["label"] == "northern_cardinal"
     corrected_counts = await product_counts(client)
     assert corrected_counts["review_labels"] == after_create["review_labels"] + 1
+
+
+async def test_unattended_monitoring_auto_creates_review_candidate_after_quiet_only(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8auto-review-activity-0\xff\xd9"
+    frame_1 = b"\xff\xd8auto-review-activity-1\xff\xd9"
+    fake_process = FakeFfmpegProcess([frame_0, frame_1])
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, **kwargs: fake_process,
+    )
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(width=100, height=100),
+            frame_1: frame_with(
+                [(30, 40), (30, 41), (31, 40), (31, 41)],
+                width=100,
+                height=100,
+            ),
+        },
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
+
+    before = await product_counts(client)
+    before_coverage = await dataset_coverage(client)
+    before_analytics = (await client.get("/api/analytics/summary")).json()
+    before_queue = (await client.get("/api/review-queue")).json()
+    before_labels = (await client.get("/api/review-labels")).json()
+
+    monitor_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/start",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": True,
+            "auto_create_review_candidates": True,
+            "auto_review_quiet_seconds": 1,
+            "auto_review_min_detections": 1,
+            "min_changed_ratio": 0.003,
+            "pixel_delta_threshold": 10,
+            "min_triggered_frames": 1,
+            "interval_seconds": 10,
+        },
+    )
+
+    assert monitor_response.status_code == 200
+    monitor = monitor_response.json()
+    assert monitor["activity_detected"] is True
+    assert monitor["auto_create_review_candidates"] is True
+    assert monitor["auto_review_quiet_seconds"] == 1
+    assert monitor["auto_review_min_detections"] == 1
+    assert monitor["auto_review_created_count"] == 0
+    assert monitor["review_activity_created"] is False
+    assert monitor["review_queue_item_id"] is None
+    assert monitor["activity_review_state"] == "waiting_for_quiet"
+    assert monitor["activity_ready_for_review"] is False
+
+    before_quiet_status = (
+        await client.get(f"/api/streams/{STREAM_ID}/live-session/status")
+    ).json()
+    assert before_quiet_status["monitor_running"] is True
+    assert before_quiet_status["auto_create_review_candidates"] is True
+    assert before_quiet_status["auto_review_created_count"] == 0
+    assert before_quiet_status["activity_review_activity_created"] is False
+    assert before_quiet_status["activity_review_state"] == "waiting_for_quiet"
+    assert (await client.get("/api/review-queue")).json() == before_queue
+    assert await product_counts(client) == before
+
+    await asyncio.sleep(1.1)
+
+    auto_status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    assert auto_status["status"] == "running"
+    assert auto_status["monitor_running"] is True
+    assert auto_status["auto_create_review_candidates"] is True
+    assert auto_status["auto_review_created_count"] == 1
+    assert auto_status["auto_review_last_error"] is None
+    assert auto_status["last_auto_review_created_at"] is not None
+    assert auto_status["activity_review_activity_created"] is True
+    assert auto_status["activity_ready_for_review"] is True
+    assert auto_status["activity_review_state"] == "review_candidate_created"
+    assert auto_status["activity_motion_evidence_id"].startswith("motion-evidence-")
+    assert auto_status["activity_event_id"].startswith("event-motion-")
+    assert auto_status["activity_visit_id"].startswith("visit-motion-")
+    assert (
+        auto_status["activity_review_queue_item_id"]
+        == f"review-queue-{auto_status['activity_visit_id']}"
+    )
+    assert (
+        auto_status["last_auto_review_queue_item_id"]
+        == auto_status["activity_review_queue_item_id"]
+    )
+    assert auto_status["last_motion_result"]["review_activity_created"] is True
+    assert auto_status["last_motion_result"]["review_queue_item_id"] == auto_status[
+        "activity_review_queue_item_id"
+    ]
+    assert auto_status["last_motion_result"]["best_media_asset_id"].startswith(
+        "media-asset-"
+    )
+
+    queue = (await client.get("/api/review-queue")).json()
+    assert len(queue) == len(before_queue) + 1
+    queue_item = next(
+        item for item in queue if item["id"] == auto_status["activity_review_queue_item_id"]
+    )
+    created = {
+        "event_id": auto_status["activity_event_id"],
+        "visit_id": auto_status["activity_visit_id"],
+        "media_asset_id": auto_status["last_motion_result"]["best_media_asset_id"],
+    }
+    assert_live_review_queue_item_quality(
+        queue_item,
+        created=created,
+        activity_session_id=monitor["activity_session_id"],
+        detection_count=1,
+        best_frame_sequence=2,
+    )
+    assert queue_item["identification"]["creates_truth"] is False
+    assert queue_item["identification"]["can_run"] is False
+    assert queue_item["suggested_label"] == "unknown_bird"
+
+    after_auto = await product_counts(client)
+    assert after_auto["media_assets"] == before["media_assets"] + 1
+    assert after_auto["motion_evidence"] == before["motion_evidence"] + 1
+    assert after_auto["events"] == before["events"] + 1
+    assert after_auto["visits"] == before["visits"] + 1
+    assert after_auto["species_suggestions"] == before["species_suggestions"] + 1
+    assert after_auto["review_labels"] == before["review_labels"]
+    assert after_auto["detection_proposals"] == before["detection_proposals"]
+    assert after_auto["dataset_exports"] == before["dataset_exports"]
+    after_auto_coverage = await dataset_coverage(client)
+    assert (
+        after_auto_coverage["reviewed_record_count"]
+        == before_coverage["reviewed_record_count"]
+    )
+    after_auto_analytics = (await client.get("/api/analytics/summary")).json()
+    assert after_auto_analytics["species_counts"] == before_analytics["species_counts"]
+    assert (await client.get("/api/review-labels")).json() == before_labels
+
+    duplicate_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/review-activity"
+    )
+    assert duplicate_response.status_code == 200
+    duplicate = duplicate_response.json()
+    assert duplicate["status"] == "already_exists"
+    assert duplicate["review_activity_created"] is False
+    assert duplicate["review_activity_reused"] is True
+    assert duplicate["motion_evidence_id"] == auto_status["activity_motion_evidence_id"]
+    assert duplicate["review_queue_item_id"] == auto_status["activity_review_queue_item_id"]
+    assert await product_counts(client) == after_auto
+
+    capture_response = await client.post(
+        f"/api/streams/{STREAM_ID}/local-camera/capture-frame"
+    )
+    assert capture_response.status_code == 200
+    capture = capture_response.json()
+    assert capture["status"] == "saved"
+    assert capture["capture_source"] == "live_camera_session"
+    after_capture_status = (
+        await client.get(f"/api/streams/{STREAM_ID}/live-session/status")
+    ).json()
+    assert after_capture_status["status"] == "running"
+    assert after_capture_status["monitor_running"] is True
+
+    correction_response = await client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": auto_status["activity_visit_id"],
+            "label": "northern_cardinal",
+            "notes": "Confirmed unattended monitoring review candidate.",
+        },
+    )
+    assert correction_response.status_code == 201
+    corrected_counts = await product_counts(client)
+    assert corrected_counts["review_labels"] == after_auto["review_labels"] + 1
+    corrected_coverage = await dataset_coverage(client)
+    assert (
+        corrected_coverage["reviewed_record_count"]
+        == before_coverage["reviewed_record_count"] + 1
+    )
+
+
+async def test_unattended_monitoring_respects_min_detection_gate(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8auto-review-min-0\xff\xd9"
+    frame_1 = b"\xff\xd8auto-review-min-1\xff\xd9"
+    fake_process = FakeFfmpegProcess([frame_0, frame_1])
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, **kwargs: fake_process,
+    )
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(width=100, height=100),
+            frame_1: frame_with(
+                [(30, 40), (30, 41), (31, 40), (31, 41)],
+                width=100,
+                height=100,
+            ),
+        },
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
+    before = await product_counts(client)
+    before_queue = (await client.get("/api/review-queue")).json()
+
+    monitor_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/start",
+        json={
+            "save_best_frame": True,
+            "auto_create_review_candidates": True,
+            "auto_review_quiet_seconds": 1,
+            "auto_review_min_detections": 2,
+            "min_changed_ratio": 0.003,
+            "pixel_delta_threshold": 10,
+            "min_triggered_frames": 1,
+            "interval_seconds": 10,
+        },
+    )
+    assert monitor_response.status_code == 200
+    monitor = monitor_response.json()
+    assert monitor["activity_detection_count"] == 1
+    assert monitor["review_activity_created"] is False
+
+    await asyncio.sleep(1.1)
+    status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    assert status["activity_ready_for_review"] is True
+    assert status["activity_review_state"] == "ready_for_review"
+    assert status["activity_review_activity_created"] is False
+    assert status["auto_review_created_count"] == 0
+    assert status["auto_review_last_error"] is None
+    assert (await client.get("/api/review-queue")).json() == before_queue
+    assert await product_counts(client) == before
+
+    manual_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/review-activity"
+    )
+    assert manual_response.status_code == 200
+    manual = manual_response.json()
+    assert manual["review_activity_created"] is True
+    assert manual["creates_truth"] is False
+    after_manual = await product_counts(client)
+    assert after_manual["motion_evidence"] == before["motion_evidence"] + 1
+    assert after_manual["review_labels"] == before["review_labels"]
 
 
 async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(

@@ -139,6 +139,13 @@ until explicit review/correction.
 Live monitoring also reports recent-frame health, last evaluation status, and
 quiet/cooldown state so repeated activity does not keep saving frames or
 creating duplicate review candidates.
+Users can explicitly enable unattended monitoring to auto-create Review Queue
+candidates from completed live activity sessions after the quiet period. This
+creates needs-review Event/Visit candidates only; it does not create
+ReviewLabels, update Bird Log, run identification assist, export data, or mark
+truth. The current unattended mode is in-memory and user-started: the API
+process, backend camera session, and monitor must remain running, but the
+browser does not need to keep the live view visible.
 When the user clicks `Create review activity`, live motion creates an uncertain
 needs-review Event/Visit candidate from MotionEvidence with the saved best frame
 attached. It also adds a low-confidence SpeciesSuggestion from Zone context, such
