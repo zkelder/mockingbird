@@ -5,6 +5,7 @@ import type {
   DetectionRun,
   MotionEvidence,
   ReviewCorrectionResult,
+  ReviewIdentificationSummary,
   ReviewLabel,
   ReviewQueueBulkCorrectionResponse,
   ReviewQueueBulkCorrectionTargetType,
@@ -188,6 +189,52 @@ function formatQualityWarning(warning: string): string {
   return warning.includes(" ") ? warning : formatLabel(warning);
 }
 
+function reviewIdentificationLabel(item: ReviewQueueItem): string | null {
+  const identification = item.identification;
+  if (!identification) {
+    return null;
+  }
+  return (
+    identification.suggestion?.suggested_label ??
+    identification.proposal?.suggested_species ??
+    identification.proposal?.suggested_subject_label ??
+    identification.proposal?.label ??
+    null
+  );
+}
+
+function reviewIdentificationConfidence(
+  identification: ReviewIdentificationSummary | null | undefined,
+): number | null {
+  if (!identification) {
+    return null;
+  }
+  return identification.suggestion?.confidence ?? identification.proposal?.confidence ?? null;
+}
+
+function reviewIdentificationStatusTone(
+  identification: ReviewIdentificationSummary | null | undefined,
+): "good" | "review" | "quiet" {
+  if (!identification) {
+    return "quiet";
+  }
+  if (
+    identification.status === "suggestion_present" ||
+    identification.status === "proposal_present" ||
+    identification.status === "proposal_created"
+  ) {
+    return "review";
+  }
+  if (identification.status === "ready") {
+    return "good";
+  }
+  return "quiet";
+}
+
+function reviewIdentificationLabelValues(items: ReviewQueueItem[]): string[] {
+  return uniqueLabelValues(items.map(reviewIdentificationLabel));
+}
+
 function isBulkCorrectionEligible(item: ReviewQueueItem): boolean {
   return item.review_status === "needs_review";
 }
@@ -209,6 +256,8 @@ function matchesStatusFilter(item: ReviewQueueItem, statusFilter: ReviewStatusFi
 function reviewQueueSearchText(item: ReviewQueueItem, taxonomyLabels: TaxonomyLabel[]): string {
   const suggestedLabel = item.suggested_label ?? "";
   const media = item.media_asset;
+  const identification = item.identification;
+  const identificationLabel = reviewIdentificationLabel(item) ?? "";
 
   return [
     item.id,
@@ -246,6 +295,21 @@ function reviewQueueSearchText(item: ReviewQueueItem, taxonomyLabels: TaxonomyLa
     item.suggestion_confidence?.toString() ?? "",
     item.suggestion_reason ?? "",
     displayTaxonomyLabel(suggestedLabel || "unknown", taxonomyLabels),
+    identification?.status ?? "",
+    identification?.message ?? "",
+    identification?.adapter_id ?? "",
+    identification?.adapter_name ?? "",
+    identification?.adapter_kind ?? "",
+    identification?.adapter_status ?? "",
+    identification?.setup_hint ?? "",
+    identificationLabel,
+    displayTaxonomyLabel(identificationLabel || "unknown", taxonomyLabels),
+    identification?.suggestion?.id ?? "",
+    identification?.suggestion?.adapter_name ?? "",
+    identification?.proposal?.id ?? "",
+    identification?.proposal?.label ?? "",
+    identification?.proposal?.suggested_subject_label ?? "",
+    identification?.proposal?.suggested_species ?? "",
     item.reason,
     media?.id ?? "",
     media?.filename ?? "",
@@ -709,6 +773,7 @@ export function ReviewQueuePage({
     useState<ReviewStatusFilter>("unreviewed");
   const [readinessHandoffLabel, setReadinessHandoffLabel] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [identifyingId, setIdentifyingId] = useState<string | null>(null);
   const [isBulkSaving, setIsBulkSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -921,7 +986,11 @@ export function ReviewQueuePage({
   );
 
   const visibleSuggestedLabelValues = useMemo(
-    () => uniqueLabelValues(filteredItems.map((item) => item.suggested_label)),
+    () =>
+      uniqueLabelValues([
+        ...filteredItems.map((item) => item.suggested_label),
+        ...reviewIdentificationLabelValues(filteredItems),
+      ]),
     [filteredItems],
   );
 
@@ -930,6 +999,8 @@ export function ReviewQueuePage({
       uniqueLabelValues([
         ...selectedItems.map((item) => item.suggested_label),
         ...visibleEligibleItems.map((item) => item.suggested_label),
+        ...reviewIdentificationLabelValues(selectedItems),
+        ...reviewIdentificationLabelValues(visibleEligibleItems),
       ]),
     [selectedItems, visibleEligibleItems],
   );
@@ -1113,6 +1184,17 @@ export function ReviewQueuePage({
     }
   }
 
+  async function refreshDetectionEvidence() {
+    const [nextProposals, nextRuns, nextMotionEvidence] = await Promise.all([
+      apiClient.getDetectionProposals(),
+      apiClient.getDetectionRuns(),
+      apiClient.listMotionEvidence({ status: "all" }),
+    ]);
+    setDetectionProposals(nextProposals);
+    setDetectionRuns(nextRuns);
+    setMotionEvidence(nextMotionEvidence.motion_evidence);
+  }
+
   function canSelectForBulk(item: ReviewQueueItem): boolean {
     return (
       isBulkCorrectionEligible(item) &&
@@ -1237,9 +1319,14 @@ export function ReviewQueuePage({
     }
   }
 
-  async function saveCorrection(item: ReviewQueueItem) {
-    const draft = drafts[item.id] ?? { label: item.suggested_label ?? "", notes: "" };
-    if (!draft.label.trim()) {
+  async function saveCorrectionWithLabel(
+    item: ReviewQueueItem,
+    label: string,
+    notes: string,
+    acceptedSuggestionId?: string | null,
+  ) {
+    const trimmedLabel = label.trim();
+    if (!trimmedLabel) {
       setMessage("Add a label before saving a correction.");
       return;
     }
@@ -1248,7 +1335,14 @@ export function ReviewQueuePage({
     setMessage(null);
     setLastCorrectionSummary(null);
     try {
-      const result = await onCreateCorrection(item, draft.label.trim(), draft.notes.trim());
+      const result = await onCreateCorrection(item, trimmedLabel, notes.trim());
+      if (acceptedSuggestionId) {
+        try {
+          await apiClient.updateSpeciesSuggestionStatus(acceptedSuggestionId, "accepted");
+        } catch {
+          // The ReviewLabel is truth; suggestion status is evidence polish only.
+        }
+      }
       await refreshReviewLabels();
       setLastCorrectionSummary({
         label: result.review_label.label,
@@ -1267,6 +1361,56 @@ export function ReviewQueuePage({
       setMessage(caught instanceof Error ? caught.message : "Correction could not be saved.");
     } finally {
       setSavingId(null);
+    }
+  }
+
+  async function saveCorrection(item: ReviewQueueItem) {
+    const draft = drafts[item.id] ?? { label: item.suggested_label ?? "", notes: "" };
+    await saveCorrectionWithLabel(item, draft.label, draft.notes);
+  }
+
+  async function runIdentificationAssist(item: ReviewQueueItem) {
+    const targetType = reviewQueueTargetType(item);
+    const targetId = reviewQueueTargetId(item);
+    const identification = item.identification;
+    const mediaAssetId = item.best_media_asset_id ?? item.media_asset?.id ?? null;
+
+    setIdentifyingId(item.id);
+    setMessage(null);
+    try {
+      const result = await apiClient.identifyReviewQueueItem(targetType, targetId, {
+        adapter_id: identification?.adapter_id ?? undefined,
+        media_asset_id: mediaAssetId ?? undefined,
+      });
+      const refreshedQueue = await apiClient.getReviewQueue();
+      setQueueItems(refreshedQueue);
+      await refreshDetectionEvidence();
+      setMessage(result.identification.message);
+    } catch (caught) {
+      setMessage(
+        caught instanceof Error ? caught.message : "Identification assist could not run.",
+      );
+    } finally {
+      setIdentifyingId(null);
+    }
+  }
+
+  async function rejectIdentificationSuggestion(item: ReviewQueueItem) {
+    const suggestionId = item.identification?.suggestion?.id;
+    if (!suggestionId) {
+      return;
+    }
+    setIdentifyingId(item.id);
+    setMessage(null);
+    try {
+      await apiClient.updateSpeciesSuggestionStatus(suggestionId, "rejected");
+      const refreshedQueue = await apiClient.getReviewQueue();
+      setQueueItems(refreshedQueue);
+      setMessage("Suggestion rejected as evidence. No review truth was created.");
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Suggestion could not be rejected.");
+    } finally {
+      setIdentifyingId(null);
     }
   }
 
@@ -1539,13 +1683,20 @@ export function ReviewQueuePage({
           const targetId = reviewQueueTargetId(item);
           const isSelected = selectedTargetIds.includes(targetId);
           const isSelectable = canSelectForBulk(item);
+          const identification = item.identification ?? null;
+          const identificationLabel = reviewIdentificationLabel(item);
           const itemHelperGroups = labelHelperGroups(
-            uniqueLabelValues([item.suggested_label, ...visibleSuggestedLabelValues]),
+            uniqueLabelValues([
+              item.suggested_label,
+              identificationLabel,
+              ...visibleSuggestedLabelValues,
+            ]),
             recentLabelValues,
             taxonomyLabelValues,
           );
           const itemSuggestedLabelValues = uniqueLabelValues([
             item.suggested_label,
+            identificationLabel,
             ...visibleSuggestedLabelValues,
           ]);
           const itemLabelValidation = classifyCorrectionLabel(draft.label, {
@@ -1693,6 +1844,21 @@ export function ReviewQueuePage({
                 {item.suggestion_confidence != null ? (
                   <EvidenceBadge label="Low-confidence suggestion" tone="quiet" />
                 ) : null}
+                {identification ? (
+                  <EvidenceBadge
+                    label={`Identification ${formatLabel(identification.status)}`}
+                    tone={
+                      identification.status === "ready" ||
+                      identification.status === "proposal_present" ||
+                      identification.status === "suggestion_present"
+                        ? "review"
+                        : "quiet"
+                    }
+                  />
+                ) : null}
+                {identification?.adapter_is_demo ? (
+                  <EvidenceBadge label="Demo placeholder" tone="quiet" />
+                ) : null}
                 <TaxonomyBadge label={suggestedTaxonomy} value={item.suggested_label} />
                 <span>
                   Suggested: {displayTaxonomyLabel(item.suggested_label ?? "unknown", taxonomyLabels)}
@@ -1796,6 +1962,29 @@ export function ReviewQueuePage({
                   </span>
                 )}
               </div>
+              <IdentificationAssistPanel
+                identification={identification}
+                isBusy={identifyingId === item.id || savingId === item.id}
+                onAcceptLabel={(label, suggestionId) =>
+                  void saveCorrectionWithLabel(
+                    item,
+                    label,
+                    `Accepted identification assist evidence${
+                      suggestionId ? ` (${suggestionId})` : ""
+                    }.`,
+                    suggestionId,
+                  )
+                }
+                onFillLabel={(label) =>
+                  setDrafts((current) => ({
+                    ...current,
+                    [item.id]: { ...draft, label },
+                  }))
+                }
+                onRejectSuggestion={() => void rejectIdentificationSuggestion(item)}
+                onRun={() => void runIdentificationAssist(item)}
+                taxonomyLabels={taxonomyLabels}
+              />
               {item.review_status === "reviewed" && latestItemCorrection ? (
                 <CorrectionTruthSummary
                   latest={latestItemCorrection}
@@ -1885,6 +2074,133 @@ export function ReviewQueuePage({
               )
             }
           />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function IdentificationAssistPanel({
+  identification,
+  isBusy,
+  onAcceptLabel,
+  onFillLabel,
+  onRejectSuggestion,
+  onRun,
+  taxonomyLabels,
+}: {
+  identification: ReviewIdentificationSummary | null;
+  isBusy: boolean;
+  onAcceptLabel: (label: string, suggestionId?: string | null) => void;
+  onFillLabel: (label: string) => void;
+  onRejectSuggestion: () => void;
+  onRun: () => void;
+  taxonomyLabels: TaxonomyLabel[];
+}) {
+  if (!identification) {
+    return null;
+  }
+
+  const suggestedLabel =
+    identification.suggestion?.suggested_label ??
+    identification.proposal?.suggested_species ??
+    identification.proposal?.suggested_subject_label ??
+    identification.proposal?.label ??
+    null;
+  const confidence = reviewIdentificationConfidence(identification);
+  const suggestionId = identification.suggestion?.id ?? null;
+
+  return (
+    <div className="review-identification-assist">
+      <div className="section-heading">
+        <div>
+          <h3>Identification assist</h3>
+          <span className="meta-text">
+            Suggestions and proposals stay evidence until correction.
+          </span>
+        </div>
+        <StatusPill
+          label={formatLabel(identification.status)}
+          tone={reviewIdentificationStatusTone(identification)}
+        />
+      </div>
+      <div className="review-identification-grid">
+        <div className="data-row">
+          <span>Adapter</span>
+          <strong>{identification.adapter_name ?? "No adapter"}</strong>
+          <small>
+            {identification.adapter_is_demo
+              ? "Demo placeholder"
+              : identification.adapter_status
+                ? formatLabel(identification.adapter_status)
+                : "Unavailable"}
+          </small>
+        </div>
+        <div className="data-row">
+          <span>Suggested label</span>
+          <strong>
+            {suggestedLabel ? displayTaxonomyLabel(suggestedLabel, taxonomyLabels) : "No suggestion"}
+          </strong>
+          <small>
+            {confidence != null ? `${formatConfidence(confidence)} confidence. ` : ""}
+            {identification.suggestion_count} suggestion
+            {identification.suggestion_count === 1 ? "" : "s"} /{" "}
+            {identification.proposal_count} proposal
+            {identification.proposal_count === 1 ? "" : "s"}
+          </small>
+        </div>
+        <div className="data-row">
+          <span>Status</span>
+          <strong>{formatLabel(identification.status)}</strong>
+          <small>{identification.message}</small>
+        </div>
+        <div className="data-row">
+          <span>Truth boundary</span>
+          <strong>{identification.creates_truth ? "Creates truth" : "Evidence only"}</strong>
+          <small>
+            {identification.setup_hint ??
+              "Accepting still creates a ReviewLabel through correction."}
+          </small>
+        </div>
+      </div>
+      <div className="review-identification-actions">
+        <button
+          className="secondary-action"
+          disabled={!identification.can_run || isBusy}
+          onClick={onRun}
+          type="button"
+        >
+          {isBusy ? "Running..." : identification.adapter_is_demo ? "Run demo assist" : "Run assist"}
+        </button>
+        {suggestedLabel ? (
+          <>
+            <button
+              className="secondary-action"
+              disabled={isBusy}
+              onClick={() => onFillLabel(suggestedLabel)}
+              type="button"
+            >
+              Use label
+            </button>
+            <button
+              className="primary-action"
+              disabled={isBusy}
+              onClick={() => onAcceptLabel(suggestedLabel, suggestionId)}
+              type="button"
+            >
+              Accept as correction
+            </button>
+          </>
+        ) : null}
+        {suggestionId ? (
+          <button
+            className="secondary-action"
+            disabled={isBusy}
+            onClick={onRejectSuggestion}
+            type="button"
+          >
+            Reject suggestion
+          </button>
         ) : null}
       </div>
     </div>

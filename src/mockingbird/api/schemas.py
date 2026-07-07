@@ -142,6 +142,17 @@ class ReviewQueueBulkCorrectionResultStatus(str, Enum):
     failed = "failed"
 
 
+class ReviewIdentificationStatus(str, Enum):
+    suggestion_present = "suggestion_present"
+    proposal_present = "proposal_present"
+    ready = "ready"
+    setup_required = "setup_required"
+    unavailable = "unavailable"
+    no_best_frame = "no_best_frame"
+    proposal_created = "proposal_created"
+    no_proposal = "no_proposal"
+
+
 class ExportStatus(str, Enum):
     ready = "ready"
     building = "building"
@@ -1742,6 +1753,33 @@ class DetectionProposalDecisionCreate(BaseModel):
     notes: str | None = None
 
 
+class ReviewIdentificationSummary(BaseModel):
+    # Identification assist is evidence context only; ReviewLabel correction remains truth.
+    status: ReviewIdentificationStatus
+    message: str
+    media_asset_id: str | None = None
+    adapter_id: str | None = None
+    adapter_name: str | None = None
+    adapter_kind: ModelAdapterKind | None = None
+    adapter_status: ModelAdapterStatus | None = None
+    adapter_is_demo: bool = False
+    can_run: bool = False
+    setup_hint: str | None = None
+    suggestion: SpeciesSuggestionResponse | None = None
+    proposal: DetectionProposal | None = None
+    suggestion_count: int = Field(default=0, ge=0)
+    proposal_count: int = Field(default=0, ge=0)
+    creates_truth: bool = False
+    creates_export: bool = False
+
+
+class ReviewIdentificationRequest(BaseModel):
+    adapter_id: str | None = None
+    media_asset_id: str | None = None
+    requested_labels: list[str] | None = None
+    notes: str | None = None
+
+
 class DemoDetectionRunResult(BaseModel):
     detection_run: DetectionRun
     proposals: list[DetectionProposal]
@@ -1784,6 +1822,7 @@ class ReviewQueueItem(BaseModel):
     suggestion_confidence: float | None = Field(default=None, ge=0, le=1)
     suggestion_reason: str | None = None
     suggestion_creates_truth: bool = False
+    identification: ReviewIdentificationSummary | None = None
     media_asset: MediaAsset | None = None
     review_status: ReviewStatus
     reason: str
@@ -1834,6 +1873,21 @@ class ReviewQueueBulkCorrectionResponse(BaseModel):
     skipped_count: int = Field(ge=0)
     failed_count: int = Field(ge=0)
     results: list[ReviewQueueBulkCorrectionResult]
+
+
+class ReviewIdentificationResponse(BaseModel):
+    # Running assist may create proposal evidence, never reviewed truth or exports.
+    target_type: ReviewQueueBulkCorrectionTargetType
+    target_id: str
+    identification: ReviewIdentificationSummary
+    detection_run: DetectionRun | None = None
+    proposals: list[DetectionProposal] = Field(default_factory=list)
+    species_suggestion: SpeciesSuggestionResponse | None = None
+    review_queue_item: ReviewQueueItem | None = None
+    creates_truth: bool = False
+    creates_export: bool = False
+    creates_review_label: bool = False
+    warnings: list[str] = Field(default_factory=list)
 
 
 class DatasetExport(BaseModel):

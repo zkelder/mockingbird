@@ -1108,6 +1108,10 @@ Current work:
   supported settings to backend camera sessions/capture, focus live motion
   scoring on a selected Zone, show strongest-zone diagnostics, and warn on
   simple overexposed/underexposed/low-contrast frame conditions.
+- Review Identification Assist 1: Review Queue candidates with best-frame media
+  now summarize pending SpeciesSuggestion and DetectionProposal evidence, can run
+  an explicitly available identification adapter, and keep accepting/correcting
+  through ReviewLabel truth only.
 - Cameras/Streams uses the bridge endpoint for local camera Live view when
   available and shows clear unavailable/setup copy when it is not.
 - Next likely phase: Phase 23 — live camera field-test validation polish.
@@ -1144,6 +1148,10 @@ Validation:
   Review Queue candidates only after explicit user action. ReviewLabel truth,
   Bird Log history, analytics/export truth, and model output are not created
   automatically.
+- Identification assist can create or reuse suggestion/proposal evidence only.
+  Adapter unavailable/setup states are visible in Review Queue, demo paths are
+  labeled as placeholder evidence, and Bird Log/export truth still requires a
+  ReviewLabel correction.
 - Motion focus uses existing normalized Zone coordinates and changes scoring
   diagnostics only; it does not create fake Zones, ReviewLabels, Bird Log
   history, exports, or model output.

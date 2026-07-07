@@ -90,6 +90,15 @@ export type ZoneType =
   | "ignore";
 
 export type ReviewStatus = "needs_review" | "reviewed" | "rejected";
+export type ReviewIdentificationStatus =
+  | "suggestion_present"
+  | "proposal_present"
+  | "ready"
+  | "setup_required"
+  | "unavailable"
+  | "no_best_frame"
+  | "proposal_created"
+  | "no_proposal";
 export type ExportStatus = "ready" | "building" | "failed";
 export type DetectionSource = "manual" | "demo_rule" | "future_model" | "integration";
 export type DetectionRunStatus = "pending" | "completed" | "failed";
@@ -1749,6 +1758,25 @@ export interface FolderImportResult {
   review_queue_count: number;
 }
 
+export interface ReviewIdentificationSummary {
+  status: ReviewIdentificationStatus;
+  message: string;
+  media_asset_id?: string | null;
+  adapter_id?: string | null;
+  adapter_name?: string | null;
+  adapter_kind?: ModelAdapterKind | null;
+  adapter_status?: ModelAdapterStatus | null;
+  adapter_is_demo: boolean;
+  can_run: boolean;
+  setup_hint?: string | null;
+  suggestion?: SpeciesSuggestion | null;
+  proposal?: DetectionProposal | null;
+  suggestion_count: number;
+  proposal_count: number;
+  creates_truth: boolean;
+  creates_export: boolean;
+}
+
 export interface ReviewQueueItem {
   id: string;
   item_type: string;
@@ -1785,6 +1813,7 @@ export interface ReviewQueueItem {
   suggestion_confidence?: number | null;
   suggestion_reason?: string | null;
   suggestion_creates_truth: boolean;
+  identification?: ReviewIdentificationSummary | null;
   media_asset?: MediaAsset | null;
   review_status: ReviewStatus;
   reason: string;
@@ -1823,6 +1852,27 @@ export interface ReviewCorrectionResult {
 
 export type ReviewQueueBulkCorrectionTargetType = "event" | "visit";
 export type ReviewQueueBulkCorrectionResultStatus = "succeeded" | "skipped" | "failed";
+
+export interface ReviewIdentificationRequest {
+  adapter_id?: string | null;
+  media_asset_id?: string | null;
+  requested_labels?: string[] | null;
+  notes?: string | null;
+}
+
+export interface ReviewIdentificationResponse {
+  target_type: ReviewQueueBulkCorrectionTargetType;
+  target_id: string;
+  identification: ReviewIdentificationSummary;
+  detection_run?: DetectionRun | null;
+  proposals: DetectionProposal[];
+  species_suggestion?: SpeciesSuggestion | null;
+  review_queue_item?: ReviewQueueItem | null;
+  creates_truth: boolean;
+  creates_export: boolean;
+  creates_review_label: boolean;
+  warnings: string[];
+}
 
 export interface ReviewQueueBulkCorrectionRequest {
   target_ids: string[];

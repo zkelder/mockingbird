@@ -16,7 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 import uuid
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy import Engine, delete, func, or_, select
+from sqlalchemy import Engine, and_, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from mockingbird.api import demo_data
@@ -131,6 +131,10 @@ from mockingbird.api.schemas import (
     Point,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
+    ReviewIdentificationRequest,
+    ReviewIdentificationResponse,
+    ReviewIdentificationStatus,
+    ReviewIdentificationSummary,
     ReviewLabel,
     ReviewQueueBulkCorrectionRequest,
     ReviewQueueBulkCorrectionResponse,
@@ -5482,6 +5486,465 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._review_queue_items(session)
 
+    def identify_review_queue_item(
+        self,
+        target_type: str,
+        target_id: str,
+        payload: ReviewIdentificationRequest | None = None,
+    ) -> ReviewIdentificationResponse:
+        request = payload or ReviewIdentificationRequest()
+        normalized_target_type = target_type.strip()
+        normalized_target_id = target_id.strip()
+        if normalized_target_type not in {"event", "visit"}:
+            raise ValueError("unsupported_target")
+        if not normalized_target_id:
+            raise ValueError("missing_review_candidate")
+
+        with self.session_factory() as session:
+            queue_item = self._review_queue_item_by_target(
+                session,
+                normalized_target_type,
+                normalized_target_id,
+            )
+            if queue_item is None:
+                raise ValueError("missing_review_candidate")
+
+            requested_media_asset_id = _clean_optional_text(request.media_asset_id)
+            if (
+                requested_media_asset_id is not None
+                and session.get(MediaAssetModel, requested_media_asset_id) is None
+            ):
+                raise ValueError("missing_media_asset")
+
+            media_asset_id = (
+                requested_media_asset_id
+                or queue_item.best_media_asset_id
+                or (queue_item.media_asset.id if queue_item.media_asset else None)
+            )
+            summary = self._review_identification_summary_for_item(
+                session,
+                queue_item,
+                requested_adapter_id=_clean_optional_text(request.adapter_id),
+                media_asset_id=media_asset_id,
+            )
+            zone_id = queue_item.zone_id or queue_item.primary_zone_id
+
+        if not summary.can_run or summary.adapter_id is None or media_asset_id is None:
+            return self._review_identification_response(
+                target_type=normalized_target_type,
+                target_id=normalized_target_id,
+                identification=summary,
+                review_queue_item=queue_item,
+            )
+
+        adapter = _model_adapter_by_id(summary.adapter_id)
+        requested_labels = request.requested_labels
+        if adapter is not None and adapter.kind == ModelAdapterKind.demo and not requested_labels:
+            requested_labels = ["unknown_bird"]
+        notes = _clean_optional_text(request.notes)
+        if notes is None:
+            notes = (
+                "Demo identification assist placeholder; no model inspected media. "
+                "Proposal evidence only."
+                if adapter is not None and adapter.kind == ModelAdapterKind.demo
+                else "Review Queue identification assist run; proposal evidence only."
+            )
+
+        try:
+            run_result = self.run_model_adapter(
+                summary.adapter_id,
+                ModelAdapterRunRequest(
+                    adapter_id=summary.adapter_id,
+                    media_asset_id=media_asset_id,
+                    zone_ids=[zone_id] if zone_id else None,
+                    requested_labels=requested_labels,
+                    notes=notes,
+                ),
+            )
+        except ValueError as error:
+            error_summary = self._review_identification_error_summary(summary, error)
+            return self._review_identification_response(
+                target_type=normalized_target_type,
+                target_id=normalized_target_id,
+                identification=error_summary,
+                review_queue_item=queue_item,
+                warnings=[str(error)],
+            )
+
+        with self.session_factory() as session:
+            refreshed_item = self._review_queue_item_by_target(
+                session,
+                normalized_target_type,
+                normalized_target_id,
+            )
+            refreshed_summary = (
+                refreshed_item.identification
+                if refreshed_item is not None and refreshed_item.identification is not None
+                else summary
+            )
+
+        if run_result.proposals:
+            outcome_summary = refreshed_summary.model_copy(
+                update={
+                    "status": ReviewIdentificationStatus.proposal_created,
+                    "message": (
+                        f"{len(run_result.proposals)} identification proposal"
+                        f"{'' if len(run_result.proposals) == 1 else 's'} created as evidence only."
+                    ),
+                    "proposal": run_result.proposals[0],
+                    "proposal_count": max(
+                        refreshed_summary.proposal_count,
+                        len(run_result.proposals),
+                    ),
+                    "adapter_id": summary.adapter_id,
+                    "adapter_name": summary.adapter_name,
+                    "adapter_kind": summary.adapter_kind,
+                    "adapter_status": summary.adapter_status,
+                    "adapter_is_demo": summary.adapter_is_demo,
+                    "can_run": summary.can_run,
+                    "setup_hint": summary.setup_hint,
+                }
+            )
+        else:
+            outcome_summary = refreshed_summary.model_copy(
+                update={
+                    "status": ReviewIdentificationStatus.no_proposal,
+                    "message": (
+                        "Identification adapter completed without proposal evidence. "
+                        "No review truth, Bird Log entry, or export data was created."
+                    ),
+                    "proposal": None,
+                    "proposal_count": refreshed_summary.proposal_count,
+                    "adapter_id": summary.adapter_id,
+                    "adapter_name": summary.adapter_name,
+                    "adapter_kind": summary.adapter_kind,
+                    "adapter_status": summary.adapter_status,
+                    "adapter_is_demo": summary.adapter_is_demo,
+                    "can_run": summary.can_run,
+                    "setup_hint": summary.setup_hint,
+                }
+            )
+
+        return self._review_identification_response(
+            target_type=normalized_target_type,
+            target_id=normalized_target_id,
+            identification=outcome_summary,
+            detection_run=run_result.detection_run,
+            proposals=run_result.proposals,
+            review_queue_item=refreshed_item,
+        )
+
+    def _review_queue_item_by_target(
+        self,
+        session: Session,
+        target_type: str,
+        target_id: str,
+    ) -> ReviewQueueItem | None:
+        return next(
+            (
+                item
+                for item in self._review_queue_items(session)
+                if item.target_type == target_type and item.target_id == target_id
+            ),
+            None,
+        )
+
+    def _review_identification_response(
+        self,
+        *,
+        target_type: str,
+        target_id: str,
+        identification: ReviewIdentificationSummary,
+        detection_run: DetectionRun | None = None,
+        proposals: list[DetectionProposal] | None = None,
+        review_queue_item: ReviewQueueItem | None = None,
+        warnings: list[str] | None = None,
+    ) -> ReviewIdentificationResponse:
+        return ReviewIdentificationResponse(
+            target_type=target_type,
+            target_id=target_id,
+            identification=identification,
+            detection_run=detection_run,
+            proposals=proposals or [],
+            species_suggestion=identification.suggestion,
+            review_queue_item=review_queue_item,
+            creates_truth=False,
+            creates_export=False,
+            creates_review_label=False,
+            warnings=warnings or [],
+        )
+
+    def _review_identification_summary_for_item(
+        self,
+        session: Session,
+        item: ReviewQueueItem,
+        *,
+        requested_adapter_id: str | None = None,
+        media_asset_id: str | None = None,
+    ) -> ReviewIdentificationSummary:
+        normalized_media_asset_id = (
+            media_asset_id
+            or item.best_media_asset_id
+            or (item.media_asset.id if item.media_asset else None)
+        )
+        media_asset_model = (
+            session.get(MediaAssetModel, normalized_media_asset_id)
+            if normalized_media_asset_id is not None
+            else None
+        )
+        if media_asset_model is None:
+            normalized_media_asset_id = None
+
+        suggestion_models = self._review_identification_suggestion_models(
+            session,
+            item,
+            media_asset_id=normalized_media_asset_id,
+        )
+        proposal_models = self._review_identification_proposal_models(
+            session,
+            item,
+            media_asset_id=normalized_media_asset_id,
+        )
+        suggestion = (
+            _species_suggestion_from_model(suggestion_models[0])
+            if suggestion_models
+            else None
+        )
+        proposal = (
+            _detection_proposal_from_model(proposal_models[0])
+            if proposal_models
+            else None
+        )
+        adapter = self._select_review_identification_adapter(
+            requested_adapter_id=requested_adapter_id,
+            media_asset_model=media_asset_model,
+        )
+        adapter_supports_media = (
+            self._review_identification_adapter_supports_media(adapter, media_asset_model)
+            if adapter is not None
+            else False
+        )
+        can_run = (
+            self._review_identification_adapter_can_run(adapter, media_asset_model)
+            if adapter is not None
+            else False
+        )
+        setup_hint = (
+            adapter.configuration_status.setup_hint
+            if adapter is not None and adapter.configuration_status is not None
+            else adapter.notes
+            if adapter is not None
+            else None
+        )
+
+        if suggestion is not None:
+            status = ReviewIdentificationStatus.suggestion_present
+            message = (
+                "Pending identification suggestion is available. Accepting it still "
+                "requires an explicit review correction."
+            )
+        elif proposal is not None:
+            status = ReviewIdentificationStatus.proposal_present
+            message = (
+                "Detection proposal evidence is available for this candidate. "
+                "Review correction still creates truth."
+            )
+        elif normalized_media_asset_id is None:
+            status = ReviewIdentificationStatus.no_best_frame
+            message = "Add or save a best frame before running identification assist."
+        elif adapter is None:
+            status = ReviewIdentificationStatus.unavailable
+            message = "No identification adapter is registered for Review Queue assist."
+        elif not adapter_supports_media:
+            status = ReviewIdentificationStatus.unavailable
+            message = (
+                f"{adapter.name} does not support this candidate media type. "
+                "No evidence or truth was created."
+            )
+        elif can_run:
+            status = ReviewIdentificationStatus.ready
+            message = (
+                "Demo identification assist can create placeholder proposal evidence "
+                "without media inspection."
+                if adapter.kind == ModelAdapterKind.demo
+                else f"{adapter.name} is ready to run on this best frame."
+            )
+        elif adapter.status == ModelAdapterStatus.not_configured:
+            status = ReviewIdentificationStatus.setup_required
+            message = (
+                f"{adapter.name} needs local setup before identification assist can run."
+            )
+        else:
+            status = ReviewIdentificationStatus.unavailable
+            message = f"{adapter.name} is unavailable for identification assist."
+
+        return ReviewIdentificationSummary(
+            status=status,
+            message=message,
+            media_asset_id=normalized_media_asset_id,
+            adapter_id=adapter.id if adapter is not None else None,
+            adapter_name=adapter.name if adapter is not None else None,
+            adapter_kind=adapter.kind if adapter is not None else None,
+            adapter_status=adapter.status if adapter is not None else None,
+            adapter_is_demo=adapter.kind == ModelAdapterKind.demo if adapter is not None else False,
+            can_run=can_run,
+            setup_hint=setup_hint,
+            suggestion=suggestion,
+            proposal=proposal,
+            suggestion_count=len(suggestion_models),
+            proposal_count=len(proposal_models),
+            creates_truth=False,
+            creates_export=False,
+        )
+
+    def _review_identification_suggestion_models(
+        self,
+        session: Session,
+        item: ReviewQueueItem,
+        *,
+        media_asset_id: str | None,
+    ) -> list[SpeciesSuggestionModel]:
+        filters = []
+        if item.visit_id:
+            filters.append(SpeciesSuggestionModel.visit_id == item.visit_id)
+        if item.event_id:
+            filters.append(SpeciesSuggestionModel.event_id == item.event_id)
+        if media_asset_id:
+            filters.append(SpeciesSuggestionModel.media_asset_id == media_asset_id)
+        if not filters:
+            return []
+        return list(
+            session.scalars(
+                select(SpeciesSuggestionModel)
+                .where(
+                    SpeciesSuggestionModel.status == SpeciesSuggestionStatus.pending.value,
+                    or_(*filters),
+                )
+                .order_by(
+                    SpeciesSuggestionModel.created_at.desc(),
+                    SpeciesSuggestionModel.rank,
+                    SpeciesSuggestionModel.id.desc(),
+                )
+            ).all()
+        )
+
+    def _review_identification_proposal_models(
+        self,
+        session: Session,
+        item: ReviewQueueItem,
+        *,
+        media_asset_id: str | None,
+    ) -> list[DetectionProposalModel]:
+        filters = []
+        if item.visit_id:
+            filters.append(DetectionProposalModel.visit_id == item.visit_id)
+        if item.event_id:
+            filters.append(DetectionProposalModel.event_id == item.event_id)
+        if media_asset_id:
+            filters.append(
+                and_(
+                    DetectionProposalModel.media_asset_id == media_asset_id,
+                    DetectionProposalModel.event_id.is_(None),
+                    DetectionProposalModel.visit_id.is_(None),
+                )
+            )
+        if not filters:
+            return []
+        return list(
+            session.scalars(
+                select(DetectionProposalModel)
+                .where(or_(*filters))
+                .order_by(
+                    DetectionProposalModel.created_at.desc(),
+                    DetectionProposalModel.id.desc(),
+                )
+            ).all()
+        )
+
+    def _select_review_identification_adapter(
+        self,
+        *,
+        requested_adapter_id: str | None,
+        media_asset_model: MediaAssetModel | None,
+    ) -> ModelAdapter | None:
+        if requested_adapter_id is not None:
+            adapter = _model_adapter_by_id(requested_adapter_id)
+            if adapter is None:
+                raise ValueError("missing_adapter")
+            return adapter
+
+        real_adapters = [
+            adapter
+            for adapter in _model_adapters()
+            if adapter.kind
+            in {ModelAdapterKind.object_detector, ModelAdapterKind.species_classifier}
+        ]
+        supported_adapters = [
+            adapter
+            for adapter in real_adapters
+            if self._review_identification_adapter_supports_media(adapter, media_asset_model)
+        ]
+        candidates = supported_adapters or real_adapters
+        return next(
+            (
+                adapter
+                for adapter in candidates
+                if self._review_identification_adapter_can_run(adapter, media_asset_model)
+            ),
+            candidates[0] if candidates else None,
+        )
+
+    def _review_identification_adapter_supports_media(
+        self,
+        adapter: ModelAdapter | None,
+        media_asset_model: MediaAssetModel | None,
+    ) -> bool:
+        if adapter is None or media_asset_model is None:
+            return adapter is not None
+        return (
+            media_asset_model.media_type in adapter.supported_media_types
+            or media_asset_model.content_type in adapter.supported_media_types
+        )
+
+    def _review_identification_adapter_can_run(
+        self,
+        adapter: ModelAdapter | None,
+        media_asset_model: MediaAssetModel | None,
+    ) -> bool:
+        if adapter is None or media_asset_model is None:
+            return False
+        if not self._review_identification_adapter_supports_media(adapter, media_asset_model):
+            return False
+        if adapter.kind == ModelAdapterKind.demo:
+            return adapter.status == ModelAdapterStatus.available
+        if adapter.configuration_status is not None:
+            return adapter.configuration_status.can_run
+        return adapter.status == ModelAdapterStatus.available
+
+    def _review_identification_error_summary(
+        self,
+        summary: ReviewIdentificationSummary,
+        error: ValueError,
+    ) -> ReviewIdentificationSummary:
+        reason = str(error)
+        setup_errors = {"local_detector_not_configured", "megadetector_not_configured"}
+        status = (
+            ReviewIdentificationStatus.setup_required
+            if reason in setup_errors
+            else ReviewIdentificationStatus.unavailable
+        )
+        return summary.model_copy(
+            update={
+                "status": status,
+                "can_run": False,
+                "message": (
+                    "Identification adapter setup is required before this candidate can be analyzed."
+                    if status == ReviewIdentificationStatus.setup_required
+                    else "Identification adapter could not analyze this candidate. No truth was created."
+                ),
+            }
+        )
+
     def _review_queue_stream_context(
         self,
         session: Session,
@@ -6647,49 +7110,52 @@ class ProductRepository:
                 media_asset_id=media_asset.id if media_asset else None,
             )
             activity_context = self._review_queue_activity_context(evidence)
-            queue.append(
-                ReviewQueueItem(
-                    id=f"review-queue-{visit.id}",
-                    item_type="visit",
-                    target_type="visit",
-                    target_id=visit.id,
-                    title=f"Review {visit.subject_label} visit",
-                    stream_id=event.stream_id,
-                    stream_name=stream_name,
-                    source_id=source_id,
-                    source_name=source_name,
-                    event_id=event.id,
-                    visit_id=visit.id,
-                    primary_zone_id=zone_id,
-                    primary_zone_name=zone_name,
-                    primary_zone_type=zone_type,
-                    zone_id=zone_id,
-                    zone_name=zone_name,
-                    zone_type=zone_type,
-                    best_media_asset_id=(
-                        media_asset.id
-                        if media_asset is not None
-                        else evidence.snapshot_media_asset_id
-                        if evidence is not None
-                        else None
-                    ),
-                    **activity_context,
-                    suggested_label=(
-                        suggestion.suggested_label
-                        if suggestion is not None
-                        else visit.species_guess or visit.subject_label
-                    ),
-                    suggestion_id=suggestion.id if suggestion is not None else None,
-                    suggestion_confidence=(
-                        suggestion.confidence if suggestion is not None else None
-                    ),
-                    suggestion_reason=suggestion.notes if suggestion is not None else None,
-                    suggestion_creates_truth=False,
-                    media_asset=media_asset,
-                    review_status=visit.review_status,
-                    reason="Confirm or correct the suggested species label.",
-                )
+            queue_item = ReviewQueueItem(
+                id=f"review-queue-{visit.id}",
+                item_type="visit",
+                target_type="visit",
+                target_id=visit.id,
+                title=f"Review {visit.subject_label} visit",
+                stream_id=event.stream_id,
+                stream_name=stream_name,
+                source_id=source_id,
+                source_name=source_name,
+                event_id=event.id,
+                visit_id=visit.id,
+                primary_zone_id=zone_id,
+                primary_zone_name=zone_name,
+                primary_zone_type=zone_type,
+                zone_id=zone_id,
+                zone_name=zone_name,
+                zone_type=zone_type,
+                best_media_asset_id=(
+                    media_asset.id
+                    if media_asset is not None
+                    else evidence.snapshot_media_asset_id
+                    if evidence is not None
+                    else None
+                ),
+                **activity_context,
+                suggested_label=(
+                    suggestion.suggested_label
+                    if suggestion is not None
+                    else visit.species_guess or visit.subject_label
+                ),
+                suggestion_id=suggestion.id if suggestion is not None else None,
+                suggestion_confidence=(
+                    suggestion.confidence if suggestion is not None else None
+                ),
+                suggestion_reason=suggestion.notes if suggestion is not None else None,
+                suggestion_creates_truth=False,
+                media_asset=media_asset,
+                review_status=visit.review_status,
+                reason="Confirm or correct the suggested species label.",
             )
+            queue_item.identification = self._review_identification_summary_for_item(
+                session,
+                queue_item,
+            )
+            queue.append(queue_item)
 
         visit_event_ids = {item.event_id for item in queue if item.event_id is not None}
         event_models = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
@@ -6716,39 +7182,42 @@ class ProductRepository:
             media_asset = _media_asset_from_model(media_asset_model) if media_asset_model else None
             activity_context = self._review_queue_activity_context(evidence)
 
-            queue.append(
-                ReviewQueueItem(
-                    id=f"review-queue-{event.id}",
-                    item_type="event",
-                    target_type="event",
-                    target_id=event.id,
-                    title=event.title,
-                    stream_id=event.stream_id,
-                    stream_name=stream_name,
-                    source_id=source_id,
-                    source_name=source_name,
-                    event_id=event.id,
-                    visit_id=None,
-                    primary_zone_id=zone_id,
-                    primary_zone_name=zone_name,
-                    primary_zone_type=zone_type,
-                    zone_id=zone_id,
-                    zone_name=zone_name,
-                    zone_type=zone_type,
-                    best_media_asset_id=(
-                        media_asset.id
-                        if media_asset is not None
-                        else evidence.snapshot_media_asset_id
-                        if evidence is not None
-                        else None
-                    ),
-                    **activity_context,
-                    suggested_label=event.detections[0].label if event.detections else None,
-                    media_asset=media_asset,
-                    review_status=event.review_status,
-                    reason="Review detected outdoor activity and correct the event meaning.",
-                )
+            queue_item = ReviewQueueItem(
+                id=f"review-queue-{event.id}",
+                item_type="event",
+                target_type="event",
+                target_id=event.id,
+                title=event.title,
+                stream_id=event.stream_id,
+                stream_name=stream_name,
+                source_id=source_id,
+                source_name=source_name,
+                event_id=event.id,
+                visit_id=None,
+                primary_zone_id=zone_id,
+                primary_zone_name=zone_name,
+                primary_zone_type=zone_type,
+                zone_id=zone_id,
+                zone_name=zone_name,
+                zone_type=zone_type,
+                best_media_asset_id=(
+                    media_asset.id
+                    if media_asset is not None
+                    else evidence.snapshot_media_asset_id
+                    if evidence is not None
+                    else None
+                ),
+                **activity_context,
+                suggested_label=event.detections[0].label if event.detections else None,
+                media_asset=media_asset,
+                review_status=event.review_status,
+                reason="Review detected outdoor activity and correct the event meaning.",
             )
+            queue_item.identification = self._review_identification_summary_for_item(
+                session,
+                queue_item,
+            )
+            queue.append(queue_item)
 
         return queue
 

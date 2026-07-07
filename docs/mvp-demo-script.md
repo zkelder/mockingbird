@@ -41,6 +41,9 @@ transcoding, or production provider infrastructure.
 - Backend-session live monitoring saves the best activity frame as evidence and
   offers an explicit low-confidence Review Queue handoff without creating truth
   or exports.
+- Review Queue can show identification assist state on best-frame candidates:
+  setup-required/unavailable when no analyzer is configured, or suggestion/proposal
+  evidence when one is available or already present.
 - Stream Detail can draw and edit user-authored Zones directly over the real
   live stream, and monitoring uses those Zones when available.
 - The `external_url` still-image preview/save/evidence path works.
@@ -501,6 +504,10 @@ For exact webhook API examples, refer to
 - [ ] Open Review Queue.
 - [ ] Confirm unreviewed Visits appear before correction.
 - [ ] Confirm evidence context is visible for imported/demo proposal records.
+- [ ] On a best-frame candidate, confirm Identification assist shows either
+      setup-required/unavailable state or suggestion/proposal evidence.
+- [ ] If an assist suggestion/proposal is present, use it as a correction only
+      through the Review Queue correction action.
 - [ ] Submit or view corrections.
 - [ ] Confirm the saved correction is shown as ReviewLabel truth.
 - [ ] Confirm corrected Visit state.

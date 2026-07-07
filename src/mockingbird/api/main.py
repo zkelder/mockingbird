@@ -92,6 +92,8 @@ from mockingbird.api.schemas import (
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
+    ReviewIdentificationRequest,
+    ReviewIdentificationResponse,
     ReviewQueueBulkCorrectionRequest,
     ReviewQueueBulkCorrectionResponse,
     ReviewQueueItem,
@@ -601,6 +603,15 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
             detail="Model adapter does not support this media type.",
         )
     return _detection_interface_error(error)
+
+
+def _review_identification_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason == "unsupported_target":
+        return HTTPException(status_code=400, detail="Unsupported review identification target.")
+    if reason == "missing_review_candidate":
+        return _not_found("Review Queue candidate", "identify target")
+    return _model_adapter_error(error)
 
 
 def _motion_evaluation_error(error: ValueError) -> HTTPException:
@@ -5930,6 +5941,28 @@ async def decide_detection_proposal(
 @app.get("/api/review-queue", response_model=list[ReviewQueueItem])
 async def list_review_queue() -> list[ReviewQueueItem]:
     return get_repository().review_queue_items()
+
+
+@app.post(
+    "/api/review-queue/{target_type}/{target_id}/identify",
+    response_model=ReviewIdentificationResponse,
+)
+async def identify_review_queue_item(
+    target_type: str,
+    target_id: str,
+    payload: ReviewIdentificationRequest | None = None,
+) -> ReviewIdentificationResponse:
+    if target_type not in {"event", "visit"}:
+        raise _unsupported_target(target_type)
+
+    try:
+        return get_repository().identify_review_queue_item(
+            target_type,
+            target_id,
+            payload or ReviewIdentificationRequest(),
+        )
+    except ValueError as error:
+        raise _review_identification_error(error) from error
 
 
 @app.post(

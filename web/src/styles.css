@@ -1856,6 +1856,39 @@ a.secondary-action {
   font-weight: 750;
 }
 
+.review-identification-assist {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d9e2d5;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcf8;
+}
+
+.review-identification-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.review-identification-grid .data-row,
+.review-identification-grid strong,
+.review-identification-grid small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.review-identification-grid small {
+  color: #627168;
+  font-weight: 700;
+}
+
+.review-identification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .review-correction-boundary {
   grid-column: 1 / -1;
   width: fit-content;
@@ -5712,6 +5745,7 @@ a.secondary-action {
   .correction-success-grid,
   .review-diagnostic-grid,
   .review-evidence-grid,
+  .review-identification-grid,
   .adapter-evaluation-grid,
   .adapter-config-grid,
   .model-readiness-grid,
@@ -5847,6 +5881,7 @@ a.secondary-action {
   .review-candidate-context,
   .review-diagnostic-grid,
   .review-evidence-grid,
+  .review-identification-grid,
   .adapter-evaluation-grid,
   .model-readiness-grid,
   .local-detector-setup-grid,

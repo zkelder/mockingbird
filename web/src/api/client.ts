@@ -69,6 +69,8 @@ import type {
   MotionEvaluateSequenceResponse,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
+  ReviewIdentificationRequest,
+  ReviewIdentificationResponse,
   ReviewLabel,
   ReviewQueueBulkCorrectionRequest,
   ReviewQueueBulkCorrectionResponse,
@@ -584,6 +586,18 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  identifyReviewQueueItem: (
+    targetType: "event" | "visit",
+    targetId: string,
+    payload: ReviewIdentificationRequest = {},
+  ) =>
+    request<ReviewIdentificationResponse>(
+      `/api/review-queue/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/identify`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
   bulkCorrectReviewQueueItems: (payload: ReviewQueueBulkCorrectionRequest) =>
     request<ReviewQueueBulkCorrectionResponse>("/api/review-queue/bulk-correct", {
       method: "POST",
