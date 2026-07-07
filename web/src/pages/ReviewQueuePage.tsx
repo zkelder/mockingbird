@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { apiClient } from "../api/client";
 import type {
+  BoundingBox,
   DetectionProposal,
   DetectionRun,
   MotionEvidence,
@@ -189,6 +190,46 @@ function formatQualityWarning(warning: string): string {
   return warning.includes(" ") ? warning : formatLabel(warning);
 }
 
+function focusCropOverlayStyle(box: BoundingBox | null | undefined): CSSProperties | undefined {
+  if (!box) {
+    return undefined;
+  }
+  return {
+    left: `${box.x * 100}%`,
+    top: `${box.y * 100}%`,
+    width: `${box.width * 100}%`,
+    height: `${box.height * 100}%`,
+  };
+}
+
+function focusCropPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function focusCropBoxLabel(box: BoundingBox | null | undefined): string {
+  if (!box) {
+    return "No crop box";
+  }
+  return `Box ${focusCropPercent(box.x)}, ${focusCropPercent(box.y)} / ${focusCropPercent(
+    box.width,
+  )} x ${focusCropPercent(box.height)}`;
+}
+
+function focusCropPixelLabel(item: ReviewQueueItem): string {
+  const box = item.focus_crop_box_pixels;
+  if (!box) {
+    return "Pixel box unavailable";
+  }
+  return `Pixels ${box.x}, ${box.y} / ${box.width} x ${box.height}`;
+}
+
+function focusCropSummary(item: ReviewQueueItem): string {
+  if (!item.focus_crop_available) {
+    return "Full best frame";
+  }
+  return item.focus_crop_label ?? "Activity focus";
+}
+
 function reviewIdentificationLabel(item: ReviewQueueItem): string | null {
   const identification = item.identification;
   if (!identification) {
@@ -312,6 +353,16 @@ function reviewQueueSearchText(item: ReviewQueueItem, taxonomyLabels: TaxonomyLa
     item.suggestion_id ?? "",
     item.suggestion_confidence?.toString() ?? "",
     item.suggestion_reason ?? "",
+    item.focus_crop_available ? "activity focus crop" : "full best frame",
+    item.focus_crop_source ?? "",
+    item.focus_crop_label ?? "",
+    item.focus_crop_box_normalized
+      ? `${item.focus_crop_box_normalized.x} ${item.focus_crop_box_normalized.y} ${item.focus_crop_box_normalized.width} ${item.focus_crop_box_normalized.height}`
+      : "",
+    item.focus_crop_box_pixels
+      ? `${item.focus_crop_box_pixels.x} ${item.focus_crop_box_pixels.y} ${item.focus_crop_box_pixels.width} ${item.focus_crop_box_pixels.height}`
+      : "",
+    ...item.focus_crop_warnings,
     displayTaxonomyLabel(suggestedLabel || "unknown", taxonomyLabels),
     identification?.status ?? "",
     identification?.message ?? "",
@@ -320,6 +371,9 @@ function reviewQueueSearchText(item: ReviewQueueItem, taxonomyLabels: TaxonomyLa
     identification?.adapter_kind ?? "",
     identification?.adapter_status ?? "",
     identification?.setup_hint ?? "",
+    identification?.focus_crop_label ?? "",
+    identification?.focus_crop_source ?? "",
+    ...(identification?.focus_crop_warnings ?? []),
     identificationLabel,
     displayTaxonomyLabel(identificationLabel || "unknown", taxonomyLabels),
     identification?.suggestion?.id ?? "",
@@ -1761,6 +1815,15 @@ export function ReviewQueuePage({
             item.best_changed_ratio != null ||
             item.effective_threshold_used != null ||
             item.threshold_source != null;
+          const focusCropOverlay =
+            item.focus_crop_available && item.focus_crop_box_normalized ? (
+              <span
+                className="review-focus-crop-overlay"
+                style={focusCropOverlayStyle(item.focus_crop_box_normalized)}
+              >
+                <span>Activity focus</span>
+              </span>
+            ) : null;
           return (
             <article className="queue-card" key={item.id}>
               <div className="item-title-row">
@@ -1807,7 +1870,11 @@ export function ReviewQueuePage({
               >
                 {item.media_asset ? (
                   <div className="review-candidate-media">
-                    <MediaAssetPreview asset={item.media_asset} compact />
+                    <MediaAssetPreview
+                      asset={item.media_asset}
+                      compact
+                      surfaceOverlay={focusCropOverlay}
+                    />
                   </div>
                 ) : null}
                 <div className="review-candidate-body">
@@ -1840,6 +1907,26 @@ export function ReviewQueuePage({
                     {item.best_media_asset_id ? (
                       <span>Best media {item.best_media_asset_id}</span>
                     ) : null}
+                  </div>
+                  <div
+                    className={`review-focus-context${
+                      item.focus_crop_available ? "" : " review-focus-context-muted"
+                    }`}
+                  >
+                    <strong>{focusCropSummary(item)}</strong>
+                    {item.focus_crop_available ? (
+                      <>
+                        <span>{formatLabel(item.focus_crop_source)} context</span>
+                        <span>{focusCropBoxLabel(item.focus_crop_box_normalized)}</span>
+                        <span>{focusCropPixelLabel(item)}</span>
+                      </>
+                    ) : (
+                      <span>
+                        {item.focus_crop_warnings.length > 0
+                          ? item.focus_crop_warnings.map(formatQualityWarning).join(", ")
+                          : "No focus crop"}
+                      </span>
+                    )}
                   </div>
                   {item.image_quality_warnings.length > 0 ? (
                     <div className="review-quality-warnings">
@@ -2166,6 +2253,9 @@ function IdentificationAssistPanel({
     identification.supported_media_types.length > 0
       ? identification.supported_media_types.join(", ")
       : "n/a";
+  const focusPixelLabel = identification.focus_crop_box_pixels
+    ? `Pixels ${identification.focus_crop_box_pixels.x}, ${identification.focus_crop_box_pixels.y} / ${identification.focus_crop_box_pixels.width} x ${identification.focus_crop_box_pixels.height}`
+    : "Pixel box unavailable";
 
   return (
     <div className="review-identification-assist">
@@ -2207,6 +2297,25 @@ function IdentificationAssistPanel({
             {identification.can_run_on_best_frame
               ? "Runnable media"
               : identification.unavailable_reason ?? `Supports ${supportedMediaCopy}`}
+          </small>
+        </div>
+        <div className="data-row">
+          <span>Focus context</span>
+          <strong>
+            {identification.focus_crop_available
+              ? identification.focus_crop_label ?? "Activity focus"
+              : "Full best frame"}
+          </strong>
+          <small>
+            {identification.focus_crop_available
+              ? `Best frame with ${formatLabel(
+                  identification.focus_crop_source,
+                )} crop context. ${focusCropBoxLabel(
+                  identification.focus_crop_box_normalized,
+                )}. ${focusPixelLabel}.`
+              : identification.focus_crop_warnings.length > 0
+                ? identification.focus_crop_warnings.map(formatQualityWarning).join(", ")
+                : "No focus crop metadata"}
           </small>
         </div>
         <div className="data-row">

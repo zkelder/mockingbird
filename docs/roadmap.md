@@ -1117,6 +1117,11 @@ Current work:
   optional local image adapters against review best frames, marks demo analyzer
   output as placeholder evidence, and still creates no ReviewLabel, Bird Log,
   export, or automatic truth.
+- Identification Input Quality 1: Review Queue candidates now expose
+  activity focus/crop context from the best frame and reviewable Zone, keep the
+  full best frame available, attach focus context to identification proposal
+  evidence, and still create no ReviewLabel, Bird Log entry, export truth, model
+  download, or bundled model file.
 - Unattended Monitoring Review Handoff 1: Stream Detail can explicitly enable
   auto-created Review Queue candidates for completed live activity sessions
   after a quiet period. It reuses the existing needs-review Event/Visit handoff,

@@ -105,6 +105,7 @@ export type ReviewIdentificationStatus =
   | "proposal_created"
   | "no_proposal"
   | "failed";
+export type FocusCropSource = "zone" | "activity" | "manual" | "none";
 export type ExportStatus = "ready" | "building" | "failed";
 export type DetectionSource = "manual" | "demo_rule" | "future_model" | "integration";
 export type DetectionRunStatus = "pending" | "completed" | "failed";
@@ -776,6 +777,13 @@ export interface Point {
 }
 
 export interface BoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PixelBoundingBox {
   x: number;
   y: number;
   width: number;
@@ -1815,6 +1823,12 @@ export interface ReviewIdentificationSummary {
   proposal_count: number;
   created_suggestion_ids: string[];
   created_proposal_ids: string[];
+  focus_crop_available: boolean;
+  focus_crop_source: FocusCropSource;
+  focus_crop_box_normalized?: BoundingBox | null;
+  focus_crop_box_pixels?: PixelBoundingBox | null;
+  focus_crop_label?: string | null;
+  focus_crop_warnings: string[];
   creates_truth: boolean;
   creates_export: boolean;
 }
@@ -1855,6 +1869,12 @@ export interface ReviewQueueItem {
   suggestion_confidence?: number | null;
   suggestion_reason?: string | null;
   suggestion_creates_truth: boolean;
+  focus_crop_available: boolean;
+  focus_crop_source: FocusCropSource;
+  focus_crop_box_normalized?: BoundingBox | null;
+  focus_crop_box_pixels?: PixelBoundingBox | null;
+  focus_crop_label?: string | null;
+  focus_crop_warnings: string[];
   identification?: ReviewIdentificationSummary | null;
   media_asset?: MediaAsset | null;
   review_status: ReviewStatus;

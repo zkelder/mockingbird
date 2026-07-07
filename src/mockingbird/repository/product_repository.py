@@ -47,6 +47,11 @@ from mockingbird.detectors.megadetector_adapter import (
     normalize_megadetector_label,
     run_megadetector_on_image,
 )
+from mockingbird.motion.activity_crop import (
+    CropBoxNormalized,
+    plan_activity_crop,
+    plan_activity_crop_bounds,
+)
 from mockingbird.api.schemas import (
     AdapterEvaluationItem,
     AdapterEvaluationOutcome,
@@ -95,6 +100,7 @@ from mockingbird.api.schemas import (
     ExternalUrlWorkerDryRunResponse,
     ExternalUrlWorkerDryRunSummary,
     ExportStatus,
+    FocusCropSource,
     FolderImportCandidate,
     FolderImportCreate,
     FolderImportEvidenceBatchCreateItem,
@@ -128,6 +134,7 @@ from mockingbird.api.schemas import (
     MotionEvidencePromoteResponse,
     MotionEvidenceResponse,
     MotionEvidenceStatus,
+    PixelBoundingBox,
     Point,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -798,6 +805,16 @@ class _SavedMediaMotionEvidenceResult:
     duplicate_skipped: bool = False
     existing_motion_evidence_id: str | None = None
     provenance_kind: str | None = None
+
+
+@dataclass(frozen=True)
+class _ReviewFocusCropContext:
+    available: bool
+    source: FocusCropSource
+    box_normalized: BoundingBox | None
+    box_pixels: PixelBoundingBox | None
+    label: str | None
+    warnings: list[str]
 
 
 @dataclass(frozen=True)
@@ -5550,6 +5567,9 @@ class ProductRepository:
                 if adapter is not None and adapter.kind == ModelAdapterKind.demo
                 else "Review Queue identification assist run; proposal evidence only."
             )
+        focus_note = _review_focus_crop_proposal_note(queue_item)
+        if focus_note is not None:
+            notes = _merge_notes(notes, focus_note)
 
         try:
             run_result = self.run_model_adapter(
@@ -5850,6 +5870,7 @@ class ProductRepository:
             proposal_count=len(proposal_models),
             created_suggestion_ids=[],
             created_proposal_ids=[],
+            **_review_identification_focus_fields(item),
             creates_truth=False,
             creates_export=False,
         )
@@ -6114,6 +6135,92 @@ class ProductRepository:
                 config.get("image_quality_warnings")
             ),
         }
+
+    def _review_focus_crop_context(
+        self,
+        session: Session,
+        *,
+        zone_id: str | None,
+        media_asset_id: str | None,
+        evidence: MotionEvidenceModel | None,
+    ) -> _ReviewFocusCropContext:
+        if media_asset_id is None:
+            return _empty_review_focus_crop_context(["focus_crop_best_frame_unavailable"])
+
+        focus_zone_id = zone_id or (evidence.zone_id if evidence is not None else None)
+        if focus_zone_id is None:
+            return _empty_review_focus_crop_context(["focus_crop_zone_unavailable"])
+
+        zone_model = session.get(ZoneModel, focus_zone_id)
+        if zone_model is None:
+            return _empty_review_focus_crop_context(["focus_crop_zone_unavailable"])
+
+        zone = _zone_from_model(zone_model)
+        if zone.zone_type in {ZoneType.privacy, ZoneType.ignore}:
+            return _empty_review_focus_crop_context(
+                [f"focus_crop_suppressed_for_{zone.zone_type.value}_zone"]
+            )
+
+        zone_bounds = _zone_bounds(zone)
+        if zone_bounds is None:
+            return _empty_review_focus_crop_context(["focus_crop_zone_bounds_unavailable"])
+
+        warnings: list[str] = []
+        if not zone.is_active:
+            warnings.append("focus_crop_zone_inactive")
+
+        zone_width = zone_bounds.right - zone_bounds.left
+        zone_height = zone_bounds.bottom - zone_bounds.top
+        if zone_width < 0.15 or zone_height < 0.15:
+            warnings.append("focus_crop_small_zone_expanded")
+
+        image_width, image_height = _motion_evidence_frame_dimensions(evidence)
+        if image_width is not None and image_height is not None:
+            crop_plan = plan_activity_crop(
+                source_media_asset_id=media_asset_id,
+                image_width=image_width,
+                image_height=image_height,
+                left=zone_bounds.left,
+                top=zone_bounds.top,
+                right=zone_bounds.right,
+                bottom=zone_bounds.bottom,
+                crop_reason="user_zone",
+            )
+            crop_box = crop_plan.crop_box_normalized
+            pixel_box = _pixel_bounding_box_from_crop_plan(crop_plan)
+            if crop_plan.warning:
+                warnings.append(crop_plan.warning)
+            is_full_frame_fallback = crop_plan.is_full_frame_fallback
+        else:
+            bounds_plan = plan_activity_crop_bounds(
+                left=zone_bounds.left,
+                top=zone_bounds.top,
+                right=zone_bounds.right,
+                bottom=zone_bounds.bottom,
+            )
+            crop_box = bounds_plan.crop_box_normalized
+            pixel_box = None
+            warnings.append("focus_crop_pixels_unavailable")
+            if bounds_plan.warning:
+                warnings.append(bounds_plan.warning)
+            is_full_frame_fallback = bounds_plan.is_full_frame_fallback
+
+        if is_full_frame_fallback:
+            return _empty_review_focus_crop_context(warnings or ["focus_crop_unavailable"])
+
+        crop_width = crop_box.right - crop_box.left
+        crop_height = crop_box.bottom - crop_box.top
+        if crop_width >= 0.9 or crop_height >= 0.9 or crop_width * crop_height >= 0.75:
+            warnings.append("focus_crop_large_context")
+
+        return _ReviewFocusCropContext(
+            available=True,
+            source=FocusCropSource.zone,
+            box_normalized=_bounding_box_from_crop_box(crop_box),
+            box_pixels=pixel_box,
+            label=f"{zone.name} activity focus",
+            warnings=_unique_strings(warnings),
+        )
 
     def list_dataset_exports(self) -> list[DatasetExport]:
         with self.session_factory() as session:
@@ -7190,6 +7297,19 @@ class ProductRepository:
                 media_asset_id=media_asset.id if media_asset else None,
             )
             activity_context = self._review_queue_activity_context(evidence)
+            best_media_asset_id = (
+                media_asset.id
+                if media_asset is not None
+                else evidence.snapshot_media_asset_id
+                if evidence is not None
+                else None
+            )
+            focus_crop_context = self._review_focus_crop_context(
+                session,
+                zone_id=zone_id,
+                media_asset_id=best_media_asset_id,
+                evidence=evidence,
+            )
             queue_item = ReviewQueueItem(
                 id=f"review-queue-{visit.id}",
                 item_type="visit",
@@ -7208,13 +7328,7 @@ class ProductRepository:
                 zone_id=zone_id,
                 zone_name=zone_name,
                 zone_type=zone_type,
-                best_media_asset_id=(
-                    media_asset.id
-                    if media_asset is not None
-                    else evidence.snapshot_media_asset_id
-                    if evidence is not None
-                    else None
-                ),
+                best_media_asset_id=best_media_asset_id,
                 **activity_context,
                 suggested_label=(
                     suggestion.suggested_label
@@ -7227,6 +7341,7 @@ class ProductRepository:
                 ),
                 suggestion_reason=suggestion.notes if suggestion is not None else None,
                 suggestion_creates_truth=False,
+                **_review_focus_crop_fields(focus_crop_context),
                 media_asset=media_asset,
                 review_status=visit.review_status,
                 reason="Confirm or correct the suggested species label.",
@@ -7261,6 +7376,19 @@ class ProductRepository:
             )
             media_asset = _media_asset_from_model(media_asset_model) if media_asset_model else None
             activity_context = self._review_queue_activity_context(evidence)
+            best_media_asset_id = (
+                media_asset.id
+                if media_asset is not None
+                else evidence.snapshot_media_asset_id
+                if evidence is not None
+                else None
+            )
+            focus_crop_context = self._review_focus_crop_context(
+                session,
+                zone_id=zone_id,
+                media_asset_id=best_media_asset_id,
+                evidence=evidence,
+            )
 
             queue_item = ReviewQueueItem(
                 id=f"review-queue-{event.id}",
@@ -7280,15 +7408,10 @@ class ProductRepository:
                 zone_id=zone_id,
                 zone_name=zone_name,
                 zone_type=zone_type,
-                best_media_asset_id=(
-                    media_asset.id
-                    if media_asset is not None
-                    else evidence.snapshot_media_asset_id
-                    if evidence is not None
-                    else None
-                ),
+                best_media_asset_id=best_media_asset_id,
                 **activity_context,
                 suggested_label=event.detections[0].label if event.detections else None,
+                **_review_focus_crop_fields(focus_crop_context),
                 media_asset=media_asset,
                 review_status=event.review_status,
                 reason="Review detected outdoor activity and correct the event meaning.",
@@ -10485,6 +10608,121 @@ def _review_queue_bulk_correction_failure_message(reason: str) -> str:
     if reason == "unsupported_target":
         return "Review target type is not supported."
     return "Review Queue item could not be corrected."
+
+
+def _empty_review_focus_crop_context(warnings: list[str]) -> _ReviewFocusCropContext:
+    return _ReviewFocusCropContext(
+        available=False,
+        source=FocusCropSource.none,
+        box_normalized=None,
+        box_pixels=None,
+        label=None,
+        warnings=_unique_strings(warnings),
+    )
+
+
+def _review_focus_crop_fields(context: _ReviewFocusCropContext) -> dict[str, Any]:
+    return {
+        "focus_crop_available": context.available,
+        "focus_crop_source": context.source,
+        "focus_crop_box_normalized": context.box_normalized,
+        "focus_crop_box_pixels": context.box_pixels,
+        "focus_crop_label": context.label,
+        "focus_crop_warnings": context.warnings,
+    }
+
+
+def _review_identification_focus_fields(item: ReviewQueueItem) -> dict[str, Any]:
+    return {
+        "focus_crop_available": item.focus_crop_available,
+        "focus_crop_source": item.focus_crop_source,
+        "focus_crop_box_normalized": item.focus_crop_box_normalized,
+        "focus_crop_box_pixels": item.focus_crop_box_pixels,
+        "focus_crop_label": item.focus_crop_label,
+        "focus_crop_warnings": list(item.focus_crop_warnings),
+    }
+
+
+def _review_focus_crop_proposal_note(item: ReviewQueueItem) -> str | None:
+    box = item.focus_crop_box_normalized
+    if not item.focus_crop_available or box is None:
+        return None
+    pixel_box = item.focus_crop_box_pixels
+    pixel_note = (
+        (
+            f"; pixel_box=x={pixel_box.x},y={pixel_box.y},"
+            f"width={pixel_box.width},height={pixel_box.height}"
+        )
+        if pixel_box is not None
+        else "; pixel_box=unavailable"
+    )
+    warnings_note = (
+        f"; warnings={','.join(item.focus_crop_warnings)}"
+        if item.focus_crop_warnings
+        else ""
+    )
+    return (
+        "Identification focus context: "
+        f"{item.focus_crop_label or 'activity focus'}; "
+        f"source={item.focus_crop_source.value}; "
+        f"normalized_box=x={box.x:.4f},y={box.y:.4f},"
+        f"width={box.width:.4f},height={box.height:.4f}"
+        f"{pixel_note}{warnings_note}; original best frame preserved."
+    )
+
+
+def _zone_bounds(zone: Zone) -> CropBoxNormalized | None:
+    if not zone.polygon:
+        return None
+    left = min(point.x for point in zone.polygon)
+    top = min(point.y for point in zone.polygon)
+    right = max(point.x for point in zone.polygon)
+    bottom = max(point.y for point in zone.polygon)
+    if left >= right or top >= bottom:
+        return None
+    return CropBoxNormalized(left=left, top=top, right=right, bottom=bottom)
+
+
+def _bounding_box_from_crop_box(box: CropBoxNormalized) -> BoundingBox:
+    return BoundingBox(
+        x=box.left,
+        y=box.top,
+        width=box.right - box.left,
+        height=box.bottom - box.top,
+    )
+
+
+def _pixel_bounding_box_from_crop_plan(crop_plan: Any) -> PixelBoundingBox:
+    return PixelBoundingBox(
+        x=crop_plan.crop_box_pixels.left,
+        y=crop_plan.crop_box_pixels.top,
+        width=crop_plan.crop_box_pixels.width,
+        height=crop_plan.crop_box_pixels.height,
+    )
+
+
+def _motion_evidence_frame_dimensions(
+    evidence: MotionEvidenceModel | None,
+) -> tuple[int | None, int | None]:
+    if evidence is None:
+        return None, None
+    try:
+        config = dict(json.loads(evidence.scoring_config_json))
+    except (TypeError, ValueError):
+        return None, None
+    width = (
+        _optional_int(config.get("best_frame_width"))
+        or _optional_int(config.get("image_width"))
+        or _optional_int(config.get("frame_width"))
+    )
+    height = (
+        _optional_int(config.get("best_frame_height"))
+        or _optional_int(config.get("image_height"))
+        or _optional_int(config.get("frame_height"))
+    )
+    if width is None or height is None or width < 1 or height < 1:
+        return None, None
+    return width, height
 
 
 def _saved_media_motion_evidence_skip_message(reason: str) -> str:

@@ -1731,6 +1731,7 @@ a.secondary-action {
 .review-candidate-summary-row,
 .review-candidate-path,
 .review-candidate-metrics,
+.review-focus-context,
 .review-quality-warnings {
   display: flex;
   flex-wrap: wrap;
@@ -1746,6 +1747,7 @@ a.secondary-action {
 
 .review-candidate-path span,
 .review-candidate-metrics span,
+.review-focus-context span,
 .review-quality-warnings span,
 .review-diagnostic-grid span {
   border-radius: 8px;
@@ -1759,6 +1761,55 @@ a.secondary-action {
 
 .review-candidate-path span {
   background: #f7faf3;
+}
+
+.review-focus-context {
+  border-radius: 8px;
+  padding: 8px;
+  background: #f0f7ee;
+}
+
+.review-focus-context strong {
+  color: #203529;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.review-focus-context span {
+  background: #ffffff;
+}
+
+.review-focus-context-muted {
+  background: #f7faf3;
+}
+
+.review-focus-context-muted strong,
+.review-focus-context-muted span {
+  color: #627168;
+}
+
+.review-focus-crop-overlay {
+  position: absolute;
+  display: grid;
+  min-width: 34px;
+  min-height: 28px;
+  place-items: end start;
+  border: 2px solid #a8e06f;
+  border-radius: 6px;
+  background: rgb(168 224 111 / 13%);
+  box-shadow: 0 0 0 1px rgb(17 29 24 / 70%);
+  color: #f6ffe8;
+  pointer-events: none;
+}
+
+.review-focus-crop-overlay span {
+  margin: 4px;
+  border-radius: 6px;
+  padding: 3px 6px;
+  background: rgb(17 29 24 / 82%);
+  color: #f6ffe8;
+  font-size: 0.72rem;
+  font-weight: 850;
 }
 
 .review-quality-warnings strong {
@@ -4478,6 +4529,7 @@ a.secondary-action {
 }
 
 .media-preview-surface {
+  position: relative;
   display: grid;
   min-height: 220px;
   place-items: center;

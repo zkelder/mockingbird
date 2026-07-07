@@ -2752,6 +2752,16 @@ async def evaluate_saved_media_motion(
                             "max_snapshots_per_session": (
                                 session_recommendation.max_snapshots_per_session
                             ),
+                            "best_frame_width": (
+                                best_snapshot_frame.width
+                                if best_snapshot_frame is not None
+                                else None
+                            ),
+                            "best_frame_height": (
+                                best_snapshot_frame.height
+                                if best_snapshot_frame is not None
+                                else None
+                            ),
                         },
                         snapshot_media_asset_id=(
                             best_media_asset_id if payload.attach_best_snapshot else None
@@ -3188,6 +3198,19 @@ def _evaluate_live_stream_motion(
         if best_candidate
         else None
     )
+    best_live_frame_summary = (
+        next(
+            (
+                frame_summary
+                for frame_summary in frame_summaries
+                if best_live_frame is not None
+                and frame_summary.sequence == best_live_frame.sequence
+            ),
+            None,
+        )
+        if best_live_frame is not None
+        else None
+    )
     strongest_frame_start_sequence, strongest_frame_end_sequence = _live_motion_pair_sequences(
         cached_frames,
         best_candidate.best_frame_index if best_candidate else None,
@@ -3244,6 +3267,12 @@ def _evaluate_live_stream_motion(
                 "end_frame_sequence": strongest_frame_end_sequence,
                 "best_frame_sequence": best_live_frame.sequence,
                 "best_frame_captured_at": best_live_frame.captured_at,
+                "best_frame_width": (
+                    best_live_frame_summary.width if best_live_frame_summary else None
+                ),
+                "best_frame_height": (
+                    best_live_frame_summary.height if best_live_frame_summary else None
+                ),
                 "best_score": _live_activity_best_frame_score(
                     changed_ratio=strongest_changed_ratio,
                     changed_pixels=strongest_score.changed_pixels
@@ -3485,6 +3514,16 @@ def _evaluate_live_stream_motion(
                         ),
                         "best_total_scored_pixels": (
                             strongest_score.total_pixels if strongest_score else 0
+                        ),
+                        "best_frame_width": (
+                            best_live_frame_summary.width
+                            if best_live_frame_summary is not None
+                            else None
+                        ),
+                        "best_frame_height": (
+                            best_live_frame_summary.height
+                            if best_live_frame_summary is not None
+                            else None
                         ),
                         "effective_threshold_used": effective_threshold_used,
                         "threshold_source": (
@@ -4034,6 +4073,8 @@ def _create_live_stream_motion_review_activity(
                     "best_total_scored_pixels": (
                         activity.get("best_total_scored_pixels") or 0
                     ),
+                    "best_frame_width": activity.get("best_frame_width"),
+                    "best_frame_height": activity.get("best_frame_height"),
                     "threshold_used": activity.get("effective_threshold_used")
                     or activity.get("threshold_used"),
                     "effective_threshold_used": activity.get("effective_threshold_used")

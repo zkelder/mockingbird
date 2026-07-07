@@ -95,6 +95,8 @@ class LiveActivitySessionSnapshot:
     best_frame_captured_at: datetime | None
     best_frame_content_type: str | None
     best_frame_size_bytes: int | None
+    best_frame_width: int | None
+    best_frame_height: int | None
     best_media_asset_id: str | None
     best_score: float | None
     best_changed_ratio: float | None
@@ -142,6 +144,8 @@ class LiveActivitySessionSnapshot:
             "best_frame_captured_at": self.best_frame_captured_at,
             "best_frame_content_type": self.best_frame_content_type,
             "best_frame_size_bytes": self.best_frame_size_bytes,
+            "best_frame_width": self.best_frame_width,
+            "best_frame_height": self.best_frame_height,
             "best_media_asset_id": self.best_media_asset_id,
             "best_score": self.best_score,
             "best_changed_ratio": self.best_changed_ratio,
@@ -890,6 +894,8 @@ class _LiveActivitySession:
     best_frame_captured_at: datetime | None
     best_frame_content_type: str | None
     best_frame_bytes: bytes | None
+    best_frame_width: int | None
+    best_frame_height: int | None
     best_media_asset_id: str | None
     best_score: float | None
     best_changed_ratio: float | None
@@ -947,6 +953,8 @@ class _LiveActivitySession:
             best_frame_captured_at=None,
             best_frame_content_type=None,
             best_frame_bytes=None,
+            best_frame_width=None,
+            best_frame_height=None,
             best_media_asset_id=None,
             best_score=None,
             best_changed_ratio=None,
@@ -1011,6 +1019,8 @@ class _LiveActivitySession:
             )
             self.best_frame_content_type = frame_content_type
             self.best_frame_bytes = frame_bytes
+            self.best_frame_width = _optional_int(values.get("best_frame_width"))
+            self.best_frame_height = _optional_int(values.get("best_frame_height"))
 
     def mark_review_created(self, values: Mapping[str, Any]) -> None:
         self.review_activity_created = True
@@ -1068,6 +1078,8 @@ class _LiveActivitySession:
             best_frame_size_bytes=(
                 len(self.best_frame_bytes) if self.best_frame_bytes is not None else None
             ),
+            best_frame_width=self.best_frame_width,
+            best_frame_height=self.best_frame_height,
             best_media_asset_id=self.best_media_asset_id,
             best_score=self.best_score,
             best_changed_ratio=self.best_changed_ratio,

@@ -48,7 +48,8 @@ transcoding, or production provider infrastructure.
 - Review Queue can show identification assist state on best-frame candidates:
   setup-required/unavailable/unsupported/failed when an optional local analyzer
   cannot run, or suggestion/proposal evidence when one is available or already
-  present. Demo analyzer output is placeholder evidence only.
+  present. Best-frame candidates can also show activity focus/crop context from
+  the reviewable Zone. Demo analyzer output is placeholder evidence only.
 - Stream Detail can draw and edit user-authored Zones directly over the real
   live stream, and monitoring uses those Zones when available.
 - The `external_url` still-image preview/save/evidence path works.
@@ -272,15 +273,16 @@ Dataset Exports.
 - [ ] If auto-create is enabled, wait through the quiet period and confirm a
       needs-review Review Queue item appears without clicking `Create review
       activity`.
-- [ ] Confirm auto-created candidates show best frame, Zone/session diagnostics,
-      and optional identification-assist status, but no identification run,
-      ReviewLabel, Bird Log entry, export, or reviewed truth is created.
+- [ ] Confirm auto-created candidates show best frame, activity focus/crop
+      context, Zone/session diagnostics, and optional identification-assist
+      status, but no identification run, ReviewLabel, Bird Log entry, export, or
+      reviewed truth is created.
 - [ ] Keep moving or click `Create review activity` twice and confirm duplicate
       activity shows a quiet/cooldown state instead of creating duplicate review
       candidates.
 - [ ] Click `Create review activity` and confirm Review Queue shows an
-      uncertain needs-review activity with the saved best frame, Zone name, and
-      low-confidence suggestion.
+      uncertain needs-review activity with the saved best frame, activity focus,
+      Zone name, and low-confidence suggestion.
 - [ ] Confirm `Open Review Queue` lands on the new needs-review item without a
       browser reload, and High sensitivity shows strongest change/threshold
       diagnostics for small feeder movement.

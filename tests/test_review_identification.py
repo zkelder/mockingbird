@@ -48,12 +48,17 @@ async def client():
         yield api_client
 
 
-async def import_review_image(client: httpx.AsyncClient, *, title: str = "Review assist image"):
+async def import_review_image(
+    client: httpx.AsyncClient,
+    *,
+    title: str = "Review assist image",
+    zone_id: str = FEEDER_ZONE_ID,
+):
     response = await client.post(
         "/api/media/import",
         data={
             "stream_id": STREAM_ID,
-            "zone_id": FEEDER_ZONE_ID,
+            "zone_id": zone_id,
             "title": title,
             "subject_label": "unknown_bird",
             "species_guess": "unknown_bird",
@@ -109,6 +114,83 @@ async def review_queue_item_for_visit(client: httpx.AsyncClient, visit_id: str) 
     response = await client.get("/api/review-queue")
     assert response.status_code == 200
     return next(item for item in response.json() if item["visit_id"] == visit_id)
+
+
+async def test_review_queue_item_exposes_zone_focus_crop_metadata_without_truth(
+    client: httpx.AsyncClient,
+) -> None:
+    imported = await import_review_image(client, title="Review assist focus image")
+    visit_id = imported["visit"]["id"]
+    media_asset_id = imported["media_asset"]["id"]
+    before_truth = await truth_snapshot(client)
+
+    queue_item = await review_queue_item_for_visit(client, visit_id)
+    focus_box = queue_item["focus_crop_box_normalized"]
+
+    assert queue_item["best_media_asset_id"] == media_asset_id
+    assert queue_item["focus_crop_available"] is True
+    assert queue_item["focus_crop_source"] == "zone"
+    assert queue_item["focus_crop_label"] == "Feeder activity focus"
+    assert focus_box["x"] == pytest.approx(0.22)
+    assert focus_box["y"] == pytest.approx(0.08)
+    assert focus_box["width"] == pytest.approx(0.56)
+    assert focus_box["height"] == pytest.approx(0.64)
+    assert queue_item["focus_crop_box_pixels"] is None
+    assert "focus_crop_pixels_unavailable" in queue_item["focus_crop_warnings"]
+    assert queue_item["identification"]["focus_crop_available"] is True
+    assert queue_item["identification"]["focus_crop_box_normalized"] == focus_box
+    assert queue_item["identification"]["focus_crop_box_pixels"] is None
+    assert queue_item["identification"]["creates_truth"] is False
+    assert await truth_snapshot(client) == before_truth
+
+
+async def test_review_queue_focus_crop_suppressed_for_ignore_and_privacy_zones(
+    client: httpx.AsyncClient,
+) -> None:
+    privacy_response = await client.post(
+        "/api/zones",
+        json={
+            "stream_id": STREAM_ID,
+            "name": "Privacy porch",
+            "zone_type": "privacy",
+            "polygon": [
+                {"x": 0.7, "y": 0.0},
+                {"x": 1.0, "y": 0.0},
+                {"x": 1.0, "y": 0.4},
+                {"x": 0.7, "y": 0.4},
+            ],
+        },
+    )
+    assert privacy_response.status_code == 201
+    privacy_zone_id = privacy_response.json()["zone"]["id"]
+
+    ignored = await import_review_image(
+        client,
+        title="Review assist ignore-zone image",
+        zone_id="zone-ignore-driveway-edge",
+    )
+    private = await import_review_image(
+        client,
+        title="Review assist privacy-zone image",
+        zone_id=privacy_zone_id,
+    )
+
+    ignored_item = await review_queue_item_for_visit(client, ignored["visit"]["id"])
+    private_item = await review_queue_item_for_visit(client, private["visit"]["id"])
+
+    assert ignored_item["focus_crop_available"] is False
+    assert ignored_item["focus_crop_source"] == "none"
+    assert ignored_item["focus_crop_box_normalized"] is None
+    assert ignored_item["focus_crop_box_pixels"] is None
+    assert "focus_crop_suppressed_for_ignore_zone" in ignored_item["focus_crop_warnings"]
+    assert ignored_item["identification"]["focus_crop_available"] is False
+
+    assert private_item["focus_crop_available"] is False
+    assert private_item["focus_crop_source"] == "none"
+    assert private_item["focus_crop_box_normalized"] is None
+    assert private_item["focus_crop_box_pixels"] is None
+    assert "focus_crop_suppressed_for_privacy_zone" in private_item["focus_crop_warnings"]
+    assert private_item["identification"]["focus_crop_available"] is False
 
 
 def mark_local_detector_available(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -278,6 +360,16 @@ async def test_review_identification_explicit_demo_adapter_creates_placeholder_p
     assert proposal["status"] == "proposed"
     assert proposal["label"] == "unknown_bird"
     assert proposal["confidence"] == 0
+    assert "Explicit demo assist from Review Queue." in proposal["notes"]
+    assert "Identification focus context: Feeder activity focus" in proposal["notes"]
+    assert "source=zone" in proposal["notes"]
+    assert "normalized_box=x=0.2200,y=0.0800,width=0.5600,height=0.6400" in proposal[
+        "notes"
+    ]
+    assert "original best frame preserved" in proposal["notes"]
+    assert result["review_queue_item"]["focus_crop_available"] is True
+    assert result["identification"]["focus_crop_available"] is True
+    assert result["identification"]["focus_crop_label"] == "Feeder activity focus"
     assert result["creates_truth"] is False
     assert after_detection["detection_run_count"] == before_detection["detection_run_count"] + 1
     assert (

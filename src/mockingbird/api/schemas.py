@@ -159,6 +159,13 @@ class ReviewIdentificationStatus(str, Enum):
     failed = "failed"
 
 
+class FocusCropSource(str, Enum):
+    zone = "zone"
+    activity = "activity"
+    manual = "manual"
+    none = "none"
+
+
 class ExportStatus(str, Enum):
     ready = "ready"
     building = "building"
@@ -953,6 +960,13 @@ class BoundingBox(BaseModel):
     y: float = Field(ge=0, le=1)
     width: float = Field(gt=0, le=1)
     height: float = Field(gt=0, le=1)
+
+
+class PixelBoundingBox(BaseModel):
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
 
 
 class Zone(BaseModel):
@@ -1811,6 +1825,12 @@ class ReviewIdentificationSummary(BaseModel):
     proposal_count: int = Field(default=0, ge=0)
     created_suggestion_ids: list[str] = Field(default_factory=list)
     created_proposal_ids: list[str] = Field(default_factory=list)
+    focus_crop_available: bool = False
+    focus_crop_source: FocusCropSource = FocusCropSource.none
+    focus_crop_box_normalized: BoundingBox | None = None
+    focus_crop_box_pixels: PixelBoundingBox | None = None
+    focus_crop_label: str | None = None
+    focus_crop_warnings: list[str] = Field(default_factory=list)
     creates_truth: bool = False
     creates_export: bool = False
 
@@ -1864,6 +1884,12 @@ class ReviewQueueItem(BaseModel):
     suggestion_confidence: float | None = Field(default=None, ge=0, le=1)
     suggestion_reason: str | None = None
     suggestion_creates_truth: bool = False
+    focus_crop_available: bool = False
+    focus_crop_source: FocusCropSource = FocusCropSource.none
+    focus_crop_box_normalized: BoundingBox | None = None
+    focus_crop_box_pixels: PixelBoundingBox | None = None
+    focus_crop_label: str | None = None
+    focus_crop_warnings: list[str] = Field(default_factory=list)
     identification: ReviewIdentificationSummary | None = None
     media_asset: MediaAsset | None = None
     review_status: ReviewStatus

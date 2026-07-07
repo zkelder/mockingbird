@@ -42,6 +42,71 @@ class ActivityCropPlan:
     warning: str | None = None
 
 
+@dataclass(frozen=True)
+class ActivityCropBoundsPlan:
+    crop_box_normalized: CropBoxNormalized
+    padding_ratio: float
+    is_full_frame_fallback: bool
+    warning: str | None = None
+
+
+def plan_activity_crop_bounds(
+    *,
+    left: float | None,
+    top: float | None,
+    right: float | None,
+    bottom: float | None,
+    padding_ratio: float = DEFAULT_CROP_PADDING_RATIO,
+    min_crop_size_ratio: float = DEFAULT_MIN_CROP_SIZE_RATIO,
+) -> ActivityCropBoundsPlan:
+    """Plan padded normalized activity bounds without requiring a decoded frame."""
+
+    safe_padding = max(0.0, padding_ratio if isfinite(padding_ratio) else 0.0)
+    safe_min_size = _clamp(
+        min_crop_size_ratio if isfinite(min_crop_size_ratio) else DEFAULT_MIN_CROP_SIZE_RATIO,
+        0.0,
+        1.0,
+    )
+
+    if not _valid_bounds(left, top, right, bottom):
+        return _full_frame_bounds_plan(
+            padding_ratio=safe_padding,
+            warning="Focused crop bounds unavailable; full snapshot remains the review context.",
+        )
+
+    base = CropBoxNormalized(
+        left=_clamp(float(left), 0.0, 1.0),
+        top=_clamp(float(top), 0.0, 1.0),
+        right=_clamp(float(right), 0.0, 1.0),
+        bottom=_clamp(float(bottom), 0.0, 1.0),
+    )
+    if base.left >= base.right or base.top >= base.bottom:
+        return _full_frame_bounds_plan(
+            padding_ratio=safe_padding,
+            warning="Focused crop bounds fell outside the image; full snapshot remains the review context.",
+        )
+
+    padded = _pad_box(base, padding_ratio=safe_padding)
+    expanded = _expand_to_min_size(padded, min_size_ratio=safe_min_size)
+    crop = CropBoxNormalized(
+        left=_clamp(expanded.left, 0.0, 1.0),
+        top=_clamp(expanded.top, 0.0, 1.0),
+        right=_clamp(expanded.right, 0.0, 1.0),
+        bottom=_clamp(expanded.bottom, 0.0, 1.0),
+    )
+    if crop.left >= crop.right or crop.top >= crop.bottom:
+        return _full_frame_bounds_plan(
+            padding_ratio=safe_padding,
+            warning="Focused crop collapsed after padding; full snapshot remains the review context.",
+        )
+
+    return ActivityCropBoundsPlan(
+        crop_box_normalized=crop,
+        padding_ratio=safe_padding,
+        is_full_frame_fallback=False,
+    )
+
+
 def plan_activity_crop(
     *,
     source_media_asset_id: str | None,
@@ -59,61 +124,43 @@ def plan_activity_crop(
 
     if image_width < 1 or image_height < 1:
         raise ValueError("image dimensions must be positive")
-    safe_padding = max(0.0, padding_ratio if isfinite(padding_ratio) else 0.0)
-    safe_min_size = _clamp(
-        min_crop_size_ratio if isfinite(min_crop_size_ratio) else DEFAULT_MIN_CROP_SIZE_RATIO,
-        0.0,
-        1.0,
+    bounds_plan = plan_activity_crop_bounds(
+        left=left,
+        top=top,
+        right=right,
+        bottom=bottom,
+        padding_ratio=padding_ratio,
+        min_crop_size_ratio=min_crop_size_ratio,
     )
-
-    if not _valid_bounds(left, top, right, bottom):
-        return _full_frame_plan(
-            source_media_asset_id=source_media_asset_id,
-            image_width=image_width,
-            image_height=image_height,
-            padding_ratio=safe_padding,
-            warning="Focused crop bounds unavailable; full snapshot remains the review context.",
-        )
-
-    base = CropBoxNormalized(
-        left=_clamp(float(left), 0.0, 1.0),
-        top=_clamp(float(top), 0.0, 1.0),
-        right=_clamp(float(right), 0.0, 1.0),
-        bottom=_clamp(float(bottom), 0.0, 1.0),
-    )
-    if base.left >= base.right or base.top >= base.bottom:
-        return _full_frame_plan(
-            source_media_asset_id=source_media_asset_id,
-            image_width=image_width,
-            image_height=image_height,
-            padding_ratio=safe_padding,
-            warning="Focused crop bounds fell outside the image; full snapshot remains the review context.",
-        )
-
-    padded = _pad_box(base, padding_ratio=safe_padding)
-    expanded = _expand_to_min_size(padded, min_size_ratio=safe_min_size)
-    crop = CropBoxNormalized(
-        left=_clamp(expanded.left, 0.0, 1.0),
-        top=_clamp(expanded.top, 0.0, 1.0),
-        right=_clamp(expanded.right, 0.0, 1.0),
-        bottom=_clamp(expanded.bottom, 0.0, 1.0),
-    )
-    if crop.left >= crop.right or crop.top >= crop.bottom:
-        return _full_frame_plan(
-            source_media_asset_id=source_media_asset_id,
-            image_width=image_width,
-            image_height=image_height,
-            padding_ratio=safe_padding,
-            warning="Focused crop collapsed after padding; full snapshot remains the review context.",
-        )
 
     return ActivityCropPlan(
         source_media_asset_id=source_media_asset_id,
+        crop_box_normalized=bounds_plan.crop_box_normalized,
+        crop_box_pixels=_pixel_box(
+            bounds_plan.crop_box_normalized,
+            image_width=image_width,
+            image_height=image_height,
+        ),
+        crop_reason=(
+            "full_frame_fallback" if bounds_plan.is_full_frame_fallback else crop_reason
+        ),
+        padding_ratio=bounds_plan.padding_ratio,
+        is_full_frame_fallback=bounds_plan.is_full_frame_fallback,
+        warning=bounds_plan.warning,
+    )
+
+
+def _full_frame_bounds_plan(
+    *,
+    padding_ratio: float,
+    warning: str,
+) -> ActivityCropBoundsPlan:
+    crop = CropBoxNormalized(left=0.0, top=0.0, right=1.0, bottom=1.0)
+    return ActivityCropBoundsPlan(
         crop_box_normalized=crop,
-        crop_box_pixels=_pixel_box(crop, image_width=image_width, image_height=image_height),
-        crop_reason=crop_reason,
-        padding_ratio=safe_padding,
-        is_full_frame_fallback=False,
+        padding_ratio=padding_ratio,
+        is_full_frame_fallback=True,
+        warning=warning,
     )
 
 
