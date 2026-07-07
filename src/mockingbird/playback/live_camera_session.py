@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha1
+import re
 import subprocess
 import threading
 import time
@@ -38,6 +40,7 @@ class LiveCameraSessionSnapshot:
     clients_connected: int
     monitor_running: bool
     last_motion_evaluation_at: datetime | None
+    current_activity_session: dict[str, Any] | None
     last_activity: dict[str, Any] | None
     last_motion_result: dict[str, Any] | None
     last_error: str | None
@@ -54,6 +57,106 @@ class LiveCameraSessionSnapshot:
             0,
             int((datetime.now(UTC) - self.last_frame_at).total_seconds() * 1000),
         )
+
+
+@dataclass(frozen=True)
+class LiveActivitySessionSnapshot:
+    # Live activity sessions group repeated hits before review creates product evidence.
+    activity_session_id: str
+    stream_id: str
+    source_id: str | None
+    region_key: str
+    region_kind: str
+    region_id: str | None
+    zone_id: str | None
+    zone_name: str | None
+    zone_type: str | None
+    started_at: datetime
+    last_seen_at: datetime
+    detection_count: int
+    start_frame_sequence: int | None
+    end_frame_sequence: int | None
+    best_frame_sequence: int | None
+    best_frame_captured_at: datetime | None
+    best_frame_content_type: str | None
+    best_frame_size_bytes: int | None
+    best_media_asset_id: str | None
+    best_score: float | None
+    best_changed_ratio: float | None
+    best_changed_pixels: int | None
+    best_total_scored_pixels: int | None
+    current_changed_ratio: float | None
+    current_changed_pixels: int | None
+    current_total_scored_pixels: int | None
+    effective_threshold_used: float | None
+    threshold_source: str | None
+    fine_motion_applied: bool
+    image_quality_warnings: list[str]
+    near_miss: bool
+    margin_to_threshold: float | None
+    review_activity_created: bool
+    motion_evidence_id: str | None
+    event_id: str | None
+    visit_id: str | None
+    review_queue_item_id: str | None
+    suggested_label: str | None
+    suggestion_id: str | None
+    suggestion_confidence: float | None
+    creates_truth: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "activity_session_id": self.activity_session_id,
+            "stream_id": self.stream_id,
+            "source_id": self.source_id,
+            "region_key": self.region_key,
+            "region_kind": self.region_kind,
+            "region_id": self.region_id,
+            "zone_id": self.zone_id,
+            "zone_name": self.zone_name,
+            "zone_type": self.zone_type,
+            "started_at": self.started_at,
+            "last_seen_at": self.last_seen_at,
+            "detection_count": self.detection_count,
+            "start_frame_sequence": self.start_frame_sequence,
+            "end_frame_sequence": self.end_frame_sequence,
+            "best_frame_sequence": self.best_frame_sequence,
+            "best_frame_captured_at": self.best_frame_captured_at,
+            "best_frame_content_type": self.best_frame_content_type,
+            "best_frame_size_bytes": self.best_frame_size_bytes,
+            "best_media_asset_id": self.best_media_asset_id,
+            "best_score": self.best_score,
+            "best_changed_ratio": self.best_changed_ratio,
+            "best_changed_pixels": self.best_changed_pixels,
+            "best_total_scored_pixels": self.best_total_scored_pixels,
+            "current_changed_ratio": self.current_changed_ratio,
+            "current_changed_pixels": self.current_changed_pixels,
+            "current_total_scored_pixels": self.current_total_scored_pixels,
+            "effective_threshold_used": self.effective_threshold_used,
+            "threshold_source": self.threshold_source,
+            "fine_motion_applied": self.fine_motion_applied,
+            "image_quality_warnings": list(self.image_quality_warnings),
+            "near_miss": self.near_miss,
+            "margin_to_threshold": self.margin_to_threshold,
+            "review_activity_created": self.review_activity_created,
+            "motion_evidence_id": self.motion_evidence_id,
+            "event_id": self.event_id,
+            "visit_id": self.visit_id,
+            "review_queue_item_id": self.review_queue_item_id,
+            "suggested_label": self.suggested_label,
+            "suggestion_id": self.suggestion_id,
+            "suggestion_confidence": self.suggestion_confidence,
+            "creates_truth": self.creates_truth,
+        }
+
+
+@dataclass(frozen=True)
+class LiveActivityBestFrame:
+    activity_session_id: str
+    frame_bytes: bytes | None
+    content_type: str | None
+    captured_at: datetime | None
+    sequence: int | None
 
 
 class LiveCameraSessionManager:
@@ -169,6 +272,72 @@ class LiveCameraSessionManager:
         session.record_motion_result(result, last_activity=last_activity)
         return session.snapshot()
 
+    def record_activity_detection(
+        self,
+        stream_id: str,
+        values: Mapping[str, Any],
+        *,
+        frame_bytes: bytes | None,
+        frame_content_type: str | None,
+        quiet_window_seconds: int,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.record_activity_detection(
+            values,
+            frame_bytes=frame_bytes,
+            frame_content_type=frame_content_type,
+            quiet_window_seconds=quiet_window_seconds,
+        )
+
+    def get_activity_session(
+        self,
+        stream_id: str,
+        activity_session_id: str | None = None,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.get_activity_session(activity_session_id)
+
+    def get_activity_best_frame(
+        self,
+        stream_id: str,
+        activity_session_id: str | None = None,
+    ) -> LiveActivityBestFrame | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.get_activity_best_frame(activity_session_id)
+
+    def mark_activity_media_asset(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+        media_asset_id: str,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.mark_activity_media_asset(activity_session_id, media_asset_id)
+
+    def mark_activity_review_created(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+        values: Mapping[str, Any],
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.mark_activity_review_created(activity_session_id, values)
+
     def update_last_activity(
         self,
         stream_id: str,
@@ -231,6 +400,8 @@ class _LiveCameraSession:
         self.last_motion_evaluation_at: datetime | None = None
         self.last_activity: dict[str, Any] | None = None
         self.last_motion_result: dict[str, Any] | None = None
+        self.current_activity_session_id: str | None = None
+        self.activity_sessions: dict[str, _LiveActivitySession] = {}
         self.last_error: str | None = None
         self.stop_reason: str | None = None
         self.camera_settings = _camera_settings_from_config(config)
@@ -330,6 +501,112 @@ class _LiveCameraSession:
             activity.update(values)
             self.last_activity = activity
 
+    def record_activity_detection(
+        self,
+        values: Mapping[str, Any],
+        *,
+        frame_bytes: bytes | None,
+        frame_content_type: str | None,
+        quiet_window_seconds: int,
+    ) -> LiveActivitySessionSnapshot:
+        with self._lock:
+            now = _coerce_datetime(values.get("last_seen_at")) or datetime.now(UTC)
+            region_key = str(values.get("region_key") or "unknown-region")
+            existing = self.activity_sessions.get(region_key)
+            if (
+                existing is None
+                or (now - existing.last_seen_at).total_seconds() > quiet_window_seconds
+            ):
+                existing = _LiveActivitySession.from_detection(
+                    values,
+                    stream_id=self.stream_id,
+                    source_id=self.source_id,
+                    region_key=region_key,
+                    now=now,
+                    frame_bytes=frame_bytes,
+                    frame_content_type=frame_content_type,
+                )
+                self.activity_sessions[region_key] = existing
+            else:
+                existing.record_detection(
+                    values,
+                    now=now,
+                    frame_bytes=frame_bytes,
+                    frame_content_type=frame_content_type,
+                )
+            snapshot = existing.snapshot()
+            self.current_activity_session_id = snapshot.activity_session_id
+            self.last_activity = snapshot.as_dict()
+            return snapshot
+
+    def get_activity_session(
+        self,
+        activity_session_id: str | None = None,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            return activity.snapshot() if activity is not None else None
+
+    def get_activity_best_frame(
+        self,
+        activity_session_id: str | None = None,
+    ) -> LiveActivityBestFrame | None:
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            if activity is None:
+                return None
+            return LiveActivityBestFrame(
+                activity_session_id=activity.activity_session_id,
+                frame_bytes=activity.best_frame_bytes,
+                content_type=activity.best_frame_content_type,
+                captured_at=activity.best_frame_captured_at,
+                sequence=activity.best_frame_sequence,
+            )
+
+    def mark_activity_media_asset(
+        self,
+        activity_session_id: str,
+        media_asset_id: str,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            if activity is None:
+                return None
+            activity.best_media_asset_id = media_asset_id
+            snapshot = activity.snapshot()
+            self.last_activity = snapshot.as_dict()
+            return snapshot
+
+    def mark_activity_review_created(
+        self,
+        activity_session_id: str,
+        values: Mapping[str, Any],
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            if activity is None:
+                return None
+            activity.mark_review_created(values)
+            snapshot = activity.snapshot()
+            self.last_activity = snapshot.as_dict()
+            return snapshot
+
+    def _activity_session(
+        self,
+        activity_session_id: str | None,
+    ) -> "_LiveActivitySession | None":
+        selected_id = activity_session_id or self.current_activity_session_id
+        if selected_id is None:
+            return None
+        return next(
+            (
+                session
+                for session in self.activity_sessions.values()
+                if session.activity_session_id == selected_id
+            ),
+            None,
+        )
+
     def increment_clients(self) -> None:
         with self._lock:
             self.clients_connected += 1
@@ -340,6 +617,7 @@ class _LiveCameraSession:
 
     def snapshot(self) -> LiveCameraSessionSnapshot:
         with self._lock:
+            current_activity = self._activity_session(self.current_activity_session_id)
             return LiveCameraSessionSnapshot(
                 stream_id=self.stream_id,
                 source_id=self.source_id,
@@ -351,6 +629,11 @@ class _LiveCameraSession:
                 clients_connected=self.clients_connected,
                 monitor_running=self.monitor_running,
                 last_motion_evaluation_at=self.last_motion_evaluation_at,
+                current_activity_session=(
+                    current_activity.snapshot().as_dict()
+                    if current_activity is not None
+                    else None
+                ),
                 last_activity=dict(self.last_activity) if self.last_activity else None,
                 last_motion_result=(
                     dict(self.last_motion_result) if self.last_motion_result else None
@@ -434,6 +717,251 @@ class _LiveCameraSession:
     def _runtime_elapsed(self) -> bool:
         elapsed = (datetime.now(UTC) - self.started_at).total_seconds()
         return elapsed >= self.max_runtime_seconds
+
+
+@dataclass
+class _LiveActivitySession:
+    activity_session_id: str
+    stream_id: str
+    source_id: str | None
+    region_key: str
+    region_kind: str
+    region_id: str | None
+    zone_id: str | None
+    zone_name: str | None
+    zone_type: str | None
+    started_at: datetime
+    last_seen_at: datetime
+    detection_count: int
+    start_frame_sequence: int | None
+    end_frame_sequence: int | None
+    best_frame_sequence: int | None
+    best_frame_captured_at: datetime | None
+    best_frame_content_type: str | None
+    best_frame_bytes: bytes | None
+    best_media_asset_id: str | None
+    best_score: float | None
+    best_changed_ratio: float | None
+    best_changed_pixels: int | None
+    best_total_scored_pixels: int | None
+    current_changed_ratio: float | None
+    current_changed_pixels: int | None
+    current_total_scored_pixels: int | None
+    effective_threshold_used: float | None
+    threshold_source: str | None
+    fine_motion_applied: bool
+    image_quality_warnings: list[str]
+    near_miss: bool
+    margin_to_threshold: float | None
+    review_activity_created: bool = False
+    motion_evidence_id: str | None = None
+    event_id: str | None = None
+    visit_id: str | None = None
+    review_queue_item_id: str | None = None
+    suggested_label: str | None = None
+    suggestion_id: str | None = None
+    suggestion_confidence: float | None = None
+    creates_truth: bool = False
+
+    @classmethod
+    def from_detection(
+        cls,
+        values: Mapping[str, Any],
+        *,
+        stream_id: str,
+        source_id: str | None,
+        region_key: str,
+        now: datetime,
+        frame_bytes: bytes | None,
+        frame_content_type: str | None,
+    ) -> "_LiveActivitySession":
+        session = cls(
+            activity_session_id=_activity_session_id(stream_id, region_key, now),
+            stream_id=stream_id,
+            source_id=source_id,
+            region_key=region_key,
+            region_kind=str(values.get("region_kind") or "zone"),
+            region_id=_optional_str(values.get("region_id")),
+            zone_id=_optional_str(values.get("zone_id")),
+            zone_name=_optional_str(values.get("zone_name")),
+            zone_type=_optional_str(values.get("zone_type")),
+            started_at=now,
+            last_seen_at=now,
+            detection_count=0,
+            start_frame_sequence=None,
+            end_frame_sequence=None,
+            best_frame_sequence=None,
+            best_frame_captured_at=None,
+            best_frame_content_type=None,
+            best_frame_bytes=None,
+            best_media_asset_id=None,
+            best_score=None,
+            best_changed_ratio=None,
+            best_changed_pixels=None,
+            best_total_scored_pixels=None,
+            current_changed_ratio=None,
+            current_changed_pixels=None,
+            current_total_scored_pixels=None,
+            effective_threshold_used=None,
+            threshold_source=None,
+            fine_motion_applied=False,
+            image_quality_warnings=[],
+            near_miss=False,
+            margin_to_threshold=None,
+        )
+        session.record_detection(
+            values,
+            now=now,
+            frame_bytes=frame_bytes,
+            frame_content_type=frame_content_type,
+        )
+        return session
+
+    def record_detection(
+        self,
+        values: Mapping[str, Any],
+        *,
+        now: datetime,
+        frame_bytes: bytes | None,
+        frame_content_type: str | None,
+    ) -> None:
+        self.detection_count += 1
+        self.last_seen_at = now
+        self.current_changed_ratio = _optional_float(values.get("changed_ratio"))
+        self.current_changed_pixels = _optional_int(values.get("changed_pixels"))
+        self.current_total_scored_pixels = _optional_int(
+            values.get("total_scored_pixels")
+        )
+        self.effective_threshold_used = _optional_float(
+            values.get("effective_threshold_used")
+        )
+        self.threshold_source = _optional_str(values.get("threshold_source"))
+        self.fine_motion_applied = bool(values.get("fine_motion_applied"))
+        self.image_quality_warnings = list(values.get("image_quality_warnings") or [])
+        self.near_miss = bool(values.get("near_miss"))
+        self.margin_to_threshold = _optional_float(values.get("margin_to_threshold"))
+        candidate_score = _optional_float(values.get("best_score"))
+        if self.best_score is None or (
+            candidate_score is not None and candidate_score > self.best_score
+        ):
+            self.best_score = candidate_score
+            self.best_changed_ratio = self.current_changed_ratio
+            self.best_changed_pixels = self.current_changed_pixels
+            self.best_total_scored_pixels = self.current_total_scored_pixels
+            self.start_frame_sequence = _optional_int(values.get("start_frame_sequence"))
+            self.end_frame_sequence = _optional_int(values.get("end_frame_sequence"))
+            self.best_frame_sequence = _optional_int(values.get("best_frame_sequence"))
+            self.best_frame_captured_at = _coerce_datetime(
+                values.get("best_frame_captured_at")
+            )
+            self.best_frame_content_type = frame_content_type
+            self.best_frame_bytes = frame_bytes
+
+    def mark_review_created(self, values: Mapping[str, Any]) -> None:
+        self.review_activity_created = True
+        self.motion_evidence_id = _optional_str(values.get("motion_evidence_id"))
+        self.event_id = _optional_str(values.get("event_id"))
+        self.visit_id = _optional_str(values.get("visit_id"))
+        self.review_queue_item_id = _optional_str(values.get("review_queue_item_id"))
+        self.suggested_label = _optional_str(values.get("suggested_label"))
+        self.suggestion_id = _optional_str(values.get("suggestion_id"))
+        self.suggestion_confidence = _optional_float(values.get("suggestion_confidence"))
+        self.creates_truth = False
+
+    def snapshot(self) -> LiveActivitySessionSnapshot:
+        return LiveActivitySessionSnapshot(
+            activity_session_id=self.activity_session_id,
+            stream_id=self.stream_id,
+            source_id=self.source_id,
+            region_key=self.region_key,
+            region_kind=self.region_kind,
+            region_id=self.region_id,
+            zone_id=self.zone_id,
+            zone_name=self.zone_name,
+            zone_type=self.zone_type,
+            started_at=self.started_at,
+            last_seen_at=self.last_seen_at,
+            detection_count=self.detection_count,
+            start_frame_sequence=self.start_frame_sequence,
+            end_frame_sequence=self.end_frame_sequence,
+            best_frame_sequence=self.best_frame_sequence,
+            best_frame_captured_at=self.best_frame_captured_at,
+            best_frame_content_type=self.best_frame_content_type,
+            best_frame_size_bytes=(
+                len(self.best_frame_bytes) if self.best_frame_bytes is not None else None
+            ),
+            best_media_asset_id=self.best_media_asset_id,
+            best_score=self.best_score,
+            best_changed_ratio=self.best_changed_ratio,
+            best_changed_pixels=self.best_changed_pixels,
+            best_total_scored_pixels=self.best_total_scored_pixels,
+            current_changed_ratio=self.current_changed_ratio,
+            current_changed_pixels=self.current_changed_pixels,
+            current_total_scored_pixels=self.current_total_scored_pixels,
+            effective_threshold_used=self.effective_threshold_used,
+            threshold_source=self.threshold_source,
+            fine_motion_applied=self.fine_motion_applied,
+            image_quality_warnings=list(self.image_quality_warnings),
+            near_miss=self.near_miss,
+            margin_to_threshold=self.margin_to_threshold,
+            review_activity_created=self.review_activity_created,
+            motion_evidence_id=self.motion_evidence_id,
+            event_id=self.event_id,
+            visit_id=self.visit_id,
+            review_queue_item_id=self.review_queue_item_id,
+            suggested_label=self.suggested_label,
+            suggestion_id=self.suggestion_id,
+            suggestion_confidence=self.suggestion_confidence,
+            creates_truth=False,
+        )
+
+
+def _activity_session_id(stream_id: str, region_key: str, started_at: datetime) -> str:
+    digest = sha1(
+        f"{stream_id}|{region_key}|{started_at.isoformat()}".encode("utf-8")
+    ).hexdigest()[:16]
+    return f"live-activity-{digest}"
+
+
+def _optional_str(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _optional_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and re.fullmatch(r"-?\d+", value):
+        return int(value)
+    return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
 
 
 def _start_process(config: Any) -> subprocess.Popen[bytes]:
@@ -530,6 +1058,8 @@ def is_session_supported(config: Any) -> bool:
 __all__ = [
     "DEFAULT_MAX_RUNTIME_SECONDS",
     "MJPEG_BOUNDARY",
+    "LiveActivityBestFrame",
+    "LiveActivitySessionSnapshot",
     "LiveCameraSessionManager",
     "LiveCameraSessionSnapshot",
     "is_session_supported",

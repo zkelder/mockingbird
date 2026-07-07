@@ -2279,7 +2279,10 @@ async def test_stored_live_activity_review_handoff_keeps_camera_running_and_trut
     assert monitor["activity_detected"] is True
     assert monitor["review_activity_available"] is True
     assert monitor["review_activity_created"] is False
-    assert monitor["best_media_asset_id"].startswith("media-asset-")
+    assert monitor["best_media_asset_id"] is None
+    assert monitor["activity_session_id"].startswith("live-activity-")
+    assert monitor["activity_detection_count"] == 1
+    assert monitor["activity_best_frame_sequence"] == 2
     assert monitor["strongest_zone_name"] == "Feeder"
     assert monitor["creates_truth"] is False
 
@@ -2288,7 +2291,9 @@ async def test_stored_live_activity_review_handoff_keeps_camera_running_and_trut
     status = status_response.json()
     assert status["status"] == "running"
     assert status["monitor_running"] is True
-    assert status["last_activity"]["best_media_asset_id"] == monitor["best_media_asset_id"]
+    assert status["current_activity_session_id"] == monitor["activity_session_id"]
+    assert status["activity_detection_count"] == 1
+    assert status["last_activity"]["best_media_asset_id"] is None
     assert status["last_activity"]["review_activity_created"] is False
     assert status["last_motion_result"]["review_activity_available"] is True
 
@@ -2303,7 +2308,9 @@ async def test_stored_live_activity_review_handoff_keeps_camera_running_and_trut
     assert created["review_activity_created"] is True
     assert created["review_activity_reused"] is False
     assert created["review_activity_already_exists"] is False
-    assert created["media_asset_id"] == monitor["best_media_asset_id"]
+    assert created["activity_session_id"] == monitor["activity_session_id"]
+    assert created["activity_detection_count"] == 1
+    assert created["media_asset_id"].startswith("media-asset-")
     assert created["motion_evidence_id"].startswith("motion-evidence-")
     assert created["event_id"].startswith("event-motion-")
     assert created["visit_id"].startswith("visit-motion-")
@@ -2339,7 +2346,7 @@ async def test_stored_live_activity_review_handoff_keeps_camera_running_and_trut
     assert queue_item["event_id"] == created["event_id"]
     assert queue_item["primary_zone_id"] == "zone-feeder"
     assert queue_item["suggested_label"] == "unknown_bird"
-    assert queue_item["media_asset"]["id"] == monitor["best_media_asset_id"]
+    assert queue_item["media_asset"]["id"] == created["media_asset_id"]
 
     after_create = await product_counts(client)
     assert after_create["media_assets"] == before["media_assets"] + 1
@@ -2399,6 +2406,151 @@ async def test_stored_live_activity_review_handoff_keeps_camera_running_and_trut
     assert corrected_counts["review_labels"] == after_create["review_labels"] + 1
 
 
+async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8session-grouping-0\xff\xd9"
+    frame_1 = b"\xff\xd8session-grouping-1\xff\xd9"
+    frame_2 = b"\xff\xd8session-grouping-2\xff\xd9"
+    frame_3 = b"\xff\xd8session-grouping-3\xff\xd9"
+    fake_process = FakeFfmpegProcess([frame_0, frame_1])
+
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, **kwargs: fake_process,
+    )
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(width=100, height=100),
+            frame_1: frame_with(
+                [(30, 40), (30, 41), (31, 40), (31, 41)],
+                width=100,
+                height=100,
+            ),
+            frame_2: blank_frame(width=100, height=100),
+            frame_3: frame_with(
+                [
+                    (30, 40),
+                    (30, 41),
+                    (30, 42),
+                    (31, 40),
+                    (31, 41),
+                    (31, 42),
+                    (32, 40),
+                    (32, 41),
+                    (32, 42),
+                ],
+                width=100,
+                height=100,
+            ),
+        },
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
+
+    before = await product_counts(client)
+    first_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/start",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.003,
+            "pixel_delta_threshold": 10,
+            "min_triggered_frames": 1,
+            "interval_seconds": 10,
+        },
+    )
+
+    assert first_response.status_code == 200
+    first = first_response.json()
+    assert first["activity_detected"] is True
+    assert first["activity_session_id"].startswith("live-activity-")
+    assert first["activity_detection_count"] == 1
+    assert first["activity_best_frame_sequence"] == 2
+    assert first["best_media_asset_id"] is None
+    assert await product_counts(client) == before
+
+    captured_at = datetime.now(UTC)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_2,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_3,
+        captured_at=captured_at + timedelta(seconds=2),
+    )
+    second_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": True,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.003,
+            "pixel_delta_threshold": 10,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert second_response.status_code == 200
+    second = second_response.json()
+    assert second["activity_session_id"] == first["activity_session_id"]
+    assert second["activity_detection_count"] == 2
+    assert second["activity_best_frame_sequence"] == 4
+    assert second["activity_best_score"] > first["activity_best_score"]
+    assert second["best_media_asset_id"] is None
+    assert await product_counts(client) == before
+
+    status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    assert status["current_activity_session_id"] == first["activity_session_id"]
+    assert status["activity_detection_count"] == 2
+    assert status["activity_best_frame_sequence"] == 4
+    assert status["activity_review_activity_created"] is False
+    assert status["monitor_running"] is True
+
+    create_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/review-activity"
+    )
+
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["status"] == "created"
+    assert created["activity_session_id"] == first["activity_session_id"]
+    assert created["activity_detection_count"] == 2
+    assert created["media_asset_id"].startswith("media-asset-")
+    assert created["motion_evidence_id"].startswith("motion-evidence-")
+    assert created["review_queue_item_id"] == f"review-queue-{created['visit_id']}"
+    assert created["creates_truth"] is False
+
+    after_create = await product_counts(client)
+    assert after_create["media_assets"] == before["media_assets"] + 1
+    assert after_create["motion_evidence"] == before["motion_evidence"] + 1
+    assert after_create["events"] == before["events"] + 1
+    assert after_create["visits"] == before["visits"] + 1
+    assert after_create["review_labels"] == before["review_labels"]
+    assert after_create["dataset_exports"] == before["dataset_exports"]
+
+    duplicate_response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/review-activity"
+    )
+    assert duplicate_response.status_code == 200
+    duplicate = duplicate_response.json()
+    assert duplicate["status"] == "already_exists"
+    assert duplicate["already_exists"] is True
+    assert duplicate["activity_session_id"] == first["activity_session_id"]
+    assert duplicate["motion_evidence_id"] == created["motion_evidence_id"]
+    assert duplicate["review_queue_item_id"] == created["review_queue_item_id"]
+    assert await product_counts(client) == after_create
+
+
 async def test_small_feeder_activity_capture_and_review_handoff_keep_monitor_running(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -2452,15 +2604,16 @@ async def test_small_feeder_activity_capture_and_review_handoff_keep_monitor_run
     assert monitor["strongest_zone_name"] == "Feeder"
     assert monitor["fine_motion_applied"] is True
     assert monitor["threshold_source"] == "high_feeder_fine"
-    assert monitor["best_media_asset_id"].startswith("media-asset-")
+    assert monitor["best_media_asset_id"] is None
+    assert monitor["activity_session_id"].startswith("live-activity-")
+    assert monitor["activity_detection_count"] == 1
     status_after_motion = (
         await client.get(f"/api/streams/{STREAM_ID}/live-session/status")
     ).json()
     assert status_after_motion["status"] == "running"
     assert status_after_motion["monitor_running"] is True
-    assert status_after_motion["last_activity"]["best_media_asset_id"] == monitor[
-        "best_media_asset_id"
-    ]
+    assert status_after_motion["current_activity_session_id"] == monitor["activity_session_id"]
+    assert status_after_motion["last_activity"]["best_media_asset_id"] is None
 
     def fail_if_one_shot_capture_runs(*args: object, **kwargs: object) -> bytes:
         raise AssertionError("Capture after small feeder activity must reuse session frames")
@@ -2482,9 +2635,10 @@ async def test_small_feeder_activity_capture_and_review_handoff_keep_monitor_run
     ).json()
     assert status_after_capture["status"] == "running"
     assert status_after_capture["monitor_running"] is True
-    assert status_after_capture["last_activity"]["best_media_asset_id"] == monitor[
-        "best_media_asset_id"
+    assert status_after_capture["current_activity_session_id"] == monitor[
+        "activity_session_id"
     ]
+    assert status_after_capture["last_activity"]["best_media_asset_id"] is None
 
     create_response = await client.post(
         f"/api/streams/{STREAM_ID}/live-motion/review-activity"
@@ -2493,6 +2647,8 @@ async def test_small_feeder_activity_capture_and_review_handoff_keep_monitor_run
     assert create_response.status_code == 200
     created = create_response.json()
     assert created["review_activity_created"] is True
+    assert created["activity_session_id"] == monitor["activity_session_id"]
+    assert created["media_asset_id"].startswith("media-asset-")
     assert created["motion_evidence_id"].startswith("motion-evidence-")
     assert created["event_id"].startswith("event-motion-")
     assert created["visit_id"].startswith("visit-motion-")

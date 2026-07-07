@@ -616,6 +616,26 @@ class LiveCameraSessionStatusResponse(BaseModel):
     clients_connected: int = Field(default=0, ge=0)
     monitor_running: bool = False
     last_motion_evaluation_at: datetime | None = None
+    current_activity_session: dict[str, Any] | None = None
+    current_activity_session_id: str | None = None
+    activity_started_at: datetime | None = None
+    activity_last_seen_at: datetime | None = None
+    activity_detection_count: int = Field(default=0, ge=0)
+    activity_best_frame_sequence: int | None = Field(default=None, ge=0)
+    activity_best_score: float | None = None
+    activity_best_changed_ratio: float | None = Field(default=None, ge=0)
+    activity_best_changed_pixels: int | None = Field(default=None, ge=0)
+    activity_best_total_scored_pixels: int | None = Field(default=None, ge=0)
+    activity_effective_threshold_used: float | None = Field(default=None, ge=0)
+    activity_threshold_source: str | None = None
+    activity_fine_motion_applied: bool = False
+    activity_near_miss: bool = False
+    activity_cooldown_remaining_seconds: int | None = Field(default=None, ge=0)
+    activity_review_activity_created: bool = False
+    activity_motion_evidence_id: str | None = None
+    activity_event_id: str | None = None
+    activity_visit_id: str | None = None
+    activity_review_queue_item_id: str | None = None
     last_activity: dict[str, Any] | None = None
     last_motion_result: dict[str, Any] | None = None
     last_error: str | None = None
@@ -1397,6 +1417,10 @@ class LiveMotionReviewActivityResponse(BaseModel):
     review_activity_reused: bool = False
     review_activity_already_exists: bool = False
     already_exists: bool = False
+    activity_session_id: str | None = None
+    activity_detection_count: int = Field(default=0, ge=0)
+    activity_started_at: datetime | None = None
+    activity_last_seen_at: datetime | None = None
     motion_evidence_id: str | None = None
     event_id: str | None = None
     visit_id: str | None = None
@@ -1487,6 +1511,19 @@ class LiveMotionEvaluateResponse(BaseModel):
     best_frame_captured_at: datetime | None = None
     best_media_asset_id: str | None = None
     media_asset_id: str | None = None
+    activity_session_id: str | None = None
+    activity_started_at: datetime | None = None
+    activity_last_seen_at: datetime | None = None
+    activity_detection_count: int = Field(default=0, ge=0)
+    activity_best_frame_sequence: int | None = Field(default=None, ge=0)
+    activity_best_score: float | None = None
+    activity_best_changed_ratio: float | None = Field(default=None, ge=0)
+    activity_best_changed_pixels: int | None = Field(default=None, ge=0)
+    activity_best_total_scored_pixels: int | None = Field(default=None, ge=0)
+    activity_effective_threshold_used: float | None = Field(default=None, ge=0)
+    activity_threshold_source: str | None = None
+    activity_fine_motion_applied: bool = False
+    activity_near_miss: bool = False
     can_create_review_activity: bool = False
     review_activity_available: bool = False
     review_activity_created: bool = False

@@ -150,6 +150,7 @@ from mockingbird.motion import (
 )
 from mockingbird.motion.activity_crop import ActivityCropPlan, plan_activity_crop
 from mockingbird.motion.activity_session import (
+    DEFAULT_QUIET_PERIOD_SECONDS,
     ExistingActivityReference,
     recommend_activity_session,
 )
@@ -1414,6 +1415,81 @@ def _live_frame_cache_response_fields(
     }
 
 
+def _live_activity_session_status_fields(
+    activity: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not activity:
+        return {}
+    return {
+        "current_activity_session": activity,
+        "current_activity_session_id": activity.get("activity_session_id"),
+        "activity_started_at": activity.get("started_at"),
+        "activity_last_seen_at": activity.get("last_seen_at"),
+        "activity_detection_count": activity.get("detection_count") or 0,
+        "activity_best_frame_sequence": activity.get("best_frame_sequence"),
+        "activity_best_score": activity.get("best_score"),
+        "activity_best_changed_ratio": activity.get("best_changed_ratio"),
+        "activity_best_changed_pixels": activity.get("best_changed_pixels"),
+        "activity_best_total_scored_pixels": activity.get("best_total_scored_pixels"),
+        "activity_effective_threshold_used": activity.get("effective_threshold_used"),
+        "activity_threshold_source": activity.get("threshold_source"),
+        "activity_fine_motion_applied": bool(activity.get("fine_motion_applied")),
+        "activity_near_miss": bool(activity.get("near_miss")),
+        "activity_cooldown_remaining_seconds": _live_activity_quiet_remaining_seconds(
+            activity
+        ),
+        "activity_review_activity_created": bool(
+            activity.get("review_activity_created")
+        ),
+        "activity_motion_evidence_id": activity.get("motion_evidence_id"),
+        "activity_event_id": activity.get("event_id"),
+        "activity_visit_id": activity.get("visit_id"),
+        "activity_review_queue_item_id": activity.get("review_queue_item_id"),
+    }
+
+
+def _live_activity_evaluate_fields(
+    activity: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not activity:
+        return {}
+    return {
+        "activity_session_id": activity.get("activity_session_id"),
+        "activity_started_at": activity.get("started_at"),
+        "activity_last_seen_at": activity.get("last_seen_at"),
+        "activity_detection_count": activity.get("detection_count") or 0,
+        "activity_best_frame_sequence": activity.get("best_frame_sequence"),
+        "activity_best_score": activity.get("best_score"),
+        "activity_best_changed_ratio": activity.get("best_changed_ratio"),
+        "activity_best_changed_pixels": activity.get("best_changed_pixels"),
+        "activity_best_total_scored_pixels": activity.get("best_total_scored_pixels"),
+        "activity_effective_threshold_used": activity.get("effective_threshold_used"),
+        "activity_threshold_source": activity.get("threshold_source"),
+        "activity_fine_motion_applied": bool(activity.get("fine_motion_applied")),
+        "activity_near_miss": bool(activity.get("near_miss")),
+    }
+
+
+def _live_activity_quiet_remaining_seconds(activity: dict[str, Any]) -> int | None:
+    last_seen = _live_activity_datetime(activity.get("last_seen_at"))
+    if last_seen is None or activity.get("review_activity_created"):
+        return None
+    elapsed = max(0.0, (datetime.now(UTC) - last_seen).total_seconds())
+    return max(0, int(DEFAULT_QUIET_PERIOD_SECONDS - elapsed))
+
+
+def _live_activity_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
+
+
 def _live_camera_session_response(
     snapshot: live_camera_session.LiveCameraSessionSnapshot | None,
     configuration: StreamLivePlaybackConfig,
@@ -1447,6 +1523,7 @@ def _live_camera_session_response(
         clients_connected=snapshot.clients_connected,
         monitor_running=snapshot.monitor_running,
         last_motion_evaluation_at=snapshot.last_motion_evaluation_at,
+        **_live_activity_session_status_fields(snapshot.current_activity_session),
         last_activity=snapshot.last_activity,
         last_motion_result=snapshot.last_motion_result,
         last_error=snapshot.last_error,
@@ -2009,6 +2086,92 @@ def _motion_evidence_session_references(
         )
         for evidence in evidence_items
     ]
+
+
+def _live_activity_region_key(
+    *,
+    region_kind: str,
+    region_id: str | None,
+    focus_zone_id: str | None,
+) -> str:
+    if region_id:
+        return f"{region_kind}:{region_id}"
+    if focus_zone_id:
+        return f"focus-zone:{focus_zone_id}"
+    return f"{region_kind}:unknown"
+
+
+def _live_activity_best_frame_score(
+    *,
+    changed_ratio: float,
+    changed_pixels: int | None,
+    total_scored_pixels: int | None,
+    fine_motion_applied: bool,
+    zone_type: ZoneType | None,
+    image_quality_warnings: list[str],
+) -> float:
+    pixel_bonus = 0.0
+    if changed_pixels is not None and total_scored_pixels:
+        # Pixel count helps choose a clearer frame without letting one noisy jump dominate.
+        pixel_bonus = min(changed_pixels, total_scored_pixels) / total_scored_pixels
+        pixel_bonus = min(pixel_bonus, 0.10)
+    fine_bonus = (
+        0.002
+        if fine_motion_applied
+        and zone_type in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}
+        else 0.0
+    )
+    quality_penalty = 0.001 * len(image_quality_warnings)
+    return changed_ratio + pixel_bonus + fine_bonus - quality_penalty
+
+
+def _ensure_live_activity_best_media_asset(
+    *,
+    repository: ProductRepository,
+    stream: Stream,
+    activity: dict[str, Any],
+) -> tuple[str | None, dict[str, Any]]:
+    media_asset_id = activity.get("best_media_asset_id")
+    if media_asset_id:
+        return str(media_asset_id), activity
+
+    activity_session_id = activity.get("activity_session_id")
+    if not activity_session_id:
+        return None, activity
+
+    manager = get_live_camera_session_manager()
+    best_frame = manager.get_activity_best_frame(stream.id, str(activity_session_id))
+    if (
+        best_frame is None
+        or best_frame.frame_bytes is None
+        or best_frame.captured_at is None
+        or best_frame.sequence is None
+    ):
+        return None, activity
+
+    configuration = repository.get_stream_live_playback_config(stream.id)
+    try:
+        media_asset = repository.create_live_motion_frame_media_asset(
+            source_id=stream.source_id,
+            stream_id=stream.id,
+            content=best_frame.frame_bytes,
+            content_type=best_frame.content_type or "image/jpeg",
+            captured_at=best_frame.captured_at,
+            frame_sequence=best_frame.sequence,
+            playback_type=configuration.live_stream_type if configuration else None,
+            note="Saved best frame from live activity session for explicit review.",
+        )
+    except ValueError as error:
+        raise _media_import_error(error) from error
+
+    updated = manager.mark_activity_media_asset(
+        stream.id,
+        str(activity_session_id),
+        media_asset.id,
+    )
+    if updated is None:
+        return media_asset.id, {**activity, "best_media_asset_id": media_asset.id}
+    return media_asset.id, updated.as_dict()
 
 
 def _frame_summary_for_media_asset(
@@ -2920,11 +3083,90 @@ def _evaluate_live_stream_motion(
         best_snapshot_media_asset_id=None,
         existing_activities=existing_session_references,
     )
+    live_activity_session: dict[str, Any] | None = None
+    live_activity_session_active = (
+        session_snapshot is not None
+        and session_snapshot.status in {"starting", "running"}
+        and activity_detected
+        and best_live_frame is not None
+    )
+    if live_activity_session_active:
+        activity_snapshot = get_live_camera_session_manager().record_activity_detection(
+            stream.id,
+            {
+                "region_key": _live_activity_region_key(
+                    region_kind=session_region_kind,
+                    region_id=session_region_id,
+                    focus_zone_id=focus_zone.id if focus_zone else None,
+                ),
+                "region_kind": session_region_kind,
+                "region_id": session_region_id,
+                "zone_id": best_candidate.zone_id
+                if best_candidate is not None and not uses_auto_regions
+                else None,
+                "zone_name": strongest_zone_name
+                or (strongest_activity_area.label if strongest_activity_area else None),
+                "zone_type": strongest_zone_type.value
+                if strongest_zone_type is not None
+                else None,
+                "last_seen_at": best_live_frame.captured_at,
+                "start_frame_sequence": strongest_frame_start_sequence,
+                "end_frame_sequence": strongest_frame_end_sequence,
+                "best_frame_sequence": best_live_frame.sequence,
+                "best_frame_captured_at": best_live_frame.captured_at,
+                "best_score": _live_activity_best_frame_score(
+                    changed_ratio=strongest_changed_ratio,
+                    changed_pixels=strongest_score.changed_pixels
+                    if strongest_score
+                    else None,
+                    total_scored_pixels=strongest_score.total_pixels
+                    if strongest_score
+                    else None,
+                    fine_motion_applied=(
+                        strongest_scoring_policy.fine_motion_applied
+                        if strongest_scoring_policy is not None
+                        else False
+                    ),
+                    zone_type=strongest_zone_type,
+                    image_quality_warnings=image_quality_warnings,
+                ),
+                "changed_ratio": strongest_changed_ratio,
+                "changed_pixels": strongest_score.changed_pixels
+                if strongest_score
+                else None,
+                "total_scored_pixels": strongest_score.total_pixels
+                if strongest_score
+                else None,
+                "effective_threshold_used": effective_threshold_used,
+                "threshold_source": (
+                    strongest_scoring_policy.threshold_source
+                    if strongest_scoring_policy is not None
+                    else "requested"
+                ),
+                "fine_motion_applied": (
+                    strongest_scoring_policy.fine_motion_applied
+                    if strongest_scoring_policy is not None
+                    else False
+                ),
+                "image_quality_warnings": image_quality_warnings,
+                "near_miss": near_miss,
+                "margin_to_threshold": margin_to_threshold,
+            },
+            frame_bytes=best_live_frame.frame_bytes,
+            frame_content_type=best_live_frame.content_type,
+            quiet_window_seconds=DEFAULT_QUIET_PERIOD_SECONDS,
+        )
+        live_activity_session = (
+            activity_snapshot.as_dict() if activity_snapshot is not None else None
+        )
     best_media_asset_id: str | None = None
+    if live_activity_session is not None:
+        best_media_asset_id = live_activity_session.get("best_media_asset_id")
     should_save_best_frame = (
         bool(best_candidate)
         and best_live_frame is not None
         and (request.save_best_frame or request.create_review_activity)
+        and live_activity_session is None
         and session_recommendation.session_status == "new_activity"
     )
     if should_save_best_frame:
@@ -2943,14 +3185,31 @@ def _evaluate_live_stream_motion(
         except ValueError as error:
             raise _media_import_error(error) from error
         best_media_asset_id = media_asset.id
+    if request.create_review_activity and live_activity_session is not None:
+        best_media_asset_id, live_activity_session = _ensure_live_activity_best_media_asset(
+            repository=repository,
+            stream=stream,
+            activity=live_activity_session,
+        )
+    live_activity_review_created = bool(
+        live_activity_session and live_activity_session.get("review_activity_created")
+    )
     can_create_review_activity = (
         has_reviewable_live_activity
-        and best_media_asset_id is not None
-        and session_recommendation.session_status == "new_activity"
+        and not live_activity_review_created
+        and (
+            live_activity_session is not None
+            or (
+                best_media_asset_id is not None
+                and session_recommendation.session_status == "new_activity"
+            )
+        )
     )
     review_activity_available = (
         can_create_review_activity and session_recommendation.should_create_review_activity
     )
+    if live_activity_session is not None and can_create_review_activity:
+        review_activity_available = True
 
     created_evidence: list[MotionEvidenceResponse] = []
     review_motion_evidence: MotionEvidenceResponse | None = None
@@ -2985,7 +3244,21 @@ def _evaluate_live_stream_motion(
             attach_snapshot_media_asset_id=best_media_asset_id,
         )
 
-    if request.create_review_activity and motion_candidates and uses_auto_regions:
+    if (
+        request.create_review_activity
+        and live_activity_session is not None
+        and live_activity_session.get("motion_evidence_id")
+    ):
+        existing_evidence = repository.get_motion_evidence(
+            str(live_activity_session["motion_evidence_id"])
+        )
+        if existing_evidence is not None:
+            review_motion_evidence = existing_evidence
+            review_event_id = existing_evidence.promoted_event_id
+            review_visit_id = existing_evidence.promoted_visit_id
+            review_activity_reused = True
+            review_activity_available = False
+    elif request.create_review_activity and motion_candidates and uses_auto_regions:
         warnings.append(
             "Automatic activity areas can detect motion now; review activity creation "
             "still requires a named Zone in this build."
@@ -3128,6 +3401,36 @@ def _evaluate_live_stream_motion(
         if review_event_id
         else None
     )
+    if (
+        live_activity_session is not None
+        and review_motion_evidence is not None
+        and review_queue_item_id is not None
+    ):
+        updated_activity = get_live_camera_session_manager().mark_activity_review_created(
+            stream.id,
+            str(live_activity_session["activity_session_id"]),
+            {
+                "motion_evidence_id": review_motion_evidence.id,
+                "event_id": review_event_id,
+                "visit_id": review_visit_id,
+                "review_queue_item_id": review_queue_item_id,
+                "suggested_label": (
+                    review_activity_suggestion.suggested_label
+                    if review_activity_suggestion
+                    else None
+                ),
+                "suggestion_id": (
+                    review_activity_suggestion.id if review_activity_suggestion else None
+                ),
+                "suggestion_confidence": (
+                    review_activity_suggestion.confidence
+                    if review_activity_suggestion
+                    else None
+                ),
+            },
+        )
+        if updated_activity is not None:
+            live_activity_session = updated_activity.as_dict()
     status = "activity_detected" if activity_detected else "no_activity"
     live_session_status = _live_motion_session_status(
         activity_detected=activity_detected,
@@ -3231,6 +3534,7 @@ def _evaluate_live_stream_motion(
         best_frame_captured_at=best_live_frame.captured_at if best_live_frame else None,
         best_media_asset_id=best_media_asset_id,
         media_asset_id=best_media_asset_id,
+        **_live_activity_evaluate_fields(live_activity_session),
         can_create_review_activity=can_create_review_activity,
         review_activity_available=review_activity_available,
         review_activity_created=review_activity_created,
@@ -3327,7 +3631,11 @@ async def stop_live_stream_motion_monitor(stream_id: str) -> LiveCameraSessionSt
 
 def _record_live_motion_session_result(response: LiveMotionEvaluateResponse) -> None:
     last_activity: dict[str, Any] | None = None
-    if response.activity_detected and response.best_media_asset_id:
+    if (
+        response.activity_detected
+        and response.best_media_asset_id
+        and not response.activity_session_id
+    ):
         zone_type = (
             response.strongest_zone_type.value
             if response.strongest_zone_type is not None
@@ -3385,6 +3693,10 @@ def _live_motion_review_activity_response(
     review_activity_created: bool = False,
     review_activity_reused: bool = False,
     review_activity_already_exists: bool = False,
+    activity_session_id: str | None = None,
+    activity_detection_count: int = 0,
+    activity_started_at: datetime | None = None,
+    activity_last_seen_at: datetime | None = None,
     media_asset_id: str | None = None,
     motion_evidence_id: str | None = None,
     event_id: str | None = None,
@@ -3406,6 +3718,10 @@ def _live_motion_review_activity_response(
         review_activity_reused=review_activity_reused,
         review_activity_already_exists=review_activity_already_exists,
         already_exists=review_activity_already_exists,
+        activity_session_id=activity_session_id,
+        activity_detection_count=activity_detection_count,
+        activity_started_at=activity_started_at,
+        activity_last_seen_at=activity_last_seen_at,
         motion_evidence_id=motion_evidence_id,
         event_id=event_id,
         visit_id=visit_id,
@@ -3436,7 +3752,9 @@ async def create_live_stream_motion_review_activity(
     if stream is None:
         raise _not_found("Stream", stream_id)
     snapshot = get_live_camera_session_manager().status(stream_id)
-    activity = snapshot.last_activity if snapshot is not None else None
+    activity = None
+    if snapshot is not None:
+        activity = snapshot.current_activity_session or snapshot.last_activity
     if not activity:
         return _live_motion_review_activity_response(
             stream_id=stream.id,
@@ -3458,6 +3776,10 @@ async def create_live_stream_motion_review_activity(
             activity_detected=True,
             review_activity_reused=True,
             review_activity_already_exists=True,
+            activity_session_id=activity.get("activity_session_id"),
+            activity_detection_count=activity.get("detection_count") or 0,
+            activity_started_at=_live_activity_datetime(activity.get("started_at")),
+            activity_last_seen_at=_live_activity_datetime(activity.get("last_seen_at")),
             media_asset_id=activity.get("best_media_asset_id"),
             motion_evidence_id=existing_motion_evidence_id,
             event_id=existing_event_id,
@@ -3469,6 +3791,12 @@ async def create_live_stream_motion_review_activity(
 
     zone_id = activity.get("zone_id")
     best_media_asset_id = activity.get("best_media_asset_id")
+    if zone_id and not best_media_asset_id and activity.get("activity_session_id"):
+        best_media_asset_id, activity = _ensure_live_activity_best_media_asset(
+            repository=repository,
+            stream=stream,
+            activity=activity,
+        )
     if not zone_id or not best_media_asset_id:
         return _live_motion_review_activity_response(
             stream_id=stream.id,
@@ -3476,6 +3804,10 @@ async def create_live_stream_motion_review_activity(
             status="unavailable",
             message="Stored live activity is missing named Zone or best-frame evidence.",
             activity_detected=True,
+            activity_session_id=activity.get("activity_session_id"),
+            activity_detection_count=activity.get("detection_count") or 0,
+            activity_started_at=_live_activity_datetime(activity.get("started_at")),
+            activity_last_seen_at=_live_activity_datetime(activity.get("last_seen_at")),
             media_asset_id=best_media_asset_id,
             warnings=["Create review activity requires a named Zone and saved best frame."],
         )
@@ -3495,12 +3827,26 @@ async def create_live_stream_motion_review_activity(
                 start_frame_index=activity.get("start_frame_sequence"),
                 end_frame_index=activity.get("end_frame_sequence"),
                 best_frame_index=activity.get("best_frame_sequence"),
-                best_frame_time=str(activity.get("detected_at")) if activity.get("detected_at") else None,
-                peak_changed_ratio=activity.get("strongest_changed_ratio", 0.0),
-                triggered_frame_count=1,
+                best_frame_time=(
+                    activity.get("best_frame_captured_at").isoformat()
+                    if isinstance(activity.get("best_frame_captured_at"), datetime)
+                    else str(activity.get("best_frame_captured_at"))
+                    if activity.get("best_frame_captured_at")
+                    else str(activity.get("detected_at"))
+                    if activity.get("detected_at")
+                    else None
+                ),
+                peak_changed_ratio=activity.get("best_changed_ratio")
+                or activity.get("strongest_changed_ratio", 0.0),
+                triggered_frame_count=activity.get("detection_count") or 1,
                 scoring_config={
                     "source": "live_stream_motion_session_activity",
-                    "threshold_used": activity.get("threshold_used"),
+                    "activity_session_id": activity.get("activity_session_id"),
+                    "detection_count": activity.get("detection_count") or 1,
+                    "threshold_used": activity.get("effective_threshold_used")
+                    or activity.get("threshold_used"),
+                    "threshold_source": activity.get("threshold_source"),
+                    "fine_motion_applied": activity.get("fine_motion_applied"),
                     "creates_truth": False,
                 },
                 snapshot_media_asset_id=best_media_asset_id,
@@ -3574,7 +3920,16 @@ async def create_live_stream_motion_review_activity(
         "creates_truth": False,
     }
     manager = get_live_camera_session_manager()
-    snapshot = manager.update_last_activity(stream_id, updates)
+    activity_session_id = activity.get("activity_session_id")
+    if activity_session_id:
+        manager.mark_activity_review_created(
+            stream_id,
+            str(activity_session_id),
+            updates,
+        )
+        snapshot = manager.status(stream_id)
+    else:
+        snapshot = manager.update_last_activity(stream_id, updates)
     if snapshot is not None and snapshot.last_motion_result is not None:
         updated_result = dict(snapshot.last_motion_result)
         updated_result.update(
@@ -3613,6 +3968,10 @@ async def create_live_stream_motion_review_activity(
         message="Review activity created. Bird Log updates after review.",
         activity_detected=True,
         review_activity_created=True,
+        activity_session_id=activity.get("activity_session_id"),
+        activity_detection_count=activity.get("detection_count") or 1,
+        activity_started_at=_live_activity_datetime(activity.get("started_at")),
+        activity_last_seen_at=_live_activity_datetime(activity.get("last_seen_at")),
         media_asset_id=best_media_asset_id,
         motion_evidence_id=promoted.evidence.id,
         event_id=promoted.event_id,

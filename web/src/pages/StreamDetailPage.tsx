@@ -1007,6 +1007,11 @@ export function StreamDetailPage({
                 suggestion_confidence: result.suggestion_confidence,
                 best_media_asset_id: result.media_asset_id ?? current.best_media_asset_id,
                 media_asset_id: result.media_asset_id ?? current.media_asset_id,
+                activity_session_id: result.activity_session_id ?? current.activity_session_id,
+                activity_detection_count:
+                  result.activity_detection_count || current.activity_detection_count,
+                activity_started_at: result.activity_started_at ?? current.activity_started_at,
+                activity_last_seen_at: result.activity_last_seen_at ?? current.activity_last_seen_at,
                 message: result.message,
                 last_evaluation_message: result.message,
               }
@@ -1455,10 +1460,18 @@ export function StreamDetailPage({
       ? `Best frame saved from ${liveStrongestZoneName}.`
       : liveMotionResult?.best_media_asset_id
         ? "Best frame saved from the strongest live activity area."
-        : "Best frame is unavailable.";
+        : liveMotionResult?.activity_session_id
+          ? "Best frame selected for this visit session."
+          : "Best frame is unavailable.";
   const liveBestFrameUrl = liveMotionResult?.best_media_asset_id
     ? apiClient.mediaFileUrl(liveMotionResult.best_media_asset_id)
     : null;
+  const liveActivityDetectionCount = liveMotionResult?.activity_detection_count ?? 0;
+  const liveActivityBestChangeLabel = formatPercent(
+    liveMotionResult?.activity_best_changed_ratio ?? liveMotionResult?.strongest_changed_ratio,
+  );
+  const liveActivityBestFrameSequence =
+    liveMotionResult?.activity_best_frame_sequence ?? liveMotionResult?.best_frame_sequence;
   const liveBestFrameTime = liveMotionResult?.best_frame_captured_at
     ? formatDateTime(liveMotionResult.best_frame_captured_at)
     : null;
@@ -2202,11 +2215,13 @@ export function StreamDetailPage({
             <div className="stream-live-activity-card">
               <div className="stream-live-activity-media">
                 {liveBestFrameUrl ? (
-                  <img alt="Saved best activity frame" src={liveBestFrameUrl} />
+                  <img alt="Best activity frame" src={liveBestFrameUrl} />
                 ) : (
                   <div>
                     <strong>Best frame</strong>
-                    <span>Saved frame unavailable</span>
+                    <span>
+                      {liveMotionResult?.activity_session_id ? "Selected in session" : "Unavailable"}
+                    </span>
                   </div>
                 )}
               </div>
@@ -2220,7 +2235,7 @@ export function StreamDetailPage({
                       <StatusPill label={formatLabel(liveStrongestZoneType)} tone="quiet" />
                     ) : null}
                     <StatusPill
-                      label={liveReviewActivityCreated ? "Needs review" : "Saved evidence"}
+                      label={liveReviewActivityCreated ? "Needs review" : "Visit session"}
                       tone="review"
                     />
                   </div>
@@ -2245,8 +2260,21 @@ export function StreamDetailPage({
                     <strong>Detected</strong> {liveBestFrameTime ?? "Recent live frame"}
                   </span>
                   <span>
+                    <strong>Detections</strong> {liveActivityDetectionCount || 1}
+                  </span>
+                  <span>
                     <strong>Best frame</strong>{" "}
-                    {liveMotionResult?.best_media_asset_id ? "saved" : "unavailable"}
+                    {liveMotionResult?.best_media_asset_id
+                      ? "saved"
+                      : liveMotionResult?.activity_session_id
+                        ? "selected"
+                        : "unavailable"}
+                  </span>
+                  <span>
+                    <strong>Frame</strong> {liveActivityBestFrameSequence ?? "n/a"}
+                  </span>
+                  <span>
+                    <strong>Change</strong> {liveActivityBestChangeLabel}
                   </span>
                   <span>
                     <strong>Bird Log</strong> after review
