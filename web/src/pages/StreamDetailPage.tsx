@@ -558,11 +558,9 @@ export function StreamDetailPage({
       const status = await apiClient.getLiveCameraSessionStatus(currentDetail.stream.id);
       setLiveSession(status);
       setIsLiveMonitoring(status.monitor_running);
-      if (status.monitor_running) {
-        setAutoCreateLiveReviews(status.auto_create_review_candidates);
-        setAutoReviewQuietSeconds(status.auto_review_quiet_seconds);
-        setAutoReviewMinDetections(status.auto_review_min_detections);
-      }
+      setAutoCreateLiveReviews(status.auto_create_review_candidates);
+      setAutoReviewQuietSeconds(status.auto_review_quiet_seconds);
+      setAutoReviewMinDetections(status.auto_review_min_detections);
       if (status.last_motion_result) {
         setLiveMotionResult(status.last_motion_result);
         setLiveMonitorState(liveMonitorStateFor(status.last_motion_result));
@@ -1351,6 +1349,7 @@ export function StreamDetailPage({
   const liveSessionRunning = liveSession?.status === "running";
   const liveSessionStarting = liveSession?.status === "starting";
   const liveSessionFailed = liveSession?.status === "failed";
+  const liveMonitorRunning = liveSession?.monitor_running ?? isLiveMonitoring;
   const liveUrl = liveStreamUrl(detail.playback, detail.stream.id);
   const liveElementKey = `${liveUrl ?? "no-live-url"}-${liveViewReloadToken}`;
   const liveViewStatusLabel =
@@ -1372,7 +1371,9 @@ export function StreamDetailPage({
         ? "good"
         : "quiet";
   const liveMonitorStatusLabel =
-    liveMonitorState === "waiting"
+    liveMonitorRunning && liveMonitorState === "idle"
+      ? "Watching"
+      : liveMonitorState === "waiting"
       ? "Waiting"
       : liveMonitorState === "watching"
         ? "Watching"
@@ -1388,7 +1389,7 @@ export function StreamDetailPage({
   const liveMonitorTone =
     liveMonitorState === "activity"
       ? "review"
-      : liveMonitorState === "watching"
+      : liveMonitorState === "watching" || liveMonitorRunning
         ? "good"
         : liveMonitorState === "failed"
           ? "review"
@@ -1452,13 +1453,13 @@ export function StreamDetailPage({
   );
   const captureSuccessMessage =
     captureResult?.capture_source === "live_camera_session" &&
-    (isLiveMonitoring || liveSession?.monitor_running)
+    liveMonitorRunning
       ? "Captured current frame; camera and monitoring are still running."
       : captureResult?.capture_source === "live_camera_session"
       ? "Saved current session frame. It will not appear in Bird Log until you create/review activity."
       : "Saved one local camera frame. It will not appear in Bird Log until you create/review activity.";
   const showManualSavedFrameComparison = Boolean(
-    !isLiveMonitoring &&
+    !liveMonitorRunning &&
       (captureSaved || motionResult || motionError || savedImageError || isLoadingSavedImages),
   );
   const captureButtonLabel =
@@ -1625,7 +1626,7 @@ export function StreamDetailPage({
   ).filter(([, value]) => value != null && String(value).trim());
   const liveLastError =
     liveMotionResult?.last_error ?? liveMotionError ?? liveSessionError ?? null;
-  const showLiveMonitorFacts = Boolean(isLiveMonitoring || liveMotionResult || liveSession);
+  const showLiveMonitorFacts = Boolean(liveMonitorRunning || liveMotionResult || liveSession);
   const liveWorkflowState =
     liveViewError || liveMotionError || liveSessionError || liveMotionResult?.last_error
       ? "error"
@@ -1637,7 +1638,7 @@ export function StreamDetailPage({
           ? "activity"
           : liveSuppressedZones.length > 0
             ? "ignored"
-          : isLiveMonitoring
+            : liveMonitorRunning
             ? "monitoring"
             : liveViewOpen && liveViewState === "streaming"
               ? "streaming"
@@ -1783,8 +1784,8 @@ export function StreamDetailPage({
             <span className={liveViewOpen ? "is-active" : ""}>
               <strong>2</strong> Live view {liveViewOpen ? "visible" : "hidden"}
             </span>
-            <span className={isLiveMonitoring ? "is-active" : ""}>
-              <strong>3</strong> Monitoring {isLiveMonitoring ? "on" : "off"}
+            <span className={liveMonitorRunning ? "is-active" : ""}>
+              <strong>3</strong> Monitoring {liveMonitorRunning ? "on" : "off"}
             </span>
             <span className={liveAutoReviewEnabled ? "is-active" : ""}>
               <strong>4</strong> Auto-create {liveAutoReviewEnabled ? "on" : "off"}
@@ -1794,117 +1795,119 @@ export function StreamDetailPage({
             </span>
           </div>
 
-          {liveActivityDetected || liveReviewActivityCreated ? null : (
+          <div className="stream-live-primary-panel">
             <div className="detail-actions stream-live-actions stream-live-primary-actions">
-              {backendLiveSessionSupported && !liveSessionRunning ? (
+              {backendLiveSessionSupported ? (
                 <button
-                  className="primary-action"
-                  disabled={!liveUrl || isStartingLiveSession || isStoppingLiveSession}
-                  onClick={() => void startLiveCameraSession(true)}
+                  className={liveSessionRunning ? "secondary-action" : "primary-action"}
+                  disabled={
+                    !liveUrl ||
+                    isStartingLiveSession ||
+                    isStoppingLiveSession ||
+                    liveSessionStarting
+                  }
+                  onClick={() =>
+                    liveSessionRunning
+                      ? void stopLiveCameraSession()
+                      : void startLiveCameraSession(false)
+                  }
                   type="button"
                 >
-                  {isStartingLiveSession ? "Starting..." : "Start camera"}
+                  {liveSessionRunning
+                    ? isStoppingLiveSession
+                      ? "Stopping..."
+                      : "Stop camera"
+                    : isStartingLiveSession
+                      ? "Starting..."
+                      : "Start camera"}
                 </button>
-              ) : !backendLiveSessionSupported && !liveViewOpen ? (
+              ) : null}
+              {liveViewOpen ? (
+                <button className="secondary-action" onClick={stopLiveView} type="button">
+                  Hide live view
+                </button>
+              ) : (
                 <button
-                  className="primary-action"
-                  disabled={!liveUrl || isCapturingFrame}
+                  className={backendLiveSessionSupported ? "secondary-action" : "primary-action"}
+                  disabled={!liveUrl || (backendLiveSessionSupported && !liveSessionRunning)}
                   onClick={openLiveView}
                   type="button"
                 >
-                  Open Live view
+                  Show live view
                 </button>
-              ) : isLiveMonitoring ? (
-                <>
-                  <button
-                    className="primary-action"
-                    onClick={() => void stopLiveMonitoring()}
-                    type="button"
-                  >
-                    Stop monitoring
-                  </button>
-                  {liveViewOpen ? (
-                    <button className="secondary-action" onClick={stopLiveView} type="button">
-                      Hide live view
-                    </button>
-                  ) : (
-                    <button className="secondary-action" onClick={openLiveView} type="button">
-                      Open live view
-                    </button>
-                  )}
-                  {backendLiveSessionSupported ? (
-                    <button
-                      className="secondary-action"
-                      disabled={isStoppingLiveSession}
-                      onClick={() => void stopLiveCameraSession()}
-                      type="button"
-                    >
-                      {isStoppingLiveSession ? "Stopping..." : "Stop camera"}
-                    </button>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <button
-                    className="primary-action"
-                    disabled={
-                      !liveUrl ||
-                      !canMonitorLiveMotion ||
-                      isEvaluatingLiveMotion ||
-                      (backendLiveSessionSupported && !liveSessionRunning) ||
-                      (!backendLiveSessionSupported && !liveViewOpen)
-                    }
-                    onClick={() => void startLiveMonitoring()}
-                    type="button"
-                  >
-                    {isEvaluatingLiveMotion ? "Checking..." : "Start monitoring"}
-                  </button>
-                  {liveViewOpen ? (
-                    <button className="secondary-action" onClick={stopLiveView} type="button">
-                      Hide live view
-                    </button>
-                  ) : (
-                    <button
-                      className="secondary-action"
-                      disabled={backendLiveSessionSupported && !liveSessionRunning}
-                      onClick={openLiveView}
-                      type="button"
-                    >
-                      Open live view
-                    </button>
-                  )}
-                  {liveViewOpen ? (
-                    <button className="secondary-action" onClick={refreshLiveView} type="button">
-                      Reconnect stream
-                    </button>
-                  ) : null}
-                  {backendLiveSessionSupported ? (
-                    <button
-                      className="secondary-action"
-                      disabled={isStoppingLiveSession}
-                      onClick={() => void stopLiveCameraSession()}
-                      type="button"
-                    >
-                      {isStoppingLiveSession ? "Stopping..." : "Stop camera"}
-                    </button>
-                  ) : null}
-                </>
               )}
-              {liveViewOpen || liveSessionRunning ? (
-                <div className="stream-live-sensitivity" aria-label="Monitoring sensitivity">
-                  {liveMonitorSensitivityOptions.map((option) => (
-                    <button
-                      className={liveMonitorSensitivity === option ? "selected" : ""}
-                      disabled={isLiveMonitoring || isEvaluatingLiveMotion}
-                      key={option}
-                      onClick={() => setLiveMonitorSensitivity(option)}
-                      type="button"
-                    >
-                      {liveMonitorSensitivitySettings[option].label}
-                    </button>
-                  ))}
-                </div>
+              {liveViewOpen ? (
+                <button className="secondary-action" onClick={refreshLiveView} type="button">
+                  Reconnect stream
+                </button>
               ) : null}
+              {liveMonitorRunning ? (
+                <button
+                  className="primary-action"
+                  onClick={() => void stopLiveMonitoring()}
+                  type="button"
+                >
+                  Stop monitoring
+                </button>
+              ) : (
+                <button
+                  className="primary-action"
+                  disabled={
+                    !liveUrl ||
+                    !canMonitorLiveMotion ||
+                    isEvaluatingLiveMotion ||
+                    (backendLiveSessionSupported && !liveSessionRunning) ||
+                    (!backendLiveSessionSupported && !liveViewOpen)
+                  }
+                  onClick={() => void startLiveMonitoring()}
+                  type="button"
+                >
+                  {isEvaluatingLiveMotion ? "Starting..." : "Start monitoring"}
+                </button>
+              )}
+              <label className="stream-live-primary-toggle">
+                <input
+                  checked={liveAutoReviewEnabled}
+                  disabled={liveMonitorRunning || isEvaluatingLiveMotion}
+                  onChange={(event) => setAutoCreateLiveReviews(event.target.checked)}
+                  type="checkbox"
+                />
+                Auto-create
+              </label>
+              {streamReviewCount > 0 ? (
+                <button
+                  className="secondary-action"
+                  onClick={() => onOpenReview(liveReviewQueueContext ?? undefined)}
+                  type="button"
+                >
+                  Open Review Queue
+                </button>
+              ) : null}
+            </div>
+            <div className="stream-live-primary-status" aria-label="Camera and monitor status">
+              <span>
+                <strong>Camera</strong> {formatLabel(liveSession?.status ?? "stopped")}
+              </span>
+              <span>
+                <strong>Live view</strong> {liveViewOpen ? "visible" : "hidden"}
+              </span>
+              <span>
+                <strong>Monitoring</strong> {liveMonitorRunning ? "running" : "stopped"}
+              </span>
+              <span>
+                <strong>Auto-create</strong> {liveAutoReviewEnabled ? "enabled" : "disabled"}
+              </span>
+              <span>
+                <strong>Review Queue</strong>{" "}
+                {streamReviewCount > 0 ? `${streamReviewCount} candidate(s)` : "clear"}
+              </span>
+              {backendLiveSessionSupported ? (
+                <span>
+                  <strong>Newest frame</strong> {liveSessionNewestFrameLabel}
+                </span>
+              ) : null}
+            </div>
+            <div className="stream-live-zone-actions">
               <button
                 className={drawMode ? "primary-action" : "secondary-action"}
                 disabled={
@@ -1927,15 +1930,17 @@ export function StreamDetailPage({
                 {showLiveZones ? "Hide zones" : "Show zones"}
               </button>
             </div>
-          )}
+          </div>
 
           {backendLiveSessionSupported && sourceProviderConfig?.provider_key === "local_usb" ? (
-            <form className="stream-live-secondary-panel" onSubmit={handleSaveCameraTuning}>
-              <div className="stream-live-panel-header">
-                <div>
+            <details className="stream-live-secondary-panel stream-live-collapsible-panel">
+              <summary>
+                <span className="stream-live-panel-summary-copy">
                   <strong>Camera tuning</strong>
                   <span>Preview 1280x720 at 10-15fps is a good feeder starting point.</span>
-                </div>
+                </span>
+              </summary>
+              <form className="stream-live-collapsible-body" onSubmit={handleSaveCameraTuning}>
                 <div className="detail-actions stream-live-actions">
                   <button
                     className="secondary-action"
@@ -1955,7 +1960,6 @@ export function StreamDetailPage({
                     </button>
                   ) : null}
                 </div>
-              </div>
               <div className="stream-live-tuning-grid">
                 {cameraTuningKeys.map((key) => (
                   <label key={key}>
@@ -1987,11 +1991,19 @@ export function StreamDetailPage({
               {cameraTuningError ? (
                 <span className="stream-live-hint is-error">{cameraTuningError}</span>
               ) : null}
-            </form>
+              </form>
+            </details>
           ) : null}
 
           {canMonitorLiveMotion ? (
-            <div className="stream-live-secondary-panel">
+            <details className="stream-live-secondary-panel stream-live-collapsible-panel">
+              <summary>
+                <span className="stream-live-panel-summary-copy">
+                  <strong>Motion calibration</strong>
+                  <span>Camera tuning, feeder motion, focus, and diagnostics.</span>
+                </span>
+              </summary>
+              <div className="stream-live-collapsible-body">
               <div className="stream-live-panel-header">
                 <div>
                   <strong>Review candidate handoff</strong>
@@ -2018,22 +2030,25 @@ export function StreamDetailPage({
               <label className="stream-live-debug-toggle stream-live-bird-motion-toggle">
                 <input
                   checked={birdSizedFeederMotion}
-                  disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                  disabled={liveMonitorRunning || isEvaluatingLiveMotion}
                   onChange={(event) => setBirdSizedFeederMotion(event.target.checked)}
                   type="checkbox"
                 />
                 Bird-sized feeder motion for Feeder/Birdbath/Perch zones.
               </label>
-              <label className="stream-live-debug-toggle stream-live-auto-review-toggle">
-                <input
-                  checked={autoCreateLiveReviews}
-                  disabled={isLiveMonitoring || isEvaluatingLiveMotion}
-                  onChange={(event) => setAutoCreateLiveReviews(event.target.checked)}
-                  type="checkbox"
-                />
-                Auto-create Review Queue items from completed activity sessions. Does not mark truth
-                or update Bird Log.
-              </label>
+              <div className="stream-live-sensitivity" aria-label="Monitoring sensitivity">
+                {liveMonitorSensitivityOptions.map((option) => (
+                  <button
+                    className={liveMonitorSensitivity === option ? "selected" : ""}
+                    disabled={liveMonitorRunning || isEvaluatingLiveMotion}
+                    key={option}
+                    onClick={() => setLiveMonitorSensitivity(option)}
+                    type="button"
+                  >
+                    {liveMonitorSensitivitySettings[option].label}
+                  </button>
+                ))}
+              </div>
               <div className="stream-live-monitor-facts">
                 <span>
                   <strong>Auto-create</strong> {liveAutoReviewEnabled ? "on" : "off"}
@@ -2087,7 +2102,7 @@ export function StreamDetailPage({
                   <label>
                     <span>Monitoring focus</span>
                     <select
-                      disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                      disabled={liveMonitorRunning || isEvaluatingLiveMotion}
                       value={liveMotionFocusZoneId}
                       onChange={(event) => setLiveMotionFocusZoneId(event.target.value)}
                     >
@@ -2102,7 +2117,7 @@ export function StreamDetailPage({
                   <label>
                     <span>Quiet period</span>
                     <input
-                      disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                      disabled={liveMonitorRunning || isEvaluatingLiveMotion}
                       min={1}
                       max={300}
                       onChange={(event) =>
@@ -2117,7 +2132,7 @@ export function StreamDetailPage({
                   <label>
                     <span>Min detections</span>
                     <input
-                      disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                      disabled={liveMonitorRunning || isEvaluatingLiveMotion}
                       min={1}
                       max={100}
                       onChange={(event) =>
@@ -2133,7 +2148,7 @@ export function StreamDetailPage({
                     {feederFocusZone ? (
                       <button
                         className="secondary-action"
-                        disabled={isLiveMonitoring || isEvaluatingLiveMotion}
+                        disabled={liveMonitorRunning || isEvaluatingLiveMotion}
                         onClick={() => setLiveMotionFocusZoneId(feederFocusZone.id)}
                         type="button"
                       >
@@ -2142,7 +2157,7 @@ export function StreamDetailPage({
                     ) : null}
                     <button
                       className="secondary-action"
-                      disabled={isLiveMonitoring || isEvaluatingLiveMotion || !liveMotionFocusZoneId}
+                      disabled={liveMonitorRunning || isEvaluatingLiveMotion || !liveMotionFocusZoneId}
                       onClick={() => setLiveMotionFocusZoneId("")}
                       type="button"
                     >
@@ -2210,7 +2225,8 @@ export function StreamDetailPage({
                   </div>
                 ) : null}
               </details>
-            </div>
+              </div>
+            </details>
           ) : null}
 
           <div className={`stream-live-frame${drawMode ? " draw-mode" : ""}`}>
@@ -2407,7 +2423,7 @@ export function StreamDetailPage({
                   <strong>Last checked</strong> {liveLastChecked ?? "not yet"}
                 </span>
                 <span>
-                  <strong>Monitor</strong> {isLiveMonitoring ? "running" : "not running"}
+                  <strong>Monitor</strong> {liveMonitorRunning ? "running" : "not running"}
                 </span>
                 <span>
                   <strong>Sensitivity</strong> {liveSensitivityLabel}
@@ -2549,7 +2565,7 @@ export function StreamDetailPage({
                       Open saved best frame
                     </a>
                   ) : null}
-                  {isLiveMonitoring ? (
+                  {liveMonitorRunning ? (
                     <button
                       className="secondary-action"
                       onClick={() => void stopLiveMonitoring()}
@@ -2586,14 +2602,14 @@ export function StreamDetailPage({
           ) : null}
 
           {canCaptureFrame ? (
-            <div className="stream-live-secondary-panel">
-              <div className="stream-live-secondary-copy">
-                  <strong>Capture current frame</strong>
-                <span>
-                  Manual capture is secondary to monitoring. Monitoring saves best frames automatically
-                  when activity is detected.
+            <details className="stream-live-secondary-panel stream-live-collapsible-panel">
+              <summary>
+                <span className="stream-live-panel-summary-copy">
+                  <strong>Manual tools</strong>
+                  <span>Capture a frame, compare saved frames, or manually create review activity.</span>
                 </span>
-              </div>
+              </summary>
+              <div className="stream-live-collapsible-body">
               <div className="detail-actions stream-live-actions">
                 <button
                   className="secondary-action"
@@ -2727,7 +2743,8 @@ export function StreamDetailPage({
                   ) : null}
                 </div>
               ) : null}
-            </div>
+              </div>
+            </details>
           ) : null}
         </section>
       ) : (
