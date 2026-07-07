@@ -133,6 +133,11 @@ export type ModelAdapterKind =
   | "integration"
   | "demo";
 export type ModelAdapterStatus = "available" | "not_configured" | "unavailable" | "disabled";
+export type ModelAdapterSetupStatus =
+  | "available"
+  | "setup_required"
+  | "unavailable"
+  | "demo";
 export type LabelCategory =
   | "bird"
   | "mammal"
@@ -911,6 +916,22 @@ export interface ModelAdapterConfigurationStatus {
   local_only: boolean;
 }
 
+export interface ModelAdapterSetupSummary {
+  adapter_id: string;
+  adapter_name: string;
+  adapter_kind: ModelAdapterKind;
+  status: ModelAdapterSetupStatus;
+  local_only: boolean;
+  is_demo: boolean;
+  supported_media_types: string[];
+  required_env_var?: string | null;
+  model_path_hint?: string | null;
+  setup_hint?: string | null;
+  can_run: boolean;
+  can_run_on_review_best_frame: boolean;
+  creates_truth: boolean;
+}
+
 export interface ModelAdapter {
   id: string;
   name: string;
@@ -992,6 +1013,7 @@ export interface ModelReadinessSummary {
   adapter_match_rate?: number | null;
   ready_for_first_detector_spike: boolean;
   recommended_next_step: string;
+  adapter_setup: ModelAdapterSetupSummary[];
   checklist: ModelReadinessChecklistItem[];
   generated_at: string;
   local_first_note: string;
@@ -1811,10 +1833,13 @@ export interface ReviewIdentificationSummary {
   adapter_kind?: ModelAdapterKind | null;
   adapter_status?: ModelAdapterStatus | null;
   adapter_is_demo: boolean;
+  setup_status?: ModelAdapterSetupStatus | null;
   local_only: boolean;
   supported_media_types: string[];
   can_run: boolean;
   can_run_on_best_frame: boolean;
+  required_env_var?: string | null;
+  model_path_hint?: string | null;
   setup_hint?: string | null;
   unavailable_reason?: string | null;
   suggestion?: SpeciesSuggestion | null;

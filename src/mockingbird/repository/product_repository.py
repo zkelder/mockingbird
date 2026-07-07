@@ -23,6 +23,7 @@ from mockingbird.api import demo_data
 from mockingbird.detectors.local_image_detector import (
     LOCAL_IMAGE_DETECTOR_ID,
     LOCAL_DETECTOR_SETUP_HINT,
+    MODEL_PATH_ENV as LOCAL_DETECTOR_MODEL_PATH_ENV,
     SUPPORTED_IMAGE_CONTENT_TYPES,
     LocalDetectorConfigurationError,
     LocalDetectorOutputError,
@@ -34,6 +35,7 @@ from mockingbird.detectors.local_image_detector import (
 )
 from mockingbird.detectors.megadetector_adapter import (
     MEGADETECTOR_ADAPTER_ID,
+    MEGADETECTOR_MODEL_PATH_ENV,
     MEGADETECTOR_SETUP_HINT,
     MEGADETECTOR_SUPPORTED_LABELS,
     SUPPORTED_MEGADETECTOR_IMAGE_CONTENT_TYPES,
@@ -124,6 +126,8 @@ from mockingbird.api.schemas import (
     ModelAdapterRunRequest,
     ModelAdapterRunResult,
     ModelAdapterStatus,
+    ModelAdapterSetupStatus,
+    ModelAdapterSetupSummary,
     MotionEvidenceBulkAction,
     MotionEvidenceBulkActionRequest,
     MotionEvidenceBulkActionResponse,
@@ -4566,6 +4570,10 @@ class ProductRepository:
                 taxonomy_count=taxonomy_count,
                 adapter_contract_ready=adapter_contract_ready,
             ),
+            adapter_setup=[
+                _model_adapter_setup_summary(adapter)
+                for adapter in adapters
+            ],
             checklist=_model_readiness_checklist(
                 coverage=coverage,
                 quality=quality,
@@ -5630,10 +5638,13 @@ class ProductRepository:
                     "adapter_kind": summary.adapter_kind,
                     "adapter_status": summary.adapter_status,
                     "adapter_is_demo": summary.adapter_is_demo,
+                    "setup_status": summary.setup_status,
                     "local_only": summary.local_only,
                     "supported_media_types": summary.supported_media_types,
                     "can_run": summary.can_run,
                     "can_run_on_best_frame": summary.can_run_on_best_frame,
+                    "required_env_var": summary.required_env_var,
+                    "model_path_hint": summary.model_path_hint,
                     "setup_hint": summary.setup_hint,
                     "unavailable_reason": None,
                     "created_suggestion_ids": created_suggestion_ids,
@@ -5655,10 +5666,13 @@ class ProductRepository:
                     "adapter_kind": summary.adapter_kind,
                     "adapter_status": summary.adapter_status,
                     "adapter_is_demo": summary.adapter_is_demo,
+                    "setup_status": summary.setup_status,
                     "local_only": summary.local_only,
                     "supported_media_types": summary.supported_media_types,
                     "can_run": summary.can_run,
                     "can_run_on_best_frame": summary.can_run_on_best_frame,
+                    "required_env_var": summary.required_env_var,
+                    "model_path_hint": summary.model_path_hint,
                     "setup_hint": summary.setup_hint,
                     "unavailable_reason": None,
                     "created_suggestion_ids": [],
@@ -5782,9 +5796,14 @@ class ProductRepository:
             if adapter is not None
             else False
         )
+        setup_summary = (
+            _model_adapter_setup_summary(adapter)
+            if adapter is not None
+            else None
+        )
         setup_hint = (
-            adapter.configuration_status.setup_hint
-            if adapter is not None and adapter.configuration_status is not None
+            setup_summary.setup_hint
+            if setup_summary is not None
             else adapter.notes
             if adapter is not None
             else None
@@ -5858,10 +5877,13 @@ class ProductRepository:
             adapter_kind=adapter.kind if adapter is not None else None,
             adapter_status=adapter.status if adapter is not None else None,
             adapter_is_demo=adapter.kind == ModelAdapterKind.demo if adapter is not None else False,
+            setup_status=setup_summary.status if setup_summary is not None else None,
             local_only=adapter.local_only if adapter is not None else True,
             supported_media_types=supported_media_types,
             can_run=can_run,
             can_run_on_best_frame=can_run,
+            required_env_var=setup_summary.required_env_var if setup_summary is not None else None,
+            model_path_hint=setup_summary.model_path_hint if setup_summary is not None else None,
             setup_hint=setup_hint,
             unavailable_reason=unavailable_reason,
             suggestion=suggestion,
@@ -10223,6 +10245,68 @@ def _model_adapter_configuration_status(
         creates_review_truth=False,
         local_only=True,
     )
+
+
+def _model_adapter_setup_summary(adapter: ModelAdapter) -> ModelAdapterSetupSummary:
+    required_env_var = _model_adapter_required_env_var(adapter.id)
+    return ModelAdapterSetupSummary(
+        adapter_id=adapter.id,
+        adapter_name=adapter.name,
+        adapter_kind=adapter.kind,
+        status=_model_adapter_setup_status(adapter),
+        local_only=adapter.local_only,
+        is_demo=adapter.kind == ModelAdapterKind.demo,
+        supported_media_types=list(adapter.supported_media_types),
+        required_env_var=required_env_var,
+        model_path_hint=_model_adapter_model_path_hint(adapter.id),
+        setup_hint=_model_adapter_setup_hint(adapter),
+        can_run=_model_adapter_setup_can_run(adapter),
+        can_run_on_review_best_frame=_model_adapter_setup_can_run(adapter),
+        creates_truth=adapter.creates_review_truth,
+    )
+
+
+def _model_adapter_setup_status(adapter: ModelAdapter) -> ModelAdapterSetupStatus:
+    if adapter.kind == ModelAdapterKind.demo:
+        return ModelAdapterSetupStatus.demo
+    if adapter.status == ModelAdapterStatus.available:
+        return ModelAdapterSetupStatus.available
+    if adapter.status == ModelAdapterStatus.not_configured:
+        return ModelAdapterSetupStatus.setup_required
+    return ModelAdapterSetupStatus.unavailable
+
+
+def _model_adapter_required_env_var(adapter_id: str) -> str | None:
+    if adapter_id == LOCAL_IMAGE_DETECTOR_ID:
+        return LOCAL_DETECTOR_MODEL_PATH_ENV
+    if adapter_id == MEGADETECTOR_ADAPTER_ID:
+        return MEGADETECTOR_MODEL_PATH_ENV
+    return None
+
+
+def _model_adapter_model_path_hint(adapter_id: str) -> str | None:
+    env_var = _model_adapter_required_env_var(adapter_id)
+    if env_var is None:
+        return None
+    if adapter_id == MEGADETECTOR_ADAPTER_ID:
+        return f"Set {env_var} to a local MegaDetector-family model file."
+    return f"Set {env_var} to a local model file."
+
+
+def _model_adapter_setup_hint(adapter: ModelAdapter) -> str | None:
+    if adapter.configuration_status is not None:
+        return adapter.configuration_status.setup_hint
+    if adapter.kind == ModelAdapterKind.demo:
+        return "Demo analyzer output is placeholder evidence only. Suggestions are not truth."
+    return adapter.notes
+
+
+def _model_adapter_setup_can_run(adapter: ModelAdapter) -> bool:
+    if adapter.kind == ModelAdapterKind.demo:
+        return adapter.status == ModelAdapterStatus.available
+    if adapter.configuration_status is not None:
+        return adapter.configuration_status.can_run
+    return adapter.status == ModelAdapterStatus.available
 
 
 def _model_adapter_by_id(adapter_id: str) -> ModelAdapter | None:

@@ -6,6 +6,7 @@ import type {
   MediaAsset,
   ModelAdapterConfigurationStatus,
   ModelAdapter,
+  ModelAdapterSetupSummary,
   ModelReadinessChecklistItem,
   ModelReadinessSummary,
   ModelAdapterRunResult,
@@ -276,6 +277,13 @@ export function ModelAdaptersPage({
               </strong>
             </div>
           </div>
+          {modelReadiness.adapter_setup.length > 0 ? (
+            <div className="adapter-setup-summary-list">
+              {modelReadiness.adapter_setup.map((setup) => (
+                <AdapterSetupSummaryCard setup={setup} key={setup.adapter_id} />
+              ))}
+            </div>
+          ) : null}
           <div className="notice-panel readiness-next-step">
             <strong>Safe next step</strong>
             <span>{modelReadiness.recommended_next_step}</span>
@@ -817,6 +825,42 @@ function ReadinessChecklistItem({ item }: { item: ModelReadinessChecklistItem })
       </div>
       <p>{item.description}</p>
       <span className="meta-text">{item.suggested_action}</span>
+    </article>
+  );
+}
+
+function AdapterSetupSummaryCard({ setup }: { setup: ModelAdapterSetupSummary }) {
+  const statusTone = setup.status === "available" || setup.status === "demo" ? "truth" : "review";
+  return (
+    <article className="adapter-setup-summary-card">
+      <div className="quality-issue-title">
+        <strong>{setup.adapter_name}</strong>
+        <EvidenceBadge label={formatLabel(setup.status)} tone={statusTone} />
+        {setup.is_demo ? <StatusPill label="Demo" tone="quiet" /> : null}
+      </div>
+      <div className="adapter-setup-summary-grid">
+        <div>
+          <span>Adapter</span>
+          <strong>{setup.adapter_id}</strong>
+          <small>{formatLabel(setup.adapter_kind)}</small>
+        </div>
+        <div>
+          <span>Required env</span>
+          <strong>{setup.required_env_var ?? "None"}</strong>
+          <small>{setup.model_path_hint ?? "No local model file required."}</small>
+        </div>
+        <div>
+          <span>Supported media</span>
+          <strong>{setup.supported_media_types.join(", ")}</strong>
+          <small>{setup.can_run_on_review_best_frame ? "Ready for review best frames" : "Setup needed before runs"}</small>
+        </div>
+        <div>
+          <span>Truth boundary</span>
+          <strong>{setup.creates_truth ? "Creates truth" : "Evidence only"}</strong>
+          <small>No model files are bundled or downloaded.</small>
+        </div>
+      </div>
+      {setup.setup_hint ? <span className="meta-text">{setup.setup_hint}</span> : null}
     </article>
   );
 }

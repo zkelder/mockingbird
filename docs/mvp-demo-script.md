@@ -49,7 +49,8 @@ transcoding, or production provider infrastructure.
   setup-required/unavailable/unsupported/failed when an optional local analyzer
   cannot run, or suggestion/proposal evidence when one is available or already
   present. Best-frame candidates can also show activity focus/crop context from
-  the reviewable Zone. Demo analyzer output is placeholder evidence only.
+  the reviewable Zone, plus safe setup details such as the required env var and
+  local model-path hint. Demo analyzer output is placeholder evidence only.
 - Stream Detail can draw and edit user-authored Zones directly over the real
   live stream, and monitoring uses those Zones when available.
 - The `external_url` still-image preview/save/evidence path works.
@@ -527,6 +528,9 @@ For exact webhook API examples, refer to
 - [ ] Confirm evidence context is visible for imported/demo proposal records.
 - [ ] On a best-frame candidate, confirm Identification assist shows either
       setup-required/unavailable state or suggestion/proposal evidence.
+- [ ] Expand Adapter setup and confirm it names the analyzer, supported media,
+      required env var/model-path hint when relevant, and says suggestions are
+      not truth.
 - [ ] If an assist suggestion/proposal is present, use it as a correction only
       through the Review Queue correction action.
 - [ ] Submit or view corrections.

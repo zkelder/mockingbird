@@ -1122,6 +1122,12 @@ Current work:
   full best frame available, attach focus context to identification proposal
   evidence, and still create no ReviewLabel, Bird Log entry, export truth, model
   download, or bundled model file.
+- Local Adapter Setup UX 1: existing adapter readiness surfaces now expose a
+  compact setup summary for demo, Local Image Detector, and MegaDetector-family
+  analyzers, including safe env-var/model-path hints, supported media, and
+  review-best-frame run readiness. Review Queue shows the same setup boundary
+  from the identification panel without adding a new page, dependency, model
+  download, truth write, Bird Log entry, export, or worker.
 - Unattended Monitoring Review Handoff 1: Stream Detail can explicitly enable
   auto-created Review Queue candidates for completed live activity sessions
   after a quiet period. It reuses the existing needs-review Event/Visit handoff,
@@ -1168,7 +1174,9 @@ Validation:
   Adapter setup-required, unsupported-media, unavailable, and failed states are
   visible in Review Queue; optional local adapters require user configuration
   and do not download or bundle models; demo paths are labeled as placeholder
-  evidence; and Bird Log/export truth still requires a ReviewLabel correction.
+  evidence; setup visibility shows safe env-var/model-path hints without
+  exposing secrets; and Bird Log/export truth still requires a ReviewLabel
+  correction.
 - Unattended monitoring is user-enabled and defaults off. It may automatically
   create or reuse one needs-review Event/Visit candidate per completed live
   activity session after quiet/min-detection gates, but it does not create

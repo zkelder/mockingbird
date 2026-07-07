@@ -2253,6 +2253,16 @@ function IdentificationAssistPanel({
     identification.supported_media_types.length > 0
       ? identification.supported_media_types.join(", ")
       : "n/a";
+  const setupStatusLabel = identification.setup_status
+    ? formatLabel(identification.setup_status)
+    : identification.adapter_status
+      ? formatLabel(identification.adapter_status)
+      : "Unavailable";
+  const setupDetailsOpen =
+    identification.status === "setup_required" ||
+    identification.status === "unavailable" ||
+    identification.status === "unsupported_media" ||
+    identification.status === "failed";
   const focusPixelLabel = identification.focus_crop_box_pixels
     ? `Pixels ${identification.focus_crop_box_pixels.x}, ${identification.focus_crop_box_pixels.y} / ${identification.focus_crop_box_pixels.width} x ${identification.focus_crop_box_pixels.height}`
     : "Pixel box unavailable";
@@ -2283,10 +2293,8 @@ function IdentificationAssistPanel({
           <small>
             {identification.adapter_is_demo
               ? "Placeholder analyzer"
-              : identification.adapter_status
-                ? `${formatLabel(identification.adapter_status)}${
-                    identification.local_only ? " / local" : ""
-                  }`
+              : identification.setup_status
+                ? `${setupStatusLabel}${identification.local_only ? " / local" : ""}`
                 : "Unavailable"}
           </small>
         </div>
@@ -2351,6 +2359,46 @@ function IdentificationAssistPanel({
           </small>
         </div>
       </div>
+      <details className="review-identification-setup-details" open={setupDetailsOpen}>
+        <summary>Adapter setup</summary>
+        <div className="review-identification-setup-grid">
+          <div className="data-row">
+            <span>Status</span>
+            <strong>{setupStatusLabel}</strong>
+            <small>
+              {identification.adapter_is_demo
+                ? "Demo output is placeholder evidence."
+                : identification.can_run_on_best_frame
+                  ? "Ready for this best frame."
+                  : "No local analyzer configured for this best frame."}
+            </small>
+          </div>
+          <div className="data-row">
+            <span>Required env</span>
+            <strong>
+              {identification.required_env_var ? (
+                <code>{identification.required_env_var}</code>
+              ) : (
+                "None"
+              )}
+            </strong>
+            <small>{identification.model_path_hint ?? "Demo analyzer requires no model file."}</small>
+          </div>
+          <div className="data-row">
+            <span>Media</span>
+            <strong>{supportedMediaCopy}</strong>
+            <small>{identification.media_asset_id ? "Best-frame compatibility is checked here." : "Readiness only."}</small>
+          </div>
+          <div className="data-row">
+            <span>Truth boundary</span>
+            <strong>{identification.creates_truth ? "Creates truth" : "Suggestions are not truth"}</strong>
+            <small>No model files are bundled or downloaded.</small>
+          </div>
+        </div>
+        {identification.setup_hint ? (
+          <span className="meta-text">{identification.setup_hint}</span>
+        ) : null}
+      </details>
       <div className="review-identification-actions">
         {canRun ? (
           <button

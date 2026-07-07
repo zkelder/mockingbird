@@ -1940,6 +1940,41 @@ a.secondary-action {
   gap: 8px;
 }
 
+.review-identification-setup-details {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d9e2d5;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.review-identification-setup-details summary {
+  cursor: pointer;
+  color: #34473b;
+  font-weight: 800;
+}
+
+.review-identification-setup-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.review-identification-setup-grid .data-row,
+.review-identification-setup-grid strong,
+.review-identification-setup-grid small,
+.review-identification-setup-grid code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.review-identification-setup-grid code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.8rem;
+}
+
 .review-correction-boundary {
   grid-column: 1 / -1;
   width: fit-content;
@@ -2302,9 +2337,47 @@ a.secondary-action {
 
 .local-detector-setup-copy,
 .local-detector-env-list,
+.adapter-setup-summary-list,
 .real-model-smoke-steps {
   display: grid;
   gap: 8px;
+}
+
+.adapter-setup-summary-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.adapter-setup-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.adapter-setup-summary-grid div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fbf4;
+}
+
+.adapter-setup-summary-grid strong,
+.adapter-setup-summary-grid small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.adapter-setup-summary-grid span,
+.adapter-setup-summary-grid small {
+  color: #627168;
+  font-size: 0.84rem;
 }
 
 .local-detector-setup-copy div,
@@ -5805,9 +5878,11 @@ a.secondary-action {
   .review-diagnostic-grid,
   .review-evidence-grid,
   .review-identification-grid,
+  .review-identification-setup-grid,
   .adapter-evaluation-grid,
   .adapter-config-grid,
   .model-readiness-grid,
+  .adapter-setup-summary-grid,
   .local-detector-setup-grid,
   .real-model-smoke-grid,
   .adapter-result-grid,
@@ -5941,8 +6016,10 @@ a.secondary-action {
   .review-diagnostic-grid,
   .review-evidence-grid,
   .review-identification-grid,
+  .review-identification-setup-grid,
   .adapter-evaluation-grid,
   .model-readiness-grid,
+  .adapter-setup-summary-grid,
   .local-detector-setup-grid,
   .real-model-smoke-grid,
   .adapter-result-grid,

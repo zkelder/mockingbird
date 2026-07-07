@@ -230,12 +230,18 @@ async def test_review_identification_setup_required_without_adapter_creates_no_t
     assert queue_item["best_media_asset_id"] == media_asset_id
     assert identification["status"] == "setup_required"
     assert identification["adapter_id"] == LOCAL_IMAGE_DETECTOR_ID
+    assert identification["setup_status"] == "setup_required"
     assert identification["can_run"] is False
     assert identification["can_run_on_best_frame"] is False
     assert identification["creates_truth"] is False
     assert identification["local_only"] is True
+    assert identification["required_env_var"] == "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH"
+    assert identification["model_path_hint"] == (
+        "Set MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH to a local model file."
+    )
     assert "image/png" in identification["supported_media_types"]
     assert "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH" in identification["setup_hint"]
+    assert "No model files are bundled or downloaded" in identification["setup_hint"]
     assert "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH" in identification["unavailable_reason"]
 
     response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
@@ -243,7 +249,11 @@ async def test_review_identification_setup_required_without_adapter_creates_no_t
     assert response.status_code == 200
     result = response.json()
     assert result["identification"]["status"] == "setup_required"
+    assert result["identification"]["setup_status"] == "setup_required"
     assert result["identification"]["can_run"] is False
+    assert result["identification"]["required_env_var"] == (
+        "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH"
+    )
     assert result["identification"]["created_proposal_ids"] == []
     assert result["created_proposal_ids"] == []
     assert result["proposals"] == []
@@ -347,8 +357,11 @@ async def test_review_identification_explicit_demo_adapter_creates_placeholder_p
     assert result["identification"]["status"] == "proposal_created"
     assert result["identification"]["adapter_id"] == DEMO_ADAPTER_ID
     assert result["identification"]["adapter_is_demo"] is True
+    assert result["identification"]["setup_status"] == "demo"
     assert result["identification"]["local_only"] is True
     assert result["identification"]["can_run_on_best_frame"] is True
+    assert result["identification"]["required_env_var"] is None
+    assert "placeholder evidence" in result["identification"]["setup_hint"]
     assert result["identification"]["supported_media_types"] == ["image", "video"]
     assert result["identification"]["created_proposal_ids"] == [proposal["id"]]
     assert result["created_proposal_ids"] == [proposal["id"]]
@@ -416,8 +429,12 @@ async def test_review_identification_available_detection_adapter_then_correction
     queue_item = await review_queue_item_for_visit(client, visit_id)
     assert queue_item["identification"]["status"] == "configured_available"
     assert queue_item["identification"]["adapter_id"] == LOCAL_IMAGE_DETECTOR_ID
+    assert queue_item["identification"]["setup_status"] == "available"
     assert queue_item["identification"]["can_run"] is True
     assert queue_item["identification"]["can_run_on_best_frame"] is True
+    assert queue_item["identification"]["required_env_var"] == (
+        "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH"
+    )
     assert "image/png" in queue_item["identification"]["supported_media_types"]
 
     response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
@@ -427,6 +444,7 @@ async def test_review_identification_available_detection_adapter_then_correction
     proposal = result["proposals"][0]
     assert result["identification"]["status"] == "proposal_created"
     assert result["identification"]["adapter_id"] == LOCAL_IMAGE_DETECTOR_ID
+    assert result["identification"]["setup_status"] == "available"
     assert result["identification"]["created_proposal_ids"] == [proposal["id"]]
     assert result["detection_run"]["source"] == "future_model"
     assert proposal["label"] == "bird"
@@ -479,6 +497,10 @@ async def test_review_identification_adapter_failure_is_clean_and_truth_safe(
     result = response.json()
     assert result["identification"]["status"] == "failed"
     assert result["identification"]["unavailable_reason"] == "local_detector_failed"
+    assert result["identification"]["setup_status"] == "available"
+    assert result["identification"]["required_env_var"] == (
+        "MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH"
+    )
     assert result["proposals"] == []
     assert result["detection_run"] is None
     assert result["creates_truth"] is False

@@ -597,7 +597,10 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
             detail="Detector output format is not supported by this adapter path.",
         )
     if reason == "local_detector_failed":
-        return HTTPException(status_code=500, detail="Local image detector failed unexpectedly.")
+        return HTTPException(
+            status_code=400,
+            detail="Local image detector failed cleanly. No truth or export data was created.",
+        )
     if reason == "unsupported_media_type":
         return HTTPException(
             status_code=400,

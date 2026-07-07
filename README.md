@@ -159,10 +159,11 @@ status plus activity focus/crop context derived from the best frame and
 reviewable Zone. If an optional local analyzer is configured, the user can run it
 explicitly against the best frame with that focus context to create
 suggestion/proposal evidence; no model files are bundled or downloaded. If setup
-is missing, unsupported, or a run fails, the queue reports that state without
-creating fake evidence. Demo analyzer output is marked as placeholder evidence,
-not real species confidence. Accepting an assist result still goes through
-ReviewLabel correction before Bird Log, analytics, or exports change.
+is missing, unsupported, or a run fails, the queue reports that state plus the
+required local env var/model-path hint without creating fake evidence. Demo
+analyzer output is marked as placeholder evidence, not real species confidence.
+Accepting an assist result still goes through ReviewLabel correction before Bird
+Log, analytics, or exports change.
 The live monitor refreshes Review Queue state before opening a created review
 item, and High sensitivity checks more recent frame pairs with lower
 feeder/birdbath/perch thresholds for small, fast outdoor activity.
@@ -244,7 +245,9 @@ evidence only; use the demo proposal action when the local detector is not
 configured.
 The Model Adapters page shows the Local Detector setup/readiness panel with
 the exact local env vars, supported image media types, runtime readiness, and a
-link back to Streams. Model files are not bundled or downloaded.
+link back to Streams. It also summarizes every registered analyzer, including
+demo and MegaDetector-family setup states. Optional local analyzers require
+user-supplied local model files; model files are not bundled or downloaded.
 For a real local model smoke check, configure the local model path if you have
 one, restart the API, capture or import an image, run Analyze image explicitly
 from the saved image, review/correct the suggested label, confirm Bird Log, and

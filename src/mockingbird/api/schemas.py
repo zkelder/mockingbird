@@ -214,6 +214,13 @@ class ModelAdapterStatus(str, Enum):
     disabled = "disabled"
 
 
+class ModelAdapterSetupStatus(str, Enum):
+    available = "available"
+    setup_required = "setup_required"
+    unavailable = "unavailable"
+    demo = "demo"
+
+
 class MotionEvidenceStatus(str, Enum):
     pending = "pending"
     promoted = "promoted"
@@ -1085,6 +1092,23 @@ class ModelAdapterConfigurationStatus(BaseModel):
     local_only: bool
 
 
+class ModelAdapterSetupSummary(BaseModel):
+    # Adapter setup visibility is safe metadata only; it never validates secrets or runs models.
+    adapter_id: str
+    adapter_name: str
+    adapter_kind: ModelAdapterKind
+    status: ModelAdapterSetupStatus
+    local_only: bool = True
+    is_demo: bool = False
+    supported_media_types: list[str]
+    required_env_var: str | None = None
+    model_path_hint: str | None = None
+    setup_hint: str | None = None
+    can_run: bool = False
+    can_run_on_review_best_frame: bool = False
+    creates_truth: bool = False
+
+
 class ModelAdapter(BaseModel):
     # Model adapters produce proposal evidence only; review labels remain truth.
     id: str
@@ -1178,6 +1202,7 @@ class ModelReadinessSummary(BaseModel):
     adapter_match_rate: float | None = Field(default=None, ge=0, le=1)
     ready_for_first_detector_spike: bool
     recommended_next_step: str
+    adapter_setup: list[ModelAdapterSetupSummary] = Field(default_factory=list)
     checklist: list[ModelReadinessChecklistItem]
     generated_at: datetime
     local_first_note: str
@@ -1813,10 +1838,13 @@ class ReviewIdentificationSummary(BaseModel):
     adapter_kind: ModelAdapterKind | None = None
     adapter_status: ModelAdapterStatus | None = None
     adapter_is_demo: bool = False
+    setup_status: ModelAdapterSetupStatus | None = None
     local_only: bool = True
     supported_media_types: list[str] = Field(default_factory=list)
     can_run: bool = False
     can_run_on_best_frame: bool = False
+    required_env_var: str | None = None
+    model_path_hint: str | None = None
     setup_hint: str | None = None
     unavailable_reason: str | None = None
     suggestion: SpeciesSuggestionResponse | None = None
