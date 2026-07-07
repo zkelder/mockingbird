@@ -3323,10 +3323,39 @@ def _evaluate_live_stream_motion(
                     peak_changed_ratio=best_candidate.peak_changed_ratio,
                     triggered_frame_count=best_candidate.triggered_frame_count,
                     scoring_config={
-                        "source": "live_stream_motion",
+                        "source": (
+                            "live_stream_motion_session_activity"
+                            if live_activity_session is not None
+                            else "live_stream_motion"
+                        ),
+                        **(
+                            {
+                                "activity_session_id": str(
+                                    live_activity_session["activity_session_id"]
+                                ),
+                                "activity_started_at": str(
+                                    live_activity_session.get("started_at")
+                                ),
+                                "activity_last_seen_at": str(
+                                    live_activity_session.get("last_seen_at")
+                                ),
+                                "detection_count": int(
+                                    live_activity_session.get("detection_count") or 1
+                                ),
+                            }
+                            if live_activity_session is not None
+                            else {}
+                        ),
                         "frames_considered": len(cached_frames),
                         "pixel_delta_threshold": request.pixel_delta_threshold,
                         "min_changed_ratio": request.min_changed_ratio,
+                        "best_changed_ratio": strongest_changed_ratio,
+                        "best_changed_pixels": (
+                            strongest_score.changed_pixels if strongest_score else 0
+                        ),
+                        "best_total_scored_pixels": (
+                            strongest_score.total_pixels if strongest_score else 0
+                        ),
                         "effective_threshold_used": effective_threshold_used,
                         "threshold_source": (
                             strongest_scoring_policy.threshold_source
@@ -3341,6 +3370,7 @@ def _evaluate_live_stream_motion(
                         "min_triggered_frames": request.min_triggered_frames,
                         "max_gap_frames": request.max_gap_frames,
                         "frame_sequence_start": cached_frames[0].sequence,
+                        "image_quality_warnings": image_quality_warnings,
                     },
                     snapshot_media_asset_id=best_media_asset_id,
                     notes=request.notes
@@ -3457,7 +3487,7 @@ def _evaluate_live_stream_motion(
         message = "Review activity is already ready in Review Queue."
     elif live_session_status == "cooldown":
         message = (
-            "Activity already captured — waiting for quiet period."
+            "Activity already captured - waiting for quiet period."
             if session_recommendation.session_status == "ongoing_activity"
             else "Cooldown active for this activity area."
         )
@@ -3843,10 +3873,28 @@ async def create_live_stream_motion_review_activity(
                     "source": "live_stream_motion_session_activity",
                     "activity_session_id": activity.get("activity_session_id"),
                     "detection_count": activity.get("detection_count") or 1,
+                    "activity_started_at": str(activity.get("started_at"))
+                    if activity.get("started_at")
+                    else "",
+                    "activity_last_seen_at": str(activity.get("last_seen_at"))
+                    if activity.get("last_seen_at")
+                    else "",
+                    "best_changed_ratio": activity.get("best_changed_ratio")
+                    or activity.get("strongest_changed_ratio", 0.0),
+                    "best_changed_pixels": activity.get("best_changed_pixels") or 0,
+                    "best_total_scored_pixels": (
+                        activity.get("best_total_scored_pixels") or 0
+                    ),
                     "threshold_used": activity.get("effective_threshold_used")
                     or activity.get("threshold_used"),
+                    "effective_threshold_used": activity.get("effective_threshold_used")
+                    or activity.get("threshold_used")
+                    or 0.0,
                     "threshold_source": activity.get("threshold_source"),
                     "fine_motion_applied": activity.get("fine_motion_applied"),
+                    "image_quality_warnings": list(
+                        activity.get("image_quality_warnings") or []
+                    ),
                     "creates_truth": False,
                 },
                 snapshot_media_asset_id=best_media_asset_id,

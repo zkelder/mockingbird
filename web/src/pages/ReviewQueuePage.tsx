@@ -75,7 +75,9 @@ interface ReviewItemFilterMetadata {
   motionEvidenceCount: number;
   searchText: string;
   sourceId: string | null;
+  sourceName: string | null;
   streamId: string | null;
+  streamName: string | null;
 }
 
 interface SourceStreamFilterOption {
@@ -113,20 +115,77 @@ type LastCorrectionSummary =
     };
 
 function reviewQueueTargetType(item: ReviewQueueItem): ReviewQueueBulkCorrectionTargetType {
+  if (item.target_type === "visit" || item.target_type === "event") {
+    return item.target_type;
+  }
   return item.visit_id ? "visit" : "event";
 }
 
 function reviewQueueTargetId(item: ReviewQueueItem): string {
-  return item.visit_id ?? item.event_id ?? item.id.replace(/^review-queue-/, "");
+  return item.target_id || item.visit_id || item.event_id || item.id.replace(/^review-queue-/, "");
+}
+
+function reviewItemZoneName(item: ReviewQueueItem): string {
+  return item.zone_name ?? item.primary_zone_name ?? item.zone_id ?? item.primary_zone_id ?? "No zone";
 }
 
 function reviewItemZoneLabel(item: ReviewQueueItem): string {
-  if (item.primary_zone_name) {
-    return item.primary_zone_type
-      ? `${item.primary_zone_name} (${formatLabel(item.primary_zone_type)})`
-      : item.primary_zone_name;
+  const zoneName = reviewItemZoneName(item);
+  const zoneType = item.zone_type ?? item.primary_zone_type;
+  if (zoneType) {
+    return `${zoneName} (${formatLabel(zoneType)})`;
   }
-  return item.primary_zone_id ?? "No zone";
+  return zoneName;
+}
+
+function reviewQueueSourceLabel(
+  item: ReviewQueueItem,
+  metadata?: Pick<ReviewItemFilterMetadata, "sourceId" | "sourceName">,
+): string {
+  return item.source_name ?? metadata?.sourceName ?? item.source_id ?? metadata?.sourceId ?? "Unknown source";
+}
+
+function reviewQueueStreamLabel(
+  item: ReviewQueueItem,
+  metadata?: Pick<ReviewItemFilterMetadata, "streamId" | "streamName">,
+): string {
+  return item.stream_name ?? metadata?.streamName ?? item.stream_id ?? metadata?.streamId ?? "Unknown stream";
+}
+
+function isLiveActivityReviewItem(item: ReviewQueueItem): boolean {
+  return Boolean(item.activity_session_id);
+}
+
+function detectionCountLabel(count: number): string {
+  return `${count} detection${count === 1 ? "" : "s"}`;
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "n/a";
+  }
+  const percent = value * 100;
+  if (percent === 0) {
+    return "0%";
+  }
+  if (Math.abs(percent) < 0.1) {
+    return `${percent.toFixed(2)}%`;
+  }
+  if (Math.abs(percent) < 10) {
+    return `${percent.toFixed(2).replace(/\.?0+$/, "")}%`;
+  }
+  return `${Math.round(percent)}%`;
+}
+
+function liveActivitySummary(item: ReviewQueueItem): string {
+  const detectionCount = item.detection_count || 1;
+  return `${reviewItemZoneName(item)} visit - ${detectionCountLabel(detectionCount)} - best change ${formatPercent(
+    item.best_changed_ratio,
+  )}`;
+}
+
+function formatQualityWarning(warning: string): string {
+  return warning.includes(" ") ? warning : formatLabel(warning);
 }
 
 function isBulkCorrectionEligible(item: ReviewQueueItem): boolean {
@@ -154,13 +213,34 @@ function reviewQueueSearchText(item: ReviewQueueItem, taxonomyLabels: TaxonomyLa
   return [
     item.id,
     item.item_type,
+    item.target_type,
+    item.target_id,
     item.title,
     item.stream_id,
+    item.stream_name ?? "",
+    item.source_id ?? "",
+    item.source_name ?? "",
     item.event_id ?? "",
     item.visit_id ?? "",
     item.primary_zone_id ?? "",
     item.primary_zone_name ?? "",
     item.primary_zone_type ?? "",
+    item.zone_id ?? "",
+    item.zone_name ?? "",
+    item.zone_type ?? "",
+    item.best_media_asset_id ?? "",
+    item.activity_session_id ?? "",
+    item.activity_started_at ?? "",
+    item.activity_last_seen_at ?? "",
+    item.detection_count.toString(),
+    item.best_frame_sequence?.toString() ?? "",
+    item.best_changed_ratio?.toString() ?? "",
+    item.best_changed_pixels?.toString() ?? "",
+    item.best_total_scored_pixels?.toString() ?? "",
+    item.effective_threshold_used?.toString() ?? "",
+    item.threshold_source ?? "",
+    item.fine_motion_applied ? "fine motion applied" : "",
+    ...item.image_quality_warnings,
     suggestedLabel,
     item.suggestion_id ?? "",
     item.suggestion_confidence?.toString() ?? "",
@@ -374,14 +454,17 @@ function reviewItemFilterMetadata(
   const proposalEvidence = reviewEvidenceProposals(item, proposals);
   const motionEvidenceItems = reviewMotionEvidenceForQueueItem(item, motionEvidence);
   const sourceId =
+    item.source_id ??
     item.media_asset?.source_id ??
     motionEvidenceItems.find((evidence) => evidence.source_id)?.source_id ??
     null;
+  const sourceName = item.source_name ?? null;
   const streamId =
     item.stream_id ||
     item.media_asset?.stream_id ||
     motionEvidenceItems.find((evidence) => evidence.stream_id)?.stream_id ||
     null;
+  const streamName = item.stream_name ?? null;
   const proposalSearch = proposalEvidence.flatMap(({ proposal }) => {
     const run = detectionRunsById.get(proposal.run_id);
     return [
@@ -418,7 +501,9 @@ function reviewItemFilterMetadata(
     searchText: [
       reviewQueueSearchText(item, taxonomyLabels),
       sourceId ?? "",
+      sourceName ?? "",
       streamId ?? "",
+      streamName ?? "",
       item.media_asset?.source_id ?? "",
       item.media_asset?.stream_id ?? "",
       ...proposalSearch,
@@ -427,7 +512,9 @@ function reviewItemFilterMetadata(
       .join(" ")
       .toLowerCase(),
     sourceId,
+    sourceName,
     streamId,
+    streamName,
   };
 }
 
@@ -469,15 +556,23 @@ function matchesSourceStreamFilter(
 function sourceStreamFilterOptions(
   metadataById: Map<string, ReviewItemFilterMetadata>,
 ): SourceStreamFilterOption[] {
-  const streamCounts = new Map<string, number>();
-  const sourceCounts = new Map<string, number>();
+  const streamCounts = new Map<string, { count: number; label: string }>();
+  const sourceCounts = new Map<string, { count: number; label: string }>();
 
   for (const metadata of metadataById.values()) {
     if (metadata.streamId) {
-      streamCounts.set(metadata.streamId, (streamCounts.get(metadata.streamId) ?? 0) + 1);
+      const existing = streamCounts.get(metadata.streamId);
+      streamCounts.set(metadata.streamId, {
+        count: (existing?.count ?? 0) + 1,
+        label: metadata.streamName ?? existing?.label ?? metadata.streamId,
+      });
     }
     if (metadata.sourceId) {
-      sourceCounts.set(metadata.sourceId, (sourceCounts.get(metadata.sourceId) ?? 0) + 1);
+      const existing = sourceCounts.get(metadata.sourceId);
+      sourceCounts.set(metadata.sourceId, {
+        count: (existing?.count ?? 0) + 1,
+        label: metadata.sourceName ?? existing?.label ?? metadata.sourceId,
+      });
     }
   }
 
@@ -489,16 +584,16 @@ function sourceStreamFilterOptions(
     },
     ...[...streamCounts.entries()]
       .sort(([first], [second]) => first.localeCompare(second))
-      .map(([streamId, count]) => ({
+      .map(([streamId, { count, label }]) => ({
         count,
-        label: `Stream ${streamId}`,
+        label: `Stream ${label}`,
         value: `stream:${streamId}`,
       })),
     ...[...sourceCounts.entries()]
       .sort(([first], [second]) => first.localeCompare(second))
-      .map(([sourceId, count]) => ({
+      .map(([sourceId, { count, label }]) => ({
         count,
-        label: `Source ${sourceId}`,
+        label: `Source ${label}`,
         value: `source:${sourceId}`,
       })),
   ];
@@ -1214,8 +1309,8 @@ export function ReviewQueuePage({
       ) : null}
       {queueItems.length === 0 ? (
         <EmptyState
-          title="No Visits need correction"
-          description="The Review Queue contains Visits that need user correction. Create reviewable activity from Cameras/Streams or import media; corrections create analytics, export, and classifier truth."
+          title="No review items need correction"
+          description="Review Queue contains Events and Visits that need user correction. Live candidates appear here only after explicit handoff, and Bird Log updates only after correction."
           action={
             <button className="primary-action" onClick={onOpenExports}>
               Open Dataset Exports
@@ -1464,6 +1559,16 @@ export function ReviewQueuePage({
           const previousItemCorrections = itemReviewLabels.slice(1);
           const itemEvidenceProposals = reviewEvidenceProposals(item, detectionProposals);
           const itemSourceStreamMetadata = filterMetadataByItemId.get(item.id);
+          const sourceLabel = reviewQueueSourceLabel(item, itemSourceStreamMetadata);
+          const streamLabel = reviewQueueStreamLabel(item, itemSourceStreamMetadata);
+          const zoneLabel = reviewItemZoneLabel(item);
+          const isLiveActivity = isLiveActivityReviewItem(item);
+          const hasActivityDiagnostics =
+            isLiveActivity ||
+            item.best_frame_sequence != null ||
+            item.best_changed_ratio != null ||
+            item.effective_threshold_used != null ||
+            item.threshold_source != null;
           return (
             <article className="queue-card" key={item.id}>
               <div className="item-title-row">
@@ -1503,10 +1608,84 @@ export function ReviewQueuePage({
                 {item.reason} Detection evidence is only a suggestion; your correction becomes local
                 dataset truth.
               </p>
+              <div
+                className={`review-candidate-context${
+                  item.media_asset ? "" : " review-candidate-context-no-media"
+                }`}
+              >
+                {item.media_asset ? (
+                  <div className="review-candidate-media">
+                    <MediaAssetPreview asset={item.media_asset} compact />
+                  </div>
+                ) : null}
+                <div className="review-candidate-body">
+                  <div className="review-candidate-summary-row">
+                    <EvidenceBadge
+                      label={isLiveActivity ? "Live monitor candidate" : "Review candidate"}
+                      tone={isLiveActivity ? "review" : "quiet"}
+                    />
+                    <strong>
+                      {isLiveActivity
+                        ? liveActivitySummary(item)
+                        : `${reviewItemZoneName(item)} ${formatLabel(item.item_type)}`}
+                    </strong>
+                  </div>
+                  <div className="review-candidate-path">
+                    <span>Source: {sourceLabel}</span>
+                    <span>Stream: {streamLabel}</span>
+                    <span>Zone: {zoneLabel}</span>
+                  </div>
+                  <div className="review-candidate-metrics">
+                    {item.detection_count > 0 ? (
+                      <span>{detectionCountLabel(item.detection_count)}</span>
+                    ) : null}
+                    {item.best_changed_ratio != null ? (
+                      <span>Best change {formatPercent(item.best_changed_ratio)}</span>
+                    ) : null}
+                    {item.best_frame_sequence != null ? (
+                      <span>Best frame {item.best_frame_sequence}</span>
+                    ) : null}
+                    {item.best_media_asset_id ? (
+                      <span>Best media {item.best_media_asset_id}</span>
+                    ) : null}
+                  </div>
+                  {item.image_quality_warnings.length > 0 ? (
+                    <div className="review-quality-warnings">
+                      <strong>Quality warnings</strong>
+                      {item.image_quality_warnings.map((warning) => (
+                        <span key={warning}>{formatQualityWarning(warning)}</span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {hasActivityDiagnostics ? (
+                    <details className="review-diagnostic-details">
+                      <summary>Activity diagnostics</summary>
+                      <div className="review-diagnostic-grid">
+                        <span>Session: {item.activity_session_id ?? "n/a"}</span>
+                        <span>
+                          Window:{" "}
+                          {item.activity_started_at ? formatDateTime(item.activity_started_at) : "n/a"} -{" "}
+                          {item.activity_last_seen_at
+                            ? formatDateTime(item.activity_last_seen_at)
+                            : "n/a"}
+                        </span>
+                        <span>
+                          Changed pixels: {item.best_changed_pixels ?? "n/a"} /{" "}
+                          {item.best_total_scored_pixels ?? "n/a"}
+                        </span>
+                        <span>Threshold: {item.effective_threshold_used ?? "n/a"}</span>
+                        <span>Threshold source: {item.threshold_source ?? "n/a"}</span>
+                        <span>Fine motion: {item.fine_motion_applied ? "Applied" : "Not applied"}</span>
+                      </div>
+                    </details>
+                  ) : null}
+                </div>
+              </div>
               <div className="queue-meta">
                 <EvidenceBadge
                   label={fromDetectionEvidence ? "Converted proposal evidence" : "Review evidence"}
                 />
+                {isLiveActivity ? <EvidenceBadge label="Live activity session" tone="review" /> : null}
                 {isSpeciesReview ? <EvidenceBadge label="Resolve species" tone="review" /> : null}
                 {isUnknownBirdLabel(item.suggested_label, taxonomyLabels) ? (
                   <EvidenceBadge label="Unknown bird" tone="review" />
@@ -1521,11 +1700,11 @@ export function ReviewQueuePage({
                 {item.suggestion_confidence != null ? (
                   <span>Confidence: {formatConfidence(item.suggestion_confidence)}</span>
                 ) : null}
-                <span>Source: {itemSourceStreamMetadata?.sourceId ?? "n/a"}</span>
-                <span>Stream: {itemSourceStreamMetadata?.streamId ?? item.stream_id}</span>
+                <span>Source: {sourceLabel}</span>
+                <span>Stream: {streamLabel}</span>
                 <span>Event: {item.event_id ?? "n/a"}</span>
                 <span>Visit: {item.visit_id ?? "n/a"}</span>
-                <span>Zone: {reviewItemZoneLabel(item)}</span>
+                <span>Zone: {zoneLabel}</span>
                 {item.suggestion_id ? <span>Suggestion: {item.suggestion_id}</span> : null}
                 {item.visit_id ? <span>Species suggestions: Visit detail</span> : null}
                 {item.media_asset ? <span>Imported media attached</span> : null}
@@ -1552,8 +1731,8 @@ export function ReviewQueuePage({
                   </div>
                   <div className="data-row">
                     <span>Stream / Zone</span>
-                    <strong>{item.stream_id}</strong>
-                    <small>{reviewItemZoneLabel(item)}</small>
+                    <strong>{streamLabel}</strong>
+                    <small>{sourceLabel} / {zoneLabel}</small>
                   </div>
                   <div className="data-row">
                     <span>Suggested label</span>
@@ -1573,11 +1752,6 @@ export function ReviewQueuePage({
                     </small>
                   </div>
                 </div>
-                {item.media_asset ? (
-                  <div className="queue-media-block">
-                    <MediaAssetPreview asset={item.media_asset} compact />
-                  </div>
-                ) : null}
                 {itemEvidenceProposals.length > 0 ? (
                   <div className="review-proposal-evidence-list">
                     {itemEvidenceProposals.slice(0, 3).map(({ proposal, relation }) => {

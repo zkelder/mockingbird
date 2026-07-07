@@ -762,17 +762,30 @@ def review_queue_items() -> list[ReviewQueueItem]:
         event = get_event(visit.event_id)
         if event is None:
             continue
+        stream = get_stream(event.stream_id)
+        source = get_source(stream.source_id) if stream is not None else None
+        zone = get_zone(event.primary_zone_id) if event.primary_zone_id is not None else None
 
         # The review queue is user-facing correction work, not raw model output.
         queue.append(
             ReviewQueueItem(
                 id=f"review-queue-{visit.id}",
                 item_type="visit",
+                target_type="visit",
+                target_id=visit.id,
                 title=f"Review {visit.subject_label} visit",
                 stream_id=event.stream_id,
+                stream_name=stream.name if stream is not None else None,
+                source_id=stream.source_id if stream is not None else None,
+                source_name=source.name if source is not None else None,
                 event_id=event.id,
                 visit_id=visit.id,
                 primary_zone_id=event.primary_zone_id,
+                primary_zone_name=zone.name if zone is not None else None,
+                primary_zone_type=zone.zone_type if zone is not None else None,
+                zone_id=event.primary_zone_id,
+                zone_name=zone.name if zone is not None else None,
+                zone_type=zone.zone_type if zone is not None else None,
                 suggested_label=visit.species_guess or visit.subject_label,
                 review_status=visit.review_status,
                 reason="Confirm or correct the suggested species label.",
@@ -783,16 +796,29 @@ def review_queue_items() -> list[ReviewQueueItem]:
     for event in EVENTS:
         if event.review_status != ReviewStatus.needs_review or event.id in visit_event_ids:
             continue
+        stream = get_stream(event.stream_id)
+        source = get_source(stream.source_id) if stream is not None else None
+        zone = get_zone(event.primary_zone_id) if event.primary_zone_id is not None else None
 
         queue.append(
             ReviewQueueItem(
                 id=f"review-queue-{event.id}",
                 item_type="event",
+                target_type="event",
+                target_id=event.id,
                 title=event.title,
                 stream_id=event.stream_id,
+                stream_name=stream.name if stream is not None else None,
+                source_id=stream.source_id if stream is not None else None,
+                source_name=source.name if source is not None else None,
                 event_id=event.id,
                 visit_id=None,
                 primary_zone_id=event.primary_zone_id,
+                primary_zone_name=zone.name if zone is not None else None,
+                primary_zone_type=zone.zone_type if zone is not None else None,
+                zone_id=event.primary_zone_id,
+                zone_name=zone.name if zone is not None else None,
+                zone_type=zone.zone_type if zone is not None else None,
                 suggested_label=event.detections[0].label if event.detections else None,
                 review_status=event.review_status,
                 reason="Review detected outdoor activity and correct the event meaning.",

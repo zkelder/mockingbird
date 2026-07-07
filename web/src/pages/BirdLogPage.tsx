@@ -349,7 +349,7 @@ export function BirdLogPage({
       <PageHeader
         eyebrow="Reviewed activity history"
         title="Bird Log"
-        description="A local history of reviewed bird or outdoor activity created by user corrections."
+        description="A local history of reviewed bird or outdoor activity created only by saved corrections."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenReview}>
@@ -417,7 +417,7 @@ export function BirdLogPage({
       {!isLoading && entries.length === 0 ? (
         <EmptyState
           title="No bird activity logged yet"
-          description="Capture or import an image, analyze it, then review/correct the suggestion to build your Bird Log."
+          description="Live candidates, captures, and suggestions stay out of Bird Log until you correct a Review Queue item."
           action={
             <>
               <button className="primary-action" onClick={onOpenStreams}>
@@ -551,8 +551,8 @@ export function BirdLogPage({
       <section className="notice-panel compact-notice">
         <strong>Truth boundary</strong>
         <span>
-          Bird Log reads existing review and correction data. It does not analyze images, create
-          corrections, mark items reviewed, or generate exports automatically.
+          Bird Log shows reviewed corrections only. Live monitor candidates remain review work until
+          a correction creates ReviewLabel truth.
         </span>
       </section>
     </div>

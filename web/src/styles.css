@@ -1701,6 +1701,92 @@ a.secondary-action {
   justify-content: flex-start;
 }
 
+.review-candidate-context,
+.review-candidate-body,
+.review-diagnostic-details,
+.review-diagnostic-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.review-candidate-context {
+  grid-template-columns: minmax(140px, 190px) minmax(0, 1fr);
+  align-items: start;
+  border-block: 1px solid #dce3d8;
+  padding: 12px 0;
+}
+
+.review-candidate-context-no-media {
+  grid-template-columns: 1fr;
+}
+
+.review-candidate-media .media-preview {
+  height: 100%;
+}
+
+.review-candidate-media .media-preview-surface {
+  aspect-ratio: 4 / 3;
+}
+
+.review-candidate-summary-row,
+.review-candidate-path,
+.review-candidate-metrics,
+.review-quality-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-candidate-summary-row strong {
+  min-width: 0;
+  color: #203529;
+  overflow-wrap: anywhere;
+}
+
+.review-candidate-path span,
+.review-candidate-metrics span,
+.review-quality-warnings span,
+.review-diagnostic-grid span {
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: #edf2e9;
+  color: #34473b;
+  font-size: 0.84rem;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.review-candidate-path span {
+  background: #f7faf3;
+}
+
+.review-quality-warnings strong {
+  color: #795313;
+  font-size: 0.86rem;
+}
+
+.review-quality-warnings span {
+  background: #fff6df;
+  color: #795313;
+}
+
+.review-diagnostic-details {
+  max-width: 100%;
+}
+
+.review-diagnostic-details summary {
+  cursor: pointer;
+  color: #2d5f39;
+  font-size: 0.9rem;
+  font-weight: 850;
+}
+
+.review-diagnostic-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
 .review-evidence-context,
 .review-proposal-evidence-list,
 .review-proposal-evidence-card {
@@ -5624,6 +5710,7 @@ a.secondary-action {
   .quality-secondary-grid,
   .import-context-grid,
   .correction-success-grid,
+  .review-diagnostic-grid,
   .review-evidence-grid,
   .adapter-evaluation-grid,
   .adapter-config-grid,
@@ -5757,6 +5844,8 @@ a.secondary-action {
   .timeline-lifecycle-grid,
   .timeline-detector-grid,
   .correction-success-grid,
+  .review-candidate-context,
+  .review-diagnostic-grid,
   .review-evidence-grid,
   .adapter-evaluation-grid,
   .model-readiness-grid,

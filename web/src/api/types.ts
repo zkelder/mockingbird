@@ -1150,7 +1150,7 @@ export interface MotionEvidence {
   best_frame_time?: string | null;
   peak_changed_ratio: number;
   triggered_frame_count: number;
-  scoring_config: Record<string, string | number | boolean>;
+  scoring_config: Record<string, string | number | boolean | string[] | null>;
   snapshot_media_asset_id?: string | null;
   status: MotionEvidenceStatus;
   promoted_event_id?: string | null;
@@ -1175,7 +1175,7 @@ export interface MotionEvidenceCreateRequest {
   best_frame_time?: string | null;
   peak_changed_ratio: number;
   triggered_frame_count: number;
-  scoring_config?: Record<string, string | number | boolean>;
+  scoring_config?: Record<string, string | number | boolean | string[] | null>;
   snapshot_media_asset_id?: string | null;
   notes?: string | null;
 }
@@ -1752,13 +1752,34 @@ export interface FolderImportResult {
 export interface ReviewQueueItem {
   id: string;
   item_type: string;
+  target_type: string;
+  target_id: string;
   title: string;
   stream_id: string;
+  stream_name?: string | null;
+  source_id?: string | null;
+  source_name?: string | null;
   event_id?: string | null;
   visit_id?: string | null;
   primary_zone_id?: string | null;
   primary_zone_name?: string | null;
   primary_zone_type?: ZoneType | null;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  zone_type?: ZoneType | null;
+  best_media_asset_id?: string | null;
+  activity_session_id?: string | null;
+  activity_started_at?: string | null;
+  activity_last_seen_at?: string | null;
+  detection_count: number;
+  best_frame_sequence?: number | null;
+  best_changed_ratio?: number | null;
+  best_changed_pixels?: number | null;
+  best_total_scored_pixels?: number | null;
+  effective_threshold_used?: number | null;
+  threshold_source?: string | null;
+  fine_motion_applied: boolean;
+  image_quality_warnings: string[];
   suggested_label?: string | null;
   suggestion_id?: string | null;
   suggestion_confidence?: number | null;

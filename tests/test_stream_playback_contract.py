@@ -249,6 +249,45 @@ async def dataset_coverage(client: httpx.AsyncClient) -> dict:
     return response.json()
 
 
+def assert_live_review_queue_item_quality(
+    item: dict,
+    *,
+    created: dict,
+    activity_session_id: str,
+    detection_count: int,
+    best_frame_sequence: int | None = None,
+) -> None:
+    assert item["target_type"] == "visit"
+    assert item["target_id"] == created["visit_id"]
+    assert item["visit_id"] == created["visit_id"]
+    assert item["event_id"] == created["event_id"]
+    assert item["source_id"] == SOURCE_ID
+    assert item["source_name"] == "Backyard demo source"
+    assert item["stream_id"] == STREAM_ID
+    assert item["stream_name"] == "Backyard feeder stream"
+    assert item["primary_zone_id"] == "zone-feeder"
+    assert item["primary_zone_name"] == "Feeder"
+    assert item["primary_zone_type"] == "feeder"
+    assert item["zone_id"] == "zone-feeder"
+    assert item["zone_name"] == "Feeder"
+    assert item["zone_type"] == "feeder"
+    assert item["best_media_asset_id"] == created["media_asset_id"]
+    assert item["media_asset"]["id"] == created["media_asset_id"]
+    assert item["activity_session_id"] == activity_session_id
+    assert item["activity_started_at"] is not None
+    assert item["activity_last_seen_at"] is not None
+    assert item["detection_count"] == detection_count
+    if best_frame_sequence is not None:
+        assert item["best_frame_sequence"] == best_frame_sequence
+    assert item["best_changed_ratio"] > 0
+    assert item["best_changed_pixels"] > 0
+    assert item["best_total_scored_pixels"] > 0
+    assert item["effective_threshold_used"] is not None
+    assert item["threshold_source"] is not None
+    assert isinstance(item["fine_motion_applied"], bool)
+    assert isinstance(item["image_quality_warnings"], list)
+
+
 def patch_live_motion_decoder(
     monkeypatch: pytest.MonkeyPatch,
     frames_by_bytes: dict[bytes, list[list[int]]],
@@ -2342,11 +2381,14 @@ async def test_stored_live_activity_review_handoff_keeps_camera_running_and_trut
     queue = (await client.get("/api/review-queue")).json()
     assert len(queue) == len(before_queue) + 1
     queue_item = next(item for item in queue if item["id"] == created["review_queue_item_id"])
-    assert queue_item["visit_id"] == created["visit_id"]
-    assert queue_item["event_id"] == created["event_id"]
-    assert queue_item["primary_zone_id"] == "zone-feeder"
+    assert_live_review_queue_item_quality(
+        queue_item,
+        created=created,
+        activity_session_id=monitor["activity_session_id"],
+        detection_count=1,
+        best_frame_sequence=2,
+    )
     assert queue_item["suggested_label"] == "unknown_bird"
-    assert queue_item["media_asset"]["id"] == created["media_asset_id"]
 
     after_create = await product_counts(client)
     assert after_create["media_assets"] == before["media_assets"] + 1
@@ -2537,6 +2579,25 @@ async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(
     assert after_create["visits"] == before["visits"] + 1
     assert after_create["review_labels"] == before["review_labels"]
     assert after_create["dataset_exports"] == before["dataset_exports"]
+    labels_after_create = (await client.get("/api/review-labels")).json()
+    assert [
+        label
+        for label in labels_after_create
+        if label["target_type"] == "visit" and label["target_id"] == created["visit_id"]
+    ] == []
+
+    queue = (await client.get("/api/review-queue")).json()
+    queue_item = next(item for item in queue if item["id"] == created["review_queue_item_id"])
+    assert_live_review_queue_item_quality(
+        queue_item,
+        created=created,
+        activity_session_id=first["activity_session_id"],
+        detection_count=2,
+        best_frame_sequence=4,
+    )
+    assert queue_item["suggested_label"] == "unknown_bird"
+    assert queue_item["fine_motion_applied"] is True
+    assert queue_item["threshold_source"] == "high_feeder_fine"
 
     duplicate_response = await client.post(
         f"/api/streams/{STREAM_ID}/live-motion/review-activity"
@@ -2549,6 +2610,33 @@ async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(
     assert duplicate["motion_evidence_id"] == created["motion_evidence_id"]
     assert duplicate["review_queue_item_id"] == created["review_queue_item_id"]
     assert await product_counts(client) == after_create
+
+    false_positive_response = await client.post(
+        "/api/review-labels",
+        json={
+            "target_type": "visit",
+            "target_id": created["visit_id"],
+            "label": "false_positive",
+            "notes": "Grouped live activity was not a bird visit.",
+        },
+    )
+
+    assert false_positive_response.status_code == 201
+    false_positive = false_positive_response.json()
+    assert false_positive["review_label"]["label"] == "false_positive"
+    assert false_positive["review_label"]["target_id"] == created["visit_id"]
+    assert false_positive["visit"]["review_status"] == "reviewed"
+    corrected_queue = (await client.get("/api/review-queue")).json()
+    assert all(item["id"] != created["review_queue_item_id"] for item in corrected_queue)
+    labels_after_false_positive = (await client.get("/api/review-labels")).json()
+    assert [
+        label["label"]
+        for label in labels_after_false_positive
+        if label["target_type"] == "visit" and label["target_id"] == created["visit_id"]
+    ] == ["false_positive"]
+    corrected_counts = await product_counts(client)
+    assert corrected_counts["review_labels"] == after_create["review_labels"] + 1
+    assert corrected_counts["dataset_exports"] == after_create["dataset_exports"]
 
 
 async def test_small_feeder_activity_capture_and_review_handoff_keep_monitor_running(

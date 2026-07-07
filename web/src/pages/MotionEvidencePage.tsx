@@ -2045,9 +2045,14 @@ function getWebhookEvidenceProvenance(evidence: MotionEvidence): WebhookEvidence
   };
 }
 
-function formatOptionalConfigValue(value: string | number | boolean | undefined): string | null {
+function formatOptionalConfigValue(
+  value: string | number | boolean | string[] | null | undefined,
+): string | null {
   if (value === undefined || value === null) {
     return null;
+  }
+  if (Array.isArray(value)) {
+    return value.join(", ");
   }
   return String(value);
 }

@@ -1206,6 +1206,9 @@ class MotionEvaluateSequenceRequest(BaseModel):
     notes: str | None = None
 
 
+MotionScoringConfigValue = str | int | float | bool | list[str] | None
+
+
 class MotionEvidenceCreateRequest(BaseModel):
     source_id: str | None = None
     stream_id: str | None = None
@@ -1218,7 +1221,7 @@ class MotionEvidenceCreateRequest(BaseModel):
     best_frame_time: str | None = None
     peak_changed_ratio: float = Field(ge=0, le=1)
     triggered_frame_count: int = Field(ge=1)
-    scoring_config: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    scoring_config: dict[str, MotionScoringConfigValue] = Field(default_factory=dict)
     snapshot_media_asset_id: str | None = None
     notes: str | None = None
 
@@ -1261,7 +1264,7 @@ class MotionEvidenceResponse(BaseModel):
     best_frame_time: str | None
     peak_changed_ratio: float
     triggered_frame_count: int
-    scoring_config: dict[str, str | int | float | bool]
+    scoring_config: dict[str, MotionScoringConfigValue]
     snapshot_media_asset_id: str | None
     status: MotionEvidenceStatus
     promoted_event_id: str | None
@@ -1748,13 +1751,34 @@ class DemoDetectionRunResult(BaseModel):
 class ReviewQueueItem(BaseModel):
     id: str
     item_type: str
+    target_type: str
+    target_id: str
     title: str
     stream_id: str
+    stream_name: str | None = None
+    source_id: str | None = None
+    source_name: str | None = None
     event_id: str | None = None
     visit_id: str | None = None
     primary_zone_id: str | None = None
     primary_zone_name: str | None = None
     primary_zone_type: ZoneType | None = None
+    zone_id: str | None = None
+    zone_name: str | None = None
+    zone_type: ZoneType | None = None
+    best_media_asset_id: str | None = None
+    activity_session_id: str | None = None
+    activity_started_at: datetime | None = None
+    activity_last_seen_at: datetime | None = None
+    detection_count: int = Field(default=0, ge=0)
+    best_frame_sequence: int | None = Field(default=None, ge=0)
+    best_changed_ratio: float | None = Field(default=None, ge=0)
+    best_changed_pixels: int | None = Field(default=None, ge=0)
+    best_total_scored_pixels: int | None = Field(default=None, ge=0)
+    effective_threshold_used: float | None = Field(default=None, ge=0)
+    threshold_source: str | None = None
+    fine_motion_applied: bool = False
+    image_quality_warnings: list[str] = Field(default_factory=list)
     suggested_label: str | None = None
     suggestion_id: str | None = None
     suggestion_confidence: float | None = Field(default=None, ge=0, le=1)

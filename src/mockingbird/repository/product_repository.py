@@ -16,7 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 import uuid
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy import Engine, delete, func, select
+from sqlalchemy import Engine, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from mockingbird.api import demo_data
@@ -5482,6 +5482,96 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._review_queue_items(session)
 
+    def _review_queue_stream_context(
+        self,
+        session: Session,
+        stream_id: str,
+    ) -> tuple[str | None, str | None, str | None]:
+        stream_model = session.get(StreamModel, stream_id)
+        if stream_model is None:
+            return None, None, None
+        source_model = session.get(CameraSourceModel, stream_model.source_id)
+        return (
+            stream_model.name,
+            stream_model.source_id,
+            source_model.name if source_model is not None else None,
+        )
+
+    def _motion_evidence_for_review_queue_item(
+        self,
+        session: Session,
+        *,
+        event_id: str | None,
+        visit_id: str | None,
+        media_asset_id: str | None,
+    ) -> MotionEvidenceModel | None:
+        filters = []
+        if visit_id:
+            filters.append(MotionEvidenceModel.promoted_visit_id == visit_id)
+        if event_id:
+            filters.append(MotionEvidenceModel.promoted_event_id == event_id)
+        if media_asset_id:
+            filters.append(MotionEvidenceModel.snapshot_media_asset_id == media_asset_id)
+        if not filters:
+            return None
+        return session.scalars(
+            select(MotionEvidenceModel)
+            .where(or_(*filters))
+            .order_by(MotionEvidenceModel.created_at.desc(), MotionEvidenceModel.id.desc())
+        ).first()
+
+    def _review_queue_activity_context(
+        self,
+        evidence: MotionEvidenceModel | None,
+    ) -> dict[str, Any]:
+        if evidence is None:
+            return {
+                "activity_session_id": None,
+                "activity_started_at": None,
+                "activity_last_seen_at": None,
+                "detection_count": 0,
+                "best_frame_sequence": None,
+                "best_changed_ratio": None,
+                "best_changed_pixels": None,
+                "best_total_scored_pixels": None,
+                "effective_threshold_used": None,
+                "threshold_source": None,
+                "fine_motion_applied": False,
+                "image_quality_warnings": [],
+            }
+        config = dict(json.loads(evidence.scoring_config_json))
+        return {
+            "activity_session_id": _optional_string(config.get("activity_session_id")),
+            "activity_started_at": _optional_datetime(
+                config.get("activity_started_at")
+            ),
+            "activity_last_seen_at": _optional_datetime(
+                config.get("activity_last_seen_at") or evidence.best_frame_time
+            ),
+            "detection_count": (
+                _optional_int(config.get("detection_count"))
+                or evidence.triggered_frame_count
+            ),
+            "best_frame_sequence": evidence.best_frame_index,
+            "best_changed_ratio": (
+                _optional_float(config.get("best_changed_ratio"))
+                or evidence.peak_changed_ratio
+            ),
+            "best_changed_pixels": _optional_int(config.get("best_changed_pixels")),
+            "best_total_scored_pixels": _optional_int(
+                config.get("best_total_scored_pixels")
+            ),
+            "effective_threshold_used": (
+                _optional_float(config.get("effective_threshold_used"))
+                or _optional_float(config.get("threshold_used"))
+            ),
+            "threshold_source": _optional_string(config.get("threshold_source")),
+            "fine_motion_applied": bool(config.get("fine_motion_applied")),
+            "image_quality_warnings": _string_list(
+                config.get("image_quality_warnings")
+            ),
+        }
+
     def list_dataset_exports(self) -> list[DatasetExport]:
         with self.session_factory() as session:
             exports = session.scalars(
@@ -6542,17 +6632,48 @@ class ProductRepository:
                 if suggestion_model is not None
                 else None
             )
+            stream_name, source_id, source_name = self._review_queue_stream_context(
+                session,
+                event.stream_id,
+            )
+            media_asset = self._media_asset_for_path_from_session(
+                session,
+                visit.representative_media_path,
+            )
+            evidence = self._motion_evidence_for_review_queue_item(
+                session,
+                event_id=event.id,
+                visit_id=visit.id,
+                media_asset_id=media_asset.id if media_asset else None,
+            )
+            activity_context = self._review_queue_activity_context(evidence)
             queue.append(
                 ReviewQueueItem(
                     id=f"review-queue-{visit.id}",
                     item_type="visit",
+                    target_type="visit",
+                    target_id=visit.id,
                     title=f"Review {visit.subject_label} visit",
                     stream_id=event.stream_id,
+                    stream_name=stream_name,
+                    source_id=source_id,
+                    source_name=source_name,
                     event_id=event.id,
                     visit_id=visit.id,
                     primary_zone_id=zone_id,
                     primary_zone_name=zone_name,
                     primary_zone_type=zone_type,
+                    zone_id=zone_id,
+                    zone_name=zone_name,
+                    zone_type=zone_type,
+                    best_media_asset_id=(
+                        media_asset.id
+                        if media_asset is not None
+                        else evidence.snapshot_media_asset_id
+                        if evidence is not None
+                        else None
+                    ),
+                    **activity_context,
                     suggested_label=(
                         suggestion.suggested_label
                         if suggestion is not None
@@ -6564,10 +6685,7 @@ class ProductRepository:
                     ),
                     suggestion_reason=suggestion.notes if suggestion is not None else None,
                     suggestion_creates_truth=False,
-                    media_asset=self._media_asset_for_path_from_session(
-                        session,
-                        visit.representative_media_path,
-                    ),
+                    media_asset=media_asset,
                     review_status=visit.review_status,
                     reason="Confirm or correct the suggested species label.",
                 )
@@ -6580,19 +6698,53 @@ class ProductRepository:
             if event.review_status != ReviewStatus.needs_review or event.id in visit_event_ids:
                 continue
             zone_id, zone_name, zone_type = self._zone_context(session, event.primary_zone_id)
+            stream_name, source_id, source_name = self._review_queue_stream_context(
+                session,
+                event.stream_id,
+            )
+            evidence = self._motion_evidence_for_review_queue_item(
+                session,
+                event_id=event.id,
+                visit_id=None,
+                media_asset_id=None,
+            )
+            media_asset_model = (
+                session.get(MediaAssetModel, evidence.snapshot_media_asset_id)
+                if evidence is not None and evidence.snapshot_media_asset_id is not None
+                else None
+            )
+            media_asset = _media_asset_from_model(media_asset_model) if media_asset_model else None
+            activity_context = self._review_queue_activity_context(evidence)
 
             queue.append(
                 ReviewQueueItem(
                     id=f"review-queue-{event.id}",
                     item_type="event",
+                    target_type="event",
+                    target_id=event.id,
                     title=event.title,
                     stream_id=event.stream_id,
+                    stream_name=stream_name,
+                    source_id=source_id,
+                    source_name=source_name,
                     event_id=event.id,
                     visit_id=None,
                     primary_zone_id=zone_id,
                     primary_zone_name=zone_name,
                     primary_zone_type=zone_type,
+                    zone_id=zone_id,
+                    zone_name=zone_name,
+                    zone_type=zone_type,
+                    best_media_asset_id=(
+                        media_asset.id
+                        if media_asset is not None
+                        else evidence.snapshot_media_asset_id
+                        if evidence is not None
+                        else None
+                    ),
+                    **activity_context,
                     suggested_label=event.detections[0].label if event.detections else None,
+                    media_asset=media_asset,
                     review_status=event.review_status,
                     reason="Review detected outdoor activity and correct the event meaning.",
                 )
@@ -10103,3 +10255,69 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    if not cleaned or cleaned.lower() == "none":
+        return None
+    return cleaned
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        try:
+            return int(float(cleaned))
+        except ValueError:
+            return None
+    return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+    return None
+
+
+def _optional_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return _as_utc(value)
+    cleaned = _optional_string(value)
+    if cleaned is None:
+        return None
+    try:
+        return _as_utc(datetime.fromisoformat(cleaned.replace("Z", "+00:00")))
+    except ValueError:
+        return None
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [
+            str(item).strip()
+            for item in value
+            if str(item).strip() and str(item).strip().lower() != "none"
+        ]
+    cleaned = _optional_string(value)
+    return [cleaned] if cleaned is not None else []
