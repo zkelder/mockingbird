@@ -3349,6 +3349,7 @@ async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(
     ] == []
 
     queue = (await client.get("/api/review-queue")).json()
+    assert queue[0]["id"] == created["review_queue_item_id"]
     queue_item = next(item for item in queue if item["id"] == created["review_queue_item_id"])
     assert_live_review_queue_item_quality(
         queue_item,

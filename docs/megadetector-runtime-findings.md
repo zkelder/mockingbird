@@ -68,6 +68,26 @@ The result validates real local inference and the evidence boundary; it does not
 establish bird recall. The next field decision requires representative saved
 frames that visibly contain feeder birds.
 
+## Daylight Feeder Field Result
+
+A later 4K daylight frame (`media-asset-007`) visibly contained a small bird on
+the Tube feeder. The configured 0.10 threshold produced no proposal. A one-off
+0.01 diagnostic did not justify lowering the product threshold: MDv5a scored the
+empty feeder hook as `animal` at 0.091 and weakly labeled the visible bird as
+`person` at 0.038. The original Tube feeder Zone was also shifted left of the
+current camera framing and excluded most of the feeder and bird.
+
+After realigning both feeder Zones, live motion completed the intended product
+handoff and created `visit-motion-004` with one saved best frame. That particular
+motion was a passing car behind the feeder, not a bird. The normal Review Queue
+identification action correctly added a `vehicle` proposal at 0.825 confidence
+without creating reviewed truth or export data.
+
+This result validates camera -> Zone motion -> best frame -> Review Queue ->
+MegaDetector proposal evidence on real field media. It also shows that the next
+recall work is better exposure/framing plus more representative bird frames,
+not a blanket MDv5 confidence reduction.
+
 ## Probe Boundary
 
 The probe was local and disposable. It did not add runtime code, model files, model downloads, camera/source adapters, background workers, or product API changes.

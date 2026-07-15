@@ -1294,13 +1294,21 @@ Current work:
   animal at 0.952 confidence. Runtime caches remain ignored/local and package
   auto-install is disabled. Bird recall still requires representative feeder
   frames with visible birds.
+- Daylight Feeder Field Validation 2: a real 4K feeder frame exposed shifted
+  Zone geometry and a small visible bird that MDv5a missed at the normal 0.10
+  threshold. A lower diagnostic threshold produced misleading evidence, so the
+  product threshold stayed unchanged. After both feeder Zones were realigned,
+  live motion created one best-frame Review Queue candidate; MegaDetector then
+  correctly identified the passing background car as `vehicle` at 0.825. The
+  Review Queue now orders newest activity first so fresh field candidates lead
+  the user's review work. No reviewed truth or export data was created.
 - No new page, navigation item, dashboard card, or permanent field-test panel is
   added. The primary product flow remains Cameras/Streams -> Review Queue -> Bird
   Log -> Exports.
-- Next likely phase: Daylight Feeder Field Validation 2 — run representative
-  sessions, measure candidate recall, nuisance and duplicate rates, best-frame
-  usefulness, and optional MDv5 proposal usefulness, then tune the existing
-  capture path from evidence.
+- Next likely phase: Daylight Feeder Field Validation 3 — improve physical
+  exposure/framing, collect representative bird arrivals, measure bird recall
+  and nuisance rates, and compare the current MDv5a evidence against a newer
+  optional open model only if the captured frames are usable.
 
 Validation:
 

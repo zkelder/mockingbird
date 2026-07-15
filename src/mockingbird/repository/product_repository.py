@@ -7913,6 +7913,7 @@ class ProductRepository:
 
     def _review_queue_items(self, session: Session) -> list[ReviewQueueItem]:
         queue: list[ReviewQueueItem] = []
+        recency_by_item_id: dict[str, float] = {}
         visits = self._visits_for_eventless_query(session)
 
         for visit in visits:
@@ -8011,6 +8012,7 @@ class ProductRepository:
                 queue_item,
             )
             queue.append(queue_item)
+            recency_by_item_id[queue_item.id] = _review_queue_timestamp(event.started_at)
 
         visit_event_ids = {item.event_id for item in queue if item.event_id is not None}
         event_models = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
@@ -8081,8 +8083,16 @@ class ProductRepository:
                 queue_item,
             )
             queue.append(queue_item)
+            recency_by_item_id[queue_item.id] = _review_queue_timestamp(event.started_at)
 
-        return queue
+        # Fresh outdoor activity is the user's next decision. Keep new live
+        # candidates ahead of sample and older unresolved items without changing
+        # any review status, evidence, or truth boundary.
+        return sorted(
+            queue,
+            key=lambda item: (recency_by_item_id.get(item.id, 0.0), item.id),
+            reverse=True,
+        )
 
     def _dataset_quality_summary(self, session: Session) -> DatasetQualitySummary:
         issues: list[DatasetQualityIssue] = []
@@ -11332,6 +11342,14 @@ def _review_queue_bulk_correction_failure_message(reason: str) -> str:
     if reason == "unsupported_target":
         return "Review target type is not supported."
     return "Review Queue item could not be corrected."
+
+
+def _review_queue_timestamp(value: datetime) -> float:
+    """Normalize persisted SQLite datetimes for deterministic newest-first review."""
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.timestamp()
 
 
 def _empty_review_focus_crop_context(warnings: list[str]) -> _ReviewFocusCropContext:
