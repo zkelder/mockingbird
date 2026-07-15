@@ -116,7 +116,52 @@ async def review_queue_item_for_visit(client: httpx.AsyncClient, visit_id: str) 
     return next(item for item in response.json() if item["visit_id"] == visit_id)
 
 
-async def test_review_queue_item_exposes_zone_focus_crop_metadata_without_truth(
+async def create_activity_review_item(
+    client: httpx.AsyncClient,
+    *,
+    media_asset_id: str,
+) -> tuple[str, str]:
+    evidence_response = await client.post(
+        "/api/motion/evidence",
+        json={
+            "source_id": SOURCE_ID,
+            "stream_id": STREAM_ID,
+            "zone_id": FEEDER_ZONE_ID,
+            "start_frame_index": 10,
+            "end_frame_index": 12,
+            "best_frame_index": 11,
+            "peak_changed_ratio": 0.24,
+            "triggered_frame_count": 2,
+            "scoring_config": {
+                "source": "test_activity_motion",
+                "activity_left": 0.45,
+                "activity_top": 0.35,
+                "activity_right": 0.55,
+                "activity_bottom": 0.45,
+                "activity_changed_pixel_count": 24,
+                "best_frame_width": 1000,
+                "best_frame_height": 500,
+            },
+            "snapshot_media_asset_id": media_asset_id,
+        },
+    )
+    assert evidence_response.status_code == 201
+    evidence_id = evidence_response.json()["id"]
+    promote_response = await client.post(
+        f"/api/motion/evidence/{evidence_id}/promote",
+        json={
+            "event_title": "Measured outdoor activity",
+            "visit_label_hint": "unknown_animal",
+            "create_event": True,
+            "create_visit": True,
+            "attach_snapshot_media_asset_id": media_asset_id,
+        },
+    )
+    assert promote_response.status_code == 200
+    return promote_response.json()["visit_id"], evidence_id
+
+
+async def test_review_queue_does_not_derive_focus_from_zone_without_activity(
     client: httpx.AsyncClient,
 ) -> None:
     imported = await import_review_image(client, title="Review assist focus image")
@@ -125,21 +170,49 @@ async def test_review_queue_item_exposes_zone_focus_crop_metadata_without_truth(
     before_truth = await truth_snapshot(client)
 
     queue_item = await review_queue_item_for_visit(client, visit_id)
+    assert queue_item["best_media_asset_id"] == media_asset_id
+    assert queue_item["focus_crop_available"] is False
+    assert queue_item["focus_crop_source"] == "none"
+    assert queue_item["focus_crop_label"] is None
+    assert queue_item["focus_crop_box_normalized"] is None
+    assert queue_item["focus_crop_box_pixels"] is None
+    assert "focus_crop_activity_bounds_unavailable" in queue_item["focus_crop_warnings"]
+    assert queue_item["identification"]["focus_crop_available"] is False
+    assert queue_item["identification"]["focus_crop_box_normalized"] is None
+    assert queue_item["identification"]["focus_crop_box_pixels"] is None
+    assert queue_item["identification"]["creates_truth"] is False
+    assert await truth_snapshot(client) == before_truth
+
+
+async def test_review_queue_item_exposes_measured_activity_focus_without_truth(
+    client: httpx.AsyncClient,
+) -> None:
+    imported = await import_review_image(client, title="Measured activity image")
+    media_asset_id = imported["media_asset"]["id"]
+    visit_id, _evidence_id = await create_activity_review_item(
+        client,
+        media_asset_id=media_asset_id,
+    )
+    before_truth = await truth_snapshot(client)
+
+    queue_item = await review_queue_item_for_visit(client, visit_id)
     focus_box = queue_item["focus_crop_box_normalized"]
 
-    assert queue_item["best_media_asset_id"] == media_asset_id
     assert queue_item["focus_crop_available"] is True
-    assert queue_item["focus_crop_source"] == "zone"
-    assert queue_item["focus_crop_label"] == "Feeder activity focus"
-    assert focus_box["x"] == pytest.approx(0.22)
-    assert focus_box["y"] == pytest.approx(0.08)
-    assert focus_box["width"] == pytest.approx(0.56)
-    assert focus_box["height"] == pytest.approx(0.64)
-    assert queue_item["focus_crop_box_pixels"] is None
-    assert "focus_crop_pixels_unavailable" in queue_item["focus_crop_warnings"]
-    assert queue_item["identification"]["focus_crop_available"] is True
+    assert queue_item["focus_crop_source"] == "activity"
+    assert queue_item["focus_crop_label"] == "Detected activity focus"
+    assert focus_box == pytest.approx(
+        {"x": 0.4, "y": 0.3, "width": 0.2, "height": 0.2}
+    )
+    assert queue_item["focus_crop_box_pixels"] == {
+        "x": 400,
+        "y": 149,
+        "width": 201,
+        "height": 101,
+    }
+    assert "focus_crop_small_activity_expanded" in queue_item["focus_crop_warnings"]
+    assert queue_item["identification"]["focus_crop_source"] == "activity"
     assert queue_item["identification"]["focus_crop_box_normalized"] == focus_box
-    assert queue_item["identification"]["focus_crop_box_pixels"] is None
     assert queue_item["identification"]["creates_truth"] is False
     assert await truth_snapshot(client) == before_truth
 
@@ -374,15 +447,10 @@ async def test_review_identification_explicit_demo_adapter_creates_placeholder_p
     assert proposal["label"] == "unknown_bird"
     assert proposal["confidence"] == 0
     assert "Explicit demo assist from Review Queue." in proposal["notes"]
-    assert "Identification focus context: Feeder activity focus" in proposal["notes"]
-    assert "source=zone" in proposal["notes"]
-    assert "normalized_box=x=0.2200,y=0.0800,width=0.5600,height=0.6400" in proposal[
-        "notes"
-    ]
-    assert "original best frame preserved" in proposal["notes"]
-    assert result["review_queue_item"]["focus_crop_available"] is True
-    assert result["identification"]["focus_crop_available"] is True
-    assert result["identification"]["focus_crop_label"] == "Feeder activity focus"
+    assert "Identification focus context" not in proposal["notes"]
+    assert result["review_queue_item"]["focus_crop_available"] is False
+    assert result["identification"]["focus_crop_available"] is False
+    assert result["identification"]["focus_crop_label"] is None
     assert result["creates_truth"] is False
     assert after_detection["detection_run_count"] == before_detection["detection_run_count"] + 1
     assert (

@@ -15,10 +15,13 @@ The adapter now implements bounded, explicit image inference. It still adds no
 model files, automatic downloads, camera work, background execution, or truth
 creation.
 
-Selected-Zone runs decode the existing saved best frame, apply the existing
-padded activity focus in memory, remap detector boxes to full-frame normalized
-coordinates, and retain only proposals intersecting the selected Zone. The
-original media remains unchanged and no derived crop file is created.
+Review-candidate runs decode the existing saved best frame and, when measured
+motion bounds are available, apply a padded activity focus in memory. Detector
+boxes are remapped to full-frame normalized coordinates. Zone geometry remains
+review/scoring context and never supplies crop geometry or filters normal-Zone
+proposals. Privacy and Ignore Zones still suppress inference. When measured
+activity bounds are unavailable, inference uses the full frame. The original
+media remains unchanged and no derived crop file is created.
 
 Before any local runtime smoke test, follow [megadetector-local-setup.md](megadetector-local-setup.md) to keep model files ignored and outputs evidence-only.
 
@@ -140,8 +143,10 @@ The implementation proves:
   record is written
 - runtime caches stay under ignored local storage and package auto-install hooks
   are disabled before the optional runtime import
-- selected-Zone inference excludes unrelated background detections and preserves
-  full-frame proposal coordinates
+- measured-activity focus preserves full-frame proposal coordinates without
+  deriving the focus from Zone geometry
+- normal Zones remain proposal context; Privacy and Ignore Zones still suppress
+  inference, and missing activity bounds fall back to full-frame inference
 
 ## Rollback Plan
 

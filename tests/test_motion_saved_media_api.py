@@ -240,21 +240,23 @@ async def test_saved_media_motion_scores_sequence_without_creating_records(
     assert result["best_snapshot_media_asset_id"] == assets[2]["id"]
     crop_plan = result["crop_plan"]
     assert crop_plan["source_media_asset_id"] == assets[2]["id"]
-    assert crop_plan["crop_reason"] == "user_zone"
+    assert crop_plan["crop_reason"] == "activity_motion"
     assert crop_plan["padding_ratio"] == 0.5
     assert crop_plan["is_full_frame_fallback"] is False
     assert crop_plan["derived_crop_media_asset_id"] is None
-    assert crop_plan["crop_box_normalized"]["left"] == pytest.approx(0.22)
-    assert crop_plan["crop_box_normalized"]["top"] == pytest.approx(0.08)
-    assert crop_plan["crop_box_normalized"]["right"] == pytest.approx(0.78)
-    assert crop_plan["crop_box_normalized"]["bottom"] == pytest.approx(0.72)
+    assert crop_plan["crop_box_normalized"] == {
+        "left": 0.0,
+        "top": 0.0,
+        "right": 1.0,
+        "bottom": 1.0,
+    }
     assert crop_plan["crop_box_pixels"] == {
         "left": 0,
         "top": 0,
         "right": 4,
-        "bottom": 3,
+        "bottom": 4,
         "width": 4,
-        "height": 3,
+        "height": 4,
     }
     assert result["strongest_zone_id"] == FEEDER_ZONE_ID
     assert result["session_key"]
@@ -420,7 +422,7 @@ async def test_saved_media_motion_uses_auto_regions_without_user_zones(
     assert result["strongest_activity_area_label"]
     assert result["best_media_asset_id"] in {assets[1]["id"], assets[2]["id"]}
     assert result["crop_plan"]["source_media_asset_id"] == result["best_media_asset_id"]
-    assert result["crop_plan"]["crop_reason"] == "auto_region_cluster"
+    assert result["crop_plan"]["crop_reason"] == "activity_motion"
     assert result["crop_plan"]["is_full_frame_fallback"] is False
     assert result["crop_plan"]["derived_crop_media_asset_id"] is None
     assert len(result["candidates"]) == 1

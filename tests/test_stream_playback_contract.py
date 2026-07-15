@@ -284,6 +284,7 @@ def assert_live_review_queue_item_quality(
     activity_session_id: str,
     detection_count: int,
     best_frame_sequence: int | None = None,
+    expected_focus_crop_normalized: dict[str, float] | None = None,
     expected_focus_crop_pixels: dict[str, int] | None = None,
 ) -> None:
     assert item["target_type"] == "visit"
@@ -316,19 +317,24 @@ def assert_live_review_queue_item_quality(
     assert isinstance(item["fine_motion_applied"], bool)
     assert isinstance(item["image_quality_warnings"], list)
     assert item["focus_crop_available"] is True
-    assert item["focus_crop_source"] == "zone"
-    assert item["focus_crop_label"] == "Feeder activity focus"
-    assert item["focus_crop_box_normalized"]["x"] == pytest.approx(0.22)
-    assert item["focus_crop_box_normalized"]["y"] == pytest.approx(0.08)
-    assert item["focus_crop_box_normalized"]["width"] == pytest.approx(0.56)
-    assert item["focus_crop_box_normalized"]["height"] == pytest.approx(0.64)
+    assert item["focus_crop_source"] == "activity"
+    assert item["focus_crop_label"] == "Detected activity focus"
+    assert item["focus_crop_box_normalized"] == pytest.approx(
+        expected_focus_crop_normalized
+        or {
+            "x": 0.0,
+            "y": 0.0,
+            "width": 1.0,
+            "height": 1.0,
+        }
+    )
     assert item["focus_crop_box_pixels"] == (
         expected_focus_crop_pixels
         or {
             "x": 0,
             "y": 0,
             "width": 4,
-            "height": 3,
+            "height": 4,
         }
     )
     assert "focus_crop_pixels_unavailable" not in item["focus_crop_warnings"]
@@ -2836,7 +2842,13 @@ async def test_unattended_monitoring_auto_creates_review_candidate_after_quiet_o
         activity_session_id=monitor["activity_session_id"],
         detection_count=1,
         best_frame_sequence=2,
-        expected_focus_crop_pixels={"x": 21, "y": 7, "width": 57, "height": 66},
+        expected_focus_crop_normalized={
+            "x": 0.335,
+            "y": 0.235,
+            "width": 0.15,
+            "height": 0.15,
+        },
+        expected_focus_crop_pixels={"x": 33, "y": 23, "width": 16, "height": 16},
     )
     assert queue_item["identification"]["creates_truth"] is False
     assert queue_item["identification"]["can_run"] is False
@@ -3357,7 +3369,13 @@ async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(
         activity_session_id=first["activity_session_id"],
         detection_count=2,
         best_frame_sequence=4,
-        expected_focus_crop_pixels={"x": 21, "y": 7, "width": 57, "height": 66},
+        expected_focus_crop_normalized={
+            "x": 0.34,
+            "y": 0.24,
+            "width": 0.15,
+            "height": 0.15,
+        },
+        expected_focus_crop_pixels={"x": 34, "y": 24, "width": 15, "height": 15},
     )
     assert queue_item["suggested_label"] == "unknown_bird"
     assert queue_item["fine_motion_applied"] is True

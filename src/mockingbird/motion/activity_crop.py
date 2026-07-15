@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import ceil, floor, isfinite
+from numbers import Real
 from typing import Literal
 
-CropReason = Literal["user_zone", "auto_region_cluster", "full_frame_fallback"]
+CropReason = Literal["activity_motion", "full_frame_fallback"]
+FramePlane = Sequence[Sequence[int | float]]
 
 DEFAULT_CROP_PADDING_RATIO = 0.5
 DEFAULT_MIN_CROP_SIZE_RATIO = 0.15
@@ -48,6 +51,75 @@ class ActivityCropBoundsPlan:
     padding_ratio: float
     is_full_frame_fallback: bool
     warning: str | None = None
+
+
+@dataclass(frozen=True)
+class ChangedActivityBounds:
+    """Measured changed-pixel extent for one motion frame pair.
+
+    Search bounds associate the change with a motion candidate. They never
+    become the returned bounds by themselves; the result is always calculated
+    from pixels that crossed the motion threshold.
+    """
+
+    box_normalized: CropBoxNormalized
+    changed_pixel_count: int
+
+
+def locate_changed_activity_bounds(
+    previous_frame: FramePlane,
+    current_frame: FramePlane,
+    *,
+    pixel_delta_threshold: float,
+    search_bounds: CropBoxNormalized | None = None,
+) -> ChangedActivityBounds | None:
+    """Locate actual changed pixels without treating Zone geometry as the crop."""
+
+    width, height = _frame_pair_dimensions(previous_frame, current_frame)
+    if (
+        not isinstance(pixel_delta_threshold, Real)
+        or isinstance(pixel_delta_threshold, bool)
+        or not isfinite(float(pixel_delta_threshold))
+        or pixel_delta_threshold < 0
+    ):
+        raise ValueError("pixel_delta_threshold must be a non-negative number")
+
+    search = search_bounds or CropBoxNormalized(0.0, 0.0, 1.0, 1.0)
+    if not _valid_bounds(search.left, search.top, search.right, search.bottom):
+        raise ValueError("search_bounds must contain valid normalized bounds")
+    left = _clamp_int(floor(_clamp(search.left, 0.0, 1.0) * width), 0, width - 1)
+    top = _clamp_int(floor(_clamp(search.top, 0.0, 1.0) * height), 0, height - 1)
+    right = _clamp_int(ceil(_clamp(search.right, 0.0, 1.0) * width), left + 1, width)
+    bottom = _clamp_int(ceil(_clamp(search.bottom, 0.0, 1.0) * height), top + 1, height)
+
+    min_x = width
+    min_y = height
+    max_x = -1
+    max_y = -1
+    changed_pixel_count = 0
+    for y in range(top, bottom):
+        previous_row = previous_frame[y]
+        current_row = current_frame[y]
+        for x in range(left, right):
+            if abs(float(current_row[x]) - float(previous_row[x])) < pixel_delta_threshold:
+                continue
+            changed_pixel_count += 1
+            min_x = min(min_x, x)
+            min_y = min(min_y, y)
+            max_x = max(max_x, x)
+            max_y = max(max_y, y)
+
+    if changed_pixel_count == 0:
+        return None
+    return ChangedActivityBounds(
+        box_normalized=CropBoxNormalized(
+            left=min_x / width,
+            top=min_y / height,
+            right=(max_x + 1) / width,
+            bottom=(max_y + 1) / height,
+        ),
+        changed_pixel_count=changed_pixel_count,
+    )
 
 
 def plan_activity_crop_bounds(
@@ -201,6 +273,38 @@ def _valid_bounds(
         and float(left) < float(right)
         and float(top) < float(bottom)
     )
+
+
+def _frame_pair_dimensions(
+    previous_frame: FramePlane,
+    current_frame: FramePlane,
+) -> tuple[int, int]:
+    previous = _frame_dimensions(previous_frame, name="previous_frame")
+    current = _frame_dimensions(current_frame, name="current_frame")
+    if previous != current:
+        raise ValueError("previous_frame and current_frame dimensions must match")
+    return previous
+
+
+def _frame_dimensions(frame: FramePlane, *, name: str) -> tuple[int, int]:
+    if isinstance(frame, (str, bytes)) or not isinstance(frame, Sequence) or not frame:
+        raise ValueError(f"{name} must be a non-empty rectangular 2D sequence")
+    width: int | None = None
+    for row in frame:
+        if isinstance(row, (str, bytes)) or not isinstance(row, Sequence) or not row:
+            raise ValueError(f"{name} rows must be non-empty sequences")
+        if width is None:
+            width = len(row)
+        elif len(row) != width:
+            raise ValueError(f"{name} must be rectangular")
+        if any(
+            not isinstance(value, Real)
+            or isinstance(value, bool)
+            or not isfinite(float(value))
+            for value in row
+        ):
+            raise ValueError(f"{name} pixels must be finite numbers")
+    return width or 0, len(frame)
 
 
 def _pad_box(box: CropBoxNormalized, *, padding_ratio: float) -> CropBoxNormalized:

@@ -265,12 +265,6 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
     "video/quicktime": "video",
 }
 
-# Small feeder animals can occupy only a few detector pixels in a 4K frame.
-# MegaDetector therefore uses a tighter Zone focus than the review UI, while
-# the original best frame remains the user's context and correction record.
-MEGADETECTOR_ZONE_PADDING_RATIO = 0.2
-MEGADETECTOR_MIN_FOCUS_SIZE_RATIO = 0.10
-
 EXTERNAL_URL_PREVIEW_EXTENSIONS = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -5206,6 +5200,8 @@ class ProductRepository:
         self,
         adapter_id: str,
         payload: ModelAdapterRunRequest,
+        *,
+        activity_focus: BoundingBox | None = None,
     ) -> ModelAdapterRunResult:
         adapter = _model_adapter_by_id(adapter_id)
         if adapter is None:
@@ -5215,7 +5211,11 @@ class ProductRepository:
         if adapter_id == LOCAL_IMAGE_DETECTOR_ID:
             return self._run_local_image_detector_adapter(adapter, payload)
         if adapter_id == MEGADETECTOR_ADAPTER_ID:
-            return self._run_megadetector_adapter(adapter, payload)
+            return self._run_megadetector_adapter(
+                adapter,
+                payload,
+                activity_focus=activity_focus,
+            )
         if adapter.status != ModelAdapterStatus.available:
             raise ValueError("adapter_unavailable")
 
@@ -5458,6 +5458,8 @@ class ProductRepository:
         self,
         adapter: ModelAdapter,
         payload: ModelAdapterRunRequest,
+        *,
+        activity_focus: BoundingBox | None,
     ) -> ModelAdapterRunResult:
         with self.session_factory() as session:
             with session.begin():
@@ -5500,11 +5502,7 @@ class ProductRepository:
                         local_path=asset_model.local_path,
                         content_type=asset_model.content_type,
                         zone_context=zone_model.id if zone_model else None,
-                        focus_box=_megadetector_focus_box(zone_model),
-                    )
-                    detector_proposals = _megadetector_proposals_in_zone(
-                        detector_proposals,
-                        zone_model,
+                        focus_box=_megadetector_activity_focus_box(activity_focus),
                     )
                 except MegaDetectorModelFormatError as error:
                     raise ValueError("megadetector_model_format_unsupported") from error
@@ -6216,6 +6214,11 @@ class ProductRepository:
                     requested_labels=requested_labels,
                     notes=notes,
                 ),
+                activity_focus=(
+                    queue_item.focus_crop_box_normalized
+                    if queue_item.focus_crop_source == FocusCropSource.activity
+                    else None
+                ),
             )
         except ValueError as error:
             error_summary = self._review_identification_error_summary(summary, error)
@@ -6813,32 +6816,27 @@ class ProductRepository:
         if media_asset_id is None:
             return _empty_review_focus_crop_context(["focus_crop_best_frame_unavailable"])
 
-        focus_zone_id = zone_id or (evidence.zone_id if evidence is not None else None)
-        if focus_zone_id is None:
-            return _empty_review_focus_crop_context(["focus_crop_zone_unavailable"])
-
-        zone_model = session.get(ZoneModel, focus_zone_id)
-        if zone_model is None:
-            return _empty_review_focus_crop_context(["focus_crop_zone_unavailable"])
-
-        zone = _zone_from_model(zone_model)
-        if zone.zone_type in {ZoneType.privacy, ZoneType.ignore}:
+        context_zone_id = zone_id or (evidence.zone_id if evidence is not None else None)
+        zone_model = session.get(ZoneModel, context_zone_id) if context_zone_id else None
+        if zone_model is not None and zone_model.zone_type in {
+            ZoneType.privacy.value,
+            ZoneType.ignore.value,
+        }:
             return _empty_review_focus_crop_context(
-                [f"focus_crop_suppressed_for_{zone.zone_type.value}_zone"]
+                [f"focus_crop_suppressed_for_{zone_model.zone_type}_zone"]
             )
 
-        zone_bounds = _zone_bounds(zone)
-        if zone_bounds is None:
-            return _empty_review_focus_crop_context(["focus_crop_zone_bounds_unavailable"])
+        activity_bounds = _motion_evidence_activity_bounds(evidence)
+        if activity_bounds is None:
+            return _empty_review_focus_crop_context(
+                ["focus_crop_activity_bounds_unavailable"]
+            )
 
         warnings: list[str] = []
-        if not zone.is_active:
-            warnings.append("focus_crop_zone_inactive")
-
-        zone_width = zone_bounds.right - zone_bounds.left
-        zone_height = zone_bounds.bottom - zone_bounds.top
-        if zone_width < 0.15 or zone_height < 0.15:
-            warnings.append("focus_crop_small_zone_expanded")
+        activity_width = activity_bounds.right - activity_bounds.left
+        activity_height = activity_bounds.bottom - activity_bounds.top
+        if activity_width < 0.15 or activity_height < 0.15:
+            warnings.append("focus_crop_small_activity_expanded")
 
         image_width, image_height = _motion_evidence_frame_dimensions(evidence)
         if image_width is not None and image_height is not None:
@@ -6846,11 +6844,11 @@ class ProductRepository:
                 source_media_asset_id=media_asset_id,
                 image_width=image_width,
                 image_height=image_height,
-                left=zone_bounds.left,
-                top=zone_bounds.top,
-                right=zone_bounds.right,
-                bottom=zone_bounds.bottom,
-                crop_reason="user_zone",
+                left=activity_bounds.left,
+                top=activity_bounds.top,
+                right=activity_bounds.right,
+                bottom=activity_bounds.bottom,
+                crop_reason="activity_motion",
             )
             crop_box = crop_plan.crop_box_normalized
             pixel_box = _pixel_bounding_box_from_crop_plan(crop_plan)
@@ -6859,10 +6857,10 @@ class ProductRepository:
             is_full_frame_fallback = crop_plan.is_full_frame_fallback
         else:
             bounds_plan = plan_activity_crop_bounds(
-                left=zone_bounds.left,
-                top=zone_bounds.top,
-                right=zone_bounds.right,
-                bottom=zone_bounds.bottom,
+                left=activity_bounds.left,
+                top=activity_bounds.top,
+                right=activity_bounds.right,
+                bottom=activity_bounds.bottom,
             )
             crop_box = bounds_plan.crop_box_normalized
             pixel_box = None
@@ -6881,10 +6879,10 @@ class ProductRepository:
 
         return _ReviewFocusCropContext(
             available=True,
-            source=FocusCropSource.zone,
+            source=FocusCropSource.activity,
             box_normalized=_bounding_box_from_crop_box(crop_box),
             box_pixels=pixel_box,
-            label=f"{zone.name} activity focus",
+            label="Detected activity focus",
             warnings=_unique_strings(warnings),
         )
 
@@ -11419,73 +11417,23 @@ def _review_focus_crop_proposal_note(item: ReviewQueueItem) -> str | None:
     )
 
 
-def _zone_bounds(zone: Zone) -> CropBoxNormalized | None:
-    if not zone.polygon:
+def _megadetector_activity_focus_box(
+    activity_focus: BoundingBox | None,
+) -> MegaDetectorBox | None:
+    if activity_focus is None:
         return None
-    left = min(point.x for point in zone.polygon)
-    top = min(point.y for point in zone.polygon)
-    right = max(point.x for point in zone.polygon)
-    bottom = max(point.y for point in zone.polygon)
-    if left >= right or top >= bottom:
+    right = min(1.0, activity_focus.x + activity_focus.width)
+    bottom = min(1.0, activity_focus.y + activity_focus.height)
+    width = right - activity_focus.x
+    height = bottom - activity_focus.y
+    if width <= 0 or height <= 0:
         return None
-    return CropBoxNormalized(left=left, top=top, right=right, bottom=bottom)
-
-
-def _megadetector_focus_box(zone_model: ZoneModel | None) -> MegaDetectorBox | None:
-    if zone_model is None:
-        return None
-    zone = _zone_from_model(zone_model)
-    if not zone.is_active or zone.zone_type in {ZoneType.privacy, ZoneType.ignore}:
-        return None
-    bounds = _zone_bounds(zone)
-    if bounds is None:
-        return None
-    crop_plan = plan_activity_crop_bounds(
-        left=bounds.left,
-        top=bounds.top,
-        right=bounds.right,
-        bottom=bounds.bottom,
-        padding_ratio=MEGADETECTOR_ZONE_PADDING_RATIO,
-        min_crop_size_ratio=MEGADETECTOR_MIN_FOCUS_SIZE_RATIO,
-    )
-    if crop_plan.is_full_frame_fallback:
-        return None
-    crop = crop_plan.crop_box_normalized
     return MegaDetectorBox(
-        x=crop.left,
-        y=crop.top,
-        width=crop.right - crop.left,
-        height=crop.bottom - crop.top,
+        x=activity_focus.x,
+        y=activity_focus.y,
+        width=width,
+        height=height,
     )
-
-
-def _megadetector_proposals_in_zone(
-    proposals: list[MegaDetectorProposal],
-    zone_model: ZoneModel | None,
-) -> list[MegaDetectorProposal]:
-    if zone_model is None:
-        return proposals
-    zone = _zone_from_model(zone_model)
-    bounds = _zone_bounds(zone)
-    if bounds is None:
-        return []
-
-    filtered: list[MegaDetectorProposal] = []
-    for proposal in proposals:
-        box = proposal.bbox
-        if box is None:
-            continue
-        intersection_width = min(box.x + box.width, bounds.right) - max(
-            box.x,
-            bounds.left,
-        )
-        intersection_height = min(box.y + box.height, bounds.bottom) - max(
-            box.y,
-            bounds.top,
-        )
-        if intersection_width > 0 and intersection_height > 0:
-            filtered.append(proposal)
-    return filtered
 
 
 def _bounding_box_from_crop_box(box: CropBoxNormalized) -> BoundingBox:
@@ -11528,6 +11476,34 @@ def _motion_evidence_frame_dimensions(
     if width is None or height is None or width < 1 or height < 1:
         return None, None
     return width, height
+
+
+def _motion_evidence_activity_bounds(
+    evidence: MotionEvidenceModel | None,
+) -> CropBoxNormalized | None:
+    """Read measured motion bounds; Zone geometry is deliberately not a fallback."""
+
+    if evidence is None:
+        return None
+    try:
+        config = dict(json.loads(evidence.scoring_config_json))
+    except (TypeError, ValueError):
+        return None
+    left = _optional_float(config.get("activity_left"))
+    top = _optional_float(config.get("activity_top"))
+    right = _optional_float(config.get("activity_right"))
+    bottom = _optional_float(config.get("activity_bottom"))
+    if None in {left, top, right, bottom}:
+        return None
+    assert (
+        left is not None
+        and top is not None
+        and right is not None
+        and bottom is not None
+    )
+    if not (0.0 <= left < right <= 1.0 and 0.0 <= top < bottom <= 1.0):
+        return None
+    return CropBoxNormalized(left=left, top=top, right=right, bottom=bottom)
 
 
 def _saved_media_motion_evidence_skip_message(reason: str) -> str:

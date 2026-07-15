@@ -7,7 +7,8 @@ import tomllib
 import httpx
 import pytest
 
-from mockingbird.api.main import app, configure_repository
+from mockingbird.api.main import app, configure_repository, get_repository
+from mockingbird.api.schemas import BoundingBox, ModelAdapterRunRequest
 from mockingbird.detectors import megadetector_adapter
 from mockingbird.detectors.megadetector_adapter import (
     MEGADETECTOR_ADAPTER_ID,
@@ -158,16 +159,21 @@ def mark_megadetector_available(
 def mock_megadetector_output(
     monkeypatch: pytest.MonkeyPatch,
     proposals: list[MegaDetectorProposal],
+    *,
+    expected_focus_box: MegaDetectorBox | None = None,
 ) -> None:
     def execute_runtime(**kwargs) -> list[MegaDetectorProposal]:
         assert Path(kwargs["media_local_path"]).is_file()
         assert Path(kwargs["model_path"]).is_file()
         focus_box = kwargs["focus_box"]
-        assert focus_box is not None
-        assert focus_box.x == pytest.approx(0.304)
-        assert focus_box.y == pytest.approx(0.176)
-        assert focus_box.width == pytest.approx(0.392)
-        assert focus_box.height == pytest.approx(0.448)
+        if expected_focus_box is None:
+            assert focus_box is None
+        else:
+            assert focus_box is not None
+            assert focus_box.x == pytest.approx(expected_focus_box.x)
+            assert focus_box.y == pytest.approx(expected_focus_box.y)
+            assert focus_box.width == pytest.approx(expected_focus_box.width)
+            assert focus_box.height == pytest.approx(expected_focus_box.height)
         return proposals
 
     monkeypatch.setattr(megadetector_adapter, "_execute_megadetector_runtime", execute_runtime)
@@ -335,6 +341,41 @@ def test_focus_crop_remaps_boxes_to_original_frame() -> None:
         width=0.15,
         height=0.24,
     )
+
+
+async def test_megadetector_uses_explicit_activity_focus_not_zone_geometry(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    mark_megadetector_available(monkeypatch, tmp_path)
+    expected_focus = MegaDetectorBox(x=0.4, y=0.3, width=0.2, height=0.2)
+    mock_megadetector_output(
+        monkeypatch,
+        [
+            MegaDetectorProposal(
+                label="animal",
+                confidence=0.8,
+                bbox=MegaDetectorBox(x=0.44, y=0.34, width=0.05, height=0.06),
+            )
+        ],
+        expected_focus_box=expected_focus,
+    )
+    media_asset = (await import_image(client)).json()["media_asset"]
+
+    result = get_repository().run_model_adapter(
+        MEGADETECTOR_ADAPTER_ID,
+        ModelAdapterRunRequest(
+            adapter_id=MEGADETECTOR_ADAPTER_ID,
+            media_asset_id=media_asset["id"],
+            zone_ids=[FEEDER_ZONE_ID],
+        ),
+        activity_focus=BoundingBox(x=0.4, y=0.3, width=0.2, height=0.2),
+    )
+
+    assert len(result.proposals) == 1
+    assert result.proposals[0].zone_id == FEEDER_ZONE_ID
+    assert result.proposals[0].status.value == "proposed"
 
 
 def test_runtime_rejects_malformed_output() -> None:
@@ -662,7 +703,7 @@ async def test_mocked_megadetector_proposals_are_evidence_only_until_conversion(
     assert after_run_quality["needs_review_count"] == before_run_quality["needs_review_count"]
 
 
-async def test_megadetector_drops_background_proposals_outside_selected_zone(
+async def test_megadetector_keeps_full_frame_proposals_when_only_zone_context_exists(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -689,12 +730,19 @@ async def test_megadetector_drops_background_proposals_outside_selected_zone(
 
     assert response.status_code == 200
     proposals = response.json()["proposals"]
-    assert len(proposals) == 1
+    assert len(proposals) == 2
     assert proposals[0]["label"] == "unknown_animal"
     assert proposals[0]["bbox"] == {
         "x": 0.42,
         "y": 0.3,
         "width": 0.08,
+        "height": 0.1,
+    }
+    assert proposals[1]["label"] == "vehicle"
+    assert proposals[1]["bbox"] == {
+        "x": 0.8,
+        "y": 0.7,
+        "width": 0.1,
         "height": 0.1,
     }
 

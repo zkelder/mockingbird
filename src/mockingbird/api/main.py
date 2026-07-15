@@ -173,7 +173,13 @@ from mockingbird.motion import (
     score_frame_motion,
     score_zone_motion,
 )
-from mockingbird.motion.activity_crop import ActivityCropPlan, plan_activity_crop
+from mockingbird.motion.activity_crop import (
+    ActivityCropPlan,
+    ChangedActivityBounds,
+    CropBoxNormalized,
+    locate_changed_activity_bounds,
+    plan_activity_crop,
+)
 from mockingbird.motion.activity_session import (
     DEFAULT_QUIET_PERIOD_SECONDS,
     ExistingActivityReference,
@@ -2544,6 +2550,49 @@ def _frame_summary_for_media_asset(
     return next((frame for frame in frames if frame.media_asset_id == media_asset_id), None)
 
 
+def _measured_activity_bounds(
+    frame_planes: list[list[list[int | float]]],
+    *,
+    frame_index: int | None,
+    frame_index_start: int,
+    activity_area: MotionActivityAreaResponse | None,
+    pixel_delta_threshold: float,
+) -> ChangedActivityBounds | None:
+    """Locate the motion itself; the activity area only selects the candidate signal."""
+
+    if frame_index is None or activity_area is None:
+        return None
+    current_index = frame_index - frame_index_start
+    if current_index < 1 or current_index >= len(frame_planes):
+        return None
+    return locate_changed_activity_bounds(
+        frame_planes[current_index - 1],
+        frame_planes[current_index],
+        pixel_delta_threshold=pixel_delta_threshold,
+        search_bounds=CropBoxNormalized(
+            left=activity_area.left,
+            top=activity_area.top,
+            right=activity_area.right,
+            bottom=activity_area.bottom,
+        ),
+    )
+
+
+def _activity_bounds_scoring_fields(
+    bounds: ChangedActivityBounds | None,
+) -> dict[str, float | int | None]:
+    box = bounds.box_normalized if bounds is not None else None
+    return {
+        "activity_left": box.left if box is not None else None,
+        "activity_top": box.top if box is not None else None,
+        "activity_right": box.right if box is not None else None,
+        "activity_bottom": box.bottom if box is not None else None,
+        "activity_changed_pixel_count": (
+            bounds.changed_pixel_count if bounds is not None else None
+        ),
+    }
+
+
 def _motion_crop_plan_response(plan: ActivityCropPlan) -> MotionCropPlanResponse:
     return MotionCropPlanResponse(
         source_media_asset_id=plan.source_media_asset_id,
@@ -2949,16 +2998,24 @@ async def evaluate_saved_media_motion(
         frame_summaries,
         best_media_asset_id,
     )
+    measured_activity = _measured_activity_bounds(
+        [frame.frame for frame in frames],
+        frame_index=best_candidate.best_frame_index if best_candidate else None,
+        frame_index_start=payload.frame_index_start,
+        activity_area=strongest_activity_area,
+        pixel_delta_threshold=payload.pixel_delta_threshold,
+    )
+    measured_box = measured_activity.box_normalized if measured_activity else None
     crop_plan = (
         plan_activity_crop(
             source_media_asset_id=best_media_asset_id,
             image_width=best_snapshot_frame.width,
             image_height=best_snapshot_frame.height,
-            left=strongest_activity_area.left if strongest_activity_area else None,
-            top=strongest_activity_area.top if strongest_activity_area else None,
-            right=strongest_activity_area.right if strongest_activity_area else None,
-            bottom=strongest_activity_area.bottom if strongest_activity_area else None,
-            crop_reason="auto_region_cluster" if uses_auto_regions else "user_zone",
+            left=measured_box.left if measured_box else None,
+            top=measured_box.top if measured_box else None,
+            right=measured_box.right if measured_box else None,
+            bottom=measured_box.bottom if measured_box else None,
+            crop_reason="activity_motion",
         )
         if best_snapshot_frame is not None and best_media_asset_id is not None
         else None
@@ -3031,6 +3088,7 @@ async def evaluate_saved_media_motion(
                                 if best_snapshot_frame is not None
                                 else None
                             ),
+                            **_activity_bounds_scoring_fields(measured_activity),
                         },
                         snapshot_media_asset_id=(
                             best_media_asset_id if payload.attach_best_snapshot else None
@@ -3491,6 +3549,23 @@ def _evaluate_live_stream_motion(
         uses_auto_regions=uses_auto_regions,
         suppressed_zone_summaries=suppressed_zone_summaries,
     )
+    activity_frame_index = (
+        best_candidate.best_frame_index
+        if best_candidate is not None
+        else strongest_score_frame_index
+    )
+    activity_pixel_delta_threshold = (
+        strongest_scoring_policy.pixel_delta_threshold
+        if strongest_scoring_policy is not None
+        else request.pixel_delta_threshold
+    )
+    measured_activity = _measured_activity_bounds(
+        [frame.frame for frame in decoded_frames],
+        frame_index=activity_frame_index,
+        frame_index_start=cached_frames[0].sequence,
+        activity_area=strongest_activity_area,
+        pixel_delta_threshold=activity_pixel_delta_threshold,
+    )
     best_live_frame = (
         next(
             (
@@ -3647,6 +3722,7 @@ def _evaluate_live_stream_motion(
                 "image_quality_warnings": image_quality_warnings,
                 "near_miss": near_miss,
                 "margin_to_threshold": margin_to_threshold,
+                **_activity_bounds_scoring_fields(measured_activity),
             },
             frame_bytes=burst_live_frame.frame_bytes,
             frame_content_type=burst_live_frame.content_type,
@@ -3893,6 +3969,19 @@ def _evaluate_live_stream_motion(
                         "max_gap_frames": request.max_gap_frames,
                         "frame_sequence_start": cached_frames[0].sequence,
                         "image_quality_warnings": image_quality_warnings,
+                        **(
+                            {
+                                "activity_left": live_activity_session.get("activity_left"),
+                                "activity_top": live_activity_session.get("activity_top"),
+                                "activity_right": live_activity_session.get("activity_right"),
+                                "activity_bottom": live_activity_session.get("activity_bottom"),
+                                "activity_changed_pixel_count": live_activity_session.get(
+                                    "activity_changed_pixel_count"
+                                ),
+                            }
+                            if live_activity_session is not None
+                            else _activity_bounds_scoring_fields(measured_activity)
+                        ),
                     },
                     snapshot_media_asset_id=best_media_asset_id,
                     notes=request.notes
@@ -4497,6 +4586,13 @@ def _create_live_stream_motion_review_activity(
                     "fine_motion_applied": activity.get("fine_motion_applied"),
                     "image_quality_warnings": list(
                         activity.get("image_quality_warnings") or []
+                    ),
+                    "activity_left": activity.get("activity_left"),
+                    "activity_top": activity.get("activity_top"),
+                    "activity_right": activity.get("activity_right"),
+                    "activity_bottom": activity.get("activity_bottom"),
+                    "activity_changed_pixel_count": activity.get(
+                        "activity_changed_pixel_count"
                     ),
                     "creates_truth": False,
                 },

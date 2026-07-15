@@ -1462,7 +1462,7 @@ export interface MotionCropPlan {
   source_media_asset_id?: string | null;
   crop_box_normalized: MotionCropBoxNormalized;
   crop_box_pixels: MotionCropBoxPixels;
-  crop_reason: "user_zone" | "auto_region_cluster" | "full_frame_fallback" | string;
+  crop_reason: "activity_motion" | "full_frame_fallback" | string;
   padding_ratio: number;
   is_full_frame_fallback: boolean;
   derived_crop_media_asset_id?: string | null;

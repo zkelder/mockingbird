@@ -1,6 +1,11 @@
 import pytest
 
-from mockingbird.motion.activity_crop import plan_activity_crop, plan_activity_crop_bounds
+from mockingbird.motion.activity_crop import (
+    CropBoxNormalized,
+    locate_changed_activity_bounds,
+    plan_activity_crop,
+    plan_activity_crop_bounds,
+)
 
 
 def test_activity_crop_pads_and_clamps_to_image_bounds() -> None:
@@ -12,11 +17,11 @@ def test_activity_crop_pads_and_clamps_to_image_bounds() -> None:
         top=0.70,
         right=0.95,
         bottom=0.95,
-        crop_reason="user_zone",
+        crop_reason="activity_motion",
     )
 
     assert plan.source_media_asset_id == "media-asset-1"
-    assert plan.crop_reason == "user_zone"
+    assert plan.crop_reason == "activity_motion"
     assert plan.is_full_frame_fallback is False
     assert plan.crop_box_normalized.left == pytest.approx(0.725)
     assert plan.crop_box_normalized.top == pytest.approx(0.575)
@@ -40,7 +45,7 @@ def test_activity_crop_invalid_bounds_fall_back_to_full_frame() -> None:
         top=0.2,
         right=0.6,
         bottom=0.8,
-        crop_reason="auto_region_cluster",
+        crop_reason="activity_motion",
     )
 
     assert plan.source_media_asset_id == "media-asset-2"
@@ -71,3 +76,41 @@ def test_activity_crop_bounds_plan_without_frame_dimensions() -> None:
     assert plan.crop_box_normalized.right == pytest.approx(0.78)
     assert plan.crop_box_normalized.bottom == pytest.approx(0.72)
     assert plan.warning is None
+
+
+def test_changed_activity_bounds_come_from_changed_pixels_not_search_area() -> None:
+    previous = [[0 for _x in range(10)] for _y in range(10)]
+    current = [[0 for _x in range(10)] for _y in range(10)]
+    current[5][6] = 255
+    current[6][6] = 255
+
+    located = locate_changed_activity_bounds(
+        previous,
+        current,
+        pixel_delta_threshold=25,
+        search_bounds=CropBoxNormalized(left=0.2, top=0.2, right=0.9, bottom=0.9),
+    )
+
+    assert located is not None
+    assert located.changed_pixel_count == 2
+    assert located.box_normalized == CropBoxNormalized(
+        left=0.6,
+        top=0.5,
+        right=0.7,
+        bottom=0.7,
+    )
+
+
+def test_changed_activity_bounds_ignore_change_outside_candidate_area() -> None:
+    previous = [[0 for _x in range(10)] for _y in range(10)]
+    current = [[0 for _x in range(10)] for _y in range(10)]
+    current[1][1] = 255
+
+    located = locate_changed_activity_bounds(
+        previous,
+        current,
+        pixel_delta_threshold=25,
+        search_bounds=CropBoxNormalized(left=0.5, top=0.5, right=1.0, bottom=1.0),
+    )
+
+    assert located is None

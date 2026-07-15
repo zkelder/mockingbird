@@ -161,6 +161,11 @@ class LiveActivitySessionSnapshot:
     best_frame_size_bytes: int | None
     best_frame_width: int | None
     best_frame_height: int | None
+    activity_left: float | None
+    activity_top: float | None
+    activity_right: float | None
+    activity_bottom: float | None
+    activity_changed_pixel_count: int | None
     best_media_asset_id: str | None
     best_score: float | None
     best_changed_ratio: float | None
@@ -217,6 +222,11 @@ class LiveActivitySessionSnapshot:
             "best_frame_size_bytes": self.best_frame_size_bytes,
             "best_frame_width": self.best_frame_width,
             "best_frame_height": self.best_frame_height,
+            "activity_left": self.activity_left,
+            "activity_top": self.activity_top,
+            "activity_right": self.activity_right,
+            "activity_bottom": self.activity_bottom,
+            "activity_changed_pixel_count": self.activity_changed_pixel_count,
             "best_media_asset_id": self.best_media_asset_id,
             "best_score": self.best_score,
             "best_changed_ratio": self.best_changed_ratio,
@@ -1244,6 +1254,11 @@ class _LiveActivitySession:
     best_frame_bytes: bytes | None
     best_frame_width: int | None
     best_frame_height: int | None
+    activity_left: float | None
+    activity_top: float | None
+    activity_right: float | None
+    activity_bottom: float | None
+    activity_changed_pixel_count: int | None
     best_media_asset_id: str | None
     best_score: float | None
     best_changed_ratio: float | None
@@ -1309,6 +1324,11 @@ class _LiveActivitySession:
             best_frame_bytes=None,
             best_frame_width=None,
             best_frame_height=None,
+            activity_left=None,
+            activity_top=None,
+            activity_right=None,
+            activity_bottom=None,
+            activity_changed_pixel_count=None,
             best_media_asset_id=None,
             best_score=None,
             best_changed_ratio=None,
@@ -1404,6 +1424,13 @@ class _LiveActivitySession:
             self.best_frame_bytes = frame_bytes
             self.best_frame_width = _optional_int(values.get("best_frame_width"))
             self.best_frame_height = _optional_int(values.get("best_frame_height"))
+            self.activity_left = _optional_float(values.get("activity_left"))
+            self.activity_top = _optional_float(values.get("activity_top"))
+            self.activity_right = _optional_float(values.get("activity_right"))
+            self.activity_bottom = _optional_float(values.get("activity_bottom"))
+            self.activity_changed_pixel_count = _optional_int(
+                values.get("activity_changed_pixel_count")
+            )
 
     def _append_candidate_frame(self, candidate: _LiveActivityCandidateFrame) -> None:
         # Burst candidates are in-memory evidence only and capped per activity session.
@@ -1489,6 +1516,11 @@ class _LiveActivitySession:
             ),
             best_frame_width=self.best_frame_width,
             best_frame_height=self.best_frame_height,
+            activity_left=self.activity_left,
+            activity_top=self.activity_top,
+            activity_right=self.activity_right,
+            activity_bottom=self.activity_bottom,
+            activity_changed_pixel_count=self.activity_changed_pixel_count,
             best_media_asset_id=self.best_media_asset_id,
             best_score=self.best_score,
             best_changed_ratio=self.best_changed_ratio,

@@ -4,7 +4,7 @@
 
 This plan defines the next active event-trigger path for MockingBird:
 
-stream visible in app -> sample frames locally -> evaluate user-drawn zones -> score motion inside feeder/birdbath/ground/etc. zones -> debounce motion across multiple sampled frames -> save candidate snapshot evidence -> create reviewable visit/event evidence -> later SpeciesNet/species classifier receives best frame or zone crop -> user correction is dataset/export truth.
+stream visible in app -> sample frames locally -> evaluate user-drawn zones or automatic activity areas -> score and debounce motion across multiple sampled frames -> measure changed-pixel bounds around the selected activity -> save candidate snapshot evidence -> create reviewable visit/event evidence -> later detector/classifier receives the best frame or activity crop -> user correction is dataset/export truth.
 
 This is not a permanent replacement for MegaDetector. It is the first lightweight event trigger that protects the product loop while heavier detectors remain optional enrichment.
 
@@ -137,13 +137,19 @@ The product should stay centered on streams, zones, reviewable events/visits, co
 Motion trigger flow:
 
 1. User views a stream in the app.
-2. User draws zones such as feeder, birdbath, ground, perch, yard, driveway, privacy, or ignore.
+2. User may draw zones such as feeder, birdbath, ground, perch, yard, driveway, privacy, or ignore.
 3. MockingBird samples local frames from the stream.
-4. Motion is scored inside relevant zones.
-5. A debounced trigger creates candidate snapshot evidence.
+4. Motion is scored inside relevant Zones, or inside automatic activity areas when no normal Zone is configured.
+5. A debounced trigger selects a best frame and records measured changed-pixel bounds for the activity.
 6. MotionEvidence is explicitly promoted into reviewable visit/event evidence.
-7. A later species suggestion adapter can inspect the best frame or zone crop.
+7. A later detector or species suggestion adapter can inspect the best frame or the measured activity crop.
 8. User correction becomes dataset/export truth.
+
+Zone geometry provides scene meaning, scoring association, and
+Privacy/Ignore suppression. It does not define analyzer crop geometry. The
+focused crop is calculated from measured activity pixels around the best frame;
+if that measurement is unavailable, analyzers receive the full frame. The full
+original media remains the review and correction context.
 
 ## Why Motion Trigger First
 
@@ -214,7 +220,7 @@ Review Queue and detail pages remain the place where the user accepts, corrects,
 
 SpeciesNet or another species classifier is a separate future suggestion adapter.
 
-It should receive a best frame or zone crop only after the motion trigger has produced a review candidate. Species suggestions remain evidence until user correction.
+It should receive a best frame or measured activity crop only after the motion trigger has produced a review candidate. Species suggestions remain evidence until user correction.
 
 Detection and species suggestion should stay separate so MockingBird can improve each without changing the product truth model.
 
@@ -259,7 +265,7 @@ Implementation tests should prove:
 
 MegaDetector or an ONNX/local-weight-only detector can later enrich motion candidates with boxes, blank filtering, or proposal confidence.
 
-SpeciesNet or another species classifier can later suggest species from the best frame or zone crop.
+SpeciesNet or another species classifier can later suggest species from the best frame or measured activity crop.
 
 These remain adapters underneath the product. They should enrich review evidence without replacing streams, zones, visits/events, corrections, exports, or analytics.
 

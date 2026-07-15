@@ -101,9 +101,14 @@ spatial, not cosmetic:
 
 The app therefore does not add a blanket cleanup filter. Highlight clipping has
 already discarded detail, and tone adjustment can make wrong evidence more
-confident. MegaDetector now uses a tighter analysis-only Zone focus with 20%
-padding and a 10% minimum width. The original best frame remains unchanged for
-review and correction, and every model result remains proposal evidence only.
+confident. The tighter-Zone result was useful diagnostic evidence that framing
+matters, but Zone geometry is scene data rather than analyzer crop geometry.
+The product implementation instead measures changed-pixel bounds from the best
+motion frame pair, pads that activity focus in memory, and uses the full frame
+when those bounds are unavailable. Normal Zones remain scoring/review context;
+Privacy and Ignore Zones still suppress analysis. The original best frame
+remains unchanged for review and correction, and every model result remains
+proposal evidence only.
 
 The next image-quality step is a read-only camera-driver exposure capability
 probe, followed by bounded hardware exposure calibration only on devices that
