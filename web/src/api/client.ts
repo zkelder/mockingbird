@@ -103,6 +103,7 @@ import type {
   Visit,
   VisitDetail,
   WorkerStatusResponse,
+  WindowsCameraDiscoveryResponse,
   Zone,
   ZoneCreate,
   ZoneMutationResult,
@@ -110,7 +111,7 @@ import type {
 } from "./types";
 
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000";
+  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "";
 
 export class ApiError extends Error {
   constructor(
@@ -283,6 +284,8 @@ export const apiClient = {
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live/local-mjpeg`,
   windowsDshowMjpegBridgeUrl: (streamId: string) =>
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live/windows-dshow-mjpeg`,
+  discoverWindowsCameras: () =>
+    request<WindowsCameraDiscoveryResponse>("/api/local-cameras/windows"),
   startLiveCameraSession: (streamId: string) =>
     request<LiveCameraSessionStatus>(
       `/api/streams/${encodeURIComponent(streamId)}/live-session/start`,

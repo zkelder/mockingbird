@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import ceil
+import subprocess
 import sys
 from typing import Any
 
@@ -41,6 +42,7 @@ from mockingbird.api.schemas import (
     ExternalUrlPreviewSaveRequest,
     ExternalUrlPreviewSaveResponse,
     LocalCameraFrameCaptureResponse,
+    LiveCameraSessionDiagnosticsResponse,
     LiveCameraSessionStatusResponse,
     Event,
     EventDetail,
@@ -137,6 +139,7 @@ from mockingbird.api.schemas import (
     WebhookPayloadValidationRequest,
     WebhookPayloadValidationResponse,
     WorkerStatusResponse,
+    WindowsCameraDiscoveryResponse,
     Zone,
     ZoneCreate,
     ZoneMutationResult,
@@ -3022,39 +3025,49 @@ def _evaluate_live_stream_motion(
         )
         if session_required:
             message = "Start camera session before monitoring."
-            return LiveMotionEvaluateResponse(
-                **common,
-                status="start_session_required",
-                session_status="waiting_for_session",
-                activity_detected=False,
-                frames_considered=0,
-                message=message,
-                last_evaluation_message=message,
+            return _recorded_live_motion_response(
+                LiveMotionEvaluateResponse(
+                    **common,
+                    status="start_session_required",
+                    session_status="waiting_for_session",
+                    activity_detected=False,
+                    frames_considered=0,
+                    message=message,
+                    last_evaluation_message=message,
+                )
             )
         message = (
             "No recent live frames are available. Keep Live view open and retry."
             if has_stale_frames
             else "Open Live view and wait for live frames before monitoring."
         )
-        return LiveMotionEvaluateResponse(
-            **common,
-            status="no_recent_frames" if has_stale_frames else "waiting_for_live_frames",
-            session_status="no_recent_frames" if has_stale_frames else "waiting_for_frames",
-            activity_detected=False,
-            frames_considered=0,
-            message=message,
-            last_evaluation_message=message,
+        return _recorded_live_motion_response(
+            LiveMotionEvaluateResponse(
+                **common,
+                status="no_recent_frames"
+                if has_stale_frames
+                else "waiting_for_live_frames",
+                session_status="no_recent_frames"
+                if has_stale_frames
+                else "waiting_for_frames",
+                activity_detected=False,
+                frames_considered=0,
+                message=message,
+                last_evaluation_message=message,
+            )
         )
     if len(cached_frames) < 2:
         message = "Waiting for at least two recent live frames from this stream."
-        return LiveMotionEvaluateResponse(
-            **common,
-            status="not_enough_frames",
-            session_status="waiting_for_frames",
-            activity_detected=False,
-            frames_considered=len(cached_frames),
-            message=message,
-            last_evaluation_message=message,
+        return _recorded_live_motion_response(
+            LiveMotionEvaluateResponse(
+                **common,
+                status="not_enough_frames",
+                session_status="waiting_for_frames",
+                activity_detected=False,
+                frames_considered=len(cached_frames),
+                message=message,
+                last_evaluation_message=message,
+            )
         )
 
     decoded_frames: list[SavedMediaFrame] = []
@@ -3077,18 +3090,20 @@ def _evaluate_live_stream_motion(
             )
     except SavedMediaFrameDecodeError:
         message = "Recent live frames could not be decoded for motion."
-        return LiveMotionEvaluateResponse(
-            **common,
-            status="decode_failed",
-            session_status="decode_failed",
-            activity_detected=False,
-            frames_considered=len(cached_frames),
-            message=message,
-            last_evaluation_message=message,
-            last_error=message,
-            warnings=[
-                "Live monitoring needs decodable JPEG/PNG/WebP frames from the active stream."
-            ],
+        return _recorded_live_motion_response(
+            LiveMotionEvaluateResponse(
+                **common,
+                status="decode_failed",
+                session_status="decode_failed",
+                activity_detected=False,
+                frames_considered=len(cached_frames),
+                message=message,
+                last_evaluation_message=message,
+                last_error=message,
+                warnings=[
+                    "Live monitoring needs decodable JPEG/PNG/WebP frames from the active stream."
+                ],
+            )
         )
 
     all_zones = repository.zones_for_stream(stream.id)
@@ -4089,6 +4104,13 @@ def _record_live_motion_session_result(response: LiveMotionEvaluateResponse) -> 
         response.model_dump(mode="json"),
         last_activity=last_activity,
     )
+
+
+def _recorded_live_motion_response(
+    response: LiveMotionEvaluateResponse,
+) -> LiveMotionEvaluateResponse:
+    _record_live_motion_session_result(response)
+    return response
 
 
 def _live_motion_review_activity_response(
@@ -5642,6 +5664,25 @@ async def get_stream_live_camera_session_status(
     return _live_camera_session_response(snapshot, configuration)
 
 
+@app.get(
+    "/api/streams/{stream_id}/live-session/diagnostics",
+    response_model=LiveCameraSessionDiagnosticsResponse,
+)
+async def get_stream_live_camera_session_diagnostics(
+    stream_id: str,
+) -> LiveCameraSessionDiagnosticsResponse:
+    _stream_live_playback_config_or_404(stream_id)
+    snapshot = get_live_camera_session_manager().status(stream_id)
+    return LiveCameraSessionDiagnosticsResponse(
+        stream_id=stream_id,
+        diagnostic_events=(snapshot.diagnostic_events if snapshot is not None else []),
+        diagnostic_events_truncated=(
+            snapshot.diagnostic_events_truncated if snapshot is not None else False
+        ),
+        creates_truth=False,
+    )
+
+
 @app.get("/api/streams/{stream_id}/live-session/mjpeg")
 async def get_stream_live_camera_session_mjpeg(stream_id: str) -> StreamingResponse:
     configuration = _stream_live_playback_config_or_404(stream_id)
@@ -5656,6 +5697,54 @@ async def get_stream_live_camera_session_mjpeg(stream_id: str) -> StreamingRespo
         get_live_camera_session_manager().iter_mjpeg(stream_id),
         media_type=(
             f"multipart/x-mixed-replace; boundary={live_camera_session.MJPEG_BOUNDARY}"
+        ),
+    )
+
+
+@app.get(
+    "/api/local-cameras/windows",
+    response_model=WindowsCameraDiscoveryResponse,
+)
+async def discover_windows_cameras() -> WindowsCameraDiscoveryResponse:
+    """List local Windows webcams without opening or recording from them."""
+
+    if not sys.platform.startswith("win"):
+        return WindowsCameraDiscoveryResponse(
+            status="unsupported_platform",
+            message="Automatic camera detection is available when MockingBird runs on Windows.",
+        )
+    if not windows_camera_bridge.is_windows_ffmpeg_available():
+        return WindowsCameraDiscoveryResponse(
+            status="ffmpeg_missing",
+            message="Camera detection needs FFmpeg. Install FFmpeg, then retry.",
+        )
+    try:
+        devices = windows_camera_bridge.list_windows_dshow_video_devices()
+    except subprocess.TimeoutExpired:
+        return WindowsCameraDiscoveryResponse(
+            status="failed",
+            message="Camera detection timed out. Check the camera connection and retry.",
+        )
+    except OSError:
+        return WindowsCameraDiscoveryResponse(
+            status="failed",
+            message="Camera detection could not start. Check FFmpeg and retry.",
+        )
+    if not devices:
+        return WindowsCameraDiscoveryResponse(
+            status="no_devices",
+            message=(
+                "No Windows cameras were found. Connect a camera, close other camera apps, "
+                "and retry."
+            ),
+        )
+    return WindowsCameraDiscoveryResponse(
+        status="available",
+        devices=devices,
+        message=(
+            f"Found {len(devices)} camera."
+            if len(devices) == 1
+            else f"Found {len(devices)} cameras."
         ),
     )
 
@@ -5826,7 +5915,8 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
                 status="camera_not_configured",
                 message="Choose a Windows DirectShow camera name before capture.",
                 warnings=[
-                    "Find the exact camera name with: ffmpeg -list_devices true -f dshow -i dummy."
+                    "Use Detect cameras in Cameras/Streams, then choose the connected Windows "
+                    "webcam."
                 ],
             )
         if bridge_status == "unsupported_host":

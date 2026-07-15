@@ -684,6 +684,7 @@ a.secondary-action {
   display: grid;
   grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.2fr);
   gap: 16px;
+  align-items: start;
 }
 
 .source-setup-summary,
@@ -695,6 +696,10 @@ a.secondary-action {
 .source-review-stream-list {
   display: grid;
   gap: 12px;
+}
+
+.source-setup-summary {
+  align-content: start;
 }
 
 .source-setup-summary label,
@@ -1050,6 +1055,26 @@ a.secondary-action {
   padding: 0 0 12px;
 }
 
+.compact-diagnostic-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  color: #405047;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.compact-diagnostic-details > summary strong {
+  color: #657269;
+  font-size: 0.8rem;
+}
+
+.compact-diagnostic-details[open] > summary {
+  margin-bottom: 4px;
+}
+
 .field-test-next-step {
   display: flex;
   align-items: center;
@@ -1353,6 +1378,27 @@ a.secondary-action {
   gap: 12px;
 }
 
+.provider-advanced-settings {
+  border-top: 1px solid #e0e6dc;
+  padding-top: 10px;
+}
+
+.camera-discovery-field {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.camera-discovery-field .secondary-action {
+  width: fit-content;
+}
+
+.camera-discovery-message {
+  color: #6d5521;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
 .field-meta {
   color: #627168;
   font-size: 0.82rem;
@@ -1588,6 +1634,42 @@ a.secondary-action {
   gap: 12px;
 }
 
+.review-secondary-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  color: #34473b;
+  font-weight: 850;
+}
+
+.review-secondary-details > summary strong {
+  color: #657269;
+  font-size: 0.82rem;
+}
+
+.review-secondary-details[open] > summary {
+  margin-bottom: 10px;
+}
+
+.queue-list {
+  order: 1;
+}
+
+.review-bulk-panel {
+  order: 2;
+}
+
+.correction-audit-panel {
+  order: 3;
+}
+
+.export-readiness-content {
+  display: grid;
+  gap: 12px;
+}
+
 .review-bulk-form {
   grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.4fr) auto;
   align-items: end;
@@ -1632,6 +1714,21 @@ a.secondary-action {
 .review-bulk-select:has(input:disabled) {
   color: #758177;
   background: #f2f5ef;
+}
+
+.review-bulk-selection-details {
+  width: fit-content;
+}
+
+.review-bulk-selection-details summary {
+  cursor: pointer;
+  color: #627168;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.review-bulk-selection-details[open] .review-bulk-select {
+  margin-top: 8px;
 }
 
 .review-bulk-result strong,

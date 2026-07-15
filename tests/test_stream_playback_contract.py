@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import subprocess
 
 import httpx
 import pytest
@@ -45,6 +46,33 @@ def isolated_repository(tmp_path: Path) -> ProductRepository:
     get_live_camera_session_manager().stop_all(reason="test_reset")
     live_frame_cache.clear_all_frames()
     configure_repository(None)
+
+
+@pytest.fixture(autouse=True)
+def linux_local_usb_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise the Linux local-USB contract consistently on every test host."""
+
+    local_camera_status = local_camera_bridge.local_camera_status
+
+    def status_for_linux_host(
+        *,
+        device: str | None,
+        camera_format: str | None = None,
+        platform_name: str = "linux",
+        ffmpeg_available: bool | None = None,
+    ) -> str:
+        return local_camera_status(
+            device=device,
+            camera_format=camera_format,
+            platform_name=platform_name,
+            ffmpeg_available=ffmpeg_available,
+        )
+
+    monkeypatch.setattr(
+        local_camera_bridge,
+        "local_camera_status",
+        status_for_linux_host,
+    )
 
 
 @pytest.fixture
@@ -3587,7 +3615,7 @@ async def test_windows_dshow_configuration_requires_camera_name(
     assert configuration["provider_key"] == "local_usb"
     assert configuration["missing_fields"] == ["windows_camera_name"]
     assert "Windows DirectShow camera name is required" in configuration["message"]
-    assert "ffmpeg -list_devices true -f dshow -i dummy" in configuration["setup_hint"]
+    assert "Use Detect cameras" in configuration["setup_hint"]
 
 
 async def test_windows_dshow_playback_reports_missing_camera_name(
@@ -3605,7 +3633,7 @@ async def test_windows_dshow_playback_reports_missing_camera_name(
     assert playback["windows_camera_status"] == "camera_name_missing"
     assert playback["windows_camera_bridge_available"] is False
     assert playback["bridged_mjpeg_url"] is None
-    assert "ffmpeg -list_devices true -f dshow -i dummy" in playback["setup_hint"]
+    assert "Use Detect cameras" in playback["setup_hint"]
 
 
 async def test_windows_dshow_playback_reports_unsupported_host_without_windows_ffmpeg(
@@ -4386,6 +4414,99 @@ def test_windows_dshow_command_uses_list_args_and_safe_camera_name() -> None:
     assert windows_camera_bridge.validate_windows_camera_name("") is False
 
 
+def test_windows_camera_listing_parses_video_devices_without_shell() -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr=(
+                '[dshow @ 000001] "Backyard Camera" (video)\n'
+                '[dshow @ 000001] "Microphone" (audio)\n'
+                '[dshow @ 000001] "Backyard Camera" (video)'
+            ),
+        )
+
+    devices = windows_camera_bridge.list_windows_dshow_video_devices(
+        ffmpeg_binary_path="C:\\ffmpeg\\ffmpeg.exe",
+        run_factory=fake_run,
+    )
+
+    assert devices == ["Backyard Camera"]
+    assert calls[0][0] == [
+        "C:\\ffmpeg\\ffmpeg.exe",
+        "-list_devices",
+        "true",
+        "-f",
+        "dshow",
+        "-i",
+        "dummy",
+    ]
+    assert calls[0][1].get("shell") is not True
+    assert calls[0][1]["timeout"] == 10.0
+
+
+async def test_windows_camera_discovery_returns_devices_without_creating_data(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("mockingbird.api.main.sys.platform", "win32")
+    monkeypatch.setattr(
+        windows_camera_bridge,
+        "is_windows_ffmpeg_available",
+        lambda *args, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        windows_camera_bridge,
+        "list_windows_dshow_video_devices",
+        lambda *args, **kwargs: ["Backyard Camera", "Birdbath Camera"],
+    )
+    before = await product_counts(client)
+
+    response = await client.get("/api/local-cameras/windows")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "available",
+        "devices": ["Backyard Camera", "Birdbath Camera"],
+        "message": "Found 2 cameras.",
+        "creates_truth": False,
+    }
+    assert await product_counts(client) == before
+
+
+async def test_windows_camera_discovery_explains_when_no_camera_is_connected(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("mockingbird.api.main.sys.platform", "win32")
+    monkeypatch.setattr(
+        windows_camera_bridge,
+        "is_windows_ffmpeg_available",
+        lambda *args, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        windows_camera_bridge,
+        "list_windows_dshow_video_devices",
+        lambda *args, **kwargs: [],
+    )
+
+    response = await client.get("/api/local-cameras/windows")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "no_devices"
+    assert body["devices"] == []
+    assert "Connect a camera" in body["message"]
+    assert body["creates_truth"] is False
+
+
 def test_windows_dshow_frame_capture_command_uses_list_args() -> None:
     command = windows_camera_bridge.build_windows_dshow_frame_capture_command(
         "EMEET SmartCam S600",
@@ -4558,6 +4679,161 @@ def test_windows_dshow_multipart_generator_updates_latest_frame_cache() -> None:
     assert len(chunks) == 1
     assert cached is not None
     assert cached.frame_bytes == b"\xff\xd8windows-live-frame\xff\xd9"
+
+
+async def test_live_camera_diagnostic_events_are_bounded_and_metadata_only(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_process = FakeFfmpegProcess([])
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, **kwargs: fake_process,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    before = await product_counts(client)
+
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    manager = get_live_camera_session_manager()
+    for index in range(130):
+        manager.record_motion_result(
+            STREAM_ID,
+            {
+                "status": "activity_detected" if index % 2 else "no_activity",
+                "session_status": "new_activity" if index % 2 else "no_activity",
+                "camera_url": "rtsp://user:secret@example.invalid/live",
+                "frame_bytes": b"private-frame",
+                "model_output": {"raw": "private-output"},
+            },
+        )
+
+    status_response = await client.get(f"/api/streams/{STREAM_ID}/live-session/status")
+    assert status_response.status_code == 200
+    assert "diagnostic_events" not in status_response.json()
+    response = await client.get(f"/api/streams/{STREAM_ID}/live-session/diagnostics")
+    assert response.status_code == 200
+    body = response.json()
+    events = body["diagnostic_events"]
+    assert len(events) == 100
+    assert body["diagnostic_events_truncated"] is True
+    assert [event["sequence"] for event in events] == sorted(
+        event["sequence"] for event in events
+    )
+    diagnostic_text = repr(events)
+    assert "secret" not in diagnostic_text
+    assert "private-frame" not in diagnostic_text
+    assert "private-output" not in diagnostic_text
+    assert all(event["creates_truth"] is False for event in events)
+    assert await product_counts(client) == before
+
+
+async def test_live_camera_diagnostics_record_product_transitions_without_truth(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_process = FakeFfmpegProcess([])
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, **kwargs: fake_process,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    before = await product_counts(client)
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+
+    manager = get_live_camera_session_manager()
+    started_at = datetime.now(UTC)
+    near_miss = manager.record_activity_detection(
+        STREAM_ID,
+        {
+            "region_key": "zone:diagnostic-test",
+            "region_kind": "zone",
+            "region_id": "zone-diagnostic-test",
+            "zone_id": "zone-diagnostic-test",
+            "zone_type": "feeder",
+            "last_seen_at": started_at,
+            "activity_detected": False,
+            "near_miss": True,
+            "frames_evaluated_count": 2,
+            "best_frame_sequence": 1,
+            "best_frame_captured_at": started_at,
+            "best_score": 0.01,
+        },
+        frame_bytes=b"\xff\xd8near-miss-frame\xff\xd9",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+    assert near_miss is not None
+    confirmed = manager.record_activity_detection(
+        STREAM_ID,
+        {
+            "region_key": "zone:diagnostic-test",
+            "region_kind": "zone",
+            "region_id": "zone-diagnostic-test",
+            "zone_id": "zone-diagnostic-test",
+            "zone_type": "feeder",
+            "last_seen_at": started_at + timedelta(seconds=1),
+            "activity_detected": True,
+            "near_miss": False,
+            "frames_evaluated_count": 2,
+            "best_frame_sequence": 2,
+            "best_frame_captured_at": started_at + timedelta(seconds=1),
+            "best_score": 0.02,
+        },
+        frame_bytes=b"\xff\xd8confirmed-frame\xff\xd9",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+    assert confirmed is not None
+    activity_session_id = confirmed.activity_session_id
+    manager.mark_activity_ready_for_review(
+        STREAM_ID,
+        activity_session_id,
+        quiet_seconds=1,
+    )
+    manager.mark_activity_media_asset(
+        STREAM_ID,
+        activity_session_id,
+        "media-asset-diagnostic-test",
+    )
+    manager.mark_activity_review_created(
+        STREAM_ID,
+        activity_session_id,
+        {
+            "motion_evidence_id": "motion-evidence-diagnostic-test",
+            "event_id": "event-diagnostic-test",
+            "visit_id": "visit-diagnostic-test",
+            "review_queue_item_id": "review-queue-diagnostic-test",
+        },
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live-session/diagnostics")
+    assert response.status_code == 200
+    events = response.json()["diagnostic_events"]
+    event_types = [event["event_type"] for event in events]
+    assert event_types == [
+        "camera_started",
+        "near_miss_started",
+        "activity_confirmed",
+        "activity_ready_for_review",
+        "best_frame_saved",
+        "review_candidate_created",
+    ]
+    diagnostic_text = repr(events)
+    assert "near-miss-frame" not in diagnostic_text
+    assert "confirmed-frame" not in diagnostic_text
+    assert "media-asset-diagnostic-test" not in diagnostic_text
+    assert all(event["creates_truth"] is False for event in events)
+    assert await product_counts(client) == before
 
 
 async def test_external_url_unknown_live_stream_type_reports_unsupported(

@@ -36,9 +36,11 @@ import type {
   SourceMonitorStatusResponse,
   SourceProviderConfiguration,
   SourceProviderDefinition,
+  SourceProviderField,
   SourceSetupReviewResponse,
   Stream,
   StreamPlaybackStatus,
+  WindowsCameraDiscoveryResponse,
   Zone,
   ZoneType,
 } from "../api/types";
@@ -106,6 +108,37 @@ const LIVE_STREAM_TYPE_OPTIONS = [
   { value: "local_usb", label: "Local USB camera" },
   { value: "windows_dshow", label: "Windows DirectShow webcam" },
 ];
+
+const LOCAL_CAMERA_STREAM_TYPE_OPTIONS = [
+  { value: "unknown", label: "Choose a connection" },
+  { value: "windows_dshow", label: "Windows webcam" },
+  { value: "local_usb", label: "Linux USB camera" },
+];
+
+const LOCAL_CAMERA_ADVANCED_FIELD_KEYS = new Set([
+  "local_camera_format",
+  "ffmpeg_binary_path",
+  "video_size",
+  "preview_video_size",
+  "capture_video_size",
+  "framerate",
+  "input_format",
+  "brightness",
+  "contrast",
+  "exposure",
+  "zoom_mode",
+  "notes",
+]);
+
+function localCameraFieldIsVisible(fieldKey: string, connectionType: string): boolean {
+  if (fieldKey === "local_camera_device" || fieldKey === "local_camera_format") {
+    return connectionType === "local_usb";
+  }
+  if (fieldKey === "windows_camera_name" || fieldKey === "ffmpeg_binary_path") {
+    return connectionType === "windows_dshow";
+  }
+  return true;
+}
 
 function isRedactedLiveStreamUrlPreview(key: string, preview?: string): boolean {
   return key === "live_stream_url" && Boolean(preview?.includes("***:***@"));
@@ -1689,6 +1722,9 @@ export function StreamsPage({
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(sources[0]?.id ?? null);
   const [providerKey, setProviderKey] = useState("");
   const [configDraft, setConfigDraft] = useState<Record<string, string>>({});
+  const [windowsCameraDiscovery, setWindowsCameraDiscovery] =
+    useState<WindowsCameraDiscoveryResponse | null>(null);
+  const [isDetectingWindowsCameras, setIsDetectingWindowsCameras] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [setupMessage, setSetupMessage] = useState<string | null>(null);
@@ -2140,8 +2176,33 @@ export function StreamsPage({
       selectedConfiguration?.provider_key === nextProviderKey ? selectedConfiguration : null;
     setProviderKey(nextProviderKey);
     setConfigDraft(draftFromConfiguration(definition, matchingConfiguration));
+    setWindowsCameraDiscovery(null);
     setSetupError(null);
     setSetupMessage(null);
+  }
+
+  async function handleDetectWindowsCameras() {
+    setIsDetectingWindowsCameras(true);
+    setWindowsCameraDiscovery(null);
+    try {
+      const result = await apiClient.discoverWindowsCameras();
+      setWindowsCameraDiscovery(result);
+      if (result.devices.length === 1 && !configDraft.windows_camera_name?.trim()) {
+        setConfigDraft((current) => ({
+          ...current,
+          windows_camera_name: result.devices[0],
+        }));
+      }
+    } catch (caught) {
+      setWindowsCameraDiscovery({
+        status: "failed",
+        devices: [],
+        message: caught instanceof Error ? caught.message : "Could not detect Windows cameras.",
+        creates_truth: false,
+      });
+    } finally {
+      setIsDetectingWindowsCameras(false);
+    }
   }
 
   async function handleSaveProviderConfiguration(event: FormEvent<HTMLFormElement>) {
@@ -3857,6 +3918,142 @@ export function StreamsPage({
       ? "Test snapshot, then capture one saved image under this camera/source."
       : selectedSetupReview?.next_step ?? selectedConnection?.setup_hint;
 
+  const isLocalCameraProvider = selectedProviderDefinition?.provider_key === "local_usb";
+  const localCameraConnectionType = configDraft.live_stream_type || "unknown";
+  const visibleProviderFields =
+    selectedProviderDefinition?.fields.filter(
+      (field) =>
+        !isLocalCameraProvider ||
+        localCameraFieldIsVisible(field.key, localCameraConnectionType),
+    ) ?? [];
+  const primaryProviderFields = visibleProviderFields.filter(
+    (field) => !isLocalCameraProvider || !LOCAL_CAMERA_ADVANCED_FIELD_KEYS.has(field.key),
+  );
+  const advancedProviderFields = isLocalCameraProvider
+    ? visibleProviderFields.filter((field) => LOCAL_CAMERA_ADVANCED_FIELD_KEYS.has(field.key))
+    : [];
+
+  function renderProviderField(field: SourceProviderField) {
+    const existingPreview = selectedConfiguration?.safe_config_preview[field.key];
+    const redactedLiveUrl = isRedactedLiveStreamUrlPreview(field.key, existingPreview);
+    const isWindowsCameraField = isLocalCameraProvider && field.key === "windows_camera_name";
+    const options = isLocalCameraProvider
+      ? LOCAL_CAMERA_STREAM_TYPE_OPTIONS
+      : LIVE_STREAM_TYPE_OPTIONS;
+    const control =
+      field.key === "live_stream_type" ? (
+        <select
+          value={configDraft[field.key] || "unknown"}
+          onChange={(event) => {
+            setConfigDraft((current) => ({
+              ...current,
+              [field.key]: event.target.value,
+            }));
+            if (isLocalCameraProvider) {
+              setWindowsCameraDiscovery(null);
+            }
+          }}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ) : isWindowsCameraField && windowsCameraDiscovery?.devices.length ? (
+        <select
+          value={configDraft[field.key] ?? ""}
+          onChange={(event) =>
+            setConfigDraft((current) => ({
+              ...current,
+              [field.key]: event.target.value,
+            }))
+          }
+        >
+          <option value="">Choose a detected camera</option>
+          {windowsCameraDiscovery.devices.map((device) => (
+            <option key={device} value={device}>
+              {device}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          placeholder={
+            redactedLiveUrl
+              ? "Credentials hidden; enter a new URL to replace"
+              : field.secret && existingPreview === "configured"
+                ? "Configured marker saved"
+                : field.placeholder ?? ""
+          }
+          type={field.secret ? "password" : "text"}
+          value={configDraft[field.key] ?? ""}
+          onChange={(event) =>
+            setConfigDraft((current) => ({
+              ...current,
+              [field.key]: event.target.value,
+            }))
+          }
+        />
+      );
+    const fieldLabel =
+      isLocalCameraProvider && field.key === "live_stream_type"
+        ? "Camera connection"
+        : field.label;
+    const fieldBody = (
+      <>
+        {fieldLabel}
+        {control}
+        <span className="field-meta">
+          {field.required ? "Required" : "Optional"}
+          {field.secret ? " · stored as marker only" : ""}
+        </span>
+        {field.key === "local_camera_device" ? (
+          <span className="field-meta">Linux device path, usually /dev/video0.</span>
+        ) : null}
+        {field.key === "ffmpeg_binary_path" ? (
+          <span className="field-meta">Only needed for a custom or WSL FFmpeg install.</span>
+        ) : null}
+        {redactedLiveUrl && existingPreview ? (
+          <span className="field-meta">Current: {existingPreview}</span>
+        ) : null}
+      </>
+    );
+
+    if (isWindowsCameraField) {
+      return (
+        <div className="camera-discovery-field" key={field.key}>
+          <label>{fieldBody}</label>
+          <button
+            className="secondary-action"
+            disabled={isDetectingWindowsCameras}
+            onClick={() => void handleDetectWindowsCameras()}
+            type="button"
+          >
+            {isDetectingWindowsCameras ? "Detecting..." : "Detect cameras"}
+          </button>
+          {windowsCameraDiscovery ? (
+            <span
+              className={
+                windowsCameraDiscovery.status === "available"
+                  ? "zone-message"
+                  : "camera-discovery-message"
+              }
+            >
+              {windowsCameraDiscovery.message}
+            </span>
+          ) : (
+            <span className="field-meta">
+              Connect the camera, then let MockingBird find it.
+            </span>
+          )}
+        </div>
+      );
+    }
+
+    return <label key={field.key}>{fieldBody}</label>;
+  }
+
   return (
     <div className="page-stack">
       <PageHeader
@@ -3967,14 +4164,11 @@ export function StreamsPage({
           <div className="source-setup-layout">
             <div className="source-setup-summary">
               {selectedSetupReview ? (
-                <div className="source-review-panel">
-                  <div className="item-title-row">
-                    <h3>Setup status</h3>
-                    <StatusPill
-                      label={formatLabel(selectedSetupReview.readiness_level)}
-                      tone={readinessTone(selectedSetupReview.readiness_level)}
-                    />
-                  </div>
+                <details className="source-review-panel compact-diagnostic-details">
+                  <summary>
+                    <span>Saved setup status</span>
+                    <strong>{formatLabel(selectedSetupReview.readiness_level)}</strong>
+                  </summary>
                   <div className="source-field-summary">
                     <div>
                       <strong>Configured</strong>
@@ -4022,7 +4216,7 @@ export function StreamsPage({
                       ))}
                     </div>
                   ) : null}
-                </div>
+                </details>
               ) : null}
               {isExternalUrlProvider ? (
                 <div className="external-preview-panel">
@@ -5242,77 +5436,16 @@ export function StreamsPage({
                 <>
                   <p className="meta-text">{selectedProviderDefinition.description}</p>
                   <div className="provider-field-grid">
-                    {selectedProviderDefinition.fields.map((field) => {
-                      const existingPreview = selectedConfiguration?.safe_config_preview[field.key];
-                      const redactedLiveUrl = isRedactedLiveStreamUrlPreview(
-                        field.key,
-                        existingPreview,
-                      );
-                      return (
-                        <label key={field.key}>
-                          {field.label}
-                          {field.key === "live_stream_type" ? (
-                            <select
-                              value={configDraft[field.key] || "unknown"}
-                              onChange={(event) =>
-                                setConfigDraft((current) => ({
-                                  ...current,
-                                  [field.key]: event.target.value,
-                                }))
-                              }
-                            >
-                              {LIVE_STREAM_TYPE_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              placeholder={
-                                redactedLiveUrl
-                                  ? "Credentials hidden; enter a new URL to replace"
-                                  : field.secret && existingPreview === "configured"
-                                    ? "Configured marker saved"
-                                    : field.placeholder ?? ""
-                              }
-                              type={field.secret ? "password" : "text"}
-                              value={configDraft[field.key] ?? ""}
-                              onChange={(event) =>
-                                setConfigDraft((current) => ({
-                                  ...current,
-                                  [field.key]: event.target.value,
-                                }))
-                              }
-                            />
-                          )}
-                          <span className="field-meta">
-                            {field.required ? "Required" : "Optional"}
-                            {field.secret ? " · stored as marker only" : ""}
-                          </span>
-                          {field.key === "local_camera_device" ? (
-                            <span className="field-meta">
-                              Linux example: /dev/video0. Use Windows DirectShow for Windows
-                              webcams.
-                            </span>
-                          ) : null}
-                          {field.key === "windows_camera_name" ? (
-                            <span className="field-meta">
-                              Find camera name with: ffmpeg -list_devices true -f dshow -i dummy
-                            </span>
-                          ) : null}
-                          {field.key === "ffmpeg_binary_path" ? (
-                            <span className="field-meta">
-                              If running API in WSL, configure a Windows ffmpeg.exe path.
-                            </span>
-                          ) : null}
-                          {redactedLiveUrl && existingPreview ? (
-                            <span className="field-meta">Current: {existingPreview}</span>
-                          ) : null}
-                        </label>
-                      );
-                    })}
+                    {primaryProviderFields.map(renderProviderField)}
                   </div>
+                  {advancedProviderFields.length > 0 ? (
+                    <details className="advanced-details provider-advanced-settings">
+                      <summary>Advanced camera settings</summary>
+                      <div className="provider-field-grid">
+                        {advancedProviderFields.map(renderProviderField)}
+                      </div>
+                    </details>
+                  ) : null}
                 </>
               ) : null}
               <div className="source-setup-actions">
@@ -5327,7 +5460,8 @@ export function StreamsPage({
                   Refresh status
                 </button>
               </div>
-              {selectedConfiguration?.setup_hint ? (
+              {selectedConfiguration?.provider_key === providerKey &&
+              selectedConfiguration.setup_hint ? (
                 <span className="meta-text">{selectedConfiguration.setup_hint}</span>
               ) : null}
               {setupMessage ? <div className="zone-message">{setupMessage}</div> : null}
@@ -5565,7 +5699,11 @@ export function StreamsPage({
                           Refresh status
                         </button>
                       </div>
-                      <div className="source-health-panel">
+                      <details className="source-health-panel compact-diagnostic-details">
+                        <summary>
+                          <span>Camera diagnostics</span>
+                          <strong>{sourceHealthLabel}</strong>
+                        </summary>
                         <div className="item-title-row">
                           <div>
                             <strong>Source health</strong>
@@ -5632,8 +5770,12 @@ export function StreamsPage({
                             ) : null}
                           </div>
                         </details>
-                      </div>
-                      <div className="field-test-readiness-panel">
+                      </details>
+                      <details className="field-test-readiness-panel compact-diagnostic-details">
+                        <summary>
+                          <span>Field test checklist</span>
+                          <strong>{fieldTestReadiness.label}</strong>
+                        </summary>
                         <div className="item-title-row">
                           <div>
                             <strong>Field test readiness</strong>
@@ -5688,8 +5830,12 @@ export function StreamsPage({
                             Export reviewed data
                           </button>
                         </div>
-                      </div>
-                      <div className="source-storage-guardrails-panel">
+                      </details>
+                      <details className="source-storage-guardrails-panel compact-diagnostic-details">
+                        <summary>
+                          <span>Storage details</span>
+                          <strong>{storageSummary.readiness}</strong>
+                        </summary>
                         <div className="item-title-row">
                           <div>
                             <strong>Storage guardrails</strong>
@@ -5767,7 +5913,7 @@ export function StreamsPage({
                             </span>
                           </div>
                         </details>
-                      </div>
+                      </details>
                       {isExternalUrlProvider ? (
                         <div className="camera-monitor-panel">
                           <div className="item-title-row">

@@ -103,6 +103,14 @@ class LocalCameraFrameCaptureStatus(str, Enum):
     capture_failed = "capture_failed"
 
 
+class WindowsCameraDiscoveryStatus(str, Enum):
+    available = "available"
+    no_devices = "no_devices"
+    ffmpeg_missing = "ffmpeg_missing"
+    unsupported_platform = "unsupported_platform"
+    failed = "failed"
+
+
 class LiveMotionEvaluationStatus(str, Enum):
     evaluated = "evaluated"
     start_session_required = "start_session_required"
@@ -631,6 +639,39 @@ class LocalCameraFrameCaptureResponse(BaseModel):
     creates_visit: bool = False
     creates_export: bool = False
     warnings: list[str] = Field(default_factory=list)
+
+
+class WindowsCameraDiscoveryResponse(BaseModel):
+    status: WindowsCameraDiscoveryStatus
+    devices: list[str] = Field(default_factory=list)
+    message: str
+    creates_truth: bool = False
+
+
+class LiveCameraSessionDiagnosticEventResponse(BaseModel):
+    # Safe transition metadata only: never frame bytes, URLs, credentials, or model output.
+    sequence: int = Field(ge=1)
+    recorded_at: datetime
+    event_type: str
+    status: str | None = None
+    reason: str | None = None
+    activity_session_id: str | None = None
+    frame_count: int = Field(default=0, ge=0)
+    detection_count: int = Field(default=0, ge=0)
+    near_miss_count: int = Field(default=0, ge=0)
+    candidate_frame_count: int = Field(default=0, ge=0)
+    quality_warning_codes: list[str] = Field(default_factory=list)
+    creates_truth: bool = False
+
+
+class LiveCameraSessionDiagnosticsResponse(BaseModel):
+    stream_id: str
+    diagnostic_events: list[LiveCameraSessionDiagnosticEventResponse] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+    diagnostic_events_truncated: bool = False
+    creates_truth: bool = False
 
 
 class LiveCameraSessionStatusResponse(BaseModel):

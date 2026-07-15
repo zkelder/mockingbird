@@ -1558,16 +1558,19 @@ export function ReviewQueuePage({
         />
       ) : null}
       {queueItems.length > 0 ? (
-        <section className="panel species-review-panel">
-          <div className="section-heading">
-            <div>
-              <h2>Review candidates</h2>
-              <span className="meta-text">
-                Suggestions are evidence only. Corrected labels are local dataset truth.
-              </span>
-            </div>
-            <EvidenceBadge label={`${queueCounts.bird_species} bird/species`} tone="review" />
-          </div>
+        <details
+          className="panel species-review-panel review-secondary-details"
+          open={Boolean(readinessHandoffLabel)}
+        >
+          <summary>
+            <span>Filter review items</span>
+            <strong>
+              {filteredItems.length} showing / {queueItems.length} total
+            </strong>
+          </summary>
+          <span className="meta-text">
+            Narrow the queue by subject, evidence, camera, or review status.
+          </span>
           <ReviewFilterTabs
             activeFilter={reviewFilter}
             filters={reviewFilters}
@@ -1667,24 +1670,18 @@ export function ReviewQueuePage({
               <span className="meta-text">No extra filters active.</span>
             )}
           </div>
-        </section>
+        </details>
       ) : null}
       {queueItems.length > 0 ? (
-        <section className="panel review-bulk-panel">
-          <div className="section-heading">
-            <div>
-              <h2>Bulk correction</h2>
-              <span className="meta-text">
-                Applies your correction to selected items. Corrections are truth for analytics and exports.
-              </span>
-            </div>
-            <EvidenceBadge
-              label={`${selectedTargetIds.length} selected / ${visibleEligibleItems.length} visible eligible`}
-              tone={selectedTargetIds.length > 0 ? "review" : "quiet"}
-            />
-          </div>
+        <details className="panel review-bulk-panel review-secondary-details">
+          <summary>
+            <span>Bulk correction</span>
+            <strong>
+              {selectedTargetIds.length} selected / {visibleEligibleItems.length} eligible
+            </strong>
+          </summary>
           <span className="meta-text">
-            Bulk correction applies only to selected unreviewed items.
+            Apply one correction to selected unreviewed items.
           </span>
           <div className="review-bulk-form">
             <TaxonomyLabelInput
@@ -1757,7 +1754,7 @@ export function ReviewQueuePage({
               </span>
             </div>
           ) : null}
-        </section>
+        </details>
       ) : null}
       <CorrectionAuditPanel
         groups={correctionAuditGroups}
@@ -1845,21 +1842,24 @@ export function ReviewQueuePage({
                   <StatusPill label={formatLabel(item.review_status)} tone="review" />
                 </div>
               </div>
-              <label className="checkbox-row review-bulk-select">
-                <input
-                  checked={isSelected}
-                  disabled={!isSelectable || isBulkSaving}
-                  onChange={(event) => toggleBulkSelection(item, event.target.checked)}
-                  type="checkbox"
-                />
-                {isSelectable
-                  ? "Select for bulk correction"
-                  : !isBulkCorrectionEligible(item)
-                    ? "Only unreviewed items are eligible for bulk correction"
-                    : selectedTargetType
-                      ? `Bulk selection currently expects ${selectedTargetType} items`
-                      : "Bulk selection is unavailable for this item"}
-              </label>
+              <details className="review-bulk-selection-details">
+                <summary>Bulk selection</summary>
+                <label className="checkbox-row review-bulk-select">
+                  <input
+                    checked={isSelected}
+                    disabled={!isSelectable || isBulkSaving}
+                    onChange={(event) => toggleBulkSelection(item, event.target.checked)}
+                    type="checkbox"
+                  />
+                  {isSelectable
+                    ? "Select for bulk correction"
+                    : !isBulkCorrectionEligible(item)
+                      ? "Only unreviewed items are eligible for bulk correction"
+                      : selectedTargetType
+                        ? `Bulk selection currently expects ${selectedTargetType} items`
+                        : "Bulk selection is unavailable for this item"}
+                </label>
+              </details>
               <p>
                 {item.reason} Suggestion evidence is not truth; your correction becomes local
                 dataset truth.
@@ -2315,19 +2315,12 @@ function IdentificationAssistPanel({
     : "Pixel box unavailable";
 
   return (
-    <div className="review-identification-assist">
-      <div className="section-heading">
-        <div>
-          <h3>Identification assist</h3>
-          <span className="meta-text">
-            Suggestions stay evidence until correction.
-          </span>
-        </div>
-        <StatusPill
-          label={reviewIdentificationStatusLabel(identification)}
-          tone={reviewIdentificationStatusTone(identification)}
-        />
-      </div>
+    <details className="review-identification-assist review-secondary-details">
+      <summary>
+        <span>Optional identification assist</span>
+        <strong>{reviewIdentificationStatusLabel(identification)}</strong>
+      </summary>
+      <span className="meta-text">Suggestions stay evidence until correction.</span>
       <div className="review-identification-grid">
         <div className="data-row">
           <span>Analyzer</span>
@@ -2500,7 +2493,7 @@ function IdentificationAssistPanel({
           </button>
         ) : null}
       </div>
-    </div>
+    </details>
   );
 }
 
@@ -2629,19 +2622,16 @@ function CorrectionAuditPanel({
   }
 
   return (
-    <section className="panel correction-audit-panel">
-      <div className="section-heading">
-        <div>
-          <h2>Reviewed correction audit</h2>
-          <span className="meta-text">
-            Latest correction truth stays visible after items leave the active queue.
-          </span>
-        </div>
-        <EvidenceBadge
-          label={`${groups.length} reviewed target${groups.length === 1 ? "" : "s"}`}
-          tone="truth"
-        />
-      </div>
+    <details className="panel correction-audit-panel review-secondary-details">
+      <summary>
+        <span>Reviewed history</span>
+        <strong>
+          {groups.length} reviewed target{groups.length === 1 ? "" : "s"}
+        </strong>
+      </summary>
+      <span className="meta-text">
+        Latest correction truth stays available after items leave the active queue.
+      </span>
       <div className="correction-audit-list">
         {groups.map((group) => (
           <article className="history-item correction-audit-item" key={group.key}>
@@ -2693,7 +2683,7 @@ function CorrectionAuditPanel({
           </article>
         ))}
       </div>
-    </section>
+    </details>
   );
 }
 

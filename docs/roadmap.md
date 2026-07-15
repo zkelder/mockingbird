@@ -1213,8 +1213,65 @@ Validation:
 - The bridge stores no media, creates no Events/Visits, ReviewLabels,
   DetectionProposals, MotionEvidence, dataset exports, analytics truth, workers,
   schedulers, captures table, or source adapter records.
-- Pi camera/libcamera, ESP32, cellular, WebRTC, persistent HLS, automatic
+- Pi camera/libcamera, ESP32, cellular, WebRTC, persistent HLS, background
   discovery, automatic capture, and monitoring integration remain future work.
 - Browser-direct MJPEG, browser video, browser-supported HLS, RTSP bridge,
   snapshot capture, Source health, monitoring, Review, Bird Log, and Export
   remain separate explicit workflows.
+
+## Phase 23 — Live camera field validation
+
+Goal: make the existing camera-to-review product loop measurable on real feeder
+cameras without adding an admin console, model dependency, or new source type.
+
+Current work:
+
+- Supported Runtime Baseline 1: the backend suite now runs on the declared
+  Python 3.11+ boundary, and Linux local-USB plus symlink tests state their host
+  requirements explicitly instead of failing on Windows for unrelated reasons.
+- Internal Camera Transition Diagnostics 1: each backend-owned camera session
+  keeps at most 100 metadata-only transition events and exposes them through the
+  explicit live-session diagnostics contract for development and support checks;
+  normal product status polling does not carry the trace.
+- The transition history covers camera/monitor lifecycle, near-miss and confirmed
+  activity, readiness, one-best-frame saving, review-candidate creation, motion
+  status changes, safe image-quality codes, and failures.
+- Windows Camera Onboarding 1: the existing local-camera setup now offers an
+  explicit, read-only Detect cameras action, reports no-device/FFmpeg/host states
+  in product language, and never requires a user to copy an ffmpeg command.
+- Local camera setup now asks only for the connection type, matching camera
+  identifier, and optional display name. Platform-specific tuning remains under
+  Advanced camera settings, while setup diagnostics, field-test checks, and
+  storage detail are collapsed by default.
+- The web app uses same-origin API requests with a local development proxy, so
+  the browser product flow works without cross-port or embedded-browser blocks.
+- Local field preflight exercised the no-camera path, then the connected EMEET
+  SmartCam S600 was detected through the product UI and saved as Windows webcam
+  connection metadata.
+- Connection-only field validation started the backend-owned camera session,
+  rendered the browser Live view, received 117 frames with the newest frame under
+  250 ms old, kept monitoring disabled, and stopped cleanly. It captured no frame
+  and created no media, review candidate, Bird Log entry, export, or truth.
+- Post-camera Product Hierarchy 1: Review Queue now puts the actual candidate
+  ahead of filters, bulk tools, reviewed history, and optional analyzer setup.
+  Dataset Exports puts the reviewed-only export action ahead of QA/coverage
+  diagnostics. Secondary capabilities remain available under explicit details.
+- No new page, navigation item, dashboard card, or permanent field-test panel is
+  added. The primary product flow remains Cameras/Streams -> Review Queue -> Bird
+  Log -> Exports.
+- Next likely phase: Daylight Feeder Field Validation 1 — run representative
+  sessions, measure candidate recall, nuisance and duplicate rates, and best-frame
+  usefulness, then tune the existing capture path from evidence.
+
+Validation:
+
+- Diagnostic events are in-memory, transition-oriented, capped at 100, and
+  replaced with the camera session.
+- Diagnostic events contain no frame bytes, camera URLs, credentials, raw model
+  output, or arbitrary exception text.
+- Diagnostic events create no MotionEvidence, Events, Visits, ReviewLabels, Bird
+  Log entries, exports, analytics truth, media files, or model behavior.
+- Existing camera monitoring, privacy/ignore suppression, one-best-frame behavior,
+  correction truth, and optional analyzer boundaries remain unchanged.
+- The complete backend suite, frontend type-check, and frontend production build
+  pass before real-camera threshold changes begin.

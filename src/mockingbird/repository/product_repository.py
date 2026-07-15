@@ -1672,8 +1672,8 @@ class ProductRepository:
                             "Live view can use the Windows camera bridge."
                         )
                         setup_hint = (
-                            "Find the exact camera name with: "
-                            "ffmpeg -list_devices true -f dshow -i dummy."
+                            "Use Detect cameras in Cameras/Streams, then choose the connected "
+                            "Windows webcam."
                         )
                     else:
                         message = (
@@ -9307,7 +9307,7 @@ def _windows_dshow_stream_playback_status(
             status=StreamPlaybackStatusValue.not_configured,
             message="Choose a Windows DirectShow camera name.",
             setup_hint=(
-                "Find the exact camera name with: ffmpeg -list_devices true -f dshow -i dummy."
+                "Use Detect cameras in Cameras/Streams, then choose the connected Windows webcam."
             ),
             supports_live_playback=False,
         )
@@ -9690,7 +9690,8 @@ def _source_provider_configuration_from_config(
             if live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
                 message = "Windows DirectShow camera name is required."
                 setup_hint = (
-                    "Find the exact camera name with: ffmpeg -list_devices true -f dshow -i dummy."
+                    "Use Detect cameras in Cameras/Streams, then choose the connected Windows "
+                    "webcam."
                 )
             else:
                 message = "Local camera setup metadata is incomplete."
@@ -9732,7 +9733,8 @@ def _source_provider_configuration_from_config(
             if bridge_status == "camera_name_missing":
                 message = "Windows DirectShow camera name is required."
                 setup_hint = (
-                    "Find the exact camera name with: ffmpeg -list_devices true -f dshow -i dummy."
+                    "Use Detect cameras in Cameras/Streams, then choose the connected Windows "
+                    "webcam."
                 )
             elif bridge_status == "unsupported_host":
                 message = "Windows DirectShow needs Windows ffmpeg.exe from this host."

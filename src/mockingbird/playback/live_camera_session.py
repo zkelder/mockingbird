@@ -27,11 +27,65 @@ DEFAULT_AUTO_REVIEW_MIN_DETECTIONS = 1
 DEFAULT_ACTIVITY_MAX_CANDIDATE_FRAMES = 30
 DEFAULT_ACTIVITY_MAX_SAVED_CANDIDATES = 1
 DEFAULT_ACTIVITY_MAX_SESSION_SECONDS = 5 * 60
+DEFAULT_MAX_DIAGNOSTIC_EVENTS = 100
 SUPPORTED_SESSION_TYPES = {
     "rtsp",
     local_camera_bridge.LOCAL_USB_STREAM_TYPE,
     windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE,
 }
+
+_DIAGNOSTIC_EVENT_TYPES = {
+    "activity_confirmed",
+    "activity_ready_for_review",
+    "activity_started",
+    "auto_review_failed",
+    "best_frame_saved",
+    "camera_failed",
+    "camera_started",
+    "camera_stopped",
+    "monitor_settings_changed",
+    "monitor_started",
+    "monitor_stopped",
+    "motion_status_changed",
+    "near_miss_started",
+    "quality_warning",
+    "review_candidate_created",
+}
+_DIAGNOSTIC_TOKEN_PATTERN = re.compile(r"^[a-z0-9_]{1,80}$")
+
+
+@dataclass(frozen=True)
+class LiveCameraDiagnosticEvent:
+    """Bounded, metadata-only transition evidence for field validation."""
+
+    sequence: int
+    recorded_at: datetime
+    event_type: str
+    status: str | None = None
+    reason: str | None = None
+    activity_session_id: str | None = None
+    frame_count: int = 0
+    detection_count: int = 0
+    near_miss_count: int = 0
+    candidate_frame_count: int = 0
+    quality_warning_codes: tuple[str, ...] = ()
+    creates_truth: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "sequence": self.sequence,
+            "recorded_at": self.recorded_at,
+            "event_type": self.event_type,
+            "status": self.status,
+            "reason": self.reason,
+            "activity_session_id": self.activity_session_id,
+            "frame_count": self.frame_count,
+            "detection_count": self.detection_count,
+            "near_miss_count": self.near_miss_count,
+            "candidate_frame_count": self.candidate_frame_count,
+            "quality_warning_codes": list(self.quality_warning_codes),
+            "creates_truth": self.creates_truth,
+        }
 
 
 @dataclass(frozen=True)
@@ -63,6 +117,8 @@ class LiveCameraSessionSnapshot:
     stop_reason: str | None
     max_runtime_seconds: int
     camera_settings: dict[str, Any]
+    diagnostic_events: list[dict[str, Any]]
+    diagnostic_events_truncated: bool
     persistent: bool = False
 
     @property
@@ -538,6 +594,12 @@ class _LiveCameraSession:
         self.stop_reason: str | None = None
         self.camera_settings = _camera_settings_from_config(config)
         self.status = "starting"
+        self.diagnostic_events: deque[LiveCameraDiagnosticEvent] = deque(
+            maxlen=DEFAULT_MAX_DIAGNOSTIC_EVENTS
+        )
+        self._diagnostic_sequence = 0
+        self._last_motion_diagnostic_status: tuple[str | None, str | None] | None = None
+        self._last_quality_warning_codes: tuple[str, ...] = ()
         self._stop_event = threading.Event()
         self._monitor_stop_event = threading.Event()
         self._monitor_thread: threading.Thread | None = None
@@ -556,6 +618,10 @@ class _LiveCameraSession:
     def start(self) -> None:
         with self._lock:
             self.status = "running"
+            self._record_diagnostic_event_locked(
+                "camera_started",
+                status=self.status,
+            )
         self._thread.start()
 
     def stop(self, reason: str) -> None:
@@ -564,9 +630,16 @@ class _LiveCameraSession:
                 if self.stop_reason is None:
                     self.stop_reason = reason
                 return
+            monitor_was_running = self.monitor_running
             self.status = "stopping"
             self.stop_reason = reason
             self.monitor_running = False
+            if monitor_was_running:
+                self._record_diagnostic_event_locked(
+                    "monitor_stopped",
+                    status="stopped",
+                    reason="camera_stopping",
+                )
         self._stop_event.set()
         self._monitor_stop_event.set()
         _stop_process(self.process)
@@ -578,6 +651,11 @@ class _LiveCameraSession:
         with self._lock:
             if self.status == "stopping":
                 self.status = "stopped"
+            self._record_diagnostic_event_locked(
+                "camera_stopped",
+                status=self.status,
+                reason=reason,
+            )
 
     def start_monitor(
         self,
@@ -598,6 +676,10 @@ class _LiveCameraSession:
             if self.monitor_running:
                 return
             self.monitor_running = True
+            self._record_diagnostic_event_locked(
+                "monitor_started",
+                status="running",
+            )
             self._monitor_stop_event.clear()
             self._monitor_thread = threading.Thread(
                 target=self._monitor_loop,
@@ -615,14 +697,36 @@ class _LiveCameraSession:
         auto_review_min_detections: int = DEFAULT_AUTO_REVIEW_MIN_DETECTIONS,
     ) -> None:
         with self._lock:
+            previous_settings = (
+                self.auto_create_review_candidates,
+                self.auto_review_quiet_seconds,
+                self.auto_review_min_detections,
+            )
             self.auto_create_review_candidates = bool(auto_create_review_candidates)
             self.auto_review_quiet_seconds = max(1, int(auto_review_quiet_seconds))
             self.auto_review_min_detections = max(1, int(auto_review_min_detections))
             self.auto_review_last_error = None
+            current_settings = (
+                self.auto_create_review_candidates,
+                self.auto_review_quiet_seconds,
+                self.auto_review_min_detections,
+            )
+            if current_settings != previous_settings:
+                self._record_diagnostic_event_locked(
+                    "monitor_settings_changed",
+                    status="running" if self.monitor_running else "stopped",
+                )
 
     def stop_monitor(self) -> None:
         with self._lock:
+            monitor_was_running = self.monitor_running
             self.monitor_running = False
+            if monitor_was_running:
+                self._record_diagnostic_event_locked(
+                    "monitor_stopped",
+                    status="stopped",
+                    reason="user_stopped",
+                )
         self._monitor_stop_event.set()
         monitor_thread = self._monitor_thread
         if (
@@ -646,6 +750,19 @@ class _LiveCameraSession:
             )
             if last_activity is not None:
                 self.last_activity = dict(last_activity)
+            status = _safe_diagnostic_token(result.get("status"))
+            reason = _safe_diagnostic_token(result.get("session_status"))
+            motion_state = (status, reason)
+            if motion_state != self._last_motion_diagnostic_status:
+                self._last_motion_diagnostic_status = motion_state
+                self._record_diagnostic_event_locked(
+                    "motion_status_changed",
+                    status=status,
+                    reason=reason,
+                )
+            self._record_quality_warning_transition_locked(
+                result.get("image_quality_warnings")
+            )
 
     def update_last_activity(self, values: Mapping[str, Any]) -> None:
         with self._lock:
@@ -665,12 +782,15 @@ class _LiveCameraSession:
             now = _coerce_datetime(values.get("last_seen_at")) or datetime.now(UTC)
             region_key = str(values.get("region_key") or "unknown-region")
             existing = self.activity_sessions.get(region_key)
-            if (
+            starts_new_session = (
                 existing is None
                 or (now - existing.last_seen_at).total_seconds() > quiet_window_seconds
                 or (now - existing.started_at).total_seconds()
                 > DEFAULT_ACTIVITY_MAX_SESSION_SECONDS
-            ):
+            )
+            previous_detection_count = existing.detection_count if existing is not None else 0
+            previous_near_miss_count = existing.near_miss_count if existing is not None else 0
+            if starts_new_session:
                 existing = _LiveActivitySession.from_detection(
                     values,
                     stream_id=self.stream_id,
@@ -691,6 +811,34 @@ class _LiveCameraSession:
             snapshot = existing.snapshot()
             self.current_activity_session_id = snapshot.activity_session_id
             self.last_activity = snapshot.as_dict()
+            if starts_new_session:
+                self._record_diagnostic_event_locked(
+                    "activity_started"
+                    if snapshot.detection_count > 0
+                    else "near_miss_started",
+                    status=snapshot.review_state,
+                    activity=snapshot,
+                )
+            elif previous_detection_count == 0 and snapshot.detection_count > 0:
+                self._record_diagnostic_event_locked(
+                    "activity_confirmed",
+                    status=snapshot.review_state,
+                    activity=snapshot,
+                )
+            elif (
+                previous_near_miss_count == 0
+                and snapshot.near_miss_count > 0
+                and snapshot.detection_count == 0
+            ):
+                self._record_diagnostic_event_locked(
+                    "near_miss_started",
+                    status=snapshot.review_state,
+                    activity=snapshot,
+                )
+            self._record_quality_warning_transition_locked(
+                snapshot.image_quality_warnings,
+                activity=snapshot,
+            )
             return snapshot
 
     def get_activity_session(
@@ -726,6 +874,7 @@ class _LiveCameraSession:
             activity = self._activity_session(activity_session_id)
             if activity is None:
                 return None
+            already_saved = activity.best_media_asset_id is not None
             activity.best_media_asset_id = media_asset_id
             activity.saved_candidate_count = min(
                 DEFAULT_ACTIVITY_MAX_SAVED_CANDIDATES,
@@ -733,6 +882,12 @@ class _LiveCameraSession:
             )
             snapshot = activity.snapshot()
             self.last_activity = snapshot.as_dict()
+            if not already_saved:
+                self._record_diagnostic_event_locked(
+                    "best_frame_saved",
+                    status=snapshot.review_state,
+                    activity=snapshot,
+                )
             return snapshot
 
     def mark_activity_review_created(
@@ -744,9 +899,16 @@ class _LiveCameraSession:
             activity = self._activity_session(activity_session_id)
             if activity is None:
                 return None
+            already_created = activity.review_activity_created
             activity.mark_review_created(values)
             snapshot = activity.snapshot()
             self.last_activity = snapshot.as_dict()
+            if not already_created:
+                self._record_diagnostic_event_locked(
+                    "review_candidate_created",
+                    status=snapshot.review_state,
+                    activity=snapshot,
+                )
             return snapshot
 
     def mark_activity_ready_for_review(
@@ -759,9 +921,16 @@ class _LiveCameraSession:
             activity = self._activity_session(activity_session_id)
             if activity is None:
                 return None
+            already_ready = activity.ready_for_review
             activity.mark_ready_for_review(quiet_seconds=quiet_seconds)
             snapshot = activity.snapshot()
             self.last_activity = snapshot.as_dict()
+            if not already_ready and snapshot.ready_for_review:
+                self._record_diagnostic_event_locked(
+                    "activity_ready_for_review",
+                    status=snapshot.review_state,
+                    activity=snapshot,
+                )
             return snapshot
 
     def record_auto_review_created(self, values: Mapping[str, Any]) -> None:
@@ -801,6 +970,87 @@ class _LiveCameraSession:
             self.auto_review_last_error = error
             if self.last_motion_result is not None:
                 self.last_motion_result["auto_review_last_error"] = error
+            if error:
+                self._record_diagnostic_event_locked(
+                    "auto_review_failed",
+                    status="failed",
+                    reason="auto_review_failed",
+                )
+
+    def _record_quality_warning_transition_locked(
+        self,
+        warnings: Any,
+        *,
+        activity: LiveActivitySessionSnapshot | None = None,
+    ) -> None:
+        warning_codes = _diagnostic_quality_warning_codes(warnings)
+        if warning_codes == self._last_quality_warning_codes:
+            return
+        self._last_quality_warning_codes = warning_codes
+        if warning_codes:
+            self._record_diagnostic_event_locked(
+                "quality_warning",
+                status="warning",
+                activity=activity,
+                quality_warning_codes=warning_codes,
+            )
+
+    def _record_diagnostic_event_locked(
+        self,
+        event_type: str,
+        *,
+        status: str | None = None,
+        reason: str | None = None,
+        activity: LiveActivitySessionSnapshot | None = None,
+        quality_warning_codes: tuple[str, ...] = (),
+    ) -> None:
+        if event_type not in _DIAGNOSTIC_EVENT_TYPES:
+            raise ValueError("unsupported_diagnostic_event_type")
+        normalized_status = _safe_diagnostic_token(status)
+        normalized_reason = _safe_diagnostic_token(reason)
+        normalized_warning_codes = tuple(
+            code
+            for code in (_safe_diagnostic_token(value) for value in quality_warning_codes)
+            if code is not None
+        )
+        activity_session_id = activity.activity_session_id if activity is not None else None
+        candidate_key = (
+            event_type,
+            normalized_status,
+            normalized_reason,
+            activity_session_id,
+            normalized_warning_codes,
+        )
+        if self.diagnostic_events:
+            previous = self.diagnostic_events[-1]
+            previous_key = (
+                previous.event_type,
+                previous.status,
+                previous.reason,
+                previous.activity_session_id,
+                previous.quality_warning_codes,
+            )
+            if candidate_key == previous_key:
+                return
+        self._diagnostic_sequence += 1
+        self.diagnostic_events.append(
+            LiveCameraDiagnosticEvent(
+                sequence=self._diagnostic_sequence,
+                recorded_at=datetime.now(UTC),
+                event_type=event_type,
+                status=normalized_status,
+                reason=normalized_reason,
+                activity_session_id=activity_session_id,
+                frame_count=self.frame_count,
+                detection_count=activity.detection_count if activity is not None else 0,
+                near_miss_count=activity.near_miss_count if activity is not None else 0,
+                candidate_frame_count=(
+                    activity.candidate_frame_count if activity is not None else 0
+                ),
+                quality_warning_codes=normalized_warning_codes,
+                creates_truth=False,
+            )
+        )
 
     def _activity_session(
         self,
@@ -865,6 +1115,12 @@ class _LiveCameraSession:
                 stop_reason=self.stop_reason,
                 max_runtime_seconds=self.max_runtime_seconds,
                 camera_settings=dict(self.camera_settings),
+                diagnostic_events=[
+                    event.as_dict() for event in self.diagnostic_events
+                ],
+                diagnostic_events_truncated=(
+                    self._diagnostic_sequence > len(self.diagnostic_events)
+                ),
                 persistent=False,
             )
 
@@ -885,6 +1141,11 @@ class _LiveCameraSession:
             with self._lock:
                 self.last_error = str(error)
                 self.monitor_running = False
+                self._record_diagnostic_event_locked(
+                    "monitor_stopped",
+                    status="failed",
+                    reason="evaluation_failed",
+                )
             return
         with self._lock:
             self.monitor_running = False
@@ -923,6 +1184,11 @@ class _LiveCameraSession:
                         self.status = "stopped"
                     if self.stop_reason is None:
                         self.stop_reason = "stopped"
+                    self._record_diagnostic_event_locked(
+                        "camera_stopped",
+                        status=self.status,
+                        reason=self.stop_reason,
+                    )
                 return
 
             with self._lock:
@@ -930,12 +1196,22 @@ class _LiveCameraSession:
                 self.stop_reason = "process_ended"
                 if self.last_error is None:
                     self.last_error = "Camera process ended before the session was stopped."
+                self._record_diagnostic_event_locked(
+                    "camera_failed",
+                    status=self.status,
+                    reason=self.stop_reason,
+                )
         except Exception as error:  # pragma: no cover - defensive around OS process IO.
             _stop_process(self.process)
             with self._lock:
                 self.status = "failed"
                 self.stop_reason = "process_error"
                 self.last_error = str(error)
+                self._record_diagnostic_event_locked(
+                    "camera_failed",
+                    status=self.status,
+                    reason=self.stop_reason,
+                )
 
     def _runtime_elapsed(self) -> bool:
         elapsed = (datetime.now(UTC) - self.started_at).total_seconds()
@@ -1392,11 +1668,45 @@ def is_session_supported(config: Any) -> bool:
     return config.live_stream_type in SUPPORTED_SESSION_TYPES
 
 
+def _safe_diagnostic_token(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized if _DIAGNOSTIC_TOKEN_PATTERN.fullmatch(normalized) else None
+
+
+def _diagnostic_quality_warning_codes(values: Any) -> tuple[str, ...]:
+    if not isinstance(values, (list, tuple, set)):
+        return ()
+    codes: list[str] = []
+    for value in values:
+        warning = str(value).lower()
+        if "overexposed" in warning:
+            code = "overexposed"
+        elif "underexposed" in warning:
+            code = "underexposed"
+        elif "low contrast" in warning:
+            code = "low_contrast"
+        elif "small in frame" in warning:
+            code = "small_zone_in_frame"
+        elif "stale" in warning:
+            code = "stale_frame"
+        elif "decode" in warning:
+            code = "decode_failed"
+        else:
+            code = "frame_quality"
+        if code not in codes:
+            codes.append(code)
+    return tuple(codes)
+
+
 __all__ = [
+    "DEFAULT_MAX_DIAGNOSTIC_EVENTS",
     "DEFAULT_MAX_RUNTIME_SECONDS",
     "MJPEG_BOUNDARY",
     "LiveActivityBestFrame",
     "LiveActivitySessionSnapshot",
+    "LiveCameraDiagnosticEvent",
     "LiveCameraSessionManager",
     "LiveCameraSessionSnapshot",
     "is_session_supported",

@@ -106,8 +106,8 @@ transcoding, or production provider infrastructure.
 - System `ffmpeg` on the MockingBird host is optional and only needed for RTSP
   bridge playback or local USB/webcam playback.
 - A Linux `/dev/video0`-style webcam path is optional for local camera Live view.
-- A Windows DirectShow camera name is optional for Windows webcam Live view; find
-  it with `ffmpeg -list_devices true -f dshow -i dummy`.
+- A Windows DirectShow camera is optional for Windows webcam Live view; use
+  **Detect cameras** in Cameras/Streams and choose the connected device.
 - If the API runs in WSL, configure a Windows `ffmpeg.exe` path such as
   `/mnt/c/ffmpeg/bin/ffmpeg.exe`; WSL USB passthrough is not the recommended
   webcam path.

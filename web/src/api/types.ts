@@ -457,6 +457,18 @@ export interface LocalCameraFrameCaptureResponse {
   warnings: string[];
 }
 
+export interface WindowsCameraDiscoveryResponse {
+  status:
+    | "available"
+    | "no_devices"
+    | "ffmpeg_missing"
+    | "unsupported_platform"
+    | "failed";
+  devices: string[];
+  message: string;
+  creates_truth: boolean;
+}
+
 export interface LiveCameraSessionStatus {
   stream_id: string;
   source_id?: string | null;

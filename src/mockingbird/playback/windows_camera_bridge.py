@@ -91,6 +91,36 @@ def parse_windows_dshow_video_devices(output: str) -> list[str]:
     return devices
 
 
+RunFactory = Callable[..., subprocess.CompletedProcess[str]]
+
+
+def list_windows_dshow_video_devices(
+    *,
+    ffmpeg_binary_path: str | None = None,
+    timeout_seconds: float = 10.0,
+    run_factory: RunFactory = subprocess.run,
+) -> list[str]:
+    """Return DirectShow video device names without opening a camera stream."""
+
+    completed = run_factory(
+        build_windows_dshow_list_devices_command(
+            ffmpeg_binary_path=ffmpeg_binary_path,
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout_seconds,
+        check=False,
+    )
+    output = "\n".join(
+        part for part in (completed.stdout, completed.stderr) if part
+    )
+    return parse_windows_dshow_video_devices(output)
+
+
 def build_windows_dshow_mjpeg_command(
     camera_name: str,
     *,
@@ -260,6 +290,7 @@ __all__ = [
     "is_windows_ffmpeg_available",
     "is_windows_ffmpeg_binary",
     "iter_multipart_mjpeg",
+    "list_windows_dshow_video_devices",
     "normalize_windows_ffmpeg_binary",
     "parse_windows_dshow_video_devices",
     "start_windows_dshow_frame_capture_process",

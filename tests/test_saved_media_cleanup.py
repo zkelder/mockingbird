@@ -414,7 +414,10 @@ async def test_cleanup_rejects_symlink_media_path(
     target_path = isolated_repository.media_root / "target-preview.jpg"
     target_path.write_bytes(b"target")
     symlink_path = isolated_repository.media_root / "symlink-preview.jpg"
-    symlink_path.symlink_to(target_path)
+    try:
+        symlink_path.symlink_to(target_path)
+    except OSError as error:
+        pytest.skip(f"Symlinks are unavailable in this environment: {error}")
     media_asset_id = insert_media_asset(
         isolated_repository,
         media_id="media-asset-symlink-cleanup-test",

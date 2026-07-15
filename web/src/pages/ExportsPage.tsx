@@ -136,32 +136,35 @@ export function ExportsPage({
         title="Dataset Exports"
         description="Generate local reviewed datasets from corrected events and visits. Corrected taxonomy labels export as truth; detections stay attached as evidence."
         actions={
-          <>
-            <button className="secondary-action" onClick={onOpenReview}>
-              Open Review Queue
-            </button>
-            <button className="secondary-action" onClick={onOpenDetectionProposals}>
-              Advanced Detection Proposals
-            </button>
-          </>
+          <button className="secondary-action" onClick={onOpenReview}>
+            Open Review Queue
+          </button>
         }
       />
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
 
-      <DatasetQualityPanel
-        quality={datasetQuality}
-        onOpenEvent={onOpenEvent}
-        onOpenReview={onOpenReview}
-        onOpenVisit={onOpenVisit}
-      />
+      <details className="panel export-readiness-details review-secondary-details">
+        <summary>
+          <span>Dataset readiness details</span>
+          <strong>QA and coverage</strong>
+        </summary>
+        <div className="export-readiness-content">
+          <DatasetQualityPanel
+            quality={datasetQuality}
+            onOpenEvent={onOpenEvent}
+            onOpenReview={onOpenReview}
+            onOpenVisit={onOpenVisit}
+          />
 
-      <DatasetCoveragePanel
-        coverage={datasetCoverage}
-        onOpenReview={onOpenReview}
-        variant="compact"
-      />
+          <DatasetCoveragePanel
+            coverage={datasetCoverage}
+            onOpenReview={onOpenReview}
+            variant="compact"
+          />
+        </div>
+      </details>
 
       <section className="split-grid">
         <form className="panel export-form" onSubmit={createExport}>
