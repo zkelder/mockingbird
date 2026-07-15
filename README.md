@@ -71,6 +71,13 @@ itself. See
 [docs/single-app-runtime-recovery-design.md](docs/single-app-runtime-recovery-design.md)
 for runtime and recovery boundaries.
 
+Use **Local Data → Backup and Recovery** to create, verify, download, import, or
+restore a complete local backup of the database and managed media. Restore is
+confirmed, verifies the artifact again, stops process-owned camera activity,
+and keeps an automatic pre-restore safety backup. See
+[docs/local-backup-recovery-design.md](docs/local-backup-recovery-design.md)
+for the recovery contract and current same-install limitation.
+
 ### Developer-only split mode
 
 Run the product API locally:
@@ -389,7 +396,7 @@ boundary is documented in
 workers must be explicitly enabled, observable, bounded, and unable to create
 review truth.
 
-Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status and can reset seeded demo metadata.
+Local product metadata and review state persist to `data/mockingbird.sqlite3` by default. Set `MOCKINGBIRD_DB_URL` to use another database URL for development or tests. Manual and folder imports store local media files under `data/media/imports/` by default; set `MOCKINGBIRD_MEDIA_ROOT` to use another local media root. Verified local backup artifacts are stored under ignored `data/backups/` by default; set `MOCKINGBIRD_BACKUP_ROOT` to use another local backup library. The `data/` directory is ignored. Imported media is not analyzed, transcoded, or copied into exports in this phase. The Local Data page shows database status, manages explicit backup/recovery actions, and can reset seeded demo metadata.
 
 ## Local frontend development
 

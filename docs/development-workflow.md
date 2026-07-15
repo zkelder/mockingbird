@@ -61,4 +61,13 @@ Validate the single runtime with `python -m mockingbird --check` after the
 frontend production build. This validation must not start camera sessions,
 monitoring, providers, workers, or models.
 
+Before durable camera, monitoring, visual-model, or audio lifecycle work, use
+[local-backup-recovery-design.md](local-backup-recovery-design.md). Backup and
+restore belong on the existing Local Data page and must preserve the database
+and managed media as one verified product graph. Restore must verify before
+mutation, create a verified pre-restore safety backup, stop process-owned camera
+activity, and roll both database and media back if the restored repository
+cannot reopen. Backup artifacts remain under ignored local data paths and do
+not create or reinterpret evidence, reviewed truth, analytics, or exports.
+
 Keep docs practical and concise. Link to [README.md](../README.md), [docs/product-doctrine.md](product-doctrine.md), [docs/roadmap.md](roadmap.md), [docs/glossary.md](glossary.md), and [docs/architecture.md](architecture.md) instead of duplicating the full doctrine in every file.

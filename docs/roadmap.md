@@ -1308,15 +1308,19 @@ camera automation or ecosystem-specific integrations.
 Completed:
 
 - Phase 24A: single-app runtime and recovery foundation.
+- Phase 24B: verified local database-and-media backup, import, download, and
+  rollback-safe restore on the existing Local Data screen.
 
 Next product-hardening work:
 
-- Phase 24B: explicit local backup/restore and migration-backup policy.
-- Phase 24C: opt-in durable camera/monitor lifecycle design after backup and
-  recovery are dependable.
+- Phase 24C: opt-in durable camera/monitor lifecycle design, made audio-aware so
+  later microphone evidence can share the same explicit ownership, shutdown,
+  health, and recovery boundaries.
 
-Design note:
-[single-app-runtime-recovery-design.md](single-app-runtime-recovery-design.md).
+Design notes:
+
+- [single-app-runtime-recovery-design.md](single-app-runtime-recovery-design.md)
+- [local-backup-recovery-design.md](local-backup-recovery-design.md)
 
 Validation:
 
@@ -1332,6 +1336,37 @@ Validation:
   existing healthy instance, and opens the browser only when ready.
 - Graceful shutdown cancels in-memory source monitors and stops live camera
   sessions.
+- Local backups use SQLite's online backup mechanism and preserve the database
+  plus configured managed-media tree in one versioned, hashed artifact.
+- Backup creation/import and every restore verify archive paths, declared sizes,
+  SHA-256 hashes, SQLite integrity, and schema compatibility before keeping or
+  applying the artifact.
+- Restore requires confirmation, creates a verified pre-restore safety backup,
+  replaces database and media as one staged transaction, and rolls both back if
+  the restored repository cannot reopen.
+- Backup and recovery extend Local Data rather than adding an administration
+  panel. Cloud sync, scheduled jobs, retention cleanup, and cross-install media
+  path migration remain out of scope.
 - No camera or monitor starts on application startup. No worker, scheduler,
   provider action, media/evidence creation, Event/Visit, ReviewLabel, export,
   analytics truth, model runtime, or automatic truth behavior is added.
+
+## Forward sequence to a completed field product
+
+- Phase 24C: design and then implement an opt-in durable camera/monitor
+  lifecycle with explicit ownership, recovery, status, and safe shutdown. Keep
+  the lifecycle audio-aware, but do not add audio capture by accident.
+- Phase 25: harden the whole field loop with restart recovery, bounded storage,
+  retention controls, camera/source health, long-run observability, and
+  representative feeder validation.
+- Phase 26A: integrate an optional local visual identification adapter that
+  creates species suggestion evidence only.
+- Phase 26B: integrate optional local bird-audio evidence, initially through a
+  BirdNET-family adapter boundary, with microphone/privacy controls and no
+  automatic truth.
+- Phase 26C: combine visual, audio, time, Zone, and reviewed local history into
+  ranked suggestions. Explicit user correction remains the only dataset-grade
+  species truth.
+- Phase 27: finish packaging, first-run setup, update/recovery policy,
+  accessibility, performance, and release acceptance for a dependable local
+  product.

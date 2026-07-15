@@ -46,6 +46,9 @@ import type {
   HealthStatus,
   LocalCameraFrameCaptureResponse,
   LiveCameraSessionStatus,
+  LocalBackupLibraryResponse,
+  LocalBackupRestoreResponse,
+  LocalBackupVerificationResponse,
   LocalDataStatus,
   MediaAsset,
   MediaImportResult,
@@ -611,6 +614,34 @@ export const apiClient = {
     request<DatasetQualitySummary>("/api/dataset-quality/summary"),
   getAnalyticsSummary: () => request<AnalyticsSummary>("/api/analytics/summary"),
   getLocalDataStatus: () => request<LocalDataStatus>("/api/settings/local-data"),
+  getLocalBackups: () => request<LocalBackupLibraryResponse>("/api/settings/backups"),
+  createLocalBackup: () =>
+    request<LocalBackupVerificationResponse>("/api/settings/backups", {
+      method: "POST",
+    }),
+  importLocalBackup: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<LocalBackupVerificationResponse>("/api/settings/backups/import", {
+      method: "POST",
+      body: form,
+    });
+  },
+  verifyLocalBackup: (backupId: string) =>
+    request<LocalBackupVerificationResponse>(
+      `/api/settings/backups/${encodeURIComponent(backupId)}/verify`,
+      { method: "POST" },
+    ),
+  restoreLocalBackup: (backupId: string) =>
+    request<LocalBackupRestoreResponse>(
+      `/api/settings/backups/${encodeURIComponent(backupId)}/restore`,
+      {
+        method: "POST",
+        body: JSON.stringify({ confirm: true }),
+      },
+    ),
+  localBackupDownloadUrl: (backupId: string) =>
+    `${API_BASE_URL}/api/settings/backups/${encodeURIComponent(backupId)}/download`,
   resetDemoData: () =>
     request<LocalDataStatus>("/api/settings/reset-demo-data", {
       method: "POST",

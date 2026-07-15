@@ -2456,6 +2456,53 @@ class LocalDataStatus(BaseModel):
     local_first_note: str
 
 
+class LocalBackupKind(str, Enum):
+    manual = "manual"
+    pre_restore = "pre_restore"
+
+
+class LocalBackupVerificationStatus(str, Enum):
+    verified = "verified"
+    not_checked = "not_checked"
+
+
+class LocalBackupSummary(BaseModel):
+    id: str
+    created_at: datetime
+    kind: LocalBackupKind
+    database_schema_version: int = Field(ge=1)
+    database_size_bytes: int = Field(ge=0)
+    media_file_count: int = Field(ge=0)
+    media_size_bytes: int = Field(ge=0)
+    archive_size_bytes: int = Field(ge=0)
+    verification_status: LocalBackupVerificationStatus
+    restore_compatible: bool
+
+
+class LocalBackupLibraryResponse(BaseModel):
+    backups: list[LocalBackupSummary]
+    unreadable_backup_count: int = Field(ge=0)
+    local_first_note: str
+
+
+class LocalBackupVerificationResponse(BaseModel):
+    backup: LocalBackupSummary
+    verified: bool = True
+    checked_at: datetime
+    message: str
+
+
+class LocalBackupRestoreRequest(BaseModel):
+    confirm: bool = False
+
+
+class LocalBackupRestoreResponse(BaseModel):
+    restored_backup: LocalBackupSummary
+    safety_backup: LocalBackupSummary
+    status: LocalDataStatus
+    message: str
+
+
 class SampleDataRemovalRequest(BaseModel):
     confirm: bool = False
 

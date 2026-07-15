@@ -3920,6 +3920,58 @@ a.secondary-action {
   gap: 10px;
 }
 
+.backup-file-action {
+  position: relative;
+  cursor: pointer;
+}
+
+.backup-file-action input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.backup-list {
+  display: grid;
+  gap: 12px;
+}
+
+.backup-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #dbe4d8;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfcf8;
+}
+
+.backup-card .section-heading > div,
+.backup-empty {
+  display: grid;
+  gap: 4px;
+}
+
+.backup-card .meta-text,
+.backup-empty {
+  color: #627168;
+}
+
+.backup-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 760px) {
+  .backup-meta-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .manual-import-layout {
   display: grid;
   grid-template-columns: minmax(300px, 0.9fr) minmax(340px, 1.1fr);

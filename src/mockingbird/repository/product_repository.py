@@ -937,6 +937,11 @@ class ProductRepository:
         self.session_factory = create_session_factory(self.engine)
         self.seed_if_empty()
 
+    def close(self) -> None:
+        """Release pooled database handles before local data is replaced."""
+
+        self.engine.dispose()
+
     def seed_if_empty(self) -> None:
         with self.session_factory() as session:
             with session.begin():

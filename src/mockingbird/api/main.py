@@ -7,8 +7,10 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import ceil
+from pathlib import Path
 import subprocess
 import sys
+import threading
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -60,6 +62,11 @@ from mockingbird.api.schemas import (
     FolderImportPreviewRequest,
     FolderImportResult,
     LocalDataStatus,
+    LocalBackupLibraryResponse,
+    LocalBackupRestoreRequest,
+    LocalBackupRestoreResponse,
+    LocalBackupSummary,
+    LocalBackupVerificationResponse,
     LiveMotionEvaluateRequest,
     LiveMotionEvaluateResponse,
     LiveMotionFrameSummary,
@@ -199,6 +206,18 @@ from mockingbird.sampler.saved_media_frames import (
     load_saved_image_frame_plane,
 )
 from mockingbird.source_providers import external_url_preview
+from mockingbird.storage.backup import (
+    BackupSummaryData,
+    BackupVerificationData,
+    LocalBackupConflictError,
+    LocalBackupError,
+    LocalBackupManager,
+    LocalBackupNotFoundError,
+    LocalBackupRestoreError,
+    LocalBackupUnsupportedError,
+    LocalBackupValidationError,
+)
+from mockingbird.storage.database import create_database_engine
 from mockingbird.web_app import frontend_response
 
 
@@ -326,24 +345,125 @@ _patch_testclient_for_pytest()
 _repository: ProductRepository | None = None
 _source_monitor_manager: SourceMonitorManager | None = None
 _live_camera_session_manager: live_camera_session.LiveCameraSessionManager | None = None
+_backup_operation_lock = threading.Lock()
+_repository_access_lock = threading.RLock()
 
 
 def get_repository() -> ProductRepository:
     global _repository
-    if _repository is None:
-        _repository = ProductRepository()
-    return _repository
+    # Restore holds this lock across the live file swap so ordinary page loads
+    # cannot initialize a second repository against an in-between filesystem.
+    with _repository_access_lock:
+        if _repository is None:
+            _repository = ProductRepository()
+        return _repository
 
 
 def configure_repository(repository: ProductRepository | None) -> None:
     global _repository, _source_monitor_manager, _live_camera_session_manager
+    with _repository_access_lock:
+        previous_repository = _repository
+        _stop_runtime_activity(reason="repository_reconfigured")
+        _repository = repository
+        if previous_repository is not None and previous_repository is not repository:
+            previous_repository.close()
+
+
+def _stop_runtime_activity(*, reason: str) -> None:
+    global _source_monitor_manager, _live_camera_session_manager
     if _source_monitor_manager is not None:
         _source_monitor_manager.cancel_all()
         _source_monitor_manager = None
     if _live_camera_session_manager is not None:
-        _live_camera_session_manager.stop_all(reason="repository_reconfigured")
+        _live_camera_session_manager.stop_all(reason=reason)
         _live_camera_session_manager = None
-    _repository = repository
+
+
+def _local_backup_manager(repository: ProductRepository | None = None) -> LocalBackupManager:
+    active_repository = repository or get_repository()
+    return LocalBackupManager(
+        db_url=active_repository.db_url,
+        media_root=active_repository.media_root,
+    )
+
+
+def _local_backup_summary(data: BackupSummaryData) -> LocalBackupSummary:
+    # Filesystem paths stay internal; the Local Data UI only needs artifact facts.
+    return LocalBackupSummary(
+        id=data.id,
+        created_at=data.created_at,
+        kind=data.kind,
+        database_schema_version=data.database_schema_version,
+        database_size_bytes=data.database_size_bytes,
+        media_file_count=data.media_file_count,
+        media_size_bytes=data.media_size_bytes,
+        archive_size_bytes=data.archive_size_bytes,
+        verification_status=data.verification_status,
+        restore_compatible=data.restore_compatible,
+    )
+
+
+def _local_backup_verification_response(
+    verification: BackupVerificationData,
+    *,
+    message: str,
+) -> LocalBackupVerificationResponse:
+    return LocalBackupVerificationResponse(
+        backup=_local_backup_summary(verification.backup),
+        checked_at=verification.checked_at,
+        message=message,
+    )
+
+
+def _local_backup_http_error(error: LocalBackupError) -> HTTPException:
+    code = str(error)
+    if isinstance(error, LocalBackupNotFoundError):
+        return HTTPException(status_code=404, detail="That local backup could not be found.")
+    if isinstance(error, LocalBackupUnsupportedError):
+        return HTTPException(
+            status_code=409,
+            detail="Backup is unavailable for the configured local storage layout.",
+        )
+    if isinstance(error, LocalBackupValidationError):
+        return HTTPException(
+            status_code=400,
+            detail="Backup verification failed. No product data was changed.",
+        )
+    if isinstance(error, LocalBackupConflictError):
+        if code == "backup_storage_layout_mismatch":
+            return HTTPException(
+                status_code=409,
+                detail="This backup was made for a different local storage layout and cannot be restored here.",
+            )
+        return HTTPException(
+            status_code=409,
+            detail="A different backup with this identity is already in the local library.",
+        )
+    if isinstance(error, LocalBackupRestoreError):
+        return HTTPException(
+            status_code=500,
+            detail="Restore could not finish safely. MockingBird attempted to preserve the previous local data.",
+        )
+    return HTTPException(status_code=500, detail="The local backup operation could not be completed.")
+
+
+def _open_product_repository(
+    *,
+    db_url: str,
+    media_root: Path,
+    classifier_manifest_export_root: Path,
+) -> ProductRepository:
+    engine = create_database_engine(db_url)
+    try:
+        return ProductRepository(
+            db_url=db_url,
+            engine=engine,
+            media_root=media_root,
+            classifier_manifest_export_root=classifier_manifest_export_root,
+        )
+    except Exception:
+        engine.dispose()
+        raise
 
 
 def get_source_monitor_manager() -> SourceMonitorManager:
@@ -6816,6 +6936,197 @@ async def get_analytics_summary() -> AnalyticsSummary:
 @app.get("/api/settings/local-data", response_model=LocalDataStatus)
 async def get_local_data_status() -> LocalDataStatus:
     return get_repository().local_data_status()
+
+
+@app.get("/api/settings/backups", response_model=LocalBackupLibraryResponse)
+def list_local_backups() -> LocalBackupLibraryResponse:
+    try:
+        library = _local_backup_manager().list_backups()
+    except LocalBackupError as error:
+        raise _local_backup_http_error(error) from error
+    return LocalBackupLibraryResponse(
+        backups=[_local_backup_summary(item) for item in library.backups],
+        unreadable_backup_count=library.unreadable_backup_count,
+        local_first_note=(
+            "Backups remain local until you download or copy an artifact elsewhere. "
+            "Listing does not change product data."
+        ),
+    )
+
+
+@app.post(
+    "/api/settings/backups",
+    response_model=LocalBackupVerificationResponse,
+    status_code=201,
+)
+def create_local_backup() -> LocalBackupVerificationResponse:
+    if not _backup_operation_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another backup or restore is already running.")
+    try:
+        verification = _local_backup_manager().create_backup()
+        return _local_backup_verification_response(
+            verification,
+            message="Backup created and verified. Product data was not changed.",
+        )
+    except LocalBackupError as error:
+        raise _local_backup_http_error(error) from error
+    finally:
+        _backup_operation_lock.release()
+
+
+@app.post(
+    "/api/settings/backups/import",
+    response_model=LocalBackupVerificationResponse,
+    status_code=201,
+)
+def import_local_backup(file: UploadFile = File(...)) -> LocalBackupVerificationResponse:
+    if not _backup_operation_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another backup or restore is already running.")
+    try:
+        file.file.seek(0)
+        verification = _local_backup_manager().import_backup(file.file)
+        return _local_backup_verification_response(
+            verification,
+            message="Backup imported and verified. Product data was not changed.",
+        )
+    except LocalBackupError as error:
+        raise _local_backup_http_error(error) from error
+    finally:
+        _backup_operation_lock.release()
+
+
+@app.post(
+    "/api/settings/backups/{backup_id}/verify",
+    response_model=LocalBackupVerificationResponse,
+)
+def verify_local_backup(backup_id: str) -> LocalBackupVerificationResponse:
+    try:
+        verification = _local_backup_manager().verify_backup(backup_id)
+        return _local_backup_verification_response(
+            verification,
+            message="Backup verification passed. Product data was not changed.",
+        )
+    except LocalBackupError as error:
+        raise _local_backup_http_error(error) from error
+
+
+@app.get("/api/settings/backups/{backup_id}/download")
+def download_local_backup(backup_id: str) -> FileResponse:
+    try:
+        manager = _local_backup_manager()
+        verification = manager.verify_backup(backup_id)
+        path = verification.backup.archive_path
+    except LocalBackupError as error:
+        raise _local_backup_http_error(error) from error
+    date_label = verification.backup.created_at.strftime("%Y-%m-%d")
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename=f"MockingBird-{date_label}-{backup_id[:8]}{path.suffix}",
+    )
+
+
+@app.post(
+    "/api/settings/backups/{backup_id}/restore",
+    response_model=LocalBackupRestoreResponse,
+)
+def restore_local_backup(
+    backup_id: str,
+    payload: LocalBackupRestoreRequest,
+) -> LocalBackupRestoreResponse:
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Confirm restore before replacing local data.")
+    if not _backup_operation_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another backup or restore is already running.")
+
+    transaction = None
+    restored_repository: ProductRepository | None = None
+    restored_repository_configured = False
+    repository_closed = False
+    repository_access_acquired = False
+    try:
+        repository = get_repository()
+        manager = _local_backup_manager(repository)
+        selected = manager.verify_backup(backup_id)
+        manager.assert_restore_compatible(selected)
+
+        db_url = repository.db_url
+        media_root = repository.media_root
+        classifier_export_root = repository.classifier_manifest_export_root
+
+        # Runtime readers stop before the safety snapshot. No camera process can
+        # keep writing managed media while the live database/media pair is swapped.
+        _stop_runtime_activity(reason="local_backup_restore")
+        safety = manager.create_backup(kind="pre_restore")
+        _repository_access_lock.acquire()
+        repository_access_acquired = True
+        configure_repository(None)
+        repository_closed = True
+
+        transaction = manager.replace_live_files(selected)
+        restored_repository = _open_product_repository(
+            db_url=db_url,
+            media_root=media_root,
+            classifier_manifest_export_root=classifier_export_root,
+        )
+        configure_repository(restored_repository)
+        restored_repository_configured = True
+        restored_status = restored_repository.local_data_status()
+        transaction.commit()
+
+        return LocalBackupRestoreResponse(
+            restored_backup=_local_backup_summary(selected.backup),
+            safety_backup=_local_backup_summary(safety.backup),
+            status=restored_status,
+            message=(
+                "Backup restored and reopened. A verified pre-restore safety backup "
+                "was kept in the local backup library."
+            ),
+        )
+    except LocalBackupError as error:
+        if repository_closed:
+            if restored_repository_configured:
+                configure_repository(None)
+            elif restored_repository is not None:
+                restored_repository.close()
+            if transaction is not None and not transaction.completed:
+                transaction.rollback()
+            try:
+                recovered_repository = _open_product_repository(
+                    db_url=db_url,
+                    media_root=media_root,
+                    classifier_manifest_export_root=classifier_export_root,
+                )
+                configure_repository(recovered_repository)
+            except Exception as recovery_error:
+                raise _local_backup_http_error(
+                    LocalBackupRestoreError("restore_and_recovery_failed")
+                ) from recovery_error
+        raise _local_backup_http_error(error) from error
+    except Exception as error:
+        if repository_closed:
+            if restored_repository_configured:
+                configure_repository(None)
+            elif restored_repository is not None:
+                restored_repository.close()
+            if transaction is not None and not transaction.completed:
+                transaction.rollback()
+            try:
+                recovered_repository = _open_product_repository(
+                    db_url=db_url,
+                    media_root=media_root,
+                    classifier_manifest_export_root=classifier_export_root,
+                )
+                configure_repository(recovered_repository)
+            except Exception as recovery_error:
+                raise _local_backup_http_error(
+                    LocalBackupRestoreError("restore_and_recovery_failed")
+                ) from recovery_error
+        raise _local_backup_http_error(LocalBackupRestoreError("restore_failed")) from error
+    finally:
+        if repository_access_acquired:
+            _repository_access_lock.release()
+        _backup_operation_lock.release()
 
 
 @app.post("/api/settings/reset-demo-data", response_model=LocalDataStatus)

@@ -74,6 +74,23 @@ def resolve_media_root(media_root: str | Path | None = None) -> Path:
     return Path(media_root or media_root_from_env())
 
 
+def sqlite_database_path(db_url: str) -> Path:
+    """Return the file path for a supported SQLite database URL.
+
+    Backup and recovery is intentionally file-based. Keeping this validation in
+    the storage layer prevents operational code from guessing at other database
+    URL formats or treating an in-memory database as recoverable.
+    """
+
+    if not db_url.startswith("sqlite:///"):
+        raise ValueError("local_backup_requires_sqlite")
+
+    value = db_url.removeprefix("sqlite:///")
+    if value in {"", ":memory:"}:
+        raise ValueError("local_backup_requires_sqlite_file")
+    return Path(value)
+
+
 def _ensure_sqlite_parent(db_url: str) -> None:
     if not db_url.startswith("sqlite:///"):
         return

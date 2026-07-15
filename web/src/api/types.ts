@@ -2231,6 +2231,42 @@ export interface LocalDataStatus {
   local_first_note: string;
 }
 
+export type LocalBackupKind = "manual" | "pre_restore";
+export type LocalBackupVerificationStatus = "verified" | "not_checked";
+
+export interface LocalBackupSummary {
+  id: string;
+  created_at: string;
+  kind: LocalBackupKind;
+  database_schema_version: number;
+  database_size_bytes: number;
+  media_file_count: number;
+  media_size_bytes: number;
+  archive_size_bytes: number;
+  verification_status: LocalBackupVerificationStatus;
+  restore_compatible: boolean;
+}
+
+export interface LocalBackupLibraryResponse {
+  backups: LocalBackupSummary[];
+  unreadable_backup_count: number;
+  local_first_note: string;
+}
+
+export interface LocalBackupVerificationResponse {
+  backup: LocalBackupSummary;
+  verified: boolean;
+  checked_at: string;
+  message: string;
+}
+
+export interface LocalBackupRestoreResponse {
+  restored_backup: LocalBackupSummary;
+  safety_backup: LocalBackupSummary;
+  status: LocalDataStatus;
+  message: string;
+}
+
 export interface SampleDataRemovalResponse {
   removed: boolean;
   removed_counts: Record<string, number>;
