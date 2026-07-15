@@ -2762,7 +2762,7 @@ async def test_unattended_monitoring_auto_creates_review_candidate_after_quiet_o
             "min_changed_ratio": 0.003,
             "pixel_delta_threshold": 10,
             "min_triggered_frames": 1,
-            "interval_seconds": 10,
+            "interval_seconds": 1.25,
         },
     )
 
@@ -2789,7 +2789,7 @@ async def test_unattended_monitoring_auto_creates_review_candidate_after_quiet_o
     assert (await client.get("/api/review-queue")).json() == before_queue
     assert await product_counts(client) == before
 
-    await asyncio.sleep(1.1)
+    await asyncio.sleep(1.5)
 
     auto_status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
     assert auto_status["status"] == "running"

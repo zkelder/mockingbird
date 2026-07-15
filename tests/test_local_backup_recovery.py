@@ -16,6 +16,10 @@ from mockingbird.storage.backup import (
     LocalBackupUnsupportedError,
     LocalBackupValidationError,
 )
+from mockingbird.storage.database import (
+    CURRENT_DATABASE_SCHEMA_VERSION,
+    create_database_engine,
+)
 
 
 class ASGITestClient:
@@ -81,6 +85,38 @@ def test_backup_captures_wal_database_and_managed_media(tmp_path: Path) -> None:
         }
 
     repository.close()
+
+
+def test_verified_schema_one_backup_restores_through_known_migration(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    repository.close()
+
+    engine = create_database_engine(repository.db_url)
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE stream_runtime_checkpoints")
+        connection.exec_driver_sql("DROP TABLE stream_monitoring_policies")
+        connection.exec_driver_sql(
+            "UPDATE mockingbird_schema SET version = 1 WHERE singleton_id = 1"
+        )
+    engine.dispose()
+
+    manager = _manager(repository, tmp_path)
+    backup = manager.create_backup()
+    assert backup.backup.database_schema_version == 1
+    assert backup.backup.restore_compatible is True
+
+    transaction = manager.replace_live_files(manager.verify_backup(backup.backup.id))
+    migrated_repository = _repository(tmp_path)
+    try:
+        policy = migrated_repository.get_stream_monitoring_policy(
+            "stream-backyard-feeder"
+        )
+        assert migrated_repository.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert policy is not None
+        assert policy.mode == "off"
+        transaction.commit()
+    finally:
+        migrated_repository.close()
 
 
 def test_restore_replaces_database_and_media_as_one_recoverable_pair(tmp_path: Path) -> None:

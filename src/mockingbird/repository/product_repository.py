@@ -197,9 +197,13 @@ from mockingbird.api.schemas import (
     SourceProviderKind,
     SourceStatus,
     Stream,
+    StreamMonitoringMode,
+    StreamMonitoringPolicyResponse,
     StreamPlaybackKind,
     StreamPlaybackStatus,
     StreamPlaybackStatusValue,
+    StreamRuntimeState,
+    StreamRuntimeStatusResponse,
     TaxonomyLabel,
     Visit,
     WebhookMotionEvidenceRequest,
@@ -228,6 +232,9 @@ from mockingbird.storage.database import (
 from mockingbird.storage.models import (
     Base,
     CameraSourceModel,
+    DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS,
+    DEFAULT_STREAM_MONITORING_MINIMUM_DETECTIONS,
+    DEFAULT_STREAM_MONITORING_QUIET_SECONDS,
     DatasetExportModel,
     DetectionModel,
     DetectionProposalModel,
@@ -236,6 +243,8 @@ from mockingbird.storage.models import (
     MediaAssetModel,
     ReviewLabelModel,
     StreamModel,
+    StreamMonitoringPolicyModel,
+    StreamRuntimeCheckpointModel,
     TaxonomyLabelModel,
     VisitModel,
     ZoneModel,
@@ -913,6 +922,51 @@ class SourceProviderConfigurationModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+def _new_stream_monitoring_records(
+    stream_id: str,
+    *,
+    created_at: datetime | None = None,
+) -> tuple[StreamMonitoringPolicyModel, StreamRuntimeCheckpointModel]:
+    """Create inert continuity records; every new Stream starts explicitly off."""
+
+    timestamp = created_at or datetime.now(UTC)
+    return (
+        StreamMonitoringPolicyModel(
+            stream_id=stream_id,
+            mode=StreamMonitoringMode.off.value,
+            auto_create_review_candidates=False,
+            evaluation_interval_seconds=DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS,
+            quiet_period_seconds=DEFAULT_STREAM_MONITORING_QUIET_SECONDS,
+            minimum_detection_count=DEFAULT_STREAM_MONITORING_MINIMUM_DETECTIONS,
+            policy_revision=1,
+            armed_at=None,
+            paused_at=None,
+            updated_at=timestamp,
+            pause_reason=None,
+        ),
+        StreamRuntimeCheckpointModel(
+            stream_id=stream_id,
+            observed_policy_revision=1,
+            actual_state=StreamRuntimeState.stopped.value,
+            app_instance_id=None,
+            runtime_generation_id=None,
+            last_start_attempt_at=None,
+            last_healthy_frame_at=None,
+            last_clean_stop_at=None,
+            last_failure_at=None,
+            failure_code=None,
+            consecutive_failure_count=0,
+            next_retry_at=None,
+            last_stop_reason="policy_off",
+            start_count=0,
+            failure_count=0,
+            evidence_handoff_count=0,
+            safety_hold_active=False,
+            updated_at=timestamp,
+        ),
+    )
+
+
 class ProductRepository:
     """Persist product-level stream, zone, event, review, and export state.
 
@@ -1198,6 +1252,17 @@ class ProductRepository:
                     )
                 )
             )
+        if graph["streams"]:
+            session.execute(
+                delete(StreamRuntimeCheckpointModel).where(
+                    StreamRuntimeCheckpointModel.stream_id.in_(graph["streams"])
+                )
+            )
+            session.execute(
+                delete(StreamMonitoringPolicyModel).where(
+                    StreamMonitoringPolicyModel.stream_id.in_(graph["streams"])
+                )
+            )
         delete_ids(StreamModel, graph["streams"])
         delete_ids(CameraSourceModel, graph["sources"])
 
@@ -1337,6 +1402,8 @@ class ProductRepository:
                 for stream in streams
             ]
         )
+        for stream in streams:
+            session.add_all(_new_stream_monitoring_records(stream.id))
         session.add_all(
             [
                 ZoneModel(
@@ -1580,7 +1647,12 @@ class ProductRepository:
                     description=f"Live outdoor stream for {source_name}.",
                     is_live=True,
                 )
-                session.add_all([source_model, stream_model])
+                policy_model, checkpoint_model = _new_stream_monitoring_records(
+                    stream_model.id
+                )
+                session.add_all(
+                    [source_model, stream_model, policy_model, checkpoint_model]
+                )
                 session.flush()
                 return CameraSourceCreateResponse(
                     source=_source_from_model(source_model),
@@ -2548,6 +2620,139 @@ class ProductRepository:
         with self.session_factory() as session:
             stream = session.get(StreamModel, stream_id)
             return _stream_from_model(stream) if stream else None
+
+    def get_stream_monitoring_policy(
+        self,
+        stream_id: str,
+    ) -> StreamMonitoringPolicyResponse | None:
+        """Read durable intent without reconciling or starting runtime activity."""
+
+        with self.session_factory() as session:
+            stream = session.get(StreamModel, stream_id)
+            if stream is None:
+                return None
+            model = session.get(StreamMonitoringPolicyModel, stream_id)
+            if model is None:
+                return StreamMonitoringPolicyResponse(
+                    stream_id=stream.id,
+                    source_id=stream.source_id,
+                    mode=StreamMonitoringMode.off,
+                    auto_create_review_candidates=False,
+                    evaluation_interval_seconds=(
+                        DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS
+                    ),
+                    quiet_period_seconds=DEFAULT_STREAM_MONITORING_QUIET_SECONDS,
+                    minimum_detection_count=(
+                        DEFAULT_STREAM_MONITORING_MINIMUM_DETECTIONS
+                    ),
+                    policy_revision=1,
+                    persisted=False,
+                    message=(
+                        "Monitoring continuity is safely off. Camera and monitoring "
+                        "still use the explicit Stream Detail controls."
+                    ),
+                    warnings=[
+                        "The persisted policy record is missing; the safe off default is shown."
+                    ],
+                )
+            return StreamMonitoringPolicyResponse(
+                stream_id=stream.id,
+                source_id=stream.source_id,
+                mode=StreamMonitoringMode(model.mode),
+                auto_create_review_candidates=model.auto_create_review_candidates,
+                evaluation_interval_seconds=model.evaluation_interval_seconds,
+                quiet_period_seconds=model.quiet_period_seconds,
+                minimum_detection_count=model.minimum_detection_count,
+                policy_revision=model.policy_revision,
+                armed_at=model.armed_at,
+                paused_at=model.paused_at,
+                updated_at=model.updated_at,
+                pause_reason=model.pause_reason,
+                persisted=True,
+                message=(
+                    "Monitoring continuity is off. Camera and monitoring still start "
+                    "only from Stream Detail."
+                    if model.mode == StreamMonitoringMode.off.value
+                    else "Saved continuity intent is visible, but durable activation is not available yet."
+                ),
+            )
+
+    def get_stream_runtime_status(
+        self,
+        stream_id: str,
+    ) -> StreamRuntimeStatusResponse | None:
+        """Read last-known continuity metadata without touching any runtime manager."""
+
+        with self.session_factory() as session:
+            stream = session.get(StreamModel, stream_id)
+            if stream is None:
+                return None
+            policy = session.get(StreamMonitoringPolicyModel, stream_id)
+            checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
+            desired_mode = (
+                StreamMonitoringMode(policy.mode)
+                if policy is not None
+                else StreamMonitoringMode.off
+            )
+            warnings: list[str] = []
+            if policy is None:
+                warnings.append(
+                    "The persisted policy record is missing; the safe off default is shown."
+                )
+
+            actual_state = StreamRuntimeState.stopped
+            if checkpoint is not None:
+                try:
+                    checkpoint_state = StreamRuntimeState(checkpoint.actual_state)
+                except ValueError:
+                    checkpoint_state = StreamRuntimeState.interrupted
+                    warnings.append("The last runtime checkpoint has an unknown state.")
+                if checkpoint_state == StreamRuntimeState.stopped:
+                    actual_state = checkpoint_state
+                else:
+                    # Phase 24D owns no supervisor/app-instance lease. Any nonterminal
+                    # checkpoint is necessarily stale and cannot prove a process is live.
+                    actual_state = StreamRuntimeState.interrupted
+                    warnings.append(
+                        "The last non-stopped checkpoint is stale; no durable runtime is enabled."
+                    )
+
+            return StreamRuntimeStatusResponse(
+                stream_id=stream.id,
+                source_id=stream.source_id,
+                desired_mode=desired_mode,
+                actual_state=actual_state,
+                observed_policy_revision=(
+                    checkpoint.observed_policy_revision
+                    if checkpoint is not None
+                    else policy.policy_revision
+                    if policy is not None
+                    else 1
+                ),
+                checkpoint_present=checkpoint is not None,
+                checkpoint_updated_at=checkpoint.updated_at if checkpoint else None,
+                last_start_attempt_at=(
+                    checkpoint.last_start_attempt_at if checkpoint else None
+                ),
+                last_healthy_frame_at=(
+                    checkpoint.last_healthy_frame_at if checkpoint else None
+                ),
+                last_clean_stop_at=(checkpoint.last_clean_stop_at if checkpoint else None),
+                last_failure_at=checkpoint.last_failure_at if checkpoint else None,
+                failure_code=checkpoint.failure_code if checkpoint else None,
+                consecutive_failure_count=(
+                    checkpoint.consecutive_failure_count if checkpoint else 0
+                ),
+                next_retry_at=checkpoint.next_retry_at if checkpoint else None,
+                last_stop_reason=checkpoint.last_stop_reason if checkpoint else "policy_off",
+                safety_hold_active=(checkpoint.safety_hold_active if checkpoint else False),
+                message=(
+                    "Continuity is off; no camera or monitor start was requested."
+                    if desired_mode == StreamMonitoringMode.off
+                    else "Saved intent is visible, but durable camera recovery is not available yet."
+                ),
+                warnings=warnings,
+            )
 
     def get_stream_playback_status(self, stream_id: str) -> StreamPlaybackStatus | None:
         with self.session_factory() as session:

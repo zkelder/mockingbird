@@ -1312,11 +1312,14 @@ Completed:
   rollback-safe restore on the existing Local Data screen.
 - Phase 24C: audio-aware durable camera/monitor lifecycle design, separating
   persisted user intent, actual runtime state, restore holds, and review truth.
+- Phase 24D: default-off Stream monitoring-policy/runtime-checkpoint schema,
+  read-only API/status UI, and side-effect-free live-session status polling.
 
 Next product-hardening work:
 
-- Phase 24D: persisted Stream monitoring policy/checkpoint schema and read-only
-  product contract, with every existing Stream off and no startup behavior.
+- Phase 24E: disabled supervisor foundation with fake-adapter lifecycle,
+  app-instance/checkpoint reconciliation, one-Stream leases, stop ordering, and
+  deterministic backoff tests. Runtime activation remains unavailable.
 
 Design notes:
 
@@ -1353,9 +1356,13 @@ Validation:
   not the snapshot Source monitor or general provider workers.
 - Durable desired policy defaults off and stays separate from actual process
   state. Old `running` checkpoints become interrupted after restart.
-- Future status routes are side-effect free. Auto-candidate creation belongs to
-  the explicitly armed monitor lifecycle and can create needs-review evidence
+- Stream policy/runtime and live-session status routes are side-effect free.
+  Current in-memory auto-candidate quiet-window handling belongs to the active
+  monitor tick, never browser polling, and can create needs-review evidence
   only, never ReviewLabels or reviewed truth.
+- Schema version 2 migrates every existing Stream to `off`/`stopped`, creates the
+  same records for new Streams, and keeps verified version-1 backups eligible
+  for the known safe migration during restore.
 - Backup/restore, migration, emergency-stop, and shutdown holds override armed
   policy; a restored armed policy requires explicit resume.
 - Future audio can share lifecycle ownership patterns but requires independent
@@ -1367,9 +1374,9 @@ Validation:
 
 ## Forward sequence to a completed field product
 
-- Phases 24D–24G: add default-off desired-state/status contracts, a bounded
-  supervisor foundation, explicit live-video continuity, then storage-limited
-  idempotent review handoff. Audio remains design-only during these phases.
+- Phases 24E–24G: add a bounded disabled supervisor foundation, explicit
+  live-video continuity, then storage-limited idempotent review handoff. Audio
+  remains design-only during these phases.
 - Phase 25: harden the whole field loop with restart recovery, bounded storage,
   retention controls, camera/source health, long-run observability, and
   representative feeder validation.

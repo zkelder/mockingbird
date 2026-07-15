@@ -144,8 +144,10 @@ from mockingbird.api.schemas import (
     SourceSetupReviewResponse,
     SourceStatus,
     Stream,
+    StreamMonitoringPolicyResponse,
     StreamPlaybackStatus,
     StreamPlaybackStatusResponse,
+    StreamRuntimeStatusResponse,
     TaxonomyLabel,
     Visit,
     VisitDetail,
@@ -4121,6 +4123,13 @@ async def start_live_stream_motion_monitor(
         )
 
     def monitor_evaluate() -> dict[str, Any]:
+        # Quiet-window completion belongs to the active monitor tick. Status GETs
+        # remain strictly observational and cannot create review candidates.
+        auto_created = _maybe_auto_create_live_review_candidate(stream_id)
+        if auto_created is not None and auto_created.review_activity_created:
+            snapshot_after_auto = get_live_camera_session_manager().status(stream_id)
+            if snapshot_after_auto is not None and snapshot_after_auto.last_motion_result:
+                return dict(snapshot_after_auto.last_motion_result)
         result = _evaluate_live_stream_motion(
             stream_id,
             evaluate_request,
@@ -5806,6 +5815,30 @@ async def get_stream_playback_status(stream_id: str) -> StreamPlaybackStatus:
     return status
 
 
+@app.get(
+    "/api/streams/{stream_id}/monitoring-policy",
+    response_model=StreamMonitoringPolicyResponse,
+)
+async def get_stream_monitoring_policy(
+    stream_id: str,
+) -> StreamMonitoringPolicyResponse:
+    policy = get_repository().get_stream_monitoring_policy(stream_id)
+    if policy is None:
+        raise _not_found("Stream", stream_id)
+    return policy
+
+
+@app.get(
+    "/api/streams/{stream_id}/runtime-status",
+    response_model=StreamRuntimeStatusResponse,
+)
+async def get_stream_runtime_status(stream_id: str) -> StreamRuntimeStatusResponse:
+    status = get_repository().get_stream_runtime_status(stream_id)
+    if status is None:
+        raise _not_found("Stream", stream_id)
+    return status
+
+
 def _stream_live_playback_config_or_404(
     stream_id: str,
     *,
@@ -5869,9 +5902,11 @@ async def get_stream_live_camera_session_status(
     stream_id: str,
 ) -> LiveCameraSessionStatusResponse:
     configuration = _stream_live_playback_config_or_404(stream_id)
-    _refresh_live_activity_review_state(stream_id)
-    _maybe_auto_create_live_review_candidate(stream_id)
-    snapshot = get_live_camera_session_manager().status(stream_id)
+    snapshot = (
+        _live_camera_session_manager.status(stream_id)
+        if _live_camera_session_manager is not None
+        else None
+    )
     return _live_camera_session_response(snapshot, configuration)
 
 
@@ -5883,7 +5918,11 @@ async def get_stream_live_camera_session_diagnostics(
     stream_id: str,
 ) -> LiveCameraSessionDiagnosticsResponse:
     _stream_live_playback_config_or_404(stream_id)
-    snapshot = get_live_camera_session_manager().status(stream_id)
+    snapshot = (
+        _live_camera_session_manager.status(stream_id)
+        if _live_camera_session_manager is not None
+        else None
+    )
     return LiveCameraSessionDiagnosticsResponse(
         stream_id=stream_id,
         diagnostic_events=(snapshot.diagnostic_events if snapshot is not None else []),

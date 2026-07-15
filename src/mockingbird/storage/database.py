@@ -17,20 +17,29 @@ from sqlalchemy import (
     Table,
     create_engine,
     event,
+    exists,
     inspect,
+    literal,
     select,
 )
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
-from mockingbird.storage.models import Base
+from mockingbird.storage.models import (
+    Base,
+    DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS,
+    DEFAULT_STREAM_MONITORING_MINIMUM_DETECTIONS,
+    DEFAULT_STREAM_MONITORING_MODE,
+    DEFAULT_STREAM_MONITORING_QUIET_SECONDS,
+    DEFAULT_STREAM_RUNTIME_STATE,
+)
 
 DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 1
+CURRENT_DATABASE_SCHEMA_VERSION = 2
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -55,7 +64,98 @@ class DatabaseSchemaStatus:
 
 
 SchemaMigration = Callable[[Connection], None]
-_SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {}
+
+
+def _migrate_to_stream_monitoring_contract(connection: Connection) -> None:
+    """Add inert Stream continuity records without arming any existing Stream."""
+
+    policies = Base.metadata.tables["stream_monitoring_policies"]
+    checkpoints = Base.metadata.tables["stream_runtime_checkpoints"]
+    streams = Base.metadata.tables["streams"]
+    policies.create(bind=connection, checkfirst=True)
+    checkpoints.create(bind=connection, checkfirst=True)
+
+    migrated_at = datetime.now(UTC)
+    connection.execute(
+        policies.insert().from_select(
+            [
+                "stream_id",
+                "mode",
+                "auto_create_review_candidates",
+                "evaluation_interval_seconds",
+                "quiet_period_seconds",
+                "minimum_detection_count",
+                "policy_revision",
+                "updated_at",
+            ],
+            select(
+                streams.c.id,
+                literal(DEFAULT_STREAM_MONITORING_MODE),
+                literal(False),
+                literal(DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS),
+                literal(DEFAULT_STREAM_MONITORING_QUIET_SECONDS),
+                literal(DEFAULT_STREAM_MONITORING_MINIMUM_DETECTIONS),
+                literal(1),
+                literal(migrated_at),
+            ).where(
+                ~exists(
+                    select(policies.c.stream_id).where(
+                        policies.c.stream_id == streams.c.id
+                    )
+                )
+            ),
+        )
+    )
+    connection.execute(
+        checkpoints.insert().from_select(
+            [
+                "stream_id",
+                "observed_policy_revision",
+                "actual_state",
+                "consecutive_failure_count",
+                "last_stop_reason",
+                "start_count",
+                "failure_count",
+                "evidence_handoff_count",
+                "safety_hold_active",
+                "updated_at",
+            ],
+            select(
+                streams.c.id,
+                literal(1),
+                literal(DEFAULT_STREAM_RUNTIME_STATE),
+                literal(0),
+                literal("policy_off"),
+                literal(0),
+                literal(0),
+                literal(0),
+                literal(False),
+                literal(migrated_at),
+            ).where(
+                ~exists(
+                    select(checkpoints.c.stream_id).where(
+                        checkpoints.c.stream_id == streams.c.id
+                    )
+                )
+            ),
+        )
+    )
+
+
+_SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
+    2: _migrate_to_stream_monitoring_contract,
+}
+
+
+def database_schema_version_is_compatible(version: int) -> bool:
+    """Return whether a recorded schema can reach the current schema safely."""
+
+    if version < 1 or version > CURRENT_DATABASE_SCHEMA_VERSION:
+        return False
+    return all(
+        target_version in _SCHEMA_MIGRATIONS
+        for target_version in range(version + 1, CURRENT_DATABASE_SCHEMA_VERSION + 1)
+    )
 
 
 def database_url_from_env() -> str:

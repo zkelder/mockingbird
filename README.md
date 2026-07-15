@@ -213,6 +213,11 @@ The future restart-safe version is designed in
 That boundary keeps durable user intent separate from actual process state,
 starts every existing Stream off, and requires restore holds, storage budgets,
 side-effect-free status, and separate future audio consent before activation.
+The first default-off contract is now implemented: every Stream has persisted
+monitoring-policy and runtime-checkpoint records, read-only status APIs, and a
+compact Monitoring continuity status on Stream Detail. It adds no arming
+control, supervisor, startup camera behavior, retry loop, audio behavior, or
+automatic truth creation.
 Stream Detail lets users choose auto-create before monitoring starts; that
 pending choice is applied when monitoring starts, and running monitor changes
 update monitor settings without creating truth.

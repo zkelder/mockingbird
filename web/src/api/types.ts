@@ -46,6 +46,15 @@ export type StreamPlaybackKind =
   | "local_usb"
   | "windows_dshow"
   | "unknown";
+export type StreamMonitoringMode = "off" | "armed" | "paused";
+export type StreamRuntimeState =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "backoff"
+  | "blocked"
+  | "stopping"
+  | "interrupted";
 export type ExternalUrlPreviewStatus =
   | "available"
   | "not_configured"
@@ -380,6 +389,56 @@ export interface Stream {
   name: string;
   description: string;
   is_live: boolean;
+}
+
+export interface StreamMonitoringPolicy {
+  stream_id: string;
+  source_id: string;
+  mode: StreamMonitoringMode;
+  auto_create_review_candidates: boolean;
+  evaluation_interval_seconds: number;
+  quiet_period_seconds: number;
+  minimum_detection_count: number;
+  policy_revision: number;
+  armed_at?: string | null;
+  paused_at?: string | null;
+  updated_at?: string | null;
+  pause_reason?: string | null;
+  persisted: boolean;
+  read_only: boolean;
+  continuity_available: boolean;
+  can_arm: boolean;
+  creates_review_candidates: boolean;
+  creates_review_truth: boolean;
+  message: string;
+  warnings: string[];
+}
+
+export interface StreamRuntimeStatus {
+  stream_id: string;
+  source_id: string;
+  desired_mode: StreamMonitoringMode;
+  actual_state: StreamRuntimeState;
+  observed_policy_revision: number;
+  checkpoint_present: boolean;
+  checkpoint_updated_at?: string | null;
+  last_start_attempt_at?: string | null;
+  last_healthy_frame_at?: string | null;
+  last_clean_stop_at?: string | null;
+  last_failure_at?: string | null;
+  failure_code?: string | null;
+  consecutive_failure_count: number;
+  next_retry_at?: string | null;
+  last_stop_reason?: string | null;
+  safety_hold_active: boolean;
+  read_only: boolean;
+  continuity_available: boolean;
+  camera_start_requested: boolean;
+  monitor_start_requested: boolean;
+  creates_review_candidates: boolean;
+  creates_review_truth: boolean;
+  message: string;
+  warnings: string[];
 }
 
 export interface StreamPlaybackStatus {

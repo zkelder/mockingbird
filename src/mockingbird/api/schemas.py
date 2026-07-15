@@ -79,6 +79,22 @@ class StreamPlaybackKind(str, Enum):
     unknown = "unknown"
 
 
+class StreamMonitoringMode(str, Enum):
+    off = "off"
+    armed = "armed"
+    paused = "paused"
+
+
+class StreamRuntimeState(str, Enum):
+    stopped = "stopped"
+    starting = "starting"
+    running = "running"
+    backoff = "backoff"
+    blocked = "blocked"
+    stopping = "stopping"
+    interrupted = "interrupted"
+
+
 class ExternalUrlPreviewStatus(str, Enum):
     available = "available"
     not_configured = "not_configured"
@@ -575,6 +591,58 @@ class Stream(BaseModel):
     name: str
     description: str
     is_live: bool
+
+
+class StreamMonitoringPolicyResponse(BaseModel):
+    # Durable desired state is configuration only; Phase 24D exposes no mutation.
+    stream_id: str
+    source_id: str
+    mode: StreamMonitoringMode
+    auto_create_review_candidates: bool = False
+    evaluation_interval_seconds: float = Field(ge=0.25, le=10)
+    quiet_period_seconds: int = Field(ge=1, le=300)
+    minimum_detection_count: int = Field(ge=1, le=100)
+    policy_revision: int = Field(ge=1)
+    armed_at: datetime | None = None
+    paused_at: datetime | None = None
+    updated_at: datetime | None = None
+    pause_reason: str | None = None
+    persisted: bool
+    read_only: bool = True
+    continuity_available: bool = False
+    can_arm: bool = False
+    creates_review_candidates: bool = False
+    creates_review_truth: bool = False
+    message: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class StreamRuntimeStatusResponse(BaseModel):
+    # Runtime checkpoints are observability metadata, not proof or product truth.
+    stream_id: str
+    source_id: str
+    desired_mode: StreamMonitoringMode
+    actual_state: StreamRuntimeState
+    observed_policy_revision: int = Field(ge=1)
+    checkpoint_present: bool
+    checkpoint_updated_at: datetime | None = None
+    last_start_attempt_at: datetime | None = None
+    last_healthy_frame_at: datetime | None = None
+    last_clean_stop_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    failure_code: str | None = None
+    consecutive_failure_count: int = Field(ge=0)
+    next_retry_at: datetime | None = None
+    last_stop_reason: str | None = None
+    safety_hold_active: bool = False
+    read_only: bool = True
+    continuity_available: bool = False
+    camera_start_requested: bool = False
+    monitor_start_requested: bool = False
+    creates_review_candidates: bool = False
+    creates_review_truth: bool = False
+    message: str
+    warnings: list[str] = Field(default_factory=list)
 
 
 class CameraSourceCreateResponse(BaseModel):

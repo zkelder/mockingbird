@@ -19,7 +19,9 @@ import type {
   SourceProviderConfiguration,
   SourceSetupReviewResponse,
   Stream,
+  StreamMonitoringPolicy,
   StreamPlaybackStatus,
+  StreamRuntimeStatus,
   Visit,
   Zone,
   ZoneType,
@@ -549,6 +551,13 @@ export function StreamDetailPage({
   const [showLiveZones, setShowLiveZones] = useState(true);
   const [liveSession, setLiveSession] = useState<LiveCameraSessionStatus | null>(null);
   const [liveSessionError, setLiveSessionError] = useState<string | null>(null);
+  const [monitoringPolicy, setMonitoringPolicy] =
+    useState<StreamMonitoringPolicy | null>(null);
+  const [runtimeStatus, setRuntimeStatus] = useState<StreamRuntimeStatus | null>(null);
+  const [monitoringContinuityError, setMonitoringContinuityError] =
+    useState<string | null>(null);
+  const [isLoadingMonitoringContinuity, setIsLoadingMonitoringContinuity] =
+    useState(true);
   const [isStartingLiveSession, setIsStartingLiveSession] = useState(false);
   const [isStoppingLiveSession, setIsStoppingLiveSession] = useState(false);
   const [captureResult, setCaptureResult] = useState<LocalCameraFrameCaptureResponse | null>(null);
@@ -843,6 +852,44 @@ export function StreamDetailPage({
 
     void loadStreamDetail();
 
+    return () => {
+      isMounted = false;
+    };
+  }, [streamId]);
+
+  useEffect(() => {
+    let isMounted = true;
+    setMonitoringPolicy(null);
+    setRuntimeStatus(null);
+    setMonitoringContinuityError(null);
+    setIsLoadingMonitoringContinuity(true);
+
+    async function loadMonitoringContinuity() {
+      try {
+        const [policy, status] = await Promise.all([
+          apiClient.getStreamMonitoringPolicy(streamId),
+          apiClient.getStreamRuntimeStatus(streamId),
+        ]);
+        if (isMounted) {
+          setMonitoringPolicy(policy);
+          setRuntimeStatus(status);
+        }
+      } catch (caught) {
+        if (isMounted) {
+          setMonitoringContinuityError(
+            caught instanceof Error
+              ? caught.message
+              : "Could not load monitoring continuity status.",
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingMonitoringContinuity(false);
+        }
+      }
+    }
+
+    void loadMonitoringContinuity();
     return () => {
       isMounted = false;
     };
@@ -2004,6 +2051,17 @@ export function StreamDetailPage({
       Boolean(liveViewError));
   const liveZonesVisible = (showLiveZones || drawMode) && !livePlaybackNeedsAttention;
   const activeZoneCount = detail.zones.filter((zone) => zone.is_active).length;
+  const continuityNeedsAttention =
+    runtimeStatus?.actual_state === "interrupted" ||
+    runtimeStatus?.actual_state === "blocked" ||
+    Boolean(monitoringContinuityError);
+  const continuityLabel = monitoringContinuityError
+    ? "Unavailable"
+    : isLoadingMonitoringContinuity
+      ? "Loading"
+      : monitoringPolicy
+        ? formatLabel(monitoringPolicy.mode)
+        : "Unavailable";
 
   return (
     <div className="page-stack">
@@ -3127,6 +3185,49 @@ export function StreamDetailPage({
           onDrawEnd={handleDrawEnd}
         />
       )}
+
+      <section className="panel stream-monitoring-continuity" aria-label="Monitoring continuity">
+        <div className="section-heading">
+          <div>
+            <h2>Monitoring continuity</h2>
+            <span className="meta-text">Restart-safe camera monitoring intent</span>
+          </div>
+          <StatusPill
+            label={continuityLabel}
+            tone={continuityNeedsAttention ? "review" : "quiet"}
+          />
+        </div>
+        {isLoadingMonitoringContinuity ? (
+          <span className="meta-text">Reading saved monitoring intent...</span>
+        ) : monitoringContinuityError ? (
+          <div className="continuity-message is-error">
+            <strong>Continuity status could not be loaded.</strong>
+            <span>{monitoringContinuityError} Existing camera controls are unchanged.</span>
+          </div>
+        ) : monitoringPolicy && runtimeStatus ? (
+          <>
+            <div className="monitoring-continuity-facts">
+              <span>
+                <strong>Saved intent</strong> {formatLabel(monitoringPolicy.mode)}
+              </span>
+              <span>
+                <strong>Restart runtime</strong> {formatLabel(runtimeStatus.actual_state)}
+              </span>
+              <span>
+                <strong>Auto-create</strong>{" "}
+                {monitoringPolicy.auto_create_review_candidates ? "enabled" : "off"}
+              </span>
+            </div>
+            <div className="continuity-message">
+              <strong>{monitoringPolicy.message}</strong>
+              <span>
+                This status is read-only. It starts no camera, creates no review candidate,
+                and changes no Bird Log truth.
+              </span>
+            </div>
+          </>
+        ) : null}
+      </section>
 
       <div className="stream-context-strip">
         <span>

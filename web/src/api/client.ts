@@ -106,7 +106,9 @@ import type {
   SourceProviderDefinition,
   SourceSetupReviewResponse,
   Stream,
+  StreamMonitoringPolicy,
   StreamPlaybackStatus,
+  StreamRuntimeStatus,
   TaxonomyLabel,
   Visit,
   VisitDetail,
@@ -296,6 +298,14 @@ export const apiClient = {
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),
   getStreamPlaybackStatus: (streamId: string) =>
     request<StreamPlaybackStatus>(`/api/streams/${streamId}/playback`),
+  getStreamMonitoringPolicy: (streamId: string) =>
+    request<StreamMonitoringPolicy>(
+      `/api/streams/${encodeURIComponent(streamId)}/monitoring-policy`,
+    ),
+  getStreamRuntimeStatus: (streamId: string) =>
+    request<StreamRuntimeStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/runtime-status`,
+    ),
   rtspMjpegBridgeUrl: (streamId: string) =>
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live/rtsp-mjpeg`,
   localCameraMjpegBridgeUrl: (streamId: string) =>

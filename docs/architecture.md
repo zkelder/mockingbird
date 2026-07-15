@@ -320,10 +320,15 @@ boundary under [worker-lifecycle-boundary-design.md](worker-lifecycle-boundary-d
 
 ## Durable live-stream lifecycle boundary
 
-Phase 24C designs the next layer without implementing it. A future
-`DurableStreamSupervisor` may reconcile explicitly armed Stream monitoring
-policies with backend-owned live camera sessions after application restart. It
-must follow
+Phase 24C designed this layer, and Phase 24D implements its inert desired-state
+attachment point. Every Stream now receives an `off` monitoring policy and a
+`stopped` runtime checkpoint through an explicit schema migration or Stream
+creation. Read-only Stream-scoped policy/runtime APIs and Stream Detail status
+expose that separation without creating a supervisor or startup behavior.
+
+A future `DurableStreamSupervisor` may reconcile explicitly armed Stream
+monitoring policies with backend-owned live camera sessions after application
+restart. It must follow
 [durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md).
 
 The architecture keeps three concerns separate:
@@ -337,7 +342,9 @@ The architecture keeps three concerns separate:
 The first durable boundary covers supported backend-owned RTSP/local USB/Windows
 DirectShow live video only. The explicit external URL `SourceMonitorManager`
 remains a separate in-memory/provider-worker concern. Status reads remain
-side-effect free, backup/restore holds override arming, and only an explicitly
-enabled auto-create policy may produce needs-review evidence. Correction remains
-truth. Future audio may reuse lifecycle/component ownership but requires
+side-effect free; live-session quiet-window handoff now runs from the active
+monitor tick instead of browser/status polling. Backup/restore holds override
+arming, and only an explicitly enabled auto-create policy may produce
+needs-review evidence. Correction remains truth. Future audio may reuse
+lifecycle/component ownership but requires
 separate consent, privacy, retention, dependency, and evidence design.

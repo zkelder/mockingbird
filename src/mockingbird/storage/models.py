@@ -4,12 +4,28 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
     pass
+
+
+DEFAULT_STREAM_MONITORING_MODE = "off"
+DEFAULT_STREAM_RUNTIME_STATE = "stopped"
+DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS = 1.5
+DEFAULT_STREAM_MONITORING_QUIET_SECONDS = 30
+DEFAULT_STREAM_MONITORING_MINIMUM_DETECTIONS = 1
 
 
 class CameraSourceModel(Base):
@@ -30,6 +46,70 @@ class StreamModel(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     is_live: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class StreamMonitoringPolicyModel(Base):
+    """Durable user intent for Stream monitoring; it never proves runtime activity."""
+
+    __tablename__ = "stream_monitoring_policies"
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('off', 'armed', 'paused')",
+            name="ck_stream_monitoring_policy_mode",
+        ),
+    )
+
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), primary_key=True)
+    mode: Mapped[str] = mapped_column(String, nullable=False)
+    auto_create_review_candidates: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    evaluation_interval_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    quiet_period_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    minimum_detection_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    policy_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    armed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    pause_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class StreamRuntimeCheckpointModel(Base):
+    """Last-known operational metadata; it is never evidence or reviewed truth."""
+
+    __tablename__ = "stream_runtime_checkpoints"
+    __table_args__ = (
+        CheckConstraint(
+            "actual_state IN ('stopped', 'starting', 'running', 'backoff', "
+            "'blocked', 'stopping', 'interrupted')",
+            name="ck_stream_runtime_checkpoint_state",
+        ),
+    )
+
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), primary_key=True)
+    observed_policy_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    actual_state: Mapped[str] = mapped_column(String, nullable=False)
+    app_instance_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    runtime_generation_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_start_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_healthy_frame_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_clean_stop_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_failure_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    consecutive_failure_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_stop_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    start_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    evidence_handoff_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    safety_hold_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ZoneModel(Base):

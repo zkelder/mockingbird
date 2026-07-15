@@ -339,9 +339,11 @@ general worker console.
 
 ## Implementation sequence
 
-1. **Phase 24D — desired-state contract:** add schema/repository/API and
-   read-only UI status with every policy `off`; no supervisor and no startup
-   camera behavior.
+1. **Phase 24D — desired-state contract (complete):** schema version 2 now
+   persists one default-`off` policy and `stopped` checkpoint per Stream,
+   exposes read-only Stream-scoped policy/runtime status, and shows a compact
+   Stream Detail continuity section. It adds no supervisor or startup camera
+   behavior.
 2. **Phase 24E — supervisor foundation:** add fake-adapter lifecycle,
    app-instance/checkpoint, lease, stop ordering, and deterministic backoff
    tests while runtime enablement remains unavailable.
@@ -355,6 +357,12 @@ general worker console.
 5. **Phase 25 — field reliability:** measure restart recovery, long-run health,
    storage growth, nuisance/duplicate rate, candidate usefulness, and recovery
    on real feeder cameras.
+
+Phase 24D also moved unattended quiet-window reconciliation out of
+`GET /live-session/status` and into the active in-memory monitor tick. Status
+reads no longer create review candidates or instantiate camera runtime when no
+session exists. Schema version 1 databases and verified backups remain accepted
+only through the known version-2 migration, which backfills every Stream off.
 
 ## Validation requirements
 

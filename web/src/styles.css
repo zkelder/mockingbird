@@ -3304,6 +3304,42 @@ a.secondary-action {
   overflow-wrap: anywhere;
 }
 
+.stream-monitoring-continuity {
+  display: grid;
+  gap: 10px;
+}
+
+.stream-monitoring-continuity .section-heading > div,
+.continuity-message {
+  display: grid;
+  gap: 3px;
+}
+
+.monitoring-continuity-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.monitoring-continuity-facts span {
+  display: inline-flex;
+  gap: 5px;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #edf2e9;
+  color: #34473b;
+  font-size: 0.86rem;
+}
+
+.continuity-message {
+  color: #4f5f55;
+  font-size: 0.9rem;
+}
+
+.continuity-message.is-error {
+  color: #7c2d1e;
+}
+
 .stream-scene {
   position: relative;
   aspect-ratio: 16 / 9;

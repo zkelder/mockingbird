@@ -98,5 +98,7 @@ defines opt-in persisted camera/monitor desired state, reconnect, restart,
 resource limits, retention, restore holds, observable failure/backoff, and
 separate future audio consent in
 [durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md).
-Phase 24D should add the desired-state schema/API with every Stream off and no
-startup camera behavior before any supervisor implementation.
+Phase 24D now adds the schema-version-2 desired-state contract with every Stream
+persisted `off`/`stopped`, read-only policy/runtime APIs, a compact Stream Detail
+status, and no startup camera behavior. Phase 24E should build the disabled,
+fake-adapter-tested supervisor foundation before any activation control.

@@ -16,7 +16,7 @@ import uuid
 import zipfile
 
 from mockingbird.storage.database import (
-    CURRENT_DATABASE_SCHEMA_VERSION,
+    database_schema_version_is_compatible,
     sqlite_database_path,
 )
 
@@ -237,7 +237,7 @@ def _validate_database_file(path: Path) -> int:
 
     if row is None or not isinstance(row[0], int):
         raise LocalBackupValidationError("backup_database_schema_record_missing")
-    if row[0] != CURRENT_DATABASE_SCHEMA_VERSION:
+    if not database_schema_version_is_compatible(row[0]):
         raise LocalBackupValidationError("backup_database_schema_incompatible")
     return int(row[0])
 
