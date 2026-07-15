@@ -132,6 +132,11 @@ const LOCAL_CAMERA_ADVANCED_FIELD_KEYS = new Set([
 ]);
 
 function localCameraFieldIsVisible(fieldKey: string, connectionType: string): boolean {
+  if (["brightness", "contrast", "exposure", "zoom_mode"].includes(fieldKey)) {
+    // These legacy metadata fields never controlled camera hardware. Stream Detail
+    // now opens the real Windows driver controls when the adapter supports them.
+    return false;
+  }
   if (fieldKey === "local_camera_device" || fieldKey === "local_camera_format") {
     return connectionType === "local_usb";
   }

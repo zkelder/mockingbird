@@ -1269,6 +1269,11 @@ Current work:
   broad branch-heavy rectangle. A bounded monitor check with auto-create off
   remained quiet after tightening and created no media, MotionEvidence, review
   candidate, Bird Log entry, export, or truth.
+- Daylight Camera Calibration + Motion Fidelity 1: Stream Detail replaces
+  misleading brightness/exposure note inputs with an explicit Windows camera
+  driver-control action that requires the camera session to be stopped. Live
+  motion now samples at a 160-pixel maximum dimension instead of 64, and field-
+  observed highlight clipping produces an actionable overexposure warning.
 - Product Trust + Lifecycle Cleanup 1: stopped camera sessions clear transient
   active-motion badges/notices; real cameras can be renamed, archived, and
   restored without deleting their product graph; unreferenced mistaken Zones
@@ -1294,6 +1299,10 @@ Validation:
 - Camera archive and Zone removal are explicit lifecycle actions. Archive stops
   active runtime sessions without deleting Streams, Zones, evidence, review
   truth, exports, or media. Zone deletion rejects linked activity/review context.
+- Camera controls are explicit, Windows/DirectShow-only, use list arguments
+  without a shell, require a stopped session, and create no media, evidence,
+  Event/Visit, ReviewLabel, export, or truth. Motion-resolution and image-quality
+  changes remain local analysis only.
 - Sample removal requires confirmation and at least one real Source, blocks when
   sample-linked user work is present, and deletes no real camera graph or local
   media files. Demo reset restores only the sample walkthrough.

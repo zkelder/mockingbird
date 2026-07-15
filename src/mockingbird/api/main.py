@@ -156,6 +156,7 @@ from mockingbird.api.schemas import (
     WebhookPayloadValidationRequest,
     WebhookPayloadValidationResponse,
     WorkerStatusResponse,
+    WindowsCameraControlsResponse,
     WindowsCameraDiscoveryResponse,
     Zone,
     ZoneCreate,
@@ -1113,7 +1114,10 @@ class _AutoMotionCluster:
 
 
 _BIRD_FINE_MOTION_ZONE_TYPES = {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}
-_LIVE_FINE_MOTION_MAX_DIMENSION = 64
+# Feeder birds occupied too few pixels at 64-wide field sampling. 160 keeps
+# motion local and lightweight while making tiny pixel changes less dominant
+# and preserving more useful zone detail for later detector enrichment.
+_LIVE_ZONE_MOTION_MAX_DIMENSION = 160
 
 
 def _motion_zone_from_bounds(
@@ -1580,14 +1584,23 @@ def _live_motion_quality_warnings(
         return []
 
     warnings: list[str] = []
-    mean_value = sum(latest_pixels) / len(latest_pixels)
+    pixel_count = len(latest_pixels)
+    mean_value = sum(latest_pixels) / pixel_count
     contrast_range = max(latest_pixels) - min(latest_pixels)
-    mean_delta = sum(abs(pixel - mean_value) for pixel in latest_pixels) / len(latest_pixels)
+    mean_delta = sum(abs(pixel - mean_value) for pixel in latest_pixels) / pixel_count
+    clipped_highlight_ratio = sum(pixel >= 245 for pixel in latest_pixels) / pixel_count
+    clipped_shadow_ratio = sum(pixel <= 10 for pixel in latest_pixels) / pixel_count
 
-    if mean_value >= 235 and contrast_range <= 35:
-        warnings.append("Camera image appears overexposed; motion may be harder to detect.")
-    elif mean_value <= 20 and contrast_range <= 35:
-        warnings.append("Camera image appears underexposed; motion may be harder to detect.")
+    if (mean_value >= 235 and contrast_range <= 35) or clipped_highlight_ratio >= 0.65:
+        warnings.append(
+            "Camera image appears overexposed with clipped highlights; lower exposure or "
+            "disable low-light compensation in camera controls."
+        )
+    elif (mean_value <= 20 and contrast_range <= 35) or clipped_shadow_ratio >= 0.65:
+        warnings.append(
+            "Camera image appears underexposed with clipped shadows; raise exposure in "
+            "camera controls."
+        )
     if contrast_range <= 14 or mean_delta <= 5:
         warnings.append("Camera image appears low contrast; motion may be harder to detect.")
 
@@ -3217,7 +3230,7 @@ def _evaluate_live_stream_motion(
             decoded = load_image_frame_plane_bytes(
                 cached_frame.frame_bytes,
                 content_type=cached_frame.content_type,
-                max_dimension=_LIVE_FINE_MOTION_MAX_DIMENSION,
+                max_dimension=_LIVE_ZONE_MOTION_MAX_DIMENSION,
             )
             decoded_frames.append(decoded)
             frame_summaries.append(
@@ -5999,6 +6012,101 @@ async def discover_windows_cameras() -> WindowsCameraDiscoveryResponse:
             if len(devices) == 1
             else f"Found {len(devices)} cameras."
         ),
+    )
+
+
+@app.post(
+    "/api/streams/{stream_id}/camera-controls/open",
+    response_model=WindowsCameraControlsResponse,
+)
+async def open_stream_windows_camera_controls(
+    stream_id: str,
+) -> WindowsCameraControlsResponse:
+    """Open real DirectShow controls only after an explicit local user action."""
+
+    configuration = _stream_live_playback_config_or_404(
+        stream_id,
+        require_active_source=True,
+    )
+    common = {
+        "stream_id": stream_id,
+        "source_id": configuration.source_id,
+    }
+    if configuration.live_stream_type != windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+        return WindowsCameraControlsResponse(
+            **common,
+            status="unsupported",
+            message="Hardware camera controls are currently available for Windows webcams.",
+        )
+
+    snapshot = (
+        _live_camera_session_manager.status(stream_id)
+        if _live_camera_session_manager is not None
+        else None
+    )
+    if snapshot is not None and snapshot.status in {"starting", "running", "stopping"}:
+        return WindowsCameraControlsResponse(
+            **common,
+            status="camera_running",
+            message="Stop the camera before opening its hardware controls.",
+        )
+
+    bridge_status = windows_camera_bridge.windows_camera_status(
+        camera_name=configuration.windows_camera_name,
+        ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
+    )
+    if bridge_status == "camera_name_missing":
+        return WindowsCameraControlsResponse(
+            **common,
+            status="camera_not_configured",
+            message="Choose a Windows camera before opening hardware controls.",
+        )
+    if bridge_status == "ffmpeg_missing":
+        return WindowsCameraControlsResponse(
+            **common,
+            status="ffmpeg_missing",
+            message="Camera controls need FFmpeg. Install FFmpeg, then retry.",
+        )
+    if bridge_status != "available":
+        return WindowsCameraControlsResponse(
+            **common,
+            status="unsupported",
+            message="Windows camera controls are unavailable on this host.",
+        )
+
+    try:
+        completed = await asyncio.to_thread(
+            windows_camera_bridge.open_windows_dshow_camera_controls,
+            configuration.windows_camera_name or "",
+            ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
+        )
+    except subprocess.TimeoutExpired:
+        return WindowsCameraControlsResponse(
+            **common,
+            status="timed_out",
+            message="Camera controls timed out. Close the driver window and retry.",
+        )
+    except (OSError, ValueError):
+        return WindowsCameraControlsResponse(
+            **common,
+            status="failed",
+            message="Camera controls could not open. Check the camera connection and retry.",
+        )
+    if completed.returncode != 0:
+        return WindowsCameraControlsResponse(
+            **common,
+            status="failed",
+            message=(
+                "Camera controls closed without applying. Close other camera apps and retry."
+            ),
+        )
+    return WindowsCameraControlsResponse(
+        **common,
+        status="opened",
+        message="Camera controls closed. Start the camera and capture a frame to verify exposure.",
+        warnings=[
+            "Camera-driver settings may reset after reconnecting; verify the daylight image."
+        ],
     )
 
 

@@ -244,12 +244,15 @@ item, and High sensitivity checks more recent frame pairs with lower
 feeder/birdbath/perch thresholds for small, fast outdoor activity.
 Stream Detail can also save local camera tuning metadata for preview size,
 capture size, framerate, and input format. Those settings are applied to the
-next backend camera session or one-shot capture when the bridge supports them;
-brightness, contrast, exposure, and zoom notes remain calibration metadata
-because camera-driver support varies. Motion calibration can focus scoring on a
-selected Feeder Zone, show strongest-zone diagnostics, and warn when the image
-looks overexposed, underexposed, or low contrast. Raw motion still creates no
-Bird Log truth until explicit review/correction.
+next backend camera session or one-shot capture when the bridge supports them.
+Windows webcam users can explicitly open the camera driver's real exposure,
+brightness, focus, and low-light controls while the camera session is stopped;
+legacy text-note fields are no longer presented as working light controls.
+Motion calibration can focus scoring on a selected Feeder Zone, samples live
+motion at a 160-pixel maximum dimension, shows strongest-zone diagnostics, and
+warns on clipped highlights, underexposure, or low contrast with an actionable
+camera-control hint. Raw motion still creates no Bird Log truth until explicit
+review/correction.
 The Streams page shows Source health / Camera status for each selected Stream so
 manual checks can confirm the last snapshot test, last capture, saved image
 count, and motion readiness. Camera Monitoring Core can now start and stop an

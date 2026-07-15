@@ -84,11 +84,7 @@ type CameraTuningKey =
   | "preview_video_size"
   | "capture_video_size"
   | "framerate"
-  | "input_format"
-  | "brightness"
-  | "contrast"
-  | "exposure"
-  | "zoom_mode";
+  | "input_format";
 
 type CameraTuningDraft = Record<CameraTuningKey, string>;
 
@@ -183,10 +179,6 @@ const cameraTuningKeys: CameraTuningKey[] = [
   "capture_video_size",
   "framerate",
   "input_format",
-  "brightness",
-  "contrast",
-  "exposure",
-  "zoom_mode",
 ];
 
 const emptyCameraTuningDraft: CameraTuningDraft = {
@@ -195,10 +187,6 @@ const emptyCameraTuningDraft: CameraTuningDraft = {
   capture_video_size: "",
   framerate: "",
   input_format: "",
-  brightness: "",
-  contrast: "",
-  exposure: "",
-  zoom_mode: "",
 };
 
 const cameraTuningLabels: Record<CameraTuningKey, string> = {
@@ -207,10 +195,6 @@ const cameraTuningLabels: Record<CameraTuningKey, string> = {
   capture_video_size: "Capture size",
   framerate: "Framerate",
   input_format: "Input format",
-  brightness: "Brightness note",
-  contrast: "Contrast note",
-  exposure: "Exposure note",
-  zoom_mode: "Zoom/crop note",
 };
 
 const cameraTuningPlaceholders: Record<CameraTuningKey, string> = {
@@ -219,10 +203,6 @@ const cameraTuningPlaceholders: Record<CameraTuningKey, string> = {
   capture_video_size: "1920x1080",
   framerate: "15",
   input_format: "mjpeg",
-  brightness: "driver setting",
-  contrast: "driver setting",
-  exposure: "driver setting",
-  zoom_mode: "feeder framed tight",
 };
 
 function playbackTone(status: StreamPlaybackStatus["status"]): "good" | "review" | "quiet" {
@@ -598,6 +578,7 @@ export function StreamDetailPage({
   const [cameraTuningMessage, setCameraTuningMessage] = useState<string | null>(null);
   const [cameraTuningError, setCameraTuningError] = useState<string | null>(null);
   const [isSavingCameraTuning, setIsSavingCameraTuning] = useState(false);
+  const [isOpeningCameraControls, setIsOpeningCameraControls] = useState(false);
   const [liveMotionFocusZoneId, setLiveMotionFocusZoneId] = useState("");
   const [showLiveMotionDebug, setShowLiveMotionDebug] = useState(false);
   const [liveStatusNotice, setLiveStatusNotice] = useState<string | null>(null);
@@ -1072,6 +1053,29 @@ export function StreamDetailPage({
     await stopLiveCameraSession();
     await startLiveCameraSession(true);
     setCameraTuningMessage("Camera restarted with saved settings.");
+  }
+
+  async function handleOpenCameraControls() {
+    if (!detail) {
+      return;
+    }
+    setIsOpeningCameraControls(true);
+    setCameraTuningError(null);
+    setCameraTuningMessage(null);
+    try {
+      const result = await apiClient.openWindowsCameraControls(detail.stream.id);
+      if (result.status === "opened") {
+        setCameraTuningMessage([result.message, ...result.warnings].join(" "));
+      } else {
+        setCameraTuningError(result.message);
+      }
+    } catch (caught) {
+      setCameraTuningError(
+        caught instanceof Error ? caught.message : "Could not open camera controls.",
+      );
+    } finally {
+      setIsOpeningCameraControls(false);
+    }
   }
 
   async function startLiveCameraSession(openViewAfterStart = false) {
@@ -1990,7 +1994,12 @@ export function StreamDetailPage({
       string,
       unknown
     >,
-  ).filter(([, value]) => value != null && String(value).trim());
+  ).filter(
+    ([key, value]) =>
+      cameraTuningKeys.includes(key as CameraTuningKey) &&
+      value != null &&
+      String(value).trim(),
+  );
   const liveLastError =
     liveMotionResult?.last_error ?? liveMotionError ?? liveSessionError ?? null;
   const showLiveMonitorFacts = Boolean(liveMonitorRunning || liveMotionResult || liveSession);
@@ -2332,8 +2341,8 @@ export function StreamDetailPage({
             <details className="stream-live-secondary-panel stream-live-collapsible-panel">
               <summary>
                 <span className="stream-live-panel-summary-copy">
-                  <strong>Camera tuning</strong>
-                  <span>Preview 1280x720 at 10-15fps is a good feeder starting point.</span>
+                  <strong>Camera calibration</strong>
+                  <span>Set daylight exposure first, then choose live and capture quality.</span>
                 </span>
               </summary>
               <form className="stream-live-collapsible-body" onSubmit={handleSaveCameraTuning}>
@@ -2353,6 +2362,21 @@ export function StreamDetailPage({
                       type="button"
                     >
                       Restart camera
+                    </button>
+                  ) : null}
+                  {detail.playback.live_stream_type === "windows_dshow" ? (
+                    <button
+                      className="secondary-action"
+                      disabled={
+                        liveSessionRunning ||
+                        isOpeningCameraControls ||
+                        isStartingLiveSession ||
+                        isStoppingLiveSession
+                      }
+                      onClick={() => void handleOpenCameraControls()}
+                      type="button"
+                    >
+                      {isOpeningCameraControls ? "Controls open..." : "Open exposure controls"}
                     </button>
                   ) : null}
                 </div>
@@ -2378,8 +2402,9 @@ export function StreamDetailPage({
                 </div>
               ) : null}
               <span className="stream-live-hint">
-                Size, framerate, and input format are passed to ffmpeg when supported.
-                Brightness, contrast, exposure, and zoom notes may need the camera driver app.
+                Size, framerate, and input format apply when the camera restarts. Windows
+                exposure, brightness, focus, and low-light compensation use the camera's real
+                driver controls; stop the camera before opening them.
               </span>
               {cameraTuningMessage ? (
                 <span className="stream-live-hint">{cameraTuningMessage}</span>

@@ -113,6 +113,7 @@ import type {
   Visit,
   VisitDetail,
   WorkerStatusResponse,
+  WindowsCameraControlsResponse,
   WindowsCameraDiscoveryResponse,
   Zone,
   ZoneCreate,
@@ -314,6 +315,13 @@ export const apiClient = {
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live/windows-dshow-mjpeg`,
   discoverWindowsCameras: () =>
     request<WindowsCameraDiscoveryResponse>("/api/local-cameras/windows"),
+  openWindowsCameraControls: (streamId: string) =>
+    request<WindowsCameraControlsResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/camera-controls/open`,
+      {
+        method: "POST",
+      },
+    ),
   startLiveCameraSession: (streamId: string) =>
     request<LiveCameraSessionStatus>(
       `/api/streams/${encodeURIComponent(streamId)}/live-session/start`,

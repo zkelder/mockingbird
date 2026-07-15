@@ -547,6 +547,26 @@ export interface WindowsCameraDiscoveryResponse {
   creates_truth: boolean;
 }
 
+export interface WindowsCameraControlsResponse {
+  stream_id: string;
+  source_id?: string | null;
+  status:
+    | "opened"
+    | "camera_running"
+    | "camera_not_configured"
+    | "ffmpeg_missing"
+    | "unsupported"
+    | "timed_out"
+    | "failed";
+  message: string;
+  creates_media: boolean;
+  creates_evidence: boolean;
+  creates_event: boolean;
+  creates_visit: boolean;
+  creates_truth: boolean;
+  warnings: string[];
+}
+
 export interface LiveCameraSessionStatus {
   stream_id: string;
   source_id?: string | null;

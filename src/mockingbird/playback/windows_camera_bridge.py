@@ -121,6 +121,67 @@ def list_windows_dshow_video_devices(
     return parse_windows_dshow_video_devices(output)
 
 
+def build_windows_dshow_camera_controls_command(
+    camera_name: str,
+    *,
+    ffmpeg_binary_path: str | None = None,
+) -> list[str]:
+    """Build the explicit DirectShow property-page command without a shell."""
+
+    if not validate_windows_camera_name(camera_name):
+        raise ValueError("invalid_windows_camera_name")
+    return [
+        normalize_windows_ffmpeg_binary(ffmpeg_binary_path),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "dshow",
+        "-show_video_device_dialog",
+        "true",
+        "-i",
+        f"video={camera_name.strip()}",
+        "-t",
+        "0.2",
+        "-f",
+        "null",
+        "NUL",
+    ]
+
+
+def open_windows_dshow_camera_controls(
+    camera_name: str,
+    *,
+    ffmpeg_binary_path: str | None = None,
+    timeout_seconds: float = 180.0,
+    run_factory: RunFactory = subprocess.run,
+) -> subprocess.CompletedProcess[str]:
+    """Open the camera driver's real controls after an explicit product action."""
+
+    return run_factory(
+        build_windows_dshow_camera_controls_command(
+            camera_name,
+            ffmpeg_binary_path=ffmpeg_binary_path,
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout_seconds,
+        check=False,
+        # MockingBird normally runs without a console. This explicit interactive
+        # action needs its own visible Windows process so the driver page cannot
+        # remain hidden behind the local app.
+        creationflags=(
+            getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+            if sys.platform.startswith("win")
+            else 0
+        ),
+    )
+
+
 def build_windows_dshow_mjpeg_command(
     camera_name: str,
     *,
@@ -284,6 +345,7 @@ __all__ = [
     "MJPEG_BOUNDARY",
     "WINDOWS_DSHOW_STREAM_TYPE",
     "build_windows_dshow_frame_capture_command",
+    "build_windows_dshow_camera_controls_command",
     "build_windows_dshow_list_devices_command",
     "build_windows_dshow_mjpeg_command",
     "capture_windows_dshow_frame",
@@ -292,6 +354,7 @@ __all__ = [
     "iter_multipart_mjpeg",
     "list_windows_dshow_video_devices",
     "normalize_windows_ffmpeg_binary",
+    "open_windows_dshow_camera_controls",
     "parse_windows_dshow_video_devices",
     "start_windows_dshow_frame_capture_process",
     "start_windows_dshow_mjpeg_process",

@@ -128,6 +128,16 @@ class WindowsCameraDiscoveryStatus(str, Enum):
     failed = "failed"
 
 
+class WindowsCameraControlsStatus(str, Enum):
+    opened = "opened"
+    camera_running = "camera_running"
+    camera_not_configured = "camera_not_configured"
+    ffmpeg_missing = "ffmpeg_missing"
+    unsupported = "unsupported"
+    timed_out = "timed_out"
+    failed = "failed"
+
+
 class LiveMotionEvaluationStatus(str, Enum):
     evaluated = "evaluated"
     start_session_required = "start_session_required"
@@ -764,6 +774,20 @@ class WindowsCameraDiscoveryResponse(BaseModel):
     devices: list[str] = Field(default_factory=list)
     message: str
     creates_truth: bool = False
+
+
+class WindowsCameraControlsResponse(BaseModel):
+    # The DirectShow property page changes driver state only; it creates no product data.
+    stream_id: str
+    source_id: str | None = None
+    status: WindowsCameraControlsStatus
+    message: str
+    creates_media: bool = False
+    creates_evidence: bool = False
+    creates_event: bool = False
+    creates_visit: bool = False
+    creates_truth: bool = False
+    warnings: list[str] = Field(default_factory=list)
 
 
 class LiveCameraSessionDiagnosticEventResponse(BaseModel):

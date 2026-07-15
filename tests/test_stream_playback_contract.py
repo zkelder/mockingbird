@@ -920,7 +920,7 @@ async def test_live_motion_decodes_live_frames_at_fine_motion_resolution(
     )
 
     assert response.status_code == 200
-    assert requested_max_dimensions == [64, 64]
+    assert requested_max_dimensions == [160, 160]
 
 
 async def test_live_motion_bird_sized_feeder_mode_lowers_only_bird_zone_thresholds(
@@ -4414,6 +4414,44 @@ def test_windows_dshow_command_uses_list_args_and_safe_camera_name() -> None:
     assert windows_camera_bridge.validate_windows_camera_name("") is False
 
 
+def test_windows_dshow_camera_controls_use_explicit_property_dialog_without_shell() -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    result = windows_camera_bridge.open_windows_dshow_camera_controls(
+        "EMEET SmartCam S600",
+        ffmpeg_binary_path="C:\\ffmpeg\\bin\\ffmpeg.exe",
+        run_factory=fake_run,
+    )
+
+    assert result.returncode == 0
+    assert calls[0][0] == [
+        "C:\\ffmpeg\\bin\\ffmpeg.exe",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "dshow",
+        "-show_video_device_dialog",
+        "true",
+        "-i",
+        "video=EMEET SmartCam S600",
+        "-t",
+        "0.2",
+        "-f",
+        "null",
+        "NUL",
+    ]
+    assert calls[0][1].get("shell") is not True
+    assert calls[0][1]["timeout"] == 180.0
+
+
 def test_windows_camera_listing_parses_video_devices_without_shell() -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
 
@@ -4481,6 +4519,49 @@ async def test_windows_camera_discovery_returns_devices_without_creating_data(
     assert await product_counts(client) == before
 
 
+async def test_live_motion_reports_clipped_highlights_despite_dark_scene_details(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame_0 = b"\xff\xd8live-clipped-0\xff\xd9"
+    frame_1 = b"\xff\xd8live-clipped-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    # Mirrors the feeder field frame: most pixels are clipped white while tree
+    # detail keeps the total contrast range high enough to fool a mean/range check.
+    clipped_frame = [[255 for _x in range(10)] for _y in range(9)] + [
+        [175 for _x in range(10)]
+    ]
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: clipped_frame,
+            frame_1: clipped_frame,
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_changed_ratio": 0.1,
+            "min_triggered_frames": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    warnings = response.json()["image_quality_warnings"]
+    assert any("overexposed with clipped highlights" in warning for warning in warnings)
+    assert any("camera controls" in warning for warning in warnings)
+
+
 async def test_windows_camera_discovery_explains_when_no_camera_is_connected(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -4505,6 +4586,83 @@ async def test_windows_camera_discovery_explains_when_no_camera_is_connected(
     assert body["devices"] == []
     assert "Connect a camera" in body["message"]
     assert body["creates_truth"] is False
+
+
+async def test_windows_camera_controls_open_explicit_driver_dialog_without_creating_data(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.windows_camera_status",
+        lambda **kwargs: "available",
+    )
+
+    def fake_open(
+        camera_name: str,
+        *,
+        ffmpeg_binary_path: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        opened.append((camera_name, ffmpeg_binary_path))
+        return subprocess.CompletedProcess(["ffmpeg"], 0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.open_windows_dshow_camera_controls",
+        fake_open,
+    )
+    await configure_windows_dshow_camera(
+        client,
+        camera_name="EMEET SmartCam S600",
+        ffmpeg_binary_path="C:\\ffmpeg\\bin\\ffmpeg.exe",
+    )
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/camera-controls/open")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "opened"
+    assert body["stream_id"] == STREAM_ID
+    assert body["source_id"] == SOURCE_ID
+    assert body["creates_media"] is False
+    assert body["creates_evidence"] is False
+    assert body["creates_event"] is False
+    assert body["creates_visit"] is False
+    assert body["creates_truth"] is False
+    assert opened == [("EMEET SmartCam S600", "C:\\ffmpeg\\bin\\ffmpeg.exe")]
+    assert await product_counts(client) == before
+
+
+async def test_windows_camera_controls_require_stopped_camera(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_process = FakeFfmpegProcess([])
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.windows_camera_status",
+        lambda **kwargs: "available",
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.start_windows_dshow_mjpeg_process",
+        lambda *args, **kwargs: fake_process,
+    )
+    await configure_windows_dshow_camera(
+        client,
+        camera_name="EMEET SmartCam S600",
+        ffmpeg_binary_path="C:\\ffmpeg\\bin\\ffmpeg.exe",
+    )
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/camera-controls/open")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "camera_running"
+    assert "Stop the camera" in response.json()["message"]
+    assert await product_counts(client) == before
+    stop_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/stop")
+    assert stop_response.status_code == 200
 
 
 def test_windows_dshow_frame_capture_command_uses_list_args() -> None:
