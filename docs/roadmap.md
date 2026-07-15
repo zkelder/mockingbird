@@ -1239,6 +1239,10 @@ Current work:
 - Windows Camera Onboarding 1: the existing local-camera setup now offers an
   explicit, read-only Detect cameras action, reports no-device/FFmpeg/host states
   in product language, and never requires a user to copy an ffmpeg command.
+- Add Camera Product Flow 1: Cameras/Streams can create a named local-camera
+  Source and one default live Stream before connection setup. This preserves the
+  demo Source and creates no media, evidence, Event/Visit, ReviewLabel, export,
+  analytics truth, or adapter runtime behavior.
 - Local camera setup now asks only for the connection type, matching camera
   identifier, and optional display name. Platform-specific tuning remains under
   Advanced camera settings, while setup diagnostics, field-test checks, and
@@ -1256,10 +1260,19 @@ Current work:
   ahead of filters, bulk tools, reviewed history, and optional analyzer setup.
   Dataset Exports puts the reviewed-only export action ahead of QA/coverage
   diagnostics. Secondary capabilities remain available under explicit details.
+- Live Zone Redraw 1: a selected user-authored Zone can be redrawn on the live
+  camera surface and saved through the existing Zone update contract. Redrawing
+  changes normalized geometry only and creates no media, evidence, review item,
+  Bird Log entry, export, or truth.
+- Daylight Feeder Setup Validation 1: the connected EMEET now has its own Source
+  and Stream, the demo Source is restored, and two tight Feeder Zones replace a
+  broad branch-heavy rectangle. A bounded monitor check with auto-create off
+  remained quiet after tightening and created no media, MotionEvidence, review
+  candidate, Bird Log entry, export, or truth.
 - No new page, navigation item, dashboard card, or permanent field-test panel is
   added. The primary product flow remains Cameras/Streams -> Review Queue -> Bird
   Log -> Exports.
-- Next likely phase: Daylight Feeder Field Validation 1 — run representative
+- Next likely phase: Daylight Feeder Field Validation 2 — run representative
   sessions, measure candidate recall, nuisance and duplicate rates, and best-frame
   usefulness, then tune the existing capture path from evidence.
 

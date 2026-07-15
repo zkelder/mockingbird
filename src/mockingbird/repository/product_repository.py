@@ -61,6 +61,8 @@ from mockingbird.api.schemas import (
     AnalyticsSummary,
     BoundingBox,
     CameraSource,
+    CameraSourceCreate,
+    CameraSourceCreateResponse,
     ClassifierManifestExample,
     ClassifierManifestExportFile,
     ClassifierManifestFileExportRequest,
@@ -1308,6 +1310,41 @@ class ProductRepository:
         with self.session_factory() as session:
             source = session.get(CameraSourceModel, source_id)
             return _source_from_model(source) if source else None
+
+    def create_camera_source(
+        self,
+        payload: CameraSourceCreate,
+    ) -> CameraSourceCreateResponse:
+        """Create durable Source/Stream context without connecting or creating evidence."""
+
+        source_name = payload.name.strip()
+        with self.session_factory() as session:
+            with session.begin():
+                existing_names = session.scalars(select(CameraSourceModel.name)).all()
+                if any(name.strip().casefold() == source_name.casefold() for name in existing_names):
+                    raise ValueError("source_name_exists")
+
+                identifier = uuid.uuid4().hex[:12]
+                source_model = CameraSourceModel(
+                    id=f"source-{identifier}",
+                    name=source_name,
+                    kind=SourceKind.local_camera.value,
+                    status=SourceStatus.needs_setup.value,
+                    description="Outdoor camera ready to connect.",
+                )
+                stream_model = StreamModel(
+                    id=f"stream-{identifier}",
+                    source_id=source_model.id,
+                    name=f"{source_name} stream",
+                    description=f"Live outdoor stream for {source_name}.",
+                    is_live=True,
+                )
+                session.add_all([source_model, stream_model])
+                session.flush()
+                return CameraSourceCreateResponse(
+                    source=_source_from_model(source_model),
+                    stream=_stream_from_model(stream_model),
+                )
 
     def list_source_provider_definitions(self) -> list[SourceProviderDefinition]:
         return list(SOURCE_PROVIDER_DEFINITIONS)

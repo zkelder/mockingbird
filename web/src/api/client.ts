@@ -2,6 +2,8 @@ import type {
   AdapterEvaluationSummary,
   AnalyticsSummary,
   CameraSource,
+  CameraSourceCreateRequest,
+  CameraSourceCreateResponse,
   ClassifierManifestFileExportRequest,
   ClassifierManifestFileExportResponse,
   ClassifierReadinessReport,
@@ -219,6 +221,11 @@ export const apiClient = {
     return request<TaxonomyLabel[]>(`/api/taxonomy/suggestions${query ? `?${query}` : ""}`);
   },
   getSources: () => request<CameraSource[]>("/api/sources"),
+  createCameraSource: (payload: CameraSourceCreateRequest) =>
+    request<CameraSourceCreateResponse>("/api/sources", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   getSourceProviderDefinitions: () =>
     request<SourceProviderDefinition[]>("/api/source-provider-definitions"),
   getWorkerStatus: () => request<WorkerStatusResponse>("/api/workers/status"),

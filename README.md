@@ -105,6 +105,9 @@ startup.
 MockingBird also has a first local USB/webcam Live view path through the
 `local_usb` provider. Linux `/dev/video0`-style devices are the first supported
 target, using optional system `ffmpeg` through the backend camera session.
+The Cameras/Streams page can add a named outdoor camera as a durable Source with
+one default Stream before connection setup, so real cameras no longer need to
+replace the seeded demo Source.
 If `ffmpeg` or the device path is unavailable, the app reports that local camera
 playback is unavailable without affecting setup, review, export, or monitoring.
 Windows webcams can use the same `local_usb` provider with `windows_dshow` and
@@ -133,6 +136,8 @@ Stream Detail can now draw and edit user-authored Zones directly over the real
 live stream surface. Monitoring uses those same active feeder, birdbath, ground,
 perch, yard, driveway, privacy, and ignore Zones when available; Bird Log and
 exports still begin only after Review Queue correction.
+Selected live Zones can also be redrawn over the current camera frame, allowing
+field placement to be tightened without leaving a stale or duplicate Zone.
 Live motion results name the strongest user-authored Zone when one triggered,
 report ignored/privacy Zone suppression, and keep raw motion out of Bird Log
 until explicit review/correction.

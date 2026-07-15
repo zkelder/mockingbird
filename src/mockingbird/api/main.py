@@ -18,6 +18,8 @@ from mockingbird.api.schemas import (
     AnalyticsSummary,
     AdapterEvaluationSummary,
     CameraSource,
+    CameraSourceCreate,
+    CameraSourceCreateResponse,
     ClassifierReadinessReport,
     ClassifierManifestFileExportRequest,
     ClassifierManifestFileExportResponse,
@@ -4820,6 +4822,23 @@ async def get_taxonomy_label(label: str) -> TaxonomyLabel:
 @app.get("/api/sources", response_model=list[CameraSource])
 async def list_sources() -> list[CameraSource]:
     return get_repository().list_sources()
+
+
+@app.post(
+    "/api/sources",
+    response_model=CameraSourceCreateResponse,
+    status_code=201,
+)
+async def create_camera_source(payload: CameraSourceCreate) -> CameraSourceCreateResponse:
+    try:
+        return get_repository().create_camera_source(payload)
+    except ValueError as error:
+        if str(error) == "source_name_exists":
+            raise HTTPException(
+                status_code=409,
+                detail="A camera with that name already exists.",
+            ) from error
+        raise
 
 
 @app.get("/api/source-provider-definitions", response_model=list[SourceProviderDefinition])

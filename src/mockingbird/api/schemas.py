@@ -286,6 +286,20 @@ class CameraSource(BaseModel):
     description: str
 
 
+class CameraSourceCreate(BaseModel):
+    """Create one user-facing camera and its default Stream."""
+
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("Camera name cannot be empty.")
+        return name
+
+
 class SourceConnectionStatus(BaseModel):
     # Source connection status is product-level readiness, not provider plumbing.
     source_id: str
@@ -537,6 +551,12 @@ class Stream(BaseModel):
     name: str
     description: str
     is_live: bool
+
+
+class CameraSourceCreateResponse(BaseModel):
+    # Source creation establishes product context only; setup and evidence stay explicit.
+    source: CameraSource
+    stream: Stream
 
 
 class StreamPlaybackStatus(BaseModel):

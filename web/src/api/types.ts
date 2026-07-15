@@ -172,6 +172,15 @@ export interface CameraSource {
   description: string;
 }
 
+export interface CameraSourceCreateRequest {
+  name: string;
+}
+
+export interface CameraSourceCreateResponse {
+  source: CameraSource;
+  stream: Stream;
+}
+
 export interface SourceConnectionStatus {
   source_id: string;
   status: SourceConnectionStatusValue;

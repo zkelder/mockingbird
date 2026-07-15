@@ -532,6 +532,7 @@ export function StreamDetailPage({
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [zoneDraft, setZoneDraft] = useState<ZoneDraft | null>(null);
   const [drawMode, setDrawMode] = useState(false);
+  const [redrawZoneId, setRedrawZoneId] = useState<string | null>(null);
   const [drawStart, setDrawStart] = useState<Point | null>(null);
   const [draftPolygon, setDraftPolygon] = useState<Point[] | null>(null);
   const [newZoneName, setNewZoneName] = useState("New zone");
@@ -1400,6 +1401,29 @@ export function StreamDetailPage({
       }
     }
     setDrawMode(true);
+    setRedrawZoneId(null);
+    setDraftPolygon(null);
+    setDrawStart(null);
+    setZoneError(null);
+    setZoneMessage(null);
+  }
+
+  function startRedrawMode() {
+    if (!selectedZone) {
+      return;
+    }
+    if (detail && hasRealLivePlayback(detail.playback)) {
+      if (!liveViewOpen) {
+        setZoneError("Open Live view to redraw this zone on the camera stream.");
+        return;
+      }
+      if (liveViewState !== "streaming") {
+        setZoneError("Wait for the live stream to start before redrawing this zone.");
+        return;
+      }
+    }
+    setDrawMode(true);
+    setRedrawZoneId(selectedZone.id);
     setDraftPolygon(null);
     setDrawStart(null);
     setZoneError(null);
@@ -1408,6 +1432,7 @@ export function StreamDetailPage({
 
   function cancelDrawMode() {
     setDrawMode(false);
+    setRedrawZoneId(null);
     setDraftPolygon(null);
     setDrawStart(null);
     setZoneError(null);
@@ -1479,7 +1504,7 @@ export function StreamDetailPage({
     }
 
     const trimmedName = newZoneName.trim();
-    if (!trimmedName) {
+    if (!redrawZoneId && !trimmedName) {
       setZoneError("Zone name is required.");
       return;
     }
@@ -1488,6 +1513,20 @@ export function StreamDetailPage({
     setZoneError(null);
     setZoneMessage(null);
     try {
+      if (redrawZoneId) {
+        const result = await apiClient.updateZone(redrawZoneId, {
+          polygon: draftPolygon,
+        });
+        replaceZones(result.zones);
+        setSelectedZoneId(result.zone.id);
+        setDrawMode(false);
+        setRedrawZoneId(null);
+        setDraftPolygon(null);
+        setDrawStart(null);
+        setZoneMessage("Zone shape updated.");
+        return;
+      }
+
       const result = await apiClient.createZone({
         stream_id: streamId,
         name: trimmedName,
@@ -1498,6 +1537,7 @@ export function StreamDetailPage({
       replaceZones(result.zones);
       setSelectedZoneId(result.zone.id);
       setDrawMode(false);
+      setRedrawZoneId(null);
       setDraftPolygon(null);
       setDrawStart(null);
       setNewZoneName("New zone");
@@ -2151,7 +2191,11 @@ export function StreamDetailPage({
                 onClick={drawMode ? cancelDrawMode : startDrawMode}
                 type="button"
               >
-                {drawMode ? "Cancel draw" : "Draw new zone"}
+                {drawMode
+                  ? redrawZoneId
+                    ? "Cancel redraw"
+                    : "Cancel draw"
+                  : "Draw new zone"}
               </button>
               <button
                 aria-pressed={showLiveZones}
@@ -3069,7 +3113,13 @@ export function StreamDetailPage({
               disabled={isSavingZone}
               onClick={drawMode ? cancelDrawMode : startDrawMode}
             >
-              {drawMode ? "Cancel draw" : realLivePlayback ? "Draw on live stream" : "Draw new zone"}
+              {drawMode
+                ? redrawZoneId
+                  ? "Cancel redraw"
+                  : "Cancel draw"
+                : realLivePlayback
+                  ? "Draw on live stream"
+                  : "Draw new zone"}
             </button>
           </div>
           <div className="zone-editor-grid">
@@ -3090,7 +3140,7 @@ export function StreamDetailPage({
             </div>
 
             <div className="zone-workspace">
-              {selectedZone && zoneDraft ? (
+              {selectedZone && zoneDraft && !drawMode ? (
                 <form className="zone-edit-form" onSubmit={handleSaveSelectedZone}>
                   <label>
                     Name
@@ -3134,52 +3184,78 @@ export function StreamDetailPage({
                     />
                     Active
                   </label>
-                  <button className="primary-action" disabled={isSavingZone} type="submit">
-                    Save zone
-                  </button>
+                  <div className="zone-action-row">
+                    <button className="primary-action" disabled={isSavingZone} type="submit">
+                      Save zone
+                    </button>
+                    {realLivePlayback ? (
+                      <button
+                        className="secondary-action"
+                        disabled={isSavingZone}
+                        onClick={startRedrawMode}
+                        type="button"
+                      >
+                        Redraw area
+                      </button>
+                    ) : null}
+                  </div>
                 </form>
-              ) : (
+              ) : !drawMode ? (
                 <span className="meta-text">No zone selected.</span>
-              )}
+              ) : null}
 
               {(drawMode || draftPolygon) && (
                 <form className="draw-zone-panel" onSubmit={handleCreateZone}>
                   <div className="item-title-row">
-                    <strong>{draftPolygon ? "New zone shape" : "Drawing zone"}</strong>
+                    <strong>
+                      {redrawZoneId
+                        ? draftPolygon
+                          ? "Replacement shape"
+                          : `Redrawing ${selectedZone?.name ?? "zone"}`
+                        : draftPolygon
+                          ? "New zone shape"
+                          : "Drawing zone"}
+                    </strong>
                     <StatusPill label={draftPolygon ? "Ready" : "Draw"} tone="quiet" />
                   </div>
                   {realLivePlayback ? (
                     <span className="meta-text">
-                      Drag a rectangle over the live camera surface, then name and save it here.
+                      {redrawZoneId
+                        ? "Drag a replacement rectangle over the live camera surface, then save the new shape."
+                        : "Drag a rectangle over the live camera surface, then name and save it here."}
                     </span>
                   ) : null}
-                  <label>
-                    Name
-                    <input
-                      value={newZoneName}
-                      onChange={(event) => setNewZoneName(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Type
-                    <select
-                      value={newZoneType}
-                      onChange={(event) => setNewZoneType(event.target.value as ZoneType)}
-                    >
-                      {zoneTypeOptions.map((zoneType) => (
-                        <option key={zoneType} value={zoneType}>
-                          {formatLabel(zoneType)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {!redrawZoneId ? (
+                    <>
+                      <label>
+                        Name
+                        <input
+                          value={newZoneName}
+                          onChange={(event) => setNewZoneName(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Type
+                        <select
+                          value={newZoneType}
+                          onChange={(event) => setNewZoneType(event.target.value as ZoneType)}
+                        >
+                          {zoneTypeOptions.map((zoneType) => (
+                            <option key={zoneType} value={zoneType}>
+                              {formatLabel(zoneType)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </>
+                  ) : null}
                   <div className="zone-action-row">
                     <button
                       className="primary-action"
                       disabled={isSavingZone || !draftPolygon}
                       type="submit"
                     >
-                      Save new zone
+                      {redrawZoneId ? "Save new shape" : "Save new zone"}
                     </button>
                     <button className="secondary-action" onClick={cancelDrawMode} type="button">
                       Cancel

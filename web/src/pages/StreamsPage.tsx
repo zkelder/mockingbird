@@ -63,6 +63,7 @@ interface StreamsPageProps {
   onOpenReview: () => void;
   onOpenBirdLog: () => void;
   onOpenExports: () => void;
+  onCameraCreated: () => Promise<void>;
 }
 
 function connectionTone(status: SourceConnectionStatus["status"]): "good" | "review" | "quiet" {
@@ -1710,6 +1711,7 @@ export function StreamsPage({
   onOpenReview,
   onOpenBirdLog,
   onOpenExports,
+  onCameraCreated,
 }: StreamsPageProps) {
   const [connectionStatuses, setConnectionStatuses] = useState<
     Record<string, SourceConnectionStatus>
@@ -1728,6 +1730,11 @@ export function StreamsPage({
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [setupMessage, setSetupMessage] = useState<string | null>(null);
+  const [isAddCameraOpen, setIsAddCameraOpen] = useState(false);
+  const [newCameraName, setNewCameraName] = useState("");
+  const [isCreatingCamera, setIsCreatingCamera] = useState(false);
+  const [createCameraError, setCreateCameraError] = useState<string | null>(null);
+  const [pendingSelectedSourceId, setPendingSelectedSourceId] = useState<string | null>(null);
   const [previewResult, setPreviewResult] = useState<ExternalUrlPreviewResponse | null>(null);
   const [previewSaveResult, setPreviewSaveResult] =
     useState<ExternalUrlPreviewSaveResponse | null>(null);
@@ -1929,10 +1936,18 @@ export function StreamsPage({
       setSelectedSourceId(null);
       return;
     }
+    if (
+      pendingSelectedSourceId &&
+      sources.some((source) => source.id === pendingSelectedSourceId)
+    ) {
+      setSelectedSourceId(pendingSelectedSourceId);
+      setPendingSelectedSourceId(null);
+      return;
+    }
     if (!selectedSourceId || !sources.some((source) => source.id === selectedSourceId)) {
       setSelectedSourceId(sources[0].id);
     }
-  }, [sources, selectedSourceId]);
+  }, [sources, selectedSourceId, pendingSelectedSourceId]);
 
   const selectedSource = sources.find((source) => source.id === selectedSourceId) ?? null;
   const selectedConnection = selectedSourceId ? connectionStatuses[selectedSourceId] : null;
@@ -1967,6 +1982,32 @@ export function StreamsPage({
     providerDefinitions.find(
       (definition) => definition.provider_key === selectedConfiguration?.provider_key,
     );
+
+  async function handleCreateCamera(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = newCameraName.trim();
+    if (!name) {
+      setCreateCameraError("Enter a name for this camera.");
+      return;
+    }
+
+    setIsCreatingCamera(true);
+    setCreateCameraError(null);
+    try {
+      const result = await apiClient.createCameraSource({ name });
+      setPendingSelectedSourceId(result.source.id);
+      await onCameraCreated();
+      setNewCameraName("");
+      setIsAddCameraOpen(false);
+      setSetupMessage("Camera added. Connect it below, then open the Stream.");
+    } catch (caught) {
+      setCreateCameraError(
+        caught instanceof Error ? caught.message : "Could not add the camera.",
+      );
+    } finally {
+      setIsCreatingCamera(false);
+    }
+  }
 
   async function refreshStreamPlaybackStatus(
     streamId: string,
@@ -4057,25 +4098,18 @@ export function StreamsPage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Stream-first workspace"
-        title="Streams"
-        description="Connect Sources, inspect Streams, configure setup metadata, then draw Zones and review activity."
+        eyebrow="Outdoor camera workspace"
+        title="Cameras / Streams"
+        description="Add a camera, connect it, open the live Stream, and draw the Zones that matter."
       />
-      <section className="notice-panel onboarding-provider-note">
-        <strong>Provider setup is metadata first</strong>
-        <span>
-          Use explicit Live view, snapshot, import, or review actions below. Playback,
-          monitoring, and review stay separate.
-        </span>
-      </section>
       {connectionError ? <div className="error-panel">{connectionError}</div> : null}
       {selectedSource ? (
         <section className="panel source-setup-panel source-workflow-panel">
           <div className="section-heading">
             <div>
-              <h2>Source workflow</h2>
+              <h2>Camera setup</h2>
               <span className="meta-text">
-                Setup metadata, playback status, Streams, Zones, and review stay in one flow
+                Connect the camera, then open its Stream and draw Zones
               </span>
             </div>
             {selectedSetupReview ? (
@@ -4091,28 +4125,58 @@ export function StreamsPage({
             ) : null}
           </div>
           <div className="source-selector-row">
-            <label>
-              Source
-              <select
-                value={selectedSource.id}
-                onChange={(event) => {
-                  setSelectedSourceId(event.target.value);
-                  setSetupError(null);
-                  setSetupMessage(null);
+            <div className="source-picker-control">
+              <label>
+                Camera
+                <select
+                  value={selectedSource.id}
+                  onChange={(event) => {
+                    setSelectedSourceId(event.target.value);
+                    setSetupError(null);
+                    setSetupMessage(null);
+                  }}
+                >
+                  {sources.map((source) => (
+                    <option key={source.id} value={source.id}>
+                      {source.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="secondary-action"
+                onClick={() => {
+                  setIsAddCameraOpen((current) => !current);
+                  setCreateCameraError(null);
                 }}
+                type="button"
               >
-                {sources.map((source) => (
-                  <option key={source.id} value={source.id}>
-                    {source.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+                {isAddCameraOpen ? "Cancel" : "Add camera"}
+              </button>
+            </div>
             <div className="source-summary-line">
               <strong>{selectedProviderLabel}</strong>
               <span>{selectedSetupReview?.summary ?? selectedSource.description}</span>
             </div>
           </div>
+          {isAddCameraOpen ? (
+            <form className="add-camera-form" onSubmit={handleCreateCamera}>
+              <label>
+                Camera name
+                <input
+                  autoFocus
+                  maxLength={120}
+                  onChange={(event) => setNewCameraName(event.target.value)}
+                  placeholder="Backyard feeder camera"
+                  value={newCameraName}
+                />
+              </label>
+              <button className="primary-action" disabled={isCreatingCamera} type="submit">
+                {isCreatingCamera ? "Adding..." : "Add camera"}
+              </button>
+              {createCameraError ? <span className="zone-error">{createCameraError}</span> : null}
+            </form>
+          ) : null}
           <div className="source-overview-grid">
             <div>
               <span>Readiness</span>
