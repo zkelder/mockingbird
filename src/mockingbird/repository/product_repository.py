@@ -40,9 +40,11 @@ from mockingbird.detectors.megadetector_adapter import (
     MEGADETECTOR_SUPPORTED_LABELS,
     SUPPORTED_MEGADETECTOR_IMAGE_CONTENT_TYPES,
     MegaDetectorConfigurationError,
+    MegaDetectorBox,
     MegaDetectorModelFormatError,
     MegaDetectorModelFileError,
     MegaDetectorOutputError,
+    MegaDetectorProposal,
     MegaDetectorRuntimeUnavailableError,
     MegaDetectorStatus,
     MegaDetectorUnsupportedMediaError,
@@ -5479,11 +5481,24 @@ class ProductRepository:
                 else:
                     zone_model = self._default_demo_zone(session, stream_model.id)
 
+                if zone_model is not None and zone_model.zone_type in {
+                    ZoneType.privacy.value,
+                    ZoneType.ignore.value,
+                }:
+                    # Privacy and Ignore zones suppress analysis itself; they must never
+                    # degrade to a full-frame detector run when no focus crop is allowed.
+                    raise ValueError("megadetector_zone_suppressed")
+
                 try:
                     detector_proposals = run_megadetector_on_image(
                         local_path=asset_model.local_path,
                         content_type=asset_model.content_type,
                         zone_context=zone_model.id if zone_model else None,
+                        focus_box=_megadetector_focus_box(zone_model),
+                    )
+                    detector_proposals = _megadetector_proposals_in_zone(
+                        detector_proposals,
+                        zone_model,
                     )
                 except MegaDetectorModelFormatError as error:
                     raise ValueError("megadetector_model_format_unsupported") from error
@@ -6642,6 +6657,7 @@ class ProductRepository:
         unsupported_errors = {
             "local_detector_unsupported_media_type",
             "megadetector_unsupported_media_type",
+            "megadetector_zone_suppressed",
             "unsupported_media_type",
         }
         failed_errors = {
@@ -11389,6 +11405,61 @@ def _zone_bounds(zone: Zone) -> CropBoxNormalized | None:
     if left >= right or top >= bottom:
         return None
     return CropBoxNormalized(left=left, top=top, right=right, bottom=bottom)
+
+
+def _megadetector_focus_box(zone_model: ZoneModel | None) -> MegaDetectorBox | None:
+    if zone_model is None:
+        return None
+    zone = _zone_from_model(zone_model)
+    if not zone.is_active or zone.zone_type in {ZoneType.privacy, ZoneType.ignore}:
+        return None
+    bounds = _zone_bounds(zone)
+    if bounds is None:
+        return None
+    crop_plan = plan_activity_crop_bounds(
+        left=bounds.left,
+        top=bounds.top,
+        right=bounds.right,
+        bottom=bounds.bottom,
+    )
+    if crop_plan.is_full_frame_fallback:
+        return None
+    crop = crop_plan.crop_box_normalized
+    return MegaDetectorBox(
+        x=crop.left,
+        y=crop.top,
+        width=crop.right - crop.left,
+        height=crop.bottom - crop.top,
+    )
+
+
+def _megadetector_proposals_in_zone(
+    proposals: list[MegaDetectorProposal],
+    zone_model: ZoneModel | None,
+) -> list[MegaDetectorProposal]:
+    if zone_model is None:
+        return proposals
+    zone = _zone_from_model(zone_model)
+    bounds = _zone_bounds(zone)
+    if bounds is None:
+        return []
+
+    filtered: list[MegaDetectorProposal] = []
+    for proposal in proposals:
+        box = proposal.bbox
+        if box is None:
+            continue
+        intersection_width = min(box.x + box.width, bounds.right) - max(
+            box.x,
+            bounds.left,
+        )
+        intersection_height = min(box.y + box.height, bounds.bottom) - max(
+            box.y,
+            bounds.top,
+        )
+        if intersection_width > 0 and intersection_height > 0:
+            filtered.append(proposal)
+    return filtered
 
 
 def _bounding_box_from_crop_box(box: CropBoxNormalized) -> BoundingBox:

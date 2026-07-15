@@ -38,6 +38,36 @@ Official references reviewed:
 - [MegaDetector repository](https://github.com/agentmorris/MegaDetector)
 - [MegaDetector user guide](https://github.com/agentmorris/MegaDetector/blob/main/megadetector.md)
 
+## Phase 23 Local MDv5a Field Smoke
+
+The first Windows field smoke used:
+
+- `megadetector` 10.0.24 in MockingBird's optional `.venv312` install
+- PyTorch 2.13.0 CPU runtime; no CUDA replacement or camera session
+- official `md_v5a.0.1.pt`, 280,767,041 bytes
+- local SHA-256
+  `FE3E90E4B1955821AB7C1F88B446DC0C8CB25E109FDD1872916A55305294A5EF`
+- default proposal threshold 0.1
+
+The first load exposed user-profile cache writes from YOLOv5/Matplotlib. The
+adapter now directs those caches to ignored `data/runtime/megadetector` storage
+and disables YOLOv5 package auto-install before importing the runtime.
+
+Observed inference results:
+
+- full overexposed feeder frame: six vehicle detections from the street, no
+  animals, 14.9 seconds including CPU model load
+- the same frame with existing padded Red feeder focus: zero detections, 10.4
+  seconds, so background vehicles no longer polluted feeder evidence
+- actual Review Queue identification path on that candidate: `no_proposal`, no
+  proposal IDs, no truth/export creation, 10.0 seconds
+- official Orinoquía positive-control image: one animal at 0.952 confidence,
+  10.3 seconds
+
+The result validates real local inference and the evidence boundary; it does not
+establish bird recall. The next field decision requires representative saved
+frames that visibly contain feeder birds.
+
 ## Probe Boundary
 
 The probe was local and disposable. It did not add runtime code, model files, model downloads, camera/source adapters, background workers, or product API changes.

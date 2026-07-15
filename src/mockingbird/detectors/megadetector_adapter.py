@@ -22,6 +22,8 @@ MEGADETECTOR_RUNTIME_PACKAGE = "megadetector"
 MEGADETECTOR_MODEL_PATH_ENV = "MOCKINGBIRD_MEGADETECTOR_MODEL_PATH"
 MEGADETECTOR_LABELS_PATH_ENV = "MOCKINGBIRD_MEGADETECTOR_LABELS_PATH"
 MEGADETECTOR_CONFIDENCE_THRESHOLD_ENV = "MOCKINGBIRD_MEGADETECTOR_CONFIDENCE_THRESHOLD"
+MEGADETECTOR_RUNTIME_CACHE_PATH_ENV = "MOCKINGBIRD_MEGADETECTOR_RUNTIME_CACHE_PATH"
+MEGADETECTOR_DEFAULT_RUNTIME_CACHE_PATH = "data/runtime/megadetector"
 MEGADETECTOR_DEFAULT_CONFIDENCE_THRESHOLD = 0.1
 MEGADETECTOR_MAX_PROPOSALS = 20
 MEGADETECTOR_SETUP_HINT = (
@@ -200,6 +202,7 @@ def run_megadetector_on_image(
     local_path: str,
     content_type: str,
     zone_context: str | None = None,
+    focus_box: MegaDetectorBox | None = None,
 ) -> list[MegaDetectorProposal]:
     if content_type not in SUPPORTED_MEGADETECTOR_IMAGE_CONTENT_TYPES:
         raise MegaDetectorUnsupportedMediaError("unsupported_media_type")
@@ -227,6 +230,7 @@ def run_megadetector_on_image(
         labels_path=status.labels_path,
         confidence_threshold=_confidence_threshold(),
         zone_context=zone_context,
+        focus_box=focus_box,
     )
 
 
@@ -247,7 +251,9 @@ def _execute_megadetector_runtime(
     labels_path: str | None,
     confidence_threshold: float | None,
     zone_context: str | None,
+    focus_box: MegaDetectorBox | None = None,
 ) -> list[MegaDetectorProposal]:
+    _prepare_megadetector_runtime_environment()
     _load_megadetector_runtime()
     try:
         resolved_model_path = Path(model_path).resolve(strict=True)
@@ -280,8 +286,9 @@ def _execute_megadetector_runtime(
             force_model_download=False,
         )
         image = visualization_utils.load_image(media_local_path)
+        inference_image, applied_focus_box = _focused_image(image, focus_box)
         output = detector.generate_detections_one_image(
-            image,
+            inference_image,
             image_id=media_local_path,
             detection_threshold=threshold,
         )
@@ -290,7 +297,115 @@ def _execute_megadetector_runtime(
     except Exception as error:  # pragma: no cover - depends on the optional runtime.
         raise MegaDetectorOutputError("megadetector_failed") from error
 
-    return _parse_megadetector_output(output, threshold=threshold)
+    proposals = _parse_megadetector_output(output, threshold=threshold)
+    return _remap_focused_proposals(proposals, applied_focus_box)
+
+
+def _prepare_megadetector_runtime_environment() -> Path:
+    """Keep optional runtime caches local and disable package auto-install hooks."""
+
+    configured_path = os.environ.get(
+        MEGADETECTOR_RUNTIME_CACHE_PATH_ENV,
+        MEGADETECTOR_DEFAULT_RUNTIME_CACHE_PATH,
+    )
+    cache_root = Path(configured_path).expanduser().resolve()
+    yolo_cache = cache_root / "yolov5"
+    matplotlib_cache = cache_root / "matplotlib"
+    try:
+        yolo_cache.mkdir(parents=True, exist_ok=True)
+        matplotlib_cache.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise MegaDetectorRuntimeUnavailableError(
+            "MegaDetector could not prepare its local runtime cache."
+        ) from error
+
+    os.environ.setdefault("YOLOV5_CONFIG_DIR", str(yolo_cache))
+    os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache))
+    os.environ.setdefault("YOLOv5_AUTOINSTALL", "False")
+    return cache_root
+
+
+def _focused_image(
+    image: Any,
+    focus_box: MegaDetectorBox | None,
+) -> tuple[Any, MegaDetectorBox | None]:
+    if focus_box is None:
+        return image, None
+    if not _valid_box(focus_box):
+        raise MegaDetectorOutputError("unsupported_detector_output")
+
+    size = getattr(image, "size", None)
+    if (
+        not isinstance(size, Sequence)
+        or isinstance(size, (str, bytes))
+        or len(size) != 2
+    ):
+        raise MegaDetectorOutputError("unsupported_detector_output")
+    try:
+        image_width = int(size[0])
+        image_height = int(size[1])
+    except (TypeError, ValueError) as error:
+        raise MegaDetectorOutputError("unsupported_detector_output") from error
+    if image_width < 1 or image_height < 1 or not hasattr(image, "crop"):
+        raise MegaDetectorOutputError("unsupported_detector_output")
+
+    left = max(0, min(image_width - 1, math.floor(focus_box.x * image_width)))
+    top = max(0, min(image_height - 1, math.floor(focus_box.y * image_height)))
+    right = max(
+        left + 1,
+        min(image_width, math.ceil((focus_box.x + focus_box.width) * image_width)),
+    )
+    bottom = max(
+        top + 1,
+        min(image_height, math.ceil((focus_box.y + focus_box.height) * image_height)),
+    )
+    applied_box = MegaDetectorBox(
+        x=left / image_width,
+        y=top / image_height,
+        width=(right - left) / image_width,
+        height=(bottom - top) / image_height,
+    )
+    return image.crop((left, top, right, bottom)), applied_box
+
+
+def _remap_focused_proposals(
+    proposals: list[MegaDetectorProposal],
+    focus_box: MegaDetectorBox | None,
+) -> list[MegaDetectorProposal]:
+    if focus_box is None:
+        return proposals
+
+    remapped: list[MegaDetectorProposal] = []
+    for proposal in proposals:
+        if proposal.bbox is None:
+            remapped.append(proposal)
+            continue
+        remapped.append(
+            MegaDetectorProposal(
+                label=proposal.label,
+                confidence=proposal.confidence,
+                bbox=MegaDetectorBox(
+                    x=focus_box.x + proposal.bbox.x * focus_box.width,
+                    y=focus_box.y + proposal.bbox.y * focus_box.height,
+                    width=proposal.bbox.width * focus_box.width,
+                    height=proposal.bbox.height * focus_box.height,
+                ),
+            )
+        )
+    return remapped
+
+
+def _valid_box(box: MegaDetectorBox) -> bool:
+    return (
+        all(
+            math.isfinite(value) and 0 <= value <= 1
+            for value in (box.x, box.y, box.width, box.height)
+        )
+        and box.width > 0
+        and box.height > 0
+        and box.x + box.width <= 1.000001
+        and box.y + box.height <= 1.000001
+    )
 
 
 def _parse_megadetector_output(

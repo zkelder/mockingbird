@@ -497,9 +497,13 @@ export MOCKINGBIRD_LOCAL_DETECTOR_CONFIDENCE_THRESHOLD=0.5 # optional
 
 Detector outputs create detection proposals only. Users still convert, review, and correct proposals before exports or analytics treat labels as truth.
 
-MegaDetector remains a useful future detector/proposal family. The current wrapper is unavailable-safe, bundles no model files, downloads nothing, and expects a future local `MOCKINGBIRD_MEGADETECTOR_MODEL_PATH` configuration before real runs.
+MegaDetector is available as an optional local MDv5 image verifier through the
+existing Review Queue identification action. It requires an explicit local
+`MOCKINGBIRD_MEGADETECTOR_MODEL_PATH`, bundles and downloads no model weights,
+focuses inference on the selected Zone, and creates `DetectionProposal` evidence
+only. User correction still creates truth.
 
-The PyTorch-Wildlife/MegaDetector runtime path is archived as experimental pending dependency, license, and download-behavior review. See [docs/megadetector-runtime-findings.md](docs/megadetector-runtime-findings.md).
+The PyTorch-Wildlife runtime path remains archived as experimental pending dependency, license, and download-behavior review. See [docs/megadetector-runtime-findings.md](docs/megadetector-runtime-findings.md).
 
 The current active implementation path is stream/zones/motion-trigger/snapshot evidence/species-suggestion/review truth. See [docs/stream-motion-trigger-plan.md](docs/stream-motion-trigger-plan.md).
 

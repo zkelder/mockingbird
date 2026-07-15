@@ -15,6 +15,11 @@ The adapter now implements bounded, explicit image inference. It still adds no
 model files, automatic downloads, camera work, background execution, or truth
 creation.
 
+Selected-Zone runs decode the existing saved best frame, apply the existing
+padded activity focus in memory, remap detector boxes to full-frame normalized
+coordinates, and retain only proposals intersecting the selected Zone. The
+original media remains unchanged and no derived crop file is created.
+
 Before any local runtime smoke test, follow [megadetector-local-setup.md](megadetector-local-setup.md) to keep model files ignored and outputs evidence-only.
 
 Phase 7K's PyTorch-Wildlife path remains archived. The Phase 23 checkpoint in
@@ -133,6 +138,10 @@ The implementation proves:
   below-threshold detections dropped
 - malformed output and runtime failure return clean errors before a run or truth
   record is written
+- runtime caches stay under ignored local storage and package auto-install hooks
+  are disabled before the optional runtime import
+- selected-Zone inference excludes unrelated background detections and preserves
+  full-frame proposal coordinates
 
 ## Rollback Plan
 

@@ -54,8 +54,15 @@ Never commit `.pt`, `.pth`, `.onnx`, `.weights`, or `.engine` files.
 - `MOCKINGBIRD_MEGADETECTOR_MODEL_PATH`: explicit local path to an MDv5 `.pt` model file.
 - `MOCKINGBIRD_MEGADETECTOR_LABELS_PATH`: reserved optional metadata path; the fixed MDv5 category map does not require it.
 - `MOCKINGBIRD_MEGADETECTOR_CONFIDENCE_THRESHOLD`: optional local confidence threshold for proposal evidence filtering.
+- `MOCKINGBIRD_MEGADETECTOR_RUNTIME_CACHE_PATH`: optional local cache override;
+  defaults to ignored `data/runtime/megadetector` storage.
 
 These variables configure the optional adapter runtime only. They do not change reviewed truth, exports, coverage, QA, analytics, or normal app startup.
+
+Before importing YOLOv5, MockingBird directs its configuration and Matplotlib
+cache into that local runtime path and sets `YOLOv5_AUTOINSTALL=False`. The
+optional package may use already-installed dependencies, but inference cannot
+install packages or write user-profile configuration implicitly.
 
 ## Pre-Run Checks
 
@@ -82,6 +89,11 @@ Manual smoke test:
 10. Correct the visit label.
 11. Export the dataset.
 12. Confirm the export uses the corrected label as truth.
+
+Selected-Zone runs use the existing padded Review Queue focus context for
+inference, then retain only proposals intersecting the selected Zone. This keeps
+background street/yard detections from polluting feeder evidence while
+preserving full-frame normalized bounding boxes.
 
 ## Failure Expectations
 

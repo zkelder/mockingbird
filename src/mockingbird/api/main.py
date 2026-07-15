@@ -752,6 +752,14 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
                 "image/jpeg, image/png, image/webp."
             ),
         )
+    if reason == "megadetector_zone_suppressed":
+        return HTTPException(
+            status_code=400,
+            detail=(
+                "MegaDetector analysis is disabled for Privacy and Ignore zones. "
+                "No inference, proposal evidence, reviewed truth, or export data was created."
+            ),
+        )
     if reason == "unsupported_detector_output":
         return HTTPException(
             status_code=400,

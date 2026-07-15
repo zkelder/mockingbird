@@ -1287,6 +1287,13 @@ Current work:
   The adapter is lazy, passes a resolved local path with forced downloads off,
   creates animal/person/vehicle `DetectionProposal` evidence only, and never
   suppresses motion candidates or writes reviewed truth automatically.
+- Local MDv5a Field Smoke 1: the official optional runtime and local MDv5a
+  weights completed real CPU inference. A full overexposed frame found only
+  background vehicles; the selected-Zone focus correctly excluded them and
+  returned no feeder proposal; an official positive-control image produced one
+  animal at 0.952 confidence. Runtime caches remain ignored/local and package
+  auto-install is disabled. Bird recall still requires representative feeder
+  frames with visible birds.
 - No new page, navigation item, dashboard card, or permanent field-test panel is
   added. The primary product flow remains Cameras/Streams -> Review Queue -> Bird
   Log -> Exports.

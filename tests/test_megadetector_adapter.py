@@ -1,4 +1,5 @@
 import importlib
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import tomllib
@@ -13,6 +14,7 @@ from mockingbird.detectors.megadetector_adapter import (
     MEGADETECTOR_DEFAULT_CONFIDENCE_THRESHOLD,
     MEGADETECTOR_LABELS_PATH_ENV,
     MEGADETECTOR_MODEL_PATH_ENV,
+    MEGADETECTOR_RUNTIME_CACHE_PATH_ENV,
     MEGADETECTOR_RUNTIME_EXTRA,
     MegaDetectorBox,
     MegaDetectorOutputError,
@@ -25,6 +27,7 @@ pytestmark = pytest.mark.anyio
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
+IGNORE_ZONE_ID = "zone-ignore-driveway-edge"
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +37,13 @@ def isolated_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.delenv("MOCKINGBIRD_MEGADETECTOR_MODEL_PATH", raising=False)
     monkeypatch.delenv("MOCKINGBIRD_MEGADETECTOR_LABELS_PATH", raising=False)
     monkeypatch.delenv("MOCKINGBIRD_MEGADETECTOR_CONFIDENCE_THRESHOLD", raising=False)
+    monkeypatch.setenv(
+        MEGADETECTOR_RUNTIME_CACHE_PATH_ENV,
+        str(tmp_path / "megadetector-runtime-cache"),
+    )
+    monkeypatch.delenv("YOLOV5_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("MPLCONFIGDIR", raising=False)
+    monkeypatch.delenv("YOLOv5_AUTOINSTALL", raising=False)
     repository = ProductRepository(
         db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
         media_root=tmp_path / "media",
@@ -83,13 +93,18 @@ async def import_video(client: httpx.AsyncClient):
     )
 
 
-async def run_megadetector(client: httpx.AsyncClient, media_asset_id: str):
+async def run_megadetector(
+    client: httpx.AsyncClient,
+    media_asset_id: str,
+    *,
+    zone_id: str = FEEDER_ZONE_ID,
+):
     return await client.post(
         f"/api/model-adapters/{MEGADETECTOR_ADAPTER_ID}/runs",
         json={
             "adapter_id": MEGADETECTOR_ADAPTER_ID,
             "media_asset_id": media_asset_id,
-            "zone_ids": [FEEDER_ZONE_ID],
+            "zone_ids": [zone_id],
             "notes": "MegaDetector-family proposal evidence only.",
         },
     )
@@ -147,6 +162,12 @@ def mock_megadetector_output(
     def execute_runtime(**kwargs) -> list[MegaDetectorProposal]:
         assert Path(kwargs["media_local_path"]).is_file()
         assert Path(kwargs["model_path"]).is_file()
+        focus_box = kwargs["focus_box"]
+        assert focus_box is not None
+        assert focus_box.x == pytest.approx(0.22)
+        assert focus_box.y == pytest.approx(0.08)
+        assert focus_box.width == pytest.approx(0.56)
+        assert focus_box.height == pytest.approx(0.64)
         return proposals
 
     monkeypatch.setattr(megadetector_adapter, "_execute_megadetector_runtime", execute_runtime)
@@ -265,12 +286,54 @@ def test_runtime_executes_explicit_local_model_and_maps_official_output(
     assert calls["image"] == "decoded image"
     assert calls["image_id"] == str(image_path)
     assert calls["threshold"] == MEGADETECTOR_DEFAULT_CONFIDENCE_THRESHOLD
+    cache_root = Path(os.environ[MEGADETECTOR_RUNTIME_CACHE_PATH_ENV]).resolve()
+    assert os.environ["YOLOV5_CONFIG_DIR"] == str(cache_root / "yolov5")
+    assert os.environ["MPLCONFIGDIR"] == str(cache_root / "matplotlib")
+    assert os.environ["YOLOv5_AUTOINSTALL"] == "False"
+    assert (cache_root / "yolov5").is_dir()
+    assert (cache_root / "matplotlib").is_dir()
     assert [proposal.label for proposal in proposals] == ["animal", "person"]
     assert proposals[0].bbox == MegaDetectorBox(
         x=0.2,
         y=0.3,
         width=0.2,
         height=0.2,
+    )
+
+
+def test_focus_crop_remaps_boxes_to_original_frame() -> None:
+    crop_calls: list[tuple[int, int, int, int]] = []
+
+    class FakeImage:
+        size = (1000, 500)
+
+        def crop(self, box):
+            crop_calls.append(box)
+            return "focused image"
+
+    focus_box = MegaDetectorBox(x=0.2, y=0.1, width=0.5, height=0.6)
+    focused_image, applied_box = megadetector_adapter._focused_image(
+        FakeImage(),
+        focus_box,
+    )
+    remapped = megadetector_adapter._remap_focused_proposals(
+        [
+            MegaDetectorProposal(
+                label="animal",
+                confidence=0.9,
+                bbox=MegaDetectorBox(x=0.1, y=0.2, width=0.3, height=0.4),
+            )
+        ],
+        applied_box,
+    )
+
+    assert focused_image == "focused image"
+    assert crop_calls == [(200, 50, 700, 350)]
+    assert remapped[0].bbox == MegaDetectorBox(
+        x=0.25,
+        y=0.22,
+        width=0.15,
+        height=0.24,
     )
 
 
@@ -543,10 +606,18 @@ async def test_mocked_megadetector_proposals_are_evidence_only_until_conversion(
             MegaDetectorProposal(
                 label="animal",
                 confidence=0.81,
-                bbox=MegaDetectorBox(x=0.2, y=0.3, width=0.25, height=0.2),
+                bbox=MegaDetectorBox(x=0.4, y=0.3, width=0.1, height=0.1),
             ),
-            MegaDetectorProposal(label="person", confidence=0.72),
-            MegaDetectorProposal(label="vehicle", confidence=0.66),
+            MegaDetectorProposal(
+                label="person",
+                confidence=0.72,
+                bbox=MegaDetectorBox(x=0.5, y=0.35, width=0.08, height=0.1),
+            ),
+            MegaDetectorProposal(
+                label="vehicle",
+                confidence=0.66,
+                bbox=MegaDetectorBox(x=0.55, y=0.4, width=0.08, height=0.1),
+            ),
         ],
     )
     media_asset = (await import_image(client)).json()["media_asset"]
@@ -574,10 +645,10 @@ async def test_mocked_megadetector_proposals_are_evidence_only_until_conversion(
     }
     assert [proposal["status"] for proposal in proposals] == ["proposed", "proposed", "proposed"]
     assert proposal_by_label["unknown_animal"]["bbox"] == {
-        "x": 0.2,
+        "x": 0.4,
         "y": 0.3,
-        "width": 0.25,
-        "height": 0.2,
+        "width": 0.1,
+        "height": 0.1,
     }
     assert all(proposal["event_id"] is None and proposal["visit_id"] is None for proposal in proposals)
     assert after_run_status["detection_run_count"] == before_run_status["detection_run_count"] + 1
@@ -589,6 +660,74 @@ async def test_mocked_megadetector_proposals_are_evidence_only_until_conversion(
     assert after_run_coverage["reviewed_record_count"] == before_run_coverage["reviewed_record_count"]
     assert after_run_quality["export_ready_count"] == before_run_quality["export_ready_count"]
     assert after_run_quality["needs_review_count"] == before_run_quality["needs_review_count"]
+
+
+async def test_megadetector_drops_background_proposals_outside_selected_zone(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    mark_megadetector_available(monkeypatch, tmp_path)
+    mock_megadetector_output(
+        monkeypatch,
+        [
+            MegaDetectorProposal(
+                label="animal",
+                confidence=0.8,
+                bbox=MegaDetectorBox(x=0.42, y=0.3, width=0.08, height=0.1),
+            ),
+            MegaDetectorProposal(
+                label="vehicle",
+                confidence=0.95,
+                bbox=MegaDetectorBox(x=0.8, y=0.7, width=0.1, height=0.1),
+            ),
+        ],
+    )
+    media_asset = (await import_image(client)).json()["media_asset"]
+
+    response = await run_megadetector(client, media_asset["id"])
+
+    assert response.status_code == 200
+    proposals = response.json()["proposals"]
+    assert len(proposals) == 1
+    assert proposals[0]["label"] == "unknown_animal"
+    assert proposals[0]["bbox"] == {
+        "x": 0.42,
+        "y": 0.3,
+        "width": 0.08,
+        "height": 0.1,
+    }
+
+
+async def test_megadetector_never_runs_for_privacy_or_ignore_zones(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    mark_megadetector_available(monkeypatch, tmp_path)
+
+    def fail_if_invoked(**kwargs):
+        raise AssertionError("MegaDetector runtime must not run for an Ignore zone.")
+
+    monkeypatch.setattr(
+        megadetector_adapter,
+        "_execute_megadetector_runtime",
+        fail_if_invoked,
+    )
+    media_asset = (await import_image(client)).json()["media_asset"]
+
+    response = await run_megadetector(
+        client,
+        media_asset["id"],
+        zone_id=IGNORE_ZONE_ID,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "MegaDetector analysis is disabled for Privacy and Ignore zones. "
+        "No inference, proposal evidence, reviewed truth, or export data was created."
+    )
+    assert (await client.get("/api/detection-proposals")).json() == []
 
 
 async def test_mocked_megadetector_conversion_exports_corrected_truth(
@@ -603,7 +742,7 @@ async def test_mocked_megadetector_conversion_exports_corrected_truth(
             MegaDetectorProposal(
                 label="animal",
                 confidence=0.84,
-                bbox=MegaDetectorBox(x=0.1, y=0.12, width=0.3, height=0.24),
+                bbox=MegaDetectorBox(x=0.45, y=0.3, width=0.1, height=0.1),
             )
         ],
     )
