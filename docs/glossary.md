@@ -264,7 +264,8 @@ A machine-generated observation that may be right or wrong.
 
 ## Motion Candidate
 
-A debounced motion signal from scored frame differences in a stream zone.
+A debounced motion signal from scored frame differences in a user Zone or an
+automatic activity area on a Stream.
 
 ## Best Frame
 
@@ -288,7 +289,9 @@ A local component that can produce frame planes from configured stream or media 
 
 ## Motion Evidence
 
-Local evidence that a motion candidate occurred in a stream zone; it is not reviewed truth.
+Local evidence that a motion candidate occurred on a Stream. A user Zone is
+optional semantic context; automatic activity can reach review without creating
+a fake Zone. Motion Evidence is not reviewed truth.
 
 ## Motion Evidence Promotion
 

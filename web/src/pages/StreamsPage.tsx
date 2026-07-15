@@ -321,7 +321,7 @@ function parseActivityAreaNumber(value: unknown): number | null {
 function markableActivityAreaFromMotionResult(
   result?: MotionEvaluateSavedMediaResponse | null,
 ): MarkableActivityArea | null {
-  if (!result?.activity_detected || !result.uses_auto_regions || result.can_create_review_activity) {
+  if (!result?.activity_detected || !result.uses_auto_regions) {
     return null;
   }
   const area =
@@ -356,10 +356,7 @@ function markableActivityAreaFromMotionArea(
 function markableActivityAreaFromMonitorStatus(
   status?: SourceMonitorStatusResponse | null,
 ): MarkableActivityArea | null {
-  if (
-    status?.last_activity_detected !== true ||
-    status.review_activity_unavailable_reason !== "auto_region_requires_named_zone"
-  ) {
+  if (status?.last_activity_detected !== true) {
     return null;
   }
   const area = status.last_activity_area;
@@ -543,7 +540,6 @@ type FieldTestOverallLabel =
   | "Needs setup"
   | "Needs snapshots"
   | "Needs motion check"
-  | "Needs Zone for review handoff"
   | "Ready for Review";
 
 interface FieldTestChecklistItem {
@@ -674,7 +670,7 @@ function motionNextStep(
     return "Capture more saved snapshots";
   }
   if (!result.can_create_review_activity) {
-    return "Named Zone needed for review activity";
+    return "Review activity unavailable";
   }
   if (!result.should_create_review_activity) {
     return "Same activity";
@@ -772,13 +768,6 @@ function sourceHealthNextAction(
     motionResult.should_create_review_activity
   ) {
     return "Create review activity.";
-  }
-  if (
-    motionResult?.activity_detected &&
-    motionResult.uses_auto_regions &&
-    !motionResult.can_create_review_activity
-  ) {
-    return "Mark activity area.";
   }
   if (motionResult?.activity_detected && !motionResult.should_create_review_activity) {
     return "Ready for manual checks.";
@@ -1094,13 +1083,6 @@ function snapshotWatchNextAction(
   if (createdEvidence) {
     return "Review activity";
   }
-  if (
-    motionResult?.activity_detected &&
-    motionResult.uses_auto_regions &&
-    !motionResult.can_create_review_activity
-  ) {
-    return "Mark activity area";
-  }
   if (motionResult?.activity_detected) {
     return motionResult.can_create_review_activity ? "Review activity" : "Check motion";
   }
@@ -1201,9 +1183,6 @@ function monitorReviewHandoffText(status?: SourceMonitorStatusResponse | null): 
   if (status.review_activity_available) {
     return "Create review activity";
   }
-  if (status.review_activity_unavailable_reason === "auto_region_requires_named_zone") {
-    return "Needs named zone";
-  }
   if (status.review_activity_unavailable_reason === "cooldown_suppressed") {
     return "Same recent activity";
   }
@@ -1245,7 +1224,7 @@ function fieldTestOverallTone(label: FieldTestOverallLabel): "good" | "review" |
   if (label === "Ready to test monitoring" || label === "Ready for Review") {
     return "good";
   }
-  if (label === "Needs setup" || label === "Needs Zone for review handoff") {
+  if (label === "Needs setup") {
     return "review";
   }
   return "quiet";
@@ -1282,11 +1261,6 @@ function buildFieldTestReadiness(params: {
         motionResult.can_create_review_activity &&
         motionResult.should_create_review_activity,
     ) || Boolean(params.monitorStatus?.review_activity_available);
-  const needsNamedZone =
-    params.hasMarkableActivityArea ||
-    motionResult?.creation_skipped_reason === "auto_region_review_activity_requires_user_zone" ||
-    params.monitorStatus?.review_activity_unavailable_reason ===
-      "auto_region_requires_named_zone";
   const hasNamedZone = params.reviewableZoneCount > 0;
   const snapshotReady = params.snapshotTest?.status === "success";
   const captureReady = params.lastCapture?.status === "success" || params.savedImageCount > 0;
@@ -1392,22 +1366,16 @@ function buildFieldTestReadiness(params: {
     },
     {
       key: "zone",
-      label: "Named Zone available or can mark area",
-      status: hasNamedZone
-        ? "ready"
-        : params.hasMarkableActivityArea
-          ? "warning"
-          : params.blockedZoneCount > 0
-            ? "warning"
-            : "needs_action",
+      label: "Named Zone context (optional)",
+      status: "ready",
       explanation: hasNamedZone
-        ? "Named Zone available for review activity."
+        ? "Named Zone context is available for organization and analytics."
         : params.hasMarkableActivityArea
-          ? "Mark this activity area as a Zone to enable review activity."
+          ? "Review works now; save this activity area as a Zone when the context is useful."
           : params.blockedZoneCount > 0
-            ? "Only privacy/ignore Zones are active for this Stream."
-            : "Add or mark a useful activity area as a Zone.",
-      nextAction: hasNamedZone ? "Start monitoring" : "Mark activity area",
+            ? "Privacy/Ignore Zones remain active; a normal Zone is optional."
+            : "Automatic activity can reach Review without a named Zone.",
+      nextAction: hasNamedZone ? "Start monitoring" : "Add Zone later",
     },
     {
       key: "monitoring",
@@ -1432,30 +1400,20 @@ function buildFieldTestReadiness(params: {
     },
     {
       key: "review",
-      label: "Review activity available when Zone-backed",
+      label: "Review activity handoff available",
       status: canCreateReviewActivity || hasReviewActivity
         ? "ready"
-        : needsNamedZone
-          ? "warning"
-          : hasNamedZone
-            ? "needs_action"
-            : "needs_action",
+        : "needs_action",
       explanation: canCreateReviewActivity
-        ? "Zone-backed activity can become review activity."
+        ? "Detected activity can become review evidence with or without a named Zone."
         : hasReviewActivity
           ? "Review activity exists and needs correction."
-          : needsNamedZone
-            ? "Mark this activity area as a Zone before review handoff."
-            : hasNamedZone
-              ? "Run monitoring or Check motion until Zone-backed activity appears."
-              : "Create a named Zone before review handoff.",
+          : "Run monitoring or Check motion until activity appears.",
       nextAction: canCreateReviewActivity
         ? "Create review activity"
         : hasReviewActivity
           ? "Open Review"
-          : needsNamedZone
-            ? "Mark activity area"
-            : "Start monitoring",
+          : "Start monitoring",
     },
     {
       key: "bird-log",
@@ -1496,8 +1454,6 @@ function buildFieldTestReadiness(params: {
     label = "Needs snapshots";
   } else if (!motionReady) {
     label = "Needs motion check";
-  } else if (needsNamedZone && !hasNamedZone) {
-    label = "Needs Zone for review handoff";
   } else if (canCreateReviewActivity || hasReviewActivity) {
     label = "Ready for Review";
   }
@@ -1513,8 +1469,6 @@ function buildFieldTestReadiness(params: {
     nextAction = "Capture another snapshot";
   } else if (!motionReady) {
     nextAction = "Check motion";
-  } else if (needsNamedZone && !hasNamedZone) {
-    nextAction = "Mark activity area";
   } else if (canCreateReviewActivity) {
     nextAction = "Create review activity";
   } else if (hasReviewActivity) {
@@ -6720,11 +6674,11 @@ export function StreamsPage({
                                   <div className="zone-error">{motionState.error}</div>
                                 ) : null}
                                 {motionResult?.activity_detected &&
-                                !canCreateMotionReviewActivity ? (
+                                motionResult.uses_auto_regions ? (
                                   <>
                                     <span className="meta-text">
-                                      Automatic activity areas can detect motion now; review activity
-                                      creation still requires a named Zone in this build.
+                                      Review can use this automatic activity area now. Saving it as a
+                                      named Zone is optional context for future organization and analytics.
                                     </span>
                                     {renderMarkActivityAreaPanel(
                                       stream,

@@ -619,7 +619,7 @@ function reviewItemFilterMetadata(
     evidence.status,
     evidence.source_id ?? "",
     evidence.stream_id ?? "",
-    evidence.zone_id,
+    evidence.zone_id ?? "",
     evidence.snapshot_media_asset_id ?? "",
     evidence.notes ?? "",
   ]);

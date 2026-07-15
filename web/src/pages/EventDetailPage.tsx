@@ -595,7 +595,10 @@ function SourceEvidenceTracePanel({
           value={motionEvidence.snapshot_media_asset_id ?? mediaAsset?.id ?? "none"}
         />
         <ContextItem label="Stream" value={motionEvidence.stream_id ?? "none"} />
-        <ContextItem label="Zone" value={motionEvidence.zone_id} />
+        <ContextItem
+          label="Activity area"
+          value={motionEvidence.zone_id ?? "Automatic activity area"}
+        />
         {webhookProvenance.isWebhook ? (
           <ContextItem
             label="Provider"

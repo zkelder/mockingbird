@@ -325,7 +325,10 @@ export function MotionEvidenceDetailPage({
 
         <div className="motion-evidence-detail-grid">
           <DetailItem label="Status" value={formatLabel(evidence.status)} />
-          <DetailItem label="Zone" value={evidence.zone_id} />
+          <DetailItem
+            label="Activity context"
+            value={evidence.zone_id ?? "Automatic activity area"}
+          />
           <DetailItem label="Peak change" value={formatPercent(evidence.peak_changed_ratio)} />
           <DetailItem label="Triggered frames" value={`${evidence.triggered_frame_count}`} />
           <DetailItem label="Frame/time range" value={formatRange(evidence)} />
@@ -354,7 +357,10 @@ export function MotionEvidenceDetailPage({
             value={stream?.name ?? evidence.stream_id ?? "none"}
             detail={evidence.stream_id}
           />
-          <ContextItem label="Zone" value={evidence.zone_id} />
+          <ContextItem
+            label="Activity area"
+            value={evidence.zone_id ?? "Automatic activity area"}
+          />
           <ContextItem
             label="Attached media"
             value={evidence.snapshot_media_asset_id ?? "none"}

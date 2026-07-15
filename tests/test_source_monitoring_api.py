@@ -584,7 +584,7 @@ async def test_monitor_review_activity_duplicate_session_does_not_create_duplica
     assert await product_truth_counts(client) == before_truth
 
 
-async def test_monitor_review_activity_auto_region_requires_named_zone(
+async def test_monitor_review_activity_auto_region_creates_zone_optional_evidence(
     client: httpx.AsyncClient,
     repository: ProductRepository,
     monkeypatch: pytest.MonkeyPatch,
@@ -613,11 +613,18 @@ async def test_monitor_review_activity_auto_region_requires_named_zone(
     assert status["last_activity_detected"] is True
     assert status["last_activity_area"]["source"] == "auto_region"
     assert status["review_activity_available"] is False
-    assert status["review_activity_created"] is False
-    assert status["review_activity_unavailable_reason"] == "auto_region_requires_named_zone"
-    assert status["review_activity_motion_evidence_id"] is None
-    assert "automatic area" in status["message"]
-    assert await motion_evidence_count(client) == before_evidence_count
+    assert status["review_activity_created"] is True
+    assert status["review_activity_unavailable_reason"] is None
+    assert status["review_activity_motion_evidence_id"].startswith("motion-evidence-")
+    evidence_response = await client.get(
+        f"/api/motion/evidence/{status['review_activity_motion_evidence_id']}"
+    )
+    assert evidence_response.status_code == 200
+    evidence = evidence_response.json()
+    assert evidence["zone_id"] is None
+    assert evidence["stream_id"] == auto_stream_id
+    assert evidence["status"] == "pending"
+    assert await motion_evidence_count(client) == before_evidence_count + 1
     assert await product_truth_counts(client) == before_truth
 
     zones_response = await client.get(f"/api/streams/{auto_stream_id}/zones")

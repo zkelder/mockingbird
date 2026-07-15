@@ -212,7 +212,10 @@ The saved evidence should stay local and should be linked to the reviewable even
 
 The MVP should save candidate snapshot evidence only after debounce/cooldown rules pass.
 
-It should create reviewable event/visit evidence with stream, zone, timestamp, and media reference context. These records are not reviewed truth.
+It should create reviewable event/visit evidence with Stream, timestamp, media,
+and measured activity context. A user Zone adds optional semantic context but is
+not required for automatic activity to reach review. These records are not
+reviewed truth.
 
 Review Queue and detail pages remain the place where the user accepts, corrects, rejects, or refines the event meaning.
 
@@ -252,6 +255,7 @@ Failures should create no truth writes. Noisy candidates should be rejectable an
 Implementation tests should prove:
 
 - zone polygons are respected
+- automatic activity areas can create review evidence without creating a fake Zone
 - privacy/ignore zones suppress normal review candidates
 - debounce prevents one-frame flicker candidates
 - cooldown prevents duplicate visits for continuous motion

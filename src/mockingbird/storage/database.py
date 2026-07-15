@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 2
+CURRENT_DATABASE_SCHEMA_VERSION = 3
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -142,8 +142,78 @@ def _migrate_to_stream_monitoring_contract(connection: Connection) -> None:
     )
 
 
+def _migrate_to_zone_optional_motion_evidence(connection: Connection) -> None:
+    """Allow automatic whole-stream activity to become reviewable evidence.
+
+    SQLite cannot remove a NOT NULL constraint in place. Rebuilding only this
+    table preserves every existing evidence row and foreign-key target while
+    making Zone context optional for automatic activity areas.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Zone-optional MotionEvidence migration requires local SQLite storage."
+        )
+
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE motion_evidence_zone_optional (
+            id VARCHAR NOT NULL,
+            source_id VARCHAR,
+            stream_id VARCHAR,
+            zone_id VARCHAR,
+            start_frame_index INTEGER,
+            end_frame_index INTEGER,
+            best_frame_index INTEGER,
+            start_time VARCHAR,
+            end_time VARCHAR,
+            best_frame_time VARCHAR,
+            peak_changed_ratio FLOAT NOT NULL,
+            triggered_frame_count INTEGER NOT NULL,
+            scoring_config_json TEXT NOT NULL,
+            snapshot_media_asset_id VARCHAR,
+            status VARCHAR NOT NULL,
+            promoted_event_id VARCHAR,
+            promoted_visit_id VARCHAR,
+            created_at DATETIME NOT NULL,
+            notes TEXT,
+            PRIMARY KEY (id),
+            FOREIGN KEY(source_id) REFERENCES camera_sources (id),
+            FOREIGN KEY(stream_id) REFERENCES streams (id),
+            FOREIGN KEY(zone_id) REFERENCES zones (id),
+            FOREIGN KEY(snapshot_media_asset_id) REFERENCES media_assets (id),
+            FOREIGN KEY(promoted_event_id) REFERENCES events (id),
+            FOREIGN KEY(promoted_visit_id) REFERENCES visits (id)
+        )
+        """
+    )
+    connection.exec_driver_sql(
+        """
+        INSERT INTO motion_evidence_zone_optional (
+            id, source_id, stream_id, zone_id, start_frame_index,
+            end_frame_index, best_frame_index, start_time, end_time,
+            best_frame_time, peak_changed_ratio, triggered_frame_count,
+            scoring_config_json, snapshot_media_asset_id, status,
+            promoted_event_id, promoted_visit_id, created_at, notes
+        )
+        SELECT
+            id, source_id, stream_id, zone_id, start_frame_index,
+            end_frame_index, best_frame_index, start_time, end_time,
+            best_frame_time, peak_changed_ratio, triggered_frame_count,
+            scoring_config_json, snapshot_media_asset_id, status,
+            promoted_event_id, promoted_visit_id, created_at, notes
+        FROM motion_evidence
+        """
+    )
+    connection.exec_driver_sql("DROP TABLE motion_evidence")
+    connection.exec_driver_sql(
+        "ALTER TABLE motion_evidence_zone_optional RENAME TO motion_evidence"
+    )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
+    3: _migrate_to_zone_optional_motion_evidence,
 }
 
 

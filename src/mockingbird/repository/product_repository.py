@@ -868,7 +868,8 @@ class MotionEvidenceModel(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     source_id: Mapped[str | None] = mapped_column(ForeignKey("camera_sources.id"), nullable=True)
     stream_id: Mapped[str | None] = mapped_column(ForeignKey("streams.id"), nullable=True)
-    zone_id: Mapped[str] = mapped_column(ForeignKey("zones.id"), nullable=False)
+    # Automatic activity areas may be reviewed before a user adds semantic Zone context.
+    zone_id: Mapped[str | None] = mapped_column(ForeignKey("zones.id"), nullable=True)
     start_frame_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     end_frame_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     best_frame_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -4515,15 +4516,24 @@ class ProductRepository:
     ) -> MotionEvidenceResponse:
         with self.session_factory() as session:
             with session.begin():
-                zone_model = session.get(ZoneModel, payload.zone_id)
-                if zone_model is None:
+                requested_zone_id = _clean_optional_text(payload.zone_id)
+                zone_model = (
+                    session.get(ZoneModel, requested_zone_id)
+                    if requested_zone_id is not None
+                    else None
+                )
+                if requested_zone_id is not None and zone_model is None:
                     raise ValueError("missing_zone")
 
-                stream_id = payload.stream_id or zone_model.stream_id
+                stream_id = _clean_optional_text(payload.stream_id) or (
+                    zone_model.stream_id if zone_model is not None else None
+                )
+                if stream_id is None:
+                    raise ValueError("missing_stream")
                 stream_model = session.get(StreamModel, stream_id)
                 if stream_model is None:
                     raise ValueError("missing_stream")
-                if zone_model.stream_id != stream_model.id:
+                if zone_model is not None and zone_model.stream_id != stream_model.id:
                     raise ValueError("zone_stream_mismatch")
 
                 source_id = payload.source_id or stream_model.source_id
@@ -4550,7 +4560,7 @@ class ProductRepository:
                     id=self._next_id(session, MotionEvidenceModel, "motion-evidence"),
                     source_id=source_id,
                     stream_id=stream_model.id,
-                    zone_id=zone_model.id,
+                    zone_id=zone_model.id if zone_model is not None else None,
                     start_frame_index=payload.start_frame_index,
                     end_frame_index=payload.end_frame_index,
                     best_frame_index=payload.best_frame_index,
@@ -4578,6 +4588,7 @@ class ProductRepository:
         *,
         status: MotionEvidenceStatus | None = None,
         zone_id: str | None = None,
+        stream_id: str | None = None,
     ) -> list[MotionEvidenceResponse]:
         with self.session_factory() as session:
             query = select(MotionEvidenceModel)
@@ -4585,6 +4596,8 @@ class ProductRepository:
                 query = query.where(MotionEvidenceModel.status == status.value)
             if zone_id is not None:
                 query = query.where(MotionEvidenceModel.zone_id == zone_id)
+            if stream_id is not None:
+                query = query.where(MotionEvidenceModel.stream_id == stream_id)
             evidence_models = session.scalars(
                 query.order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
             ).all()
@@ -4695,10 +4708,14 @@ class ProductRepository:
         if payload.create_visit and not payload.create_event:
             raise ValueError("motion_evidence_visit_requires_event")
 
-        zone_model = session.get(ZoneModel, evidence_model.zone_id)
-        if zone_model is None:
+        zone_model = (
+            session.get(ZoneModel, evidence_model.zone_id)
+            if evidence_model.zone_id is not None
+            else None
+        )
+        if evidence_model.zone_id is not None and zone_model is None:
             raise ValueError("missing_zone")
-        if zone_model.zone_type in {
+        if zone_model is not None and zone_model.zone_type in {
             ZoneType.privacy.value,
             ZoneType.ignore.value,
         }:
@@ -4727,11 +4744,12 @@ class ProductRepository:
 
         if payload.create_event:
             event_id = self._next_id(session, EventModel, "event-motion")
-            event_title = (
-                payload.event_title.strip()
-                if payload.event_title and payload.event_title.strip()
-                else f"Motion evidence in {zone_model.name}"
-            )
+            if payload.event_title and payload.event_title.strip():
+                event_title = payload.event_title.strip()
+            elif zone_model is not None:
+                event_title = f"Motion evidence in {zone_model.name}"
+            else:
+                event_title = f"Motion activity on {stream_model.name}"
             event_model = EventModel(
                 id=event_id,
                 stream_id=stream_model.id,
@@ -4739,7 +4757,7 @@ class ProductRepository:
                 event_type="motion_evidence",
                 started_at=created_at,
                 ended_at=created_at,
-                primary_zone_id=zone_model.id,
+                primary_zone_id=zone_model.id if zone_model is not None else None,
                 review_status=ReviewStatus.needs_review.value,
             )
             session.add(event_model)

@@ -411,11 +411,11 @@ async def test_saved_media_motion_uses_auto_regions_without_user_zones(
     assert result["uses_auto_regions"] is True
     assert result["region_source"] == "auto_regions"
     assert result["activity_detected"] is True
-    assert result["can_create_review_activity"] is False
+    assert result["can_create_review_activity"] is True
     assert result["review_activity_created"] is False
     assert result["session_key"]
     assert result["session_status"] == "new_activity"
-    assert result["should_create_review_activity"] is False
+    assert result["should_create_review_activity"] is True
     assert result["created_evidence"] == []
     assert len(result["activity_areas"]) == 1
     assert result["activity_areas"][0]["area_id"] == result["strongest_activity_area_id"]
@@ -431,7 +431,7 @@ async def test_saved_media_motion_uses_auto_regions_without_user_zones(
     assert await truth_counts(client) == before_truth
 
 
-async def test_saved_media_motion_auto_region_create_request_is_result_only(
+async def test_saved_media_motion_auto_region_creates_zone_optional_evidence(
     client: httpx.AsyncClient,
     repository: ProductRepository,
 ) -> None:
@@ -477,14 +477,21 @@ async def test_saved_media_motion_auto_region_create_request_is_result_only(
     result = response.json()
     assert result["activity_detected"] is True
     assert result["uses_auto_regions"] is True
-    assert result["can_create_review_activity"] is False
+    assert result["can_create_review_activity"] is True
     assert result["session_status"] == "new_activity"
-    assert result["should_create_review_activity"] is False
-    assert result["review_activity_created"] is False
-    assert result["creation_skipped_reason"] == "auto_region_review_activity_requires_user_zone"
-    assert result["created_evidence"] == []
-    assert any("review activity creation still requires a named Zone" in warning for warning in result["warnings"])
-    assert await motion_evidence_count(client) == before_evidence_count
+    assert result["should_create_review_activity"] is True
+    assert result["review_activity_created"] is True
+    assert result["creation_skipped_reason"] is None
+    assert len(result["created_evidence"]) == 1
+    evidence = result["created_evidence"][0]
+    assert evidence["zone_id"] is None
+    assert evidence["stream_id"] == AUTO_STREAM_ID
+    assert evidence["status"] == "pending"
+    assert evidence["snapshot_media_asset_id"] == result["best_media_asset_id"]
+    assert evidence["scoring_config"]["activity_region_kind"] == "auto_area"
+    assert evidence["scoring_config"]["activity_region_id"]
+    assert evidence["scoring_config"]["activity_left"] is not None
+    assert await motion_evidence_count(client) == before_evidence_count + 1
     assert await truth_counts(client) == before_truth
 
 

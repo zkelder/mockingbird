@@ -337,18 +337,20 @@ Dataset Exports.
 - [ ] Confirm monitoring status becomes Starting or Monitoring.
 - [ ] Confirm Last checked, Last snapshot, snapshots saved, motion checks, and
       Last activity update over time.
-- [ ] If user-zone-backed activity appears, confirm `Create review activity`
-      is available, click it, and confirm `Open Review Queue` shows an
-      unknown/low-confidence activity without creating reviewed truth.
-- [ ] If automatic activity areas appear without a named Zone, confirm the UI
-      explains that review activity creation needs a named Zone in this build.
+- [ ] If activity appears in a user Zone or automatic activity area, confirm
+      `Create review activity` is available, click it, and confirm `Open Review
+      Queue` shows an unknown/low-confidence activity without creating reviewed
+      truth.
+- [ ] If automatic activity areas appear without a named Zone, confirm the
+      review item preserves Stream and measured activity-crop context with no
+      fake Zone record.
 - [ ] Choose Feeder, Birdbath, Ground, Yard, Driveway, Ignore, Privacy, or
       Other, optionally rename the area, and click `Mark this area`.
 - [ ] Confirm a real Zone is saved and the UI says to run `Check motion` again
       or continue monitoring.
 - [ ] For Feeder, Birdbath, Ground, Yard, Driveway, or Other, rerun `Check
-      motion` or continue monitoring and confirm future user-zone-backed
-      activity can offer `Create review activity`.
+      motion` or continue monitoring and confirm the saved Zone adds semantic
+      context to future review activity.
 - [ ] For Ignore or Privacy, confirm the area is saved as a skip/suppression
       Zone and no reviewed truth or export is created automatically.
 - [ ] Click `Stop monitoring`.

@@ -2440,19 +2440,37 @@ def _activity_session_region_id(area: MotionActivityAreaResponse | None) -> str 
 def _motion_evidence_session_references(
     evidence_items: list[MotionEvidenceResponse],
 ) -> list[ExistingActivityReference]:
-    return [
-        ExistingActivityReference(
-            activity_id=evidence.id,
-            source_id=evidence.source_id,
-            stream_id=evidence.stream_id,
-            region_kind="zone",
-            region_id=evidence.zone_id,
-            created_at=evidence.created_at,
-            snapshot_media_asset_id=evidence.snapshot_media_asset_id,
-            status=evidence.status.value,
+    references: list[ExistingActivityReference] = []
+    for evidence in evidence_items:
+        configured_kind = evidence.scoring_config.get("activity_region_kind")
+        configured_id = evidence.scoring_config.get("activity_region_id")
+        region_kind = (
+            configured_kind.strip()
+            if isinstance(configured_kind, str) and configured_kind.strip()
+            else "zone"
+            if evidence.zone_id is not None
+            else None
         )
-        for evidence in evidence_items
-    ]
+        region_id = (
+            configured_id.strip()
+            if isinstance(configured_id, str) and configured_id.strip()
+            else evidence.zone_id
+        )
+        if region_kind is None or region_id is None:
+            continue
+        references.append(
+            ExistingActivityReference(
+                activity_id=evidence.id,
+                source_id=evidence.source_id,
+                stream_id=evidence.stream_id,
+                region_kind=region_kind,
+                region_id=region_id,
+                created_at=evidence.created_at,
+                snapshot_media_asset_id=evidence.snapshot_media_asset_id,
+                status=evidence.status.value,
+            )
+        )
+    return references
 
 
 def _live_activity_region_key(
@@ -2975,14 +2993,10 @@ async def evaluate_saved_media_motion(
     )
     session_region_kind = "auto_area" if uses_auto_regions else "zone"
     session_region_id = _activity_session_region_id(strongest_activity_area)
-    existing_session_references = (
-        _motion_evidence_session_references(
-            repository.list_motion_evidence(zone_id=best_candidate.zone_id)
-        )
-        if best_candidate and not uses_auto_regions
-        else []
+    existing_session_references = _motion_evidence_session_references(
+        repository.list_motion_evidence(stream_id=stream.id)
     )
-    can_create_review_activity = not uses_auto_regions
+    can_create_review_activity = True
     session_recommendation = recommend_activity_session(
         source_id=stream.source_id,
         stream_id=stream.id,
@@ -3021,13 +3035,7 @@ async def evaluate_saved_media_motion(
         else None
     )
     created_evidence: list[MotionEvidenceResponse] = []
-    if payload.create_motion_evidence and motion_candidates and uses_auto_regions:
-        creation_skipped_reason = "auto_region_review_activity_requires_user_zone"
-        warnings.append(
-            "Automatic activity areas can detect motion now; review activity creation "
-            "still requires a named Zone in this build."
-        )
-    elif (
+    if (
         payload.create_motion_evidence
         and motion_candidates
         and not session_recommendation.should_create_review_activity
@@ -3044,7 +3052,7 @@ async def evaluate_saved_media_motion(
                     MotionEvidenceCreateRequest(
                         source_id=stream.source_id,
                         stream_id=stream.id,
-                        zone_id=best_candidate.zone_id,
+                        zone_id=(None if uses_auto_regions else best_candidate.zone_id),
                         start_frame_index=best_candidate.start_frame_index,
                         end_frame_index=best_candidate.end_frame_index,
                         best_frame_index=best_candidate.best_frame_index,
@@ -3075,6 +3083,9 @@ async def evaluate_saved_media_motion(
                             "frame_index_start": payload.frame_index_start,
                             "attach_best_snapshot": payload.attach_best_snapshot,
                             "activity_session_status": session_recommendation.session_status,
+                            "activity_session_key": session_recommendation.session_key,
+                            "activity_region_kind": session_region_kind,
+                            "activity_region_id": session_region_id,
                             "max_snapshots_per_session": (
                                 session_recommendation.max_snapshots_per_session
                             ),
@@ -3617,20 +3628,22 @@ def _evaluate_live_stream_motion(
     )
     session_region_kind = "auto_area" if uses_auto_regions else "zone"
     session_region_id = _activity_session_region_id(strongest_activity_area)
-    existing_session_references = (
-        _motion_evidence_session_references(
-            repository.list_motion_evidence(zone_id=best_candidate.zone_id)
-        )
-        if best_candidate and not uses_auto_regions
-        else []
+    existing_session_references = _motion_evidence_session_references(
+        repository.list_motion_evidence(stream_id=stream.id)
     )
-    has_reviewable_live_activity = bool(best_candidate) and not uses_auto_regions
-    feeder_burst_signal = (
-        not uses_auto_regions
-        and strongest_zone_type in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}
-        and strongest_zone_id is not None
-        and burst_live_frame is not None
-        and (activity_detected or near_miss)
+    has_reviewable_live_activity = bool(best_candidate)
+    session_activity_signal = (
+        burst_live_frame is not None
+        and (
+            (uses_auto_regions and activity_detected)
+            or (
+                not uses_auto_regions
+                and strongest_zone_type
+                in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}
+                and strongest_zone_id is not None
+                and (activity_detected or near_miss)
+            )
+        )
     )
     session_recommendation = recommend_activity_session(
         source_id=stream.source_id,
@@ -3647,7 +3660,7 @@ def _evaluate_live_stream_motion(
     live_activity_session_active = (
         session_snapshot is not None
         and session_snapshot.status in {"starting", "running"}
-        and feeder_burst_signal
+        and session_activity_signal
     )
     if live_activity_session_active:
         burst_start_sequence, burst_end_sequence = (
@@ -3830,11 +3843,6 @@ def _evaluate_live_stream_motion(
             review_visit_id = existing_evidence.promoted_visit_id
             review_activity_reused = True
             review_activity_available = False
-    elif request.create_review_activity and motion_candidates and uses_auto_regions:
-        warnings.append(
-            "Automatic activity areas can detect motion now; review activity creation "
-            "still requires a named Zone in this build."
-        )
     elif (
         request.create_review_activity
         and motion_candidates
@@ -3879,7 +3887,7 @@ def _evaluate_live_stream_motion(
                 MotionEvidenceCreateRequest(
                     source_id=stream.source_id,
                     stream_id=stream.id,
-                    zone_id=best_candidate.zone_id,
+                    zone_id=(None if uses_auto_regions else best_candidate.zone_id),
                     start_frame_index=best_candidate.start_frame_index,
                     end_frame_index=best_candidate.end_frame_index,
                     best_frame_index=best_candidate.best_frame_index,
@@ -3934,6 +3942,8 @@ def _evaluate_live_stream_motion(
                             else {}
                         ),
                         "frames_considered": len(cached_frames),
+                        "activity_region_kind": session_region_kind,
+                        "activity_region_id": session_region_id,
                         "pixel_delta_threshold": request.pixel_delta_threshold,
                         "min_changed_ratio": request.min_changed_ratio,
                         "best_changed_ratio": strongest_changed_ratio,
@@ -4507,25 +4517,25 @@ def _create_live_stream_motion_review_activity(
 
     zone_id = activity.get("zone_id")
     best_media_asset_id = activity.get("best_media_asset_id")
-    if zone_id and not best_media_asset_id and activity.get("activity_session_id"):
+    if not best_media_asset_id and activity.get("activity_session_id"):
         best_media_asset_id, activity = _ensure_live_activity_best_media_asset(
             repository=repository,
             stream=stream,
             activity=activity,
         )
-    if not zone_id or not best_media_asset_id:
+    if not best_media_asset_id:
         return _live_motion_review_activity_response(
             stream_id=stream.id,
             source_id=stream.source_id,
             status="unavailable",
-            message="Stored live activity is missing named Zone or best-frame evidence.",
+            message="Stored live activity is missing best-frame evidence.",
             activity_detected=True,
             activity_session_id=activity.get("activity_session_id"),
             activity_detection_count=activity.get("detection_count") or 0,
             activity_started_at=_live_activity_datetime(activity.get("started_at")),
             activity_last_seen_at=_live_activity_datetime(activity.get("last_seen_at")),
             media_asset_id=best_media_asset_id,
-            warnings=["Create review activity requires a named Zone and saved best frame."],
+            warnings=["Create review activity requires saved best-frame evidence."],
         )
 
     zone_name = activity.get("zone_name")
@@ -4558,6 +4568,8 @@ def _create_live_stream_motion_review_activity(
                 scoring_config={
                     "source": "live_stream_motion_session_activity",
                     "activity_session_id": activity.get("activity_session_id"),
+                    "activity_region_kind": activity.get("region_kind"),
+                    "activity_region_id": activity.get("region_id"),
                     "detection_count": activity.get("detection_count") or 1,
                     "near_miss_count": activity.get("near_miss_count") or 0,
                     "frames_evaluated_count": activity.get("frames_evaluated_count") or 0,
@@ -5557,8 +5569,8 @@ async def _monitor_evaluate_saved_media(
 def _monitor_review_unavailable_reason(result: MotionEvaluateSavedMediaResponse) -> str | None:
     if not result.activity_detected:
         return "no_activity_detected"
-    if result.uses_auto_regions or not result.can_create_review_activity:
-        return "auto_region_requires_named_zone"
+    if not result.can_create_review_activity:
+        return "review_activity_unavailable"
     if not (result.best_snapshot_media_asset_id or result.best_media_asset_id):
         return "missing_best_snapshot"
     if result.review_activity_created:
@@ -5617,11 +5629,6 @@ def _monitor_status_message(state: SourceMonitorState) -> str:
             f"Activity detected in {area_label}. Create review activity when ready."
             if area_label
             else "Activity detected. Create review activity when ready."
-        )
-    if state.review_activity_unavailable_reason == "auto_region_requires_named_zone":
-        return (
-            "Activity detected in an automatic area. Add or select a named zone to "
-            "create a review activity in this build."
         )
     if state.review_activity_unavailable_reason == "cooldown_suppressed":
         return "Same recent activity. No duplicate review item is needed."

@@ -161,6 +161,85 @@ async def test_create_motion_evidence_returns_pending_evidence(
     assert evidence["scoring_config"]["pixel_delta_threshold"] == 25.0
 
 
+async def test_zone_optional_motion_evidence_promotes_to_review_without_truth(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    asset = add_test_media_asset(
+        isolated_repository,
+        media_id="media_zone_optional_activity",
+    )
+    before_counts = await product_counts(client)
+
+    created_response = await create_motion_evidence(
+        client,
+        zone_id=None,
+        stream_id=STREAM_ID,
+        snapshot_media_asset_id=asset.id,
+        scoring_config={
+            "source": "automatic_activity_test",
+            "activity_region_kind": "auto_area",
+            "activity_region_id": "auto-region:test",
+            "activity_left": 0.2,
+            "activity_top": 0.3,
+            "activity_right": 0.4,
+            "activity_bottom": 0.5,
+            "best_frame_width": 100,
+            "best_frame_height": 100,
+        },
+    )
+
+    assert created_response.status_code == 201
+    evidence = created_response.json()
+    assert evidence["zone_id"] is None
+    assert evidence["status"] == "pending"
+
+    promoted_response = await client.post(
+        f"/api/motion/evidence/{evidence['id']}/promote",
+        json={"create_event": True, "create_visit": True},
+    )
+
+    assert promoted_response.status_code == 200
+    promoted = promoted_response.json()
+    assert promoted["evidence"]["zone_id"] is None
+    assert promoted["event_id"].startswith("event-motion-")
+    assert promoted["visit_id"].startswith("visit-motion-")
+
+    queue_response = await client.get("/api/review-queue")
+    assert queue_response.status_code == 200
+    queue_item = next(
+        item
+        for item in queue_response.json()
+        if item["visit_id"] == promoted["visit_id"]
+    )
+    assert queue_item["primary_zone_id"] is None
+    assert queue_item["zone_id"] is None
+    assert queue_item["focus_crop_source"] == "activity"
+    assert queue_item["review_status"] == "needs_review"
+
+    after_counts = await product_counts(client)
+    assert after_counts["events"] == before_counts["events"] + 1
+    assert after_counts["visits"] == before_counts["visits"] + 1
+    assert after_counts["review_labels"] == before_counts["review_labels"]
+    assert after_counts["exports"] == before_counts["exports"]
+
+
+async def test_zone_optional_motion_evidence_requires_stream_context(
+    client: httpx.AsyncClient,
+) -> None:
+    before_counts = await product_counts(client)
+
+    response = await create_motion_evidence(
+        client,
+        zone_id=None,
+        stream_id=None,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Stream 'motion evidence stream' was not found."
+    assert await product_counts(client) == before_counts
+
+
 async def test_created_motion_evidence_can_be_listed(client: httpx.AsyncClient) -> None:
     created = (await create_motion_evidence(client)).json()
 

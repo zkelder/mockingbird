@@ -172,7 +172,7 @@ def recommend_activity_session(
     message = (
         "New activity is ready for review."
         if should_create
-        else "Automatic activity area result only; review activity requires a named Zone in this build."
+        else "Activity was detected, but review evidence is not available."
     )
     return ActivitySessionRecommendation(
         session_key=session_key,

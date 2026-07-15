@@ -172,7 +172,9 @@ export function MotionEvidencePage({
     () =>
       evidence.filter((item) =>
         zoneFilter.trim()
-          ? item.zone_id.toLowerCase().includes(zoneFilter.trim().toLowerCase())
+          ? (item.zone_id ?? "automatic activity area")
+              .toLowerCase()
+              .includes(zoneFilter.trim().toLowerCase())
           : true,
       ),
     [evidence, zoneFilter],
@@ -293,7 +295,9 @@ export function MotionEvidencePage({
   useEffect(() => {
     setEventTitle(
       selectedEvidence
-        ? `Motion evidence in ${selectedEvidence.zone_id}`
+        ? selectedEvidence.zone_id
+          ? `Motion evidence in ${selectedEvidence.zone_id}`
+          : "Outdoor motion activity"
         : "",
     );
     setVisitLabelHint("unknown_animal");
@@ -359,7 +363,7 @@ export function MotionEvidencePage({
     try {
       const created = await apiClient.createMotionEvidence(payload);
       setStatusFilter("pending");
-      setZoneFilter(created.zone_id);
+      setZoneFilter(created.zone_id ?? "");
       setSelectedEvidenceId(created.id);
       setMessage(
         created.snapshot_media_asset_id
@@ -433,7 +437,7 @@ export function MotionEvidencePage({
       if (result.created_evidence.length > 0) {
         const firstCreated = result.created_evidence[0];
         setStatusFilter("pending");
-        setZoneFilter(firstCreated.zone_id);
+        setZoneFilter(firstCreated.zone_id ?? "");
         setSelectedEvidenceId(firstCreated.id);
         setMessage(
           `${firstCreated.id} created as pending Motion Evidence from sampled frame evaluation.`,
@@ -1089,14 +1093,14 @@ export function MotionEvidencePage({
                       key={created.id}
                       onClick={() => {
                         setStatusFilter("pending");
-                        setZoneFilter(created.zone_id);
+                        setZoneFilter(created.zone_id ?? "");
                         setSelectedEvidenceId(created.id);
                       }}
                       type="button"
                     >
                       <strong>{created.id}</strong>
                       <span>{formatLabel(created.status)}</span>
-                      <span>{created.zone_id}</span>
+                      <span>{created.zone_id ?? "Automatic activity area"}</span>
                       <span>{formatPercent(created.peak_changed_ratio)} peak change</span>
                       <span>{created.triggered_frame_count} triggered frames</span>
                     </button>
@@ -1248,7 +1252,9 @@ export function MotionEvidencePage({
                   >
                     <div className="item-title-row">
                       <div>
-                        <span className="meta-text">{item.zone_id}</span>
+                        <span className="meta-text">
+                          {item.zone_id ?? "Automatic activity area"}
+                        </span>
                         <h2>{item.id}</h2>
                       </div>
                       <div className="record-status-stack">
@@ -1380,7 +1386,10 @@ export function MotionEvidencePage({
                 ) : null}
 
                 <div className="motion-evidence-detail-grid">
-                  <DetailItem label="Zone" value={selectedEvidence.zone_id} />
+                  <DetailItem
+                    label="Activity context"
+                    value={selectedEvidence.zone_id ?? "Automatic activity area"}
+                  />
                   <DetailItem label="Status" value={formatLabel(selectedEvidence.status)} />
                   <DetailItem label="Peak change" value={formatPercent(selectedEvidence.peak_changed_ratio)} />
                   <DetailItem label="Triggered frames" value={`${selectedEvidence.triggered_frame_count}`} />
@@ -1418,7 +1427,10 @@ export function MotionEvidencePage({
                       value={selectedStream?.name ?? selectedEvidence.stream_id ?? "none"}
                       detail={selectedEvidence.stream_id}
                     />
-                    <ContextItem label="Zone" value={selectedEvidence.zone_id} />
+                    <ContextItem
+                      label="Activity area"
+                      value={selectedEvidence.zone_id ?? "Automatic activity area"}
+                    />
                     <ContextItem
                       label="Evidence state"
                       value={formatLabel(selectedEvidence.status)}

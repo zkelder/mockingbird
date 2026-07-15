@@ -2921,7 +2921,7 @@ export function StreamDetailPage({
                   {liveReviewActivityCreated
                     ? `Open Review Queue to confirm or correct the activity in ${liveActivityAreaLabel}.`
                     : liveMotionResult?.uses_auto_regions
-                      ? "Automatic activity areas are evidence only; add or select a named Zone before review activity."
+                      ? "Automatic activity is ready for review; a named Zone is optional context."
                       : `${liveBestFrameMessage} Create a review activity to send it into the correction flow.`}
                 </p>
                 <div className="stream-live-activity-facts">

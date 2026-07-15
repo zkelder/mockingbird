@@ -1472,7 +1472,7 @@ MotionScoringConfigValue = str | int | float | bool | list[str] | None
 class MotionEvidenceCreateRequest(BaseModel):
     source_id: str | None = None
     stream_id: str | None = None
-    zone_id: str
+    zone_id: str | None = None
     start_frame_index: int | None = None
     end_frame_index: int | None = None
     best_frame_index: int | None = None
@@ -1515,7 +1515,7 @@ class MotionEvidenceResponse(BaseModel):
     id: str
     source_id: str | None
     stream_id: str | None
-    zone_id: str
+    zone_id: str | None
     start_frame_index: int | None
     end_frame_index: int | None
     best_frame_index: int | None

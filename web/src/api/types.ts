@@ -1317,7 +1317,7 @@ export interface MotionEvidence {
   id: string;
   source_id?: string | null;
   stream_id?: string | null;
-  zone_id: string;
+  zone_id?: string | null;
   start_frame_index?: number | null;
   end_frame_index?: number | null;
   best_frame_index?: number | null;
@@ -1342,7 +1342,7 @@ export interface MotionEvidenceListResponse {
 export interface MotionEvidenceCreateRequest {
   source_id?: string | null;
   stream_id?: string | null;
-  zone_id: string;
+  zone_id?: string | null;
   start_frame_index?: number | null;
   end_frame_index?: number | null;
   best_frame_index?: number | null;

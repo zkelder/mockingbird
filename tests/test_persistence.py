@@ -4,6 +4,7 @@ import pytest
 
 from mockingbird.api.schemas import (
     DatasetExportCreate,
+    MotionEvidenceCreateRequest,
     Point,
     ReviewCorrectionCreate,
     ZoneCreate,
@@ -176,6 +177,96 @@ def test_database_schema_record_and_integrity_survive_restart(tmp_path: Path) ->
     assert reloaded_repository.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
     assert reloaded_repository.schema_status.initialized_schema_record is False
     assert reloaded_repository.schema_status.integrity_check == "ok"
+
+
+def test_schema_two_migrates_motion_evidence_to_optional_zone_without_data_loss(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing = repository.create_motion_evidence(
+        MotionEvidenceCreateRequest(
+            stream_id=STREAM_ID,
+            zone_id=FEEDER_ZONE_ID,
+            peak_changed_ratio=0.25,
+            triggered_frame_count=2,
+            scoring_config={"source": "schema_two_fixture"},
+        )
+    )
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE motion_evidence_schema_two (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                source_id VARCHAR,
+                stream_id VARCHAR,
+                zone_id VARCHAR NOT NULL,
+                start_frame_index INTEGER,
+                end_frame_index INTEGER,
+                best_frame_index INTEGER,
+                start_time VARCHAR,
+                end_time VARCHAR,
+                best_frame_time VARCHAR,
+                peak_changed_ratio FLOAT NOT NULL,
+                triggered_frame_count INTEGER NOT NULL,
+                scoring_config_json TEXT NOT NULL,
+                snapshot_media_asset_id VARCHAR,
+                status VARCHAR NOT NULL,
+                promoted_event_id VARCHAR,
+                promoted_visit_id VARCHAR,
+                created_at DATETIME NOT NULL,
+                notes TEXT
+            )
+            """
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO motion_evidence_schema_two SELECT * FROM motion_evidence"
+        )
+        connection.exec_driver_sql("DROP TABLE motion_evidence")
+        connection.exec_driver_sql(
+            "ALTER TABLE motion_evidence_schema_two RENAME TO motion_evidence"
+        )
+        connection.exec_driver_sql(
+            "UPDATE mockingbird_schema SET version = 2 WHERE singleton_id = 1"
+        )
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        persisted = migrated.get_motion_evidence(existing.id)
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert persisted is not None
+        assert persisted.zone_id == FEEDER_ZONE_ID
+
+        zone_optional = migrated.create_motion_evidence(
+            MotionEvidenceCreateRequest(
+                stream_id=STREAM_ID,
+                zone_id=None,
+                peak_changed_ratio=0.2,
+                triggered_frame_count=1,
+                scoring_config={
+                    "source": "automatic_activity",
+                    "activity_region_kind": "auto_area",
+                    "activity_region_id": "auto-region:migration-test",
+                },
+            )
+        )
+        assert zone_optional.zone_id is None
+
+        with migrated.engine.connect() as connection:
+            zone_column = next(
+                row
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(motion_evidence)"
+                )
+                if row[1] == "zone_id"
+            )
+        assert zone_column[3] == 0
+    finally:
+        migrated.close()
 
 
 def test_newer_database_version_is_rejected_without_modification(tmp_path: Path) -> None:
