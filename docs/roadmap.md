@@ -1302,6 +1302,13 @@ Current work:
   correctly identified the passing background car as `vehicle` at 0.825. The
   Review Queue now orders newest activity first so fresh field candidates lead
   the user's review work. No reviewed truth or export data was created.
+- Daylight Feeder Image Quality 1: a controlled matrix on the real bird frame
+  showed that brightness/gamma/contrast cleanup increased confidence without
+  correcting the wrong class, so no blanket image filter was added. A tighter
+  analysis-only feeder-Zone focus produced a 0.462 proposal above the unchanged
+  normal 0.10 threshold while preserving the original review frame and the
+  evidence-only correction boundary. Hardware exposure capability probing
+  remains the next safe route to preventing clipped highlights.
 - No new page, navigation item, dashboard card, or permanent field-test panel is
   added. The primary product flow remains Cameras/Streams -> Review Queue -> Bird
   Log -> Exports.

@@ -265,6 +265,12 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
     "video/quicktime": "video",
 }
 
+# Small feeder animals can occupy only a few detector pixels in a 4K frame.
+# MegaDetector therefore uses a tighter Zone focus than the review UI, while
+# the original best frame remains the user's context and correction record.
+MEGADETECTOR_ZONE_PADDING_RATIO = 0.2
+MEGADETECTOR_MIN_FOCUS_SIZE_RATIO = 0.10
+
 EXTERNAL_URL_PREVIEW_EXTENSIONS = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -11439,6 +11445,8 @@ def _megadetector_focus_box(zone_model: ZoneModel | None) -> MegaDetectorBox | N
         top=bounds.top,
         right=bounds.right,
         bottom=bounds.bottom,
+        padding_ratio=MEGADETECTOR_ZONE_PADDING_RATIO,
+        min_crop_size_ratio=MEGADETECTOR_MIN_FOCUS_SIZE_RATIO,
     )
     if crop_plan.is_full_frame_fallback:
         return None

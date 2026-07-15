@@ -164,10 +164,10 @@ def mock_megadetector_output(
         assert Path(kwargs["model_path"]).is_file()
         focus_box = kwargs["focus_box"]
         assert focus_box is not None
-        assert focus_box.x == pytest.approx(0.22)
-        assert focus_box.y == pytest.approx(0.08)
-        assert focus_box.width == pytest.approx(0.56)
-        assert focus_box.height == pytest.approx(0.64)
+        assert focus_box.x == pytest.approx(0.304)
+        assert focus_box.y == pytest.approx(0.176)
+        assert focus_box.width == pytest.approx(0.392)
+        assert focus_box.height == pytest.approx(0.448)
         return proposals
 
     monkeypatch.setattr(megadetector_adapter, "_execute_megadetector_runtime", execute_runtime)

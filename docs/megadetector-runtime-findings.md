@@ -88,6 +88,28 @@ MegaDetector proposal evidence on real field media. It also shows that the next
 recall work is better exposure/framing plus more representative bird frames,
 not a blanket MDv5 confidence reduction.
 
+### Overexposure cleanup matrix
+
+The same real bird frame was evaluated with the original image, reduced
+brightness, gamma correction, contrast adjustment, and autocontrast across the
+existing detector focus and two tighter Zone crops. The useful result was
+spatial, not cosmetic:
+
+- the existing broad focus scored the visible bird as `person` at 0.014
+- the tighter Zone focus scored it as `person` at 0.462
+- gamma correction increased that wrong `person` score to 0.570
+
+The app therefore does not add a blanket cleanup filter. Highlight clipping has
+already discarded detail, and tone adjustment can make wrong evidence more
+confident. MegaDetector now uses a tighter analysis-only Zone focus with 20%
+padding and a 10% minimum width. The original best frame remains unchanged for
+review and correction, and every model result remains proposal evidence only.
+
+The next image-quality step is a read-only camera-driver exposure capability
+probe, followed by bounded hardware exposure calibration only on devices that
+explicitly support it. Software filtering is not a substitute for preventing
+clipping at capture time.
+
 ## Probe Boundary
 
 The probe was local and disposable. It did not add runtime code, model files, model downloads, camera/source adapters, background workers, or product API changes.
