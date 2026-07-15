@@ -327,3 +327,29 @@ A local export of reviewed media, labels, corrections, and metadata.
 ## Analytics
 
 Local summaries of outdoor activity over time.
+
+## Stream Monitoring Policy
+
+Durable, user-authored intent for whether a supported live-video Stream should
+remain off, armed, or paused while MockingBird is running. It is configuration,
+not proof that a camera process is active, evidence, or reviewed truth.
+
+## Runtime Checkpoint
+
+Operational last-known lifecycle metadata for one Stream, such as interrupted,
+starting, running, backoff, blocked, or stopped. A checkpoint from an older app
+instance is stale until reconciled and is never product evidence or truth.
+
+## Durable Stream Supervisor
+
+A future application-level lifecycle owner that reconciles explicitly armed
+Stream Monitoring Policies with bounded backend-owned live camera sessions. It
+is not a Source adapter, general provider scheduler, model runtime, or truth
+source.
+
+## Runtime Safety Hold
+
+An install-level operational stop that overrides armed monitoring during backup
+quiesce, restore, migration/recovery, emergency stop, or shutdown. A restore
+hold requires explicit resume so restored policy cannot unexpectedly start a
+camera.

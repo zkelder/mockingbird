@@ -93,7 +93,10 @@ Phase 24A creates no:
 
 ## Follow-on Work
 
-Phase 24B can add explicit local backup/restore artifacts and migration backup
-policy. Phase 24C can design opt-in persisted camera/monitor desired state,
-reconnect, restart, resource limits, retention, and observable failure/backoff
-without allowing automation to create reviewed truth.
+Phase 24B added explicit verified local backup/restore artifacts. Phase 24C now
+defines opt-in persisted camera/monitor desired state, reconnect, restart,
+resource limits, retention, restore holds, observable failure/backoff, and
+separate future audio consent in
+[durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md).
+Phase 24D should add the desired-state schema/API with every Stream off and no
+startup camera behavior before any supervisor implementation.

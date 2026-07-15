@@ -208,6 +208,11 @@ ReviewLabels, update Bird Log, run identification assist, export data, or mark
 truth. The current unattended mode is in-memory and user-started: the API
 process, backend camera session, and monitor must remain running, but the
 browser does not need to keep the live view visible.
+The future restart-safe version is designed in
+[docs/durable-camera-monitor-lifecycle-design.md](docs/durable-camera-monitor-lifecycle-design.md).
+That boundary keeps durable user intent separate from actual process state,
+starts every existing Stream off, and requires restore holds, storage budgets,
+side-effect-free status, and separate future audio consent before activation.
 Stream Detail lets users choose auto-create before monitoring starts; that
 pending choice is applied when monitoring starts, and running monitor changes
 update monitor settings without creating truth.

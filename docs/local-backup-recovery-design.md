@@ -78,6 +78,16 @@ The existing Local Data screen provides:
 Backup listing is read-only. There is no scheduled backup, cloud sync, retention
 cleanup, or background worker in this phase.
 
+## Future durable-runtime coordination
+
+When durable live monitoring is implemented, backup creation must temporarily
+quiesce new evidence/media writes and wait for an in-progress handoff within a
+bounded deadline. Restore must hard-stop the durable supervisor before repository
+close and persist a `restore_hold` after the restored repository opens. An armed
+monitoring policy contained in a backup must not restart a camera until the user
+explicitly resumes it. See
+[durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md).
+
 ## Truth and product boundaries
 
 Backup and restore preserve the product graph exactly. They do not create or

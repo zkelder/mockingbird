@@ -175,6 +175,16 @@ Every future implementation task must restate:
   and explicit phase scope. Workers must be disabled by default initially,
   observable, bounded, local-first, and unable to create ReviewLabels, mark
   Visits reviewed, or create analytics/export truth.
+- Durable camera/monitor lifecycle work must follow
+  [docs/durable-camera-monitor-lifecycle-design.md](docs/durable-camera-monitor-lifecycle-design.md).
+  Persisted desired policy and actual runtime state must remain separate; every
+  existing Stream starts off, arming is explicit and Stream-scoped, status reads
+  are side-effect free, backup/restore safety holds override arming, and Source
+  archive/Stop camera must prevent surprise restart. The first boundary is only
+  for supported backend-owned live video sessions, not external snapshot
+  polling or other provider workers. It must not create ReviewLabels or reviewed
+  truth. Future audio requires separate consent, privacy, retention, dependency,
+  and evidence design and must never inherit video arming.
 - Local MegaDetector setup must follow
   [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
   artifacts must never be committed.

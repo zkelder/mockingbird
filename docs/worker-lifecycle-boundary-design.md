@@ -137,6 +137,20 @@ worker.
 
 MockingBird should not upload media or evidence to cloud services by default.
 
+## Relationship to durable live-camera continuity
+
+Restart-safe backend-owned live-video sessions are narrower than the general
+provider workers described here. Their boundary is documented in
+[durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md).
+A future durable Stream supervisor may reconcile explicit per-Stream video
+intent, but it must not activate the external URL scheduler placeholder, folder
+watcher, webhook queue, retention job, or model job.
+
+Desired monitoring policy defaults off. Actual runtime state is separate,
+status reads are side-effect free, backup/restore holds override arming, and
+audio requires separate future consent. The same truth, storage, privacy,
+observability, boundedness, and stop requirements in this document still apply.
+
 ## Observability/Status
 
 Future status surfaces should report:

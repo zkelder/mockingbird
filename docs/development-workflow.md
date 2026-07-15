@@ -70,4 +70,13 @@ activity, and roll both database and media back if the restored repository
 cannot reopen. Backup artifacts remain under ignored local data paths and do
 not create or reinterpret evidence, reviewed truth, analytics, or exports.
 
+Before persisting camera or monitor intent across restart, use
+[durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md).
+Implement it in stages: desired-state schema/API with every Stream off;
+supervisor and fake-clock lifecycle tests while activation remains unavailable;
+then explicit live-video arming with backup/restore holds and storage budgets.
+Do not make external snapshot polling durable through this path, put lifecycle
+controls on a new admin page, allow status reads to create candidates, or let
+future audio inherit video consent.
+
 Keep docs practical and concise. Link to [README.md](../README.md), [docs/product-doctrine.md](product-doctrine.md), [docs/roadmap.md](roadmap.md), [docs/glossary.md](glossary.md), and [docs/architecture.md](architecture.md) instead of duplicating the full doctrine in every file.

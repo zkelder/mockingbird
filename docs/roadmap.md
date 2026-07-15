@@ -1310,17 +1310,19 @@ Completed:
 - Phase 24A: single-app runtime and recovery foundation.
 - Phase 24B: verified local database-and-media backup, import, download, and
   rollback-safe restore on the existing Local Data screen.
+- Phase 24C: audio-aware durable camera/monitor lifecycle design, separating
+  persisted user intent, actual runtime state, restore holds, and review truth.
 
 Next product-hardening work:
 
-- Phase 24C: opt-in durable camera/monitor lifecycle design, made audio-aware so
-  later microphone evidence can share the same explicit ownership, shutdown,
-  health, and recovery boundaries.
+- Phase 24D: persisted Stream monitoring policy/checkpoint schema and read-only
+  product contract, with every existing Stream off and no startup behavior.
 
 Design notes:
 
 - [single-app-runtime-recovery-design.md](single-app-runtime-recovery-design.md)
 - [local-backup-recovery-design.md](local-backup-recovery-design.md)
+- [durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md)
 
 Validation:
 
@@ -1347,15 +1349,27 @@ Validation:
 - Backup and recovery extend Local Data rather than adding an administration
   panel. Cloud sync, scheduled jobs, retention cleanup, and cross-install media
   path migration remain out of scope.
+- Durable monitoring design applies first to supported backend-owned live video,
+  not the snapshot Source monitor or general provider workers.
+- Durable desired policy defaults off and stays separate from actual process
+  state. Old `running` checkpoints become interrupted after restart.
+- Future status routes are side-effect free. Auto-candidate creation belongs to
+  the explicitly armed monitor lifecycle and can create needs-review evidence
+  only, never ReviewLabels or reviewed truth.
+- Backup/restore, migration, emergency-stop, and shutdown holds override armed
+  policy; a restored armed policy requires explicit resume.
+- Future audio can share lifecycle ownership patterns but requires independent
+  consent, privacy, retention, dependency, and evidence design. Video arming
+  never enables a microphone.
 - No camera or monitor starts on application startup. No worker, scheduler,
   provider action, media/evidence creation, Event/Visit, ReviewLabel, export,
   analytics truth, model runtime, or automatic truth behavior is added.
 
 ## Forward sequence to a completed field product
 
-- Phase 24C: design and then implement an opt-in durable camera/monitor
-  lifecycle with explicit ownership, recovery, status, and safe shutdown. Keep
-  the lifecycle audio-aware, but do not add audio capture by accident.
+- Phases 24D–24G: add default-off desired-state/status contracts, a bounded
+  supervisor foundation, explicit live-video continuity, then storage-limited
+  idempotent review handoff. Audio remains design-only during these phases.
 - Phase 25: harden the whole field loop with restart recovery, bounded storage,
   retention controls, camera/source health, long-run observability, and
   representative feeder validation.

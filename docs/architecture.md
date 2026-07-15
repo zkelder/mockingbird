@@ -317,3 +317,27 @@ The runtime is orchestration, not a new product model or provider adapter. It
 creates no evidence, Event, Visit, correction, export, analytics truth, or model
 result. Durable camera/monitor desired state remains a separate lifecycle
 boundary under [worker-lifecycle-boundary-design.md](worker-lifecycle-boundary-design.md).
+
+## Durable live-stream lifecycle boundary
+
+Phase 24C designs the next layer without implementing it. A future
+`DurableStreamSupervisor` may reconcile explicitly armed Stream monitoring
+policies with backend-owned live camera sessions after application restart. It
+must follow
+[durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md).
+
+The architecture keeps three concerns separate:
+
+- `StreamMonitoringPolicy` is durable user intent and defaults off;
+- `StreamRuntimeCheckpoint` is operational last-known state, never proof that a
+  prior process is still running; and
+- `LiveCameraSessionManager` continues to own bounded subprocess, frame-cache,
+  monitor-thread, and activity-burst resources for the current process.
+
+The first durable boundary covers supported backend-owned RTSP/local USB/Windows
+DirectShow live video only. The explicit external URL `SourceMonitorManager`
+remains a separate in-memory/provider-worker concern. Status reads remain
+side-effect free, backup/restore holds override arming, and only an explicitly
+enabled auto-create policy may produce needs-review evidence. Correction remains
+truth. Future audio may reuse lifecycle/component ownership but requires
+separate consent, privacy, retention, dependency, and evidence design.
