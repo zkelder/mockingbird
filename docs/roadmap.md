@@ -1269,6 +1269,11 @@ Current work:
   broad branch-heavy rectangle. A bounded monitor check with auto-create off
   remained quiet after tightening and created no media, MotionEvidence, review
   candidate, Bird Log entry, export, or truth.
+- Product Trust + Lifecycle Cleanup 1: stopped camera sessions clear transient
+  active-motion badges/notices; real cameras can be renamed, archived, and
+  restored without deleting their product graph; unreferenced mistaken Zones
+  can be removed while linked review/evidence context is protected; and sample
+  walkthrough removal/reset preserves real cameras and real product data.
 - No new page, navigation item, dashboard card, or permanent field-test panel is
   added. The primary product flow remains Cameras/Streams -> Review Queue -> Bird
   Log -> Exports.
@@ -1286,5 +1291,11 @@ Validation:
   Log entries, exports, analytics truth, media files, or model behavior.
 - Existing camera monitoring, privacy/ignore suppression, one-best-frame behavior,
   correction truth, and optional analyzer boundaries remain unchanged.
+- Camera archive and Zone removal are explicit lifecycle actions. Archive stops
+  active runtime sessions without deleting Streams, Zones, evidence, review
+  truth, exports, or media. Zone deletion rejects linked activity/review context.
+- Sample removal requires confirmation and at least one real Source, blocks when
+  sample-linked user work is present, and deletes no real camera graph or local
+  media files. Demo reset restores only the sample walkthrough.
 - The complete backend suite, frontend type-check, and frontend production build
   pass before real-camera threshold changes begin.

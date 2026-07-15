@@ -345,7 +345,7 @@ export default function App() {
           onOpenReview={() => openReviewQueue()}
           onOpenBirdLog={() => setPage("bird-log")}
           onOpenExports={() => setPage("exports")}
-          onCameraCreated={() => loadAppData({ showLoading: false })}
+          onSourcesChanged={() => loadAppData({ showLoading: false })}
         />
       );
     }

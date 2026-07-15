@@ -4,6 +4,8 @@ import type {
   CameraSource,
   CameraSourceCreateRequest,
   CameraSourceCreateResponse,
+  CameraSourceMutationResult,
+  CameraSourceUpdateRequest,
   ClassifierManifestFileExportRequest,
   ClassifierManifestFileExportResponse,
   ClassifierReadinessReport,
@@ -87,6 +89,7 @@ import type {
   SavedMediaRetentionReportResponse,
   SavedPreviewMotionEvidenceRequest,
   SavedPreviewMotionEvidenceResponse,
+  SampleDataRemovalResponse,
   SpeciesSuggestion,
   SpeciesSuggestionCreateRequest,
   SpeciesSuggestionListResponse,
@@ -224,6 +227,11 @@ export const apiClient = {
   createCameraSource: (payload: CameraSourceCreateRequest) =>
     request<CameraSourceCreateResponse>("/api/sources", {
       method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateCameraSource: (sourceId: string, payload: CameraSourceUpdateRequest) =>
+    request<CameraSourceMutationResult>(`/api/sources/${encodeURIComponent(sourceId)}`, {
+      method: "PATCH",
       body: JSON.stringify(payload),
     }),
   getSourceProviderDefinitions: () =>
@@ -581,6 +589,10 @@ export const apiClient = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  deleteZone: (zoneId: string) =>
+    request<ZoneMutationResult>(`/api/zones/${zoneId}`, {
+      method: "DELETE",
+    }),
   getReviewQueue: () => request<ReviewQueueItem[]>("/api/review-queue"),
   getReviewLabels: () => request<ReviewLabel[]>("/api/review-labels"),
   getDatasetExports: () => request<DatasetExport[]>("/api/dataset-exports"),
@@ -602,6 +614,11 @@ export const apiClient = {
   resetDemoData: () =>
     request<LocalDataStatus>("/api/settings/reset-demo-data", {
       method: "POST",
+    }),
+  removeSampleData: () =>
+    request<SampleDataRemovalResponse>("/api/settings/remove-sample-data", {
+      method: "POST",
+      body: JSON.stringify({ confirm: true }),
     }),
   createReviewLabel: (payload: ReviewCorrectionCreate) =>
     request<ReviewCorrectionResult>("/api/review-labels", {

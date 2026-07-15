@@ -7,7 +7,7 @@ export type SourceKind =
   | "webhook"
   | "integration";
 
-export type SourceStatus = "connected" | "disconnected" | "needs_setup";
+export type SourceStatus = "connected" | "disconnected" | "needs_setup" | "archived";
 export type SourceConnectionStatusValue =
   | "demo"
   | "not_configured"
@@ -179,6 +179,16 @@ export interface CameraSourceCreateRequest {
 export interface CameraSourceCreateResponse {
   source: CameraSource;
   stream: Stream;
+}
+
+export interface CameraSourceUpdateRequest {
+  name?: string;
+  archived?: boolean;
+}
+
+export interface CameraSourceMutationResult {
+  source: CameraSource;
+  streams: Stream[];
 }
 
 export interface SourceConnectionStatus {
@@ -2209,10 +2219,19 @@ export interface LocalDataStatus {
   media_asset_count: number;
   detection_run_count: number;
   detection_proposal_count: number;
+  motion_evidence_count: number;
   review_label_count: number;
   dataset_export_count: number;
   needs_review_count: number;
   database_ready: boolean;
   seed_data_present: boolean;
   local_first_note: string;
+}
+
+export interface SampleDataRemovalResponse {
+  removed: boolean;
+  removed_counts: Record<string, number>;
+  preserved_source_count: number;
+  status: LocalDataStatus;
+  message: string;
 }

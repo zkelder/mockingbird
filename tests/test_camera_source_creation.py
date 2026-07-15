@@ -83,3 +83,187 @@ async def test_add_camera_rejects_blank_name(client: httpx.AsyncClient) -> None:
     response = await client.post("/api/sources", json={"name": "   "})
 
     assert response.status_code == 422
+
+
+async def test_camera_can_be_renamed_archived_and_restored_without_losing_stream(
+    client: httpx.AsyncClient,
+) -> None:
+    created = (await client.post("/api/sources", json={"name": "Feeder camera"})).json()
+    source_id = created["source"]["id"]
+    stream_id = created["stream"]["id"]
+
+    renamed = await client.patch(
+        f"/api/sources/{source_id}",
+        json={"name": "East feeder camera"},
+    )
+
+    assert renamed.status_code == 200
+    assert renamed.json()["source"]["name"] == "East feeder camera"
+    assert renamed.json()["streams"][0]["id"] == stream_id
+    assert renamed.json()["streams"][0]["name"] == "East feeder camera stream"
+
+    archived = await client.patch(
+        f"/api/sources/{source_id}",
+        json={"archived": True},
+    )
+
+    assert archived.status_code == 200
+    assert archived.json()["source"]["status"] == "archived"
+    playback = (await client.get(f"/api/streams/{stream_id}/playback")).json()
+    assert playback["status"] == "offline"
+    assert playback["supports_live_playback"] is False
+    blocked_start = await client.post(f"/api/streams/{stream_id}/live-session/start")
+    assert blocked_start.status_code == 409
+
+    restored = await client.patch(
+        f"/api/sources/{source_id}",
+        json={"archived": False},
+    )
+
+    assert restored.status_code == 200
+    assert restored.json()["source"]["status"] == "needs_setup"
+    assert restored.json()["streams"][0]["id"] == stream_id
+
+
+async def test_sample_camera_cannot_be_renamed_or_archived(client: httpx.AsyncClient) -> None:
+    response = await client.patch(
+        "/api/sources/source-backyard-demo",
+        json={"archived": True},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "The sample camera cannot be renamed or archived."
+
+
+async def test_unreferenced_zone_can_be_removed_but_review_context_is_protected(
+    client: httpx.AsyncClient,
+) -> None:
+    created = (await client.post("/api/sources", json={"name": "Zone test camera"})).json()
+    stream_id = created["stream"]["id"]
+    zone = (
+        await client.post(
+            "/api/zones",
+            json={
+                "stream_id": stream_id,
+                "name": "Mistaken feeder",
+                "zone_type": "feeder",
+                "polygon": [
+                    {"x": 0.1, "y": 0.1},
+                    {"x": 0.3, "y": 0.1},
+                    {"x": 0.3, "y": 0.3},
+                ],
+            },
+        )
+    ).json()["zone"]
+
+    removed = await client.delete(f"/api/zones/{zone['id']}")
+
+    assert removed.status_code == 200
+    assert removed.json()["zone"]["id"] == zone["id"]
+    assert removed.json()["zones"] == []
+
+    protected = await client.delete("/api/zones/zone-feeder")
+    assert protected.status_code == 409
+    assert "Deactivate it instead" in protected.json()["detail"]
+
+
+async def test_remove_sample_data_requires_real_camera_and_preserves_real_graph(
+    client: httpx.AsyncClient,
+) -> None:
+    without_real_camera = await client.post(
+        "/api/settings/remove-sample-data",
+        json={"confirm": True},
+    )
+    assert without_real_camera.status_code == 409
+
+    created = (await client.post("/api/sources", json={"name": "Real feeder camera"})).json()
+    source_id = created["source"]["id"]
+    stream_id = created["stream"]["id"]
+    zone = (
+        await client.post(
+            "/api/zones",
+            json={
+                "stream_id": stream_id,
+                "name": "Real feeder",
+                "zone_type": "feeder",
+                "polygon": [
+                    {"x": 0.2, "y": 0.2},
+                    {"x": 0.4, "y": 0.2},
+                    {"x": 0.4, "y": 0.4},
+                ],
+            },
+        )
+    ).json()["zone"]
+
+    removed = await client.post(
+        "/api/settings/remove-sample-data",
+        json={"confirm": True},
+    )
+
+    assert removed.status_code == 200
+    result = removed.json()
+    assert result["removed"] is True
+    assert result["status"]["seed_data_present"] is False
+    assert result["preserved_source_count"] == 1
+    assert (await client.get("/api/sources/source-backyard-demo")).status_code == 404
+    assert (await client.get(f"/api/sources/{source_id}")).status_code == 200
+    assert (await client.get(f"/api/zones/{zone['id']}")).status_code == 200
+
+
+async def test_remove_sample_data_protects_added_sample_work(
+    client: httpx.AsyncClient,
+) -> None:
+    await client.post("/api/sources", json={"name": "Real camera"})
+    await client.post(
+        "/api/zones",
+        json={
+            "stream_id": "stream-backyard-feeder",
+            "name": "Added sample Zone",
+            "zone_type": "yard",
+            "polygon": [
+                {"x": 0.1, "y": 0.1},
+                {"x": 0.2, "y": 0.1},
+                {"x": 0.2, "y": 0.2},
+            ],
+        },
+    )
+
+    response = await client.post(
+        "/api/settings/remove-sample-data",
+        json={"confirm": True},
+    )
+
+    assert response.status_code == 409
+    assert "preserved to avoid deleting user data" in response.json()["detail"]
+    assert (await client.get("/api/sources/source-backyard-demo")).status_code == 200
+
+
+async def test_reset_sample_walkthrough_preserves_real_camera_and_zone(
+    client: httpx.AsyncClient,
+) -> None:
+    created = (await client.post("/api/sources", json={"name": "Persistent camera"})).json()
+    source_id = created["source"]["id"]
+    stream_id = created["stream"]["id"]
+    zone = (
+        await client.post(
+            "/api/zones",
+            json={
+                "stream_id": stream_id,
+                "name": "Persistent feeder",
+                "zone_type": "feeder",
+                "polygon": [
+                    {"x": 0.2, "y": 0.2},
+                    {"x": 0.5, "y": 0.2},
+                    {"x": 0.5, "y": 0.5},
+                ],
+            },
+        )
+    ).json()["zone"]
+
+    reset = await client.post("/api/settings/reset-demo-data")
+
+    assert reset.status_code == 200
+    assert reset.json()["source_count"] == 2
+    assert reset.json()["zone_count"] == 4
+    assert (await client.get(f"/api/sources/{source_id}")).status_code == 200
+    assert (await client.get(f"/api/zones/{zone['id']}")).status_code == 200

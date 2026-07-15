@@ -24,6 +24,7 @@ class SourceStatus(str, Enum):
     connected = "connected"
     disconnected = "disconnected"
     needs_setup = "needs_setup"
+    archived = "archived"
 
 
 class SourceConnectionStatusValue(str, Enum):
@@ -300,6 +301,29 @@ class CameraSourceCreate(BaseModel):
         return name
 
 
+class CameraSourceUpdate(BaseModel):
+    """Rename or archive one user-facing camera without changing its evidence."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    archived: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def normalize_optional_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        name = value.strip()
+        if not name:
+            raise ValueError("Camera name cannot be empty.")
+        return name
+
+    @model_validator(mode="after")
+    def require_change(self) -> "CameraSourceUpdate":
+        if self.name is None and self.archived is None:
+            raise ValueError("Provide a camera name or archive state.")
+        return self
+
+
 class SourceConnectionStatus(BaseModel):
     # Source connection status is product-level readiness, not provider plumbing.
     source_id: str
@@ -557,6 +581,12 @@ class CameraSourceCreateResponse(BaseModel):
     # Source creation establishes product context only; setup and evidence stay explicit.
     source: CameraSource
     stream: Stream
+
+
+class CameraSourceMutationResult(BaseModel):
+    # Camera lifecycle changes preserve related Streams, Zones, evidence, and truth.
+    source: CameraSource
+    streams: list[Stream]
 
 
 class StreamPlaybackStatus(BaseModel):
@@ -2421,6 +2451,18 @@ class LocalDataStatus(BaseModel):
     database_ready: bool
     seed_data_present: bool
     local_first_note: str
+
+
+class SampleDataRemovalRequest(BaseModel):
+    confirm: bool = False
+
+
+class SampleDataRemovalResponse(BaseModel):
+    removed: bool
+    removed_counts: dict[str, int] = Field(default_factory=dict)
+    preserved_source_count: int = Field(ge=0)
+    status: LocalDataStatus
+    message: str
 
 
 class ReviewCorrectionResult(BaseModel):

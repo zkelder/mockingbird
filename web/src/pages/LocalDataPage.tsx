@@ -67,7 +67,7 @@ export function LocalDataPage({
       setStatus(await apiClient.resetDemoData());
       await onResetComplete();
       setIsConfirmingReset(false);
-      setMessage("Demo data reset. Local zones, corrections, and exports are back to seed state.");
+      setMessage("Sample walkthrough restored. Your real cameras and product data were preserved.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not reset demo data.");
     } finally {
@@ -200,13 +200,14 @@ export function LocalDataPage({
             </div>
             <p>
               Reset restores the seeded source, stream, zones, events, visits, review label, and
-              dataset export manifest. Media files are not deleted.
+              dataset export manifest. Real cameras, their Zones and observations, other exports,
+              and local media are preserved.
             </p>
             {isConfirmingReset ? (
               <div className="notice-panel">
                 <strong>Confirm reset</strong>
                 <span>
-                  This will replace local demo metadata with the seeded product loop state.
+                  This will replace only the sample walkthrough with its seeded product loop state.
                 </span>
               </div>
             ) : null}

@@ -20,6 +20,8 @@ from mockingbird.api.schemas import (
     CameraSource,
     CameraSourceCreate,
     CameraSourceCreateResponse,
+    CameraSourceMutationResult,
+    CameraSourceUpdate,
     ClassifierReadinessReport,
     ClassifierManifestFileExportRequest,
     ClassifierManifestFileExportResponse,
@@ -113,6 +115,8 @@ from mockingbird.api.schemas import (
     SavedMediaRetentionReportResponse,
     SavedPreviewMotionEvidenceRequest,
     SavedPreviewMotionEvidenceResponse,
+    SampleDataRemovalRequest,
+    SampleDataRemovalResponse,
     SpeciesSuggestionCreateRequest,
     SpeciesSuggestionListResponse,
     SpeciesSuggestionResponse,
@@ -130,6 +134,7 @@ from mockingbird.api.schemas import (
     SourceProviderConfigurationUpdate,
     SourceProviderDefinition,
     SourceSetupReviewResponse,
+    SourceStatus,
     Stream,
     StreamPlaybackStatus,
     StreamPlaybackStatusResponse,
@@ -4841,6 +4846,40 @@ async def create_camera_source(payload: CameraSourceCreate) -> CameraSourceCreat
         raise
 
 
+@app.patch(
+    "/api/sources/{source_id}",
+    response_model=CameraSourceMutationResult,
+)
+async def update_camera_source(
+    source_id: str,
+    payload: CameraSourceUpdate,
+) -> CameraSourceMutationResult:
+    repository = get_repository()
+    try:
+        result = repository.update_camera_source(source_id, payload)
+    except ValueError as error:
+        if str(error) == "source_name_exists":
+            raise HTTPException(
+                status_code=409,
+                detail="A camera with that name already exists.",
+            ) from error
+        if str(error) == "demo_source_immutable":
+            raise HTTPException(
+                status_code=400,
+                detail="The sample camera cannot be renamed or archived.",
+            ) from error
+        raise
+    if result is None:
+        raise _not_found("Source", source_id)
+
+    if payload.archived is True:
+        # Archiving pauses runtime activity but preserves every product record.
+        for stream in result.streams:
+            get_live_camera_session_manager().stop(stream.id, reason="source_archived")
+            await get_source_monitor_manager().stop(stream.id)
+    return result
+
+
 @app.get("/api/source-provider-definitions", response_model=list[SourceProviderDefinition])
 async def list_source_provider_definitions() -> list[SourceProviderDefinition]:
     return get_repository().list_source_provider_definitions()
@@ -5443,7 +5482,12 @@ async def start_stream_monitor(
     payload: SourceMonitorStartRequest | None = None,
 ) -> SourceMonitorStatusResponse:
     repository = get_repository()
-    stream, _source = _stream_source_for_monitor(repository, stream_id)
+    stream, source = _stream_source_for_monitor(repository, stream_id)
+    if source.status == SourceStatus.archived:
+        raise HTTPException(
+            status_code=409,
+            detail="Restore this archived camera before starting monitoring.",
+        )
     manager = get_source_monitor_manager()
     existing = await manager.status(stream.id)
     if existing is not None and existing.status in {"starting", "monitoring"}:
@@ -5631,10 +5675,24 @@ async def get_stream_playback_status(stream_id: str) -> StreamPlaybackStatus:
     return status
 
 
-def _stream_live_playback_config_or_404(stream_id: str) -> StreamLivePlaybackConfig:
-    configuration = get_repository().get_stream_live_playback_config(stream_id)
+def _stream_live_playback_config_or_404(
+    stream_id: str,
+    *,
+    require_active_source: bool = False,
+) -> StreamLivePlaybackConfig:
+    repository = get_repository()
+    configuration = repository.get_stream_live_playback_config(stream_id)
     if configuration is None:
         raise _not_found("Stream", stream_id)
+    if require_active_source:
+        source = repository.get_source(configuration.source_id)
+        if source is None:
+            raise _not_found("Source", configuration.source_id)
+        if source.status == SourceStatus.archived:
+            raise HTTPException(
+                status_code=409,
+                detail="Restore this archived camera before using Live view or capture.",
+            )
     return configuration
 
 
@@ -5643,7 +5701,10 @@ def _stream_live_playback_config_or_404(stream_id: str) -> StreamLivePlaybackCon
     response_model=LiveCameraSessionStatusResponse,
 )
 async def start_stream_live_camera_session(stream_id: str) -> LiveCameraSessionStatusResponse:
-    configuration = _stream_live_playback_config_or_404(stream_id)
+    configuration = _stream_live_playback_config_or_404(
+        stream_id,
+        require_active_source=True,
+    )
     _validate_live_camera_session_config(configuration)
     try:
         snapshot = get_live_camera_session_manager().start(configuration)
@@ -5704,7 +5765,10 @@ async def get_stream_live_camera_session_diagnostics(
 
 @app.get("/api/streams/{stream_id}/live-session/mjpeg")
 async def get_stream_live_camera_session_mjpeg(stream_id: str) -> StreamingResponse:
-    configuration = _stream_live_playback_config_or_404(stream_id)
+    configuration = _stream_live_playback_config_or_404(
+        stream_id,
+        require_active_source=True,
+    )
     _validate_live_camera_session_config(configuration)
     snapshot = get_live_camera_session_manager().status(stream_id)
     if snapshot is None or snapshot.status not in {"starting", "running"}:
@@ -5770,7 +5834,10 @@ async def discover_windows_cameras() -> WindowsCameraDiscoveryResponse:
 
 @app.get("/api/streams/{stream_id}/live/rtsp-mjpeg")
 async def get_stream_rtsp_mjpeg_bridge(stream_id: str) -> StreamingResponse:
-    configuration = _stream_live_playback_config_or_404(stream_id)
+    configuration = _stream_live_playback_config_or_404(
+        stream_id,
+        require_active_source=True,
+    )
     _validate_live_camera_session_config(configuration, expected_kind="rtsp")
     try:
         get_live_camera_session_manager().start(configuration)
@@ -5785,7 +5852,10 @@ async def get_stream_rtsp_mjpeg_bridge(stream_id: str) -> StreamingResponse:
 
 @app.get("/api/streams/{stream_id}/live/local-mjpeg")
 async def get_stream_local_mjpeg_bridge(stream_id: str) -> StreamingResponse:
-    configuration = _stream_live_playback_config_or_404(stream_id)
+    configuration = _stream_live_playback_config_or_404(
+        stream_id,
+        require_active_source=True,
+    )
     _validate_live_camera_session_config(
         configuration,
         expected_kind=local_camera_bridge.LOCAL_USB_STREAM_TYPE,
@@ -5808,7 +5878,10 @@ async def get_stream_local_mjpeg_bridge(stream_id: str) -> StreamingResponse:
 
 @app.get("/api/streams/{stream_id}/live/windows-dshow-mjpeg")
 async def get_stream_windows_dshow_mjpeg_bridge(stream_id: str) -> StreamingResponse:
-    configuration = _stream_live_playback_config_or_404(stream_id)
+    configuration = _stream_live_playback_config_or_404(
+        stream_id,
+        require_active_source=True,
+    )
     _validate_live_camera_session_config(
         configuration,
         expected_kind=windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE,
@@ -5835,9 +5908,10 @@ async def get_stream_windows_dshow_mjpeg_bridge(stream_id: str) -> StreamingResp
 )
 async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameCaptureResponse:
     repository = get_repository()
-    configuration = repository.get_stream_live_playback_config(stream_id)
-    if configuration is None:
-        raise _not_found("Stream", stream_id)
+    configuration = _stream_live_playback_config_or_404(
+        stream_id,
+        require_active_source=True,
+    )
 
     common = {
         "stream_id": configuration.stream_id,
@@ -6123,6 +6197,26 @@ async def update_zone(zone_id: str, payload: ZoneUpdate) -> ZoneMutationResult:
         zone=zone,
         zones=repository.zones_for_stream(zone.stream_id),
     )
+
+
+@app.delete("/api/zones/{zone_id}", response_model=ZoneMutationResult)
+async def delete_zone(zone_id: str) -> ZoneMutationResult:
+    try:
+        result = get_repository().delete_zone(zone_id)
+    except ValueError as error:
+        if str(error) == "zone_has_review_context":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This Zone is linked to existing activity or review context. "
+                    "Deactivate it instead so that history stays intact."
+                ),
+            ) from error
+        raise
+    if result is None:
+        raise _not_found("Zone", zone_id)
+    deleted_zone, zones = result
+    return ZoneMutationResult(zone=deleted_zone, zones=zones)
 
 
 @app.get("/api/events", response_model=list[Event])
@@ -6715,5 +6809,36 @@ async def get_local_data_status() -> LocalDataStatus:
 
 @app.post("/api/settings/reset-demo-data", response_model=LocalDataStatus)
 async def reset_demo_data() -> LocalDataStatus:
-    # Local demo reset clears product metadata only; imported media files stay on disk.
+    # Reset restores the sample walkthrough only; real product data and media stay intact.
     return get_repository().reset_demo_data()
+
+
+@app.post(
+    "/api/settings/remove-sample-data",
+    response_model=SampleDataRemovalResponse,
+)
+async def remove_sample_data(
+    payload: SampleDataRemovalRequest,
+) -> SampleDataRemovalResponse:
+    try:
+        return get_repository().remove_sample_data(confirm=payload.confirm)
+    except ValueError as error:
+        if str(error) == "sample_data_confirmation_required":
+            raise HTTPException(
+                status_code=400,
+                detail="Confirm removal of the sample walkthrough.",
+            ) from error
+        if str(error) == "sample_data_requires_real_source":
+            raise HTTPException(
+                status_code=409,
+                detail="Add a real camera before removing the sample walkthrough.",
+            ) from error
+        if str(error) == "sample_data_has_user_content":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The sample camera contains added captures, evidence, Zones, or review work. "
+                    "It was preserved to avoid deleting user data."
+                ),
+            ) from error
+        raise

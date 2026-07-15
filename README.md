@@ -108,6 +108,12 @@ target, using optional system `ffmpeg` through the backend camera session.
 The Cameras/Streams page can add a named outdoor camera as a durable Source with
 one default Stream before connection setup, so real cameras no longer need to
 replace the seeded demo Source.
+Camera options can rename or archive a real camera without deleting its Stream,
+Zones, evidence, observations, corrections, or exports; archiving also stops its
+active camera session and monitoring until the camera is restored. Once a real
+camera exists, the sample walkthrough can be removed through a confirmed action
+that preserves real product data. Restoring the sample walkthrough from Local
+Data now resets only sample-linked records instead of clearing real cameras.
 If `ffmpeg` or the device path is unavailable, the app reports that local camera
 playback is unavailable without affecting setup, review, export, or monitoring.
 Windows webcams can use the same `local_usb` provider with `windows_dshow` and
@@ -138,6 +144,9 @@ perch, yard, driveway, privacy, and ignore Zones when available; Bird Log and
 exports still begin only after Review Queue correction.
 Selected live Zones can also be redrawn over the current camera frame, allowing
 field placement to be tightened without leaving a stale or duplicate Zone.
+Unreferenced mistaken Zones can be removed after confirmation. Zones already
+linked to activity or review context are protected and can be deactivated while
+their history remains intact.
 Live motion results name the strongest user-authored Zone when one triggered,
 report ignored/privacy Zone suppression, and keep raw motion out of Bird Log
 until explicit review/correction.

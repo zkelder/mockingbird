@@ -63,6 +63,8 @@ from mockingbird.api.schemas import (
     CameraSource,
     CameraSourceCreate,
     CameraSourceCreateResponse,
+    CameraSourceMutationResult,
+    CameraSourceUpdate,
     ClassifierManifestExample,
     ClassifierManifestExportFile,
     ClassifierManifestFileExportRequest,
@@ -168,6 +170,7 @@ from mockingbird.api.schemas import (
     SavedMediaRetentionReportResponse,
     SavedMediaRetentionSummary,
     SavedPreviewMotionEvidenceRequest,
+    SampleDataRemovalResponse,
     SourceConnectionStatus,
     SourceConnectionStatusValue,
     SourceFolderImportCreatedMediaAsset,
@@ -944,30 +947,260 @@ class ProductRepository:
                 self._seed_session(session)
 
     def reset_demo_data(self) -> LocalDataStatus:
-        # This clears local product metadata and reseeds demo state. It does not
-        # delete media files or touch anything outside the configured database.
+        # Reset only the sample walkthrough graph. Real cameras and their local
+        # observations must survive a demo reset now that both can coexist.
         with self.session_factory() as session:
             with session.begin():
-                for model in (
-                    SpeciesSuggestionModel,
-                    SourceProviderConfigurationModel,
-                    MotionEvidenceModel,
-                    DetectionProposalModel,
-                    DetectionRunModel,
-                    MediaAssetModel,
-                    DetectionModel,
-                    VisitModel,
-                    ReviewLabelModel,
-                    DatasetExportModel,
-                    EventModel,
-                    ZoneModel,
-                    StreamModel,
-                    CameraSourceModel,
-                ):
-                    session.execute(delete(model))
+                graph = self._sample_graph_ids(session)
+                self._delete_sample_graph(session, graph)
                 self._seed_taxonomy_labels(session)
                 self._seed_session(session)
             return self._local_data_status(session)
+
+    def remove_sample_data(self, *, confirm: bool) -> SampleDataRemovalResponse:
+        """Remove only the seeded walkthrough after a real Source exists.
+
+        Added sample-linked captures, evidence, or corrections block removal so
+        an action labeled "sample data" cannot silently discard user work.
+        """
+
+        if not confirm:
+            raise ValueError("sample_data_confirmation_required")
+
+        with self.session_factory() as session:
+            with session.begin():
+                real_source_count = session.scalar(
+                    select(func.count(CameraSourceModel.id)).where(
+                        CameraSourceModel.id != demo_data.SOURCE_ID
+                    )
+                ) or 0
+                if real_source_count == 0:
+                    raise ValueError("sample_data_requires_real_source")
+
+                if session.get(CameraSourceModel, demo_data.SOURCE_ID) is None:
+                    status = self._local_data_status(session)
+                    return SampleDataRemovalResponse(
+                        removed=False,
+                        removed_counts={},
+                        preserved_source_count=status.source_count,
+                        status=status,
+                        message="Sample walkthrough data is already removed.",
+                    )
+
+                graph = self._sample_graph_ids(session)
+                if self._sample_graph_has_user_content(session, graph):
+                    raise ValueError("sample_data_has_user_content")
+
+                removed_counts = self._delete_sample_graph(session, graph)
+                session.flush()
+                status = self._local_data_status(session)
+                return SampleDataRemovalResponse(
+                    removed=True,
+                    removed_counts=removed_counts,
+                    preserved_source_count=status.source_count,
+                    status=status,
+                    message=(
+                        "Sample walkthrough removed. Real cameras, observations, "
+                        "corrections, exports, and local media were preserved."
+                    ),
+                )
+
+    def _sample_graph_ids(self, session: Session) -> dict[str, set[str]]:
+        """Collect records owned by the seeded demo Source without touching real Sources."""
+
+        def ids_for(model: type, *criteria: Any) -> set[str]:
+            statement = select(model.id)
+            if criteria:
+                statement = statement.where(*criteria)
+            return set(session.scalars(statement).all())
+
+        (
+            _seed_sources,
+            seed_streams,
+            seed_zones,
+            seed_events,
+            seed_visits,
+            seed_review_labels,
+            seed_exports,
+        ) = demo_data.seed_product_data()
+        seed_export_ids = {item.id for item in seed_exports}
+
+        source_ids = (
+            {demo_data.SOURCE_ID}
+            if session.get(CameraSourceModel, demo_data.SOURCE_ID) is not None
+            else set()
+        )
+        stream_ids = ids_for(StreamModel, StreamModel.source_id == demo_data.SOURCE_ID)
+        zone_ids = ids_for(ZoneModel, ZoneModel.stream_id.in_(stream_ids))
+        event_ids = ids_for(EventModel, EventModel.stream_id.in_(stream_ids))
+        visit_ids = ids_for(VisitModel, VisitModel.event_id.in_(event_ids))
+        media_asset_ids = ids_for(
+            MediaAssetModel,
+            or_(
+                MediaAssetModel.source_id == demo_data.SOURCE_ID,
+                MediaAssetModel.stream_id.in_(stream_ids),
+            ),
+        )
+        motion_evidence_ids = ids_for(
+            MotionEvidenceModel,
+            or_(
+                MotionEvidenceModel.source_id == demo_data.SOURCE_ID,
+                MotionEvidenceModel.stream_id.in_(stream_ids),
+                MotionEvidenceModel.zone_id.in_(zone_ids),
+                MotionEvidenceModel.snapshot_media_asset_id.in_(media_asset_ids),
+            ),
+        )
+        detection_run_ids = ids_for(
+            DetectionRunModel,
+            DetectionRunModel.media_asset_id.in_(media_asset_ids),
+        )
+        detection_proposal_ids = ids_for(
+            DetectionProposalModel,
+            or_(
+                DetectionProposalModel.run_id.in_(detection_run_ids),
+                DetectionProposalModel.media_asset_id.in_(media_asset_ids),
+                DetectionProposalModel.stream_id.in_(stream_ids),
+                DetectionProposalModel.zone_id.in_(zone_ids),
+                DetectionProposalModel.event_id.in_(event_ids),
+                DetectionProposalModel.visit_id.in_(visit_ids),
+            ),
+        )
+        species_suggestion_ids = ids_for(
+            SpeciesSuggestionModel,
+            or_(
+                SpeciesSuggestionModel.source_id == demo_data.SOURCE_ID,
+                SpeciesSuggestionModel.stream_id.in_(stream_ids),
+                SpeciesSuggestionModel.event_id.in_(event_ids),
+                SpeciesSuggestionModel.visit_id.in_(visit_ids),
+                SpeciesSuggestionModel.media_asset_id.in_(media_asset_ids),
+                SpeciesSuggestionModel.motion_evidence_id.in_(motion_evidence_ids),
+            ),
+        )
+        detection_ids = ids_for(
+            DetectionModel,
+            or_(
+                DetectionModel.event_id.in_(event_ids),
+                DetectionModel.zone_id.in_(zone_ids),
+            ),
+        )
+        review_label_ids = ids_for(
+            ReviewLabelModel,
+            or_(
+                and_(
+                    ReviewLabelModel.target_type == "event",
+                    ReviewLabelModel.target_id.in_(event_ids),
+                ),
+                and_(
+                    ReviewLabelModel.target_type == "visit",
+                    ReviewLabelModel.target_id.in_(visit_ids),
+                ),
+            ),
+        )
+        dataset_export_ids = ids_for(
+            DatasetExportModel,
+            DatasetExportModel.id.in_(seed_export_ids),
+        )
+        provider_configuration_ids = (
+            {demo_data.SOURCE_ID}
+            if session.get(SourceProviderConfigurationModel, demo_data.SOURCE_ID) is not None
+            else set()
+        )
+
+        return {
+            "sources": source_ids,
+            "streams": stream_ids,
+            "zones": zone_ids,
+            "events": event_ids,
+            "visits": visit_ids,
+            "media_assets": media_asset_ids,
+            "motion_evidence": motion_evidence_ids,
+            "detection_runs": detection_run_ids,
+            "detection_proposals": detection_proposal_ids,
+            "species_suggestions": species_suggestion_ids,
+            "detections": detection_ids,
+            "review_labels": review_label_ids,
+            "dataset_exports": dataset_export_ids,
+            "provider_configurations": provider_configuration_ids,
+            "seed_streams": {item.id for item in seed_streams},
+            "seed_zones": {item.id for item in seed_zones},
+            "seed_events": {item.id for item in seed_events},
+            "seed_visits": {item.id for item in seed_visits},
+            "seed_detections": {
+                detection.id for event in seed_events for detection in event.detections
+            },
+            "seed_review_labels": {item.id for item in seed_review_labels},
+        }
+
+    def _sample_graph_has_user_content(
+        self,
+        session: Session,
+        graph: dict[str, set[str]],
+    ) -> bool:
+        if graph["streams"] - graph["seed_streams"]:
+            return True
+        if graph["zones"] - graph["seed_zones"]:
+            return True
+        if graph["events"] - graph["seed_events"]:
+            return True
+        if graph["visits"] - graph["seed_visits"]:
+            return True
+        if graph["detections"] - graph["seed_detections"]:
+            return True
+        if graph["review_labels"] - graph["seed_review_labels"]:
+            return True
+        if any(
+            graph[key]
+            for key in (
+                "media_assets",
+                "motion_evidence",
+                "detection_runs",
+                "detection_proposals",
+                "species_suggestions",
+            )
+        ):
+            return True
+
+        configuration = session.get(SourceProviderConfigurationModel, demo_data.SOURCE_ID)
+        return configuration is not None and configuration.provider_key != "demo"
+
+    def _delete_sample_graph(
+        self,
+        session: Session,
+        graph: dict[str, set[str]],
+    ) -> dict[str, int]:
+        """Delete the collected demo graph in dependency order; media files remain local."""
+
+        def delete_ids(model: type, ids: set[str]) -> None:
+            if ids:
+                session.execute(delete(model).where(model.id.in_(ids)))
+
+        delete_ids(SpeciesSuggestionModel, graph["species_suggestions"])
+        delete_ids(DetectionProposalModel, graph["detection_proposals"])
+        delete_ids(DetectionRunModel, graph["detection_runs"])
+        delete_ids(MotionEvidenceModel, graph["motion_evidence"])
+        delete_ids(DetectionModel, graph["detections"])
+        delete_ids(ReviewLabelModel, graph["review_labels"])
+        delete_ids(VisitModel, graph["visits"])
+        delete_ids(EventModel, graph["events"])
+        delete_ids(ZoneModel, graph["zones"])
+        delete_ids(MediaAssetModel, graph["media_assets"])
+        delete_ids(DatasetExportModel, graph["dataset_exports"])
+        if graph["provider_configurations"]:
+            session.execute(
+                delete(SourceProviderConfigurationModel).where(
+                    SourceProviderConfigurationModel.source_id.in_(
+                        graph["provider_configurations"]
+                    )
+                )
+            )
+        delete_ids(StreamModel, graph["streams"])
+        delete_ids(CameraSourceModel, graph["sources"])
+
+        return {
+            key: len(value)
+            for key, value in graph.items()
+            if not key.startswith("seed_") and value
+        }
 
     def local_data_status(self) -> LocalDataStatus:
         with self.session_factory() as session:
@@ -1346,6 +1579,55 @@ class ProductRepository:
                     stream=_stream_from_model(stream_model),
                 )
 
+    def update_camera_source(
+        self,
+        source_id: str,
+        payload: CameraSourceUpdate,
+    ) -> CameraSourceMutationResult | None:
+        """Rename or archive a camera while preserving its complete product graph."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                source = session.get(CameraSourceModel, source_id)
+                if source is None:
+                    return None
+                if source.id == demo_data.SOURCE_ID or source.kind == SourceKind.demo.value:
+                    raise ValueError("demo_source_immutable")
+
+                streams = session.scalars(
+                    select(StreamModel)
+                    .where(StreamModel.source_id == source_id)
+                    .order_by(StreamModel.id)
+                ).all()
+                if payload.name is not None:
+                    source_name = payload.name.strip()
+                    existing_names = session.scalars(
+                        select(CameraSourceModel.name).where(CameraSourceModel.id != source_id)
+                    ).all()
+                    if any(
+                        name.strip().casefold() == source_name.casefold()
+                        for name in existing_names
+                    ):
+                        raise ValueError("source_name_exists")
+
+                    previous_default_stream_name = f"{source.name} stream"
+                    source.name = source_name
+                    for stream in streams:
+                        if stream.name == previous_default_stream_name:
+                            stream.name = f"{source_name} stream"
+                            stream.description = f"Live outdoor stream for {source_name}."
+
+                if payload.archived is True:
+                    source.status = SourceStatus.archived.value
+                elif payload.archived is False and source.status == SourceStatus.archived.value:
+                    source.status = SourceStatus.needs_setup.value
+
+                session.flush()
+                return CameraSourceMutationResult(
+                    source=_source_from_model(source),
+                    streams=[_stream_from_model(stream) for stream in streams],
+                )
+
     def list_source_provider_definitions(self) -> list[SourceProviderDefinition]:
         return list(SOURCE_PROVIDER_DEFINITIONS)
 
@@ -1663,7 +1945,12 @@ class ProductRepository:
             definition = _source_provider_definition(configuration.provider_key)
             provider_kind = _source_provider_kind(configuration.provider_key)
 
-            if source.status == SourceStatus.disconnected.value:
+            source_archived = source.status == SourceStatus.archived.value
+            if source_archived:
+                status = SourceConnectionStatusValue.offline
+                message = "This camera is archived and will not connect or monitor."
+                setup_hint = "Restore the camera when you want to use its Stream again."
+            elif source.status == SourceStatus.disconnected.value:
                 status = SourceConnectionStatusValue.offline
                 message = "This source is offline, so streams can show only placeholders."
                 setup_hint = "Save provider metadata now; playback still requires a future provider."
@@ -1814,8 +2101,10 @@ class ProductRepository:
                 message=message,
                 setup_hint=setup_hint,
                 supports_streams=len(stream_ids) > 0,
-                supports_live_playback=configuration.supports_live_playback,
-                supports_zone_editing=supports_zone_editing,
+                supports_live_playback=(
+                    configuration.supports_live_playback and not source_archived
+                ),
+                supports_zone_editing=supports_zone_editing and not source_archived,
                 adapter_key=configuration.provider_key,
                 configured_fields=configuration.configured_fields,
                 missing_fields=configuration.missing_fields,
@@ -2272,6 +2561,20 @@ class ProductRepository:
                     supports_live_playback=False,
                 )
 
+            if source.status == SourceStatus.archived.value:
+                return StreamPlaybackStatus(
+                    stream_id=stream.id,
+                    source_id=stream.source_id,
+                    status=StreamPlaybackStatusValue.offline,
+                    playback_kind=StreamPlaybackKind.placeholder,
+                    display_title=stream.name,
+                    message="This camera is archived, so its Stream is paused.",
+                    setup_hint="Restore the camera from Cameras/Streams to use it again.",
+                    supports_zone_editing=False,
+                    supports_live_playback=False,
+                    adapter_key=source.kind,
+                )
+
             adapter_key = source.kind
             model = session.get(SourceProviderConfigurationModel, source.id)
             configured_provider_key = model.provider_key if model is not None else None
@@ -2538,6 +2841,56 @@ class ProductRepository:
 
                 session.flush()
                 return _zone_from_model(zone)
+
+    def delete_zone(self, zone_id: str) -> tuple[Zone, list[Zone]] | None:
+        """Delete only an unreferenced Zone; linked review/evidence context is protected."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                zone = session.get(ZoneModel, zone_id)
+                if zone is None:
+                    return None
+
+                linked_counts = (
+                    session.scalar(
+                        select(func.count(EventModel.id)).where(
+                            EventModel.primary_zone_id == zone_id
+                        )
+                    )
+                    or 0,
+                    session.scalar(
+                        select(func.count(DetectionModel.id)).where(
+                            DetectionModel.zone_id == zone_id
+                        )
+                    )
+                    or 0,
+                    session.scalar(
+                        select(func.count(MotionEvidenceModel.id)).where(
+                            MotionEvidenceModel.zone_id == zone_id
+                        )
+                    )
+                    or 0,
+                    session.scalar(
+                        select(func.count(DetectionProposalModel.id)).where(
+                            DetectionProposalModel.zone_id == zone_id
+                        )
+                    )
+                    or 0,
+                )
+                referenced_by_provider = any(
+                    json.loads(configuration.config_json).get("default_zone_id") == zone_id
+                    for configuration in session.scalars(
+                        select(SourceProviderConfigurationModel)
+                    ).all()
+                )
+                if any(linked_counts) or referenced_by_provider:
+                    raise ValueError("zone_has_review_context")
+
+                deleted_zone = _zone_from_model(zone)
+                stream_id = zone.stream_id
+                session.delete(zone)
+                session.flush()
+                return deleted_zone, self._zones_for_stream(session, stream_id)
 
     def list_events(self) -> list[Event]:
         with self.session_factory() as session:

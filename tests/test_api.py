@@ -763,7 +763,10 @@ def test_reset_demo_data_restores_seed_state_after_mutations() -> None:
             "label": "carolina_wren",
         },
     )
-    client.post("/api/dataset-exports", json={"name": "Temporary reviewed dataset"})
+    temporary_export = client.post(
+        "/api/dataset-exports",
+        json={"name": "Temporary reviewed dataset"},
+    ).json()["export"]
 
     mutated_status = client.get("/api/settings/local-data").json()
     assert mutated_status["zone_count"] == 4
@@ -778,13 +781,16 @@ def test_reset_demo_data_restores_seed_state_after_mutations() -> None:
     assert status["seed_data_present"] is True
     assert status["zone_count"] == 3
     assert status["review_label_count"] == 1
-    assert status["dataset_export_count"] == 1
+    assert status["dataset_export_count"] == 2
     assert status["needs_review_count"] >= 1
 
     zones = client.get(f"/api/streams/{STREAM_ID}/zones").json()
     assert all(zone["id"] != created_zone["id"] for zone in zones)
     assert client.get(f"/api/visits/{BIRD_VISIT_ID}").json()["review_status"] == "needs_review"
-    assert [item["id"] for item in client.get("/api/dataset-exports").json()] == [SEED_EXPORT_ID]
+    assert {item["id"] for item in client.get("/api/dataset-exports").json()} == {
+        SEED_EXPORT_ID,
+        temporary_export["id"],
+    }
 
 
 def test_reset_demo_data_does_not_duplicate_seed_rows() -> None:

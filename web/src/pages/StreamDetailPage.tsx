@@ -540,6 +540,7 @@ export function StreamDetailPage({
   const [zoneMessage, setZoneMessage] = useState<string | null>(null);
   const [zoneError, setZoneError] = useState<string | null>(null);
   const [isSavingZone, setIsSavingZone] = useState(false);
+  const [deleteZoneConfirmId, setDeleteZoneConfirmId] = useState<string | null>(null);
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   const [liveViewState, setLiveViewState] = useState<LiveViewState>("idle");
   const [liveViewReloadToken, setLiveViewReloadToken] = useState(0);
@@ -598,6 +599,15 @@ export function StreamDetailPage({
 
   const selectedZone = detail?.zones.find((zone) => zone.id === selectedZoneId) ?? null;
 
+  function clearTransientLiveActivity() {
+    setLiveMotionResult(null);
+    setLiveMotionError(null);
+    setLiveStatusNotice(null);
+    setLiveMonitorState("stopped");
+    lastActivityNoticeRef.current = null;
+    lastReviewNoticeRef.current = null;
+  }
+
   async function refreshLiveCameraSessionStatus(
     currentDetail: StreamDetailState | null = detail,
   ): Promise<LiveCameraSessionStatus | null> {
@@ -623,8 +633,12 @@ export function StreamDetailPage({
       }
       setAutoReviewQuietSeconds(status.auto_review_quiet_seconds);
       setAutoReviewMinDetections(status.auto_review_min_detections);
-      handleLiveStatusNoticeFromStatus(status);
-      if (status.last_motion_result) {
+      if (status.status === "stopped" && !status.monitor_running) {
+        clearTransientLiveActivity();
+      } else {
+        handleLiveStatusNoticeFromStatus(status);
+      }
+      if (status.status !== "stopped" && status.last_motion_result) {
         setLiveMotionResult(status.last_motion_result);
         setLiveMonitorState(liveMonitorStateFor(status.last_motion_result));
         setBirdSizedFeederMotion(status.last_motion_result.bird_sized_feeder_motion);
@@ -746,6 +760,7 @@ export function StreamDetailPage({
       setError(null);
       setZoneError(null);
       setZoneMessage(null);
+      setDeleteZoneConfirmId(null);
       setDrawMode(false);
       setDraftPolygon(null);
       setDrawStart(null);
@@ -936,6 +951,13 @@ export function StreamDetailPage({
   }, [selectedZone]);
 
   useEffect(() => {
+    if (deleteZoneConfirmId !== null) {
+      setZoneMessage(null);
+    }
+    setDeleteZoneConfirmId(null);
+  }, [selectedZoneId]);
+
+  useEffect(() => {
     if (!detail || !liveMotionFocusZoneId) {
       return;
     }
@@ -1046,6 +1068,9 @@ export function StreamDetailPage({
     try {
       const status = await apiClient.stopLiveCameraSession(detail.stream.id);
       setLiveSession(status);
+      if (status.status === "stopped") {
+        clearTransientLiveActivity();
+      }
     } catch (caught) {
       setLiveSessionError(
         caught instanceof Error ? caught.message : "Could not stop camera session.",
@@ -1384,6 +1409,42 @@ export function StreamDetailPage({
       setZoneMessage("Zone saved.");
     } catch (caught) {
       setZoneError(caught instanceof Error ? caught.message : "Could not save zone.");
+    } finally {
+      setIsSavingZone(false);
+    }
+  }
+
+  async function handleDeleteSelectedZone() {
+    if (!selectedZone) {
+      return;
+    }
+    if (isLiveMonitoring || liveSession?.monitor_running) {
+      setZoneError("Stop monitoring before removing a Zone.");
+      return;
+    }
+    if (deleteZoneConfirmId !== selectedZone.id) {
+      setDeleteZoneConfirmId(selectedZone.id);
+      setZoneError(null);
+      setZoneMessage(`Confirm removal of ${selectedZone.name}.`);
+      return;
+    }
+
+    const deletedZone = selectedZone;
+    setIsSavingZone(true);
+    setZoneError(null);
+    setZoneMessage(null);
+    try {
+      const result = await apiClient.deleteZone(deletedZone.id);
+      replaceZones(result.zones);
+      setSelectedZoneId(result.zones[0]?.id ?? null);
+      setDeleteZoneConfirmId(null);
+      setRedrawZoneId(null);
+      if (liveMotionFocusZoneId === deletedZone.id) {
+        setLiveMotionFocusZoneId("");
+      }
+      setZoneMessage(`${deletedZone.name} removed.`);
+    } catch (caught) {
+      setZoneError(caught instanceof Error ? caught.message : "Could not remove Zone.");
     } finally {
       setIsSavingZone(false);
     }
@@ -3198,6 +3259,20 @@ export function StreamDetailPage({
                         Redraw area
                       </button>
                     ) : null}
+                    <button
+                      className={
+                        deleteZoneConfirmId === selectedZone.id
+                          ? "danger-action"
+                          : "text-action"
+                      }
+                      disabled={isSavingZone}
+                      onClick={() => void handleDeleteSelectedZone()}
+                      type="button"
+                    >
+                      {deleteZoneConfirmId === selectedZone.id
+                        ? "Confirm remove"
+                        : "Remove zone"}
+                    </button>
                   </div>
                 </form>
               ) : !drawMode ? (

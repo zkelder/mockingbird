@@ -63,7 +63,7 @@ interface StreamsPageProps {
   onOpenReview: () => void;
   onOpenBirdLog: () => void;
   onOpenExports: () => void;
-  onCameraCreated: () => Promise<void>;
+  onSourcesChanged: () => Promise<void>;
 }
 
 function connectionTone(status: SourceConnectionStatus["status"]): "good" | "review" | "quiet" {
@@ -1711,7 +1711,7 @@ export function StreamsPage({
   onOpenReview,
   onOpenBirdLog,
   onOpenExports,
-  onCameraCreated,
+  onSourcesChanged,
 }: StreamsPageProps) {
   const [connectionStatuses, setConnectionStatuses] = useState<
     Record<string, SourceConnectionStatus>
@@ -1735,6 +1735,12 @@ export function StreamsPage({
   const [isCreatingCamera, setIsCreatingCamera] = useState(false);
   const [createCameraError, setCreateCameraError] = useState<string | null>(null);
   const [pendingSelectedSourceId, setPendingSelectedSourceId] = useState<string | null>(null);
+  const [isCameraOptionsOpen, setIsCameraOptionsOpen] = useState(false);
+  const [cameraNameDraft, setCameraNameDraft] = useState("");
+  const [isUpdatingCamera, setIsUpdatingCamera] = useState(false);
+  const [cameraUpdateError, setCameraUpdateError] = useState<string | null>(null);
+  const [archiveCameraConfirmed, setArchiveCameraConfirmed] = useState(false);
+  const [removeSampleConfirmed, setRemoveSampleConfirmed] = useState(false);
   const [previewResult, setPreviewResult] = useState<ExternalUrlPreviewResponse | null>(null);
   const [previewSaveResult, setPreviewSaveResult] =
     useState<ExternalUrlPreviewSaveResponse | null>(null);
@@ -1950,6 +1956,7 @@ export function StreamsPage({
   }, [sources, selectedSourceId, pendingSelectedSourceId]);
 
   const selectedSource = sources.find((source) => source.id === selectedSourceId) ?? null;
+  const realSourceCount = sources.filter((source) => source.kind !== "demo").length;
   const selectedConnection = selectedSourceId ? connectionStatuses[selectedSourceId] : null;
   const selectedConfiguration = selectedSourceId
     ? providerConfigurations[selectedSourceId] ?? null
@@ -1983,6 +1990,14 @@ export function StreamsPage({
       (definition) => definition.provider_key === selectedConfiguration?.provider_key,
     );
 
+  useEffect(() => {
+    setCameraNameDraft(selectedSource?.name ?? "");
+    setCameraUpdateError(null);
+    setArchiveCameraConfirmed(false);
+    setRemoveSampleConfirmed(false);
+    setIsCameraOptionsOpen(false);
+  }, [selectedSource?.id]);
+
   async function handleCreateCamera(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const name = newCameraName.trim();
@@ -1996,7 +2011,7 @@ export function StreamsPage({
     try {
       const result = await apiClient.createCameraSource({ name });
       setPendingSelectedSourceId(result.source.id);
-      await onCameraCreated();
+      await onSourcesChanged();
       setNewCameraName("");
       setIsAddCameraOpen(false);
       setSetupMessage("Camera added. Connect it below, then open the Stream.");
@@ -2006,6 +2021,91 @@ export function StreamsPage({
       );
     } finally {
       setIsCreatingCamera(false);
+    }
+  }
+
+  async function handleRenameCamera(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedSource || selectedSource.kind === "demo") {
+      return;
+    }
+    const name = cameraNameDraft.trim();
+    if (!name) {
+      setCameraUpdateError("Enter a name for this camera.");
+      return;
+    }
+
+    setIsUpdatingCamera(true);
+    setCameraUpdateError(null);
+    try {
+      await apiClient.updateCameraSource(selectedSource.id, { name });
+      setPendingSelectedSourceId(selectedSource.id);
+      await onSourcesChanged();
+      setSetupMessage("Camera renamed. Its Stream, Zones, and observations were preserved.");
+    } catch (caught) {
+      setCameraUpdateError(
+        caught instanceof Error ? caught.message : "Could not rename the camera.",
+      );
+    } finally {
+      setIsUpdatingCamera(false);
+    }
+  }
+
+  async function handleArchiveCamera() {
+    if (!selectedSource || selectedSource.kind === "demo") {
+      return;
+    }
+    const shouldArchive = selectedSource.status !== "archived";
+    if (shouldArchive && !archiveCameraConfirmed) {
+      setArchiveCameraConfirmed(true);
+      setCameraUpdateError(null);
+      return;
+    }
+
+    setIsUpdatingCamera(true);
+    setCameraUpdateError(null);
+    try {
+      await apiClient.updateCameraSource(selectedSource.id, { archived: shouldArchive });
+      setPendingSelectedSourceId(selectedSource.id);
+      await onSourcesChanged();
+      setArchiveCameraConfirmed(false);
+      setSetupMessage(
+        shouldArchive
+          ? "Camera archived. Playback and monitoring are paused; all history is preserved."
+          : "Camera restored. Its saved setup and history are available again.",
+      );
+    } catch (caught) {
+      setCameraUpdateError(
+        caught instanceof Error ? caught.message : "Could not update the camera.",
+      );
+    } finally {
+      setIsUpdatingCamera(false);
+    }
+  }
+
+  async function handleRemoveSampleData() {
+    if (!selectedSource || selectedSource.kind !== "demo" || realSourceCount === 0) {
+      return;
+    }
+    if (!removeSampleConfirmed) {
+      setRemoveSampleConfirmed(true);
+      setCameraUpdateError(null);
+      return;
+    }
+
+    setIsUpdatingCamera(true);
+    setCameraUpdateError(null);
+    try {
+      const result = await apiClient.removeSampleData();
+      await onSourcesChanged();
+      setRemoveSampleConfirmed(false);
+      setSetupMessage(result.message);
+    } catch (caught) {
+      setCameraUpdateError(
+        caught instanceof Error ? caught.message : "Could not remove sample data.",
+      );
+    } finally {
+      setIsUpdatingCamera(false);
     }
   }
 
@@ -4139,6 +4239,8 @@ export function StreamsPage({
                   {sources.map((source) => (
                     <option key={source.id} value={source.id}>
                       {source.name}
+                      {source.kind === "demo" ? " (sample)" : ""}
+                      {source.status === "archived" ? " (archived)" : ""}
                     </option>
                   ))}
                 </select>
@@ -4176,6 +4278,93 @@ export function StreamsPage({
               </button>
               {createCameraError ? <span className="zone-error">{createCameraError}</span> : null}
             </form>
+          ) : null}
+          {selectedSource.kind !== "demo" ? (
+            <details
+              className="source-review-panel compact-diagnostic-details camera-options-details"
+              onToggle={(event) => setIsCameraOptionsOpen(event.currentTarget.open)}
+              open={isCameraOptionsOpen}
+            >
+              <summary>
+                <span>Camera options</span>
+                <strong>
+                  {selectedSource.status === "archived" ? "Archived" : "Rename or archive"}
+                </strong>
+              </summary>
+              <form className="add-camera-form" onSubmit={handleRenameCamera}>
+                <label>
+                  Camera name
+                  <input
+                    maxLength={120}
+                    onChange={(event) => setCameraNameDraft(event.target.value)}
+                    value={cameraNameDraft}
+                  />
+                </label>
+                <button className="secondary-action" disabled={isUpdatingCamera} type="submit">
+                  {isUpdatingCamera ? "Saving..." : "Rename camera"}
+                </button>
+                <div className="camera-lifecycle-actions">
+                  <button
+                    className={archiveCameraConfirmed ? "danger-action" : "text-action"}
+                    disabled={isUpdatingCamera}
+                    onClick={() => void handleArchiveCamera()}
+                    type="button"
+                  >
+                    {selectedSource.status === "archived"
+                      ? "Restore camera"
+                      : archiveCameraConfirmed
+                        ? "Confirm archive"
+                        : "Archive camera"}
+                  </button>
+                  {archiveCameraConfirmed ? (
+                    <button
+                      className="text-action"
+                      disabled={isUpdatingCamera}
+                      onClick={() => setArchiveCameraConfirmed(false)}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  ) : null}
+                </div>
+                {cameraUpdateError ? (
+                  <span className="zone-error">{cameraUpdateError}</span>
+                ) : null}
+              </form>
+            </details>
+          ) : realSourceCount > 0 ? (
+            <div className="sample-data-action">
+              <span>
+                This is sample walkthrough data. Your real cameras and observations are separate.
+              </span>
+              <div className="camera-lifecycle-actions">
+                <button
+                  className={removeSampleConfirmed ? "danger-action" : "text-action"}
+                  disabled={isUpdatingCamera}
+                  onClick={() => void handleRemoveSampleData()}
+                  type="button"
+                >
+                  {removeSampleConfirmed ? "Confirm remove sample" : "Remove sample data"}
+                </button>
+                {removeSampleConfirmed ? (
+                  <button
+                    className="text-action"
+                    disabled={isUpdatingCamera}
+                    onClick={() => setRemoveSampleConfirmed(false)}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                ) : null}
+              </div>
+              {cameraUpdateError ? <span className="zone-error">{cameraUpdateError}</span> : null}
+            </div>
+          ) : null}
+          {selectedSource.status === "archived" ? (
+            <div className="notice-panel compact-notice">
+              This camera is archived. Live view and monitoring stay paused until you restore it;
+              Streams, Zones, and history remain saved.
+            </div>
           ) : null}
           <div className="source-overview-grid">
             <div>
