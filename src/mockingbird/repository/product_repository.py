@@ -933,7 +933,7 @@ class ProductRepository:
             classifier_manifest_export_root or DEFAULT_CLASSIFIER_MANIFEST_EXPORT_ROOT
         )
         self.engine = engine or create_database_engine(self.db_url)
-        initialize_database(self.engine)
+        self.schema_status = initialize_database(self.engine)
         self.session_factory = create_session_factory(self.engine)
         self.seed_if_empty()
 
@@ -1466,6 +1466,9 @@ class ProductRepository:
             dataset_export_count=self._count(session, DatasetExportModel),
             needs_review_count=analytics.needs_review_count,
             database_ready=True,
+            database_schema_version=self.schema_status.version,
+            database_schema_current_version=self.schema_status.current_version,
+            database_integrity_check=self.schema_status.integrity_check,
             seed_data_present=session.get(CameraSourceModel, demo_data.SOURCE_ID) is not None,
             local_first_note=(
                 "MockingBird stores local product metadata, zones, corrections, "

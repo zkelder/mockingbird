@@ -37,29 +37,12 @@ import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
 import { VisitDetailPage } from "./pages/VisitDetailPage";
 import { WorkerStatusPage } from "./pages/WorkerStatusPage";
-
-type Page =
-  | "dashboard"
-  | "streams"
-  | "import"
-  | "folder-import"
-  | "model-adapters"
-  | "detection-proposals"
-  | "motion-evidence"
-  | "motion-evidence-detail"
-  | "species-suggestions"
-  | "classifier-readiness"
-  | "classifier-manifest"
-  | "stream-detail"
-  | "event-detail"
-  | "visit-detail"
-  | "review"
-  | "bird-log"
-  | "analytics"
-  | "exports"
-  | "saved-media-retention"
-  | "worker-status"
-  | "settings";
+import {
+  type AppRoute,
+  type Page,
+  readAppRoute,
+  writeAppRoute,
+} from "./navigation";
 
 interface AppData {
   health: HealthStatus | null;
@@ -121,11 +104,20 @@ const advancedPages = new Set<Page>([
 ]);
 
 export default function App() {
-  const [page, setPage] = useState<Page>("dashboard");
-  const [selectedStreamId, setSelectedStreamId] = useState<string | null>(null);
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [selectedVisitId, setSelectedVisitId] = useState<string | null>(null);
-  const [selectedMotionEvidenceId, setSelectedMotionEvidenceId] = useState<string | null>(null);
+  const [initialRoute] = useState<AppRoute>(() => readAppRoute());
+  const [page, setPageState] = useState<Page>(initialRoute.page);
+  const [selectedStreamId, setSelectedStreamId] = useState<string | null>(
+    initialRoute.streamId ?? null,
+  );
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(
+    initialRoute.eventId ?? null,
+  );
+  const [selectedVisitId, setSelectedVisitId] = useState<string | null>(
+    initialRoute.visitId ?? null,
+  );
+  const [selectedMotionEvidenceId, setSelectedMotionEvidenceId] = useState<string | null>(
+    initialRoute.motionEvidenceId ?? null,
+  );
   const [reviewQueueInitialContext, setReviewQueueInitialContext] =
     useState<ReviewQueueInitialContext | null>(null);
   const [visitCorrectionPrefill, setVisitCorrectionPrefill] =
@@ -133,7 +125,33 @@ export default function App() {
   const [data, setData] = useState<AppData>(initialData);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
   const [isAdvancedNavOpen, setIsAdvancedNavOpen] = useState(false);
+
+  function applyRoute(route: AppRoute) {
+    setPageState(route.page);
+    if (route.streamId !== undefined) {
+      setSelectedStreamId(route.streamId);
+    }
+    if (route.eventId !== undefined) {
+      setSelectedEventId(route.eventId);
+    }
+    if (route.visitId !== undefined) {
+      setSelectedVisitId(route.visitId);
+    }
+    if (route.motionEvidenceId !== undefined) {
+      setSelectedMotionEvidenceId(route.motionEvidenceId);
+    }
+  }
+
+  function navigate(route: AppRoute, replace = false) {
+    writeAppRoute(route, replace);
+    applyRoute(route);
+  }
+
+  function setPage(nextPage: Page) {
+    navigate({ page: nextPage });
+  }
 
   async function loadAppData(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
@@ -141,18 +159,19 @@ export default function App() {
       setIsLoading(true);
     }
     setError(null);
+    setLoadWarnings([]);
     try {
       const [
-        health,
-        sources,
-        streams,
-        reviewQueue,
-        exports,
-        analytics,
-        datasetCoverage,
-        datasetQuality,
-        modelReadiness,
-      ] = await Promise.all([
+        healthResult,
+        sourcesResult,
+        streamsResult,
+        reviewQueueResult,
+        exportsResult,
+        analyticsResult,
+        datasetCoverageResult,
+        datasetQualityResult,
+        modelReadinessResult,
+      ] = await Promise.allSettled([
         apiClient.getHealth(),
         apiClient.getSources(),
         apiClient.getStreams(),
@@ -164,18 +183,60 @@ export default function App() {
         apiClient.getModelReadinessSummary(),
       ]);
 
+      if (
+        healthResult.status !== "fulfilled" ||
+        sourcesResult.status !== "fulfilled" ||
+        streamsResult.status !== "fulfilled"
+      ) {
+        const message =
+          "MockingBird reached the local app, but its camera data could not be loaded.";
+        if (data.health) {
+          setLoadWarnings([`${message} Existing screen data was kept; retry when ready.`]);
+        } else {
+          setError(message);
+        }
+        return;
+      }
+
+      const optionalResults: Array<[string, PromiseSettledResult<unknown>]> = [
+        ["Review activity", reviewQueueResult],
+        ["Exports", exportsResult],
+        ["Analytics", analyticsResult],
+        ["Dataset coverage", datasetCoverageResult],
+        ["Dataset quality", datasetQualityResult],
+        ["Identification readiness", modelReadinessResult],
+      ];
+      setLoadWarnings(
+        optionalResults
+          .filter(([, result]) => result.status === "rejected")
+          .map(([label]) => `${label} is temporarily unavailable.`),
+      );
+
       setData({
-        health,
-        sources,
-        streams,
-        reviewQueue,
-        exports,
-        analytics,
-        datasetCoverage,
-        datasetQuality,
-        modelReadiness,
+        health: healthResult.value,
+        sources: sourcesResult.value,
+        streams: streamsResult.value,
+        reviewQueue:
+          reviewQueueResult.status === "fulfilled"
+            ? reviewQueueResult.value
+            : data.reviewQueue,
+        exports: exportsResult.status === "fulfilled" ? exportsResult.value : data.exports,
+        analytics:
+          analyticsResult.status === "fulfilled" ? analyticsResult.value : data.analytics,
+        datasetCoverage:
+          datasetCoverageResult.status === "fulfilled"
+            ? datasetCoverageResult.value
+            : data.datasetCoverage,
+        datasetQuality:
+          datasetQualityResult.status === "fulfilled"
+            ? datasetQualityResult.value
+            : data.datasetQuality,
+        modelReadiness:
+          modelReadinessResult.status === "fulfilled"
+            ? modelReadinessResult.value
+            : data.modelReadiness,
       });
-      setSelectedStreamId((current) => current ?? streams[0]?.id ?? null);
+      setSelectedStreamId((current) => current ?? streamsResult.value[0]?.id ?? null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load MockingBird data.");
     } finally {
@@ -187,6 +248,19 @@ export default function App() {
 
   useEffect(() => {
     void loadAppData();
+  }, []);
+
+  useEffect(() => {
+    if (initialRoute.recoveredFromUnknownPath) {
+      writeAppRoute({ page: "dashboard" }, true);
+    }
+    function handleBrowserNavigation() {
+      applyRoute(readAppRoute());
+      setReviewQueueInitialContext(null);
+      setVisitCorrectionPrefill(null);
+    }
+    window.addEventListener("popstate", handleBrowserNavigation);
+    return () => window.removeEventListener("popstate", handleBrowserNavigation);
   }, []);
 
   const isAdvancedPageActive = advancedPages.has(page);
@@ -203,24 +277,20 @@ export default function App() {
   );
 
   function openStream(streamId: string) {
-    setSelectedStreamId(streamId);
-    setPage("stream-detail");
+    navigate({ page: "stream-detail", streamId });
   }
 
   function openEvent(eventId: string) {
-    setSelectedEventId(eventId);
-    setPage("event-detail");
+    navigate({ page: "event-detail", eventId });
   }
 
   function openVisit(visitId: string, prefill?: Omit<VisitCorrectionPrefill, "visitId">) {
-    setSelectedVisitId(visitId);
     setVisitCorrectionPrefill(prefill ? { visitId, ...prefill } : null);
-    setPage("visit-detail");
+    navigate({ page: "visit-detail", visitId });
   }
 
   function openMotionEvidence(motionEvidenceId: string) {
-    setSelectedMotionEvidenceId(motionEvidenceId);
-    setPage("motion-evidence-detail");
+    navigate({ page: "motion-evidence-detail", motionEvidenceId });
   }
 
   function openReviewQueue(context?: ReviewQueueInitialContext | null) {
@@ -676,11 +746,22 @@ export default function App() {
           ) : null}
         </nav>
         <div className="sidebar-footer">
-          <span>Local API</span>
-          <strong>{apiClient.baseUrl}</strong>
+          <span>Local app</span>
+          <strong>{apiClient.baseUrl || "This device"}</strong>
         </div>
       </aside>
-      <main className="main-content">{renderPage()}</main>
+      <main className="main-content">
+        {loadWarnings.length > 0 ? (
+          <div className="notice-panel app-load-warning" role="status">
+            <strong>Some supporting information could not refresh.</strong>
+            <span>{loadWarnings.join(" ")}</span>
+            <button className="text-action" onClick={() => void loadAppData({ showLoading: false })}>
+              Retry
+            </button>
+          </div>
+        ) : null}
+        {renderPage()}
+      </main>
     </div>
   );
 }

@@ -725,6 +725,8 @@ def test_local_data_status_reports_persisted_product_counts() -> None:
     assert response.status_code == 200
     status = response.json()
     assert status["database_ready"] is True
+    assert status["database_schema_version"] == status["database_schema_current_version"]
+    assert status["database_integrity_check"] == "ok"
     assert status["seed_data_present"] is True
     assert status["using_default_database"] is False
     assert status["database_url"].startswith("sqlite:///")

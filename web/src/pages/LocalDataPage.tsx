@@ -154,6 +154,19 @@ export function LocalDataPage({
                 <strong>{status.using_default_database ? "Default local database" : "Environment override"}</strong>
               </div>
               <div className="data-row">
+                <span>Data format</span>
+                <strong>
+                  Version {status.database_schema_version} of{" "}
+                  {status.database_schema_current_version}
+                </strong>
+              </div>
+              <div className="data-row">
+                <span>Integrity check</span>
+                <strong>
+                  {status.database_integrity_check === "ok" ? "Passed" : "Not required"}
+                </strong>
+              </div>
+              <div className="data-row">
                 <span>Seed data</span>
                 <strong>{status.seed_data_present ? "Present" : "Missing"}</strong>
               </div>

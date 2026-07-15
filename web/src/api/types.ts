@@ -2224,6 +2224,9 @@ export interface LocalDataStatus {
   dataset_export_count: number;
   needs_review_count: number;
   database_ready: boolean;
+  database_schema_version: number;
+  database_schema_current_version: number;
+  database_integrity_check: string;
   seed_data_present: boolean;
   local_first_note: string;
 }

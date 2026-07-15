@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from mockingbird.api.schemas import (
     DatasetExportCreate,
     Point,
@@ -8,6 +10,11 @@ from mockingbird.api.schemas import (
     ZoneUpdate,
 )
 from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.storage.database import (
+    CURRENT_DATABASE_SCHEMA_VERSION,
+    DatabaseSchemaCompatibilityError,
+    create_database_engine,
+)
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
@@ -156,4 +163,55 @@ def test_repeated_initialization_does_not_duplicate_seed_records(tmp_path: Path)
     assert len(reloaded_repository.list_sources()) == 1
     assert len(reloaded_repository.zones_for_stream(STREAM_ID)) == 3
     assert len(reloaded_repository.list_dataset_exports()) == 1
+
+
+def test_database_schema_record_and_integrity_survive_restart(tmp_path: Path) -> None:
+    db_path = tmp_path / "mockingbird.sqlite3"
+    first_repository = repository_for(db_path)
+    reloaded_repository = repository_for(db_path)
+
+    assert first_repository.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+    assert first_repository.schema_status.initialized_schema_record is True
+    assert first_repository.schema_status.integrity_check == "ok"
+    assert reloaded_repository.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+    assert reloaded_repository.schema_status.initialized_schema_record is False
+    assert reloaded_repository.schema_status.integrity_check == "ok"
+
+
+def test_newer_database_version_is_rejected_without_modification(tmp_path: Path) -> None:
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    newer_version = CURRENT_DATABASE_SCHEMA_VERSION + 1
+    with repository.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE mockingbird_schema SET version = ? WHERE singleton_id = 1",
+            (newer_version,),
+        )
+    repository.engine.dispose()
+
+    with pytest.raises(DatabaseSchemaCompatibilityError, match="newer app version"):
+        repository_for(db_path)
+
+    inspection_engine = create_database_engine(f"sqlite:///{db_path}")
+    try:
+        with inspection_engine.connect() as connection:
+            recorded_version = connection.exec_driver_sql(
+                "SELECT version FROM mockingbird_schema WHERE singleton_id = 1"
+            ).scalar_one()
+    finally:
+        inspection_engine.dispose()
+    assert recorded_version == newer_version
+
+
+def test_database_needing_unknown_migration_is_rejected(tmp_path: Path) -> None:
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    with repository.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE mockingbird_schema SET version = 0 WHERE singleton_id = 1"
+        )
+    repository.engine.dispose()
+
+    with pytest.raises(DatabaseSchemaCompatibilityError, match="explicit migration"):
+        repository_for(db_path)
 

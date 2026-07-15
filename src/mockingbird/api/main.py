@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import ceil
@@ -198,6 +199,21 @@ from mockingbird.sampler.saved_media_frames import (
     load_saved_image_frame_plane,
 )
 from mockingbird.source_providers import external_url_preview
+from mockingbird.web_app import frontend_response
+
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    """Validate local data before readiness and stop in-memory runtime activity cleanly."""
+
+    get_repository()
+    try:
+        yield
+    finally:
+        if _source_monitor_manager is not None:
+            _source_monitor_manager.cancel_all()
+        if _live_camera_session_manager is not None:
+            _live_camera_session_manager.stop_all(reason="api_shutdown")
 
 app = FastAPI(
     title="MockingBird API",
@@ -206,6 +222,7 @@ app = FastAPI(
         "Local-first outdoor video intelligence centered on streams, zones, "
         "events, visits, review, corrections, exports, and analytics."
     ),
+    lifespan=_app_lifespan,
 )
 
 # Local Vite dev origins let the stream-first frontend use the API.
@@ -221,12 +238,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("shutdown")
-def _stop_live_camera_sessions_on_shutdown() -> None:
-    if _live_camera_session_manager is not None:
-        _live_camera_session_manager.stop_all(reason="api_shutdown")
 
 
 def _patch_testclient_for_pytest() -> None:
@@ -6842,3 +6853,15 @@ async def remove_sample_data(
                 ),
             ) from error
         raise
+
+
+# Production-mode web routes come last so API, health, and documentation routes
+# always win. Direct browser loads can therefore restore product/detail URLs.
+@app.get("/", include_in_schema=False)
+async def get_web_app_root() -> Response:
+    return frontend_response("")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def get_web_app_route(full_path: str) -> Response:
+    return frontend_response(full_path)

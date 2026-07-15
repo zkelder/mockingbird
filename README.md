@@ -42,6 +42,37 @@ python -m pip install -e ".[test]"
 python -m pytest
 ```
 
+Install the local web dependencies once:
+
+```sh
+cd web
+npm ci
+cd ..
+```
+
+### Start the complete local app
+
+After the Python and web dependencies are installed, Windows users can open
+`Start MockingBird.cmd`. The launcher prepares the web interface when needed,
+checks the local database, starts one local-only application process, and opens
+the app in the default browser. It reuses an already-running healthy instance
+instead of starting a duplicate.
+
+The equivalent cross-platform command is:
+
+```sh
+python -m mockingbird
+```
+
+Use `python -m mockingbird --check` to validate the frontend and local database
+without starting the server or opening a browser. The normal launcher never
+starts a camera, monitoring session, provider action, worker, or model by
+itself. See
+[docs/single-app-runtime-recovery-design.md](docs/single-app-runtime-recovery-design.md)
+for runtime and recovery boundaries.
+
+### Developer-only split mode
+
 Run the product API locally:
 
 ```sh
@@ -49,6 +80,10 @@ python -m uvicorn mockingbird.api.main:app --reload
 ```
 
 Then open http://127.0.0.1:8000/docs.
+
+Frontend hot reload can still run separately from `web/` during development.
+The complete local application path serves the production frontend and API from
+the same process and origin.
 
 The API contract includes list routes, detail routes, nested source/stream/event routes, a review queue, dataset exports, and an analytics summary.
 

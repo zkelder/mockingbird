@@ -1299,3 +1299,39 @@ Validation:
   media files. Demo reset restores only the sample walkthrough.
 - The complete backend suite, frontend type-check, and frontend production build
   pass before real-camera threshold changes begin.
+
+## Phase 24 — Product runtime and recovery
+
+Goal: make MockingBird one dependable local application before adding durable
+camera automation or ecosystem-specific integrations.
+
+Completed:
+
+- Phase 24A: single-app runtime and recovery foundation.
+
+Next product-hardening work:
+
+- Phase 24B: explicit local backup/restore and migration-backup policy.
+- Phase 24C: opt-in durable camera/monitor lifecycle design after backup and
+  recovery are dependable.
+
+Design note:
+[single-app-runtime-recovery-design.md](single-app-runtime-recovery-design.md).
+
+Validation:
+
+- The built frontend and existing API run from one same-origin application
+  process while Vite remains a development-only option.
+- Direct product routes, refresh, and browser back/forward preserve primary and
+  detail-page context without adding a routing dependency.
+- Optional review/export/analytics/model summaries can fail independently
+  without making Sources and Streams appear unreachable.
+- Local database startup records and validates a schema version, checks SQLite
+  integrity, and rejects unsupported newer or unmigrated older schemas.
+- The local launcher anchors relative data paths, validates startup, reuses an
+  existing healthy instance, and opens the browser only when ready.
+- Graceful shutdown cancels in-memory source monitors and stops live camera
+  sessions.
+- No camera or monitor starts on application startup. No worker, scheduler,
+  provider action, media/evidence creation, Event/Visit, ReviewLabel, export,
+  analytics truth, model runtime, or automatic truth behavior is added.

@@ -365,6 +365,14 @@ a.secondary-action {
   border-color: #a9c993;
 }
 
+.app-load-warning {
+  margin-bottom: 18px;
+}
+
+.app-load-warning .text-action {
+  justify-self: start;
+}
+
 .all-reviewed-panel {
   border-color: #8fb78b;
   background: #f3faef;

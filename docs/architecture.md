@@ -298,3 +298,22 @@ dry-run routes are read-only; the current cleanup route is file-only and limited
 to confirmed low-risk unlinked saved preview media. Future cleanup work must
 separate file deletion from record deletion, protect reviewed truth by default,
 and report stale or missing media safely without decoding media.
+
+## Single local application runtime
+
+Phase 24A adds a product runtime above the existing API and frontend layers:
+
+- FastAPI remains the product API and lifecycle owner.
+- The compiled React application is served from the same local origin after all
+  API, health, and documentation routes.
+- Stable browser paths restore primary screens and Source/Stream-adjacent detail
+  context after refresh or back/forward navigation.
+- Startup validates local SQLite integrity and an explicit schema version before
+  reporting readiness.
+- Shutdown stops process-owned camera sessions and in-memory monitors without
+  persisting or automatically restarting them.
+
+The runtime is orchestration, not a new product model or provider adapter. It
+creates no evidence, Event, Visit, correction, export, analytics truth, or model
+result. Durable camera/monitor desired state remains a separate lifecycle
+boundary under [worker-lifecycle-boundary-design.md](worker-lifecycle-boundary-design.md).

@@ -54,4 +54,11 @@ Before treating the current app as local MVP demo-ready, use
 [local-mvp-readiness-checklist.md](local-mvp-readiness-checklist.md). It is a
 local demo/dev gate, not a production release claim.
 
+For product-like launch, reload/navigation recovery, local data compatibility,
+and graceful shutdown, use
+[single-app-runtime-recovery-design.md](single-app-runtime-recovery-design.md).
+Validate the single runtime with `python -m mockingbird --check` after the
+frontend production build. This validation must not start camera sessions,
+monitoring, providers, workers, or models.
+
 Keep docs practical and concise. Link to [README.md](../README.md), [docs/product-doctrine.md](product-doctrine.md), [docs/roadmap.md](roadmap.md), [docs/glossary.md](glossary.md), and [docs/architecture.md](architecture.md) instead of duplicating the full doctrine in every file.

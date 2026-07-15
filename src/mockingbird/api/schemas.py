@@ -2449,6 +2449,9 @@ class LocalDataStatus(BaseModel):
     dataset_export_count: int = Field(ge=0)
     needs_review_count: int = Field(ge=0)
     database_ready: bool
+    database_schema_version: int = Field(ge=1)
+    database_schema_current_version: int = Field(ge=1)
+    database_integrity_check: str
     seed_data_present: bool
     local_first_note: str
 
