@@ -176,10 +176,12 @@ Validation:
 - Model adapters produce proposal evidence only.
 - User corrections remain dataset truth.
 - Adapter evaluation and rollback stay local, reviewable, and safe.
-- Real MegaDetector runtime work follows [megadetector-runtime-plan.md](megadetector-runtime-plan.md) before dependencies or inference behavior are added.
+- Real MegaDetector runtime work follows [megadetector-runtime-plan.md](megadetector-runtime-plan.md); Phase 23 adds the first bounded official-package MDv5 image path.
 - Local MegaDetector setup follows [megadetector-local-setup.md](megadetector-local-setup.md) before any smoke test.
-- PyTorch-Wildlife/MegaDetector remains an experimental archived runtime option pending dependency, license, and download-behavior review.
-- The active next path is [stream-motion-trigger-plan.md](stream-motion-trigger-plan.md): stream -> zones -> motion trigger -> snapshot evidence -> later species suggestion -> user correction truth.
+- PyTorch-Wildlife remains archived. The official `megadetector` package is an
+  optional, explicit, local MDv5 proposal adapter and still requires a final
+  installer dependency audit before distribution.
+- The active product path is [stream-motion-trigger-plan.md](stream-motion-trigger-plan.md): stream -> zones -> motion trigger -> saved best-frame evidence -> optional detector evidence -> later species suggestion -> user correction truth.
 
 ## Phase 8 — Zone-aware motion trigger foundation
 
@@ -1279,12 +1281,19 @@ Current work:
   restored without deleting their product graph; unreferenced mistaken Zones
   can be removed while linked review/evidence context is protected; and sample
   walkthrough removal/reset preserves real cameras and real product data.
+- Optional MDv5 Review Verifier 1: the existing Review Queue identification
+  action can run the official `megadetector` package against one saved best
+  frame when an explicit local MDv5 `.pt` path and optional runtime are present.
+  The adapter is lazy, passes a resolved local path with forced downloads off,
+  creates animal/person/vehicle `DetectionProposal` evidence only, and never
+  suppresses motion candidates or writes reviewed truth automatically.
 - No new page, navigation item, dashboard card, or permanent field-test panel is
   added. The primary product flow remains Cameras/Streams -> Review Queue -> Bird
   Log -> Exports.
 - Next likely phase: Daylight Feeder Field Validation 2 — run representative
-  sessions, measure candidate recall, nuisance and duplicate rates, and best-frame
-  usefulness, then tune the existing capture path from evidence.
+  sessions, measure candidate recall, nuisance and duplicate rates, best-frame
+  usefulness, and optional MDv5 proposal usefulness, then tune the existing
+  capture path from evidence.
 
 Validation:
 

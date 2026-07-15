@@ -6,6 +6,38 @@ This record captures the local PyTorch-Wildlife / MegaDetector smoke probe so Mo
 
 MegaDetector remains useful as a detector/proposal adapter later. It is not the center of MockingBird's stream, zone, event, review, correction, export, and analytics loop.
 
+## Phase 23 Official-Package Checkpoint
+
+The earlier findings below apply to the archived PyTorch-Wildlife path. A July
+2026 review of the official `agentmorris/MegaDetector` project found a narrower
+route through the official `megadetector` package:
+
+- the package exposes an MDv5 image loader and detector API
+- MDv5 output uses stable category IDs for animal, person, and vehicle
+- a full local `.pt` path can be passed to the loader
+- known aliases may trigger model acquisition, so MockingBird rejects aliases
+  and accepts existing local `.pt` files only
+- the package remains a heavy optional model stack and is not part of core app
+  startup
+
+This checkpoint is sufficient for an optional, local, explicit inference slice.
+It is not a release-time approval to bundle weights or redistribute the full
+dependency tree. PyTorch-Wildlife remains archived.
+
+Current implementation rules:
+
+- lazy import `megadetector` only during an explicit adapter run
+- pass a resolved local model path with `force_model_download=False`
+- process one saved/imported image at a time
+- default to a recall-oriented 0.1 evidence threshold, locally configurable
+- cap retained proposals at 20
+- create `DetectionProposal` evidence only
+
+Official references reviewed:
+
+- [MegaDetector repository](https://github.com/agentmorris/MegaDetector)
+- [MegaDetector user guide](https://github.com/agentmorris/MegaDetector/blob/main/megadetector.md)
+
 ## Probe Boundary
 
 The probe was local and disposable. It did not add runtime code, model files, model downloads, camera/source adapters, background workers, or product API changes.
@@ -47,21 +79,25 @@ That dependency weight is risky for a local-first product where the core app mus
 
 `pip` metadata showed licensing concerns around transitive runtime dependencies. This needs a deliberate dependency/license review before PyTorch-Wildlife can be offered as a product-grade optional install.
 
-Until that checkpoint is complete, PyTorch-Wildlife should stay archived as an experimental MegaDetector runtime path.
+PyTorch-Wildlife stays archived as an experimental MegaDetector runtime path.
 
 ## Implementation Impact
 
-PyTorch-Wildlife is not the active first implementation path.
+PyTorch-Wildlife is not the active implementation path.
 
 The active path pivots to:
 
 stream -> zones -> lightweight motion trigger -> snapshot evidence -> reviewable visit/event evidence -> later species suggestion -> user correction truth.
 
-MegaDetector can return later as optional detector enrichment for boxes, blank filtering, or proposal quality. ONNX/local-weight-only remains a serious fallback candidate for a product-grade detector runtime.
+The official package now provides explicit Review Queue proposal enrichment for
+saved best frames. It does not yet blank-filter, suppress, or automatically
+promote motion candidates. ONNX/local-weight-only remains a later optimization
+candidate.
 
 ## Recommended Future Checkpoint
 
-Before reopening PyTorch-Wildlife integration, require:
+Before reopening PyTorch-Wildlife integration or approving a redistributable
+model installer, require:
 
 - dependency tree review
 - license review

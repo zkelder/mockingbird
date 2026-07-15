@@ -6,7 +6,12 @@ The first real local detector candidate should prove that MockingBird can turn c
 
 It is a product safety spike, not a production accuracy claim.
 
-Phase 7E selects a MegaDetector-family local image detector as a useful detector/proposal family. Phase 7K archives the PyTorch-Wildlife runtime path as experimental after dependency, license, and download-behavior findings. See [detector-decision-megadetector.md](detector-decision-megadetector.md), [megadetector-runtime-plan.md](megadetector-runtime-plan.md), and [megadetector-runtime-findings.md](megadetector-runtime-findings.md).
+Phase 7E selected a MegaDetector-family local image detector as useful proposal
+evidence, and Phase 7K archived the PyTorch-Wildlife route. Phase 23 reopens a
+narrower executable path through the official `megadetector` package, an
+explicit local MDv5 `.pt` file, and the existing Review Queue identification
+action. See [megadetector-runtime-plan.md](megadetector-runtime-plan.md) and
+[megadetector-runtime-findings.md](megadetector-runtime-findings.md).
 
 The active next event-trigger path is [stream-motion-trigger-plan.md](stream-motion-trigger-plan.md): stream -> zones -> lightweight motion trigger -> snapshot evidence -> later species suggestion -> user correction truth.
 
@@ -33,7 +38,10 @@ A candidate model should:
 - fail clearly when output shape is unsupported
 - be removable without changing reviewed product data
 
-MegaDetector-family animal/person/vehicle detection remains useful future proposal enrichment. It is no longer the active first implementation path. The next implementation path is zone-aware motion triggering, with species suggestion handled by a separate future adapter.
+MegaDetector-family animal/person/vehicle detection is now optional second-stage
+proposal enrichment for saved motion best frames. Zone-aware motion remains the
+event trigger; MegaDetector does not automatically suppress or promote motion
+candidates. Species suggestion remains a separate future adapter.
 
 ## Future Species Suggestion Candidates
 
@@ -145,14 +153,18 @@ SpeciesNet stays a separate optional external species/taxon candidate.
 
 ## Dependency Rules
 
-Prefer the existing unavailable-safe detector shell and the motion-trigger path first.
+Keep the motion-trigger path as the event trigger and the MegaDetector adapter
+as explicit, unavailable-safe enrichment.
 
-PyTorch-Wildlife / MegaDetector is archived as experimental until dependency, license, and download behavior are reviewed. Do not advertise or deepen that optional runtime by default.
+PyTorch-Wildlife remains archived. The official `megadetector` package is the
+selected optional MDv5 runtime after a focused API, dependency, license, and
+download-behavior checkpoint. Final installer redistribution still requires a
+release-time transitive dependency audit.
 
 Serious future detector runtime candidates:
 
 - ONNX Runtime for local model execution, only after a compatible local MegaDetector artifact and output mapping are available
-- local-weight-only MegaDetector-family runtime with explicit model paths and no downloads
+- official `megadetector` MDv5 runtime with an explicit local `.pt` path and no adapter downloads
 - PyTorch-Wildlife only if a future checkpoint resolves dependency/license/download risk
 - Pillow or numpy only when the explicit implementation phase proves they are needed
 

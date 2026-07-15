@@ -715,6 +715,22 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
                 "MOCKINGBIRD_MEGADETECTOR_MODEL_PATH to an existing local file."
             ),
         )
+    if reason == "megadetector_model_format_unsupported":
+        return HTTPException(
+            status_code=400,
+            detail=(
+                "MegaDetector currently requires an existing local MDv5 .pt model file. "
+                "Model aliases and automatic model downloads are not accepted."
+            ),
+        )
+    if reason == "megadetector_failed":
+        return HTTPException(
+            status_code=400,
+            detail=(
+                "MegaDetector could not analyze this image. No proposal, reviewed truth, "
+                "or export data was created."
+            ),
+        )
     if reason == "missing_media_file":
         return HTTPException(
             status_code=404,

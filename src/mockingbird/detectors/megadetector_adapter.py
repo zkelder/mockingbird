@@ -1,33 +1,43 @@
-"""MegaDetector-family adapter wrapper.
+"""Optional local MegaDetector adapter.
 
-This module records MegaDetector runtime state without importing heavy model
-dependencies. Detector outputs remain proposal evidence below product truth.
+The core app never imports the heavy runtime at startup and never downloads a
+model. An explicit Review Queue action can run one local MDv5 image and records
+the result as proposal evidence below user-reviewed product truth.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module, util
+import math
 import os
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 MEGADETECTOR_ADAPTER_ID = "megadetector"
 MEGADETECTOR_RUNTIME_EXTRA = "detector-megadetector"
-MEGADETECTOR_RUNTIME_PACKAGE = "PytorchWildlife"
+MEGADETECTOR_RUNTIME_PACKAGE = "megadetector"
 MEGADETECTOR_MODEL_PATH_ENV = "MOCKINGBIRD_MEGADETECTOR_MODEL_PATH"
 MEGADETECTOR_LABELS_PATH_ENV = "MOCKINGBIRD_MEGADETECTOR_LABELS_PATH"
 MEGADETECTOR_CONFIDENCE_THRESHOLD_ENV = "MOCKINGBIRD_MEGADETECTOR_CONFIDENCE_THRESHOLD"
+MEGADETECTOR_DEFAULT_CONFIDENCE_THRESHOLD = 0.1
+MEGADETECTOR_MAX_PROPOSALS = 20
 MEGADETECTOR_SETUP_HINT = (
-    f"Install optional {MEGADETECTOR_RUNTIME_EXTRA} runtime only when needed. "
-    f"Set {MEGADETECTOR_MODEL_PATH_ENV} to a local MegaDetector-family model file. "
-    f"Optionally set {MEGADETECTOR_LABELS_PATH_ENV} to local labels. "
+    f"Install optional {MEGADETECTOR_RUNTIME_EXTRA} support only when needed. "
+    f"Set {MEGADETECTOR_MODEL_PATH_ENV} to an existing local MDv5 .pt model file. "
     "No model files are bundled or downloaded automatically. "
     "MegaDetector outputs animal/person/vehicle proposal evidence only."
 )
 
 SUPPORTED_MEGADETECTOR_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MEGADETECTOR_SUPPORTED_LABELS = ["animal", "person", "vehicle", "unknown_animal"]
+MEGADETECTOR_CATEGORY_LABELS = {
+    "1": "animal",
+    "2": "person",
+    "3": "vehicle",
+}
 
 
 class MegaDetectorError(RuntimeError):
@@ -39,6 +49,10 @@ class MegaDetectorConfigurationError(MegaDetectorError):
 
 
 class MegaDetectorModelFileError(MegaDetectorConfigurationError):
+    pass
+
+
+class MegaDetectorModelFormatError(MegaDetectorConfigurationError):
     pass
 
 
@@ -115,6 +129,20 @@ def get_megadetector_status() -> MegaDetectorStatus:
             ),
         )
 
+    if model_path.suffix.lower() != ".pt":
+        return MegaDetectorStatus(
+            status="unavailable",
+            configured=True,
+            runtime_available=False,
+            model_path=str(model_path),
+            labels_path=str(labels_path) if labels_path else None,
+            detail=(
+                "The first local MegaDetector runtime supports an explicit MDv5 "
+                ".pt model file only. Model aliases and automatic downloads are not "
+                "accepted."
+            ),
+        )
+
     runtime_status = get_megadetector_runtime_status()
     if not runtime_status.available:
         return MegaDetectorStatus(
@@ -181,6 +209,8 @@ def run_megadetector_on_image(
         raise MegaDetectorConfigurationError(status.detail)
     if status.model_path is not None and not Path(status.model_path).is_file():
         raise MegaDetectorModelFileError(status.detail)
+    if status.model_path is not None and Path(status.model_path).suffix.lower() != ".pt":
+        raise MegaDetectorModelFormatError(status.detail)
     if status.status != "available" or not status.runtime_available:
         raise MegaDetectorRuntimeUnavailableError(status.detail)
 
@@ -219,10 +249,129 @@ def _execute_megadetector_runtime(
     zone_context: str | None,
 ) -> list[MegaDetectorProposal]:
     _load_megadetector_runtime()
-    raise MegaDetectorRuntimeUnavailableError(
-        "MegaDetector runtime dependency boundary is available, but production "
-        "inference is not implemented in this phase."
+    try:
+        resolved_model_path = Path(model_path).resolve(strict=True)
+    except OSError as error:
+        raise MegaDetectorModelFileError(
+            "Configured MegaDetector model file was not found."
+        ) from error
+    if resolved_model_path.suffix.lower() != ".pt":
+        raise MegaDetectorModelFormatError(
+            "MegaDetector requires an explicit local MDv5 .pt model file."
+        )
+
+    # MegaDetector's animal/person/vehicle category map is fixed for this
+    # adapter. Labels and zone context stay in the product-level run contract,
+    # but neither changes raw model inference.
+    del labels_path, zone_context
+    threshold = (
+        MEGADETECTOR_DEFAULT_CONFIDENCE_THRESHOLD
+        if confidence_threshold is None
+        else confidence_threshold
     )
+
+    try:
+        run_detector = import_module("megadetector.detection.run_detector")
+        visualization_utils = import_module(
+            "megadetector.visualization.visualization_utils"
+        )
+        detector = run_detector.load_detector(
+            str(resolved_model_path),
+            force_model_download=False,
+        )
+        image = visualization_utils.load_image(media_local_path)
+        output = detector.generate_detections_one_image(
+            image,
+            image_id=media_local_path,
+            detection_threshold=threshold,
+        )
+    except MegaDetectorError:
+        raise
+    except Exception as error:  # pragma: no cover - depends on the optional runtime.
+        raise MegaDetectorOutputError("megadetector_failed") from error
+
+    return _parse_megadetector_output(output, threshold=threshold)
+
+
+def _parse_megadetector_output(
+    output: Any,
+    *,
+    threshold: float,
+) -> list[MegaDetectorProposal]:
+    if not isinstance(output, Mapping):
+        raise MegaDetectorOutputError("unsupported_detector_output")
+    if output.get("failure"):
+        raise MegaDetectorOutputError("megadetector_failed")
+
+    detections = output.get("detections")
+    if detections is None:
+        return []
+    if not isinstance(detections, Sequence) or isinstance(detections, (str, bytes)):
+        raise MegaDetectorOutputError("unsupported_detector_output")
+
+    proposals: list[MegaDetectorProposal] = []
+    for detection in detections:
+        proposal = _proposal_from_detection(detection, threshold=threshold)
+        if proposal is not None:
+            proposals.append(proposal)
+
+    return sorted(
+        proposals,
+        key=lambda proposal: proposal.confidence,
+        reverse=True,
+    )[:MEGADETECTOR_MAX_PROPOSALS]
+
+
+def _proposal_from_detection(
+    detection: Any,
+    *,
+    threshold: float,
+) -> MegaDetectorProposal | None:
+    if not isinstance(detection, Mapping):
+        raise MegaDetectorOutputError("unsupported_detector_output")
+
+    label = MEGADETECTOR_CATEGORY_LABELS.get(str(detection.get("category")))
+    if label is None:
+        # Unknown runtime categories are ignored instead of being mislabeled as
+        # animals and polluting the user's review queue.
+        return None
+
+    confidence = _bounded_number(detection.get("conf"))
+    if confidence is None:
+        raise MegaDetectorOutputError("unsupported_detector_output")
+    if confidence < threshold:
+        return None
+
+    bbox_value = detection.get("bbox")
+    bbox = None if bbox_value is None else _normalized_box(bbox_value)
+    return MegaDetectorProposal(label=label, confidence=confidence, bbox=bbox)
+
+
+def _normalized_box(value: Any) -> MegaDetectorBox:
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or len(value) != 4
+    ):
+        raise MegaDetectorOutputError("unsupported_detector_output")
+
+    numbers = [_bounded_number(item) for item in value]
+    if any(number is None for number in numbers):
+        raise MegaDetectorOutputError("unsupported_detector_output")
+    x, y, width, height = (float(number) for number in numbers)
+    if width <= 0 or height <= 0 or x + width > 1.000001 or y + height > 1.000001:
+        raise MegaDetectorOutputError("unsupported_detector_output")
+    return MegaDetectorBox(x=x, y=y, width=width, height=height)
+
+
+def _bounded_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < 0 or number > 1:
+        return None
+    return number
 
 
 def normalize_megadetector_label(label: str) -> str:

@@ -40,6 +40,7 @@ from mockingbird.detectors.megadetector_adapter import (
     MEGADETECTOR_SUPPORTED_LABELS,
     SUPPORTED_MEGADETECTOR_IMAGE_CONTENT_TYPES,
     MegaDetectorConfigurationError,
+    MegaDetectorModelFormatError,
     MegaDetectorModelFileError,
     MegaDetectorOutputError,
     MegaDetectorRuntimeUnavailableError,
@@ -5484,6 +5485,8 @@ class ProductRepository:
                         content_type=asset_model.content_type,
                         zone_context=zone_model.id if zone_model else None,
                     )
+                except MegaDetectorModelFormatError as error:
+                    raise ValueError("megadetector_model_format_unsupported") from error
                 except MegaDetectorModelFileError as error:
                     raise ValueError("megadetector_model_file_missing") from error
                 except MegaDetectorConfigurationError as error:
@@ -6634,6 +6637,7 @@ class ProductRepository:
             "local_detector_not_configured",
             "megadetector_not_configured",
             "megadetector_model_file_missing",
+            "megadetector_model_format_unsupported",
         }
         unsupported_errors = {
             "local_detector_unsupported_media_type",
@@ -6644,6 +6648,7 @@ class ProductRepository:
             "local_detector_failed",
             "local_detector_runtime_unavailable",
             "megadetector_runtime_unavailable",
+            "megadetector_failed",
             "missing_media_file",
             "unsupported_detector_output",
         }
@@ -10822,7 +10827,7 @@ def _megadetector_adapter() -> ModelAdapter:
         name="MegaDetector",
         kind=ModelAdapterKind.object_detector,
         status=ModelAdapterStatus(status.status),
-        version="wrapper-1",
+        version="mdv5-runtime-1",
         description=(
             "MegaDetector-family local image detector for animal/person/vehicle "
             "proposal evidence. It does not identify species or write reviewed truth."

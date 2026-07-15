@@ -1,5 +1,6 @@
 import importlib
 from pathlib import Path
+from types import SimpleNamespace
 import tomllib
 
 import httpx
@@ -9,10 +10,12 @@ from mockingbird.api.main import app, configure_repository
 from mockingbird.detectors import megadetector_adapter
 from mockingbird.detectors.megadetector_adapter import (
     MEGADETECTOR_ADAPTER_ID,
+    MEGADETECTOR_DEFAULT_CONFIDENCE_THRESHOLD,
     MEGADETECTOR_LABELS_PATH_ENV,
     MEGADETECTOR_MODEL_PATH_ENV,
     MEGADETECTOR_RUNTIME_EXTRA,
     MegaDetectorBox,
+    MegaDetectorOutputError,
     MegaDetectorProposal,
     MegaDetectorRuntimeStatus,
 )
@@ -149,7 +152,7 @@ def mock_megadetector_output(
     monkeypatch.setattr(megadetector_adapter, "_execute_megadetector_runtime", execute_runtime)
 
 
-def test_pyproject_does_not_advertise_experimental_megadetector_runtime() -> None:
+def test_pyproject_keeps_megadetector_runtime_optional_and_out_of_core() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text())
 
     core_dependencies = "\n".join(pyproject["project"].get("dependencies", [])).lower()
@@ -160,7 +163,9 @@ def test_pyproject_does_not_advertise_experimental_megadetector_runtime() -> Non
         for dependency in dependencies
     )
 
-    assert "detector-megadetector" not in optional_dependencies
+    assert optional_dependencies["detector-megadetector"] == [
+        "megadetector>=10.0.22,<11.0; python_version < '3.14'"
+    ]
     assert "pytorchwildlife" not in core_dependencies
     assert "torch" not in core_dependencies
     assert "pytorchwildlife" not in optional_dependency_text
@@ -169,6 +174,120 @@ def test_pyproject_does_not_advertise_experimental_megadetector_runtime() -> Non
     assert "yolov5" not in optional_dependency_text
     assert "soundfile" not in optional_dependency_text
     assert "librosa" not in optional_dependency_text
+
+
+def test_runtime_status_inspects_official_megadetector_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inspected: list[str] = []
+
+    def find_spec(package_name: str):
+        inspected.append(package_name)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(megadetector_adapter.util, "find_spec", find_spec)
+
+    status = megadetector_adapter.get_megadetector_runtime_status()
+
+    assert status.available is True
+    assert inspected == ["megadetector"]
+
+
+def test_runtime_executes_explicit_local_model_and_maps_official_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "mdv5.pt"
+    image_path = tmp_path / "feeder.jpg"
+    model_path.write_bytes(b"local model")
+    image_path.write_bytes(b"local image")
+    calls: dict[str, object] = {}
+
+    class FakeDetector:
+        def generate_detections_one_image(
+            self,
+            image,
+            *,
+            image_id: str,
+            detection_threshold: float,
+        ):
+            calls["image"] = image
+            calls["image_id"] = image_id
+            calls["threshold"] = detection_threshold
+            return {
+                "detections": [
+                    {"category": "2", "conf": 0.75, "bbox": [0.1, 0.2, 0.3, 0.4]},
+                    {"category": "1", "conf": 0.91, "bbox": [0.2, 0.3, 0.2, 0.2]},
+                    {"category": "3", "conf": 0.05, "bbox": [0.0, 0.0, 0.1, 0.1]},
+                    {"category": "99", "conf": 0.99, "bbox": [0.0, 0.0, 0.1, 0.1]},
+                ]
+            }
+
+    def load_detector(path: str, *, force_model_download: bool):
+        calls["model_path"] = path
+        calls["force_model_download"] = force_model_download
+        return FakeDetector()
+
+    def load_image(path: str):
+        calls["loaded_image_path"] = path
+        return "decoded image"
+
+    modules = {
+        "megadetector.detection.run_detector": SimpleNamespace(
+            load_detector=load_detector
+        ),
+        "megadetector.visualization.visualization_utils": SimpleNamespace(
+            load_image=load_image
+        ),
+    }
+    monkeypatch.setattr(
+        megadetector_adapter,
+        "_load_megadetector_runtime",
+        lambda: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        megadetector_adapter,
+        "import_module",
+        lambda module_name: modules[module_name],
+    )
+
+    proposals = megadetector_adapter._execute_megadetector_runtime(
+        media_local_path=str(image_path),
+        model_path=str(model_path),
+        labels_path=None,
+        confidence_threshold=None,
+        zone_context=FEEDER_ZONE_ID,
+    )
+
+    assert calls["model_path"] == str(model_path.resolve())
+    assert calls["force_model_download"] is False
+    assert calls["loaded_image_path"] == str(image_path)
+    assert calls["image"] == "decoded image"
+    assert calls["image_id"] == str(image_path)
+    assert calls["threshold"] == MEGADETECTOR_DEFAULT_CONFIDENCE_THRESHOLD
+    assert [proposal.label for proposal in proposals] == ["animal", "person"]
+    assert proposals[0].bbox == MegaDetectorBox(
+        x=0.2,
+        y=0.3,
+        width=0.2,
+        height=0.2,
+    )
+
+
+def test_runtime_rejects_malformed_output() -> None:
+    with pytest.raises(MegaDetectorOutputError, match="unsupported_detector_output"):
+        megadetector_adapter._parse_megadetector_output(
+            {
+                "detections": [
+                    {
+                        "category": "1",
+                        "conf": 0.8,
+                        "bbox": [0.9, 0.9, 0.2, 0.2],
+                    }
+                ]
+            },
+            threshold=0.1,
+        )
 
 
 def test_api_app_imports_without_optional_megadetector_runtime() -> None:
@@ -271,6 +390,29 @@ async def test_megadetector_status_reports_missing_model_file_before_runtime(
     assert "model file was not found" in configuration_status["status_reason"]
 
 
+async def test_megadetector_rejects_non_mdv5_model_without_runtime_or_download(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "megadetector.onnx"
+    model_path.write_bytes(b"unsupported local model placeholder")
+    monkeypatch.setenv(MEGADETECTOR_MODEL_PATH_ENV, str(model_path))
+    media_asset = (await import_image(client)).json()["media_asset"]
+
+    status_response = await client.get(
+        f"/api/model-adapters/{MEGADETECTOR_ADAPTER_ID}"
+    )
+    run_response = await run_megadetector(client, media_asset["id"])
+
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "unavailable"
+    assert ".pt model file only" in status_response.json()["notes"]
+    assert run_response.status_code == 400
+    assert "MDv5 .pt model file" in run_response.json()["detail"]
+    assert "automatic model downloads are not accepted" in run_response.json()["detail"]
+
+
 async def test_megadetector_status_reports_available_with_runtime_and_model_file(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -340,6 +482,37 @@ async def test_running_megadetector_with_missing_model_file_returns_clear_error(
 
     assert response.status_code == 404
     assert "model file was not found" in response.json()["detail"]
+
+
+async def test_runtime_failure_returns_clean_error_without_partial_records(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    mark_megadetector_available(monkeypatch, tmp_path)
+
+    def fail_runtime(**kwargs):
+        raise MegaDetectorOutputError("megadetector_failed")
+
+    monkeypatch.setattr(
+        megadetector_adapter,
+        "_execute_megadetector_runtime",
+        fail_runtime,
+    )
+    media_asset = (await import_image(client)).json()["media_asset"]
+    before_status = (await client.get("/api/settings/local-data")).json()
+
+    response = await run_megadetector(client, media_asset["id"])
+
+    after_status = (await client.get("/api/settings/local-data")).json()
+    assert response.status_code == 400
+    assert "could not analyze this image" in response.json()["detail"]
+    assert after_status["detection_run_count"] == before_status["detection_run_count"]
+    assert (
+        after_status["detection_proposal_count"]
+        == before_status["detection_proposal_count"]
+    )
+    assert after_status["review_label_count"] == before_status["review_label_count"]
 
 
 async def test_megadetector_errors_prefer_media_validation_before_config(
