@@ -422,6 +422,24 @@ async def test_external_url_to_correction_truth_smoke_flow(
     assert await dataset_truth_counts(client) == before_truth
     assert await analytics_species_count(client, "northern_cardinal") == before_cardinal_count
 
+    pre_correction_export_response = await client.post(
+        "/api/dataset-exports",
+        json={"name": "Primary flow before correction"},
+    )
+    assert pre_correction_export_response.status_code == 201
+    pre_correction_manifest = pre_correction_export_response.json()["manifest"]
+    assert all(record["visit_id"] != visit_id for record in pre_correction_manifest["records"])
+    assert pre_correction_manifest["skipped_reasons"]["needs_review"] >= 1
+    assert_count_delta(
+        before_configuration,
+        await product_counts(client),
+        media_assets=1,
+        motion_evidence=1,
+        events=1,
+        visits=1,
+        dataset_exports=1,
+    )
+
     event_detail_response = await client.get(f"/api/events/{event_id}/detail")
     visit_detail_response = await client.get(f"/api/visits/{visit_id}/detail")
     review_queue_response = await client.get("/api/review-queue")
@@ -471,6 +489,7 @@ async def test_external_url_to_correction_truth_smoke_flow(
         events=1,
         visits=1,
         review_labels=1,
+        dataset_exports=1,
     )
     assert await dataset_truth_counts(client) == {
         "reviewed_record_count": before_truth["reviewed_record_count"] + 1,
@@ -494,6 +513,43 @@ async def test_external_url_to_correction_truth_smoke_flow(
     assert corrected_event_detail["dataset_ready"] is True
     assert corrected_event_detail["review_labels"][0]["label"] == "northern_cardinal"
     assert all(item["visit_id"] != visit_id for item in corrected_queue_response.json())
+
+    bird_log_labels_response = await client.get("/api/review-labels")
+    assert bird_log_labels_response.status_code == 200
+    bird_log_label = next(
+        label
+        for label in reversed(bird_log_labels_response.json())
+        if label["target_type"] == "visit" and label["target_id"] == visit_id
+    )
+    assert bird_log_label["label"] == "northern_cardinal"
+    assert corrected_visit_detail["media_asset"]["id"] == saved["media_asset_id"]
+
+    reviewed_export_response = await client.post(
+        "/api/dataset-exports",
+        json={"name": "Primary flow after correction"},
+    )
+    assert reviewed_export_response.status_code == 201
+    reviewed_manifest = reviewed_export_response.json()["manifest"]
+    reviewed_record = next(
+        record for record in reviewed_manifest["records"] if record["visit_id"] == visit_id
+    )
+    assert reviewed_record["label"] == "northern_cardinal"
+    assert reviewed_record["reviewed"] is True
+    assert reviewed_record["dataset_ready"] is True
+    assert reviewed_record["source_id"] == SOURCE_ID
+    assert reviewed_record["stream_id"] == STREAM_ID
+    assert reviewed_record["zone_id"] == FEEDER_ZONE_ID
+    assert reviewed_record["media_path"] == media_asset["local_path"]
+    assert_count_delta(
+        before_configuration,
+        await product_counts(client),
+        media_assets=1,
+        motion_evidence=1,
+        events=1,
+        visits=1,
+        review_labels=1,
+        dataset_exports=2,
+    )
 
     assert_no_generated_artifacts_outside_media_root(
         tmp_path,
