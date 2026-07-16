@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 import zipfile
 
@@ -19,6 +20,10 @@ from mockingbird.storage.backup import (
 from mockingbird.storage.database import (
     CURRENT_DATABASE_SCHEMA_VERSION,
     create_database_engine,
+)
+from mockingbird.storage.models import (
+    BioClipIdentificationAttemptModel,
+    MediaAssetModel,
 )
 
 
@@ -87,12 +92,15 @@ def test_backup_captures_wal_database_and_managed_media(tmp_path: Path) -> None:
     repository.close()
 
 
-def test_verified_schema_one_backup_restores_through_known_migration(tmp_path: Path) -> None:
+def test_verified_schema_one_backup_restores_through_known_migration(
+    tmp_path: Path,
+) -> None:
     repository = _repository(tmp_path)
     repository.close()
 
     engine = create_database_engine(repository.db_url)
     with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE bioclip_identification_attempts")
         connection.exec_driver_sql("DROP TABLE stream_runtime_checkpoints")
         connection.exec_driver_sql("DROP TABLE stream_monitoring_policies")
         connection.exec_driver_sql(
@@ -111,7 +119,9 @@ def test_verified_schema_one_backup_restores_through_known_migration(tmp_path: P
         policy = migrated_repository.get_stream_monitoring_policy(
             "stream-backyard-feeder"
         )
-        assert migrated_repository.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert (
+            migrated_repository.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        )
         assert policy is not None
         assert policy.mode == "off"
         transaction.commit()
@@ -119,7 +129,101 @@ def test_verified_schema_one_backup_restores_through_known_migration(tmp_path: P
         migrated_repository.close()
 
 
-def test_restore_replaces_database_and_media_as_one_recoverable_pair(tmp_path: Path) -> None:
+def test_backup_restore_preserves_bioclip_attempt_evidence(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    repository.media_root.mkdir(parents=True)
+    media_path = repository.media_root / "bioclip-backup.jpg"
+    media_path.write_bytes(b"bounded BioCLIP input")
+    now = datetime.now(UTC)
+    with repository.engine.begin() as connection:
+        connection.execute(
+            MediaAssetModel.__table__.insert().values(
+                id="media-bioclip-backup",
+                source_id="source-backyard-demo",
+                stream_id="stream-backyard-feeder",
+                filename="bioclip-backup.jpg",
+                content_type="image/jpeg",
+                media_type="image",
+                local_path=str(media_path),
+                original_filename="bioclip-backup.jpg",
+                file_size_bytes=media_path.stat().st_size,
+                created_at=now,
+                notes="Storage preservation fixture.",
+            )
+        )
+        connection.execute(
+            BioClipIdentificationAttemptModel.__table__.insert().values(
+                id="bioclip-attempt-backup",
+                target_type="visit",
+                target_id="visit-bird-feeder-001",
+                event_id="event-bird-feeder-001",
+                visit_id="visit-bird-feeder-001",
+                media_asset_id="media-bioclip-backup",
+                source_id="source-backyard-demo",
+                stream_id="stream-backyard-feeder",
+                zone_id="zone-feeder",
+                motion_evidence_id=None,
+                detection_proposal_id=None,
+                resulting_species_suggestion_id=None,
+                adapter_id="bioclip-2",
+                started_at=now,
+                completed_at=now,
+                duration_ms=47,
+                timeout_limit_ms=30_000,
+                timeout_exceeded=False,
+                outcome="failed",
+                crop_source="activity",
+                crop_provenance_json=(
+                    '{"box_normalized":{"height":0.5,"width":0.5,"x":0.1,"y":0.1}}'
+                ),
+                model_provenance_json=None,
+                preprocessing_json=None,
+                candidate_manifest_json=None,
+                candidate_set_count=None,
+                candidate_set_sha256=None,
+                candidate_set_version=None,
+                candidate_manifest_complete=False,
+                error_code="runtime_unavailable",
+                error_stage="model_load",
+                error_detail="The optional local model runtime was unavailable.",
+                provenance_schema_version=1,
+            )
+        )
+
+    manager = _manager(repository, tmp_path)
+    backup = manager.create_backup()
+    with repository.engine.begin() as connection:
+        connection.execute(
+            BioClipIdentificationAttemptModel.__table__.delete().where(
+                BioClipIdentificationAttemptModel.id == "bioclip-attempt-backup"
+            )
+        )
+    repository.close()
+
+    transaction = manager.replace_live_files(manager.verify_backup(backup.backup.id))
+    restored_repository = _repository(tmp_path)
+    try:
+        with restored_repository.engine.connect() as connection:
+            restored = (
+                connection.execute(
+                    BioClipIdentificationAttemptModel.__table__.select().where(
+                        BioClipIdentificationAttemptModel.id == "bioclip-attempt-backup"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert restored["outcome"] == "failed"
+        assert restored["duration_ms"] == 47
+        assert restored["error_code"] == "runtime_unavailable"
+        transaction.commit()
+    finally:
+        restored_repository.close()
+
+
+def test_restore_replaces_database_and_media_as_one_recoverable_pair(
+    tmp_path: Path,
+) -> None:
     repository = _repository(tmp_path)
     repository.media_root.mkdir(parents=True)
     media_path = repository.media_root / "visit.jpg"
@@ -231,7 +335,9 @@ def api_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     configure_repository(None)
 
 
-def test_backup_api_create_list_verify_download_and_import(api_repository: ProductRepository) -> None:
+def test_backup_api_create_list_verify_download_and_import(
+    api_repository: ProductRepository,
+) -> None:
     created_response = client.post("/api/settings/backups")
     assert created_response.status_code == 201
     created = created_response.json()
@@ -255,13 +361,17 @@ def test_backup_api_create_list_verify_download_and_import(api_repository: Produ
 
     import_response = client.post(
         "/api/settings/backups/import",
-        files={"file": ("saved.mbbackup", download_response.content, "application/zip")},
+        files={
+            "file": ("saved.mbbackup", download_response.content, "application/zip")
+        },
     )
     assert import_response.status_code == 201
     assert import_response.json()["backup"]["id"] == backup_id
 
 
-def test_backup_api_restore_requires_confirmation(api_repository: ProductRepository) -> None:
+def test_backup_api_restore_requires_confirmation(
+    api_repository: ProductRepository,
+) -> None:
     backup_id = client.post("/api/settings/backups").json()["backup"]["id"]
 
     response = client.post(
@@ -291,7 +401,9 @@ def test_backup_api_restore_keeps_pre_restore_safety_backup(
     body = response.json()
     assert body["status"]["review_label_count"] == 1
     assert body["safety_backup"]["kind"] == "pre_restore"
-    assert (api_repository.media_root / "api-visit.jpg").read_bytes() == b"api backup version"
+    assert (
+        api_repository.media_root / "api-visit.jpg"
+    ).read_bytes() == b"api backup version"
     backups = client.get("/api/settings/backups").json()["backups"]
     assert {item["kind"] for item in backups} == {"manual", "pre_restore"}
 
@@ -303,7 +415,9 @@ def test_failed_repository_reopen_rolls_back_before_returning_error(
     backup_id = client.post("/api/settings/backups").json()["backup"]["id"]
     with api_repository.engine.begin() as connection:
         connection.exec_driver_sql("DELETE FROM review_labels")
-    (api_repository.media_root / "api-visit.jpg").write_bytes(b"current before failed restore")
+    (api_repository.media_root / "api-visit.jpg").write_bytes(
+        b"current before failed restore"
+    )
 
     original_open = api_main._open_product_repository
     calls = 0

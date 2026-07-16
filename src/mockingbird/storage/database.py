@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 3
+CURRENT_DATABASE_SCHEMA_VERSION = 4
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -211,9 +211,17 @@ def _migrate_to_zone_optional_motion_evidence(connection: Connection) -> None:
     )
 
 
+def _migrate_to_bioclip_identification_attempt_evidence(connection: Connection) -> None:
+    """Add an empty evidence table without inventing historical model attempts."""
+
+    attempts = Base.metadata.tables["bioclip_identification_attempts"]
+    attempts.create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
+    4: _migrate_to_bioclip_identification_attempt_evidence,
 }
 
 
@@ -275,7 +283,9 @@ def _ensure_sqlite_parent(db_url: str) -> None:
 def create_database_engine(db_url: str | None = None) -> Engine:
     resolved_url = resolve_database_url(db_url)
     _ensure_sqlite_parent(resolved_url)
-    connect_args = {"check_same_thread": False} if resolved_url.startswith("sqlite") else {}
+    connect_args = (
+        {"check_same_thread": False} if resolved_url.startswith("sqlite") else {}
+    )
     engine = create_engine(resolved_url, connect_args=connect_args)
     if resolved_url.startswith("sqlite"):
         # A short local write should wait briefly instead of making the app look
@@ -287,6 +297,7 @@ def create_database_engine(db_url: str | None = None) -> Engine:
                 cursor.execute("PRAGMA busy_timeout=5000")
             finally:
                 cursor.close()
+
     return engine
 
 

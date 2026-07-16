@@ -1,3 +1,5 @@
+import hashlib
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,14 +25,20 @@ from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.species.bioclip_adapter import (
     BIOCLIP_ADAPTER_ID,
     BIOCLIP_ADAPTER_NAME,
+    BIOCLIP_CANDIDATE_FINGERPRINT_ALGORITHM,
+    BIOCLIP_PREPROCESSING_CONFIG_JSON,
     BIOCLIP_PROMPT_RECIPE_ID,
     BIOCLIP_PROMPT_RECIPE_SHA256,
+    BIOCLIP_RUN_TIMEOUT_SECONDS,
     BIOCLIP_SCORE_KIND,
     BioClipBusyError,
+    BioClipNoResultError,
     BioClipOutputError,
     BioClipPrediction,
+    BioClipPreparedRun,
     BioClipProvenance,
     BioClipRankedSuggestion,
+    BioClipTimeoutError,
 )
 
 pytestmark = pytest.mark.anyio
@@ -67,7 +75,9 @@ def anyio_backend() -> str:
 @pytest.fixture
 async def client():
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as api_client:
         yield api_client
 
 
@@ -87,13 +97,17 @@ async def import_review_image(
             "species_guess": "unknown_bird",
             "notes": "Local image for Review Queue identification assist.",
         },
-        files={"file": ("review-assist.png", b"review assist image bytes", "image/png")},
+        files={
+            "file": ("review-assist.png", b"review assist image bytes", "image/png")
+        },
     )
     assert response.status_code == 201
     return response.json()
 
 
-async def import_review_video(client: httpx.AsyncClient, *, title: str = "Review assist video"):
+async def import_review_video(
+    client: httpx.AsyncClient, *, title: str = "Review assist video"
+):
     response = await client.post(
         "/api/media/import",
         data={
@@ -104,7 +118,9 @@ async def import_review_video(client: httpx.AsyncClient, *, title: str = "Review
             "species_guess": "unknown_bird",
             "notes": "Unsupported video media for Review Queue identification assist.",
         },
-        files={"file": ("review-assist.mp4", b"review assist video bytes", "video/mp4")},
+        files={
+            "file": ("review-assist.mp4", b"review assist video bytes", "video/mp4")
+        },
     )
     assert response.status_code == 201
     return response.json()
@@ -133,7 +149,9 @@ async def detector_counts(client: httpx.AsyncClient) -> dict[str, int]:
     }
 
 
-async def review_queue_item_for_visit(client: httpx.AsyncClient, visit_id: str) -> dict[str, object]:
+async def review_queue_item_for_visit(
+    client: httpx.AsyncClient, visit_id: str
+) -> dict[str, object]:
     response = await client.get("/api/review-queue")
     assert response.status_code == 200
     return next(item for item in response.json() if item["visit_id"] == visit_id)
@@ -143,6 +161,7 @@ async def create_activity_review_item(
     client: httpx.AsyncClient,
     *,
     media_asset_id: str,
+    create_visit: bool = True,
 ) -> tuple[str, str]:
     evidence_response = await client.post(
         "/api/motion/evidence",
@@ -176,12 +195,16 @@ async def create_activity_review_item(
             "event_title": "Measured outdoor activity",
             "visit_label_hint": "unknown_animal",
             "create_event": True,
-            "create_visit": True,
+            "create_visit": create_visit,
             "attach_snapshot_media_asset_id": media_asset_id,
         },
     )
     assert promote_response.status_code == 200
-    return promote_response.json()["visit_id"], evidence_id
+    result = promote_response.json()
+    return (
+        result["visit_id"] if create_visit else result["event_id"],
+        evidence_id,
+    )
 
 
 async def test_review_queue_does_not_derive_focus_from_zone_without_activity(
@@ -224,9 +247,7 @@ async def test_review_queue_item_exposes_measured_activity_focus_without_truth(
     assert queue_item["focus_crop_available"] is True
     assert queue_item["focus_crop_source"] == "activity"
     assert queue_item["focus_crop_label"] == "Detected activity focus"
-    assert focus_box == pytest.approx(
-        {"x": 0.4, "y": 0.3, "width": 0.2, "height": 0.2}
-    )
+    assert focus_box == pytest.approx({"x": 0.4, "y": 0.3, "width": 0.2, "height": 0.2})
     assert queue_item["focus_crop_box_pixels"] == {
         "x": 400,
         "y": 149,
@@ -280,14 +301,18 @@ async def test_review_queue_focus_crop_suppressed_for_ignore_and_privacy_zones(
     assert ignored_item["focus_crop_source"] == "none"
     assert ignored_item["focus_crop_box_normalized"] is None
     assert ignored_item["focus_crop_box_pixels"] is None
-    assert "focus_crop_suppressed_for_ignore_zone" in ignored_item["focus_crop_warnings"]
+    assert (
+        "focus_crop_suppressed_for_ignore_zone" in ignored_item["focus_crop_warnings"]
+    )
     assert ignored_item["identification"]["focus_crop_available"] is False
 
     assert private_item["focus_crop_available"] is False
     assert private_item["focus_crop_source"] == "none"
     assert private_item["focus_crop_box_normalized"] is None
     assert private_item["focus_crop_box_pixels"] is None
-    assert "focus_crop_suppressed_for_privacy_zone" in private_item["focus_crop_warnings"]
+    assert (
+        "focus_crop_suppressed_for_privacy_zone" in private_item["focus_crop_warnings"]
+    )
     assert private_item["identification"]["focus_crop_available"] is False
 
     for visit_id in (ignored["visit"]["id"], private["visit"]["id"]):
@@ -326,7 +351,9 @@ def mock_local_detector_output(
     proposals: list[LocalDetectorProposal],
 ) -> None:
     # Existing adapter seam; no model file or optional detector runtime is required.
-    monkeypatch.setattr(product_repository, "run_local_image_detector", lambda **_: proposals)
+    monkeypatch.setattr(
+        product_repository, "run_local_image_detector", lambda **_: proposals
+    )
 
 
 def mark_bioclip_available(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -356,6 +383,8 @@ def mark_bioclip_available(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
 def bioclip_prediction(
     *ranked: tuple[str, str | None, str | None, float],
 ) -> BioClipPrediction:
+    candidate_labels = tuple(item[0] for item in ranked)
+    candidate_scores = tuple(item[3] for item in ranked)
     suggestions = tuple(
         BioClipRankedSuggestion(
             rank=index,
@@ -378,8 +407,10 @@ def bioclip_prediction(
             device="cpu",
             open_clip_version="3.3.0",
             torch_version="2.13.0+cpu",
-            label_count=245,
-            labels_sha256="a" * 64,
+            label_count=len(candidate_labels),
+            labels_sha256=hashlib.sha256(
+                "\n".join(candidate_labels).encode("utf-8")
+            ).hexdigest(),
             embedding_cache_sha256="b" * 64,
             model_config_sha256="c" * 64,
             model_weights_name="open_clip_model.safetensors",
@@ -389,7 +420,50 @@ def bioclip_prediction(
             score_kind=BIOCLIP_SCORE_KIND,
             calibrated=False,
         ),
+        candidate_labels=candidate_labels,
+        candidate_scores=candidate_scores,
     )
+
+
+def bioclip_prepared_run(prediction: BioClipPrediction) -> BioClipPreparedRun:
+    provenance = prediction.provenance
+    return BioClipPreparedRun(
+        adapter_id=provenance.adapter_id,
+        adapter_name=provenance.adapter_name,
+        adapter_contract_version=provenance.adapter_contract_version,
+        model_name=provenance.model_name,
+        architecture_id=provenance.architecture_id,
+        device=provenance.device,
+        candidate_labels=prediction.candidate_labels,
+        candidate_count=len(prediction.candidate_labels),
+        candidate_set_sha256=provenance.labels_sha256,
+        candidate_fingerprint_algorithm=(BIOCLIP_CANDIDATE_FINGERPRINT_ALGORITHM),
+        embedding_cache_sha256=provenance.embedding_cache_sha256,
+        model_config_sha256=provenance.model_config_sha256,
+        model_weights_sha256=provenance.model_weights_sha256,
+        model_weights_name=provenance.model_weights_name,
+        model_weights_verified=False,
+        prompt_recipe_id=provenance.prompt_recipe_id,
+        prompt_recipe_sha256=provenance.prompt_recipe_sha256,
+        preprocessing_id=provenance.preprocessing_id,
+        preprocessing_sha256=provenance.preprocessing_sha256,
+        preprocessing_config_json=BIOCLIP_PREPROCESSING_CONFIG_JSON,
+        timeout_seconds=BIOCLIP_RUN_TIMEOUT_SECONDS,
+        open_clip_version=provenance.open_clip_version,
+        torch_version=provenance.torch_version,
+        pillow_version="11.3.0",
+        numpy_version="2.3.0",
+    )
+
+
+def invoke_bioclip_prepared_callback(
+    callback: object | None,
+    prediction: BioClipPrediction,
+) -> None:
+    if callback is None:
+        return
+    assert callable(callback)
+    callback(bioclip_prepared_run(prediction))
 
 
 def mock_bioclip_run(
@@ -404,15 +478,54 @@ def mock_bioclip_run(
         crop = kwargs["crop"]
         assert isinstance(crop, product_repository._ReviewSpeciesCropContext)
         crops.append(crop)
+        observation = kwargs.get("observation")
+        if isinstance(observation, dict):
+            width = 1000
+            height = 500
+            box = crop.box_normalized
+            left = max(0, min(width - 1, math.floor(box.x * width)))
+            top = max(0, min(height - 1, math.floor(box.y * height)))
+            right = max(
+                left + 1,
+                min(width, math.ceil((box.x + box.width) * width)),
+            )
+            bottom = max(
+                top + 1,
+                min(height, math.ceil((box.y + box.height) * height)),
+            )
+            observation.update(
+                {
+                    "original_dimensions": {
+                        "width": width,
+                        "height": height,
+                    },
+                    "pixel_box": {
+                        "x": left,
+                        "y": top,
+                        "width": right - left,
+                        "height": bottom - top,
+                        "right": right,
+                        "bottom": bottom,
+                    },
+                    "effective_dimensions": {
+                        "width": right - left,
+                        "height": bottom - top,
+                    },
+                    "used_for_inference": True,
+                }
+            )
         return object()
 
     def run_image(
         image_loader: object,
         _config: object,
         top_k: int = 5,
+        *,
+        on_prepared: object | None = None,
     ) -> BioClipPrediction:
         assert top_k == 5
         assert callable(image_loader)
+        invoke_bioclip_prepared_callback(on_prepared, prediction)
         image_loader()
         if repository is not None and hasattr(repository.engine.pool, "checkedout"):
             assert repository.engine.pool.checkedout() == 0
@@ -440,9 +553,14 @@ def mark_megadetector_available(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_review_identification_setup_points_to_species_classifier_without_truth_or_detection(
     client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_repository: ProductRepository,
 ) -> None:
+    unsafe_device = "https://user:secret@example.invalid/private-device"
+    monkeypatch.setenv("MOCKINGBIRD_BIOCLIP_DEVICE", unsafe_device)
     imported = await import_review_image(client)
     visit_id = imported["visit"]["id"]
+    event_id = imported["event"]["id"]
     media_asset_id = imported["media_asset"]["id"]
     before_truth = await truth_snapshot(client)
     before_detection = await detector_counts(client)
@@ -467,9 +585,14 @@ async def test_review_identification_setup_points_to_species_classifier_without_
     assert "image/png" in identification["supported_media_types"]
     assert "MOCKINGBIRD_BIOCLIP_MODEL_PATH" in identification["setup_hint"]
     assert "precomputed embedding cache" in identification["setup_hint"]
-    assert "No artifacts are downloaded or generated" in identification["unavailable_reason"]
+    assert (
+        "No artifacts are downloaded or generated"
+        in identification["unavailable_reason"]
+    )
 
-    response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+    response = await client.post(
+        f"/api/review-queue/visit/{visit_id}/identify", json={}
+    )
 
     assert response.status_code == 200
     result = response.json()
@@ -486,8 +609,96 @@ async def test_review_identification_setup_points_to_species_classifier_without_
     assert result["creates_truth"] is False
     assert result["creates_export"] is False
     assert result["creates_review_label"] is False
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 1
+    attempt = attempts[0]
+    assert attempt["target_type"] == "visit"
+    assert attempt["target_id"] == visit_id
+    assert attempt["visit_id"] == visit_id
+    assert attempt["event_id"] == event_id
+    assert attempt["media_asset_id"] == media_asset_id
+    assert attempt["source_id"] == SOURCE_ID
+    assert attempt["stream_id"] == STREAM_ID
+    assert attempt["zone_id"] == FEEDER_ZONE_ID
+    assert attempt["adapter_id"] == BIOCLIP_ADAPTER_ID
+    assert attempt["outcome"] == "unsupported"
+    assert attempt["completed_at"] is not None
+    assert attempt["duration_ms"] is None
+    assert attempt["timeout_exceeded"] is False
+    assert attempt["resulting_species_suggestion_id"] is None
+    assert attempt["candidate_manifest_complete"] is False
+    assert attempt["error_code"] == "bioclip_not_configured"
+    assert attempt["error_stage"] == "configuration"
+    assert attempt["error_detail"] == (
+        "BioCLIP local model artifacts are not configured."
+    )
+    assert attempt["model_provenance"]["device"] == "unvalidated"
+    assert unsafe_device not in str(attempt)
     assert await truth_snapshot(client) == before_truth
     assert await detector_counts(client) == before_detection
+
+
+async def test_review_identification_unavailable_runtime_records_preflight_without_duration(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    imported = await import_review_image(
+        client,
+        title="BioCLIP unavailable runtime preflight",
+    )
+    visit_id = imported["visit"]["id"]
+    mark_bioclip_available(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        product_repository,
+        "get_bioclip_status",
+        lambda _config: SimpleNamespace(
+            status="unavailable",
+            configured=True,
+            runtime_available=False,
+            detail="Optional runtime unavailable without private path detail.",
+            model_dir=None,
+            labels_path=None,
+            embedding_cache_path=None,
+            device="cpu",
+            labels_sha256=None,
+        ),
+    )
+
+    def must_not_run(*_args: object, **_kwargs: object) -> BioClipPrediction:
+        raise AssertionError("A preflight-unavailable runtime must not execute.")
+
+    monkeypatch.setattr(
+        product_repository,
+        "run_bioclip_from_image_loader",
+        must_not_run,
+    )
+
+    response = await client.post(
+        f"/api/review-queue/visit/{visit_id}/identify",
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["identification"]["status"] == "unavailable"
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 1
+    attempt = attempts[0]
+    assert attempt["outcome"] == "unsupported"
+    assert attempt["duration_ms"] is None
+    assert attempt["timeout_exceeded"] is False
+    assert attempt["error_code"] == "bioclip_runtime_not_ready"
+    assert attempt["error_stage"] == "configuration"
+    assert attempt["error_detail"] == (
+        "The optional local BioCLIP runtime was not ready before execution."
+    )
 
 
 async def test_review_identification_unsupported_best_frame_returns_clean_state(
@@ -504,7 +715,9 @@ async def test_review_identification_unsupported_best_frame_returns_clean_state(
     assert identification["can_run_on_best_frame"] is False
     assert identification["unavailable_reason"] == "unsupported_media_type:video/mp4"
 
-    response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+    response = await client.post(
+        f"/api/review-queue/visit/{visit_id}/identify", json={}
+    )
 
     assert response.status_code == 200
     result = response.json()
@@ -589,8 +802,9 @@ async def test_review_identification_does_not_reuse_another_visits_same_media_su
     first_item = await review_queue_item_for_visit(client, first_visit_id)
     second_item = await review_queue_item_for_visit(client, second_visit_id)
 
-    assert first_item["identification"]["suggestion"]["id"] == (
-        suggestion_response.json()["id"]
+    assert (
+        first_item["identification"]["suggestion"]["id"]
+        == (suggestion_response.json()["id"])
     )
     assert second_item["identification"]["suggestion"] is None
     assert second_item["suggestion_id"] is None
@@ -643,7 +857,10 @@ async def test_review_identification_explicit_demo_adapter_creates_placeholder_p
     assert result["identification"]["focus_crop_available"] is False
     assert result["identification"]["focus_crop_label"] is None
     assert result["creates_truth"] is False
-    assert after_detection["detection_run_count"] == before_detection["detection_run_count"] + 1
+    assert (
+        after_detection["detection_run_count"]
+        == before_detection["detection_run_count"] + 1
+    )
     assert (
         after_detection["detection_proposal_count"]
         == before_detection["detection_proposal_count"] + 1
@@ -687,7 +904,9 @@ async def test_review_identification_available_detection_adapter_then_correction
             )
         ],
     )
-    imported = await import_review_image(client, title="Review assist local detector image")
+    imported = await import_review_image(
+        client, title="Review assist local detector image"
+    )
     visit_id = imported["visit"]["id"]
     before_truth = await truth_snapshot(client)
 
@@ -702,7 +921,9 @@ async def test_review_identification_available_detection_adapter_then_correction
     )
     assert "image/png" in queue_item["identification"]["supported_media_types"]
 
-    response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+    response = await client.post(
+        f"/api/review-queue/visit/{visit_id}/identify", json={}
+    )
 
     assert response.status_code == 200
     result = response.json()
@@ -822,7 +1043,9 @@ async def test_review_identification_prefers_bioclip_and_uses_padded_megadetecto
     assert queue_item["identification"]["can_run"] is True
     assert queue_item["identification"]["proposal_count"] == 2
 
-    response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+    response = await client.post(
+        f"/api/review-queue/visit/{visit_id}/identify", json={}
+    )
 
     assert response.status_code == 200
     result = response.json()
@@ -861,8 +1084,7 @@ async def test_review_identification_prefers_bioclip_and_uses_padded_megadetecto
     assert "local_path" not in suggestion["notes"]
     evidence_region = suggestion["evidence_region"]
     assert {
-        key: evidence_region[key]
-        for key in ("x", "y", "width", "height")
+        key: evidence_region[key] for key in ("x", "y", "width", "height")
     } == pytest.approx(
         {
             "x": 0.35,
@@ -880,6 +1102,85 @@ async def test_review_identification_prefers_bioclip_and_uses_padded_megadetecto
     assert "model_dir" not in evidence_region["model_provenance"]
     assert crops[0].source == "megadetector"
     assert crops[0].detection_proposal_id == animal_proposal["id"]
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 1
+    attempt = attempts[0]
+    assert attempt["target_type"] == "visit"
+    assert attempt["target_id"] == visit_id
+    assert attempt["visit_id"] == visit_id
+    assert attempt["event_id"] == imported["event"]["id"]
+    assert attempt["media_asset_id"] == media_asset_id
+    assert attempt["source_id"] == SOURCE_ID
+    assert attempt["stream_id"] == STREAM_ID
+    assert attempt["zone_id"] == FEEDER_ZONE_ID
+    assert attempt["detection_proposal_id"] == animal_proposal["id"]
+    assert attempt["adapter_id"] == BIOCLIP_ADAPTER_ID
+    assert attempt["outcome"] == "succeeded"
+    assert attempt["completed_at"] is not None
+    assert isinstance(attempt["duration_ms"], int)
+    assert attempt["duration_ms"] >= 0
+    assert attempt["timeout_limit_ms"] == int(BIOCLIP_RUN_TIMEOUT_SECONDS * 1000)
+    assert attempt["timeout_exceeded"] is False
+    assert attempt["resulting_species_suggestion_id"] == suggestion["id"]
+    assert attempt["error_code"] is None
+    assert attempt["error_stage"] is None
+    assert attempt["error_detail"] is None
+    assert attempt["candidate_manifest_complete"] is True
+    assert attempt["candidate_set_count"] == len(prediction.candidate_labels)
+    assert attempt["candidate_set_sha256"] == prediction.provenance.labels_sha256
+    assert attempt["candidate_set_version"] == (BIOCLIP_CANDIDATE_FINGERPRINT_ALGORITHM)
+    assert [
+        (
+            item["source_position"],
+            item["raw_label"],
+            item["rank"],
+            item["score"],
+        )
+        for item in attempt["candidate_manifest"]
+    ] == [
+        (index, label, index, score)
+        for index, (label, score) in enumerate(
+            zip(
+                prediction.candidate_labels,
+                prediction.candidate_scores,
+                strict=True,
+            ),
+            start=1,
+        )
+    ]
+    assert attempt["candidate_manifest"][-1]["common_name"] == "vehicle"
+    assert attempt["candidate_manifest"][-1]["scientific_name"] is None
+    assert attempt["model_provenance"]["model_weights_verified"] is True
+    assert attempt["model_provenance"]["adapter_contract_version"] == (
+        prediction.provenance.adapter_contract_version
+    )
+    assert attempt["preprocessing"]["preprocessing_sha256"] == (
+        prediction.provenance.preprocessing_sha256
+    )
+    assert attempt["crop_source"] == "megadetector"
+    assert attempt["crop_provenance"]["normalized_box"] == pytest.approx(
+        {"x": 0.35, "y": 0.25, "width": 0.2, "height": 0.2}
+    )
+    assert attempt["crop_provenance"]["original_dimensions"] == {
+        "width": 1000,
+        "height": 500,
+    }
+    assert attempt["crop_provenance"]["pixel_box"] == {
+        "x": 350,
+        "y": 124,
+        "width": 200,
+        "height": 102,
+        "right": 550,
+        "bottom": 226,
+    }
+    assert attempt["crop_provenance"]["effective_dimensions"] == {
+        "width": 200,
+        "height": 102,
+    }
+    assert attempt["crop_provenance"]["used_for_inference"] is True
     assert await detector_counts(client) == before_detection
     assert await truth_snapshot(client) == before_truth
 
@@ -894,6 +1195,7 @@ async def test_review_identification_bioclip_activity_crop_supersedes_only_prior
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    isolated_repository: ProductRepository,
 ) -> None:
     imported = await import_review_image(client, title="BioCLIP activity crop image")
     media_asset_id = imported["media_asset"]["id"]
@@ -901,6 +1203,7 @@ async def test_review_identification_bioclip_activity_crop_supersedes_only_prior
         client,
         media_asset_id=media_asset_id,
     )
+    target_event_id = (await review_queue_item_for_visit(client, visit_id))["event_id"]
     mark_megadetector_available(monkeypatch)
     monkeypatch.setattr(
         product_repository,
@@ -949,7 +1252,8 @@ async def test_review_identification_bioclip_activity_crop_supersedes_only_prior
 
     first = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
     assert first.status_code == 200
-    assert first.json()["species_suggestion"]["suggested_label"] == "northern_cardinal"
+    first_suggestion = first.json()["species_suggestion"]
+    assert first_suggestion["suggested_label"] == "northern_cardinal"
     # The high-confidence animal proposal is elsewhere in the frame, so the
     # measured activity that created this Visit remains the classifier input.
     assert crops[0].source == "activity"
@@ -966,16 +1270,97 @@ async def test_review_identification_bioclip_activity_crop_supersedes_only_prior
     )
     second = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
     assert second.status_code == 200
-    assert second.json()["species_suggestion"]["suggested_label"] == "blue_jay"
+    second_suggestion = second.json()["species_suggestion"]
+    assert second_suggestion["suggested_label"] == "blue_jay"
 
     suggestions = (
         await client.get("/api/species-suggestions", params={"visit_id": visit_id})
     ).json()["species_suggestions"]
     bioclip = [item for item in suggestions if item["adapter_id"] == BIOCLIP_ADAPTER_ID]
-    other = [item for item in suggestions if item["adapter_id"] == "other_species_adapter"]
+    other = [
+        item for item in suggestions if item["adapter_id"] == "other_species_adapter"
+    ]
     assert [item["status"] for item in bioclip] == ["superseded", "pending"]
     assert [item["status"] for item in other] == ["pending"]
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 2
+    assert len({attempt["id"] for attempt in attempts}) == 2
+    assert [attempt["outcome"] for attempt in attempts] == [
+        "succeeded",
+        "succeeded",
+    ]
+    assert [attempt["resulting_species_suggestion_id"] for attempt in attempts] == [
+        first_suggestion["id"],
+        second_suggestion["id"],
+    ]
+    assert all(attempt["target_type"] == "visit" for attempt in attempts)
+    assert all(attempt["target_id"] == visit_id for attempt in attempts)
+    assert all(attempt["visit_id"] == visit_id for attempt in attempts)
+    assert all(attempt["event_id"] == target_event_id for attempt in attempts)
+    assert all(attempt["media_asset_id"] == media_asset_id for attempt in attempts)
+    assert all(attempt["crop_source"] == "activity" for attempt in attempts)
+    assert all(attempt["candidate_manifest_complete"] is True for attempt in attempts)
+    assert attempts[0]["candidate_set_sha256"] != attempts[1]["candidate_set_sha256"]
     assert await detector_counts(client) == before_detection
+    assert await truth_snapshot(client) == before_truth
+
+
+async def test_review_identification_bioclip_preserves_exact_event_target(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    imported = await import_review_image(
+        client,
+        title="BioCLIP exact Event target media",
+    )
+    media_asset_id = imported["media_asset"]["id"]
+    event_id, _evidence_id = await create_activity_review_item(
+        client,
+        media_asset_id=media_asset_id,
+        create_visit=False,
+    )
+    mark_bioclip_available(monkeypatch, tmp_path)
+    mock_bioclip_run(
+        monkeypatch,
+        bioclip_prediction(
+            ("blue jay (Cyanocitta cristata)", None, None, 0.68),
+            ("unknown bird", "unknown bird", None, 0.32),
+        ),
+    )
+    before_truth = await truth_snapshot(client)
+
+    response = await client.post(
+        f"/api/review-queue/event/{event_id}/identify",
+        json={},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["target_type"] == "event"
+    assert result["target_id"] == event_id
+    assert result["identification"]["status"] == "suggestion_created"
+    suggestion = result["species_suggestion"]
+    assert suggestion["event_id"] == event_id
+    assert suggestion["visit_id"] is None
+    assert suggestion["status"] == "pending"
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="event",
+        target_id=event_id,
+    )
+    assert len(attempts) == 1
+    attempt = attempts[0]
+    assert attempt["target_type"] == "event"
+    assert attempt["target_id"] == event_id
+    assert attempt["event_id"] == event_id
+    assert attempt["visit_id"] is None
+    assert attempt["media_asset_id"] == media_asset_id
+    assert attempt["outcome"] == "succeeded"
+    assert attempt["resulting_species_suggestion_id"] == suggestion["id"]
     assert await truth_snapshot(client) == before_truth
 
 
@@ -1014,11 +1399,15 @@ async def test_review_identification_bioclip_full_frame_is_blocked_by_separate_p
         called = True
         raise AssertionError("Privacy-blocked full-frame input must not be decoded.")
 
-    monkeypatch.setattr(product_repository, "_load_bioclip_input_image", should_not_load)
+    monkeypatch.setattr(
+        product_repository, "_load_bioclip_input_image", should_not_load
+    )
     before_truth = await truth_snapshot(client)
     before_detection = await detector_counts(client)
 
-    response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+    response = await client.post(
+        f"/api/review-queue/visit/{visit_id}/identify", json={}
+    )
 
     assert response.status_code == 200
     result = response.json()
@@ -1071,10 +1460,7 @@ async def test_review_identification_bioclip_uses_full_frame_without_restricted_
     assert result["species_suggestion"]["suggested_label"] == "blue_jay"
     evidence_region = result["species_suggestion"]["evidence_region"]
     assert evidence_region["source"] == "full_frame"
-    assert {
-        key: evidence_region[key]
-        for key in ("x", "y", "width", "height")
-    } == {
+    assert {key: evidence_region[key] for key in ("x", "y", "width", "height")} == {
         "x": 0.0,
         "y": 0.0,
         "width": 1.0,
@@ -1113,9 +1499,12 @@ async def test_review_identification_bioclip_rechecks_late_privacy_zone_before_w
         image_loader: object,
         _config: object,
         top_k: int = 5,
+        *,
+        on_prepared: object | None = None,
     ) -> BioClipPrediction:
         assert top_k == 5
         assert callable(image_loader)
+        invoke_bioclip_prepared_callback(on_prepared, prediction)
         image_loader()
         isolated_repository.create_zone(
             ZoneCreate(
@@ -1184,9 +1573,12 @@ async def test_review_identification_bioclip_rechecks_media_file_before_write(
         image_loader: object,
         _config: object,
         top_k: int = 5,
+        *,
+        on_prepared: object | None = None,
     ) -> BioClipPrediction:
         assert top_k == 5
         assert callable(image_loader)
+        invoke_bioclip_prepared_callback(on_prepared, prediction)
         image_loader()
         media_path.unlink()
         return prediction
@@ -1267,6 +1659,7 @@ async def test_review_identification_bioclip_failure_is_atomic_and_keeps_pending
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    isolated_repository: ProductRepository,
 ) -> None:
     imported = await import_review_image(client, title="BioCLIP atomic failure image")
     media_asset_id = imported["media_asset"]["id"]
@@ -1295,9 +1688,25 @@ async def test_review_identification_bioclip_failure_is_atomic_and_keeps_pending
         "_load_bioclip_input_image",
         lambda **_: object(),
     )
+    failure_prediction = bioclip_prediction(
+        ("blue jay (Cyanocitta cristata)", None, None, 0.57),
+        ("unknown bird", "unknown bird", None, 0.43),
+    )
 
-    def fail_bioclip(*_: object, **__: object) -> BioClipPrediction:
-        raise BioClipOutputError("mock inference failure")
+    def fail_bioclip(
+        image_loader: object,
+        _config: object,
+        top_k: int = 5,
+        *,
+        on_prepared: object | None = None,
+    ) -> BioClipPrediction:
+        assert top_k == 5
+        assert callable(image_loader)
+        invoke_bioclip_prepared_callback(on_prepared, failure_prediction)
+        image_loader()
+        raise BioClipOutputError(
+            r"mock failure at C:\Users\private\embedding-cache.npz"
+        )
 
     monkeypatch.setattr(
         product_repository,
@@ -1317,7 +1726,187 @@ async def test_review_identification_bioclip_failure_is_atomic_and_keeps_pending
     ).json()["species_suggestions"]
     pending = [item for item in suggestions if item["status"] == "pending"]
     assert [item["id"] for item in pending] == [pending_id]
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 2
+    failed_attempt = attempts[-1]
+    assert failed_attempt["outcome"] == "failed"
+    assert failed_attempt["resulting_species_suggestion_id"] is None
+    assert failed_attempt["candidate_manifest_complete"] is True
+    assert failed_attempt["error_code"] == "bioclip_failed"
+    assert failed_attempt["error_stage"] == "output_parsing"
+    assert failed_attempt["error_detail"] == (
+        "BioCLIP returned invalid bounded output."
+    )
+    assert "C:\\Users\\private" not in str(failed_attempt)
     assert await detector_counts(client) == before_detection
+    assert await truth_snapshot(client) == before_truth
+
+
+async def test_review_identification_bioclip_timeout_records_typed_attempt_only(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    imported = await import_review_image(client, title="BioCLIP timeout image")
+    media_asset_id = imported["media_asset"]["id"]
+    visit_id, _evidence_id = await create_activity_review_item(
+        client,
+        media_asset_id=media_asset_id,
+    )
+    mark_bioclip_available(monkeypatch, tmp_path)
+    prediction = bioclip_prediction(
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.62),
+        ("blue jay (Cyanocitta cristata)", None, None, 0.22),
+    )
+    mock_bioclip_run(monkeypatch, prediction)
+
+    def time_out(
+        image_loader: object,
+        _config: object,
+        top_k: int = 5,
+        *,
+        on_prepared: object | None = None,
+    ) -> BioClipPrediction:
+        assert top_k == 5
+        assert callable(image_loader)
+        invoke_bioclip_prepared_callback(on_prepared, prediction)
+        image_loader()
+        raise BioClipTimeoutError(
+            r"private runtime detail C:\Users\private\model.safetensors"
+        )
+
+    monkeypatch.setattr(
+        product_repository,
+        "run_bioclip_from_image_loader",
+        time_out,
+    )
+    before_truth = await truth_snapshot(client)
+
+    response = await client.post(
+        f"/api/review-queue/visit/{visit_id}/identify",
+        json={},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["identification"]["status"] == "failed"
+    assert result["identification"]["unavailable_reason"] == "bioclip_timed_out"
+    assert result["species_suggestion"] is None
+    assert result["created_suggestion_ids"] == []
+    assert (
+        await client.get(
+            "/api/species-suggestions",
+            params={"visit_id": visit_id},
+        )
+    ).json()["species_suggestions"] == []
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 1
+    attempt = attempts[0]
+    assert attempt["outcome"] == "timed_out"
+    assert attempt["timeout_exceeded"] is True
+    assert attempt["timeout_limit_ms"] == int(BIOCLIP_RUN_TIMEOUT_SECONDS * 1000)
+    assert isinstance(attempt["duration_ms"], int)
+    assert attempt["duration_ms"] >= 0
+    assert attempt["resulting_species_suggestion_id"] is None
+    assert attempt["candidate_manifest_complete"] is True
+    assert attempt["candidate_set_count"] == 2
+    assert all(
+        item["rank"] is None and item["score"] is None
+        for item in attempt["candidate_manifest"]
+    )
+    assert attempt["crop_provenance"]["used_for_inference"] is True
+    assert attempt["crop_provenance"]["original_dimensions"] == {
+        "width": 1000,
+        "height": 500,
+    }
+    assert attempt["crop_provenance"]["effective_dimensions"]["width"] > 0
+    assert attempt["crop_provenance"]["effective_dimensions"]["height"] > 0
+    assert attempt["error_code"] == "bioclip_timed_out"
+    # The parent timeout spans worker startup, model load, and inference, so the
+    # exact internal stage cannot be distinguished honestly.
+    assert attempt["error_stage"] is None
+    assert attempt["error_detail"] == (
+        "The isolated BioCLIP process exceeded its configured timeout."
+    )
+    assert "private" not in str(attempt)
+    assert await truth_snapshot(client) == before_truth
+
+
+async def test_review_identification_bioclip_no_result_is_durable_without_suggestion(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    imported = await import_review_image(client, title="BioCLIP no-result image")
+    media_asset_id = imported["media_asset"]["id"]
+    visit_id, _evidence_id = await create_activity_review_item(
+        client,
+        media_asset_id=media_asset_id,
+    )
+    mark_bioclip_available(monkeypatch, tmp_path)
+    prediction = bioclip_prediction(
+        ("unknown bird", "unknown bird", None, 0.5),
+        ("blank scene with no animal", "blank scene with no animal", None, 0.5),
+    )
+    mock_bioclip_run(monkeypatch, prediction)
+
+    def no_result(
+        image_loader: object,
+        _config: object,
+        top_k: int = 5,
+        *,
+        on_prepared: object | None = None,
+    ) -> BioClipPrediction:
+        assert top_k == 5
+        assert callable(image_loader)
+        invoke_bioclip_prepared_callback(on_prepared, prediction)
+        image_loader()
+        raise BioClipNoResultError("raw no-result runtime detail")
+
+    monkeypatch.setattr(
+        product_repository,
+        "run_bioclip_from_image_loader",
+        no_result,
+    )
+    before_truth = await truth_snapshot(client)
+
+    response = await client.post(
+        f"/api/review-queue/visit/{visit_id}/identify",
+        json={},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["identification"]["status"] == "no_proposal"
+    assert result["identification"]["unavailable_reason"] == "bioclip_no_result"
+    assert result["species_suggestion"] is None
+    assert result["created_suggestion_ids"] == []
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 1
+    attempt = attempts[0]
+    assert attempt["outcome"] == "no_result"
+    assert attempt["timeout_exceeded"] is False
+    assert isinstance(attempt["duration_ms"], int)
+    assert attempt["duration_ms"] >= 0
+    assert attempt["resulting_species_suggestion_id"] is None
+    assert attempt["candidate_manifest_complete"] is True
+    assert attempt["error_code"] == "bioclip_no_result"
+    assert attempt["error_stage"] == "output_parsing"
+    assert attempt["error_detail"] == (
+        "BioCLIP completed without a usable ranked result."
+    )
+    assert "raw no-result" not in str(attempt)
     assert await truth_snapshot(client) == before_truth
 
 
@@ -1325,6 +1914,7 @@ async def test_review_identification_bioclip_busy_fails_fast_without_writes(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    isolated_repository: ProductRepository,
 ) -> None:
     imported = await import_review_image(client, title="BioCLIP busy image")
     media_asset_id = imported["media_asset"]["id"]
@@ -1340,7 +1930,9 @@ async def test_review_identification_bioclip_busy_fails_fast_without_writes(
     )
 
     def report_busy(*_args: object, **_kwargs: object) -> BioClipPrediction:
-        raise BioClipBusyError("another run is active")
+        raise BioClipBusyError(
+            r"another run at C:\Users\private\model.safetensors is active"
+        )
 
     monkeypatch.setattr(
         product_repository,
@@ -1363,14 +1955,83 @@ async def test_review_identification_bioclip_busy_fails_fast_without_writes(
     assert result["created_suggestion_ids"] == []
     assert result["detection_run"] is None
     assert result["proposals"] == []
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 1
+    attempt = attempts[0]
+    assert attempt["outcome"] == "cancelled"
+    assert attempt["timeout_exceeded"] is False
+    assert attempt["resulting_species_suggestion_id"] is None
+    assert attempt["candidate_manifest_complete"] is False
+    assert attempt["error_code"] == "bioclip_busy"
+    assert attempt["error_stage"] == "process_startup"
+    assert attempt["error_detail"] == (
+        "Another manual BioCLIP run already owns the local runtime."
+    )
+    assert "C:\\Users\\private" not in str(attempt)
     assert await detector_counts(client) == before_detection
     assert await truth_snapshot(client) == before_truth
+
+
+async def test_review_identification_does_not_run_when_attempt_start_cannot_persist(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    imported = await import_review_image(
+        client,
+        title="BioCLIP initial persistence guard",
+    )
+    visit_id = imported["visit"]["id"]
+    mark_bioclip_available(monkeypatch, tmp_path)
+    ran_model = False
+
+    def fail_attempt_start(
+        _repository: ProductRepository,
+        _attempt_context: object,
+    ) -> str:
+        raise RuntimeError("simulated attempt storage failure")
+
+    def must_not_run(*_args: object, **_kwargs: object) -> BioClipPrediction:
+        nonlocal ran_model
+        ran_model = True
+        raise AssertionError("BioCLIP must not run without durable start evidence.")
+
+    monkeypatch.setattr(
+        ProductRepository,
+        "_create_bioclip_identification_attempt",
+        fail_attempt_start,
+    )
+    monkeypatch.setattr(
+        product_repository,
+        "run_bioclip_from_image_loader",
+        must_not_run,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated attempt storage failure"):
+        await client.post(
+            f"/api/review-queue/visit/{visit_id}/identify",
+            json={},
+        )
+
+    assert ran_model is False
+    assert (
+        isolated_repository.list_bioclip_identification_attempts(
+            target_type="visit",
+            target_id=visit_id,
+        )
+        == []
+    )
 
 
 async def test_review_identification_bioclip_persistence_failure_rolls_back_supersede(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    isolated_repository: ProductRepository,
 ) -> None:
     imported = await import_review_image(
         client,
@@ -1432,6 +2093,20 @@ async def test_review_identification_bioclip_persistence_failure_rolls_back_supe
     assert [(item["id"], item["status"]) for item in suggestions] == [
         (pending_id, "pending")
     ]
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 2
+    assert attempts[0]["outcome"] == "succeeded"
+    assert attempts[0]["resulting_species_suggestion_id"] == pending_id
+    assert attempts[1]["outcome"] == "failed"
+    assert attempts[1]["resulting_species_suggestion_id"] is None
+    assert attempts[1]["error_code"] == "bioclip_persistence_failed"
+    assert attempts[1]["error_stage"] == "persistence"
+    assert attempts[1]["error_detail"] == (
+        "BioCLIP result evidence could not be saved atomically."
+    )
     assert await detector_counts(client) == before_detection
     assert await truth_snapshot(client) == before_truth
 
@@ -1479,7 +2154,9 @@ async def test_review_identification_adapter_failure_is_clean_and_truth_safe(
     before_truth = await truth_snapshot(client)
     before_detection = await detector_counts(client)
 
-    response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+    response = await client.post(
+        f"/api/review-queue/visit/{visit_id}/identify", json={}
+    )
 
     assert response.status_code == 200
     result = response.json()

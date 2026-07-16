@@ -114,7 +114,10 @@ downloads artifacts or generates embeddings during a review request. A manual
 run creates ranked, explicitly uncalibrated `SpeciesSuggestion` evidence only;
 submitting a correction remains the sole species-truth action. Runtime package
 versions and artifact digests are retained with the evidence for reproducible
-evaluation.
+evaluation. Each future user-triggered manual run also retains one durable
+attempt record with its outcome, duration, exact crop, complete ordered
+candidate bank and scores when returned, and sanitized failure context. This
+does not backfill history or enable automatic identification.
 
 Evaluate already-stored BioCLIP suggestions against final ReviewLabel
 corrections without running a model or writing product state:
@@ -126,7 +129,7 @@ python scripts/evaluate_bioclip_field_truth.py --json-output data/evaluations/bi
 
 The command opens local SQLite storage in query-only mode, keeps JSON reports
 under the ignored `data/` tree, and labels candidate-relative scores and
-unsupported historical metrics explicitly.
+incomplete historical attempt coverage explicitly.
 
 ## Developer split mode
 

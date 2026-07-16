@@ -10,9 +10,11 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -42,7 +44,9 @@ class StreamModel(Base):
     __tablename__ = "streams"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    source_id: Mapped[str] = mapped_column(ForeignKey("camera_sources.id"), nullable=False)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("camera_sources.id"), nullable=False
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     is_live: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -66,9 +70,15 @@ class StreamMonitoringPolicyModel(Base):
     quiet_period_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     minimum_detection_count: Mapped[int] = mapped_column(Integer, nullable=False)
     policy_revision: Mapped[int] = mapped_column(Integer, nullable=False)
-    armed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    armed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    paused_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     pause_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -103,13 +113,17 @@ class StreamRuntimeCheckpointModel(Base):
     )
     failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
     consecutive_failure_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_stop_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     start_count: Mapped[int] = mapped_column(Integer, nullable=False)
     failure_count: Mapped[int] = mapped_column(Integer, nullable=False)
     evidence_handoff_count: Mapped[int] = mapped_column(Integer, nullable=False)
     safety_hold_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class ZoneModel(Base):
@@ -130,9 +144,15 @@ class EventModel(Base):
     stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     event_type: Mapped[str] = mapped_column(String, nullable=False)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    primary_zone_id: Mapped[str | None] = mapped_column(ForeignKey("zones.id"), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    primary_zone_id: Mapped[str | None] = mapped_column(
+        ForeignKey("zones.id"), nullable=True
+    )
     review_status: Mapped[str] = mapped_column(String, nullable=False)
 
 
@@ -164,7 +184,9 @@ class MediaAssetModel(Base):
     __tablename__ = "media_assets"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    source_id: Mapped[str | None] = mapped_column(ForeignKey("camera_sources.id"), nullable=True)
+    source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("camera_sources.id"), nullable=True
+    )
     stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
     filename: Mapped[str] = mapped_column(String, nullable=False)
     content_type: Mapped[str] = mapped_column(String, nullable=False)
@@ -172,7 +194,9 @@ class MediaAssetModel(Base):
     local_path: Mapped[str] = mapped_column(String, nullable=False)
     original_filename: Mapped[str] = mapped_column(String, nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -180,12 +204,18 @@ class DetectionRunModel(Base):
     __tablename__ = "detection_runs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    media_asset_id: Mapped[str] = mapped_column(ForeignKey("media_assets.id"), nullable=False)
+    media_asset_id: Mapped[str] = mapped_column(
+        ForeignKey("media_assets.id"), nullable=False
+    )
     source: Mapped[str] = mapped_column(String, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class DetectionProposalModel(Base):
@@ -193,7 +223,9 @@ class DetectionProposalModel(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("detection_runs.id"), nullable=False)
-    media_asset_id: Mapped[str] = mapped_column(ForeignKey("media_assets.id"), nullable=False)
+    media_asset_id: Mapped[str] = mapped_column(
+        ForeignKey("media_assets.id"), nullable=False
+    )
     stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
     zone_id: Mapped[str | None] = mapped_column(ForeignKey("zones.id"), nullable=True)
     event_id: Mapped[str | None] = mapped_column(ForeignKey("events.id"), nullable=True)
@@ -206,8 +238,205 @@ class DetectionProposalModel(Base):
     suggested_species: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class BioClipIdentificationAttemptModel(Base):
+    """Durable evidence for one explicit manual BioCLIP attempt, never review truth."""
+
+    __tablename__ = "bioclip_identification_attempts"
+    __table_args__ = (
+        CheckConstraint(
+            "target_type IN ('visit', 'event')",
+            name="ck_bioclip_attempt_target_type",
+        ),
+        CheckConstraint(
+            "(target_type = 'visit' AND visit_id IS NOT NULL AND visit_id = target_id) "
+            "OR (target_type = 'event' AND event_id IS NOT NULL "
+            "AND event_id = target_id AND visit_id IS NULL)",
+            name="ck_bioclip_attempt_exact_target",
+        ),
+        CheckConstraint(
+            "outcome IS NULL OR outcome IN "
+            "('succeeded', 'no_result', 'timed_out', 'failed', 'unsupported', 'cancelled')",
+            name="ck_bioclip_attempt_outcome",
+        ),
+        CheckConstraint(
+            "(outcome IS NULL AND completed_at IS NULL "
+            "AND resulting_species_suggestion_id IS NULL "
+            "AND error_code IS NULL AND error_stage IS NULL AND error_detail IS NULL) "
+            "OR (outcome IS NOT NULL AND completed_at IS NOT NULL)",
+            name="ck_bioclip_attempt_lifecycle",
+        ),
+        CheckConstraint(
+            "(outcome = 'succeeded' AND resulting_species_suggestion_id IS NOT NULL "
+            "AND error_code IS NULL AND error_stage IS NULL AND error_detail IS NULL) "
+            "OR ((outcome IS NULL OR outcome <> 'succeeded') "
+            "AND resulting_species_suggestion_id IS NULL)",
+            name="ck_bioclip_attempt_result_link",
+        ),
+        CheckConstraint(
+            "outcome IS NULL OR outcome = 'succeeded' OR error_code IS NOT NULL",
+            name="ck_bioclip_attempt_non_success_error_code",
+        ),
+        CheckConstraint(
+            "error_stage IS NULL OR error_stage IN "
+            "('configuration', 'input_preparation', 'crop_preparation', "
+            "'process_startup', 'model_load', 'inference', 'output_parsing', "
+            "'eligibility_revalidation', 'persistence')",
+            name="ck_bioclip_attempt_error_stage",
+        ),
+        CheckConstraint(
+            "error_code IS NULL OR length(error_code) <= 80",
+            name="ck_bioclip_attempt_error_code_length",
+        ),
+        CheckConstraint(
+            "error_detail IS NULL OR length(error_detail) <= 256",
+            name="ck_bioclip_attempt_error_detail_length",
+        ),
+        CheckConstraint(
+            "completed_at IS NULL OR completed_at >= started_at",
+            name="ck_bioclip_attempt_completion_time",
+        ),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms >= 0",
+            name="ck_bioclip_attempt_duration",
+        ),
+        CheckConstraint(
+            "outcome IS NULL OR outcome IN ('unsupported', 'cancelled') "
+            "OR duration_ms IS NOT NULL",
+            name="ck_bioclip_attempt_measured_duration",
+        ),
+        CheckConstraint(
+            "timeout_limit_ms > 0",
+            name="ck_bioclip_attempt_timeout_limit",
+        ),
+        CheckConstraint(
+            "(outcome = 'timed_out' AND timeout_exceeded = 1) "
+            "OR ((outcome IS NULL OR outcome <> 'timed_out') AND timeout_exceeded = 0)",
+            name="ck_bioclip_attempt_timeout_outcome",
+        ),
+        CheckConstraint(
+            "crop_source IS NULL OR crop_source IN ('megadetector', 'activity', 'full_frame')",
+            name="ck_bioclip_attempt_crop_source",
+        ),
+        CheckConstraint(
+            "candidate_set_count IS NULL OR candidate_set_count >= 0",
+            name="ck_bioclip_attempt_candidate_count",
+        ),
+        CheckConstraint(
+            "candidate_set_sha256 IS NULL OR length(candidate_set_sha256) = 64",
+            name="ck_bioclip_attempt_candidate_sha256",
+        ),
+        CheckConstraint(
+            "candidate_manifest_complete = 0 OR "
+            "(candidate_manifest_json IS NOT NULL AND candidate_set_count > 0 "
+            "AND candidate_set_sha256 IS NOT NULL)",
+            name="ck_bioclip_attempt_complete_manifest",
+        ),
+        CheckConstraint(
+            "outcome IS NULL OR outcome <> 'succeeded' OR "
+            "(crop_source IS NOT NULL AND crop_provenance_json IS NOT NULL "
+            "AND model_provenance_json IS NOT NULL AND preprocessing_json IS NOT NULL "
+            "AND candidate_manifest_complete = 1)",
+            name="ck_bioclip_attempt_success_provenance",
+        ),
+        CheckConstraint(
+            "provenance_schema_version >= 1",
+            name="ck_bioclip_attempt_provenance_version",
+        ),
+        UniqueConstraint(
+            "resulting_species_suggestion_id",
+            name="uq_bioclip_attempt_resulting_suggestion",
+        ),
+        Index(
+            "ix_bioclip_attempt_target_started",
+            "target_type",
+            "target_id",
+            "started_at",
+        ),
+        Index(
+            "ix_bioclip_attempt_outcome_started",
+            "outcome",
+            "started_at",
+        ),
+        Index(
+            "ix_bioclip_attempt_media_started",
+            "media_asset_id",
+            "started_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    target_type: Mapped[str] = mapped_column(String, nullable=False)
+    target_id: Mapped[str] = mapped_column(String, nullable=False)
+    event_id: Mapped[str | None] = mapped_column(ForeignKey("events.id"), nullable=True)
+    visit_id: Mapped[str | None] = mapped_column(ForeignKey("visits.id"), nullable=True)
+    media_asset_id: Mapped[str] = mapped_column(
+        ForeignKey("media_assets.id"), nullable=False
+    )
+    source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("camera_sources.id"),
+        nullable=True,
+    )
+    stream_id: Mapped[str | None] = mapped_column(
+        ForeignKey("streams.id"), nullable=True
+    )
+    zone_id: Mapped[str | None] = mapped_column(ForeignKey("zones.id"), nullable=True)
+    # MotionEvidence currently lives in ProductRepository, so this identifier stays
+    # an indexed link rather than making storage metadata depend on import order.
+    motion_evidence_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, index=True
+    )
+    detection_proposal_id: Mapped[str | None] = mapped_column(
+        ForeignKey("detection_proposals.id"),
+        nullable=True,
+    )
+    # SpeciesSuggestion has the same repository-owned metadata boundary.
+    resulting_species_suggestion_id: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+    )
+    adapter_id: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    timeout_limit_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    timeout_exceeded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    outcome: Mapped[str | None] = mapped_column(String, nullable=True)
+    crop_source: Mapped[str | None] = mapped_column(String, nullable=True)
+    crop_provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preprocessing_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidate_manifest_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidate_set_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    candidate_set_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    candidate_set_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    candidate_manifest_complete: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+    error_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_stage: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provenance_schema_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+    )
 
 
 class TaxonomyLabelModel(Base):
@@ -232,7 +461,9 @@ class ReviewLabelModel(Base):
     target_id: Mapped[str] = mapped_column(String, nullable=False)
     label: Mapped[str] = mapped_column(String, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class DatasetExportModel(Base):
@@ -245,4 +476,6 @@ class DatasetExportModel(Base):
     include_detections: Mapped[bool] = mapped_column(Boolean, nullable=False)
     include_zone_context: Mapped[bool] = mapped_column(Boolean, nullable=False)
     record_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )

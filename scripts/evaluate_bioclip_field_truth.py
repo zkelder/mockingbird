@@ -20,6 +20,7 @@ from mockingbird.species.bioclip_adapter import BIOCLIP_ADAPTER_ID
 from mockingbird.species.bioclip_evaluation import (
     BioClipFieldTruthReport,
     EvaluationConfig,
+    StoredBioClipAttempt,
     StoredReviewLabel,
     StoredSpeciesSuggestion,
     TaxonomyDescriptor,
@@ -43,6 +44,7 @@ class EvaluationCommandError(RuntimeError):
 class EvaluationDatabaseRecords:
     review_labels: tuple[StoredReviewLabel, ...]
     species_suggestions: tuple[StoredSpeciesSuggestion, ...]
+    attempts: tuple[StoredBioClipAttempt, ...]
     taxonomy: tuple[TaxonomyDescriptor, ...]
 
 
@@ -159,6 +161,36 @@ def load_evaluation_records(database_path: Path) -> EvaluationDatabaseRecords:
             """,
             (BIOCLIP_ADAPTER_ID,),
         ).fetchall()
+        attempt_rows = connection.execute(
+            """
+            SELECT
+                id,
+                target_type,
+                target_id,
+                adapter_id,
+                resulting_species_suggestion_id,
+                started_at,
+                completed_at,
+                duration_ms,
+                timeout_limit_ms,
+                timeout_exceeded,
+                outcome,
+                crop_source,
+                candidate_manifest_json,
+                candidate_set_count,
+                candidate_set_sha256,
+                candidate_set_version,
+                candidate_manifest_complete,
+                model_provenance_json,
+                preprocessing_json,
+                error_code,
+                error_stage
+            FROM bioclip_identification_attempts
+            WHERE adapter_id = ?
+            ORDER BY started_at, id
+            """,
+            (BIOCLIP_ADAPTER_ID,),
+        ).fetchall()
         taxonomy_rows = connection.execute(
             """
             SELECT label, category, is_species
@@ -180,6 +212,7 @@ def load_evaluation_records(database_path: Path) -> EvaluationDatabaseRecords:
         species_suggestions=tuple(
             _species_suggestion_from_row(row) for row in suggestion_rows
         ),
+        attempts=tuple(_bioclip_attempt_from_row(row) for row in attempt_rows),
         taxonomy=tuple(_taxonomy_from_row(row) for row in taxonomy_rows),
     )
 
@@ -198,6 +231,7 @@ def build_report(
         generated_at=generated_at or datetime.now(UTC),
         database_identifier=safe_database_identifier(database_path),
         config=EvaluationConfig(minimum_examples=minimum_examples),
+        attempts=records.attempts,
     )
 
 
@@ -301,6 +335,40 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
             f"(found {found}, expected {CURRENT_DATABASE_SCHEMA_VERSION}). "
             "The evaluator will not migrate it."
         )
+    required_attempt_columns = {
+        "id",
+        "target_type",
+        "target_id",
+        "adapter_id",
+        "resulting_species_suggestion_id",
+        "started_at",
+        "completed_at",
+        "duration_ms",
+        "timeout_limit_ms",
+        "timeout_exceeded",
+        "outcome",
+        "crop_source",
+        "candidate_manifest_json",
+        "candidate_set_count",
+        "candidate_set_sha256",
+        "candidate_set_version",
+        "candidate_manifest_complete",
+        "model_provenance_json",
+        "preprocessing_json",
+        "error_code",
+        "error_stage",
+    }
+    attempt_columns = {
+        str(column["name"])
+        for column in connection.execute(
+            "PRAGMA table_info(bioclip_identification_attempts)"
+        ).fetchall()
+    }
+    if not required_attempt_columns.issubset(attempt_columns):
+        raise EvaluationCommandError(
+            "The current database is missing durable BioCLIP attempt evidence "
+            "storage. The evaluator will not initialize or migrate it."
+        )
 
 
 def _review_label_from_row(row: sqlite3.Row) -> StoredReviewLabel:
@@ -320,9 +388,7 @@ def _species_suggestion_from_row(row: sqlite3.Row) -> StoredSpeciesSuggestion:
         visit_id=_optional_text(row["visit_id"]),
         adapter_id=str(row["adapter_id"]),
         suggested_label=str(row["suggested_label"]),
-        suggested_scientific_name=_optional_text(
-            row["suggested_scientific_name"]
-        ),
+        suggested_scientific_name=_optional_text(row["suggested_scientific_name"]),
         confidence=(
             float(row["confidence"]) if row["confidence"] is not None else None
         ),
@@ -331,6 +397,49 @@ def _species_suggestion_from_row(row: sqlite3.Row) -> StoredSpeciesSuggestion:
         evidence_region=_stored_mapping(row["evidence_region_json"]),
         status=str(row["status"]),
         created_at=_stored_datetime(row["created_at"]),
+    )
+
+
+def _bioclip_attempt_from_row(row: sqlite3.Row) -> StoredBioClipAttempt:
+    return StoredBioClipAttempt(
+        id=str(row["id"]),
+        target_type=str(row["target_type"]),
+        target_id=str(row["target_id"]),
+        adapter_id=str(row["adapter_id"]),
+        resulting_species_suggestion_id=_optional_text(
+            row["resulting_species_suggestion_id"]
+        ),
+        started_at=_stored_datetime(row["started_at"]),
+        completed_at=_stored_optional_datetime(row["completed_at"]),
+        duration_ms=_stored_optional_nonnegative_integer(
+            row["duration_ms"],
+            field_name="duration",
+        ),
+        timeout_limit_ms=_stored_positive_integer(
+            row["timeout_limit_ms"],
+            field_name="timeout limit",
+        ),
+        timeout_exceeded=_stored_boolean(
+            row["timeout_exceeded"],
+            field_name="timeout flag",
+        ),
+        outcome=_optional_text(row["outcome"]),
+        crop_source=_optional_text(row["crop_source"]),
+        candidate_manifest=_stored_manifest(row["candidate_manifest_json"]),
+        candidate_set_count=_stored_optional_nonnegative_integer(
+            row["candidate_set_count"],
+            field_name="candidate count",
+        ),
+        candidate_set_sha256=_optional_text(row["candidate_set_sha256"]),
+        candidate_set_version=_optional_text(row["candidate_set_version"]),
+        candidate_manifest_complete=_stored_boolean(
+            row["candidate_manifest_complete"],
+            field_name="candidate manifest flag",
+        ),
+        model_provenance=_stored_mapping(row["model_provenance_json"]),
+        preprocessing=_stored_mapping(row["preprocessing_json"]),
+        error_code=_optional_text(row["error_code"]),
+        error_stage=_optional_text(row["error_stage"]),
     )
 
 
@@ -343,6 +452,16 @@ def _taxonomy_from_row(row: sqlite3.Row) -> TaxonomyDescriptor:
 
 
 def _stored_alternatives(value: Any) -> tuple[Mapping[str, Any], ...] | None:
+    parsed = _stored_json(value)
+    if not isinstance(parsed, list):
+        return None
+    return tuple(
+        item if isinstance(item, dict) else {"invalid_stored_value": item}
+        for item in parsed
+    )
+
+
+def _stored_manifest(value: Any) -> tuple[Mapping[str, Any], ...] | None:
     parsed = _stored_json(value)
     if not isinstance(parsed, list):
         return None
@@ -380,6 +499,52 @@ def _stored_datetime(value: Any) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _stored_optional_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    return _stored_datetime(value)
+
+
+def _stored_optional_nonnegative_integer(
+    value: Any,
+    *,
+    field_name: str,
+) -> int | None:
+    if value is None:
+        return None
+    parsed = _stored_integer(value, field_name=field_name)
+    if parsed < 0:
+        raise EvaluationCommandError(
+            f"A stored BioCLIP attempt has an invalid {field_name}."
+        )
+    return parsed
+
+
+def _stored_positive_integer(value: Any, *, field_name: str) -> int:
+    parsed = _stored_integer(value, field_name=field_name)
+    if parsed < 1:
+        raise EvaluationCommandError(
+            f"A stored BioCLIP attempt has an invalid {field_name}."
+        )
+    return parsed
+
+
+def _stored_integer(value: Any, *, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise EvaluationCommandError(
+            f"A stored BioCLIP attempt has an invalid {field_name}."
+        )
+    return value
+
+
+def _stored_boolean(value: Any, *, field_name: str) -> bool:
+    if value not in {0, 1} or isinstance(value, bool):
+        raise EvaluationCommandError(
+            f"A stored BioCLIP attempt has an invalid {field_name}."
+        )
+    return bool(value)
 
 
 def _optional_text(value: Any) -> str | None:

@@ -116,8 +116,12 @@ BioCLIP rankings and final exact-target ReviewLabels. The current local
 checkpoint has one eligible example and fifteen reviewed targets without
 BioCLIP evidence, so its result is descriptive only and cannot justify model
 selection. Top-1, stored top-3, crop, and reproducibility variants are available;
-complete candidate membership, inference duration, timeout, and failed-attempt
-counts remain unavailable until future runs persist that evidence.
+Phase 26A2 now durably records each future user-triggered manual attempt,
+including complete candidate membership, duration, exact crop, model/runtime
+provenance, successful suggestion linkage, and honest no-result, timeout,
+failure, unsupported, or cancelled outcomes. Historical attempts were not
+invented or backfilled. The next step is collecting the representative
+30-100-example field-truth set through the existing correction flow.
 
 Candidate labels must be genuinely local and seasonal, with explicit unknown
 and non-bird choices. Rerun the leading candidate against held-out corrections
@@ -328,7 +332,8 @@ performance/storage budgets from the engineering gate.
 
 - Phase 26A is now the active product milestone above: evaluate and integrate an
   optional local visual identification adapter that creates ranked species
-  suggestion evidence only.
+  suggestion evidence only. Phase 26A2 durable manual-attempt instrumentation
+  is complete; representative field-truth collection is next.
 - Phase 26B: integrate optional local bird-audio evidence through a separately
   designed consent, microphone, privacy, retention, and dependency boundary.
 - Phase 26C: combine visual, audio, time, Zone, and reviewed local history into

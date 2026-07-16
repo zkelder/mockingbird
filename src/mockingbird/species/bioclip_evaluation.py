@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 import hashlib
 import json
 import math
+from statistics import median
 from typing import Any, Mapping
 
 from mockingbird.species.bioclip_adapter import (
@@ -20,7 +21,7 @@ from mockingbird.species.bioclip_adapter import (
     BIOCLIP_SCORE_KIND,
 )
 
-REPORT_SCHEMA_VERSION = 1
+REPORT_SCHEMA_VERSION = 2
 CROP_BREAKDOWN_KEYS = (
     "credible_megadetector_crop",
     "measured_activity_crop",
@@ -28,6 +29,15 @@ CROP_BREAKDOWN_KEYS = (
     "unknown_missing",
 )
 _NON_BIRD_CATEGORIES = {"mammal", "pet", "person", "vehicle", "object"}
+_CANDIDATE_NON_BIRD_CATEGORIES = _NON_BIRD_CATEGORIES | {"false_positive"}
+BIOCLIP_ATTEMPT_OUTCOMES = (
+    "succeeded",
+    "no_result",
+    "timed_out",
+    "failed",
+    "unsupported",
+    "cancelled",
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +67,33 @@ class StoredSpeciesSuggestion:
     evidence_region: Mapping[str, Any] | None
     status: str
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class StoredBioClipAttempt:
+    """The safe stored fields needed to evaluate one manual BioCLIP attempt."""
+
+    id: str
+    target_type: str
+    target_id: str
+    adapter_id: str
+    resulting_species_suggestion_id: str | None
+    started_at: datetime
+    completed_at: datetime | None
+    duration_ms: int | None
+    timeout_limit_ms: int
+    timeout_exceeded: bool
+    outcome: str | None
+    crop_source: str | None
+    candidate_manifest: tuple[Mapping[str, Any], ...] | None
+    candidate_set_count: int | None
+    candidate_set_sha256: str | None
+    candidate_set_version: str | None
+    candidate_manifest_complete: bool
+    model_provenance: Mapping[str, Any] | None
+    preprocessing: Mapping[str, Any] | None
+    error_code: str | None
+    error_stage: str | None
 
 
 @dataclass(frozen=True)
@@ -95,6 +132,7 @@ class BioClipFieldTruthReport:
     small_sample: dict[str, Any]
     counts: dict[str, Any]
     metrics: dict[str, Any]
+    attempt_metrics: dict[str, Any]
     reliability: dict[str, Any]
     exclusions: dict[str, Any]
     breakdowns: dict[str, Any]
@@ -137,6 +175,17 @@ class _ValidatedSuggestion:
     model_weights_runtime_combination_id: str
 
 
+@dataclass(frozen=True)
+class _CompleteCandidateManifest:
+    """One defensively validated complete candidate-bank manifest."""
+
+    labels: tuple[str, ...]
+    entries: tuple[Mapping[str, Any], ...]
+    count: int
+    fingerprint: str
+    version: str | None
+
+
 def evaluate_bioclip_field_truth(
     review_labels: list[StoredReviewLabel] | tuple[StoredReviewLabel, ...],
     species_suggestions: (
@@ -147,6 +196,7 @@ def evaluate_bioclip_field_truth(
     generated_at: datetime,
     database_identifier: str,
     config: EvaluationConfig | None = None,
+    attempts: (list[StoredBioClipAttempt] | tuple[StoredBioClipAttempt, ...]) = (),
 ) -> BioClipFieldTruthReport:
     """Evaluate stored BioCLIP evidence against exact-target ReviewLabel truth."""
 
@@ -158,6 +208,10 @@ def evaluate_bioclip_field_truth(
     taxonomy_by_label = {
         item.label.strip(): item for item in taxonomy if item.label.strip()
     }
+    bioclip_attempts = tuple(
+        attempt for attempt in attempts if attempt.adapter_id == BIOCLIP_ADAPTER_ID
+    )
+    attempts_by_suggestion_id = _successful_attempts_by_suggestion_id(bioclip_attempts)
 
     label_distribution = Counter(item.label.strip() for item in final_truth.values())
     crop_distribution = Counter({key: 0 for key in CROP_BREAKDOWN_KEYS})
@@ -248,6 +302,26 @@ def evaluate_bioclip_field_truth(
             else None
         )
         candidate_fingerprint = _candidate_set_identifier(validated.provenance)
+        linked_attempt = _linked_successful_attempt(
+            attempts_by_suggestion_id,
+            suggestion,
+            target_key,
+        )
+        linked_manifest = (
+            _validated_complete_candidate_manifest(linked_attempt)
+            if linked_attempt is not None
+            else None
+        )
+        full_candidate_corrected_rank = (
+            _manifest_rank(linked_manifest, corrected_label)
+            if linked_manifest is not None
+            else None
+        )
+        full_candidate_contains_corrected_label = (
+            _manifest_contains_label(linked_manifest, corrected_label)
+            if linked_manifest is not None
+            else None
+        )
         example = {
             "target_type": target_key[0],
             "target_id": target_key[1],
@@ -265,6 +339,19 @@ def evaluate_bioclip_field_truth(
                 not_present_among_stored_candidates
             ),
             "stored_candidate_count": len(validated.ranking),
+            "attempt_id": linked_attempt.id if linked_attempt is not None else None,
+            "complete_candidate_manifest_available": linked_manifest is not None,
+            "complete_candidate_count": (
+                linked_manifest.count if linked_manifest is not None else None
+            ),
+            "corrected_rank_in_complete_candidate_bank": (
+                full_candidate_corrected_rank
+            ),
+            "corrected_label_missing_from_complete_candidate_bank": (
+                not full_candidate_contains_corrected_label
+                if full_candidate_contains_corrected_label is not None
+                else None
+            ),
             "crop_source": validated.crop_key,
             "candidate_set_identifier": candidate_fingerprint,
             "candidate_prompt_variant_id": validated.candidate_prompt_variant_id,
@@ -307,6 +394,15 @@ def evaluate_bioclip_field_truth(
     stored_candidate_membership_evaluated_count = (
         eligible_count - stored_candidate_membership_unavailable_count
     )
+    complete_membership_examples = [
+        item
+        for item in evaluated_examples
+        if item["complete_candidate_manifest_available"]
+    ]
+    corrected_label_missing_from_complete_candidate_bank_count = sum(
+        item["corrected_label_missing_from_complete_candidate_bank"] is True
+        for item in complete_membership_examples
+    )
 
     unknown_bird_examples = [
         item for item in evaluated_examples if item["corrected_label"] == "unknown_bird"
@@ -341,8 +437,12 @@ def evaluate_bioclip_field_truth(
         eligible_count,
         evaluation_config.minimum_examples,
     )
-    unreviewed_bioclip_targets = sorted(
-        set(latest_suggestions).difference(final_truth)
+    unreviewed_bioclip_targets = sorted(set(latest_suggestions).difference(final_truth))
+    attempt_metrics = _build_attempt_metrics(
+        bioclip_attempts,
+        species_suggestions,
+        final_truth,
+        taxonomy_by_label,
     )
 
     return BioClipFieldTruthReport(
@@ -357,6 +457,10 @@ def evaluate_bioclip_field_truth(
             "record_selection": (
                 "latest ReviewLabel and latest BioCLIP suggestion by "
                 "(created_at, id) for the exact same target"
+            ),
+            "attempt_scope": (
+                "all supplied manual BioCLIP attempt evidence; attempts never "
+                "select or replace the suggestion used for accuracy"
             ),
         },
         safety={
@@ -398,6 +502,9 @@ def evaluate_bioclip_field_truth(
                 "unscoped_bioclip_suggestions"
             ],
             "unsupported_review_label_records": unsupported_truth_records,
+            "manual_bioclip_attempts_inspected": attempt_metrics["counts"][
+                "total_manual_attempts"
+            ],
         },
         metrics={
             "top_1": _accuracy_metric(
@@ -432,11 +539,22 @@ def evaluate_bioclip_field_truth(
                 ),
             },
             "corrected_label_missing_from_candidate_set": {
-                "available": False,
-                "count": None,
+                "available": bool(complete_membership_examples),
+                "count": (
+                    corrected_label_missing_from_complete_candidate_bank_count
+                    if complete_membership_examples
+                    else None
+                ),
+                "evaluated_count": len(complete_membership_examples),
+                "unavailable_count": eligible_count - len(complete_membership_examples),
                 "reason": (
-                    "Historical suggestions store a candidate-bank fingerprint and "
-                    "top-K ranking, not complete candidate-label membership."
+                    None
+                    if complete_membership_examples
+                    else (
+                        "No selected successful suggestion is linked to a valid "
+                        "complete candidate-bank manifest. Historical suggestions "
+                        "are not backfilled."
+                    )
                 ),
             },
             "unknown_bird_truth": _false_species_metric(unknown_bird_examples),
@@ -444,24 +562,32 @@ def evaluate_bioclip_field_truth(
             "known_non_bird_truth": _false_species_metric(known_non_bird_examples),
             "top_1_mistake_count": len(all_mistakes),
         },
+        attempt_metrics=attempt_metrics,
         reliability={
-            "runtime_ms": {
-                "available": False,
-                "sample_count": None,
-                "median": None,
-                "minimum": None,
-                "maximum": None,
-                "reason": "Successful suggestions do not persist inference duration.",
-            },
+            "runtime_ms": attempt_metrics["duration_ms"],
             "timeout_runs": {
-                "available": False,
-                "count": None,
-                "reason": "Timeout attempts do not persist a durable run record.",
+                "available": True,
+                "count": attempt_metrics["counts"]["outcomes"]["timed_out"],
+                "coverage": "recorded_manual_attempts_only",
+                "historical_coverage_incomplete": attempt_metrics[
+                    "historical_coverage"
+                ]["incomplete"],
             },
             "failed_runs": {
-                "available": False,
-                "count": None,
-                "reason": "Failed attempts do not persist a durable run record.",
+                "available": True,
+                "count": attempt_metrics["counts"]["outcomes"]["failed"],
+                "coverage": "recorded_manual_attempts_only",
+                "historical_coverage_incomplete": attempt_metrics[
+                    "historical_coverage"
+                ]["incomplete"],
+            },
+            "no_result_runs": {
+                "available": True,
+                "count": attempt_metrics["counts"]["outcomes"]["no_result"],
+                "coverage": "recorded_manual_attempts_only",
+                "historical_coverage_incomplete": attempt_metrics[
+                    "historical_coverage"
+                ]["incomplete"],
             },
             "missing_provenance_count": exclusion_counts["missing_provenance"],
             "missing_crop_count": missing_crop_count,
@@ -483,9 +609,7 @@ def evaluate_bioclip_field_truth(
             "crop_source_distribution": {
                 key: crop_distribution[key] for key in CROP_BREAKDOWN_KEYS
             },
-            "candidate_prompt_variants": _sorted_variants(
-                candidate_prompt_variants
-            ),
+            "candidate_prompt_variants": _sorted_variants(candidate_prompt_variants),
             "model_weights_variants": _sorted_variants(model_weights_variants),
             "runtime_version_variants": _sorted_variants(runtime_variants),
             "model_weights_runtime_combinations": _sorted_variants(
@@ -505,24 +629,10 @@ def evaluate_bioclip_field_truth(
         },
         unsupported_metrics=[
             {
-                "metric": "complete_candidate_set_membership",
+                "metric": "historical_manual_attempt_outcomes_and_duration",
                 "smallest_future_provenance_addition": (
-                    "Persist immutable normalized candidate membership keyed by "
-                    "labels_sha256."
-                ),
-            },
-            {
-                "metric": "successful_inference_runtime",
-                "smallest_future_provenance_addition": (
-                    "Persist bounded run_duration_ms with successful suggestion "
-                    "provenance."
-                ),
-            },
-            {
-                "metric": "timeout_and_failed_run_counts",
-                "smallest_future_provenance_addition": (
-                    "Persist append-only evidence-only attempt outcomes; never write "
-                    "review truth from them."
+                    "Unavailable by design before durable attempt recording; "
+                    "historical suggestions are not backfilled or rerun."
                 ),
             },
         ],
@@ -534,6 +644,7 @@ def render_terminal_report(report: BioClipFieldTruthReport) -> str:
 
     counts = report.counts
     metrics = report.metrics
+    attempts = report.attempt_metrics
     reliability = report.reliability
     breakdowns = report.breakdowns
     lines = [
@@ -566,7 +677,10 @@ def render_terminal_report(report: BioClipFieldTruthReport) -> str:
         + _format_stored_candidate_absence(
             metrics["corrected_label_not_present_among_stored_candidates"]
         ),
-        "- Corrected label absent from full candidate set: unavailable",
+        "- Corrected label absent from complete candidate bank: "
+        + _format_complete_candidate_absence(
+            metrics["corrected_label_missing_from_candidate_set"]
+        ),
         "- Species suggested on unknown_bird: "
         + _format_false_species_metric(metrics["unknown_bird_truth"]),
         "- Species suggested on false_positive: "
@@ -591,13 +705,32 @@ def render_terminal_report(report: BioClipFieldTruthReport) -> str:
         ),
         "",
         "Reliability and exclusions",
-        "- Runtime median/min/max: unavailable (not persisted)",
-        "- Timeout count: unavailable (attempts are not persisted)",
-        "- Failed-run count: unavailable (attempts are not persisted)",
+        (
+            "- Recorded manual attempts: "
+            f"{attempts['counts']['total_manual_attempts']} "
+            f"({attempts['counts']['terminal_attempts']} terminal, "
+            f"{attempts['counts']['incomplete_attempts']} incomplete)"
+        ),
+        "- Attempt outcomes: " + _format_distribution(attempts["counts"]["outcomes"]),
+        "- Attempt success rate: "
+        + _format_attempt_success_rate(attempts["success_rate"]),
+        "- Runtime median/min/max: "
+        + _format_duration_summary(reliability["runtime_ms"]),
+        f"- Timeout count: {reliability['timeout_runs']['count']}",
+        f"- Failed-run count: {reliability['failed_runs']['count']}",
+        f"- No-result count: {reliability['no_result_runs']['count']}",
+        (
+            "- Historical suggestions without linked attempts: "
+            f"{attempts['suggestions_without_linked_attempts']['count']}"
+        ),
+        (
+            "- Complete candidate manifests: "
+            f"{attempts['candidate_banks']['complete_manifest_attempts']}/"
+            f"{attempts['counts']['total_manual_attempts']}"
+        ),
         f"- Missing provenance: {reliability['missing_provenance_count']}",
         f"- Missing crop: {reliability['missing_crop_count']}",
-        "- Exclusions: "
-        + _format_distribution(report.exclusions["reason_counts"]),
+        "- Exclusions: " + _format_distribution(report.exclusions["reason_counts"]),
         "",
         "Highest-scoring top-1 mistakes",
     ]
@@ -630,7 +763,9 @@ def _latest_review_truth(
         grouped[target_key].append(label)
     return (
         {
-            key: max(values, key=lambda value: (_datetime_key(value.created_at), value.id))
+            key: max(
+                values, key=lambda value: (_datetime_key(value.created_at), value.id)
+            )
             for key, values in grouped.items()
         },
         unsupported,
@@ -656,7 +791,9 @@ def _latest_bioclip_suggestions(
         grouped[target_key].append(suggestion)
     return (
         {
-            key: max(values, key=lambda value: (_datetime_key(value.created_at), value.id))
+            key: max(
+                values, key=lambda value: (_datetime_key(value.created_at), value.id)
+            )
             for key, values in grouped.items()
         },
         {
@@ -664,6 +801,559 @@ def _latest_bioclip_suggestions(
             "unscoped_bioclip_suggestions": unscoped,
         },
     )
+
+
+def _successful_attempts_by_suggestion_id(
+    attempts: tuple[StoredBioClipAttempt, ...],
+) -> dict[str, StoredBioClipAttempt]:
+    grouped: dict[str, list[StoredBioClipAttempt]] = defaultdict(list)
+    for attempt in attempts:
+        suggestion_id = _optional_text(attempt.resulting_species_suggestion_id)
+        if attempt.outcome == "succeeded" and suggestion_id is not None:
+            grouped[suggestion_id].append(attempt)
+    return {
+        suggestion_id: max(
+            values,
+            key=lambda value: (
+                _datetime_key(value.completed_at or value.started_at),
+                value.id,
+            ),
+        )
+        for suggestion_id, values in grouped.items()
+    }
+
+
+def _linked_successful_attempt(
+    attempts_by_suggestion_id: Mapping[str, StoredBioClipAttempt],
+    suggestion: StoredSpeciesSuggestion,
+    target_key: tuple[str, str],
+) -> StoredBioClipAttempt | None:
+    attempt = attempts_by_suggestion_id.get(suggestion.id)
+    if attempt is None or _attempt_target_key(attempt) != target_key:
+        return None
+    return attempt
+
+
+def _build_attempt_metrics(
+    attempts: tuple[StoredBioClipAttempt, ...],
+    species_suggestions: (
+        list[StoredSpeciesSuggestion] | tuple[StoredSpeciesSuggestion, ...]
+    ),
+    final_truth: Mapping[tuple[str, str], StoredReviewLabel],
+    taxonomy_by_label: Mapping[str, TaxonomyDescriptor],
+) -> dict[str, Any]:
+    outcome_counts = Counter({outcome: 0 for outcome in BIOCLIP_ATTEMPT_OUTCOMES})
+    terminal_attempts: list[StoredBioClipAttempt] = []
+    incomplete_attempts: list[StoredBioClipAttempt] = []
+    for attempt in attempts:
+        if attempt.outcome in BIOCLIP_ATTEMPT_OUTCOMES:
+            outcome_counts[attempt.outcome] += 1
+            terminal_attempts.append(attempt)
+        else:
+            incomplete_attempts.append(attempt)
+
+    valid_durations = [
+        int(attempt.duration_ms)
+        for attempt in terminal_attempts
+        if _valid_duration_ms(attempt.duration_ms)
+    ]
+    duration_by_crop: dict[str, list[int]] = defaultdict(list)
+    duration_by_variant: dict[str, list[int]] = defaultdict(list)
+    crop_attempt_counts: Counter[str] = Counter()
+    variant_attempt_counts: Counter[str] = Counter()
+    for attempt in terminal_attempts:
+        crop_key = _attempt_crop_key(attempt.crop_source)
+        variant_id = _attempt_model_runtime_variant_id(attempt)
+        crop_attempt_counts[crop_key] += 1
+        variant_attempt_counts[variant_id] += 1
+        if not _valid_duration_ms(attempt.duration_ms):
+            continue
+        duration = int(attempt.duration_ms)
+        duration_by_crop[crop_key].append(duration)
+        duration_by_variant[variant_id].append(duration)
+
+    target_counts: Counter[tuple[str, str]] = Counter()
+    invalid_target_count = 0
+    for attempt in attempts:
+        target_key = _attempt_target_key(attempt)
+        if target_key is None:
+            invalid_target_count += 1
+        else:
+            target_counts[target_key] += 1
+    repeated_attempt_count = sum(max(0, count - 1) for count in target_counts.values())
+    repeated_target_count = sum(count > 1 for count in target_counts.values())
+
+    bioclip_suggestion_ids = {
+        suggestion.id
+        for suggestion in species_suggestions
+        if suggestion.adapter_id == BIOCLIP_ADAPTER_ID
+    }
+    linked_suggestion_ids = {
+        suggestion_id
+        for attempt in attempts
+        if attempt.outcome == "succeeded"
+        for suggestion_id in [_optional_text(attempt.resulting_species_suggestion_id)]
+        if suggestion_id is not None
+    }
+    suggestions_without_linked_attempts = bioclip_suggestion_ids - linked_suggestion_ids
+    linked_attempts_without_stored_suggestion = (
+        linked_suggestion_ids - bioclip_suggestion_ids
+    )
+    historical_coverage_incomplete = bool(suggestions_without_linked_attempts)
+
+    complete_manifests: list[
+        tuple[StoredBioClipAttempt, _CompleteCandidateManifest]
+    ] = []
+    invalid_complete_manifest_count = 0
+    for attempt in attempts:
+        manifest = _validated_complete_candidate_manifest(attempt)
+        if manifest is not None:
+            complete_manifests.append((attempt, manifest))
+        elif attempt.candidate_manifest_complete:
+            invalid_complete_manifest_count += 1
+
+    size_distribution = Counter(
+        str(manifest.count) for _, manifest in complete_manifests
+    )
+    fingerprint_counts = Counter(
+        manifest.fingerprint for _, manifest in complete_manifests
+    )
+    candidate_version_counts = Counter(
+        manifest.version or "unknown_missing" for _, manifest in complete_manifests
+    )
+    candidate_variant_counts = Counter(
+        (
+            manifest.fingerprint,
+            manifest.version or "unknown_missing",
+            manifest.count,
+        )
+        for _, manifest in complete_manifests
+    )
+    corrected_label_absent_details: list[dict[str, str]] = []
+    reviewed_complete_manifest_count = 0
+    unknown_bird_attempt_count = 0
+    taxonomy_non_bird_attempt_count = 0
+    taxonomy_non_bird_label_counts: Counter[str] = Counter()
+    for attempt, manifest in complete_manifests:
+        labels = set(manifest.labels)
+        if "unknown_bird" in labels:
+            unknown_bird_attempt_count += 1
+        non_bird_labels = sorted(
+            label
+            for label in labels
+            if _is_taxonomy_backed_non_bird_candidate(
+                label,
+                taxonomy_by_label,
+            )
+        )
+        if non_bird_labels:
+            taxonomy_non_bird_attempt_count += 1
+            taxonomy_non_bird_label_counts.update(non_bird_labels)
+
+        target_key = _attempt_target_key(attempt)
+        if target_key is None or target_key not in final_truth:
+            continue
+        reviewed_complete_manifest_count += 1
+        corrected_label = final_truth[target_key].label.strip()
+        if corrected_label not in labels:
+            corrected_label_absent_details.append(
+                {
+                    "attempt_id": attempt.id,
+                    "target_type": target_key[0],
+                    "target_id": target_key[1],
+                }
+            )
+
+    successful_attempt_count = outcome_counts["succeeded"]
+    top_three_supported_count = sum(
+        attempt.outcome == "succeeded" and _manifest_supports_top_three(manifest)
+        for attempt, manifest in complete_manifests
+    )
+    success_denominator = len(terminal_attempts)
+    return {
+        "scope": {
+            "kind": "recorded_user_triggered_manual_bioclip_attempts",
+            "accuracy_selection_uses_attempts": False,
+            "truth_source": "latest_exact_target_review_label_only",
+            "automatic_attempts_included": False,
+        },
+        "counts": {
+            "total_manual_attempts": len(attempts),
+            "terminal_attempts": len(terminal_attempts),
+            "incomplete_attempts": len(incomplete_attempts),
+            "outcomes": {
+                outcome: outcome_counts[outcome] for outcome in BIOCLIP_ATTEMPT_OUTCOMES
+            },
+            "invalid_target_records": invalid_target_count,
+        },
+        "success_rate": {
+            "available": success_denominator > 0,
+            "successful_attempts": successful_attempt_count,
+            "denominator": "terminal_recorded_attempts",
+            "denominator_count": success_denominator,
+            "rate": (
+                successful_attempt_count / success_denominator
+                if success_denominator
+                else None
+            ),
+            "incomplete_attempts_excluded": len(incomplete_attempts),
+        },
+        "duration_ms": _duration_summary(
+            valid_durations,
+            unavailable_count=len(terminal_attempts) - len(valid_durations),
+            historical_coverage_incomplete=historical_coverage_incomplete,
+        ),
+        "duration_by_crop_source": [
+            {
+                "crop_source": crop_source,
+                "attempt_count": crop_attempt_counts[crop_source],
+                **_duration_summary(
+                    duration_by_crop.get(crop_source, []),
+                    unavailable_count=(
+                        crop_attempt_counts[crop_source]
+                        - len(duration_by_crop.get(crop_source, []))
+                    ),
+                    historical_coverage_incomplete=historical_coverage_incomplete,
+                ),
+            }
+            for crop_source in sorted(crop_attempt_counts)
+        ],
+        "duration_by_model_runtime_variant": [
+            {
+                "variant_id": variant_id,
+                "attempt_count": variant_attempt_counts[variant_id],
+                **_duration_summary(
+                    duration_by_variant.get(variant_id, []),
+                    unavailable_count=(
+                        variant_attempt_counts[variant_id]
+                        - len(duration_by_variant.get(variant_id, []))
+                    ),
+                    historical_coverage_incomplete=historical_coverage_incomplete,
+                ),
+            }
+            for variant_id in sorted(variant_attempt_counts)
+        ],
+        "attempt_counts_by_target": [
+            {
+                "target_type": target_type,
+                "target_id": target_id,
+                "count": target_counts[(target_type, target_id)],
+            }
+            for target_type, target_id in sorted(target_counts)
+        ],
+        "repeated_attempts": {
+            "attempts_beyond_first_per_target": repeated_attempt_count,
+            "targets_with_multiple_attempts": repeated_target_count,
+        },
+        "attempts_without_suggestions": {
+            "count": sum(
+                _optional_text(attempt.resulting_species_suggestion_id) is None
+                for attempt in attempts
+            ),
+            "successful_attempts_without_suggestion": sum(
+                attempt.outcome == "succeeded"
+                and _optional_text(attempt.resulting_species_suggestion_id) is None
+                for attempt in attempts
+            ),
+            "linked_attempts_without_stored_suggestion": len(
+                linked_attempts_without_stored_suggestion
+            ),
+        },
+        "suggestions_without_linked_attempts": {
+            "count": len(suggestions_without_linked_attempts),
+            "meaning": (
+                "Stored BioCLIP suggestions without a successful durable attempt "
+                "link are historical or incomplete evidence."
+            ),
+        },
+        "historical_coverage": {
+            "complete": not historical_coverage_incomplete,
+            "incomplete": historical_coverage_incomplete,
+            "boundary": (
+                "Attempt outcomes, durations, and complete candidate manifests are "
+                "available only for manual BioCLIP invocations recorded after "
+                "durable attempt provenance was introduced; no history is backfilled."
+            ),
+        },
+        "candidate_banks": {
+            "complete_manifest_attempts": len(complete_manifests),
+            "incomplete_manifest_attempts": len(attempts) - len(complete_manifests),
+            "invalid_complete_manifest_attempts": invalid_complete_manifest_count,
+            "size_distribution": dict(
+                sorted(size_distribution.items(), key=lambda item: int(item[0]))
+            ),
+            "fingerprints": [
+                {
+                    "sha256": fingerprint,
+                    "attempt_count": fingerprint_counts[fingerprint],
+                }
+                for fingerprint in sorted(fingerprint_counts)
+            ],
+            "version_distribution": dict(sorted(candidate_version_counts.items())),
+            "variants": [
+                {
+                    "sha256": fingerprint,
+                    "version": version,
+                    "candidate_count": candidate_count,
+                    "attempt_count": candidate_variant_counts[
+                        (fingerprint, version, candidate_count)
+                    ],
+                }
+                for fingerprint, version, candidate_count in sorted(
+                    candidate_variant_counts
+                )
+            ],
+            "variant_count": len(candidate_variant_counts),
+            "corrected_label_absent": {
+                "available": reviewed_complete_manifest_count > 0,
+                "count": (
+                    len(corrected_label_absent_details)
+                    if reviewed_complete_manifest_count
+                    else None
+                ),
+                "evaluated_attempt_count": reviewed_complete_manifest_count,
+                "details": corrected_label_absent_details,
+            },
+            "unknown_bird_presence": {
+                "available": bool(complete_manifests),
+                "attempt_count": unknown_bird_attempt_count,
+                "evaluated_attempt_count": len(complete_manifests),
+                "rate": (
+                    unknown_bird_attempt_count / len(complete_manifests)
+                    if complete_manifests
+                    else None
+                ),
+            },
+            "taxonomy_backed_non_bird_escape_presence": {
+                "available": bool(complete_manifests),
+                "attempt_count": taxonomy_non_bird_attempt_count,
+                "evaluated_attempt_count": len(complete_manifests),
+                "rate": (
+                    taxonomy_non_bird_attempt_count / len(complete_manifests)
+                    if complete_manifests
+                    else None
+                ),
+                "label_distribution": dict(
+                    sorted(taxonomy_non_bird_label_counts.items())
+                ),
+                "classification_source": "stored_review_taxonomy_category",
+            },
+            "top_3_support": {
+                "available": successful_attempt_count > 0,
+                "successful_attempt_count": successful_attempt_count,
+                "supported_attempt_count": top_three_supported_count,
+                "unsupported_attempt_count": (
+                    successful_attempt_count - top_three_supported_count
+                ),
+                "fully_supported": (
+                    top_three_supported_count == successful_attempt_count
+                    if successful_attempt_count
+                    else None
+                ),
+            },
+        },
+    }
+
+
+def _duration_summary(
+    durations: list[int],
+    *,
+    unavailable_count: int,
+    historical_coverage_incomplete: bool,
+) -> dict[str, Any]:
+    return {
+        "available": bool(durations),
+        "sample_count": len(durations),
+        "median": median(durations) if durations else None,
+        "minimum": min(durations) if durations else None,
+        "maximum": max(durations) if durations else None,
+        "unavailable_count": unavailable_count,
+        "coverage": "recorded_manual_attempts_only",
+        "historical_coverage_incomplete": historical_coverage_incomplete,
+        "reason": (
+            None if durations else "No recorded terminal attempt has a valid duration."
+        ),
+    }
+
+
+def _validated_complete_candidate_manifest(
+    attempt: StoredBioClipAttempt,
+) -> _CompleteCandidateManifest | None:
+    manifest = attempt.candidate_manifest
+    count = attempt.candidate_set_count
+    fingerprint = attempt.candidate_set_sha256
+    if (
+        attempt.candidate_manifest_complete is not True
+        or manifest is None
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 1
+        or len(manifest) != count
+        or not _is_sha256(fingerprint)
+    ):
+        return None
+    labels: list[str] = []
+    raw_labels: list[str] = []
+    for expected_position, entry in enumerate(manifest, start=1):
+        label = _candidate_manifest_label(entry)
+        raw_label = entry.get("raw_label") if isinstance(entry, Mapping) else None
+        source_position = (
+            entry.get("source_position") if isinstance(entry, Mapping) else None
+        )
+        if (
+            label is None
+            or not isinstance(raw_label, str)
+            or not raw_label.strip()
+            or raw_label != raw_label.strip()
+            or isinstance(source_position, bool)
+            or source_position != expected_position
+        ):
+            return None
+        labels.append(label)
+        raw_labels.append(raw_label)
+    computed_fingerprint = hashlib.sha256(
+        "\n".join(raw_labels).encode("utf-8")
+    ).hexdigest()
+    if computed_fingerprint != str(fingerprint).lower():
+        return None
+    return _CompleteCandidateManifest(
+        labels=tuple(labels),
+        entries=manifest,
+        count=count,
+        fingerprint=str(fingerprint).lower(),
+        version=_safe_report_token(attempt.candidate_set_version),
+    )
+
+
+def _candidate_manifest_label(entry: Mapping[str, Any]) -> str | None:
+    if not isinstance(entry, Mapping):
+        return None
+    for field in ("normalized_label", "label"):
+        value = entry.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _safe_report_token(value: Any) -> str | None:
+    text = _optional_text(value)
+    if (
+        text is None
+        or len(text) > 100
+        or any(
+            character
+            not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-"
+            for character in text
+        )
+    ):
+        return None
+    return text
+
+
+def _manifest_contains_label(
+    manifest: _CompleteCandidateManifest,
+    label: str,
+) -> bool:
+    return label in manifest.labels
+
+
+def _manifest_rank(
+    manifest: _CompleteCandidateManifest,
+    label: str,
+) -> int | None:
+    for entry in manifest.entries:
+        if _candidate_manifest_label(entry) != label:
+            continue
+        rank = entry.get("global_rank", entry.get("rank"))
+        if not isinstance(rank, bool) and isinstance(rank, int) and rank > 0:
+            return rank
+    return None
+
+
+def _manifest_supports_top_three(
+    manifest: _CompleteCandidateManifest,
+) -> bool:
+    valid_ranks: set[int] = set()
+    for entry in manifest.entries:
+        rank = entry.get("global_rank", entry.get("rank"))
+        score = entry.get("score")
+        if (
+            not isinstance(rank, bool)
+            and isinstance(rank, int)
+            and rank > 0
+            and _valid_score(score)
+            and entry.get("score_kind") == BIOCLIP_SCORE_KIND
+            and entry.get("calibrated") is False
+        ):
+            valid_ranks.add(rank)
+    return {1, 2, 3}.issubset(valid_ranks)
+
+
+def _attempt_model_runtime_variant_id(attempt: StoredBioClipAttempt) -> str:
+    model = attempt.model_provenance
+    preprocessing = attempt.preprocessing
+    fields: dict[str, Any] = {}
+    if isinstance(model, Mapping):
+        for key in (
+            "adapter_id",
+            "adapter_contract_version",
+            "model_name",
+            "architecture_id",
+            "device",
+            "open_clip_version",
+            "torch_version",
+            "pillow_version",
+            "numpy_version",
+            "model_weights_sha256",
+            "preprocessing_id",
+            "preprocessing_sha256",
+        ):
+            value = model.get(key)
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                fields[key] = value
+    if isinstance(preprocessing, Mapping):
+        for key in ("preprocessing_id", "preprocessing_sha256"):
+            value = preprocessing.get(key)
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                fields[f"preprocessing.{key}"] = value
+    return (
+        _variant_id("attempt-model-runtime", fields)
+        if fields
+        else "attempt-model-runtime-unknown-missing"
+    )
+
+
+def _attempt_crop_key(value: str | None) -> str:
+    return {
+        "megadetector": "credible_megadetector_crop",
+        "credible_megadetector_crop": "credible_megadetector_crop",
+        "activity": "measured_activity_crop",
+        "measured_activity_crop": "measured_activity_crop",
+        "full_frame": "full_frame_fallback",
+        "full_frame_fallback": "full_frame_fallback",
+    }.get(_optional_text(value), "unknown_missing")
+
+
+def _attempt_target_key(
+    attempt: StoredBioClipAttempt,
+) -> tuple[str, str] | None:
+    target_type = attempt.target_type.strip()
+    target_id = attempt.target_id.strip()
+    if target_type not in {"event", "visit"} or not target_id:
+        return None
+    return target_type, target_id
+
+
+def _is_taxonomy_backed_non_bird_candidate(
+    label: str,
+    taxonomy_by_label: Mapping[str, TaxonomyDescriptor],
+) -> bool:
+    item = taxonomy_by_label.get(label)
+    return item is not None and item.category in _CANDIDATE_NON_BIRD_CATEGORIES
+
+
+def _valid_duration_ms(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
 
 
 def _review_target_key(label: StoredReviewLabel) -> tuple[str, str] | None:
@@ -748,11 +1438,7 @@ def _primary_candidate(
     suggestion: StoredSpeciesSuggestion,
 ) -> _RankedCandidate | None:
     label = suggestion.suggested_label.strip()
-    if (
-        suggestion.rank != 1
-        or not label
-        or not _valid_score(suggestion.confidence)
-    ):
+    if suggestion.rank != 1 or not label or not _valid_score(suggestion.confidence):
         return None
     return _RankedCandidate(
         rank=1,
@@ -880,8 +1566,7 @@ def _runtime_variant_fields(provenance: Mapping[str, Any]) -> dict[str, Any]:
 
 def _candidate_set_identifier(provenance: Mapping[str, Any]) -> str:
     return (
-        f"labels-{str(provenance['labels_sha256'])[:12]}"
-        f"-n{provenance['label_count']}"
+        f"labels-{str(provenance['labels_sha256'])[:12]}-n{provenance['label_count']}"
     )
 
 
@@ -933,9 +1618,7 @@ def _false_species_metric(examples: list[dict[str, Any]]) -> dict[str, Any]:
         "unknown_classification_count": unknown_classification_count,
         "species_suggested_count": species_suggested_count,
         "rate": (
-            species_suggested_count / classified_count
-            if classified_count
-            else None
+            species_suggested_count / classified_count if classified_count else None
         ),
     }
 
@@ -968,9 +1651,7 @@ def _mistake_example(example: Mapping[str, Any]) -> dict[str, Any]:
         "score_kind": BIOCLIP_SCORE_KIND,
         "crop_source": example["crop_source"],
         "candidate_set_identifier": example["candidate_set_identifier"],
-        "corrected_rank_in_stored_ranking": example[
-            "corrected_rank_in_stored_ranking"
-        ],
+        "corrected_rank_in_stored_ranking": example["corrected_rank_in_stored_ranking"],
     }
 
 
@@ -1054,6 +1735,35 @@ def _format_stored_candidate_absence(metric: Mapping[str, Any]) -> str:
         else ""
     )
     return f"{metric['count']}/{metric['evaluated_count']}{suffix}"
+
+
+def _format_complete_candidate_absence(metric: Mapping[str, Any]) -> str:
+    if not metric["available"]:
+        return f"unavailable ({metric['reason']})"
+    suffix = (
+        f"; {metric['unavailable_count']} historical/incomplete"
+        if metric["unavailable_count"]
+        else ""
+    )
+    return f"{metric['count']}/{metric['evaluated_count']}{suffix}"
+
+
+def _format_attempt_success_rate(metric: Mapping[str, Any]) -> str:
+    if not metric["available"]:
+        return "unavailable (no terminal recorded attempts)"
+    return (
+        f"{metric['successful_attempts']}/{metric['denominator_count']} "
+        f"terminal recorded attempts ({metric['rate'] * 100:.1f}%)"
+    )
+
+
+def _format_duration_summary(metric: Mapping[str, Any]) -> str:
+    if not metric["available"]:
+        return f"unavailable ({metric['reason']})"
+    return (
+        f"{metric['median']}/{metric['minimum']}/{metric['maximum']} ms "
+        f"across {metric['sample_count']} recorded attempts"
+    )
 
 
 def _format_false_species_metric(metric: Mapping[str, Any]) -> str:

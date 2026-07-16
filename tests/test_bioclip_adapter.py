@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import threading
 import time
@@ -24,8 +26,10 @@ from mockingbird.species.bioclip_adapter import (
     BIOCLIP_SCORE_KIND,
     BioClipBusyError,
     BioClipConfigurationError,
+    BioClipNoResultError,
     BioClipOutputError,
     BioClipPrediction,
+    BioClipPreparedRun,
     BioClipProvenance,
     BioClipRuntimeUnavailableError,
     BioClipTimeoutError,
@@ -62,9 +66,7 @@ def _write_configured_artifacts(
         json.dumps(
             {
                 "model_cfg": bioclip_adapter._EXPECTED_BIOCLIP_MODEL_CONFIG,
-                "preprocess_cfg": (
-                    bioclip_adapter._EXPECTED_BIOCLIP_PREPROCESS_CONFIG
-                ),
+                "preprocess_cfg": (bioclip_adapter._EXPECTED_BIOCLIP_PREPROCESS_CONFIG),
             }
         ),
         encoding="utf-8",
@@ -75,9 +77,7 @@ def _write_configured_artifacts(
     labels_path = tmp_path / "labels.txt"
     labels_path.write_text("\n".join(labels) + "\n", encoding="utf-8")
     metadata = {
-        "label_sha256": hashlib.sha256(
-            "\n".join(labels).encode("utf-8")
-        ).hexdigest(),
+        "label_sha256": hashlib.sha256("\n".join(labels).encode("utf-8")).hexdigest(),
         "model_config_sha256": hashlib.sha256(
             model_config_path.read_bytes()
         ).hexdigest(),
@@ -128,9 +128,7 @@ assert adapter.get_bioclip_status(None).status == "not_configured"
 
 def test_pyproject_keeps_bioclip_runtime_optional_and_out_of_core() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    core_dependencies = "\n".join(
-        pyproject["project"].get("dependencies", [])
-    ).lower()
+    core_dependencies = "\n".join(pyproject["project"].get("dependencies", [])).lower()
     optional_dependencies = pyproject["project"].get("optional-dependencies", {})
 
     assert optional_dependencies["classifier-bioclip"] == [
@@ -172,9 +170,11 @@ def test_status_is_available_without_importing_or_loading_runtime(
     monkeypatch.setattr(
         bioclip_adapter.metadata,
         "version",
-        lambda name: "3.3.0"
-        if name == "open-clip-torch"
-        else pytest.fail("unexpected distribution lookup"),
+        lambda name: (
+            "3.3.0"
+            if name == "open-clip-torch"
+            else pytest.fail("unexpected distribution lookup")
+        ),
     )
     monkeypatch.setattr(
         bioclip_adapter,
@@ -191,9 +191,10 @@ def test_status_is_available_without_importing_or_loading_runtime(
     assert status.model_dir == str(config.model_dir)
     assert status.labels_path == str(config.labels_path)
     assert status.embedding_cache_path == str(config.embedding_cache_path)
-    assert status.labels_sha256 == hashlib.sha256(
-        "\n".join(labels).encode("utf-8")
-    ).hexdigest()
+    assert (
+        status.labels_sha256
+        == hashlib.sha256("\n".join(labels).encode("utf-8")).hexdigest()
+    )
     assert inspected == ["PIL", "numpy", "open_clip", "torch"]
 
 
@@ -218,9 +219,11 @@ def test_status_never_hashes_large_model_weights(
     monkeypatch.setattr(
         bioclip_adapter.metadata,
         "version",
-        lambda name: "3.3.0"
-        if name == "open-clip-torch"
-        else pytest.fail("unexpected distribution lookup"),
+        lambda name: (
+            "3.3.0"
+            if name == "open-clip-torch"
+            else pytest.fail("unexpected distribution lookup")
+        ),
     )
 
     assert get_bioclip_status(config).status == "available"
@@ -259,9 +262,11 @@ def test_status_rejects_unsupported_open_clip_series_without_importing_it(
     monkeypatch.setattr(
         bioclip_adapter.metadata,
         "version",
-        lambda name: "3.4.0"
-        if name == "open-clip-torch"
-        else pytest.fail("unexpected distribution lookup"),
+        lambda name: (
+            "3.4.0"
+            if name == "open-clip-torch"
+            else pytest.fail("unexpected distribution lookup")
+        ),
     )
     monkeypatch.setattr(
         bioclip_adapter,
@@ -691,9 +696,12 @@ def test_in_process_worker_uses_precomputed_cache_and_loads_model_per_request(
     assert first.provenance.device == "cpu"
     assert first.provenance.open_clip_version == "3.3.0"
     assert first.provenance.torch_version == "2.13.0+cpu"
-    assert first.provenance.embedding_cache_sha256 == hashlib.sha256(
-        config.embedding_cache_path.read_bytes()  # type: ignore[union-attr]
-    ).hexdigest()
+    assert (
+        first.provenance.embedding_cache_sha256
+        == hashlib.sha256(
+            config.embedding_cache_path.read_bytes()  # type: ignore[union-attr]
+        ).hexdigest()
+    )
 
 
 class _FakeReceiveConnection:
@@ -789,10 +797,23 @@ class _FakeSpawnContext:
 def _prediction_fixture(
     validated,
 ) -> BioClipPrediction:
+    return _prediction_for_scores(
+        validated,
+        (0.8, 0.15, 0.05),
+        top_k=2,
+    )
+
+
+def _prediction_for_scores(
+    validated,
+    scores: tuple[float, ...],
+    *,
+    top_k: int,
+) -> BioClipPrediction:
     suggestions = bioclip_adapter._rank_suggestions(
         validated.labels,
-        [0.8, 0.15, 0.05],
-        top_k=2,
+        list(scores),
+        top_k=top_k,
     )
     assert validated.embedding_cache_sha256 is not None
     model_weights_sha256 = (
@@ -819,6 +840,8 @@ def _prediction_fixture(
             score_kind=BIOCLIP_SCORE_KIND,
             calibrated=False,
         ),
+        candidate_labels=validated.labels,
+        candidate_scores=scores,
     )
 
 
@@ -827,6 +850,60 @@ def _worker_bytes(prediction: BioClipPrediction) -> bytes:
         bioclip_adapter._prediction_to_worker_payload(prediction),
         separators=(",", ":"),
     ).encode("utf-8")
+
+
+def test_worker_round_trip_preserves_complete_ordered_candidate_bank_and_ties(
+    tmp_path: Path,
+) -> None:
+    config, labels = _write_configured_artifacts(tmp_path)
+    validated = bioclip_adapter._validate_config_files(config)
+    prediction = _prediction_for_scores(
+        validated,
+        (0.4, 0.4, 0.2),
+        top_k=2,
+    )
+
+    encoded = _worker_bytes(prediction)
+    decoded = bioclip_adapter._decode_worker_result(
+        encoded,
+        validated=validated,
+        top_k=2,
+    )
+
+    assert decoded == prediction
+    assert decoded.candidate_labels == labels
+    assert decoded.candidate_scores == (0.4, 0.4, 0.2)
+    assert [item.label for item in decoded.suggestions] == [labels[0], labels[1]]
+    payload = json.loads(encoded)
+    assert payload["candidate_scores"]["encoding"] == (
+        bioclip_adapter.BIOCLIP_FULL_SCORE_ENCODING
+    )
+    assert "candidate_labels" not in payload
+
+
+def test_complete_score_transport_is_bounded_at_maximum_candidate_count(
+    tmp_path: Path,
+) -> None:
+    labels = tuple(
+        f"candidate species {index}"
+        for index in range(bioclip_adapter.BIOCLIP_MAX_LABEL_COUNT)
+    )
+    config, _ = _write_configured_artifacts(tmp_path, labels=labels)
+    validated = bioclip_adapter._validate_config_files(config)
+    scores = tuple(1.0 / bioclip_adapter.BIOCLIP_MAX_LABEL_COUNT for _ in labels)
+    prediction = _prediction_for_scores(validated, scores, top_k=20)
+
+    encoded = _worker_bytes(prediction)
+    decoded = bioclip_adapter._decode_worker_result(
+        encoded,
+        validated=validated,
+        top_k=20,
+    )
+
+    assert len(encoded) <= bioclip_adapter.BIOCLIP_MAX_RESULT_BYTES
+    assert decoded.candidate_labels == labels
+    assert decoded.candidate_scores == scores
+    assert [item.label for item in decoded.suggestions] == list(labels[:20])
 
 
 def test_worker_subprocess_success_uses_spawn_and_bounded_json(
@@ -912,6 +989,62 @@ def test_worker_enforces_offline_hub_environment(
         "TRANSFORMERS_OFFLINE": "1",
         "HF_DATASETS_OFFLINE": "1",
     }
+
+
+def test_worker_never_transports_raw_typed_exception_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RecordingConnection:
+        encoded: bytes | None = None
+
+        def send_bytes(self, encoded: bytes) -> None:
+            self.encoded = encoded
+
+        def close(self) -> None:
+            return None
+
+    connection = RecordingConnection()
+    raw_detail = f"failed at {tmp_path / 'private-model.safetensors'}"
+    monkeypatch.setattr(
+        bioclip_adapter,
+        "_read_shared_image_payload",
+        lambda _payload: bioclip_adapter._ImagePayload(
+            width=1,
+            height=1,
+            rgb_bytes=b"\x00\x00\x00",
+        ),
+    )
+    monkeypatch.setattr(
+        bioclip_adapter,
+        "_load_pillow_runtime",
+        lambda: SimpleNamespace(frombytes=lambda *_args: object()),
+    )
+
+    def fail_with_raw_detail(*_args) -> BioClipPrediction:
+        raise BioClipConfigurationError(raw_detail)
+
+    monkeypatch.setattr(
+        bioclip_adapter,
+        "_run_bioclip_in_process",
+        fail_with_raw_detail,
+    )
+
+    bioclip_adapter._bioclip_worker(
+        connection,
+        bioclip_adapter._SharedImagePayload(1, 1, "unused", 3),
+        build_bioclip_config(
+            model_dir="model",
+            labels_path="labels",
+            embedding_cache_path="cache",
+        ),
+        1,
+    )
+
+    assert connection.encoded is not None
+    payload = json.loads(connection.encoded)
+    assert payload == bioclip_adapter._worker_error("configuration")
+    assert raw_detail not in connection.encoded.decode("utf-8")
 
 
 def test_locked_run_serializes_in_memory_rgb_before_worker_start(
@@ -1082,6 +1215,176 @@ def test_worker_result_rejects_tampered_label_or_provenance(
         )
 
 
+def test_worker_result_rejects_malformed_complete_score_transport(
+    tmp_path: Path,
+) -> None:
+    config, _ = _write_configured_artifacts(tmp_path)
+    validated = bioclip_adapter._validate_config_files(config)
+    prediction = _prediction_fixture(validated)
+    original = bioclip_adapter._prediction_to_worker_payload(prediction)
+    malformed_values = (
+        {
+            "encoding": "unbounded-json",
+            "count": 3,
+            "data": original["candidate_scores"]["data"],
+        },
+        {
+            "encoding": bioclip_adapter.BIOCLIP_FULL_SCORE_ENCODING,
+            "count": 2,
+            "data": original["candidate_scores"]["data"],
+        },
+        {
+            "encoding": bioclip_adapter.BIOCLIP_FULL_SCORE_ENCODING,
+            "count": 3,
+            "data": "not-base64!",
+        },
+        {
+            "encoding": bioclip_adapter.BIOCLIP_FULL_SCORE_ENCODING,
+            "count": 3,
+            "data": base64.b64encode(struct.pack("<2d", 0.8, 0.2)).decode("ascii"),
+        },
+        {
+            "encoding": bioclip_adapter.BIOCLIP_FULL_SCORE_ENCODING,
+            "count": 3,
+            "data": base64.b64encode(
+                struct.pack("<3d", float("nan"), 0.15, 0.05)
+            ).decode("ascii"),
+        },
+        {
+            "encoding": bioclip_adapter.BIOCLIP_FULL_SCORE_ENCODING,
+            "count": 3,
+            "data": base64.b64encode(struct.pack("<3d", 1.01, 0.0, 0.0)).decode(
+                "ascii"
+            ),
+        },
+    )
+
+    for malformed in malformed_values:
+        payload = json.loads(json.dumps(original))
+        payload["candidate_scores"] = malformed
+        with pytest.raises(BioClipOutputError, match="candidate-score transport"):
+            bioclip_adapter._decode_worker_result(
+                json.dumps(payload).encode("utf-8"),
+                validated=validated,
+                top_k=2,
+            )
+
+
+def test_worker_result_recomputes_top_k_from_complete_scores(
+    tmp_path: Path,
+) -> None:
+    config, _ = _write_configured_artifacts(tmp_path)
+    validated = bioclip_adapter._validate_config_files(config)
+    payload = bioclip_adapter._prediction_to_worker_payload(
+        _prediction_fixture(validated)
+    )
+    payload["candidate_scores"]["data"] = base64.b64encode(
+        struct.pack("<3d", 0.01, 0.98, 0.01)
+    ).decode("ascii")
+
+    with pytest.raises(BioClipOutputError, match="rankings"):
+        bioclip_adapter._decode_worker_result(
+            json.dumps(payload).encode("utf-8"),
+            validated=validated,
+            top_k=2,
+        )
+
+
+def test_worker_no_result_is_typed_and_raw_detail_is_rejected(
+    tmp_path: Path,
+) -> None:
+    config, _ = _write_configured_artifacts(tmp_path)
+    validated = bioclip_adapter._validate_config_files(config)
+    payload = bioclip_adapter._worker_error("no_result")
+
+    with pytest.raises(BioClipNoResultError) as caught:
+        bioclip_adapter._decode_worker_result(
+            json.dumps(payload).encode("utf-8"),
+            validated=validated,
+            top_k=2,
+        )
+
+    assert caught.value.error_code == "bioclip_no_result"
+    assert caught.value.error_stage == "output_parsing"
+    assert str(tmp_path) not in str(caught.value)
+
+    payload["detail"] = f"raw local path: {tmp_path}"
+    with pytest.raises(BioClipOutputError, match="invalid error response"):
+        bioclip_adapter._decode_worker_result(
+            json.dumps(payload).encode("utf-8"),
+            validated=validated,
+            top_k=2,
+        )
+
+
+def test_empty_inference_scores_raise_explicit_no_result() -> None:
+    class FakeTensor:
+        def unsqueeze(self, _axis: int):
+            return self
+
+        def to(self, **_kwargs):
+            return self
+
+        def norm(self, **_kwargs):
+            return self
+
+        def clamp_min(self, _value: float):
+            return self
+
+        def __truediv__(self, _other):
+            return self
+
+        def __rmul__(self, _other):
+            return self
+
+        def __matmul__(self, _other):
+            return self
+
+        @property
+        def T(self):
+            return self
+
+        def softmax(self, **_kwargs):
+            return self
+
+        def __getitem__(self, _index: int):
+            return self
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        @staticmethod
+        def tolist() -> list[float]:
+            return []
+
+    class FakeInferenceMode:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *_args):
+            return None
+
+    tensor = FakeTensor()
+    runtime = SimpleNamespace(
+        preprocess=lambda _image: tensor,
+        model=SimpleNamespace(
+            encode_image=lambda _prepared: tensor,
+            logit_scale=SimpleNamespace(exp=lambda: 1.0),
+        ),
+        text_embeddings=tensor,
+        torch=SimpleNamespace(
+            float32="float32",
+            inference_mode=lambda: FakeInferenceMode(),
+        ),
+    )
+
+    with pytest.raises(BioClipNoResultError, match="no candidate scores"):
+        bioclip_adapter._infer_scores(runtime, object())
+
+
 def test_image_serialization_is_raw_memory_only_and_pixel_bounded() -> None:
     class FakeImage:
         width = 2
@@ -1241,7 +1544,12 @@ def test_loader_single_flight_reserves_slot_before_image_decode(
     first_load_calls: list[str] = []
     second_load_calls: list[str] = []
 
-    def run_locked(_image: object, _config: object, _top_k: int) -> BioClipPrediction:
+    def run_locked(
+        _image: object,
+        _config: object,
+        _top_k: int,
+        **_kwargs: object,
+    ) -> BioClipPrediction:
         entered.set()
         assert release.wait(timeout=2)
         return prediction
@@ -1269,6 +1577,82 @@ def test_loader_single_flight_reserves_slot_before_image_decode(
     assert bioclip_adapter._RUN_LOCK.locked() is False
 
 
+def test_loader_reports_safe_prepared_context_before_image_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    labels = (
+        "northern cardinal (Cardinalis cardinalis)",
+        "blue jay (Cyanocitta cristata)",
+        "unknown bird",
+    )
+    config, _ = _write_configured_artifacts(tmp_path, labels=labels)
+    validated = bioclip_adapter._validate_config_files(config)
+    prediction = _prediction_fixture(validated)
+    events: list[str] = []
+    prepared_runs: list[BioClipPreparedRun] = []
+
+    def on_prepared(prepared: BioClipPreparedRun) -> None:
+        events.append("prepared")
+        prepared_runs.append(prepared)
+
+    def image_loader() -> object:
+        events.append("decoded")
+        return SimpleNamespace(close=lambda: events.append("closed"))
+
+    def run_locked(
+        _image: object,
+        _config: object,
+        _top_k: int,
+        *,
+        validated,
+    ) -> BioClipPrediction:
+        events.append("worker")
+        assert validated.labels == labels
+        return prediction
+
+    monkeypatch.setattr(bioclip_adapter, "_run_bioclip_locked", run_locked)
+
+    result = run_bioclip_from_image_loader(
+        image_loader,
+        config,
+        2,
+        on_prepared=on_prepared,
+    )
+
+    assert result == prediction
+    assert events == ["prepared", "decoded", "worker", "closed"]
+    assert len(prepared_runs) == 1
+    prepared = prepared_runs[0]
+    assert prepared.candidate_labels == labels
+    assert prepared.candidate_count == len(labels)
+    assert (
+        prepared.candidate_set_sha256
+        == hashlib.sha256("\n".join(labels).encode("utf-8")).hexdigest()
+    )
+    assert prepared.candidate_fingerprint_algorithm == (
+        bioclip_adapter.BIOCLIP_CANDIDATE_FINGERPRINT_ALGORITHM
+    )
+    assert prepared.model_weights_verified is False
+    assert prepared.timeout_seconds == bioclip_adapter.BIOCLIP_RUN_TIMEOUT_SECONDS
+    assert prepared.preprocessing_config_json == json.dumps(
+        bioclip_adapter._EXPECTED_BIOCLIP_PREPROCESS_CONFIG,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert str(tmp_path) not in repr(prepared)
+
+
+def test_candidate_fingerprint_is_deterministic_and_order_sensitive() -> None:
+    labels = ("bird", "vehicle", "blank scene")
+    expected = hashlib.sha256("\n".join(labels).encode("utf-8")).hexdigest()
+
+    assert bioclip_adapter._label_sha256(labels) == expected
+    assert bioclip_adapter._label_sha256(labels) == expected
+    assert bioclip_adapter._label_sha256(tuple(reversed(labels))) != expected
+
+
 def test_loader_close_failure_still_releases_single_flight_slot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1279,7 +1663,7 @@ def test_loader_close_failure_still_releases_single_flight_slot(
     monkeypatch.setattr(
         bioclip_adapter,
         "_run_bioclip_locked",
-        lambda _image, _config, _top_k: prediction,
+        lambda _image, _config, _top_k, **_kwargs: prediction,
     )
 
     def raise_on_close() -> None:

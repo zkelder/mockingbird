@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import time
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 import uuid
@@ -57,15 +58,21 @@ from mockingbird.detectors.megadetector_adapter import (
 from mockingbird.species.bioclip_adapter import (
     BIOCLIP_ADAPTER_ID,
     BIOCLIP_ADAPTER_NAME,
+    BIOCLIP_RUN_TIMEOUT_SECONDS,
+    BIOCLIP_SCORE_KIND,
     BioClipAdapterConfig,
     BioClipAdapterStatus,
     BioClipBusyError,
     BioClipConfigurationError,
+    BioClipNoResultError,
     BioClipOutputError,
     BioClipPrediction,
+    BioClipPreparedRun,
     BioClipRankedSuggestion,
     BioClipRuntimeUnavailableError,
+    BioClipTimeoutError,
     BioClipUnsupportedImageError,
+    BioClipWorkerFailureError,
     build_bioclip_config,
     get_bioclip_status,
     run_bioclip_from_image_loader,
@@ -252,6 +259,7 @@ from mockingbird.storage.database import (
 )
 from mockingbird.storage.models import (
     Base,
+    BioClipIdentificationAttemptModel,
     CameraSourceModel,
     DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS,
     DEFAULT_STREAM_MONITORING_MINIMUM_DETECTIONS,
@@ -296,6 +304,127 @@ BIOCLIP_SETUP_HINT = (
     "The first bounded Review Queue integration is CPU-only, requires a precomputed "
     "embedding cache, and never downloads or generates model artifacts."
 )
+
+_BIOCLIP_ATTEMPT_ERROR_FIELDS: dict[
+    str,
+    tuple[str, str | None, str],
+] = {
+    "bioclip_busy": (
+        "cancelled",
+        "process_startup",
+        "Another manual BioCLIP run already owns the local runtime.",
+    ),
+    "bioclip_timed_out": (
+        "timed_out",
+        None,
+        "The isolated BioCLIP process exceeded its configured timeout.",
+    ),
+    "bioclip_no_result": (
+        "no_result",
+        "output_parsing",
+        "BioCLIP completed without a usable ranked result.",
+    ),
+    "bioclip_configuration_error": (
+        "unsupported",
+        "configuration",
+        "The local BioCLIP configuration was not usable for this attempt.",
+    ),
+    "bioclip_not_configured": (
+        "unsupported",
+        "configuration",
+        "BioCLIP local model artifacts are not configured.",
+    ),
+    "bioclip_runtime_not_ready": (
+        "unsupported",
+        "configuration",
+        "The optional local BioCLIP runtime was not ready before execution.",
+    ),
+    "bioclip_runtime_unavailable": (
+        "failed",
+        "model_load",
+        "The optional local BioCLIP runtime was unavailable.",
+    ),
+    "bioclip_worker_failed": (
+        "failed",
+        "inference",
+        "The isolated BioCLIP process failed cleanly.",
+    ),
+    "bioclip_unsupported_image": (
+        "unsupported",
+        "input_preparation",
+        "The selected image could not be decoded as bounded BioCLIP input.",
+    ),
+    "bioclip_unsupported_media_type": (
+        "unsupported",
+        "input_preparation",
+        "The selected media type is not supported by BioCLIP.",
+    ),
+    "bioclip_crop_preparation_failed": (
+        "unsupported",
+        "crop_preparation",
+        "The selected image crop could not be prepared for BioCLIP.",
+    ),
+    "bioclip_input_too_large": (
+        "unsupported",
+        "input_preparation",
+        "The selected image exceeded the bounded input limit.",
+    ),
+    "bioclip_media_changed": (
+        "unsupported",
+        "eligibility_revalidation",
+        "The selected media changed before the attempt could be saved.",
+    ),
+    "bioclip_media_not_review_frame": (
+        "unsupported",
+        "eligibility_revalidation",
+        "The selected media was no longer the target review frame.",
+    ),
+    "identification_zone_suppressed": (
+        "unsupported",
+        "eligibility_revalidation",
+        "A Privacy or Ignore Zone blocked this identification attempt.",
+    ),
+    "missing_media_file": (
+        "unsupported",
+        "input_preparation",
+        "The selected local media file was unavailable.",
+    ),
+    "missing_media_asset": (
+        "unsupported",
+        "eligibility_revalidation",
+        "The selected MediaAsset was unavailable.",
+    ),
+    "missing_review_candidate": (
+        "unsupported",
+        "eligibility_revalidation",
+        "The selected review target was unavailable.",
+    ),
+    "media_stream_mismatch": (
+        "unsupported",
+        "eligibility_revalidation",
+        "The selected media no longer belonged to the review Stream.",
+    ),
+    "bioclip_input_unavailable": (
+        "unsupported",
+        "input_preparation",
+        "No eligible bounded image input was available.",
+    ),
+    "bioclip_failed": (
+        "failed",
+        "output_parsing",
+        "BioCLIP returned invalid bounded output.",
+    ),
+    "bioclip_unexpected_failure": (
+        "failed",
+        None,
+        "BioCLIP failed cleanly without exposing private runtime detail.",
+    ),
+    "bioclip_persistence_failed": (
+        "failed",
+        "persistence",
+        "BioCLIP result evidence could not be saved atomically.",
+    ),
+}
 
 EXTERNAL_URL_PREVIEW_EXTENSIONS = {
     "image/jpeg": ".jpg",
@@ -880,6 +1009,8 @@ class _ReviewSpeciesCropContext:
 
 @dataclass(frozen=True)
 class _ReviewSpeciesRunContext:
+    target_type: str
+    target_id: str
     local_path: str
     media_file_size_bytes: int
     media_file_mtime_ns: int
@@ -890,7 +1021,22 @@ class _ReviewSpeciesRunContext:
     visit_id: str | None
     media_asset_id: str
     motion_evidence_id: str | None
+    zone_id: str | None
     crop: _ReviewSpeciesCropContext
+
+
+@dataclass(frozen=True)
+class _BioClipAttemptContext:
+    target_type: str
+    target_id: str
+    source_id: str | None
+    stream_id: str
+    zone_id: str | None
+    event_id: str | None
+    visit_id: str | None
+    media_asset_id: str
+    motion_evidence_id: str | None
+    crop: _ReviewSpeciesCropContext | None
 
 
 @dataclass(frozen=True)
@@ -1194,6 +1340,26 @@ class ProductRepository:
                 SpeciesSuggestionModel.motion_evidence_id.in_(motion_evidence_ids),
             ),
         )
+        bioclip_attempt_ids = ids_for(
+            BioClipIdentificationAttemptModel,
+            or_(
+                BioClipIdentificationAttemptModel.source_id == demo_data.SOURCE_ID,
+                BioClipIdentificationAttemptModel.stream_id.in_(stream_ids),
+                BioClipIdentificationAttemptModel.zone_id.in_(zone_ids),
+                BioClipIdentificationAttemptModel.event_id.in_(event_ids),
+                BioClipIdentificationAttemptModel.visit_id.in_(visit_ids),
+                BioClipIdentificationAttemptModel.media_asset_id.in_(media_asset_ids),
+                BioClipIdentificationAttemptModel.motion_evidence_id.in_(
+                    motion_evidence_ids
+                ),
+                BioClipIdentificationAttemptModel.detection_proposal_id.in_(
+                    detection_proposal_ids
+                ),
+                BioClipIdentificationAttemptModel.resulting_species_suggestion_id.in_(
+                    species_suggestion_ids
+                ),
+            ),
+        )
         detection_ids = ids_for(
             DetectionModel,
             or_(
@@ -1235,6 +1401,7 @@ class ProductRepository:
             "detection_runs": detection_run_ids,
             "detection_proposals": detection_proposal_ids,
             "species_suggestions": species_suggestion_ids,
+            "bioclip_attempts": bioclip_attempt_ids,
             "detections": detection_ids,
             "review_labels": review_label_ids,
             "dataset_exports": dataset_export_ids,
@@ -1274,6 +1441,7 @@ class ProductRepository:
                 "detection_runs",
                 "detection_proposals",
                 "species_suggestions",
+                "bioclip_attempts",
             )
         ):
             return True
@@ -1292,6 +1460,10 @@ class ProductRepository:
             if ids:
                 session.execute(delete(model).where(model.id.in_(ids)))
 
+        delete_ids(
+            BioClipIdentificationAttemptModel,
+            graph["bioclip_attempts"],
+        )
         delete_ids(SpeciesSuggestionModel, graph["species_suggestions"])
         delete_ids(DetectionProposalModel, graph["detection_proposals"])
         delete_ids(DetectionRunModel, graph["detection_runs"])
@@ -6264,13 +6436,15 @@ class ProductRepository:
             )
             zone_id = queue_item.zone_id or queue_item.primary_zone_id
             species_run_context: _ReviewSpeciesRunContext | None = None
+            species_run_error: str | None = None
             if summary.can_run and _review_item_has_active_restricted_zone(
                 session,
                 queue_item,
             ):
+                species_run_error = "identification_zone_suppressed"
                 summary = self._review_identification_error_summary(
                     summary,
-                    ValueError("identification_zone_suppressed"),
+                    ValueError(species_run_error),
                 )
             elif (
                 summary.can_run
@@ -6282,10 +6456,45 @@ class ProductRepository:
                     species_run_context = self._review_species_run_context(
                         session,
                         queue_item,
+                        target_type=normalized_target_type,
+                        target_id=normalized_target_id,
                         media_asset_id=media_asset_id,
                     )
                 except ValueError as error:
+                    species_run_error = _safe_bioclip_error_code(str(error))
                     summary = self._review_identification_error_summary(summary, error)
+            bioclip_attempt_context = (
+                self._review_bioclip_attempt_context(
+                    session,
+                    queue_item,
+                    target_type=normalized_target_type,
+                    target_id=normalized_target_id,
+                    media_asset_id=media_asset_id,
+                    run_context=species_run_context,
+                )
+                if summary.adapter_id == BIOCLIP_ADAPTER_ID
+                and media_asset_id is not None
+                else None
+            )
+
+        bioclip_attempt_id: str | None = None
+        if bioclip_attempt_context is not None:
+            bioclip_attempt_id = self._create_bioclip_identification_attempt(
+                bioclip_attempt_context
+            )
+            if not summary.can_run:
+                error_code = species_run_error or _bioclip_preflight_error_code(summary)
+                outcome, stage, detail = _bioclip_attempt_failure_fields(error_code)
+                self._complete_bioclip_identification_attempt(
+                    bioclip_attempt_id,
+                    attempt_context=bioclip_attempt_context,
+                    outcome=outcome,
+                    duration_ms=None,
+                    timeout_exceeded=False,
+                    error_code=error_code,
+                    error_stage=stage,
+                    error_detail=detail,
+                )
 
         if not summary.can_run or summary.adapter_id is None or media_asset_id is None:
             return self._review_identification_response(
@@ -6309,6 +6518,19 @@ class ProductRepository:
                     review_queue_item=queue_item,
                 )
             if species_run_context is None:
+                if bioclip_attempt_id is not None:
+                    error_code = "bioclip_input_unavailable"
+                    outcome, stage, detail = _bioclip_attempt_failure_fields(error_code)
+                    self._complete_bioclip_identification_attempt(
+                        bioclip_attempt_id,
+                        attempt_context=bioclip_attempt_context,
+                        outcome=outcome,
+                        duration_ms=None,
+                        timeout_exceeded=False,
+                        error_code=error_code,
+                        error_stage=stage,
+                        error_detail=detail,
+                    )
                 error_summary = self._review_identification_error_summary(
                     summary,
                     ValueError("bioclip_input_unavailable"),
@@ -6319,12 +6541,18 @@ class ProductRepository:
                     identification=error_summary,
                     review_queue_item=queue_item,
                 )
+            if bioclip_attempt_id is None or bioclip_attempt_context is None:
+                raise RuntimeError(
+                    "A manual BioCLIP run cannot start without durable attempt evidence."
+                )
             return self._identify_review_queue_with_bioclip(
                 target_type=normalized_target_type,
                 target_id=normalized_target_id,
                 summary=summary,
                 queue_item=queue_item,
                 run_context=species_run_context,
+                attempt_context=bioclip_attempt_context,
+                attempt_id=bioclip_attempt_id,
                 request=request,
             )
 
@@ -6466,48 +6694,127 @@ class ProductRepository:
         summary: ReviewIdentificationSummary,
         queue_item: ReviewQueueItem,
         run_context: _ReviewSpeciesRunContext,
+        attempt_context: _BioClipAttemptContext,
+        attempt_id: str,
         request: ReviewIdentificationRequest,
     ) -> ReviewIdentificationResponse:
         # Image decode and optional model inference deliberately happen after the
         # read session has closed. A slow local model must never hold a DB transaction.
+        prepared_run: BioClipPreparedRun | None = None
+        provenance_persistence_ns = 0
+        crop_observation = _initial_bioclip_crop_provenance(attempt_context.crop)
+
+        def retain_prepared_run(value: BioClipPreparedRun) -> None:
+            nonlocal prepared_run, provenance_persistence_ns
+            prepared_run = value
+            persistence_started = time.monotonic_ns()
+            try:
+                self._record_bioclip_prepared_provenance(
+                    attempt_id,
+                    attempt_context=attempt_context,
+                    prepared_run=value,
+                )
+            except Exception as error:
+                raise ValueError("bioclip_persistence_failed") from error
+            finally:
+                provenance_persistence_ns += time.monotonic_ns() - persistence_started
+
+        def load_input_image() -> Any:
+            nonlocal provenance_persistence_ns
+            image = _load_bioclip_input_image(
+                local_path=run_context.local_path,
+                expected_size_bytes=run_context.media_file_size_bytes,
+                expected_mtime_ns=run_context.media_file_mtime_ns,
+                content_type=run_context.content_type,
+                crop=run_context.crop,
+                observation=crop_observation,
+            )
+            persistence_started = time.monotonic_ns()
+            try:
+                self._record_bioclip_input_provenance(
+                    attempt_id,
+                    attempt_context=attempt_context,
+                    crop_provenance=crop_observation,
+                )
+            except Exception as error:
+                try:
+                    image.close()
+                except Exception:
+                    pass
+                raise ValueError("bioclip_persistence_failed") from error
+            finally:
+                provenance_persistence_ns += time.monotonic_ns() - persistence_started
+            return image
+
+        execution_started = time.monotonic_ns()
         try:
             prediction = run_bioclip_from_image_loader(
-                lambda: _load_bioclip_input_image(
-                    local_path=run_context.local_path,
-                    expected_size_bytes=run_context.media_file_size_bytes,
-                    expected_mtime_ns=run_context.media_file_mtime_ns,
-                    content_type=run_context.content_type,
-                    crop=run_context.crop,
-                ),
+                load_input_image,
                 _bioclip_config(),
                 top_k=BIOCLIP_REVIEW_TOP_K,
+                on_prepared=retain_prepared_run,
             )
+            if not _bioclip_prediction_has_complete_candidate_bank(prediction):
+                raise BioClipOutputError(
+                    "BioCLIP did not return complete candidate-bank provenance."
+                )
+            if not prediction.suggestions:
+                raise BioClipNoResultError(
+                    "BioCLIP completed without a usable ranked suggestion."
+                )
             suggestion_payload = _bioclip_species_suggestion_payload(
                 prediction,
                 run_context=run_context,
                 request_notes=_clean_optional_text(request.notes),
             )
+            if suggestion_payload is None:
+                raise BioClipNoResultError(
+                    "BioCLIP completed without a usable ranked suggestion."
+                )
         except BioClipBusyError:
-            error = ValueError("bioclip_busy")
+            error_code = "bioclip_busy"
+        except BioClipTimeoutError:
+            error_code = "bioclip_timed_out"
+        except BioClipNoResultError:
+            error_code = "bioclip_no_result"
         except BioClipConfigurationError:
-            error = ValueError("bioclip_configuration_error")
+            error_code = "bioclip_configuration_error"
+        except BioClipWorkerFailureError:
+            error_code = "bioclip_worker_failed"
         except BioClipRuntimeUnavailableError:
-            error = ValueError("bioclip_runtime_unavailable")
+            error_code = "bioclip_runtime_unavailable"
         except BioClipUnsupportedImageError:
-            error = ValueError("bioclip_unsupported_image")
+            error_code = "bioclip_unsupported_image"
         except BioClipOutputError:
-            error = ValueError("bioclip_failed")
+            error_code = "bioclip_failed"
         except (OSError, ValueError) as caught:
-            reason = str(caught)
-            error = ValueError(
-                reason
-                if reason.startswith("bioclip_") or reason == "missing_media_file"
-                else "bioclip_failed"
-            )
+            error_code = _safe_bioclip_error_code(str(caught))
+        except Exception:
+            error_code = "bioclip_unexpected_failure"
         else:
-            error = None
+            error_code = None
+        duration_ms = _elapsed_milliseconds(
+            execution_started,
+            excluded_ns=provenance_persistence_ns,
+        )
 
-        if error is not None:
+        if error_code is not None:
+            attempt_outcome, error_stage, error_detail = (
+                _bioclip_attempt_failure_fields(error_code)
+            )
+            self._complete_bioclip_identification_attempt(
+                attempt_id,
+                attempt_context=attempt_context,
+                outcome=attempt_outcome,
+                duration_ms=duration_ms,
+                timeout_exceeded=error_code == "bioclip_timed_out",
+                crop_provenance=crop_observation,
+                prepared_run=prepared_run,
+                error_code=error_code,
+                error_stage=error_stage,
+                error_detail=error_detail,
+            )
+            error = ValueError(error_code)
             error_summary = self._review_identification_error_summary(summary, error)
             return self._review_identification_response(
                 target_type=target_type,
@@ -6515,27 +6822,6 @@ class ProductRepository:
                 identification=error_summary,
                 review_queue_item=queue_item,
                 warnings=[str(error)],
-            )
-
-        if suggestion_payload is None:
-            outcome = summary.model_copy(
-                update={
-                    "status": ReviewIdentificationStatus.no_proposal,
-                    "message": (
-                        "BioCLIP completed without a usable ranked suggestion. "
-                        "The candidate remains reviewable and no truth was created."
-                    ),
-                    "suggestion": None,
-                    "created_suggestion_ids": [],
-                    "created_proposal_ids": [],
-                    **_review_species_focus_fields(run_context.crop, queue_item),
-                }
-            )
-            return self._review_identification_response(
-                target_type=target_type,
-                target_id=target_id,
-                identification=outcome,
-                review_queue_item=queue_item,
             )
 
         try:
@@ -6576,6 +6862,18 @@ class ProductRepository:
                     suggestion = self._create_species_suggestion_in_session(
                         session,
                         suggestion_payload,
+                    )
+                    self._complete_bioclip_identification_attempt_in_session(
+                        session,
+                        attempt_id,
+                        attempt_context=attempt_context,
+                        outcome="succeeded",
+                        duration_ms=duration_ms,
+                        timeout_exceeded=False,
+                        crop_provenance=crop_observation,
+                        prepared_run=prepared_run,
+                        prediction=prediction,
+                        resulting_species_suggestion_id=suggestion.id,
                     )
                     refreshed_item = self._review_queue_item_by_target(
                         session,
@@ -6622,14 +6920,40 @@ class ProductRepository:
                         identification=outcome,
                         review_queue_item=refreshed_item,
                     )
-        except ValueError as caught:
-            error_summary = self._review_identification_error_summary(summary, caught)
+        except Exception as caught:
+            caught_code = (
+                _safe_bioclip_revalidation_error_code(str(caught))
+                if isinstance(caught, ValueError)
+                else None
+            )
+            error_code = caught_code or "bioclip_persistence_failed"
+            attempt_outcome, error_stage, error_detail = (
+                _bioclip_attempt_failure_fields(error_code)
+            )
+            self._complete_bioclip_identification_attempt(
+                attempt_id,
+                attempt_context=attempt_context,
+                outcome=attempt_outcome,
+                duration_ms=duration_ms,
+                timeout_exceeded=False,
+                crop_provenance=crop_observation,
+                prepared_run=prepared_run,
+                prediction=prediction,
+                error_code=error_code,
+                error_stage=error_stage,
+                error_detail=error_detail,
+            )
+            safe_error = ValueError(error_code)
+            error_summary = self._review_identification_error_summary(
+                summary,
+                safe_error,
+            )
             return self._review_identification_response(
                 target_type=target_type,
                 target_id=target_id,
                 identification=error_summary,
                 review_queue_item=queue_item,
-                warnings=[str(caught)],
+                warnings=[error_code],
             )
 
     def _review_species_run_context(
@@ -6637,6 +6961,8 @@ class ProductRepository:
         session: Session,
         item: ReviewQueueItem,
         *,
+        target_type: str,
+        target_id: str,
         media_asset_id: str,
     ) -> _ReviewSpeciesRunContext:
         media_asset = session.get(MediaAssetModel, media_asset_id)
@@ -6686,18 +7012,387 @@ class ProductRepository:
             raise ValueError("identification_zone_suppressed")
 
         return _ReviewSpeciesRunContext(
+            target_type=target_type,
+            target_id=target_id,
             local_path=media_asset.local_path,
             media_file_size_bytes=media_stat.st_size,
             media_file_mtime_ns=media_stat.st_mtime_ns,
             content_type=media_asset.content_type,
-            source_id=media_asset.source_id or item.source_id,
+            source_id=item.source_id,
             stream_id=item.stream_id,
             event_id=item.event_id,
-            visit_id=item.visit_id,
+            visit_id=item.visit_id if target_type == "visit" else None,
+            media_asset_id=media_asset_id,
+            motion_evidence_id=evidence.id if evidence is not None else None,
+            zone_id=(
+                item.zone_id
+                or item.primary_zone_id
+                or (evidence.zone_id if evidence is not None else None)
+            ),
+            crop=crop,
+        )
+
+    def _review_bioclip_attempt_context(
+        self,
+        session: Session,
+        item: ReviewQueueItem,
+        *,
+        target_type: str,
+        target_id: str,
+        media_asset_id: str,
+        run_context: _ReviewSpeciesRunContext | None,
+    ) -> _BioClipAttemptContext:
+        if run_context is not None:
+            return _BioClipAttemptContext(
+                target_type=run_context.target_type,
+                target_id=run_context.target_id,
+                source_id=run_context.source_id,
+                stream_id=run_context.stream_id,
+                zone_id=run_context.zone_id,
+                event_id=run_context.event_id,
+                visit_id=run_context.visit_id,
+                media_asset_id=run_context.media_asset_id,
+                motion_evidence_id=run_context.motion_evidence_id,
+                crop=run_context.crop,
+            )
+
+        media_asset = session.get(MediaAssetModel, media_asset_id)
+        if media_asset is None:
+            raise ValueError("missing_media_asset")
+        evidence = self._motion_evidence_for_review_queue_item(
+            session,
+            event_id=item.event_id,
+            visit_id=item.visit_id if target_type == "visit" else None,
+            media_asset_id=media_asset_id,
+        )
+        crop: _ReviewSpeciesCropContext | None = None
+        review_media_asset_id = item.best_media_asset_id or (
+            item.media_asset.id if item.media_asset is not None else None
+        )
+        if (
+            review_media_asset_id == media_asset_id
+            and media_asset.stream_id == item.stream_id
+            and media_asset.media_type == "image"
+            and media_asset.content_type in BIOCLIP_SUPPORTED_IMAGE_CONTENT_TYPES
+        ):
+            crop = self._review_species_crop_context(
+                session,
+                item,
+                media_asset_id=media_asset_id,
+            )
+        return _BioClipAttemptContext(
+            target_type=target_type,
+            target_id=target_id,
+            source_id=item.source_id,
+            stream_id=item.stream_id,
+            zone_id=(
+                item.zone_id
+                or item.primary_zone_id
+                or (evidence.zone_id if evidence is not None else None)
+            ),
+            event_id=item.event_id,
+            visit_id=item.visit_id if target_type == "visit" else None,
             media_asset_id=media_asset_id,
             motion_evidence_id=evidence.id if evidence is not None else None,
             crop=crop,
         )
+
+    def _create_bioclip_identification_attempt(
+        self,
+        attempt_context: _BioClipAttemptContext,
+    ) -> str:
+        """Persist the one durable start record before optional runtime work begins."""
+
+        attempt_id = f"bioclip-attempt-{uuid.uuid4().hex}"
+        config = _bioclip_config()
+        with self.session_factory() as session:
+            with session.begin():
+                session.add(
+                    BioClipIdentificationAttemptModel(
+                        id=attempt_id,
+                        target_type=attempt_context.target_type,
+                        target_id=attempt_context.target_id,
+                        event_id=attempt_context.event_id,
+                        visit_id=(
+                            attempt_context.visit_id
+                            if attempt_context.target_type == "visit"
+                            else None
+                        ),
+                        media_asset_id=attempt_context.media_asset_id,
+                        source_id=attempt_context.source_id,
+                        stream_id=attempt_context.stream_id,
+                        zone_id=attempt_context.zone_id,
+                        motion_evidence_id=attempt_context.motion_evidence_id,
+                        detection_proposal_id=(
+                            attempt_context.crop.detection_proposal_id
+                            if attempt_context.crop is not None
+                            else None
+                        ),
+                        resulting_species_suggestion_id=None,
+                        adapter_id=BIOCLIP_ADAPTER_ID,
+                        started_at=datetime.now(UTC),
+                        completed_at=None,
+                        duration_ms=None,
+                        timeout_limit_ms=round(BIOCLIP_RUN_TIMEOUT_SECONDS * 1000),
+                        timeout_exceeded=False,
+                        outcome=None,
+                        crop_source=(
+                            attempt_context.crop.source
+                            if attempt_context.crop is not None
+                            else None
+                        ),
+                        crop_provenance_json=(
+                            _bioclip_attempt_json(
+                                _initial_bioclip_crop_provenance(attempt_context.crop),
+                            )
+                            if attempt_context.crop is not None
+                            else None
+                        ),
+                        model_provenance_json=_bioclip_attempt_json(
+                            {
+                                "adapter_id": BIOCLIP_ADAPTER_ID,
+                                "adapter_name": BIOCLIP_ADAPTER_NAME,
+                                "device": (
+                                    "cpu"
+                                    if config.device == "cpu"
+                                    else "unvalidated"
+                                ),
+                                "prepared": False,
+                            },
+                        ),
+                        preprocessing_json=None,
+                        candidate_manifest_json=None,
+                        candidate_set_count=None,
+                        candidate_set_sha256=None,
+                        candidate_set_version=None,
+                        candidate_manifest_complete=False,
+                        error_code=None,
+                        error_stage=None,
+                        error_detail=None,
+                        provenance_schema_version=1,
+                    )
+                )
+                session.flush()
+        return attempt_id
+
+    def _complete_bioclip_identification_attempt(
+        self,
+        attempt_id: str,
+        *,
+        attempt_context: _BioClipAttemptContext,
+        outcome: str,
+        duration_ms: int | None,
+        timeout_exceeded: bool,
+        crop_provenance: dict[str, Any] | None = None,
+        prepared_run: BioClipPreparedRun | None = None,
+        prediction: BioClipPrediction | None = None,
+        resulting_species_suggestion_id: str | None = None,
+        error_code: str | None = None,
+        error_stage: str | None = None,
+        error_detail: str | None = None,
+    ) -> None:
+        with self.session_factory() as session:
+            with session.begin():
+                self._complete_bioclip_identification_attempt_in_session(
+                    session,
+                    attempt_id,
+                    attempt_context=attempt_context,
+                    outcome=outcome,
+                    duration_ms=duration_ms,
+                    timeout_exceeded=timeout_exceeded,
+                    crop_provenance=crop_provenance,
+                    prepared_run=prepared_run,
+                    prediction=prediction,
+                    resulting_species_suggestion_id=(resulting_species_suggestion_id),
+                    error_code=error_code,
+                    error_stage=error_stage,
+                    error_detail=error_detail,
+                )
+
+    def _record_bioclip_prepared_provenance(
+        self,
+        attempt_id: str,
+        *,
+        attempt_context: _BioClipAttemptContext,
+        prepared_run: BioClipPreparedRun,
+    ) -> None:
+        """Durably retain validated bank/model context before decode or inference."""
+
+        artifacts = _bioclip_attempt_artifacts(
+            prepared_run=prepared_run,
+            prediction=None,
+        )
+        with self.session_factory() as session:
+            with session.begin():
+                attempt = session.get(
+                    BioClipIdentificationAttemptModel,
+                    attempt_id,
+                )
+                if (
+                    attempt is None
+                    or attempt.outcome is not None
+                    or attempt.target_type != attempt_context.target_type
+                    or attempt.target_id != attempt_context.target_id
+                    or attempt.media_asset_id != attempt_context.media_asset_id
+                ):
+                    raise RuntimeError(
+                        "BioCLIP attempt cannot accept prepared provenance."
+                    )
+                attempt.model_provenance_json = _bioclip_attempt_json(
+                    artifacts["model_provenance"]
+                )
+                attempt.preprocessing_json = _bioclip_attempt_json(
+                    artifacts["preprocessing"]
+                )
+                attempt.candidate_manifest_json = _bioclip_attempt_json(
+                    artifacts["candidate_manifest"]
+                )
+                attempt.candidate_set_count = artifacts["candidate_set_count"]
+                attempt.candidate_set_sha256 = artifacts["candidate_set_sha256"]
+                attempt.candidate_set_version = artifacts["candidate_set_version"]
+                attempt.candidate_manifest_complete = artifacts[
+                    "candidate_manifest_complete"
+                ]
+                session.flush()
+
+    def _record_bioclip_input_provenance(
+        self,
+        attempt_id: str,
+        *,
+        attempt_context: _BioClipAttemptContext,
+        crop_provenance: dict[str, Any],
+    ) -> None:
+        """Durably retain the exact prepared crop before worker inference."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                attempt = session.get(
+                    BioClipIdentificationAttemptModel,
+                    attempt_id,
+                )
+                if (
+                    attempt is None
+                    or attempt.outcome is not None
+                    or attempt.target_type != attempt_context.target_type
+                    or attempt.target_id != attempt_context.target_id
+                    or attempt.media_asset_id != attempt_context.media_asset_id
+                ):
+                    raise RuntimeError(
+                        "BioCLIP attempt cannot accept input provenance."
+                    )
+                attempt.crop_provenance_json = _bioclip_attempt_json(crop_provenance)
+                session.flush()
+
+    def _complete_bioclip_identification_attempt_in_session(
+        self,
+        session: Session,
+        attempt_id: str,
+        *,
+        attempt_context: _BioClipAttemptContext,
+        outcome: str,
+        duration_ms: int | None,
+        timeout_exceeded: bool,
+        crop_provenance: dict[str, Any] | None = None,
+        prepared_run: BioClipPreparedRun | None = None,
+        prediction: BioClipPrediction | None = None,
+        resulting_species_suggestion_id: str | None = None,
+        error_code: str | None = None,
+        error_stage: str | None = None,
+        error_detail: str | None = None,
+    ) -> None:
+        attempt = session.get(BioClipIdentificationAttemptModel, attempt_id)
+        if attempt is None:
+            raise RuntimeError("BioCLIP attempt evidence is missing.")
+        if attempt.outcome is not None or attempt.completed_at is not None:
+            raise RuntimeError("BioCLIP attempt evidence is already terminal.")
+        if (
+            attempt.target_type != attempt_context.target_type
+            or attempt.target_id != attempt_context.target_id
+            or attempt.media_asset_id != attempt_context.media_asset_id
+        ):
+            raise RuntimeError("BioCLIP attempt linkage changed before completion.")
+        if (
+            resulting_species_suggestion_id is not None
+            and session.get(
+                SpeciesSuggestionModel,
+                resulting_species_suggestion_id,
+            )
+            is None
+        ):
+            raise RuntimeError("BioCLIP result suggestion is missing.")
+
+        effective_crop = (
+            crop_provenance
+            if crop_provenance is not None
+            else _initial_bioclip_crop_provenance(attempt_context.crop)
+        )
+        attempt.completed_at = datetime.now(UTC)
+        attempt.duration_ms = duration_ms
+        attempt.timeout_exceeded = timeout_exceeded
+        attempt.outcome = outcome
+        attempt.crop_source = (
+            attempt_context.crop.source if attempt_context.crop is not None else None
+        )
+        attempt.crop_provenance_json = (
+            _bioclip_attempt_json(effective_crop) if effective_crop else None
+        )
+        if prediction is not None or not attempt.candidate_manifest_complete:
+            artifacts = _bioclip_attempt_artifacts(
+                prepared_run=prepared_run,
+                prediction=prediction,
+            )
+            attempt.model_provenance_json = (
+                _bioclip_attempt_json(artifacts["model_provenance"])
+                if artifacts["model_provenance"]
+                else attempt.model_provenance_json
+            )
+            attempt.preprocessing_json = (
+                _bioclip_attempt_json(artifacts["preprocessing"])
+                if artifacts["preprocessing"]
+                else None
+            )
+            attempt.candidate_manifest_json = (
+                _bioclip_attempt_json(artifacts["candidate_manifest"])
+                if artifacts["candidate_manifest"]
+                else None
+            )
+            attempt.candidate_set_count = artifacts["candidate_set_count"]
+            attempt.candidate_set_sha256 = artifacts["candidate_set_sha256"]
+            attempt.candidate_set_version = artifacts["candidate_set_version"]
+            attempt.candidate_manifest_complete = artifacts[
+                "candidate_manifest_complete"
+            ]
+        attempt.resulting_species_suggestion_id = resulting_species_suggestion_id
+        attempt.error_code = error_code
+        attempt.error_stage = error_stage
+        attempt.error_detail = error_detail
+        session.flush()
+
+    def list_bioclip_identification_attempts(
+        self,
+        *,
+        target_type: str | None = None,
+        target_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return safe evidence summaries; attempt records have no mutation API."""
+
+        with self.session_factory() as session:
+            query = select(BioClipIdentificationAttemptModel)
+            if target_type is not None:
+                query = query.where(
+                    BioClipIdentificationAttemptModel.target_type == target_type.strip()
+                )
+            if target_id is not None:
+                query = query.where(
+                    BioClipIdentificationAttemptModel.target_id == target_id.strip()
+                )
+            attempts = session.scalars(
+                query.order_by(
+                    BioClipIdentificationAttemptModel.started_at,
+                    BioClipIdentificationAttemptModel.id,
+                )
+            ).all()
+            return [_bioclip_attempt_record(attempt) for attempt in attempts]
 
     def _review_species_crop_context(
         self,
@@ -7253,6 +7948,7 @@ class ProductRepository:
             "megadetector_model_format_unsupported",
         }
         unsupported_errors = {
+            "bioclip_crop_preparation_failed",
             "bioclip_input_too_large",
             "bioclip_media_changed",
             "bioclip_media_not_review_frame",
@@ -7268,7 +7964,11 @@ class ProductRepository:
         failed_errors = {
             "bioclip_failed",
             "bioclip_input_unavailable",
+            "bioclip_persistence_failed",
             "bioclip_runtime_unavailable",
+            "bioclip_timed_out",
+            "bioclip_unexpected_failure",
+            "bioclip_worker_failed",
             "local_detector_failed",
             "local_detector_runtime_unavailable",
             "megadetector_runtime_unavailable",
@@ -7280,7 +7980,20 @@ class ProductRepository:
             status = ReviewIdentificationStatus.running
             message = (
                 "Another species identification is already running. "
-                "No additional model process or evidence write was started."
+                "The cancelled attempt was recorded, and no second model process "
+                "or suggestion was created."
+            )
+        elif reason == "bioclip_no_result":
+            status = ReviewIdentificationStatus.no_proposal
+            message = (
+                "BioCLIP completed without a usable ranked suggestion. "
+                "The attempt was recorded and no truth was created."
+            )
+        elif reason == "bioclip_timed_out":
+            status = ReviewIdentificationStatus.failed
+            message = (
+                "BioCLIP exceeded its local run timeout. The timed-out attempt "
+                "was recorded and no truth was created."
             )
         elif reason in setup_errors:
             status = ReviewIdentificationStatus.setup_required
@@ -12203,6 +12916,333 @@ def _bioclip_media_file_matches_run_context(
     )
 
 
+def _elapsed_milliseconds(
+    started_monotonic_ns: int,
+    *,
+    excluded_ns: int = 0,
+) -> int:
+    return max(
+        0,
+        (time.monotonic_ns() - started_monotonic_ns - excluded_ns) // 1_000_000,
+    )
+
+
+def _initial_bioclip_crop_provenance(
+    crop: _ReviewSpeciesCropContext | None,
+) -> dict[str, Any]:
+    if crop is None:
+        return {}
+    value: dict[str, Any] = {
+        "source": crop.source,
+        "coordinate_space": "full_frame_normalized",
+        "normalized_box": crop.box_normalized.model_dump(),
+        "selection_reason": crop.label,
+        "used_for_inference": False,
+    }
+    if crop.detection_proposal_id is not None:
+        value["detection_proposal_id"] = crop.detection_proposal_id
+    return value
+
+
+def _candidate_bank_sha256(labels: tuple[str, ...]) -> str:
+    return hashlib.sha256("\n".join(labels).encode("utf-8")).hexdigest()
+
+
+def _bioclip_prediction_has_complete_candidate_bank(
+    prediction: BioClipPrediction,
+) -> bool:
+    labels = tuple(prediction.candidate_labels)
+    scores = tuple(prediction.candidate_scores)
+    if (
+        not labels
+        or len(labels) != prediction.provenance.label_count
+        or len(scores) != len(labels)
+        or _candidate_bank_sha256(labels) != prediction.provenance.labels_sha256
+    ):
+        return False
+    if any(
+        not isinstance(label, str) or not label.strip() or label != label.strip()
+        for label in labels
+    ):
+        return False
+    if any(
+        isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or not math.isfinite(float(score))
+        or float(score) < 0
+        or float(score) > 1
+        for score in scores
+    ):
+        return False
+
+    ranked_indexes = sorted(
+        range(len(labels)),
+        key=lambda index: (-float(scores[index]), index),
+    )
+    if len(prediction.suggestions) > len(ranked_indexes):
+        return False
+    for expected_rank, suggestion in enumerate(
+        prediction.suggestions,
+        start=1,
+    ):
+        candidate_index = ranked_indexes[expected_rank - 1]
+        if (
+            suggestion.rank != expected_rank
+            or suggestion.label != labels[candidate_index]
+            or suggestion.score != float(scores[candidate_index])
+            or suggestion.score_kind != BIOCLIP_SCORE_KIND
+            or suggestion.calibrated
+        ):
+            return False
+    return True
+
+
+def _bioclip_candidate_label_fields(raw_label: str) -> dict[str, str | None]:
+    normalized_raw = raw_label.strip()
+    common_name: str | None = normalized_raw
+    scientific_name: str | None = None
+    match = re.fullmatch(
+        r"(?P<common>.+?)\s+\("
+        r"(?P<scientific>[A-Z][A-Za-z.-]+(?:\s+[a-z][A-Za-z.-]+)+)"
+        r"\)",
+        normalized_raw,
+    )
+    if match is not None:
+        common_name = match.group("common").strip()
+        scientific_name = match.group("scientific").strip()
+    return {
+        "raw_label": normalized_raw,
+        "normalized_label": _freeform_label(common_name or normalized_raw),
+        "common_name": common_name,
+        "scientific_name": scientific_name,
+    }
+
+
+def _bioclip_candidate_manifest(
+    labels: tuple[str, ...],
+    scores: tuple[float, ...] | None,
+) -> list[dict[str, Any]]:
+    ranks_by_index: dict[int, int] = {}
+    if scores is not None and len(scores) == len(labels):
+        ranked_indexes = sorted(
+            range(len(labels)),
+            key=lambda index: (-float(scores[index]), index),
+        )
+        ranks_by_index = {
+            candidate_index: rank
+            for rank, candidate_index in enumerate(ranked_indexes, start=1)
+        }
+
+    manifest: list[dict[str, Any]] = []
+    for index, label in enumerate(labels):
+        fields = _bioclip_candidate_label_fields(label)
+        manifest.append(
+            {
+                "source_position": index + 1,
+                "raw_label": fields["raw_label"],
+                "prompt_input": fields["raw_label"],
+                "normalized_label": fields["normalized_label"],
+                "common_name": fields["common_name"],
+                "scientific_name": fields["scientific_name"],
+                "rank": ranks_by_index.get(index),
+                "score": (
+                    float(scores[index])
+                    if scores is not None and len(scores) == len(labels)
+                    else None
+                ),
+                "score_kind": BIOCLIP_SCORE_KIND,
+                "calibrated": False,
+            }
+        )
+    return manifest
+
+
+def _bioclip_attempt_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _safe_json_object(value: str | None) -> dict[str, Any]:
+    if value is None:
+        return {}
+    try:
+        decoded = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _bioclip_attempt_artifacts(
+    *,
+    prepared_run: BioClipPreparedRun | None,
+    prediction: BioClipPrediction | None,
+) -> dict[str, Any]:
+    prepared_value = asdict(prepared_run) if prepared_run is not None else {}
+    prepared_labels = tuple(prepared_value.pop("candidate_labels", ()))
+    preprocessing_config_json = prepared_value.pop(
+        "preprocessing_config_json",
+        None,
+    )
+    model_provenance = dict(prepared_value)
+    if prepared_run is not None:
+        model_provenance["prepared"] = True
+    if prediction is not None:
+        model_provenance.update(asdict(prediction.provenance))
+
+    preprocessing: dict[str, Any] = {}
+    if prepared_run is not None:
+        preprocessing = {
+            "preprocessing_id": prepared_run.preprocessing_id,
+            "preprocessing_sha256": prepared_run.preprocessing_sha256,
+            "config": _safe_json_object(preprocessing_config_json),
+        }
+    elif prediction is not None:
+        preprocessing = {
+            "preprocessing_id": prediction.provenance.preprocessing_id,
+            "preprocessing_sha256": (prediction.provenance.preprocessing_sha256),
+        }
+
+    labels = (
+        tuple(prediction.candidate_labels)
+        if prediction is not None and prediction.candidate_labels
+        else prepared_labels
+    )
+    scores = (
+        tuple(float(score) for score in prediction.candidate_scores)
+        if prediction is not None
+        and len(prediction.candidate_scores) == len(labels)
+        and labels
+        else None
+    )
+    computed_sha256 = _candidate_bank_sha256(labels) if labels else None
+    declared_sha256 = (
+        prepared_run.candidate_set_sha256
+        if prepared_run is not None
+        else prediction.provenance.labels_sha256
+        if prediction is not None
+        else None
+    )
+    declared_count = (
+        prepared_run.candidate_count
+        if prepared_run is not None
+        else prediction.provenance.label_count
+        if prediction is not None
+        else None
+    )
+    manifest_complete = bool(
+        labels and declared_count == len(labels) and declared_sha256 == computed_sha256
+    )
+    candidate_set_version = (
+        prepared_run.candidate_fingerprint_algorithm
+        if prepared_run is not None
+        else "ordered_trimmed_utf8_lf_sha256_v1"
+        if labels
+        else None
+    )
+    return {
+        "model_provenance": model_provenance,
+        "preprocessing": preprocessing,
+        "candidate_manifest": _bioclip_candidate_manifest(labels, scores),
+        "candidate_set_count": len(labels) if labels else None,
+        "candidate_set_sha256": computed_sha256,
+        "candidate_set_version": candidate_set_version,
+        "candidate_manifest_complete": manifest_complete,
+    }
+
+
+def _bioclip_attempt_failure_fields(
+    error_code: str,
+) -> tuple[str, str | None, str]:
+    return _BIOCLIP_ATTEMPT_ERROR_FIELDS.get(
+        error_code,
+        _BIOCLIP_ATTEMPT_ERROR_FIELDS["bioclip_unexpected_failure"],
+    )
+
+
+def _safe_bioclip_error_code(reason: str) -> str:
+    return (
+        reason
+        if reason in _BIOCLIP_ATTEMPT_ERROR_FIELDS
+        else "bioclip_unexpected_failure"
+    )
+
+
+def _safe_bioclip_revalidation_error_code(reason: str) -> str | None:
+    return (
+        reason
+        if reason
+        in {
+            "bioclip_media_changed",
+            "bioclip_media_not_review_frame",
+            "identification_zone_suppressed",
+            "missing_media_asset",
+            "missing_review_candidate",
+        }
+        else None
+    )
+
+
+def _bioclip_preflight_error_code(
+    summary: ReviewIdentificationSummary,
+) -> str:
+    reason = summary.unavailable_reason or ""
+    if reason == "identification_zone_suppressed":
+        return reason
+    if reason.startswith("unsupported_media_type"):
+        return "bioclip_unsupported_media_type"
+    if summary.setup_status == ModelAdapterSetupStatus.setup_required:
+        return "bioclip_not_configured"
+    if summary.adapter_status == ModelAdapterStatus.not_configured:
+        return "bioclip_not_configured"
+    return "bioclip_runtime_not_ready"
+
+
+def _bioclip_attempt_record(
+    attempt: BioClipIdentificationAttemptModel,
+) -> dict[str, Any]:
+    def decoded(value: str | None) -> Any:
+        if value is None:
+            return None
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return None
+
+    return {
+        "id": attempt.id,
+        "target_type": attempt.target_type,
+        "target_id": attempt.target_id,
+        "event_id": attempt.event_id,
+        "visit_id": attempt.visit_id,
+        "media_asset_id": attempt.media_asset_id,
+        "source_id": attempt.source_id,
+        "stream_id": attempt.stream_id,
+        "zone_id": attempt.zone_id,
+        "motion_evidence_id": attempt.motion_evidence_id,
+        "detection_proposal_id": attempt.detection_proposal_id,
+        "resulting_species_suggestion_id": (attempt.resulting_species_suggestion_id),
+        "adapter_id": attempt.adapter_id,
+        "started_at": attempt.started_at,
+        "completed_at": attempt.completed_at,
+        "duration_ms": attempt.duration_ms,
+        "timeout_limit_ms": attempt.timeout_limit_ms,
+        "timeout_exceeded": attempt.timeout_exceeded,
+        "outcome": attempt.outcome,
+        "crop_source": attempt.crop_source,
+        "crop_provenance": decoded(attempt.crop_provenance_json),
+        "model_provenance": decoded(attempt.model_provenance_json),
+        "preprocessing": decoded(attempt.preprocessing_json),
+        "candidate_manifest": decoded(attempt.candidate_manifest_json),
+        "candidate_set_count": attempt.candidate_set_count,
+        "candidate_set_sha256": attempt.candidate_set_sha256,
+        "candidate_set_version": attempt.candidate_set_version,
+        "candidate_manifest_complete": attempt.candidate_manifest_complete,
+        "error_code": attempt.error_code,
+        "error_stage": attempt.error_stage,
+        "error_detail": attempt.error_detail,
+        "provenance_schema_version": attempt.provenance_schema_version,
+    }
+
+
 def _load_bioclip_input_image(
     *,
     local_path: str,
@@ -12210,6 +13250,7 @@ def _load_bioclip_input_image(
     expected_mtime_ns: int,
     content_type: str,
     crop: _ReviewSpeciesCropContext,
+    observation: dict[str, Any] | None = None,
 ) -> Any:
     if content_type not in BIOCLIP_SUPPORTED_IMAGE_CONTENT_TYPES:
         raise ValueError("bioclip_unsupported_media_type")
@@ -12233,6 +13274,11 @@ def _load_bioclip_input_image(
     try:
         with Image.open(path) as source:
             width, height = source.size
+            if observation is not None:
+                observation["original_dimensions"] = {
+                    "width": width,
+                    "height": height,
+                }
             if (
                 width < 1
                 or height < 1
@@ -12265,14 +13311,31 @@ def _load_bioclip_input_image(
     top = max(0, min(height - 1, math.floor(box.y * height)))
     right = max(left + 1, min(width, math.ceil((box.x + box.width) * width)))
     bottom = max(top + 1, min(height, math.ceil((box.y + box.height) * height)))
+    if observation is not None:
+        observation.update(
+            {
+                "pixel_box": {
+                    "x": left,
+                    "y": top,
+                    "width": right - left,
+                    "height": bottom - top,
+                    "right": right,
+                    "bottom": bottom,
+                },
+                "effective_dimensions": {
+                    "width": right - left,
+                    "height": bottom - top,
+                },
+            }
+        )
     try:
         result = rgb.crop((left, top, right, bottom)).copy()
     except Exception as error:
-        raise BioClipUnsupportedImageError(
-            "BioCLIP could not prepare the bounded in-memory crop."
-        ) from error
+        raise ValueError("bioclip_crop_preparation_failed") from error
     finally:
         rgb.close()
+    if observation is not None:
+        observation["used_for_inference"] = True
     return result
 
 

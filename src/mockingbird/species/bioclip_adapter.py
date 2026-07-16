@@ -9,6 +9,8 @@ run, and every runtime artifact must already exist at an explicit local path.
 from __future__ import annotations
 
 import ast
+import base64
+import binascii
 from dataclasses import dataclass
 import hashlib
 import hmac
@@ -21,6 +23,7 @@ from multiprocessing import shared_memory
 import os
 from pathlib import Path
 import re
+import struct
 import threading
 from types import ModuleType
 from typing import Any, Callable, Literal
@@ -28,8 +31,13 @@ import zipfile
 
 BIOCLIP_ADAPTER_ID = "bioclip_2"
 BIOCLIP_ADAPTER_NAME = "BioCLIP 2"
+BIOCLIP_ADAPTER_CONTRACT_VERSION = 1
 BIOCLIP_MODEL_NAME = "BioCLIP 2 local"
+BIOCLIP_ARCHITECTURE_ID = "bioclip-2-vit-l-14"
+BIOCLIP_PREPROCESSING_ID = "openclip-bioclip-2-vit-l-14-v1"
 BIOCLIP_SCORE_KIND = "candidate_relative_softmax"
+BIOCLIP_CANDIDATE_FINGERPRINT_ALGORITHM = "sha256-newline-joined-utf8-v1"
+BIOCLIP_FULL_SCORE_ENCODING = "float64-le-base64-v1"
 BIOCLIP_MAX_TOP_K = 20
 BIOCLIP_MAX_LABEL_COUNT = 10_000
 BIOCLIP_MAX_LABEL_LENGTH = 512
@@ -41,7 +49,7 @@ BIOCLIP_MAX_EMBEDDING_CACHE_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
 BIOCLIP_EMBEDDING_DIMENSION = 768
 BIOCLIP_MAX_CACHE_METADATA_MEMBER_BYTES = 4 * 1024
 BIOCLIP_MAX_IMAGE_PIXELS = 16_777_216
-BIOCLIP_MAX_RESULT_BYTES = 128 * 1024
+BIOCLIP_MAX_RESULT_BYTES = 256 * 1024
 BIOCLIP_RUN_TIMEOUT_SECONDS = 120.0
 BIOCLIP_WORKER_STOP_GRACE_SECONDS = 5.0
 BIOCLIP_OPEN_CLIP_VERSION_SERIES = "3.3"
@@ -100,6 +108,15 @@ _EXPECTED_BIOCLIP_PREPROCESS_CONFIG = {
     "interpolation": "bicubic",
     "resize_mode": "shortest",
 }
+BIOCLIP_PREPROCESSING_CONFIG_JSON = json.dumps(
+    _EXPECTED_BIOCLIP_PREPROCESS_CONFIG,
+    ensure_ascii=False,
+    separators=(",", ":"),
+    sort_keys=True,
+)
+BIOCLIP_PREPROCESSING_SHA256 = hashlib.sha256(
+    BIOCLIP_PREPROCESSING_CONFIG_JSON.encode("utf-8")
+).hexdigest()
 _SCIENTIFIC_LABEL = re.compile(
     r"^(?P<common>.+?)\s+\("
     r"(?P<scientific>[A-Z][A-Za-z.-]+(?:\s+[a-z][A-Za-z.-]+)+)"
@@ -112,29 +129,92 @@ BioClipAdapterStatusValue = Literal["available", "not_configured", "unavailable"
 class BioClipError(RuntimeError):
     """Base error for bounded BioCLIP adapter failures."""
 
+    error_code = "bioclip_failed"
+    error_stage = "inference"
+
 
 class BioClipConfigurationError(BioClipError):
     """Raised when explicit local runtime configuration is incomplete or invalid."""
+
+    error_code = "bioclip_configuration"
+    error_stage = "configuration"
 
 
 class BioClipRuntimeUnavailableError(BioClipError):
     """Raised when the optional local runtime cannot be imported or loaded."""
 
+    error_code = "bioclip_runtime_unavailable"
+    error_stage = "model_load"
+
 
 class BioClipBusyError(BioClipRuntimeUnavailableError):
     """Raised when another one-shot BioCLIP request already owns the runtime."""
+
+    error_code = "bioclip_busy"
+    error_stage = "process_startup"
 
 
 class BioClipTimeoutError(BioClipRuntimeUnavailableError):
     """Raised when a one-shot model worker exceeds its hard time limit."""
 
+    error_code = "bioclip_timed_out"
+    error_stage = "inference"
+
+
+class BioClipWorkerFailureError(BioClipRuntimeUnavailableError):
+    """Raised when the isolated worker fails outside a narrower typed outcome."""
+
+    error_code = "bioclip_worker_failed"
+    error_stage = "inference"
+
 
 class BioClipUnsupportedImageError(BioClipError):
     """Raised when the caller did not supply a supported in-memory image."""
 
+    error_code = "bioclip_unsupported_image"
+    error_stage = "input_preparation"
+
+
+class BioClipNoResultError(BioClipError):
+    """Raised when a valid run completes without any candidate scores."""
+
+    error_code = "bioclip_no_result"
+    error_stage = "output_parsing"
+
 
 class BioClipOutputError(BioClipError):
     """Raised when the optional runtime returns unusable inference output."""
+
+    error_code = "bioclip_invalid_output"
+    error_stage = "output_parsing"
+
+
+_WORKER_ERROR_DETAILS: dict[str, tuple[str, str]] = {
+    "configuration": (
+        "BioCLIP worker configuration validation failed.",
+        "configuration",
+    ),
+    "runtime_unavailable": (
+        "BioCLIP optional runtime was unavailable in the isolated worker.",
+        "model_load",
+    ),
+    "unsupported_image": (
+        "BioCLIP worker could not prepare the bounded in-memory image.",
+        "input_preparation",
+    ),
+    "no_result": (
+        "BioCLIP completed without candidate scores.",
+        "output_parsing",
+    ),
+    "output": (
+        "BioCLIP worker returned invalid bounded model output.",
+        "output_parsing",
+    ),
+    "unexpected": (
+        "BioCLIP one-shot worker failed safely.",
+        "inference",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -195,6 +275,13 @@ class BioClipProvenance:
     prompt_recipe_sha256: str
     score_kind: str
     calibrated: bool
+    adapter_contract_version: int = BIOCLIP_ADAPTER_CONTRACT_VERSION
+    architecture_id: str = BIOCLIP_ARCHITECTURE_ID
+    preprocessing_id: str = BIOCLIP_PREPROCESSING_ID
+    preprocessing_sha256: str = BIOCLIP_PREPROCESSING_SHA256
+    pillow_version: str | None = None
+    numpy_version: str | None = None
+    model_weights_verified: bool = True
 
 
 @dataclass(frozen=True)
@@ -203,6 +290,39 @@ class BioClipPrediction:
 
     suggestions: tuple[BioClipRankedSuggestion, ...]
     provenance: BioClipProvenance
+    candidate_labels: tuple[str, ...] = ()
+    candidate_scores: tuple[float, ...] = ()
+
+
+@dataclass(frozen=True)
+class BioClipPreparedRun:
+    """Safe, complete attempt context available before image decoding."""
+
+    adapter_id: str
+    adapter_name: str
+    adapter_contract_version: int
+    model_name: str
+    architecture_id: str
+    device: str
+    candidate_labels: tuple[str, ...]
+    candidate_count: int
+    candidate_set_sha256: str
+    candidate_fingerprint_algorithm: str
+    embedding_cache_sha256: str
+    model_config_sha256: str
+    model_weights_sha256: str
+    model_weights_name: str
+    model_weights_verified: bool
+    prompt_recipe_id: str
+    prompt_recipe_sha256: str
+    preprocessing_id: str
+    preprocessing_sha256: str
+    preprocessing_config_json: str
+    timeout_seconds: float
+    open_clip_version: str | None
+    torch_version: str | None
+    pillow_version: str | None
+    numpy_version: str | None
 
 
 @dataclass(frozen=True)
@@ -316,9 +436,7 @@ def get_bioclip_status(
         )
 
     open_clip_version = _installed_open_clip_distribution_version()
-    if open_clip_version is None or not _supports_open_clip_version(
-        open_clip_version
-    ):
+    if open_clip_version is None or not _supports_open_clip_version(open_clip_version):
         return _status(
             config,
             status="unavailable",
@@ -363,17 +481,29 @@ def run_bioclip_from_image_loader(
     image_loader: Callable[[], Any],
     config: BioClipAdapterConfig | None,
     top_k: int = 3,
+    *,
+    on_prepared: Callable[[BioClipPreparedRun], None] | None = None,
 ) -> BioClipPrediction:
-    """Reserve the one-run slot before decoding a loader-owned image."""
+    """Reserve, validate, and expose safe context before decoding an image."""
 
     if not callable(image_loader):
         raise BioClipConfigurationError("BioCLIP image_loader must be callable.")
+    if on_prepared is not None and not callable(on_prepared):
+        raise BioClipConfigurationError("BioCLIP on_prepared must be callable.")
     validated_config = _validate_run_request(config, top_k)
     _acquire_run_lock()
     image: Any | None = None
     try:
+        validated = _validate_config_files(validated_config)
+        if on_prepared is not None:
+            on_prepared(_prepared_run_from_validated(validated))
         image = image_loader()
-        return _run_bioclip_locked(image, validated_config, top_k)
+        return _run_bioclip_locked(
+            image,
+            validated_config,
+            top_k,
+            validated=validated,
+        )
     finally:
         try:
             if image is not None:
@@ -415,8 +545,11 @@ def _run_bioclip_locked(
     image: Any,
     config: BioClipAdapterConfig,
     top_k: int,
+    *,
+    validated: _ValidatedConfig | None = None,
 ) -> BioClipPrediction:
-    validated = _validate_config_files(config)
+    if validated is None:
+        validated = _validate_config_files(config)
     missing_runtime = _missing_runtime_packages()
     if missing_runtime:
         raise BioClipRuntimeUnavailableError(
@@ -431,6 +564,42 @@ def _run_bioclip_locked(
         config,
         top_k,
         validated=validated,
+    )
+
+
+def _prepared_run_from_validated(
+    validated: _ValidatedConfig,
+) -> BioClipPreparedRun:
+    if validated.embedding_cache_sha256 is None:
+        raise BioClipConfigurationError(
+            "BioCLIP embedding-cache provenance could not be established."
+        )
+    return BioClipPreparedRun(
+        adapter_id=BIOCLIP_ADAPTER_ID,
+        adapter_name=BIOCLIP_ADAPTER_NAME,
+        adapter_contract_version=BIOCLIP_ADAPTER_CONTRACT_VERSION,
+        model_name=BIOCLIP_MODEL_NAME,
+        architecture_id=BIOCLIP_ARCHITECTURE_ID,
+        device="cpu",
+        candidate_labels=validated.labels,
+        candidate_count=len(validated.labels),
+        candidate_set_sha256=validated.labels_sha256,
+        candidate_fingerprint_algorithm=(BIOCLIP_CANDIDATE_FINGERPRINT_ALGORITHM),
+        embedding_cache_sha256=validated.embedding_cache_sha256,
+        model_config_sha256=validated.model_config_sha256,
+        model_weights_sha256=validated.expected_model_weights_sha256,
+        model_weights_name=validated.model_weights_path.name,
+        model_weights_verified=False,
+        prompt_recipe_id=BIOCLIP_PROMPT_RECIPE_ID,
+        prompt_recipe_sha256=BIOCLIP_PROMPT_RECIPE_SHA256,
+        preprocessing_id=BIOCLIP_PREPROCESSING_ID,
+        preprocessing_sha256=BIOCLIP_PREPROCESSING_SHA256,
+        preprocessing_config_json=BIOCLIP_PREPROCESSING_CONFIG_JSON,
+        timeout_seconds=BIOCLIP_RUN_TIMEOUT_SECONDS,
+        open_clip_version=_installed_distribution_version("open-clip-torch"),
+        torch_version=_installed_distribution_version("torch"),
+        pillow_version=_installed_distribution_version("Pillow"),
+        numpy_version=_installed_distribution_version("numpy"),
     )
 
 
@@ -469,6 +638,14 @@ def _run_bioclip_in_process(
         runtime_modules.torch,
         package_name="PyTorch",
     )
+    pillow_version = _optional_runtime_package_version(
+        runtime_modules.image_module,
+        distribution_name="Pillow",
+    )
+    numpy_version = _optional_runtime_package_version(
+        runtime_modules.numpy,
+        distribution_name="numpy",
+    )
     scores = _infer_scores(runtime, prepared_image)
     suggestions = _rank_suggestions(
         validated.labels,
@@ -494,7 +671,16 @@ def _run_bioclip_in_process(
             prompt_recipe_sha256=BIOCLIP_PROMPT_RECIPE_SHA256,
             score_kind=BIOCLIP_SCORE_KIND,
             calibrated=False,
+            adapter_contract_version=BIOCLIP_ADAPTER_CONTRACT_VERSION,
+            architecture_id=BIOCLIP_ARCHITECTURE_ID,
+            preprocessing_id=BIOCLIP_PREPROCESSING_ID,
+            preprocessing_sha256=BIOCLIP_PREPROCESSING_SHA256,
+            pillow_version=pillow_version,
+            numpy_version=numpy_version,
+            model_weights_verified=True,
         ),
+        candidate_labels=validated.labels,
+        candidate_scores=tuple(scores),
     )
 
 
@@ -596,19 +782,18 @@ def _bioclip_worker(
         )
         prediction = _run_bioclip_in_process(image, config, top_k)
         payload = _prediction_to_worker_payload(prediction)
-    except BioClipConfigurationError as error:
-        payload = _worker_error("configuration", str(error))
-    except BioClipRuntimeUnavailableError as error:
-        payload = _worker_error("runtime_unavailable", str(error))
-    except BioClipUnsupportedImageError as error:
-        payload = _worker_error("unsupported_image", str(error))
-    except BioClipOutputError as error:
-        payload = _worker_error("output", str(error))
+    except BioClipConfigurationError:
+        payload = _worker_error("configuration")
+    except BioClipRuntimeUnavailableError:
+        payload = _worker_error("runtime_unavailable")
+    except BioClipUnsupportedImageError:
+        payload = _worker_error("unsupported_image")
+    except BioClipNoResultError:
+        payload = _worker_error("no_result")
+    except BioClipOutputError:
+        payload = _worker_error("output")
     except Exception:
-        payload = _worker_error(
-            "unexpected",
-            "BioCLIP one-shot worker failed safely.",
-        )
+        payload = _worker_error("unexpected")
 
     try:
         encoded = json.dumps(
@@ -618,10 +803,7 @@ def _bioclip_worker(
         ).encode("utf-8")
         if len(encoded) > BIOCLIP_MAX_RESULT_BYTES:
             encoded = json.dumps(
-                _worker_error(
-                    "output",
-                    "BioCLIP result exceeded the bounded response size.",
-                ),
+                _worker_error("output"),
                 separators=(",", ":"),
             ).encode("utf-8")
         send_connection.send_bytes(encoded)
@@ -640,8 +822,10 @@ def _enforce_worker_offline_environment() -> None:
 
 
 def _prediction_to_worker_payload(prediction: BioClipPrediction) -> dict[str, Any]:
+    candidate_scores = _encode_candidate_scores(prediction)
     return {
         "ok": True,
+        "candidate_scores": candidate_scores,
         "suggestions": [
             {
                 "rank": suggestion.rank,
@@ -663,9 +847,7 @@ def _prediction_to_worker_payload(prediction: BioClipPrediction) -> dict[str, An
             "torch_version": prediction.provenance.torch_version,
             "label_count": prediction.provenance.label_count,
             "labels_sha256": prediction.provenance.labels_sha256,
-            "embedding_cache_sha256": (
-                prediction.provenance.embedding_cache_sha256
-            ),
+            "embedding_cache_sha256": (prediction.provenance.embedding_cache_sha256),
             "model_config_sha256": prediction.provenance.model_config_sha256,
             "model_weights_sha256": prediction.provenance.model_weights_sha256,
             "model_weights_name": prediction.provenance.model_weights_name,
@@ -673,7 +855,52 @@ def _prediction_to_worker_payload(prediction: BioClipPrediction) -> dict[str, An
             "prompt_recipe_sha256": prediction.provenance.prompt_recipe_sha256,
             "score_kind": prediction.provenance.score_kind,
             "calibrated": prediction.provenance.calibrated,
+            "adapter_contract_version": (
+                prediction.provenance.adapter_contract_version
+            ),
+            "architecture_id": prediction.provenance.architecture_id,
+            "preprocessing_id": prediction.provenance.preprocessing_id,
+            "preprocessing_sha256": (prediction.provenance.preprocessing_sha256),
+            "pillow_version": prediction.provenance.pillow_version,
+            "numpy_version": prediction.provenance.numpy_version,
+            "model_weights_verified": (prediction.provenance.model_weights_verified),
         },
+    }
+
+
+def _encode_candidate_scores(
+    prediction: BioClipPrediction,
+) -> dict[str, Any]:
+    labels = prediction.candidate_labels
+    scores = prediction.candidate_scores
+    if (
+        not labels
+        or len(labels) != len(scores)
+        or len(labels) != prediction.provenance.label_count
+        or len(labels) > BIOCLIP_MAX_LABEL_COUNT
+        or _label_sha256(labels) != prediction.provenance.labels_sha256
+        or any(
+            isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or not math.isfinite(float(score))
+            or float(score) < 0
+            or float(score) > 1
+            for score in scores
+        )
+    ):
+        raise BioClipOutputError(
+            "BioCLIP candidate-score evidence is incomplete or invalid."
+        )
+    try:
+        packed = struct.pack(f"<{len(scores)}d", *(float(score) for score in scores))
+    except (OverflowError, struct.error, TypeError, ValueError) as error:
+        raise BioClipOutputError(
+            "BioCLIP candidate-score evidence could not be encoded safely."
+        ) from error
+    return {
+        "encoding": BIOCLIP_FULL_SCORE_ENCODING,
+        "count": len(scores),
+        "data": base64.b64encode(packed).decode("ascii"),
     }
 
 
@@ -683,6 +910,12 @@ def _decode_worker_result(
     validated: _ValidatedConfig,
     top_k: int,
 ) -> BioClipPrediction:
+    if not isinstance(encoded, bytes):
+        raise BioClipOutputError("BioCLIP worker returned an invalid bounded response.")
+    if len(encoded) > BIOCLIP_MAX_RESULT_BYTES:
+        raise BioClipOutputError(
+            "BioCLIP worker response exceeded the bounded response size."
+        )
     try:
         payload = json.loads(encoded.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as error:
@@ -696,6 +929,7 @@ def _decode_worker_result(
 
     suggestions_value = payload.get("suggestions")
     provenance_value = payload.get("provenance")
+    candidate_scores_value = payload.get("candidate_scores")
     if (
         not isinstance(suggestions_value, list)
         or not isinstance(provenance_value, dict)
@@ -703,6 +937,10 @@ def _decode_worker_result(
     ):
         raise BioClipOutputError("BioCLIP worker returned an invalid response.")
 
+    candidate_scores = _decode_candidate_scores(
+        candidate_scores_value,
+        expected_count=len(validated.labels),
+    )
     suggestions = tuple(
         _suggestion_from_worker_value(
             value,
@@ -712,12 +950,77 @@ def _decode_worker_result(
         for index, value in enumerate(suggestions_value, start=1)
     )
     if not suggestions:
-        raise BioClipOutputError("BioCLIP worker returned no ranked suggestions.")
+        raise BioClipNoResultError("BioCLIP worker returned no ranked suggestions.")
+    expected_suggestions = _rank_suggestions(
+        validated.labels,
+        list(candidate_scores),
+        top_k=min(top_k, len(validated.labels)),
+    )
+    if suggestions != expected_suggestions:
+        raise BioClipOutputError(
+            "BioCLIP worker rankings did not match the complete candidate scores."
+        )
     provenance = _provenance_from_worker_value(
         provenance_value,
         validated=validated,
     )
-    return BioClipPrediction(suggestions=suggestions, provenance=provenance)
+    return BioClipPrediction(
+        suggestions=suggestions,
+        provenance=provenance,
+        candidate_labels=validated.labels,
+        candidate_scores=candidate_scores,
+    )
+
+
+def _decode_candidate_scores(
+    value: Any,
+    *,
+    expected_count: int,
+) -> tuple[float, ...]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"encoding", "count", "data"}
+        or value.get("encoding") != BIOCLIP_FULL_SCORE_ENCODING
+    ):
+        raise BioClipOutputError(
+            "BioCLIP worker returned invalid candidate-score transport."
+        )
+    count = value.get("count")
+    data = value.get("data")
+    maximum_encoded_length = ((BIOCLIP_MAX_LABEL_COUNT * 8 + 2) // 3) * 4
+    if (
+        isinstance(count, bool)
+        or not isinstance(count, int)
+        or count != expected_count
+        or count < 1
+        or count > BIOCLIP_MAX_LABEL_COUNT
+        or not isinstance(data, str)
+        or len(data) > maximum_encoded_length
+    ):
+        raise BioClipOutputError(
+            "BioCLIP worker returned invalid candidate-score transport."
+        )
+    try:
+        packed = base64.b64decode(data.encode("ascii"), validate=True)
+    except (UnicodeEncodeError, binascii.Error, ValueError) as error:
+        raise BioClipOutputError(
+            "BioCLIP worker returned invalid candidate-score transport."
+        ) from error
+    if len(packed) != count * 8:
+        raise BioClipOutputError(
+            "BioCLIP worker returned invalid candidate-score transport."
+        )
+    try:
+        scores = tuple(struct.unpack(f"<{count}d", packed))
+    except struct.error as error:
+        raise BioClipOutputError(
+            "BioCLIP worker returned invalid candidate-score transport."
+        ) from error
+    if any(not math.isfinite(score) or score < 0 or score > 1 for score in scores):
+        raise BioClipOutputError(
+            "BioCLIP worker returned invalid candidate-score transport."
+        )
+    return scores
 
 
 def _suggestion_from_worker_value(
@@ -780,11 +1083,24 @@ def _provenance_from_worker_value(
         )
     open_clip_version = value.get("open_clip_version")
     torch_version = value.get("torch_version")
-    if not _is_runtime_version(open_clip_version) or not _is_runtime_version(
-        torch_version
+    pillow_version = value.get("pillow_version")
+    numpy_version = value.get("numpy_version")
+    if (
+        not _is_runtime_version(open_clip_version)
+        or not _is_runtime_version(torch_version)
+        or not _is_optional_runtime_version(pillow_version)
+        or not _is_optional_runtime_version(numpy_version)
     ):
         raise BioClipOutputError(
             "BioCLIP worker returned invalid runtime-version provenance."
+        )
+    if (
+        isinstance(value.get("adapter_contract_version"), bool)
+        or value.get("adapter_contract_version") != BIOCLIP_ADAPTER_CONTRACT_VERSION
+        or value.get("model_weights_verified") is not True
+    ):
+        raise BioClipOutputError(
+            "BioCLIP worker returned invalid adapter-contract provenance."
         )
     expected = {
         "adapter_id": BIOCLIP_ADAPTER_ID,
@@ -803,8 +1119,17 @@ def _provenance_from_worker_value(
         "prompt_recipe_sha256": BIOCLIP_PROMPT_RECIPE_SHA256,
         "score_kind": BIOCLIP_SCORE_KIND,
         "calibrated": False,
+        "adapter_contract_version": BIOCLIP_ADAPTER_CONTRACT_VERSION,
+        "architecture_id": BIOCLIP_ARCHITECTURE_ID,
+        "preprocessing_id": BIOCLIP_PREPROCESSING_ID,
+        "preprocessing_sha256": BIOCLIP_PREPROCESSING_SHA256,
+        "pillow_version": pillow_version,
+        "numpy_version": numpy_version,
+        "model_weights_verified": True,
     }
-    if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+    if any(
+        value.get(key) != expected_value for key, expected_value in expected.items()
+    ):
         raise BioClipOutputError(
             "BioCLIP worker provenance did not match the configured local artifacts."
         )
@@ -814,18 +1139,19 @@ def _provenance_from_worker_value(
 def _raise_worker_error(payload: dict[str, Any]) -> None:
     error_type = payload.get("error_type")
     detail = payload.get("detail")
-    if (
-        not isinstance(error_type, str)
-        or not isinstance(detail, str)
-        or len(detail) > 2_000
-    ):
+    stage = payload.get("stage")
+    expected_detail = (
+        _WORKER_ERROR_DETAILS.get(error_type) if isinstance(error_type, str) else None
+    )
+    if expected_detail is None or (detail, stage) != expected_detail:
         raise BioClipOutputError("BioCLIP worker returned an invalid error response.")
     error_classes: dict[str, type[BioClipError]] = {
         "configuration": BioClipConfigurationError,
         "runtime_unavailable": BioClipRuntimeUnavailableError,
         "unsupported_image": BioClipUnsupportedImageError,
+        "no_result": BioClipNoResultError,
         "output": BioClipOutputError,
-        "unexpected": BioClipRuntimeUnavailableError,
+        "unexpected": BioClipWorkerFailureError,
     }
     error_class = error_classes.get(error_type)
     if error_class is None:
@@ -833,11 +1159,15 @@ def _raise_worker_error(payload: dict[str, Any]) -> None:
     raise error_class(detail)
 
 
-def _worker_error(error_type: str, detail: str) -> dict[str, Any]:
+def _worker_error(error_type: str) -> dict[str, Any]:
+    if error_type not in _WORKER_ERROR_DETAILS:
+        error_type = "unexpected"
+    detail, stage = _WORKER_ERROR_DETAILS[error_type]
     return {
         "ok": False,
         "error_type": error_type,
-        "detail": detail[:2_000],
+        "stage": stage,
+        "detail": detail,
     }
 
 
@@ -905,9 +1235,7 @@ def _read_shared_image_payload(
         or not payload.shared_memory_name
         or len(payload.shared_memory_name) > 256
     ):
-        raise BioClipUnsupportedImageError(
-            "BioCLIP worker image metadata is invalid."
-        )
+        raise BioClipUnsupportedImageError("BioCLIP worker image metadata is invalid.")
     try:
         buffer = shared_memory.SharedMemory(
             name=payload.shared_memory_name,
@@ -992,10 +1320,7 @@ def _validate_config_files(
         raise BioClipConfigurationError(
             "BioCLIP embedding cache must be a precomputed .npz file."
         )
-    if (
-        _file_identity(embedding_cache_path)[0]
-        > BIOCLIP_MAX_EMBEDDING_CACHE_BYTES
-    ):
+    if _file_identity(embedding_cache_path)[0] > BIOCLIP_MAX_EMBEDDING_CACHE_BYTES:
         raise BioClipConfigurationError(
             "BioCLIP embedding cache exceeds the bounded local cache size."
         )
@@ -1269,7 +1594,9 @@ def _read_labels(path: Path) -> tuple[str, ...]:
     if len(labels) > BIOCLIP_MAX_LABEL_COUNT:
         raise BioClipConfigurationError("BioCLIP labels file contains too many labels.")
     if any(len(label) > BIOCLIP_MAX_LABEL_LENGTH for label in labels):
-        raise BioClipConfigurationError("BioCLIP labels file contains an oversized label.")
+        raise BioClipConfigurationError(
+            "BioCLIP labels file contains an oversized label."
+        )
     folded = [label.casefold() for label in labels]
     if len(set(folded)) != len(folded):
         raise BioClipConfigurationError(
@@ -1428,18 +1755,32 @@ def _runtime_package_version(module: ModuleType, *, package_name: str) -> str:
     return version
 
 
-def _installed_open_clip_distribution_version() -> str | None:
+def _optional_runtime_package_version(
+    module: Any,
+    *,
+    distribution_name: str,
+) -> str | None:
+    version = getattr(module, "__version__", None)
+    if _is_runtime_version(version):
+        return version
+    return _installed_distribution_version(distribution_name)
+
+
+def _installed_distribution_version(distribution_name: str) -> str | None:
     try:
-        version = metadata.version("open-clip-torch")
+        version = metadata.version(distribution_name)
     except (metadata.PackageNotFoundError, OSError, ValueError):
         return None
     return version if _is_runtime_version(version) else None
 
 
+def _installed_open_clip_distribution_version() -> str | None:
+    return _installed_distribution_version("open-clip-torch")
+
+
 def _supports_open_clip_version(version: str) -> bool:
-    return (
-        version == BIOCLIP_OPEN_CLIP_VERSION_SERIES
-        or version.startswith(f"{BIOCLIP_OPEN_CLIP_VERSION_SERIES}.")
+    return version == BIOCLIP_OPEN_CLIP_VERSION_SERIES or version.startswith(
+        f"{BIOCLIP_OPEN_CLIP_VERSION_SERIES}."
     )
 
 
@@ -1449,6 +1790,10 @@ def _is_runtime_version(value: object) -> bool:
         and 1 <= len(value) <= 128
         and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_-]*", value) is not None
     )
+
+
+def _is_optional_runtime_version(value: object) -> bool:
+    return value is None or _is_runtime_version(value)
 
 
 def _load_pillow_runtime() -> ModuleType:
@@ -1524,9 +1869,13 @@ def _load_runtime(
 
 def _infer_scores(runtime: _LoadedRuntime, image: Any) -> list[float]:
     try:
-        prepared = runtime.preprocess(image).unsqueeze(0).to(
-            device="cpu",
-            dtype=runtime.torch.float32,
+        prepared = (
+            runtime.preprocess(image)
+            .unsqueeze(0)
+            .to(
+                device="cpu",
+                dtype=runtime.torch.float32,
+            )
         )
         with runtime.torch.inference_mode():
             image_features = runtime.model.encode_image(prepared)
@@ -1544,12 +1893,16 @@ def _infer_scores(runtime: _LoadedRuntime, image: Any) -> list[float]:
     except Exception as error:  # pragma: no cover - depends on optional model runtime.
         raise BioClipOutputError("BioCLIP inference failed safely.") from error
 
-    if not isinstance(values, list) or not values:
-        raise BioClipOutputError("BioCLIP returned no candidate scores.")
+    if not isinstance(values, list):
+        raise BioClipOutputError("BioCLIP returned invalid candidate scores.")
+    if not values:
+        raise BioClipNoResultError("BioCLIP returned no candidate scores.")
     try:
         scores = [float(value) for value in values]
     except (TypeError, ValueError) as error:
-        raise BioClipOutputError("BioCLIP returned invalid candidate scores.") from error
+        raise BioClipOutputError(
+            "BioCLIP returned invalid candidate scores."
+        ) from error
     if any(not math.isfinite(score) or score < 0 or score > 1 for score in scores):
         raise BioClipOutputError("BioCLIP returned invalid candidate scores.")
     return scores
@@ -1669,7 +2022,9 @@ def _file_sha256(path: Path) -> str:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
     except OSError as error:
-        raise BioClipConfigurationError("BioCLIP local artifact could not be read.") from error
+        raise BioClipConfigurationError(
+            "BioCLIP local artifact could not be read."
+        ) from error
     return digest.hexdigest()
 
 
@@ -1677,7 +2032,9 @@ def _file_identity(path: Path) -> tuple[int, int]:
     try:
         stat = path.stat()
     except OSError as error:
-        raise BioClipConfigurationError("BioCLIP local artifact is unavailable.") from error
+        raise BioClipConfigurationError(
+            "BioCLIP local artifact is unavailable."
+        ) from error
     return (stat.st_size, stat.st_mtime_ns)
 
 

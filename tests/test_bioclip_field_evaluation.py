@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -17,6 +19,7 @@ from mockingbird.species.bioclip_adapter import (
 )
 from mockingbird.species.bioclip_evaluation import (
     EvaluationConfig,
+    StoredBioClipAttempt,
     StoredReviewLabel,
     StoredSpeciesSuggestion,
     TaxonomyDescriptor,
@@ -26,9 +29,7 @@ from mockingbird.species.bioclip_evaluation import (
 from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION
 
 SCRIPT_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "scripts"
-    / "evaluate_bioclip_field_truth.py"
+    Path(__file__).resolve().parents[1] / "scripts" / "evaluate_bioclip_field_truth.py"
 )
 SCRIPT_SPEC = importlib.util.spec_from_file_location(
     "evaluate_bioclip_field_truth_script",
@@ -168,11 +169,106 @@ def taxonomy() -> tuple[TaxonomyDescriptor, ...]:
     )
 
 
+def candidate_manifest(
+    labels: tuple[str, ...] = (
+        "northern_cardinal",
+        "blue_jay",
+        "unknown_bird",
+        "vehicle",
+    ),
+) -> tuple[dict[str, Any], ...]:
+    scores = (0.7, 0.2, 0.08, 0.02)
+    ranking = sorted(
+        range(len(labels)),
+        key=lambda index: (-scores[index], index),
+    )
+    ranks = {
+        candidate_index: rank for rank, candidate_index in enumerate(ranking, start=1)
+    }
+    return tuple(
+        {
+            "source_position": index + 1,
+            "raw_label": label.replace("_", " "),
+            "prompt_input": label.replace("_", " "),
+            "normalized_label": label,
+            "common_name": label.replace("_", " "),
+            "scientific_name": None,
+            "rank": ranks[index],
+            "score": scores[index],
+            "score_kind": BIOCLIP_SCORE_KIND,
+            "calibrated": False,
+        }
+        for index, label in enumerate(labels)
+    )
+
+
+def attempt(
+    *,
+    record_id: str = "attempt-1",
+    target_id: str = "visit-1",
+    target_type: str = "visit",
+    suggestion_id: str | None = "suggestion-1",
+    outcome: str | None = "succeeded",
+    duration_ms: int | None = 1250,
+    crop_source: str | None = "credible_megadetector_crop",
+    manifest: tuple[dict[str, Any], ...] | None = None,
+    manifest_complete: bool = True,
+    minute: int = 4,
+) -> StoredBioClipAttempt:
+    values = candidate_manifest() if manifest is None else manifest
+    manifest_sha256 = (
+        hashlib.sha256(
+            "\n".join(str(value["raw_label"]) for value in values).encode("utf-8")
+        ).hexdigest()
+        if values is not None
+        else None
+    )
+    return StoredBioClipAttempt(
+        id=record_id,
+        target_type=target_type,
+        target_id=target_id,
+        adapter_id=BIOCLIP_ADAPTER_ID,
+        resulting_species_suggestion_id=suggestion_id,
+        started_at=BASE_TIME + timedelta(minutes=minute),
+        completed_at=(
+            BASE_TIME + timedelta(minutes=minute, seconds=2)
+            if outcome is not None
+            else None
+        ),
+        duration_ms=duration_ms,
+        timeout_limit_ms=60_000,
+        timeout_exceeded=outcome == "timed_out",
+        outcome=outcome,
+        crop_source=crop_source,
+        candidate_manifest=values,
+        candidate_set_count=len(values) if values is not None else None,
+        candidate_set_sha256=manifest_sha256,
+        candidate_set_version="ordered_trimmed_utf8_lf_sha256_v1",
+        candidate_manifest_complete=manifest_complete,
+        model_provenance={
+            "adapter_id": BIOCLIP_ADAPTER_ID,
+            "model_name": "BioCLIP 2 local",
+            "architecture_id": "ViT-L-14",
+            "device": "cpu",
+            "open_clip_version": "3.3.0",
+            "torch_version": "2.7.0",
+            "model_weights_sha256": HASH_D,
+        },
+        preprocessing={
+            "preprocessing_id": "open-clip-default",
+            "preprocessing_sha256": HASH_E,
+        },
+        error_code=None if outcome == "succeeded" else f"bioclip_{outcome}",
+        error_stage=None if outcome == "succeeded" else "model_execution",
+    )
+
+
 def field_report(
     labels: list[StoredReviewLabel],
     suggestions: list[StoredSpeciesSuggestion],
     *,
     minimum_examples: int = 30,
+    attempts: list[StoredBioClipAttempt] | None = None,
 ):
     return evaluate_bioclip_field_truth(
         labels,
@@ -181,6 +277,7 @@ def field_report(
         generated_at=BASE_TIME,
         database_identifier="test.sqlite3#safe",
         config=EvaluationConfig(minimum_examples=minimum_examples),
+        attempts=attempts or (),
     )
 
 
@@ -216,7 +313,11 @@ def test_top_3_correct_when_top_1_is_wrong() -> None:
     )
     report = field_report(
         [review_label("northern_cardinal")],
-        [suggestion("blue_jay", alternatives=ranked, scientific_name="Cyanocitta cristata")],
+        [
+            suggestion(
+                "blue_jay", alternatives=ranked, scientific_name="Cyanocitta cristata"
+            )
+        ],
     )
 
     assert report.metrics["top_1"]["correct"] == 0
@@ -244,18 +345,20 @@ def test_corrected_label_absent_from_stored_ranking_not_candidate_set() -> None:
         ],
     )
 
-    metric = report.metrics[
-        "corrected_label_not_present_among_stored_candidates"
-    ]
+    metric = report.metrics["corrected_label_not_present_among_stored_candidates"]
     assert metric["available"] is True
     assert metric["count"] == 1
-    assert report.evaluated_examples[0][
-        "corrected_label_not_present_among_stored_candidates"
-    ] is True
+    assert (
+        report.evaluated_examples[0][
+            "corrected_label_not_present_among_stored_candidates"
+        ]
+        is True
+    )
     assert "does not claim a complete top-K" in metric["meaning"]
-    assert report.metrics["corrected_label_missing_from_candidate_set"][
-        "available"
-    ] is False
+    assert (
+        report.metrics["corrected_label_missing_from_candidate_set"]["available"]
+        is False
+    )
 
 
 def test_unknown_bird_truth_counts_species_suggestion() -> None:
@@ -303,9 +406,7 @@ def test_uninterpretable_stored_candidates_are_not_reported_absent() -> None:
         ],
     )
 
-    metric = report.metrics[
-        "corrected_label_not_present_among_stored_candidates"
-    ]
+    metric = report.metrics["corrected_label_not_present_among_stored_candidates"]
     assert metric["available"] is False
     assert metric["count"] is None
     assert metric["unavailable_count"] == 1
@@ -366,24 +467,234 @@ def test_crop_source_breakdowns_include_unknown_missing() -> None:
     assert report.reliability["missing_crop_count"] == 1
 
 
-def test_unstored_runtime_timeout_and_failure_metrics_are_unavailable() -> None:
+def test_history_only_report_keeps_attempt_metrics_explicitly_incomplete() -> None:
     report = field_report(
         [review_label("northern_cardinal")],
         [suggestion("northern_cardinal")],
     )
 
-    assert report.reliability["runtime_ms"] == {
-        "available": False,
-        "sample_count": None,
-        "median": None,
-        "minimum": None,
-        "maximum": None,
-        "reason": "Successful suggestions do not persist inference duration.",
+    assert report.attempt_metrics["counts"]["total_manual_attempts"] == 0
+    assert report.attempt_metrics["suggestions_without_linked_attempts"]["count"] == 1
+    assert report.attempt_metrics["historical_coverage"]["incomplete"] is True
+    assert report.reliability["runtime_ms"]["available"] is False
+    assert report.reliability["runtime_ms"]["sample_count"] == 0
+    assert report.reliability["timeout_runs"]["count"] == 0
+    assert report.reliability["timeout_runs"]["available"] is True
+    assert report.reliability["failed_runs"]["count"] == 0
+    assert report.reliability["failed_runs"]["available"] is True
+
+
+def test_attempt_metrics_count_every_terminal_outcome_and_duration() -> None:
+    attempts = [
+        attempt(record_id="success", duration_ms=1000),
+        attempt(
+            record_id="no-result",
+            outcome="no_result",
+            suggestion_id=None,
+            duration_ms=400,
+        ),
+        attempt(
+            record_id="timeout",
+            outcome="timed_out",
+            suggestion_id=None,
+            duration_ms=600,
+        ),
+        attempt(
+            record_id="failure",
+            outcome="failed",
+            suggestion_id=None,
+            duration_ms=500,
+        ),
+        attempt(
+            record_id="unsupported",
+            outcome="unsupported",
+            suggestion_id=None,
+            duration_ms=None,
+        ),
+        attempt(
+            record_id="cancelled",
+            outcome="cancelled",
+            suggestion_id=None,
+            duration_ms=50,
+        ),
+        attempt(
+            record_id="incomplete",
+            outcome=None,
+            suggestion_id=None,
+            duration_ms=None,
+        ),
+    ]
+
+    report = field_report(
+        [review_label("northern_cardinal")],
+        [suggestion("northern_cardinal")],
+        attempts=attempts,
+    )
+
+    metrics = report.attempt_metrics
+    assert metrics["counts"] == {
+        "total_manual_attempts": 7,
+        "terminal_attempts": 6,
+        "incomplete_attempts": 1,
+        "outcomes": {
+            "succeeded": 1,
+            "no_result": 1,
+            "timed_out": 1,
+            "failed": 1,
+            "unsupported": 1,
+            "cancelled": 1,
+        },
+        "invalid_target_records": 0,
     }
-    assert report.reliability["timeout_runs"]["count"] is None
-    assert report.reliability["timeout_runs"]["available"] is False
-    assert report.reliability["failed_runs"]["count"] is None
-    assert report.reliability["failed_runs"]["available"] is False
+    assert metrics["success_rate"]["denominator"] == "terminal_recorded_attempts"
+    assert metrics["success_rate"]["rate"] == pytest.approx(1 / 6)
+    assert metrics["duration_ms"]["sample_count"] == 5
+    assert metrics["duration_ms"]["median"] == 500
+    assert metrics["duration_ms"]["minimum"] == 50
+    assert metrics["duration_ms"]["maximum"] == 1000
+    assert metrics["duration_ms"]["unavailable_count"] == 1
+    assert metrics["repeated_attempts"] == {
+        "attempts_beyond_first_per_target": 6,
+        "targets_with_multiple_attempts": 1,
+    }
+    assert metrics["attempts_without_suggestions"]["count"] == 6
+    assert report.metrics["top_1"]["correct"] == 1
+
+
+def test_failed_attempt_does_not_displace_successful_suggestion_accuracy() -> None:
+    report = field_report(
+        [review_label("northern_cardinal")],
+        [suggestion("northern_cardinal")],
+        attempts=[
+            attempt(record_id="success", minute=4),
+            attempt(
+                record_id="later-failure",
+                outcome="failed",
+                suggestion_id=None,
+                minute=20,
+            ),
+        ],
+    )
+
+    assert report.metrics["top_1"]["correct"] == 1
+    assert report.metrics["top_3"]["correct"] == 1
+    assert report.evaluated_examples[0]["attempt_id"] == "success"
+    assert report.attempt_metrics["counts"]["outcomes"]["failed"] == 1
+
+
+def test_complete_candidate_bank_metrics_use_attempt_link_and_taxonomy() -> None:
+    report = field_report(
+        [review_label("northern_cardinal")],
+        [suggestion("northern_cardinal")],
+        attempts=[attempt()],
+    )
+
+    candidate_metrics = report.attempt_metrics["candidate_banks"]
+    assert candidate_metrics["complete_manifest_attempts"] == 1
+    assert candidate_metrics["size_distribution"] == {"4": 1}
+    assert candidate_metrics["fingerprints"] == [
+        {
+            "sha256": attempt().candidate_set_sha256,
+            "attempt_count": 1,
+        }
+    ]
+    assert candidate_metrics["version_distribution"] == {
+        "ordered_trimmed_utf8_lf_sha256_v1": 1
+    }
+    assert candidate_metrics["variants"] == [
+        {
+            "sha256": attempt().candidate_set_sha256,
+            "version": "ordered_trimmed_utf8_lf_sha256_v1",
+            "candidate_count": 4,
+            "attempt_count": 1,
+        }
+    ]
+    assert candidate_metrics["unknown_bird_presence"]["attempt_count"] == 1
+    assert candidate_metrics["taxonomy_backed_non_bird_escape_presence"][
+        "label_distribution"
+    ] == {"vehicle": 1}
+    assert candidate_metrics["corrected_label_absent"]["count"] == 0
+    assert candidate_metrics["top_3_support"]["fully_supported"] is True
+    assert report.metrics["corrected_label_missing_from_candidate_set"] == {
+        "available": True,
+        "count": 0,
+        "evaluated_count": 1,
+        "unavailable_count": 0,
+        "reason": None,
+    }
+
+
+def test_complete_candidate_bank_detects_corrected_label_absence() -> None:
+    manifest = candidate_manifest(
+        ("blue_jay", "song_sparrow", "unknown_bird", "person")
+    )
+    report = field_report(
+        [review_label("northern_cardinal")],
+        [
+            suggestion(
+                "blue_jay",
+                scientific_name="Cyanocitta cristata",
+            )
+        ],
+        attempts=[attempt(manifest=manifest)],
+    )
+
+    metric = report.metrics["corrected_label_missing_from_candidate_set"]
+    assert metric["available"] is True
+    assert metric["count"] == 1
+    assert (
+        report.evaluated_examples[0][
+            "corrected_label_missing_from_complete_candidate_bank"
+        ]
+        is True
+    )
+    attempt_metric = report.attempt_metrics["candidate_banks"]["corrected_label_absent"]
+    assert attempt_metric["count"] == 1
+    assert attempt_metric["details"] == [
+        {
+            "attempt_id": "attempt-1",
+            "target_type": "visit",
+            "target_id": "visit-1",
+        }
+    ]
+
+
+def test_incomplete_manifest_remains_unavailable_without_reconstruction() -> None:
+    report = field_report(
+        [review_label("northern_cardinal")],
+        [suggestion("northern_cardinal")],
+        attempts=[attempt(manifest_complete=False)],
+    )
+
+    candidate_metrics = report.attempt_metrics["candidate_banks"]
+    assert candidate_metrics["complete_manifest_attempts"] == 0
+    assert candidate_metrics["incomplete_manifest_attempts"] == 1
+    assert (
+        report.metrics["corrected_label_missing_from_candidate_set"]["available"]
+        is False
+    )
+    assert (
+        report.evaluated_examples[0]["complete_candidate_manifest_available"] is False
+    )
+
+
+def test_complete_manifest_flag_does_not_override_fingerprint_mismatch() -> None:
+    invalid_attempt = replace(
+        attempt(),
+        candidate_set_sha256=HASH_A,
+    )
+    report = field_report(
+        [review_label("northern_cardinal")],
+        [suggestion("northern_cardinal")],
+        attempts=[invalid_attempt],
+    )
+
+    candidate_metrics = report.attempt_metrics["candidate_banks"]
+    assert candidate_metrics["complete_manifest_attempts"] == 0
+    assert candidate_metrics["invalid_complete_manifest_attempts"] == 1
+    assert (
+        report.evaluated_examples[0]["complete_candidate_manifest_available"] is False
+    )
 
 
 def test_missing_primary_ranking_and_provenance_are_excluded() -> None:
@@ -484,9 +795,7 @@ def test_latest_review_label_wins_deterministically() -> None:
 
     report = field_report(labels, [suggestion("northern_cardinal")])
 
-    assert report.breakdowns["review_label_distribution"] == {
-        "northern_cardinal": 1
-    }
+    assert report.breakdowns["review_label_distribution"] == {"northern_cardinal": 1}
     assert report.evaluated_examples[0]["review_label_id"] == "review-new"
     assert report.metrics["top_1"]["correct"] == 1
 
@@ -512,13 +821,39 @@ def test_report_json_serialization_is_safe_and_explicit() -> None:
 
     payload = json.loads(report.to_json())
 
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["database_identifier"] == "test.sqlite3#safe"
     assert payload["safety"]["read_only_evaluation"] is True
     assert payload["safety"]["inference_invoked"] is False
     assert payload["score_semantics"]["is_probability"] is False
     assert payload["mistake_examples"][0]["uncalibrated_score"] == pytest.approx(0.8)
     assert "C:\\" not in report.to_json()
+
+
+def test_attempt_report_does_not_emit_paths_urls_or_error_details() -> None:
+    unsafe_attempt = replace(
+        attempt(),
+        model_provenance={
+            "adapter_id": BIOCLIP_ADAPTER_ID,
+            "model_name": r"C:\private\models\weights.bin",
+            "device": "cpu",
+            "provider_url": "rtsp://user:password@camera.local/stream",
+        },
+        error_code="safe_code",
+        error_stage="inference",
+    )
+
+    report = field_report(
+        [review_label("northern_cardinal")],
+        [suggestion("northern_cardinal")],
+        attempts=[unsafe_attempt],
+    )
+    serialized = report.to_json()
+
+    assert "C:\\private" not in serialized
+    assert "rtsp://" not in serialized
+    assert "password" not in serialized
+    assert "provider_url" not in serialized
 
 
 def test_cli_json_run_preserves_database_and_operational_tables(
@@ -549,6 +884,10 @@ def test_cli_json_run_preserves_database_and_operational_tables(
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["counts"]["eligible_examples"] == 1
     assert payload["counts"]["excluded_examples"] == 0
+    assert payload["attempt_metrics"]["counts"]["total_manual_attempts"] == 1
+    assert (
+        payload["attempt_metrics"]["candidate_banks"]["complete_manifest_attempts"] == 1
+    )
     assert payload["safety"]["product_or_operational_state_modified"] is False
     assert str(tmp_path) not in json.dumps(payload)
     terminal_output = capsys.readouterr().out
@@ -587,6 +926,47 @@ def test_evaluation_never_calls_bioclip_inference(
 
     assert calls == []
     assert report.safety["inference_invoked"] is False
+
+
+def test_read_only_evaluator_does_not_initialize_or_migrate_old_schema(
+    tmp_path: Path,
+) -> None:
+    database_path = _create_evaluation_database(tmp_path)
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("DROP TABLE bioclip_identification_attempts")
+        connection.execute(
+            "UPDATE mockingbird_schema SET version = ? WHERE singleton_id = 1",
+            (CURRENT_DATABASE_SCHEMA_VERSION - 1,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    before = _database_snapshot(database_path)
+
+    with pytest.raises(
+        EVALUATION_SCRIPT.EvaluationCommandError,
+        match="will not migrate",
+    ):
+        EVALUATION_SCRIPT.load_evaluation_records(database_path)
+
+    assert _database_snapshot(database_path) == before
+    connection = sqlite3.connect(database_path)
+    try:
+        attempt_table = connection.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'bioclip_identification_attempts'
+            """
+        ).fetchone()
+        version = connection.execute(
+            "SELECT version FROM mockingbird_schema WHERE singleton_id = 1"
+        ).fetchone()
+    finally:
+        connection.close()
+    assert attempt_table is None
+    assert version == (CURRENT_DATABASE_SCHEMA_VERSION - 1,)
 
 
 def _create_evaluation_database(tmp_path: Path) -> Path:
@@ -629,6 +1009,40 @@ def _create_evaluation_database(tmp_path: Path) -> Path:
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 notes TEXT
+            );
+            CREATE TABLE bioclip_identification_attempts (
+                id TEXT PRIMARY KEY,
+                target_type TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                event_id TEXT,
+                visit_id TEXT,
+                media_asset_id TEXT NOT NULL,
+                source_id TEXT,
+                stream_id TEXT,
+                zone_id TEXT,
+                motion_evidence_id TEXT,
+                detection_proposal_id TEXT,
+                resulting_species_suggestion_id TEXT,
+                adapter_id TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                duration_ms INTEGER,
+                timeout_limit_ms INTEGER NOT NULL,
+                timeout_exceeded INTEGER NOT NULL,
+                outcome TEXT,
+                crop_source TEXT,
+                crop_provenance_json TEXT,
+                model_provenance_json TEXT,
+                preprocessing_json TEXT,
+                candidate_manifest_json TEXT,
+                candidate_set_count INTEGER,
+                candidate_set_sha256 TEXT,
+                candidate_set_version TEXT,
+                candidate_manifest_complete INTEGER NOT NULL,
+                error_code TEXT,
+                error_stage TEXT,
+                error_detail TEXT,
+                provenance_schema_version INTEGER NOT NULL
             );
             CREATE TABLE taxonomy_labels (
                 id TEXT PRIMARY KEY,
@@ -709,6 +1123,67 @@ def _create_evaluation_database(tmp_path: Path) -> Path:
                 json.dumps(stored_suggestion.evidence_region),
                 stored_suggestion.status,
                 stored_suggestion.created_at.isoformat(),
+            ),
+        )
+        stored_attempt = attempt()
+        connection.execute(
+            """
+            INSERT INTO bioclip_identification_attempts(
+                id,
+                target_type,
+                target_id,
+                event_id,
+                visit_id,
+                media_asset_id,
+                resulting_species_suggestion_id,
+                adapter_id,
+                started_at,
+                completed_at,
+                duration_ms,
+                timeout_limit_ms,
+                timeout_exceeded,
+                outcome,
+                crop_source,
+                model_provenance_json,
+                preprocessing_json,
+                candidate_manifest_json,
+                candidate_set_count,
+                candidate_set_sha256,
+                candidate_set_version,
+                candidate_manifest_complete,
+                provenance_schema_version
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            (
+                stored_attempt.id,
+                stored_attempt.target_type,
+                stored_attempt.target_id,
+                "event-1",
+                stored_attempt.target_id,
+                "media-1",
+                stored_attempt.resulting_species_suggestion_id,
+                stored_attempt.adapter_id,
+                stored_attempt.started_at.isoformat(),
+                (
+                    stored_attempt.completed_at.isoformat()
+                    if stored_attempt.completed_at is not None
+                    else None
+                ),
+                stored_attempt.duration_ms,
+                stored_attempt.timeout_limit_ms,
+                stored_attempt.timeout_exceeded,
+                stored_attempt.outcome,
+                stored_attempt.crop_source,
+                json.dumps(stored_attempt.model_provenance),
+                json.dumps(stored_attempt.preprocessing),
+                json.dumps(list(stored_attempt.candidate_manifest or ())),
+                stored_attempt.candidate_set_count,
+                stored_attempt.candidate_set_sha256,
+                stored_attempt.candidate_set_version,
+                stored_attempt.candidate_manifest_complete,
+                1,
             ),
         )
         for index, item in enumerate(taxonomy()):
