@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "test:e2e": "npm run build && node e2e/run-playwright.mjs",
+    "test:e2e:install": "playwright install chromium",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview"
   },
@@ -14,9 +16,10 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
+    "@playwright/test": "^1.61.1",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   }
