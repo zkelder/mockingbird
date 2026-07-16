@@ -197,6 +197,7 @@ class ReviewIdentificationStatus(str, Enum):
 class FocusCropSource(str, Enum):
     zone = "zone"
     activity = "activity"
+    detector = "detector"
     manual = "manual"
     none = "none"
 
@@ -1301,7 +1302,7 @@ class ModelAdapterSetupSummary(BaseModel):
 
 
 class ModelAdapter(BaseModel):
-    # Model adapters produce proposal evidence only; review labels remain truth.
+    # Model adapters produce proposal or suggestion evidence; review labels remain truth.
     id: str
     name: str
     kind: ModelAdapterKind
@@ -2182,7 +2183,7 @@ class ReviewQueueBulkCorrectionResponse(BaseModel):
 
 
 class ReviewIdentificationResponse(BaseModel):
-    # Running assist may create proposal evidence, never reviewed truth or exports.
+    # Running assist may create proposal or suggestion evidence, never truth or exports.
     target_type: ReviewQueueBulkCorrectionTargetType
     target_id: str
     identification: ReviewIdentificationSummary

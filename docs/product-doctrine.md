@@ -10,6 +10,27 @@ The product starts with video streams. A user should think:
 
 Connect source → view stream → draw zones → analyze outdoor activity → review visits/events → correct labels/species → export datasets and analytics.
 
+## Product promise
+
+MockingBird should turn meaningful outdoor activity into useful, ranked animal
+or species suggestions before asking the user to review it. Automatic
+identification is a core product outcome, not a future administration feature.
+A product that captures and organizes activity but never attempts useful
+identification is incomplete.
+
+The visual identification path is:
+
+saved activity -> best frame -> animal/activity-centered crop -> ranked species
+suggestions -> Review Queue -> explicit correction -> Bird Log
+
+Zones provide semantic, privacy, and ignore context. They are not required crop
+boundaries. Detection or measured activity bounds should focus identification,
+while the original frame remains available as evidence context.
+
+Model suggestions may be wrong and remain evidence. Explicit correction remains
+the only dataset-grade truth and is the basis for measuring identification
+accuracy over time.
+
 ## Product objects
 
 ### Source
@@ -118,3 +139,6 @@ MockingBird should not be framed around:
 - one camera adapter as the main product
 
 Adapters are implementation details. The product is the stream, zone, event, review, correction, export, and analytics experience.
+
+New administration, readiness, provider, diagnostic, or training surfaces must
+not displace delivery of the core identification and review loop.

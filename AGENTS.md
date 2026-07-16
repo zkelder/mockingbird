@@ -1,8 +1,11 @@
 # Codex Guardrails
 
-MockingBird is a local-first outdoor video intelligence platform. Video streams are central.
+MockingBird is a local-first outdoor video intelligence platform. Video streams
+are central.
 
-Before implementation work, Codex must read:
+## Required reading
+
+Before implementation work, read these current-state documents completely:
 
 - [README.md](README.md)
 - [docs/product-doctrine.md](docs/product-doctrine.md)
@@ -10,45 +13,42 @@ Before implementation work, Codex must read:
 - [docs/glossary.md](docs/glossary.md)
 - [docs/architecture.md](docs/architecture.md)
 
-## Core Doctrine
+Read only the conditional design documents routed below for the task at hand.
+Completed-phase history is available in
+[docs/roadmap-history.md](docs/roadmap-history.md) but is not required reading.
 
-Users connect outdoor camera/video sources, view streams in the app, draw zones, MockingBird analyzes video for animals/outdoor events, creates reviewable visits/events, users correct labels/species, and corrections build dataset exports and analytics over time.
+## Product invariants
 
-Core product loop:
+Core product flow:
 
-connect source → view stream → draw zones → analyze outdoor activity → review visits/events → correct labels/species → export datasets and analytics.
+connect Source -> view Stream -> draw Zones -> analyze outdoor activity ->
+review Events/Visits -> correct labels/species -> export datasets and analytics.
 
-Preserve these product concepts:
+Preserve these concepts: Source, Stream, Zone, Event, Visit, Detection,
+review/correction, Dataset Export, and Analytics.
 
-- Source
-- Stream
-- Zone
-- Event
-- Visit
-- Detection
-- Review/correction
-- Dataset export
-- Analytics
+- Streams and Zones are the product center. Adapters normalize into product
+  concepts; they do not define the product.
+- Detections, DetectionProposals, SpeciesSuggestions, MotionEvidence, imported
+  media, and external labels are evidence or context, never reviewed truth.
+- Explicit user correction creates dataset-grade ReviewLabel truth. Bird Log,
+  reviewed analytics, classifier readiness, and reviewed-only exports derive
+  from that truth.
+- Read/status/preview/dry-run routes are side-effect free unless a task
+  explicitly scopes a write. Provider actions and destructive actions are
+  explicit and bounded.
+- Local-first storage, redacted secrets, Privacy Zones, Ignore Zones, retention,
+  backup/recovery, and safe restart behavior are product constraints.
+- Generated media, datasets, exports, caches, model artifacts, and checkpoints
+  stay under ignored local paths and are never committed.
 
-Source adapters are underneath the product. They normalize media and activity into product-level concepts instead of defining the product.
+Do not center the product on Windows USB, PowerShell, CLI tools, ROI wording,
+interval analysis, debug internals, snapshot loops, one adapter, or hardware
+setup.
 
-## Product Drift To Avoid
+## Task packet
 
-Do not center MockingBird on:
-
-- Windows USB
-- PowerShell
-- CLI tools
-- ROI wording
-- interval analysis
-- debug internals
-- snapshot loops
-- a single camera adapter
-- hardware setup as the main product
-
-## Task Packet
-
-Every future implementation task must restate:
+Every implementation task must restate before edits:
 
 - roadmap phase
 - product flow improved
@@ -57,173 +57,52 @@ Every future implementation task must restate:
 - non-goals
 - validation tier
 
-## Architecture Guidance
+Follow [docs/development-workflow.md](docs/development-workflow.md) for tier
+definitions, validation reporting, and documentation maintenance rules.
 
-- Build the product model first, adapters later.
-- Build stream-first UX assumptions into the API/frontend.
-- Treat detections as evidence, not final truth.
-- Treat user corrections as dataset-grade labels.
-- Before adding real model dependencies or detector behavior, read
-  [docs/model-adapter-guardrails.md](docs/model-adapter-guardrails.md) and
-  [docs/model-selection.md](docs/model-selection.md). Model outputs must remain
-  `DetectionProposal` evidence until user review/correction.
-- MegaDetector-family integrations must remain evidence-only adapters and must
-  not bypass Review Queue or Visit Detail correction.
-- Real MegaDetector runtime work must follow
-  [docs/megadetector-runtime-plan.md](docs/megadetector-runtime-plan.md) and stay
-  optional, lazy-loaded, local, and evidence-only.
-- Species/classifier outputs must follow
-  [docs/species-suggestion-adapter-design.md](docs/species-suggestion-adapter-design.md)
-  and remain suggestion evidence only until explicit review/correction creates
-  truth.
-- SpeciesNet or classifier runtime work must follow
-  [docs/speciesnet-runtime-investigation.md](docs/speciesnet-runtime-investigation.md),
-  [docs/speciesnet-source-review.md](docs/speciesnet-source-review.md), and
-  [docs/speciesnet-adapter-boundary-plan.md](docs/speciesnet-adapter-boundary-plan.md).
-  It must not add dependencies, model files, automatic downloads, or classifier
-  calls without explicit scope that preserves the optional adapter boundary.
-- Custom classifier or training work must follow
-  [docs/custom-bird-classifier-dataset-plan.md](docs/custom-bird-classifier-dataset-plan.md)
-  and
-  [docs/classifier-training-manifest-design.md](docs/classifier-training-manifest-design.md)
-  and must not add training dependencies, model files, generated datasets, or
-  runtime behavior without explicit scope. Reviewed corrections remain training
-  truth; suggestions remain evidence.
-- Generated classifier dataset/export files require explicit export scope,
-  must follow
-  [docs/classifier-manifest-file-export-design.md](docs/classifier-manifest-file-export-design.md),
-  must remain under ignored local data/export paths, and must not be committed.
-- Copied classifier media bundles or generated datasets require explicit scope,
-  must follow
-  [docs/media-copy-export-design.md](docs/media-copy-export-design.md),
-  must remain under ignored local data/export paths, must not be committed, and
-  must not create reviewed truth.
-- External classifier training work must follow
-  [docs/external-training-workflow.md](docs/external-training-workflow.md) and
-  [docs/external-training-workspace-checklist.md](docs/external-training-workspace-checklist.md);
-  training dependencies, generated datasets, model artifacts, and checkpoints
-  require explicit scope and ignored local paths.
-- Workspace templates/docs must not create real folders, generated datasets,
-  model artifacts, dependencies, or training scripts without explicit scope.
-- Stream/source playback work must follow
-  [docs/stream-source-playback-contract.md](docs/stream-source-playback-contract.md).
-  Playback status is product-level, read-only, and must not create evidence,
-  reviewed truth, exports, analytics truth, capture behavior, or adapter runtime
-  work unless explicitly scoped.
-- Source connection/provider work must follow
-  [docs/source-connection-provider-contract.md](docs/source-connection-provider-contract.md)
-  and stay product-level until real provider implementation is explicitly scoped.
-- Source provider configuration work must follow
-  [docs/source-provider-configuration-contract.md](docs/source-provider-configuration-contract.md).
-  Configuration is metadata-only and must not connect to sources, validate URLs,
-  store raw secrets, capture frames, decode media, or create product truth.
-- Real source adapter implementation must follow
-  [docs/source-adapter-boundary-design.md](docs/source-adapter-boundary-design.md)
-  and explicit task scope. Do not add capture, decoding, workers, network calls,
-  dependencies, generated media, or truth creation by accident.
-- New provider work must preserve provider smoke flows: status routes stay
-  read-only, provider actions stay explicit, and correction remains truth.
-- New provider work must start from a boundary/design task, preserve provider
-  smoke-test expectations, and treat incoming media/events/detections as
-  evidence until user review/correction creates truth.
-- Webhook provider work must follow
-  [docs/generic-webhook-provider-boundary-design.md](docs/generic-webhook-provider-boundary-design.md)
-  and must not create truth, accept anonymous ingest, download media, or couple
-  core product behavior to one external ecosystem without explicit scope.
-- Folder/trail-cam provider work must follow
-  [docs/folder-trailcam-provider-boundary-design.md](docs/folder-trailcam-provider-boundary-design.md)
-  and explicit phase scope. The source-scoped folder preview route is dry-run
-  only: relative candidate/skipped paths, no MediaAssets, no evidence, no
-  Events/Visits, no truth. Source-scoped folder import may create MediaAssets
-  only when explicitly scoped and must not create MotionEvidence, Events, Visits,
-  labels, or truth. Do not add watchers, polling, media deletion, decoding,
-  workers, dependencies, or truth creation without that scope.
-- Folder-imported MediaAssets must follow
-  [docs/folder-import-evidence-handoff-design.md](docs/folder-import-evidence-handoff-design.md)
-  before they become MotionEvidence. Evidence handoff must be explicit and must
-  not create Events, Visits, labels, or truth. Batch handoff must dry-run/report
-  before create. Batch create may create pending MotionEvidence only and never
-  truth. Folder import must not auto-create evidence unless a future task
-  explicitly scopes that boundary.
-- External URL provider implementation must follow
-  [docs/external-url-still-image-provider-contract.md](docs/external-url-still-image-provider-contract.md)
-  and explicit phase scope. Do not add URL fetches without SSRF, timeout,
-  content-type, secret-redaction, storage, and truth-boundary guardrails.
-  External URL fetches must remain explicit, bounded, no-worker, and no-truth
-  unless a later task scopes a different lifecycle.
-- Saving fetched previews as MediaAssets must follow
-  [docs/external-url-preview-media-asset-handoff-design.md](docs/external-url-preview-media-asset-handoff-design.md),
-  use ignored local paths, require explicit scope, and create no truth by itself.
-- Saved preview MediaAssets must follow
-  [docs/saved-preview-review-evidence-handoff-design.md](docs/saved-preview-review-evidence-handoff-design.md)
-  before becoming evidence, Events, Visits, labels, analytics truth, export truth,
-  or classifier truth. Saved-preview-origin MotionEvidence is pending evidence
-  only and must not create Events, Visits, or truth without explicit promotion
-  and review/correction.
-- Cleanup/delete work for saved preview media must follow
-  [docs/external-url-saved-media-retention-design.md](docs/external-url-saved-media-retention-design.md),
-  require explicit scope, prefer dry-run/reporting first, separate file deletion
-  from record deletion, and protect reviewed truth/export context by default.
-- Source setup review/status work must remain read-only and must not connect to
-  sources, capture/decode media, run adapters/models, or create evidence/truth.
-- Dashboard/status views may summarize provider readiness and next actions, but
-  they must not fetch provider media, scan folders, run providers/models, create
-  evidence, promote Events/Visits, or write reviewed truth.
-- Worker, scheduler, polling, watcher, queue, or background cleanup work must
-  follow
-  [docs/worker-lifecycle-boundary-design.md](docs/worker-lifecycle-boundary-design.md)
-  and explicit phase scope. Workers must be disabled by default initially,
-  observable, bounded, local-first, and unable to create ReviewLabels, mark
-  Visits reviewed, or create analytics/export truth.
-- Durable camera/monitor lifecycle work must follow
-  [docs/durable-camera-monitor-lifecycle-design.md](docs/durable-camera-monitor-lifecycle-design.md).
-  Persisted desired policy and actual runtime state must remain separate; every
-  existing Stream starts off, arming is explicit and Stream-scoped, status reads
-  are side-effect free, backup/restore safety holds override arming, and Source
-  archive/Stop camera must prevent surprise restart. The first boundary is only
-  for supported backend-owned live video sessions, not external snapshot
-  polling or other provider workers. It must not create ReviewLabels or reviewed
-  truth. Future audio requires separate consent, privacy, retention, dependency,
-  and evidence design and must never inherit video arming.
-- Local MegaDetector setup must follow
-  [docs/megadetector-local-setup.md](docs/megadetector-local-setup.md), and model
-  artifacts must never be committed.
-- PyTorch-Wildlife/MegaDetector runtime work is experimental unless a future task
-  explicitly reopens it after
-  [docs/megadetector-runtime-findings.md](docs/megadetector-runtime-findings.md).
-  Do not add heavy detector runtimes, model files, or download behavior without
-  that checkpoint.
-- The current active event trigger direction is zone-aware motion trigger; see
-  [docs/stream-motion-trigger-plan.md](docs/stream-motion-trigger-plan.md).
-- Keep local-first storage/export assumptions in mind.
-- Respect privacy and ignore zones as first-class product concepts when those features are implemented.
-- Avoid adapter-specific models leaking into core product models.
+## Conditional document router
 
-## Comment Standard
+Read the smallest applicable set before working in one of these areas.
 
-When implementation code is added later, include clear comments where they help future maintainers understand product intent, domain meaning, non-obvious constraints, or decisions that prevent product drift.
+| Work area | Required design documents | Boundary to preserve |
+| --- | --- | --- |
+| Motion trigger or MotionEvidence | [stream-motion-trigger-plan.md](docs/stream-motion-trigger-plan.md) and the directly applicable motion/evidence design | Motion is evidence; promotion is review context; correction creates truth. |
+| Model or detector adapter | [model-adapter-guardrails.md](docs/model-adapter-guardrails.md) and [model-selection.md](docs/model-selection.md) | Optional, lazy, local, evidence-only; no automatic downloads or truth writes. |
+| MegaDetector runtime | [megadetector-runtime-plan.md](docs/megadetector-runtime-plan.md), [megadetector-local-setup.md](docs/megadetector-local-setup.md), and [megadetector-runtime-findings.md](docs/megadetector-runtime-findings.md) | Official-package/local-model work remains optional and proposal-only; PyTorch-Wildlife remains experimental unless explicitly reopened. |
+| Species suggestions or SpeciesNet | [species-suggestion-adapter-design.md](docs/species-suggestion-adapter-design.md), then the applicable [SpeciesNet boundary plan](docs/speciesnet-adapter-boundary-plan.md) and linked investigation/source review | Suggestions remain evidence until explicit correction. |
+| BioCLIP runtime | [model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [model-selection.md](docs/model-selection.md), and [species-suggestion-adapter-design.md](docs/species-suggestion-adapter-design.md) | Optional, explicit local model/labels/precomputed embeddings, request-bounded and memory-isolated; ranked output is uncalibrated suggestion evidence only. |
+| Classifier dataset/export/training | [custom-bird-classifier-dataset-plan.md](docs/custom-bird-classifier-dataset-plan.md), [classifier-training-manifest-design.md](docs/classifier-training-manifest-design.md), and the applicable export/training document | Reviewed corrections are training truth; dependencies, generated datasets, media bundles, and artifacts require explicit scope and ignored paths. |
+| Stream playback or Source status/configuration | [stream-source-playback-contract.md](docs/stream-source-playback-contract.md), [source-connection-provider-contract.md](docs/source-connection-provider-contract.md), and [source-provider-configuration-contract.md](docs/source-provider-configuration-contract.md) as applicable | Status/configuration is product-level, redacted, and side-effect free. |
+| New or real Source adapter | [source-adapter-boundary-design.md](docs/source-adapter-boundary-design.md) plus the provider-specific contract | Start with a scoped boundary; incoming media/events/detections remain evidence; extend provider smoke flows. |
+| External URL media | [external-url-still-image-provider-contract.md](docs/external-url-still-image-provider-contract.md), then the applicable preview/media/evidence handoff design | Fetches are explicit, SSRF-safe, bounded, and no-truth; persistence and evidence handoff are separate actions. |
+| Folder/trail-cam media | [folder-trailcam-provider-boundary-design.md](docs/folder-trailcam-provider-boundary-design.md) and [folder-import-evidence-handoff-design.md](docs/folder-import-evidence-handoff-design.md) | Preview is dry-run; import creates MediaAssets only; evidence handoff is explicit; no watcher/polling by accident. |
+| Webhook provider | [generic-webhook-provider-boundary-design.md](docs/generic-webhook-provider-boundary-design.md) | No anonymous ingest or ecosystem coupling; external labels remain untrusted evidence. |
+| Saved-media cleanup/retention | [external-url-saved-media-retention-design.md](docs/external-url-saved-media-retention-design.md) | Dry-run/report first; file deletion is separate from record deletion; protect reviewed/export context. |
+| Worker, polling, watcher, queue, or background cleanup | [worker-lifecycle-boundary-design.md](docs/worker-lifecycle-boundary-design.md) | Default off, observable, bounded, local-first, safely stoppable, and unable to create reviewed truth. |
+| Durable camera/monitor lifecycle | [durable-camera-monitor-lifecycle-design.md](docs/durable-camera-monitor-lifecycle-design.md) and [local-backup-recovery-design.md](docs/local-backup-recovery-design.md) | Desired policy and runtime state stay separate; explicit Stream arming; side-effect-free status; restore/stop/archive holds prevent surprise restart. Audio requires separate consent and design. |
 
-Good comments explain:
+When a routed document links a more specific design for the exact task, read
+that linked design too. Do not load unrelated history or every document in the
+same category.
 
-- product intent
-- domain meaning
-- why a model, endpoint, or workflow exists
-- non-obvious constraints
-- decisions that prevent product drift
-- validation assumptions
+## Implementation standards
 
-Avoid comments that merely repeat obvious syntax.
+- Prefer tests for behavior changes and regression fixes.
+- Preserve provider smoke flows: status reads do nothing, provider writes are
+  explicit, and correction remains truth.
+- Do not add network calls, capture/decoding, workers, dependencies, model
+  files, generated media, or destructive cleanup unless the task packet
+  explicitly scopes them.
+- Comments should explain product intent, domain meaning, non-obvious safety
+  constraints, or why a decision prevents product drift. Do not narrate syntax.
+- Source setup and Dashboard/readiness surfaces guide users; they do not run
+  providers/models or create evidence/truth.
+- Adapter-specific models must not leak into the core product model.
 
-Useful future comment examples:
+## Validation and reporting
 
-- Source adapters normalize into Streams/Events rather than defining the product.
-- Detection is model evidence, not user-confirmed truth.
-- ReviewLabel or equivalent correction models represent dataset-grade user truth.
-- Privacy and Ignore zones affect event creation/review behavior.
-- Demo data exists to prove the product flow before real camera adapters.
-
-## Validation Expectations
-
-- Prefer tests for implementation work.
-- For docs-only changes, validate by checking scope, file list, and product language.
-- Every task report should include changed files, validation performed, and deviations from scope.
+- Run the task packet's validation tier in proportion to risk.
+- Docs-only work checks scope, links, terminology, current-state accuracy, and
+  duplication.
+- Every final task report lists changed files, validation performed, and any
+  deviation from scope.

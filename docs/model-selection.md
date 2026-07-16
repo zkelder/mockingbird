@@ -13,7 +13,54 @@ explicit local MDv5 `.pt` file, and the existing Review Queue identification
 action. See [megadetector-runtime-plan.md](megadetector-runtime-plan.md) and
 [megadetector-runtime-findings.md](megadetector-runtime-findings.md).
 
-The active next event-trigger path is [stream-motion-trigger-plan.md](stream-motion-trigger-plan.md): stream -> zones -> lightweight motion trigger -> snapshot evidence -> later species suggestion -> user correction truth.
+The event-trigger path remains
+[stream-motion-trigger-plan.md](stream-motion-trigger-plan.md): Stream ->
+lightweight activity trigger, Zone-aware when configured -> best-frame evidence.
+Detection and species classification enrich the resulting review candidate;
+they are not the motion trigger and Zones are not required crop boundaries.
+
+## Current Visual Species Identification Milestone
+
+The first detector spike is complete: the optional local MegaDetector path can
+produce animal/person/vehicle `DetectionProposal` evidence from saved best
+frames. It does not identify species. The current product priority is therefore
+real visual species classification, not another detector/readiness scaffold.
+
+The first saved-media evaluation completed on July 16, 2026. SpeciesNet
+recognized bird as top-1 on only one of eight reviewed bird crops and produced
+no species-specific top-1 result, so it is not selected as the visual species
+engine for the current field corpus.
+
+BioCLIP 2 returned an avian species first for all reviewed and candidate bird
+crops, but the candidate bank was bird-heavy and the local corrections contain
+coarse bird/false-positive truth rather than species truth. Several
+visually questionable results also carried high scores and large margins.
+BioCLIP 2 is therefore the leading controlled follow-up, not a selected
+production classifier. Exposure cleanup variants did not consistently improve
+either model and cannot restore clipped source detail.
+
+The active implementation sequence is:
+
+1. use an explicitly triggered, one-item-at-a-time BioCLIP 2 shadow to map real
+   ranked output into existing `SpeciesSuggestion` evidence; this accelerates
+   correction but does not select the runtime or establish accuracy
+2. collect representative species-level `ReviewLabel` corrections from
+   identification-quality best frames/activity crops
+3. include substantially more animal/person/vehicle/blank activity so
+   abstention and false suggestions can be measured
+4. freeze a genuinely local/seasonal candidate set with explicit unknown and
+   non-bird choices
+5. evaluate BioCLIP 2 on held-out corrections for top-1, top-3, coverage,
+   abstention, high-confidence mistakes, and non-bird specificity
+6. only after that gate, decide whether BioCLIP 2 is the selected visual
+   classifier and define its abstention/calibration policy
+7. automate bounded inference after eligible completed activity only after the
+   saved-media path is accurate and failure-safe
+
+This milestone may explicitly scope an optional runtime dependency and local
+model artifact. It must never make the model mandatory for app startup,
+automatically download weights, commit artifacts, or turn suggestions into
+reviewed truth.
 
 ## Acceptable First Detector Type
 
@@ -25,7 +72,11 @@ The first candidate must be:
 - `DetectionProposal` evidence only
 - explicitly triggered through the existing model adapter run flow
 
-Species classification, live input, and automatic background processing are out of scope for the first candidate. SpeciesNet or another species classifier is a separate future suggestion adapter, not the motion trigger itself.
+Species classification, live input, and automatic background processing were
+out of scope for the completed first detector candidate. SpeciesNet or another
+species classifier remains a separate suggestion adapter, not the motion
+trigger; the active milestone above now explicitly scopes its evaluation and
+integration.
 
 ## Model Candidate Requirements
 
@@ -41,11 +92,16 @@ A candidate model should:
 MegaDetector-family animal/person/vehicle detection is now optional second-stage
 proposal enrichment for saved motion best frames. Zone-aware motion remains the
 event trigger; MegaDetector does not automatically suppress or promote motion
-candidates. Species suggestion remains a separate future adapter.
+candidates. Species suggestion remains a separate adapter and is now the active
+product milestone above.
 
-## Future Species Suggestion Candidates
+## Species Suggestion Candidates
 
-SpeciesNet and a custom backyard bird classifier are future species suggestion candidates, not detector adapters and not truth writers.
+SpeciesNet, BioCLIP 2, and a custom backyard bird classifier are species
+suggestion candidates, not detector adapters and not truth writers. The phase
+history below records how the evidence and export boundaries were established.
+The measured evaluation above, rather than model popularity, controls which
+candidate may enter the Review Queue shadow path.
 
 Phase 9B adds the `SpeciesSuggestion` schema/repository/API foundation before any SpeciesNet or custom classifier runtime. Phase 9C adds a manual/mock UI surface for suggestion evidence and status workflow; it still adds no species runtime, model dependency, media inspection, or truth writing. Phase 9D defines the explicit correction-flow boundary for using suggestion evidence without making status updates into truth.
 
@@ -149,7 +205,10 @@ Custom classifier training remains future work until reviewed media-backed
 examples, metadata export review, media-copy workflow, dataset coverage/quality
 checks, external training workspace checks/templates, and runtime boundary
 planning are in place.
-SpeciesNet stays a separate optional external species/taxon candidate.
+SpeciesNet did not clear the current saved-field-media gate. BioCLIP 2 is the
+leading controlled follow-up, but it is not selected until species-level
+reviewed corrections and representative non-bird examples establish useful
+accuracy and abstention behavior.
 
 ## Dependency Rules
 
@@ -160,6 +219,16 @@ PyTorch-Wildlife remains archived. The official `megadetector` package is the
 selected optional MDv5 runtime after a focused API, dependency, license, and
 download-behavior checkpoint. Final installer redistribution still requires a
 release-time transitive dependency audit.
+
+The Phase 26A evaluation shadow justifies a separate
+`classifier-bioclip` optional extra backed by the tested OpenCLIP 3.3 minor
+line. The core app does not import that runtime during startup or status reads.
+A run requires an explicit local BioCLIP model directory, frozen
+candidate-label file, and matching precomputed text-embedding cache. Runtime
+code never downloads a model or rebuilds that cache. The evidence provenance
+binds the labels, cache, model configuration, weights, prompt recipe, OpenCLIP
+version, and PyTorch version. The evaluation-only `pybioclip` tooling used to
+prepare the current cache is not a production runtime dependency.
 
 Serious future detector runtime candidates:
 
@@ -183,6 +252,9 @@ MockingBird must not:
 - hide the configured/unconfigured state from the user
 
 Use environment variables such as `MOCKINGBIRD_LOCAL_DETECTOR_MODEL_PATH` and optional labels configuration such as `MOCKINGBIRD_LOCAL_DETECTOR_LABELS_PATH`. MegaDetector runtime work should use `MOCKINGBIRD_MEGADETECTOR_MODEL_PATH`, optional `MOCKINGBIRD_MEGADETECTOR_LABELS_PATH`, and optional `MOCKINGBIRD_MEGADETECTOR_CONFIDENCE_THRESHOLD`.
+The BioCLIP evaluation shadow uses `MOCKINGBIRD_BIOCLIP_MODEL_PATH`,
+`MOCKINGBIRD_BIOCLIP_LABELS_PATH`, and
+`MOCKINGBIRD_BIOCLIP_EMBEDDING_CACHE_PATH`; the first runtime is CPU-only.
 
 ## Supported Media Scope
 
@@ -212,6 +284,12 @@ The adapter must set proposal fields conservatively:
 
 No raw model output should become reviewed labels, export records, or analytics truth without user correction.
 
+Species-classifier output maps separately into one pending
+`SpeciesSuggestion`: top-1 is the primary candidate, lower ranks are stored as
+alternatives, and the actual padded detector/activity/full-frame input box is
+stored as provenance. It does not create a detector run or proposal merely to
+fit the detector-shaped API.
+
 ## Confidence Threshold Rules
 
 Use a conservative default threshold. Make threshold configuration explicit and local.
@@ -219,10 +297,12 @@ Use a conservative default threshold. Make threshold configuration explicit and 
 Low-confidence outputs should be dropped or left as low-confidence proposal evidence. They must not become review truth.
 
 Confidence is evidence metadata. It is not a replacement for correction.
+BioCLIP softmax values are candidate-bank-relative, uncalibrated scores rather
+than confidence and must be labeled that way in Review Queue.
 
-## Performance Expectations
+## Bounded Runtime Expectations
 
-The first candidate should be boring and bounded:
+The completed first detector candidate remains boring and bounded:
 
 - run only when requested
 - process one imported image at a time
@@ -232,10 +312,25 @@ The first candidate should be boring and bounded:
 
 If runtime cost is unclear, prefer disabled or unavailable status over automatic execution.
 
+The visual classifier evaluation also starts one saved media item at a time and
+records its actual cost. Automatic post-activity inference is allowed only after
+selection, with one bounded attempt per eligible Visit, explicit concurrency and
+timeout limits, and failure behavior that leaves capture and review available.
+The shadow serializes model loads and deliberately releases the large model
+after each request instead of retaining it in the local app process. Its
+single-flight slot is reserved before image decode so concurrent requests
+cannot multiply full-image decode memory. Side-effect-free status rejects an
+unsupported OpenCLIP runtime line before execution, and Windows worker startup
+passes a bounded shared-memory descriptor instead of pickling full RGB bytes
+into spawn arguments.
+
 ## Evaluation Plan
 
 Evaluate with product data, not model hype:
 
+- measure real per-image top-1/top-3 species predictions against reviewed labels
+- record abstentions, high-confidence mistakes, inference time, and setup cost
+- compare detector/activity-centered crops with useful original-frame context
 - create proposal evidence
 - convert useful proposals into reviewable events/visits
 - correct labels through the normal review flow
@@ -255,9 +350,10 @@ Rollback must be safe:
 - use adapter evaluation to identify noisy labels
 - do not delete product data to undo a bad model candidate
 
-## Explicit Non-Goals
+## Historical First-detector Non-Goals
 
-The first real detector candidate must not add:
+The completed first real detector spike did not add the following. These limits
+do not block the explicitly scoped visual species milestone above:
 
 - species classification
 - video frame extraction

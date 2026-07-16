@@ -10,6 +10,7 @@ import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
+import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
 import { formatDateTime, formatLabel } from "../utils";
 
 type SpeciesSuggestionFilter = "all" | SpeciesSuggestionStatus;
@@ -575,7 +576,10 @@ export function SpeciesSuggestionsPage({
                 </div>
                 <div className="species-suggestion-meta">
                   <span>Rank {suggestion.rank}</span>
-                  <span>{formatConfidence(suggestion.confidence)}</span>
+                  <span>
+                    {formatConfidence(suggestion.confidence)}{" "}
+                    {speciesSuggestionMetricLabel(suggestion)}
+                  </span>
                   <span>{formatDateTime(suggestion.created_at)}</span>
                 </div>
                 <div className="species-suggestion-links">
@@ -612,7 +616,11 @@ export function SpeciesSuggestionsPage({
                     value={selectedSuggestion.suggested_scientific_name ?? "none"}
                   />
                   <DetailItem
-                    label="Confidence"
+                    label={
+                      speciesSuggestionMetricLabel(selectedSuggestion) === "uncalibrated score"
+                        ? "Uncalibrated score"
+                        : "Confidence"
+                    }
                     value={formatConfidence(selectedSuggestion.confidence)}
                   />
                   <DetailItem label="Rank" value={`${selectedSuggestion.rank}`} />
@@ -877,9 +885,9 @@ function parseOptionalJsonObject(
 
 function formatConfidence(value?: number | null): string {
   if (typeof value !== "number") {
-    return "No confidence";
+    return "Unavailable";
   }
-  return `${Math.round(value * 100)}% confidence`;
+  return `${Math.round(value * 100)}%`;
 }
 
 function formatJsonSummary(value: Record<string, unknown>): string {

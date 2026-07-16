@@ -1,17 +1,19 @@
 # Development Workflow
 
-MockingBird work should stay scoped, product-led, and easy to review.
+MockingBird work should stay scoped, product-led, reproducible, and easy to
+review. [roadmap.md](roadmap.md) is the current sequencing authority;
+[roadmap-history.md](roadmap-history.md) is reference history only.
 
 ## Roles
 
-- ChatGPT acts as product architect, task writer, and review partner.
-- Codex edits files and runs validation.
-- The user reviews the diff and test output before commit.
-- Commit only after scope and validation are clean.
+- The user owns product direction, scope approval, and final review.
+- The assistant/Codex turns current roadmap work into a task packet, changes
+  only the allowed files, and validates in proportion to risk.
+- Commits happen only after scope, diff, and validation are clean.
 
-## Standard Task Packet
+## Standard task packet
 
-Each implementation task should include:
+Before implementation edits, state:
 
 - roadmap phase
 - product flow improved
@@ -19,64 +21,134 @@ Each implementation task should include:
 - files allowed
 - non-goals
 - validation tier
-- implementation requirements
-- validation commands/report
+- implementation requirements when the roadmap/design does not already define
+  them
 
-## Intended Build Order
+If a task needs a materially different action, dependency, network call,
+provider behavior, generated artifact, or destructive operation, update the
+scope before taking it.
 
-- Phase 0: product doctrine and repo framing
-- Phase 0B: Codex guardrails and development workflow
-- Phase 1A: core product API skeleton
-- Phase 1B: product contract tests and demo data
-- Phase 2: stream-first frontend shell
-- Phase 3: local/demo media adapters
-- Phase 4: detection pipeline
-- Phase 5: bird feeder species review vertical
-- Phase 6: broader outdoor intelligence
+## Validation tiers
 
-Camera/source adapters come after the core product model and UI loop. They should normalize into Sources, Streams, Zones, Events, Visits, Detections, Review/corrections, Dataset exports, and Analytics rather than defining the product shape.
+Use the lowest tier that adequately covers the risk. Higher tiers include the
+applicable lower-tier checks.
 
-For source/stream work around the current external_url path, use
-[source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md)
-as the manual browser/API validation companion to the automated smoke test.
+### Tier 0 - docs and scope
 
-For a full local MVP walkthrough across Dashboard readiness, provider workflows,
-Motion Evidence, review/correction, analytics, exports, classifier readiness,
-and saved media retention, use
-[mvp-demo-script.md](mvp-demo-script.md).
+For documentation, comments, copy-only, or planning changes:
 
-For first-run and sparse-data copy, use
-[onboarding-empty-state-polish.md](onboarding-empty-state-polish.md). These
-surfaces are read-only guidance and must not run provider actions or create
-truth.
+- inspect the changed-file list and diff
+- verify links and referenced files
+- check product terminology and current-state accuracy
+- confirm the task packet's non-goals and allowed files
+- check that doctrine is linked rather than unnecessarily duplicated
 
-Before treating the current app as local MVP demo-ready, use
-[local-mvp-readiness-checklist.md](local-mvp-readiness-checklist.md). It is a
-local demo/dev gate, not a production release claim.
+### Tier 1 - focused code checks
 
-For product-like launch, reload/navigation recovery, local data compatibility,
-and graceful shutdown, use
-[single-app-runtime-recovery-design.md](single-app-runtime-recovery-design.md).
-Validate the single runtime with `python -m mockingbird --check` after the
-frontend production build. This validation must not start camera sessions,
-monitoring, providers, workers, or models.
+For small, isolated behavior changes:
 
-Before durable camera, monitoring, visual-model, or audio lifecycle work, use
-[local-backup-recovery-design.md](local-backup-recovery-design.md). Backup and
-restore belong on the existing Local Data page and must preserve the database
-and managed media as one verified product graph. Restore must verify before
-mutation, create a verified pre-restore safety backup, stop process-owned camera
-activity, and roll both database and media back if the restored repository
-cannot reopen. Backup artifacts remain under ignored local data paths and do
-not create or reinterpret evidence, reviewed truth, analytics, or exports.
+- run the closest focused tests
+- run the relevant frontend type-check or backend static/lint checks when the
+  changed language is covered
+- verify no generated/local artifact entered the worktree
 
-Before persisting camera or monitor intent across restart, use
-[durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md).
-Implement it in stages: desired-state schema/API with every Stream off;
-supervisor and fake-clock lifecycle tests while activation remains unavailable;
-then explicit live-video arming with backup/restore holds and storage budgets.
-Do not make external snapshot polling durable through this path, put lifecycle
-controls on a new admin page, allow status reads to create candidates, or let
-future audio inherit video consent.
+### Tier 2 - domain integration and persistence
 
-Keep docs practical and concise. Link to [README.md](../README.md), [docs/product-doctrine.md](product-doctrine.md), [docs/roadmap.md](roadmap.md), [docs/glossary.md](glossary.md), and [docs/architecture.md](architecture.md) instead of duplicating the full doctrine in every file.
+For API/repository/service changes, data writes, migrations, media handling,
+provider boundaries, or backup/restore behavior:
+
+- run focused unit and domain integration tests
+- run schema migration and backup compatibility tests when persistence changes
+- validate negative paths, side-effect-free reads, and evidence/truth boundaries
+- run the frontend build when API shapes or shared product flows change
+
+### Tier 3 - complete non-hardware gate
+
+For cross-cutting product work, lifecycle foundations, release candidates, or
+changes with broad blast radius:
+
+- run the complete backend suite
+- run frontend type-check and production build
+- run the critical hardware-free product smoke flow
+- run migration/backup compatibility checks
+- run the repository's configured formatting, lint, type, and contract-parity
+  checks
+- run `python -m mockingbird --check` after the production frontend build when
+  runtime/startup behavior is in scope
+
+Tier 3 must not start cameras, workers, providers, model runtimes, or truth
+creation merely to report readiness.
+
+### Tier 4 - explicit hardware, failure, and soak validation
+
+For camera bridges, durable activation, field performance, destructive recovery
+drills, or release acceptance:
+
+- start only explicitly scoped hardware/runtime behavior
+- run the relevant Tier 3 gate first
+- use bounded fake-clock/fake-adapter checks before real hardware
+- run scoped failure-injection and long-run/soak checks
+- record environment, duration, representative inputs, product metrics,
+  artifacts created, cleanup, and deviations
+
+Tier 4 media, benchmark data, reports, model artifacts, and caches remain under
+ignored local paths.
+
+## Change workflow
+
+1. Read the required current-state documents in `AGENTS.md` and the smallest
+   conditional design set for the task.
+2. Restate the task packet and identify the validation tier.
+3. Inspect the current implementation and existing tests before editing.
+4. Make the smallest coherent change that completes the scoped outcome.
+5. Validate incrementally, then run the full selected tier.
+6. Review the changed-file list and diff for unrelated or generated changes.
+7. Report changed files, validation performed, and deviations from scope.
+
+## Product-flow validation
+
+When the changed area participates in the main loop, validate the nearest
+applicable portion of:
+
+Cameras/Streams -> Zones -> monitoring/evidence -> Review Queue -> explicit
+correction -> Bird Log -> reviewed-only Exports.
+
+Provider/status reads remain side-effect free. Media, MotionEvidence,
+DetectionProposals, SpeciesSuggestions, and external labels remain evidence.
+Explicit correction remains the first dataset-grade truth write.
+
+Useful focused references:
+
+- [source-stream-dev-smoke-checklist.md](source-stream-dev-smoke-checklist.md)
+  for Source/Stream provider flows
+- [mvp-demo-script.md](mvp-demo-script.md) for the broader local product spine
+- [local-mvp-readiness-checklist.md](local-mvp-readiness-checklist.md) for the
+  local demo/dev gate
+- [single-app-runtime-recovery-design.md](single-app-runtime-recovery-design.md)
+  for startup, navigation recovery, schema compatibility, and shutdown
+- [local-backup-recovery-design.md](local-backup-recovery-design.md) for verified
+  database-and-media backup/restore
+- [durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md)
+  for default-off durable monitoring and future activation
+
+## Documentation maintenance
+
+Each concept has one preferred home:
+
+- product identity and quick start: `README.md`
+- non-negotiable product doctrine: `product-doctrine.md`
+- current priorities and sequence: `roadmap.md`
+- completed phase summary: `roadmap-history.md`
+- domain definitions: `glossary.md`
+- current component and data-flow boundaries: `architecture.md`
+- agent routing and universal guardrails: `AGENTS.md`
+- detailed feature contract: the relevant focused design document
+
+Do not append completed implementation diaries to README, architecture, or the
+current roadmap. When work completes, update current-state facts concisely,
+move phase detail to history if it remains useful, and keep design documents as
+the authoritative detailed contracts.
+
+Prefer links over repeated non-goal inventories. Repeat a guardrail only when
+the local task could otherwise cross that boundary. Remove or archive stale
+"next likely phase" text when the current roadmap supersedes it.

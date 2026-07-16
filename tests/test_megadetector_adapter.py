@@ -184,10 +184,9 @@ def test_pyproject_keeps_megadetector_runtime_optional_and_out_of_core() -> None
 
     core_dependencies = "\n".join(pyproject["project"].get("dependencies", [])).lower()
     optional_dependencies = pyproject["project"].get("optional-dependencies", {})
-    optional_dependency_text = "\n".join(
+    megadetector_dependency_text = "\n".join(
         dependency.lower()
-        for dependencies in optional_dependencies.values()
-        for dependency in dependencies
+        for dependency in optional_dependencies["detector-megadetector"]
     )
 
     assert optional_dependencies["detector-megadetector"] == [
@@ -195,12 +194,12 @@ def test_pyproject_keeps_megadetector_runtime_optional_and_out_of_core() -> None
     ]
     assert "pytorchwildlife" not in core_dependencies
     assert "torch" not in core_dependencies
-    assert "pytorchwildlife" not in optional_dependency_text
-    assert "torch" not in optional_dependency_text
-    assert "ultralytics" not in optional_dependency_text
-    assert "yolov5" not in optional_dependency_text
-    assert "soundfile" not in optional_dependency_text
-    assert "librosa" not in optional_dependency_text
+    assert "pytorchwildlife" not in megadetector_dependency_text
+    assert "torch" not in megadetector_dependency_text
+    assert "ultralytics" not in megadetector_dependency_text
+    assert "yolov5" not in megadetector_dependency_text
+    assert "soundfile" not in megadetector_dependency_text
+    assert "librosa" not in megadetector_dependency_text
 
 
 def test_runtime_status_inspects_official_megadetector_package(

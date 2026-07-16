@@ -13,6 +13,7 @@ import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEv
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
+import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
 import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
 import { TaxonomyBadge } from "../components/TaxonomyBadge";
 import { displayTaxonomyLabel, findTaxonomyLabel, isBirdReviewLabel } from "../components/taxonomy";
@@ -883,7 +884,10 @@ export function VisitDetailPage({
                     <span className="meta-text">{speciesSuggestionStatusCopy(suggestion.status)}</span>
                     <div className="species-suggestion-meta">
                       <span>Rank {suggestion.rank}</span>
-                      <span>{formatConfidence(suggestion.confidence)}</span>
+                      <span>
+                        {formatConfidence(suggestion.confidence)}{" "}
+                        {speciesSuggestionMetricLabel(suggestion)}
+                      </span>
                       <span>{formatDateTime(suggestion.created_at)}</span>
                     </div>
                     {suggestion.notes ? (
@@ -1280,11 +1284,17 @@ function compareSpeciesSuggestions(a: SpeciesSuggestion, b: SpeciesSuggestion): 
   if (rankDelta !== 0) {
     return rankDelta;
   }
-  const confidenceDelta = (b.confidence ?? -1) - (a.confidence ?? -1);
-  if (confidenceDelta !== 0) {
-    return confidenceDelta;
+  if (
+    a.adapter_id === b.adapter_id &&
+    speciesSuggestionMetricLabel(a) === speciesSuggestionMetricLabel(b)
+  ) {
+    const confidenceDelta = (b.confidence ?? -1) - (a.confidence ?? -1);
+    if (confidenceDelta !== 0) {
+      return confidenceDelta;
+    }
   }
-  return Date.parse(b.created_at) - Date.parse(a.created_at);
+  const recencyDelta = Date.parse(b.created_at) - Date.parse(a.created_at);
+  return recencyDelta !== 0 ? recencyDelta : a.id.localeCompare(b.id);
 }
 
 function speciesSuggestionStatusCopy(status: SpeciesSuggestion["status"]): string {
@@ -1303,7 +1313,7 @@ function speciesSuggestionStatusCopy(status: SpeciesSuggestion["status"]): strin
 
 function formatConfidence(value?: number | null): string {
   if (typeof value !== "number") {
-    return "No confidence";
+    return "Unavailable";
   }
-  return `${Math.round(value * 100)}% confidence`;
+  return `${Math.round(value * 100)}%`;
 }

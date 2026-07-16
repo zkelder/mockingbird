@@ -1,1433 +1,360 @@
 # MockingBird Roadmap
 
-## Phase 0 — Product foundation
-
-Goal: establish the doctrine, repo shape, vocabulary, and product boundaries.
-
-Deliverables:
-
-- README
-- product doctrine
-- roadmap
-- glossary
-- architecture notes
-
-Validation:
-
-- The repo clearly presents MockingBird as a local-first outdoor video intelligence platform.
-- Streams, zones, events, review, corrections, exports, and analytics are central.
-- Source adapters are described as underneath the product.
-
-## Phase 1 — Core product model and API
-
-Goal: define the universal local-first event platform before building source adapters.
-
-Core concepts:
-
-- CameraSource
-- Stream
-- Zone
-- Event
-- Visit
-- Detection
-- Snapshot
-- Clip
-- ReviewLabel
-- SpeciesCorrection
-- DatasetExport
-
-Validation:
-
-- Seed/demo data can represent outdoor visits and events without relying on a real camera.
-- API can list sources, streams, zones, events, visits, labels, and exports.
-- The frontend can be built against stable product-shaped objects.
-
-## Phase 2 — Stream-first frontend MVP
-
-Goal: create the app shell around streams and reviewable outdoor events.
-
-Core screens:
-
-- Dashboard
-- Streams
-- Stream Detail
-- Zone Editor
-- Events
-- Event Detail
-- Review Queue
-- Analytics
-- Dataset Exports
-- Settings
-
-Validation:
-
-- User can see a demo stream placeholder.
-- User can draw or manage zones.
-- User can review demo events.
-- User can correct labels/species.
-- User can see analytics derived from reviewed events.
-
-## Phase 3 — Local media and demo source adapters
-
-Goal: bring media into the platform without letting adapters define the product.
-
-Initial adapters:
-
-- Demo stream adapter
-- Manual upload adapter
-- Local folder import adapter
-
-Validation:
-
-- Imported media becomes streams/events/visits in the same product model.
-- Review and correction flow works the same regardless of source.
-
-## Phase 4 — Detection pipeline
-
-Goal: analyze video/media for outdoor activity and create reviewable events.
-
-Initial detection targets:
-
-- bird
-- squirrel
-- cat
-- dog
-- person
-- vehicle
-- unknown_animal
-- unknown_bird
-
-Validation:
-
-- Detections create reviewable events.
-- User corrections override model guesses.
-- Corrections are stored as dataset-grade labels.
-
-## Phase 5 — Bird feeder species vertical
-
-Goal: make backyard bird feeder review genuinely useful.
-
-Initial species targets:
-
-- northern_mockingbird
-- carolina_wren
-- mourning_dove
-- american_robin
-- northern_cardinal
-- blue_jay
-- tufted_titmouse
-- carolina_chickadee
-- house_finch
-- eastern_bluebird
-- red_bellied_woodpecker
-- downy_woodpecker
-- brown_thrasher
-- gray_catbird
-- unknown_bird
-
-Validation:
-
-- Bird visits are reviewable by species.
-- Corrections can generate clean local dataset exports.
-- Analytics can summarize species and feeder activity over time.
-
-## Phase 6 — Broader outdoor intelligence
-
-Goal: expand beyond feeder review into yard-scale outdoor events.
-
-Targets:
-
-- wildlife activity
-- pets
-- cats
-- squirrels
-- people
-- vehicles
-- feeder zones
-- birdbath zones
-- driveway zones
-- privacy zones
-- ignore zones
-
-Validation:
-
-- MockingBird can describe meaningful yard activity over time.
-- Events remain reviewable and correctable.
-- Exports and analytics remain local-first.
-
-## Phase 7 — Local model adapter readiness
-
-Goal: prepare the first real local detector without weakening the review and truth boundary.
-
-Current guardrail work:
-
-- Phase 7D: model selection and runtime guardrails.
-- Phase 7E: MegaDetector-family detector decision record.
-- Phase 7F: MegaDetector adapter wrapper and unavailable-safe runtime path.
-- Phase 7G: MegaDetector runtime selection and dependency plan.
-- Phase 7H: optional MegaDetector dependency/runtime integration boundary.
-- Phase 7I: MegaDetector local runtime setup checklist.
-- Phase 7J: MegaDetector/PyTorch-Wildlife runtime smoke findings.
-- Phase 7K: detector runtime pivot and motion trigger plan.
-- Next likely phase: Phase 8A or 7L — zone-aware motion trigger backend design/implementation.
-
-Validation:
-
-- Model adapters produce proposal evidence only.
-- User corrections remain dataset truth.
-- Adapter evaluation and rollback stay local, reviewable, and safe.
-- Real MegaDetector runtime work follows [megadetector-runtime-plan.md](megadetector-runtime-plan.md); Phase 23 adds the first bounded official-package MDv5 image path.
-- Local MegaDetector setup follows [megadetector-local-setup.md](megadetector-local-setup.md) before any smoke test.
-- PyTorch-Wildlife remains archived. The official `megadetector` package is an
-  optional, explicit, local MDv5 proposal adapter and still requires a final
-  installer dependency audit before distribution.
-- The active product path is [stream-motion-trigger-plan.md](stream-motion-trigger-plan.md): stream -> zones -> motion trigger -> saved best-frame evidence -> optional detector evidence -> later species suggestion -> user correction truth.
-
-## Phase 8 — Zone-aware motion trigger foundation
-
-Goal: build the lightweight stream-first event trigger path around user-drawn zones while preserving review and correction as truth.
-
-Current work:
-
-- Phase 8A: deterministic zone-aware motion scoring foundation for supplied grayscale frame planes.
-- Phase 8B: explicit motion evaluation API contract for synthetic/manual frame-plane inputs.
-- Phase 8C: Motion Evidence product design for bridging candidate motion to later Event/Visit evidence.
-- Phase 8D: MotionEvidence schema/repository/API foundation.
-- Phase 8E: MotionEvidence promotion design.
-- Phase 8F: MotionEvidence promotion API/repository implementation.
-- Phase 8G: MotionEvidence review surface.
-- Phase 8H: manual MotionEvidence creation UI/dev surface.
-- Phase 8I: frame sequence motion-to-evidence backend contract for already-sampled frame planes.
-- Phase 8J: sampled-frame ingestion boundary design.
-- Phase 8K: sampled-frame evaluation browser harness.
-- Phase 8L: lightweight sampler abstraction design.
-- Phase 8M: sampler abstraction code using supplied in-memory frame planes only.
-- Phase 8N: best-frame media attachment design.
-- Phase 8O: best-frame attachment schema/API compatibility review.
-- Phase 8P: local frame artifact design.
-- Phase 8Q: attach existing MediaAsset to MotionEvidence.
-- Phase 8R: Motion Evidence media preview polish.
-- Phase 8S: media-backed MotionEvidence creation from existing MediaAsset.
-- Phase 8T: end-to-end motion/media review demo polish.
-- Next likely phase: Phase 8U — local frame artifact creation from existing imported media or controlled frame capture design.
-
-Validation:
-
-- Motion scoring stays pure and deterministic.
-- Motion evaluation API does not persist data or create product truth.
-- Motion Evidence design preserves pending/promoted/ignored evidence as separate from truth.
-- MotionEvidence creation and ignore actions do not create Event, Visit, ReviewLabel, export, or analytics truth.
-- MotionEvidence promotion design keeps Event/Visit creation unreviewed and evidence-only until user correction.
-- MotionEvidence promotion creates only unreviewed Event/Visit evidence and leaves correction/export truth untouched.
-- MotionEvidence review surface lets users inspect, ignore, and promote evidence without creating truth.
-- Manual MotionEvidence creation lets the browser exercise the evidence loop before stream sampling without creating truth.
-- Frame sequence evaluation can create pending MotionEvidence from caller-provided frame planes without creating truth.
-- Sampled-frame ingestion design defines the bridge from visible streams to frame planes before implementation.
-- Sampled-frame evaluation harness exercises supplied frame planes in the browser without real stream sampling.
-- Lightweight sampler abstraction design defines future sampler inputs, outputs, zone/privacy behavior, and truth boundary before implementation.
-- Sampler abstraction code evaluates supplied in-memory frame planes and can create pending MotionEvidence without creating truth.
-- Best-frame media attachment design defines how candidate frame indexes can later link to optional visible evidence without creating truth.
-- Best-frame attachment compatibility confirms MotionEvidence and Visit/detail media references stay evidence-only.
-- Local frame artifact design separates scoring frame planes from optional visual evidence references.
-- Existing MediaAsset attachment lets pending MotionEvidence carry visual evidence context without creating truth.
-- Motion Evidence media preview polish makes attached MediaAsset context visible without capture, decoding, thumbnails, model calls, or truth writes.
-- Media-backed MotionEvidence creation lets manual pending evidence start with existing MediaAsset context without capture, decoding, thumbnails, model calls, or truth writes.
-- End-to-end motion/media review demo polish makes the current import -> media-backed MotionEvidence -> preview -> promote -> review/correction loop easier to validate without capture, decoding, thumbnails, model calls, or truth writes from MotionEvidence.
-- Stream sampling, media decoding, and species suggestion remain later phases.
-- Motion output remains candidate evidence only; user correction remains dataset truth.
-
-## Phase 9 — Species suggestion assistance
-
-Goal: add species assistance as review evidence without weakening user correction as dataset/export truth.
-
-Current work:
-
-- Phase 9A: species suggestion adapter design.
-- Phase 9B: SpeciesSuggestion schema/repository/API foundation.
-- Phase 9C: SpeciesSuggestion UI surface with manual/mock suggestions.
-- Phase 9D: species suggestion correction-flow design.
-- Phase 9E: SpeciesSuggestion use-as-correction UI prefill.
-- Phase 9F: SpeciesSuggestion status polish after successful correction.
-- Phase 9G: Visit Detail species suggestion surface polish.
-- Phase 9H: mock species suggestion adapter for existing Visits.
-- Phase 9I: SpeciesNet runtime investigation docs.
-- Phase 9J: SpeciesNet source/license/runtime review.
-- Phase 9K: SpeciesNet optional adapter boundary plan.
-- Phase 9L: review/species suggestion UI polish.
-- Phase 9M: custom bird classifier dataset/export plan.
-- Phase 9N: dataset export manifest design for classifier training.
-- Phase 9O: classifier readiness report/API.
-- Phase 9P: classifier readiness UI surface.
-- Phase 9Q: classifier training manifest preview/API implementation foundation.
-- Phase 9R: classifier manifest UI/download preview.
-- Phase 9S: classifier manifest file export design.
-- Phase 9T: manifest file export backend implementation, metadata files only.
-- Phase 9U: classifier manifest export UI/status.
-- Phase 9V: external training workflow documentation.
-- Phase 9W: media-copy export design.
-- Phase 9X: media-copy export dry-run implementation.
-- Phase 9Y: external training workspace checklist.
-- Phase 9Z: external training workspace template docs.
-- Follow-on phase: Phase 10A — stream/source playback contract.
-
-Validation:
-
-- Species suggestions remain evidence only.
-- SpeciesSuggestion stays separate from MotionEvidence, DetectionProposal, and ReviewLabel.
-- SpeciesNet and custom bird classifiers remain optional future adapters, not product architecture.
-- SpeciesNet is a candidate with a boundary plan; no runtime is selected or installed.
-- Suggestions do not create reviewed labels, reviewed Visit/Event state, export truth, dataset coverage truth, or analytics truth without explicit user correction.
-- Phase 9L stays product-first by improving review clarity and suggestion usability before adding classifier runtime.
-- Phase 9M defines reviewed-data requirements before any custom classifier training or runtime work.
-- Phase 9N designs the classifier-training export manifest around reviewed media-backed examples, taxonomy, split, skip, and quality signals.
-- Phase 9O keeps the readiness path read-only, local, reviewed-truth-only, and free of export generation, model runtime, or training dependencies.
-- Phase 9P makes readiness visible in the UI without creating exports, labels, datasets, or classifier/runtime behavior.
-- Phase 9Q implements the read-only manifest preview/API foundation without training, media copying, manifest files, model files, or classifier runtime.
-- Phase 9R adds the frontend manifest preview and browser-side JSON copy/download without server-side file export, media copying, training, or runtime behavior.
-- Phase 9S defines the file-export boundary before any generated manifest files or reviewed media-backed example export work.
-- Phase 9T implements metadata-only manifest file export without media copying, training, model files, runtime calls, or truth writes.
-- Phase 9U adds dry-run/create UI and status for metadata export without media copying, training, model files, runtime calls, or truth writes.
-- Phase 9V defines the external training workspace boundary without adding media copying, training dependencies, model files, runtime calls, or truth writes.
-- Phase 9W defines the optional copied-media bundle boundary without copying media, generating datasets, adding dependencies, training, runtime calls, or truth writes.
-- Phase 9X implements copy-media dry-run planning without copying media, creating export directories/files for copied media, generating datasets, adding dependencies, training, runtime calls, or truth writes.
-- Phase 9Y defines the external local training workspace checklist without adding media copying, generated datasets, training dependencies, model files, runtime calls, or truth writes.
-- Phase 9Z documents the external training workspace template without creating folders, copying media, generating datasets, adding training scripts/dependencies, model files, runtime calls, or truth writes.
-- Accepted/rejected/superseded suggestion status remains evidence workflow, not dataset truth.
-- The Species Suggestions UI can create manual/mock evidence, inspect context, and update status without creating truth.
-- Applying suggestion evidence must route through explicit review/correction before dataset/export truth changes.
-- Use-as-correction prefill helps users start the existing correction form without creating truth until submit.
-- Suggestion accepted status from use-as-correction is evidence metadata and happens only after correction submit succeeds.
-- Visit Detail can show Visit-linked SpeciesSuggestions near correction without creating truth.
-- Mock species suggestion generation creates pending evidence only and does not run a model or inspect media.
-- Media-backed Event/Visit evidence can be the future input to suggestion adapters.
-- SpeciesNet remains under investigation as an optional future suggestion adapter; no runtime, model files, or dependency changes happen before source/license/runtime review.
-- SpeciesNet source review recommends boundary planning next, while runtime dependencies, model files, and downloads remain deferred.
-- Custom classifier training depends on reviewed local exports; raw suggestions, MotionEvidence, DetectionProposal, and unreviewed Visits are not training truth.
-
-## Phase 10 — Stream/source playback foundation
-
-Goal: make the stream-centered product honest about what can be shown before real
-source adapters exist.
-
-Current work:
-
-- Phase 10A: stream/source playback contract for Stream Detail.
-- Phase 10B: source connection/provider status contract.
-- Phase 10C: source provider configuration contract/UI.
-- Phase 10D: source setup review/status polish.
-- Phase 10E: manual media provider integration polish.
-- Phase 10F: stream/source UX consolidation.
-- Next likely phase: Phase 11A — first real source adapter boundary design.
-
-Validation:
-
-- Known streams return product-level playback status.
-- Known sources return product-level connection/provider status.
-- Provider definitions return product-level setup contracts.
-- Provider configuration stores safe metadata only.
-- Source setup review combines configuration, connection readiness, and stream
-  playback readiness without connecting to sources.
-- Manual media provider setup points to explicit import/review workflows while
-  live playback remains out of scope.
-- Source/Stream UX presents setup review, provider configuration, connection
-  readiness, playback status, zone editing, and manual import as one product
-  flow without changing review/correction truth.
-- Unknown streams return 404.
-- Unknown sources return 404.
-- Unknown provider keys are rejected.
-- Demo and placeholder streams do not claim real live playback.
-- Demo and not-configured sources do not claim real live playback.
-- Configured future providers still do not claim real live playback.
-- Zone editing remains central even when playback is not configured.
-- Source connection status includes related Stream ids and safe field readiness
-  lists without exposing provider internals.
-- Source provider configuration redacts secret fields to configured/not-configured
-  markers.
-- Source setup review reports demo-ready, metadata-ready, needs-setup,
-  future-adapter-required, or unavailable readiness without creating evidence or
-  truth.
-- Manual media imports can create reviewable Events/Visits through explicit
-  import actions; corrections remain dataset/export truth.
-- Playback status does not create MotionEvidence, Events, Visits, ReviewLabels,
-  SpeciesSuggestions, exports, analytics truth, media files, model artifacts, or
-  adapter runtime calls.
-- Source connection status does not create MotionEvidence, Events, Visits,
-  ReviewLabels, SpeciesSuggestions, exports, analytics truth, media files, model
-  artifacts, or provider runtime calls.
-- Source provider configuration does not create MotionEvidence, Events, Visits,
-  ReviewLabels, SpeciesSuggestions, exports, analytics truth, media files, model
-  artifacts, network calls, or provider runtime calls.
-- Future source adapters feed the playback contract instead of redefining the
-  Source, Stream, Zone, Event, Visit, review/correction, export, and analytics
-  loop.
-
-## Phase 11 — Source adapter boundary
-
-Goal: define the first real Source adapter boundary before adding provider
-runtime behavior.
-
-Current work:
-
-- Phase 11A: first real source adapter boundary design.
-- Phase 11B: external URL / HTTP still-image provider contract.
-- Phase 11C: explicit external URL preview fetch implementation.
-- Phase 11D: external URL preview-to-MediaAsset handoff design.
-- Phase 11E: explicit preview-to-MediaAsset save implementation.
-- Phase 11F: saved preview review/evidence handoff design.
-- Phase 11G: explicit saved-preview-to-MotionEvidence creation, no
-  Event/Visit/truth.
-- Phase 11H: saved preview evidence UI/review polish.
-- Phase 11I: external URL media review/promote flow polish.
-- Next likely phase: Phase 12A — source/stream smoke-test hardening.
-
-Validation:
-
-- Source adapters remain underneath Sources, Streams, Zones, Events, Visits,
-  review/correction, analytics, and exports.
-- Provider configuration feeds future adapters without implementing them.
-- Source connection status is the product-facing adapter status surface.
-- Stream playback status is the product-facing playback surface.
-- Recommended first real adapter direction is explicit external URL / HTTP
-  still-image preview/status, not a worker.
-- Phase 11B defines `external_url` provider fields, explicit preview/status
-  behavior, content-type boundaries, SSRF/timeout/security guardrails, storage
-  rules, and review/truth boundaries before implementation.
-- Phase 11C implements explicit still-image preview fetch with bounded timeout,
-  bounded bytes, supported JPEG/PNG/WebP content types, no redirects, no
-  workers, no media storage, and no truth creation.
-- Phase 11D designs when a transient preview may become a local MediaAsset,
-  including provenance, ignored local storage paths, cleanup/retention, Source
-  and Stream context, privacy/ignore boundaries, and no automatic truth.
-- Phase 11E implements explicit save-as-MediaAsset for external URL previews:
-  one bounded still image, existing local media storage, Source/Stream context,
-  and no automatic MotionEvidence, Events, Visits, ReviewLabels, or truth.
-- Phase 11F designs saved preview MediaAsset -> explicit pending
-  MotionEvidence handoff, preserving Source/Stream/Zone context, privacy/ignore
-  boundaries, promotion separation, and ReviewLabel correction as truth.
-- Phase 11G implements the explicit saved preview MediaAsset -> pending
-  MotionEvidence handoff. It requires user action, preserves Source/Stream/Zone
-  context where available, stores `snapshot_media_asset_id`, and creates no
-  Event, Visit, ReviewLabel, SpeciesSuggestion, DetectionProposal,
-  DatasetExport, reviewed status, model output, URL fetch, or media file.
-- Phase 11H makes saved-preview-origin MotionEvidence understandable in the
-  review UI with attached media preview/file access, safe provenance copy,
-  Source/Stream/Zone context, clear status, and explicit ignore/promote actions
-  without creating Events, Visits, labels, reviewed status, exports, or truth.
-- Phase 11I carries saved-preview context through explicit promotion into
-  Event/Visit detail, showing promoted MotionEvidence provenance, saved local
-  media context, Source/Stream/Zone context, and correction truth boundaries
-  without changing promotion behavior or creating ReviewLabels/export truth.
-- Future adapter work does not create MotionEvidence, Events, Visits,
-  ReviewLabels, analytics truth, export truth, copied media, model files,
-  dependencies, or generated artifacts unless explicitly scoped later.
-
-## Phase 12 — Source/stream validation hardening
-
-Goal: prove the explicit Source/Stream path stays product-shaped before adding
-more provider behavior.
-
-Current work:
-
-- Phase 12A: source/stream smoke-test hardening for the explicit external_url
-  preview -> MediaAsset -> MotionEvidence -> promotion -> correction path.
-- Phase 12B: Source/Stream smoke-test dev checklist for manual browser/API
-  validation of the same explicit path.
-- Phase 12C: external_url saved media cleanup/retention design.
-- Phase 12D: saved media retention report/dry-run API, no deletion.
-- Phase 12E: saved media retention UI, dry-run only.
-- Phase 12F: low-risk unlinked saved media file cleanup implementation.
-- Next likely phase: Phase 13A folder/trail-cam provider boundary design, or
-  Phase 12G cleanup UI polish/audit trail design.
-
-Validation:
-
-- Phase 12A adds backend smoke coverage only; it adds no runtime code,
-  dependencies, providers, workers, media decoding, automation, model calls, or
-  frontend behavior.
-- Source setup review, Source connection status, Stream playback status, Event
-  detail, Visit detail, and MotionEvidence list/detail do not fetch external
-  URLs.
-- Explicit preview fetch remains transient and creates no MediaAsset,
-  MotionEvidence, Event, Visit, ReviewLabel, SpeciesSuggestion,
-  DetectionProposal, DatasetExport, analytics truth, or dataset truth.
-- Explicit save creates one local MediaAsset only.
-- Explicit saved-media handoff creates one pending MotionEvidence only.
-- Explicit promotion creates unreviewed Event/Visit context only.
-- ReviewLabel correction remains the first dataset-grade truth write.
-- Phase 12B documents the repeatable manual validation path without adding
-  backend code, frontend code, tests, dependencies, workers, live playback,
-  automatic evidence creation, automatic Event/Visit creation, model runtime, or
-  generated artifacts.
-- Manual validation must preserve the same truth boundary as Phase 12A: preview
-  fetch creates no records, save creates MediaAsset only, media-to-evidence
-  creates MotionEvidence only, promote creates Event/Visit only, and correction
-  creates ReviewLabel truth.
-- Phase 12C designs retention policy only; it adds no delete implementation,
-  retention job, API endpoint, UI, backend code, frontend code, tests,
-  dependencies, generated media, or truth mutation.
-- Phase 12D implements read-only retention reporting and cleanup dry-run
-  planning for saved external_url preview MediaAssets. It classifies low,
-  medium, high, and protected risk from current MotionEvidence, Event/Visit,
-  and ReviewLabel links, reports stale media safely, and deletes no files,
-  deletes no records, fetches no URLs, creates no evidence, and mutates no
-  truth.
-- Phase 12E adds frontend visibility for that retention report and dry-run
-  planner. The UI shows risk badges, media state, linkage counts, warnings,
-  protected-media skips, and dry-run totals without adding cleanup/delete
-  behavior, media deletion, record deletion, evidence creation, or truth
-  mutation.
-- Phase 12F adds explicit, confirmed, low-risk saved preview file cleanup. It
-  deletes only eligible unlinked local files and deletes no MediaAsset records,
-  MotionEvidence, Events, Visits, ReviewLabels, DatasetExports, exports,
-  analytics truth, classifier truth, or reviewed truth.
-- Saved preview cleanup must separate file deletion from MediaAsset record
-  deletion, classify risk by linkage/review state, dry-run before destructive
-  work, and protect reviewed truth/export/classifier-readiness context by
-  default.
-
-## Phase 13 — Folder/trail-cam provider boundary
-
-Goal: define the next local-first Source provider boundary before adding folder
-or trail-camera import behavior.
-
-Current work:
-
-- Phase 13A: folder/trail-cam import provider boundary design.
-- Phase 13B: folder/trail-cam provider configuration/status contract.
-- Phase 13C: folder import preview API, dry-run only.
-- Phase 13D: folder import implementation to MediaAssets only.
-- Phase 13E: folder import UI preview/import.
-- Phase 13F: folder-import-to-MotionEvidence handoff design.
-- Phase 13G: single folder-imported MediaAsset to pending MotionEvidence, no
-  Event/Visit/truth.
-- Phase 13H: batch folder media evidence handoff dry-run/report, no creation.
-- Phase 13I: batch folder media evidence creation, pending MotionEvidence only.
-- Phase 13J: folder media review/promote UI polish.
-- Next likely phase: Phase 14A source/provider consolidation and smoke-test
-  expansion.
-
-Validation:
-
-- Phase 13A is docs/design only.
-- Phase 13B adds `folder_import_future` to provider definitions, provider
-  configuration, Source connection status, Source setup review, and placeholder
-  Stream playback only.
-- Phase 13C adds `POST /api/sources/{source_id}/folder-import/preview` for
-  explicit dry-run preview only.
-- Phase 13D adds `POST /api/sources/{source_id}/folder-import` for explicit
-  copy-to-local-MediaAsset import only.
-- Phase 13E exposes folder preview/import on the Streams page with candidate,
-  skipped, warning, and MediaAsset result reporting.
-- Phase 13F designs the explicit handoff from folder-imported MediaAssets to
-  pending MotionEvidence before any implementation.
-- Phase 13G implements that handoff one MediaAsset at a time through explicit
-  user action, reusing the shared media evidence route, preserving
-  Source/Stream/Zone context, and creating no Event, Visit, ReviewLabel,
-  SpeciesSuggestion, DetectionProposal, DatasetExport, analytics/export truth,
-  model output, or reviewed truth.
-- Phase 13H adds a batch evidence handoff dry-run for already-imported
-  folder MediaAssets. It reports eligible, duplicate, skipped, privacy/ignore,
-  missing-file, and context-mismatch cases without creating MotionEvidence,
-  Event, Visit, ReviewLabel, SpeciesSuggestion, DetectionProposal,
-  DatasetExport, analytics/export truth, model output, folder scan, import,
-  worker, or reviewed truth.
-- Phase 13I adds confirmed batch creation for eligible folder-imported
-  MediaAssets. It reuses dry-run eligibility, creates pending MotionEvidence
-  only, skips duplicates by default, and creates no Event, Visit, ReviewLabel,
-  SpeciesSuggestion, DetectionProposal, DatasetExport, analytics/export truth,
-  model output, folder scan, import, worker, promotion, or reviewed truth.
-- Phase 13J polishes the review/promote UI for folder-origin evidence. Motion
-  Evidence shows folder-imported media, safe provenance, Source/Stream/Zone
-  context, and pending/ignored/promoted state; Event/Visit detail can show
-  promoted folder-origin media context while correction remains truth.
-- Recommended canonical provider key is `folder_import_future`, with display
-  name Folder / trail-cam import.
-- `folder_path` is required sensitive metadata and must be redacted to
-  configured/not-configured in API/UI responses.
-- Folder/trail-cam provider work stays underneath Source setup, Source
-  connection status, and Stream playback contracts.
-- Folder/trail-cam setup represents explicit local batch import readiness, not
-  live playback, camera connection, watcher behavior, polling, or background
-  indexing.
-- Configured folder/trail-cam metadata enables explicit preview planning only;
-  Phase 13D adds explicit MediaAsset-only import; it still does not make live
-  playback available.
-- Preview/import behavior must be explicit, local-first, bounded, and
-  review/truth-safe.
-- Preview responses return relative candidate/skipped paths only and create no
-  MediaAssets, MotionEvidence, Events, Visits, ReviewLabels, DatasetExports,
-  SpeciesSuggestions, DetectionProposals, or truth.
-- Folder import creates MediaAssets at most by default; MotionEvidence,
-  Events/Visits, labels, analytics truth, exports, and classifier readiness
-  require explicit future routes and reviewed correction semantics.
-  Phase 13G adds the explicit single-media MotionEvidence route, but folder
-  import itself still creates MediaAssets only.
-- No folder scan, filesystem path validation, media import, media copy/reference
-  behavior, media deletion, decoding, worker, scheduler, dependency, generated
-  artifact, MediaAsset, MotionEvidence, Event/Visit, ReviewLabel, export, or
-  truth creation is added in Phase 13B.
-- No import, media copy/reference behavior, media deletion, decoding, worker,
-  scheduler, dependency, generated artifact, MediaAsset, MotionEvidence,
-  Event/Visit, ReviewLabel, export, or truth creation is added in Phase 13C.
-- No MotionEvidence, Event/Visit, ReviewLabel, DatasetExport, SpeciesSuggestion,
-  DetectionProposal, analytics truth, export truth, media deletion, decoding,
-  worker, scheduler, dependency, generated model/dataset artifact, watcher, or
-  polling behavior is added in Phase 13D.
-- No MotionEvidence, Event/Visit, ReviewLabel, DatasetExport, SpeciesSuggestion,
-  DetectionProposal, analytics truth, export truth, media deletion, decoding,
-  worker, scheduler, dependency, generated model/dataset artifact, watcher,
-  polling, or live playback behavior is added in Phase 13E.
-- No backend code, frontend code, tests, MotionEvidence creation, Event/Visit
-  creation, ReviewLabel/truth creation, media deletion, decoding, worker,
-  dependency, model/runtime behavior, or generated artifact is added in Phase
-  13F.
-- No automatic MotionEvidence creation, batch evidence creation, Event/Visit
-  creation, ReviewLabel/truth creation, media deletion, decoding, worker,
-  dependency, model/runtime behavior, or generated artifact is added in Phase
-  13G.
-- No MotionEvidence creation, Event/Visit creation, ReviewLabel/truth creation,
-  media import/copy/delete, folder scan, decoding, worker, dependency,
-  model/runtime behavior, batch creation, or generated artifact is added in
-  Phase 13H.
-- No automatic MotionEvidence creation, Event/Visit creation, ReviewLabel/truth
-  creation, promotion, media import/copy/delete, folder scan, decoding, worker,
-  dependency, model/runtime behavior, or generated artifact is added in Phase
-  13I.
-- No backend behavior, automatic MotionEvidence creation, automatic promotion,
-  ReviewLabel/truth creation, folder watcher, polling, media import/copy/delete,
-  decoding, worker, dependency, model/runtime behavior, or generated artifact is
-  added in Phase 13J.
-
-## Phase 14 — Source/provider flow consolidation
-
-Goal: harden implemented provider paths under one Source/Stream validation
-spine before adding another provider or runtime behavior.
-
-Current work:
-
-- Phase 14A: source/provider flow consolidation and smoke-test expansion for
-  `external_url` and `folder_import_future`.
-- Phase 14B: source/provider dashboard/status polish for read-only provider
-  workflow readiness and next-action cues.
-- Phase 14C: next provider boundary decision after `external_url` and
-  `folder_import_future`.
-- Phase 14D: generic webhook ingest provider boundary design.
-- Phase 14E: webhook provider configuration/status contract.
-- Phase 14F: webhook payload validation/dry-run endpoint, no records.
-- Phase 14G: webhook metadata event to pending MotionEvidence, explicit/evidence
-  only.
-- Phase 14H: webhook provider smoke-test hardening through correction truth.
-- Phase 14I: webhook review/promote UI provenance polish.
-- Follow-on phase: Phase 15A MVP source/provider readiness consolidation.
-
-Validation:
-
-- Phase 14A adds consolidated backend smoke coverage for both implemented
-  provider paths.
-- `external_url` is validated from provider configuration through explicit
-  preview, explicit MediaAsset save, explicit pending MotionEvidence handoff,
-  explicit promotion, and explicit ReviewLabel correction.
-- `folder_import_future` is validated from provider configuration through
-  explicit folder preview, explicit MediaAsset import, explicit single and batch
-  pending MotionEvidence handoff, explicit promotion, and explicit ReviewLabel
-  correction.
-- Source setup review, Source connection status, and Stream playback status are
-  read-only and must not fetch URLs, scan folders, create media, create
-  evidence, or claim live playback.
-- Dashboard/source overview may summarize provider readiness and route users to
-  explicit Streams, Motion Evidence, Retention, and Review workflows, but it
-  must not run providers, create media/evidence, or create truth.
-- Phase 14C recommends generic webhook ingest as the next provider boundary to
-  design before implementation, with HTTP/MJPEG design as the alternate visual
-  source-expansion path.
-- Future webhook work must keep incoming media/events/detections as
-  MediaAsset/MotionEvidence/proposal evidence until user review/correction.
-- Phase 14D defines the generic webhook ingest boundary: `webhook_future`,
-  metadata-only setup, future authenticated validation, future MediaAsset or
-  MotionEvidence mapping only when explicitly scoped, and no reviewed truth.
-- Phase 14E represents Generic webhook ingest in provider definitions, redacted
-  configuration, Source connection status, setup review, and placeholder Stream
-  playback. Missing shared-secret metadata stays `not_configured`; configured
-  metadata stays future-adapter-required because no endpoint accepts payloads.
-- Phase 14F adds explicit webhook payload validation/dry-run at
-  `POST /api/sources/{source_id}/webhook/validate`. It validates generic payload
-  shape and Source/Stream/Zone context, reports candidate mappings, rejects
-  privacy/ignore-zone candidates, and creates no records or truth.
-- Phase 14G adds explicit webhook metadata motion evidence creation at
-  `POST /api/sources/{source_id}/webhook/motion-evidence`. It requires
-  confirmation, accepts motion payloads only, creates pending MotionEvidence
-  only, skips duplicate `external_event_id` values by default, and creates no
-  MediaAssets, Events/Visits, labels, or truth.
-- Phase 14H adds backend smoke coverage for the complete metadata webhook path:
-  setup/status and Stream playback stay read-only, validation dry-run creates
-  nothing, explicit webhook motion ingest creates pending MotionEvidence only,
-  explicit promotion creates Event/Visit context only, and correction creates
-  ReviewLabel truth.
-- Phase 14I surfaces webhook-origin MotionEvidence provenance in the frontend:
-  provider key, external event ID, untrusted label/confidence, and timestamp can
-  appear in Motion Evidence, Event Detail, and Visit Detail as evidence metadata
-  only. Promotion and correction behavior stay explicit.
-- MediaAssets remain media context, MotionEvidence remains evidence, and
-  Event/Visit promotion remains unreviewed until correction.
-- No frontend feature, new provider, live playback, folder watcher, polling,
-  worker, media decoding, model runtime, dependency, automatic evidence, or
-  generated artifact is added in Phase 14A.
-- No new provider behavior, live playback, folder watcher, polling, worker,
-  media decoding, model runtime, dependency, automatic evidence, truth write, or
-  generated artifact is added in Phase 14B.
-- No backend code, frontend code, tests, endpoint, database model, provider
-  implementation, dependency, live playback, worker, polling, media decoding,
-  automatic evidence, truth write, or generated artifact is added in Phase 14C.
-- No backend code, frontend code, tests, endpoint, webhook ingest, auth/token
-  code, media upload, media download, MediaAsset creation, MotionEvidence
-  creation, Event/Visit creation, ReviewLabel/truth creation,
-  ecosystem-specific integration, MQTT, worker, queue, polling, dependency,
-  model/runtime behavior, or generated artifact is added in Phase 14D.
-- No webhook ingest endpoint, auth/token generation, payload parsing, media
-  upload/download behavior, MediaAsset creation, MotionEvidence creation,
-  Event/Visit creation, ReviewLabel/truth creation, ecosystem-specific
-  integration, MQTT, worker, queue, polling, dependency, model/runtime behavior,
-  live playback, or generated artifact is added in Phase 14E.
-- No webhook ingest, real auth/token generation, media upload/download,
-  MediaAsset creation, MotionEvidence creation, Event/Visit creation,
-  ReviewLabel/truth creation, ecosystem-specific integration, MQTT, worker,
-  queue, polling, dependency, model/runtime behavior, live playback, external
-  network call, or generated artifact is added in Phase 14F.
-- No general webhook ingest, real auth/token generation, media upload/download,
-  MediaAsset creation, Event/Visit creation, ReviewLabel/truth creation,
-  SpeciesSuggestion creation, DetectionProposal creation, ecosystem-specific
-  integration, MQTT, worker, queue, polling, dependency, model/runtime behavior,
-  live playback, external network call, or generated artifact is added in Phase
-  14G.
-- No frontend feature, backend behavior change, general webhook ingest, real
-  auth/token generation, media upload/download, MediaAsset creation,
-  SpeciesSuggestion creation, DetectionProposal creation, ecosystem-specific
-  integration, MQTT, worker, queue, polling, dependency, model/runtime behavior,
-  live playback, external network call, or generated artifact is added in Phase
-  14H. Event/Visit and ReviewLabel changes appear only through existing promote
-  and correction routes under smoke test.
-- No webhook media upload/download, automatic promotion, automatic labels,
-  ReviewLabel/truth creation, ecosystem-specific integration, worker, queue,
-  polling, dependency, model/runtime behavior, live playback, external network
-  call, or generated artifact is added in Phase 14I.
-
-## Phase 15 — MVP readiness and onboarding consolidation
-
-Goal: make the current stream/source MVP understandable without adding provider
-runtime behavior.
-
-Current work:
-
-- Phase 15A: MVP source/provider readiness consolidation.
-- Phase 15B: MVP demo script/checklist.
-- Phase 15C: onboarding and empty-state polish.
-- Phase 15D: local MVP release/readiness checklist.
-- Phase 15E: UI copy reduction pass.
-- Follow-on phase: Phase 16A worker/lifecycle boundary design.
-
-Design note: [mvp-readiness-consolidation.md](mvp-readiness-consolidation.md).
-Demo script: [mvp-demo-script.md](mvp-demo-script.md).
-Onboarding/empty states:
-[onboarding-empty-state-polish.md](onboarding-empty-state-polish.md).
-Local MVP readiness checklist:
-[local-mvp-readiness-checklist.md](local-mvp-readiness-checklist.md).
-
-Validation:
-
-- Dashboard/source overview explains current provider workflow readiness,
-  explicit next actions, review/evidence status, correction truth, and
-  export/classifier readiness without claiming live playback.
-- `external_url` is presented as explicit preview -> MediaAsset -> pending
-  MotionEvidence -> explicit promotion -> correction truth.
-- `folder_import_future` is presented as explicit folder preview/import ->
-  MediaAsset -> pending MotionEvidence -> explicit promotion -> correction
-  truth.
-- `webhook_future` is presented as API validation/metadata motion evidence ->
-  pending MotionEvidence -> explicit promotion -> correction truth, with UI
-  ingest controls still future.
-- `manual_media` is presented as explicit local import -> review/correction
-  truth.
-- Readiness/dashboard surfaces remain read-only and do not fetch URLs, scan
-  folders, process webhook payloads, create MediaAssets, create MotionEvidence,
-  create Events/Visits, create ReviewLabels, run models, or generate artifacts.
-- Media and evidence are not truth; reviewed corrections remain the source for
-  analytics, exports, and classifier readiness.
-- No new provider behavior, new backend endpoint, live playback, media decoding,
-  dependency, model runtime, training behavior, automatic evidence, automatic
-  Event/Visit creation, automatic truth creation, or generated artifact is
-  added in Phase 15A.
-- Phase 15B provides one repeatable local walkthrough for the current MVP spine:
-  fresh local app, provider readiness, explicit provider actions,
-  MotionEvidence review/promote, correction truth, analytics/export/classifier
-  readiness, saved media retention, and artifact safety.
-- Phase 15B is documentation only. It adds no backend code, frontend code,
-  tests, endpoints, database models, scripts, generated media, seed assets,
-  dependencies, provider behavior, live playback, workers, polling, watchers,
-  automation, model runtime, training behavior, or generated artifacts.
-- Phase 15C makes sparse/fresh local app states explain the product path:
-  Source setup, explicit provider action, MediaAsset/MotionEvidence evidence,
-  promotion, Visit correction, and analytics/export/classifier readiness.
-- Phase 15C frontend surfaces remain read-only guidance. They do not fetch
-  provider media, scan folders, process webhook payloads, create MediaAssets,
-  create MotionEvidence, create Events/Visits, create ReviewLabels, run models,
-  or generate artifacts.
-- Phase 15D should turn the current MVP spine into a local release/readiness
-  checklist after onboarding copy, demo flow, and validation expectations are
-  clean.
-- Phase 15D is documentation/checklist only. It defines local demo/dev
-  readiness, known limitations, validation commands, provider smoke-test gates,
-  artifact safety, and the truth boundary without adding runtime behavior.
-- Local MVP demo-ready means the required validation passes and
-  [mvp-demo-script.md](mvp-demo-script.md) can be completed. It is not a
-  public/product release claim.
-- Follow-on work should come from known gaps: reduce UI copy if it feels heavy,
-  design worker/lifecycle boundaries before background behavior, design
-  live/source automation before source automation, and select live provider work
-  through an explicit decision phase.
-- Phase 15E reduces repetitive explanatory UI copy from Phase 15C while keeping
-  concise next actions, truth-boundary cues, cleanup warnings, and detailed
-  guardrails in docs.
-- Phase 15E adds no behavior, provider work, backend/frontend data contract,
-  tests, dependencies, generated artifacts, or release claim.
-
-## Phase 16 — Worker and lifecycle boundaries
-
-Goal: define optional worker lifecycle rules before any background behavior is
-added.
-
-Current work:
-
-- Phase 16A: worker/lifecycle boundary design.
-- Phase 16B: worker status schema/API contract, read-only/no workers.
-- Phase 16C: worker status UI, read-only/no workers.
-- Phase 16D: disabled no-op worker registry/status contract.
-- Phase 16E: external_url worker dry-run plan API.
-- Phase 16F: Worker Status UI dry-run plan integration.
-- Next likely phase: Phase 16G folder import worker dry-run plan API.
-
-Design note: [worker-lifecycle-boundary-design.md](worker-lifecycle-boundary-design.md).
-
-Validation:
-
-- Phase 16A keeps provider flows explicit and documents future automation
-  candidates without implementing workers, schedulers, polling, watchers,
-  queues, provider behavior, media writes, evidence creation, Event/Visit
-  creation, label/truth creation, dependencies, or generated artifacts.
-- Workers are optional, local-first, disabled by default initially, observable,
-  bounded, and safely stoppable.
-- Worker status is lifecycle metadata only and must not create evidence or
-  truth.
-- Future worker output can become pending MotionEvidence, DetectionProposal, or
-  SpeciesSuggestion at most; ReviewLabel correction remains truth.
-- Privacy and ignore zones must block or skip automated evidence creation.
-- Storage estimates and retention rules are required before repeated
-  fetch/import/generation behavior.
-- Follow-on implementation must start with read-only status contracts before any
-  active background work.
-- Phase 16B adds `GET /api/workers/status` as a read-only future worker
-  visibility contract. It returns disabled, unimplemented placeholder workers
-  with all create/truth flags false and no provider execution.
-- Phase 16B adds backend schema/API/tests only. It adds no frontend, worker
-  runtime, scheduler, polling, watcher, queue, background job, provider
-  execution, external URL fetch, folder scan, webhook processing, MediaAsset,
-  MotionEvidence, Event/Visit, ReviewLabel/truth, model runtime, dependency, or
-  generated artifact.
-- Phase 16C adds a frontend Worker Status page and Dashboard link over the
-  read-only status route. It adds no backend behavior, worker runtime,
-  scheduler, polling, watcher, queue, background job, provider execution, media
-  creation, evidence creation, Event/Visit, ReviewLabel/truth, dependency, or
-  generated artifact.
-- Phase 16D moves future worker placeholders into a metadata-only registry so
-  future automation has one disabled status attachment point. It adds no
-  callbacks, start/run/enable methods, scheduling config, worker runtime,
-  scheduler, polling, watcher, queue, background job, provider execution, media
-  creation, evidence creation, Event/Visit, ReviewLabel/truth, dependency, or
-  generated artifact.
-- Phase 16E adds `GET /api/workers/external-url-preview/dry-run` as an explicit
-  planning route over local Source/provider configuration. It considers
-  `external_url` Sources only and keeps every would-fetch/create/truth flag
-  false. It adds no worker runtime, scheduler, polling, background job, HTTP
-  request, provider execution, media creation, evidence creation, Event/Visit,
-  ReviewLabel/truth, dependency, or generated artifact.
-- Phase 16F exposes the external_url dry-run plan in Worker Status UI. It adds
-  no worker runtime, scheduler, polling, background job, provider execution,
-  fetch, media creation, evidence creation, Event/Visit, ReviewLabel/truth,
-  dependency, or generated artifact.
-
-## Phase 17 — Evidence review efficiency
-
-Goal: make explicit evidence review faster while preserving the correction truth
-boundary.
-
-Deliverables:
-
-- Phase 17A: bulk MotionEvidence review actions.
-- Phase 17B: bulk saved media to MotionEvidence triage.
-- Phase 17C: bulk Review Queue correction actions.
-- Phase 17D: Review Queue filters and bulk selection safety.
-- Phase 17E: Review correction label helpers.
-- Phase 17F: Review correction label validation.
-- Phase 17G: Review correction history and latest-truth visibility.
-- Phase 17H: Promotion result links and evidence traceability.
-- Phase 17I: MotionEvidence detail route and trace links.
-- Phase 17J: MotionEvidence detail actions.
-- Next likely phase: Phase 17K source/stream smoke-test validation polish.
-
-Validation:
-
-- Phase 17A adds pending-only bulk ignore/promote actions for MotionEvidence.
-  Bulk ignore creates no Event, Visit, ReviewLabel, export, analytics, or truth.
-  Bulk promote reuses explicit promotion semantics to create reviewable
-  Event/Visit context only; corrections remain the first dataset/export truth.
-  It adds no workers, scheduler, provider changes, media import/fetch/scan
-  changes, model runtime, dependencies, or generated artifacts.
-- Phase 17B lets users select multiple eligible saved MediaAssets and create
-  pending MotionEvidence in bulk. It creates no Event, Visit, ReviewLabel,
-  reviewed truth, analytics/export truth, media import/fetch/scan behavior,
-  worker, scheduler, dependency, or generated artifact.
-- Phase 17C lets users select multiple eligible Review Queue items and apply
-  the same explicit correction in bulk. It creates ReviewLabels as user-selected
-  truth only, with no automatic labels, MediaAssets, MotionEvidence, new
-  Events/Visits, model runtime, worker, scheduler, provider change, dependency,
-  or generated artifact.
-- Phase 17D lets users narrow the Review Queue with client-side search, target,
-  and review-status filters before selecting visible eligible unreviewed items.
-  Filter changes clear selection and previous bulk result summaries. It adds no
-  backend filters, automatic labels, new truth path, worker, provider behavior,
-  dependency, or generated artifact.
-- Phase 17E adds compact label helper chips in the Review Queue from existing
-  taxonomy labels, recent ReviewLabels, and current suggested labels. Helpers
-  fill correction fields only; explicit single or bulk correction submit remains
-  required before ReviewLabel truth exists.
-- Phase 17F shows compact validation feedback for Review Queue correction
-  labels, distinguishing suggested, recent, taxonomy, and custom labels without
-  blocking custom local labels or creating truth before explicit submit.
-- Phase 17G makes latest ReviewLabel correction truth and compact correction
-  history visible in Review Queue audit context plus Event and Visit detail
-  pages, using existing read-only correction data without changing truth
-  creation.
-- Phase 17H adds direct Event/Visit links from single and bulk MotionEvidence
-  promotion results, shows promoted target links on promoted evidence, and makes
-  source MotionEvidence/media traceability visible on Event and Visit detail
-  pages without changing promotion or correction truth semantics.
-- Phase 17I adds a focused read-only MotionEvidence detail view using the
-  existing detail API and links to it from promote results, promoted evidence
-  rows, Event Detail, and Visit Detail. It changes no backend behavior,
-  promotion semantics, correction semantics, or truth creation path.
-- Phase 17J lets pending MotionEvidence be promoted or ignored directly from
-  the detail view using the existing single-action APIs. Promote still creates
-  reviewable Event/Visit context only, ignore creates no review records, and
-  ReviewLabel correction remains the first dataset/export truth path.
-
-## Phase 18 — Classifier readiness drill-down
-
-Goal: make classifier readiness auditable from reviewed correction examples
-without adding training or model runtime behavior.
-
-Deliverables:
-
-- Phase 18A: classifier readiness drill-down examples.
-- Phase 18B: classifier readiness gap actions into Review Queue.
-- Next likely phase: Phase 18C classifier readiness gap coverage polish.
-
-Validation:
-
-- Phase 18A lets users select a readiness label/species and inspect matching
-  ReviewLabel examples with Event/Visit detail links where target ids allow.
-  It uses existing read-only ReviewLabel data, creates no ReviewLabels, runs no
-  training/model code, changes no export format, and preserves correction as
-  classifier truth.
-- Phase 18B lets readiness gaps open Review Queue with label/search context and
-  an editable bulk correction label. It auto-selects nothing, auto-submits
-  nothing, and still creates classifier/export truth only through explicit
-  ReviewLabel correction.
-
-## Phase 19 — Camera Monitoring Core
-
-Goal: add explicit backend-managed monitoring for configured camera/source
-Streams without turning source adapters, workers, or model runtimes into the
-product center.
-
-Current work:
-
-- Camera Monitoring Core 1: in-memory Start monitoring / Stop monitoring /
-  Monitor status for `external_url` Streams.
-- Monitoring Review Candidate 1: monitored user-zone activity can be explicitly
-  turned into pending review activity from Cameras/Streams.
-- Named Zone Fast Path 1: automatic activity areas can be explicitly marked as
-  real named Zones so future motion can use the normal Zone-backed review path.
-- Next likely phase: Camera Monitoring Core 2 — browser/API smoke validation
-  polish for the named-Zone and monitoring-to-review handoff.
-
-Validation:
-
-- Monitoring starts only from an explicit user action.
-- Monitoring is source/stream scoped, in-memory only, and does not survive API
-  restart.
-- The first monitor path reuses existing external_url snapshot capture,
-  saved-media motion checks, source health, storage guardrails, activity
-  sessionization, and crop planning.
-- Monitoring stops on explicit Stop monitoring, max runtime, max snapshots,
-  repeated failures, or storage guardrails.
-- Monitoring creates no ReviewLabel truth, reviewed Event/Visit state,
-  analytics/export truth, automatic exports, model runtime calls, RTSP, USB,
-  ESP32, Pi, cellular, or live video behavior.
-- Monitoring review handoff creates pending review activity only after explicit
-  user action, reuses existing activity for duplicates, and leaves automatic
-  activity areas result-only until a named Zone is available. ReviewLabel truth
-  and Bird Log history still start only after correction.
-- Automatic activity areas become Zones only after explicit user action; privacy
-  and ignore Zones keep future activity suppressed in those areas.
-
-## Phase 20 — Live Camera Playback
-
-Goal: show a real Live view in Cameras/Streams for browser-playable camera
-stream URLs while keeping source adapters, monitoring, review truth, and exports
-separate.
-
-Current work:
-
-- Live Camera Playback 1: `external_url` Source setup can store optional
-  `live_stream_url` and `live_stream_type` metadata.
-- Cameras/Streams shows a primary Live view panel for selected Streams.
-- MJPEG renders through a browser image stream; browser video and direct
-  browser-supported HLS render through the native video element.
-- RTSP URLs are stored for the next optional local bridge phase.
-- Next likely phase: Phase 21 — RTSP Bridge.
-
-Validation:
-
-- Empty Live stream URL is allowed and shows a clear missing-URL state.
-- Browser-playable stream URLs are loaded frontend-direct only.
-- The backend reports playback readiness/status but does not fetch, decode,
-  transcode, generate HLS, or verify the stream.
-- Credentials embedded in stream URLs are redacted in displayed URLs.
-- Snapshot capture, Source health, monitoring, Review, Bird Log, and Export
-  remain separate explicit workflows.
-- No USB, ESP32, Pi, cellular, model runtime, automatic truth, automatic
-  exports, captures table, worker, scheduler, or dependency behavior is added.
-
-## Phase 21 — RTSP Bridge
-
-Goal: let configured RTSP camera streams render in browser Live view through an
-optional local bridge while keeping playback separate from monitoring, review
-truth, exports, and source adapter identity.
-
-Current work:
-
-- RTSP Bridge 1: `external_url` stream playback reports whether RTSP bridge
-  playback is available, unavailable because `ffmpeg` is missing, not RTSP, or
-  unsupported because the URL is not `rtsp://` or `rtsps://`.
-- The backend exposes `GET /api/streams/{stream_id}/live/rtsp-mjpeg` for
-  request-scoped RTSP-to-MJPEG streaming.
-- Cameras/Streams uses the bridge endpoint for RTSP Live view when available
-  and shows a clear install-ffmpeg unavailable state when it is not.
-- Next likely phase: Phase 22 — Local USB Camera Source.
-
-Validation:
-
-- The bridge uses system `ffmpeg` only when available on the MockingBird host;
-  no package dependency, bundled runtime, model file, or download behavior is
-  added.
-- `ffmpeg` starts only for an active RTSP Live view HTTP request and is stopped
-  when the response ends or the client disconnects.
-- The bridge stores no media, creates no Events/Visits, ReviewLabels,
-  DetectionProposals, MotionEvidence, dataset exports, analytics truth, workers,
-  schedulers, captures table, or source adapter records.
-- Browser-direct MJPEG, browser video, and browser-supported HLS playback remain
-  unchanged.
-- Snapshot capture, Source health, monitoring, Review, Bird Log, and Export
-  remain separate explicit workflows.
-
-## Phase 22 — Local USB Camera Source
-
-Goal: let configured local USB/webcam devices render in Cameras/Streams Live
-view through an optional local bridge while keeping playback separate from
-monitoring, review truth, exports, and platform-specific camera agents.
-
-Current work:
-
-- Local USB Camera Source 1: the `local_usb` provider can store a local camera
-  playback type, Linux `/dev/video*` device path, and optional v4l2 format
-  metadata.
-- Windows DirectShow Camera Source 1: the same provider can store
-  `windows_dshow`, a DirectShow camera name, optional Windows `ffmpeg.exe` path,
-  video size, and framerate metadata for Windows webcam Live view.
-- Stream playback reports local camera bridge states for available, missing
-  `ffmpeg`, missing device path, invalid device path, and unsupported platform
-  cases.
-- Stream playback reports Windows DirectShow bridge states for available,
-  missing camera name, missing ffmpeg, unsupported WSL/Linux host path, and
-  request-time ffmpeg failures.
-- The backend exposes `GET /api/streams/{stream_id}/live/local-mjpeg` as a
-  compatibility endpoint for local camera MJPEG streaming.
-- The backend exposes
-  `GET /api/streams/{stream_id}/live/windows-dshow-mjpeg` as a compatibility
-  endpoint for Windows DirectShow MJPEG streaming.
-- Backend-Owned Live Camera Session 1: Stream Detail can start/stop one bounded
-  in-memory backend camera session per Stream. Live view, capture, and live
-  monitoring share the same session frames; legacy bridge endpoints remain
-  compatibility shims over the same session.
-- Local Camera Frame Capture 1: the backend exposes
-  `POST /api/streams/{stream_id}/local-camera/capture-frame` so local USB or
-  Windows DirectShow playback can save one user-triggered JPEG frame as a local
-  MediaAsset.
-- Captured Frame Review Handoff 1: Stream Detail explains that captured frames
-  are saved media, refreshes the Stream saved-image count after capture, enables
-  explicit Check motion only after at least two saved frames, and keeps Review
-  Queue / Motion Evidence / Bird Log handoff separate.
-- Captured Frame Motion Sanity Fix: single captured frames remain saved media
-  only, motion checks compare two or more saved frames, captured local camera
-  JPEGs are motion-check compatible, and Bird Log still requires reviewed
-  correction truth.
-- Live Stream Motion Monitor 1: active MockingBird-served Live view requests
-  keep a bounded rolling frame cache, Start monitoring compares recent live
-  frames, detected activity can save the strongest live frame as local evidence,
-  and review activity remains an explicit handoff before correction truth.
-- Live Motion Review Handoff Fix: explicit `Create review activity` promotes
-  live MotionEvidence into an uncertain needs-review Event/Visit candidate with
-  the saved best frame attached, returns Review Queue ids, and creates no
-  ReviewLabel, Bird Log history, export, model output, or reviewed truth. It
-  uses stored session activity without stopping or restarting the camera.
-- Live Video Zone Overlay 1: Stream Detail renders and edits existing normalized
-  Zone polygons directly over the real live camera surface. Monitoring continues
-  to use the same user-authored Zone records, including privacy and ignore
-  boundaries, without creating truth.
-- Zone-Aware Live Monitor Polish 1: live motion responses and Stream Detail
-  copy name the strongest user-authored Zone, report ignored/privacy
-  suppression, and keep Review Queue and Bird Log correction-gated.
-- Live Monitor Reliability 1: live monitoring reports recent-frame diagnostics,
-  last evaluation status, and quiet/cooldown duplicate suppression while
-  remaining user-started, in-memory, and review-truth gated.
-- Live Activity Suggestion 1: explicit live motion review candidates now attach
-  low-confidence SpeciesSuggestion evidence from Zone context, while ReviewLabel,
-  Bird Log, and export truth still begin only after correction.
-- Live Monitor Review Reliability Fix: created live-motion candidates now refresh
-  and open the Review Queue item directly, while High sensitivity uses more
-  recent frame pairs and lower bird-zone thresholds with visible diagnostics.
-- Camera Controls + Motion Calibration 1: Stream Detail can save local camera
-  tuning metadata for preview/capture size, framerate, and input format, apply
-  supported settings to backend camera sessions/capture, focus live motion
-  scoring on a selected Zone, show strongest-zone diagnostics, and warn on
-  simple overexposed/underexposed/low-contrast frame conditions.
-- Review Identification Assist 1: Review Queue candidates with best-frame media
-  now summarize pending SpeciesSuggestion and DetectionProposal evidence, can run
-  an explicitly available identification adapter, and keep accepting/correcting
-  through ReviewLabel truth only.
-- Review Identification Adapter Quality 1: identification assist now reports
-  explicit adapter readiness/setup/unsupported/failed states, runs configured
-  optional local image adapters against review best frames, marks demo analyzer
-  output as placeholder evidence, and still creates no ReviewLabel, Bird Log,
-  export, or automatic truth.
-- Identification Input Quality 1: Review Queue candidates now expose
-  activity focus/crop context from the best frame and reviewable Zone, keep the
-  full best frame available, attach focus context to identification proposal
-  evidence, and still create no ReviewLabel, Bird Log entry, export truth, model
-  download, or bundled model file.
-- Local Adapter Setup UX 1: existing adapter readiness surfaces now expose a
-  compact setup summary for demo, Local Image Detector, and MegaDetector-family
-  analyzers, including safe env-var/model-path hints, supported media, and
-  review-best-frame run readiness. Review Queue shows the same setup boundary
-  from the identification panel without adding a new page, dependency, model
-  download, truth write, Bird Log entry, export, or worker.
-- Unattended Monitoring Review Handoff 1: Stream Detail can explicitly enable
-  auto-created Review Queue candidates for completed live activity sessions
-  after a quiet period. It reuses the existing needs-review Event/Visit handoff,
-  creates no ReviewLabels, Bird Log history, export truth, or automatic
-  identification run, and remains in-memory while the user-started camera
-  session and monitor are running.
-- MVP Flow Cleanup 1: the main UI now presents the product-first path as
-  Cameras/Streams -> Review Queue -> Bird Log -> Exports, with Stream Detail
-  emphasizing camera session, live view, monitoring, auto-created review
-  candidates, and Review Queue handoff. Motion Evidence is framed as Advanced
-  Evidence, Model Adapters are framed as optional Analyzers, and Bird Log copy
-  remains reviewed-corrections-only without changing truth semantics.
-- Feeder Activity Capture Pipeline 1: feeder/birdbath/perch live monitoring can
-  maintain a bounded in-memory burst for confirmed and near-threshold activity,
-  report accurate detection/near-miss/frame/candidate counts, emit transition
-  status for activity start and review-candidate readiness, and persist only one
-  best candidate frame during explicit or unattended Review Queue handoff.
-  Tentative near-miss-only sessions are visible but not review-ready, and Bird
-  Log/export truth still begins only after ReviewLabel correction.
-- Auto-create Toggle Reliability Fix: Stream Detail can select auto-create
-  before monitoring starts as a pending setting, apply it on Start monitoring,
-  and update active monitor settings without starting cameras, evaluating
-  motion, creating ReviewLabels, updating Bird Log, or exporting data.
-- Cameras/Streams uses the bridge endpoint for local camera Live view when
-  available and shows clear unavailable/setup copy when it is not.
-- Next likely phase: Phase 23 — live camera field-test validation polish.
-
-Validation:
-
-- The bridge uses system `ffmpeg` only when available on the MockingBird host;
-  no package dependency, bundled runtime, model file, or download behavior is
-  added.
-- Backend camera sessions start only after an explicit user action, are
-  in-memory and bounded, do not survive API restart, and never start on API
-  startup.
-- `ffmpeg` is owned by the session and stops on explicit Stop camera, API
-  shutdown, runtime limit, or failure.
-- The local camera bridge accepts only Linux `/dev/video*` device paths in this
-  phase and reports unsupported platform/device states honestly.
-- Windows DirectShow uses optional Windows `ffmpeg.exe`; when the API runs in
-  WSL, a Windows executable path such as `/mnt/c/ffmpeg/bin/ffmpeg.exe` is the
-  recommended webcam path rather than WSL USB passthrough.
-- DirectShow camera names are passed as subprocess arguments, not shell strings.
-- Frame capture uses the existing saved-image MediaAsset pipeline, reuses
-  configured camera size/framerate when present, and creates no Events, Visits,
-  ReviewLabels, MotionEvidence, dataset exports, analytics truth, or reviewed
-  truth by itself.
-- Camera tuning applies only safe ffmpeg bridge arguments for size, framerate,
-  and input format. Brightness, contrast, exposure, and zoom/crop notes are
-  calibration metadata unless a bridge can safely apply them later.
-- Captured frame handoff preserves the truth boundary: Bird Log shows reviewed
-  activity only, and motion/review/export require explicit user actions after
-  capture.
-- Live Stream Motion Monitor compares recent cached frames from the backend
-  camera session; it starts no second camera process, adds no persistent
-  scheduler, saves best-frame evidence only on detected activity, and creates
-  Review Queue candidates only after explicit user action. ReviewLabel truth,
-  Bird Log history, analytics/export truth, and model output are not created
-  automatically.
-- Identification assist can create or reuse suggestion/proposal evidence only.
-  Adapter setup-required, unsupported-media, unavailable, and failed states are
-  visible in Review Queue; optional local adapters require user configuration
-  and do not download or bundle models; demo paths are labeled as placeholder
-  evidence; setup visibility shows safe env-var/model-path hints without
-  exposing secrets; and Bird Log/export truth still requires a ReviewLabel
-  correction.
-- Unattended monitoring is user-enabled and defaults off. It may automatically
-  create or reuse one needs-review Event/Visit candidate per completed live
-  activity session after quiet/min-detection gates, but it does not create
-  ReviewLabels, reviewed Visits, Bird Log entries, analytics/export truth,
-  model output, or identification results automatically.
-- Feeder activity bursts are in-memory and capped. Near-miss-only activity can
-  update session status and counts but cannot create review candidates, media
-  assets, Events, Visits, Bird Log entries, reviewed truth, exports, or model
-  output. Confirmed sessions persist only the selected best frame as evidence
-  when handed to Review Queue.
-- Motion focus uses existing normalized Zone coordinates and changes scoring
-  diagnostics only; it does not create fake Zones, ReviewLabels, Bird Log
-  history, exports, or model output.
-- Live Zone Overlay keeps coordinates normalized to the visible live stream
-  surface, uses existing Zone create/update routes, and stores no adapter-specific
-  or fake auto-zone model.
-- The bridge stores no media, creates no Events/Visits, ReviewLabels,
-  DetectionProposals, MotionEvidence, dataset exports, analytics truth, workers,
-  schedulers, captures table, or source adapter records.
-- Pi camera/libcamera, ESP32, cellular, WebRTC, persistent HLS, background
-  discovery, automatic capture, and monitoring integration remain future work.
-- Browser-direct MJPEG, browser video, browser-supported HLS, RTSP bridge,
-  snapshot capture, Source health, monitoring, Review, Bird Log, and Export
-  remain separate explicit workflows.
-
-## Phase 23 — Live camera field validation
-
-Goal: make the existing camera-to-review product loop measurable on real feeder
-cameras without adding an admin console, model dependency, or new source type.
-
-Current work:
-
-- Supported Runtime Baseline 1: the backend suite now runs on the declared
-  Python 3.11+ boundary, and Linux local-USB plus symlink tests state their host
-  requirements explicitly instead of failing on Windows for unrelated reasons.
-- Internal Camera Transition Diagnostics 1: each backend-owned camera session
-  keeps at most 100 metadata-only transition events and exposes them through the
-  explicit live-session diagnostics contract for development and support checks;
-  normal product status polling does not carry the trace.
-- The transition history covers camera/monitor lifecycle, near-miss and confirmed
-  activity, readiness, one-best-frame saving, review-candidate creation, motion
-  status changes, safe image-quality codes, and failures.
-- Windows Camera Onboarding 1: the existing local-camera setup now offers an
-  explicit, read-only Detect cameras action, reports no-device/FFmpeg/host states
-  in product language, and never requires a user to copy an ffmpeg command.
-- Add Camera Product Flow 1: Cameras/Streams can create a named local-camera
-  Source and one default live Stream before connection setup. This preserves the
-  demo Source and creates no media, evidence, Event/Visit, ReviewLabel, export,
-  analytics truth, or adapter runtime behavior.
-- Local camera setup now asks only for the connection type, matching camera
-  identifier, and optional display name. Platform-specific tuning remains under
-  Advanced camera settings, while setup diagnostics, field-test checks, and
-  storage detail are collapsed by default.
-- The web app uses same-origin API requests with a local development proxy, so
-  the browser product flow works without cross-port or embedded-browser blocks.
-- Local field preflight exercised the no-camera path, then the connected EMEET
-  SmartCam S600 was detected through the product UI and saved as Windows webcam
-  connection metadata.
-- Connection-only field validation started the backend-owned camera session,
-  rendered the browser Live view, received 117 frames with the newest frame under
-  250 ms old, kept monitoring disabled, and stopped cleanly. It captured no frame
-  and created no media, review candidate, Bird Log entry, export, or truth.
-- Post-camera Product Hierarchy 1: Review Queue now puts the actual candidate
-  ahead of filters, bulk tools, reviewed history, and optional analyzer setup.
-  Dataset Exports puts the reviewed-only export action ahead of QA/coverage
-  diagnostics. Secondary capabilities remain available under explicit details.
-- Live Zone Redraw 1: a selected user-authored Zone can be redrawn on the live
-  camera surface and saved through the existing Zone update contract. Redrawing
-  changes normalized geometry only and creates no media, evidence, review item,
-  Bird Log entry, export, or truth.
-- Daylight Feeder Setup Validation 1: the connected EMEET now has its own Source
-  and Stream, the demo Source is restored, and two tight Feeder Zones replace a
-  broad branch-heavy rectangle. A bounded monitor check with auto-create off
-  remained quiet after tightening and created no media, MotionEvidence, review
-  candidate, Bird Log entry, export, or truth.
-- Daylight Camera Calibration + Motion Fidelity 1: Stream Detail replaces
-  misleading brightness/exposure note inputs with an explicit Windows camera
-  driver-control action that requires the camera session to be stopped. Live
-  motion now samples at a 160-pixel maximum dimension instead of 64, and field-
-  observed highlight clipping produces an actionable overexposure warning.
-- Product Trust + Lifecycle Cleanup 1: stopped camera sessions clear transient
-  active-motion badges/notices; real cameras can be renamed, archived, and
-  restored without deleting their product graph; unreferenced mistaken Zones
-  can be removed while linked review/evidence context is protected; and sample
-  walkthrough removal/reset preserves real cameras and real product data.
-- Optional MDv5 Review Verifier 1: the existing Review Queue identification
-  action can run the official `megadetector` package against one saved best
-  frame when an explicit local MDv5 `.pt` path and optional runtime are present.
-  The adapter is lazy, passes a resolved local path with forced downloads off,
-  creates animal/person/vehicle `DetectionProposal` evidence only, and never
-  suppresses motion candidates or writes reviewed truth automatically.
-- Local MDv5a Field Smoke 1: the official optional runtime and local MDv5a
-  weights completed real CPU inference. A full overexposed frame found only
-  background vehicles; the selected-Zone focus correctly excluded them and
-  returned no feeder proposal; an official positive-control image produced one
-  animal at 0.952 confidence. Runtime caches remain ignored/local and package
-  auto-install is disabled. Bird recall still requires representative feeder
-  frames with visible birds.
-- Daylight Feeder Field Validation 2: a real 4K feeder frame exposed shifted
-  Zone geometry and a small visible bird that MDv5a missed at the normal 0.10
-  threshold. A lower diagnostic threshold produced misleading evidence, so the
-  product threshold stayed unchanged. After both feeder Zones were realigned,
-  live motion created one best-frame Review Queue candidate; MegaDetector then
-  correctly identified the passing background car as `vehicle` at 0.825. The
-  Review Queue now orders newest activity first so fresh field candidates lead
-  the user's review work. No reviewed truth or export data was created.
-- Daylight Feeder Image Quality 1: a controlled matrix on the real bird frame
-  showed that brightness/gamma/contrast cleanup increased confidence without
-  correcting the wrong class, so no blanket image filter was added. A tighter
-  analysis-only feeder-Zone focus produced a 0.462 proposal above the unchanged
-  normal 0.10 threshold while preserving the original review frame and the
-  evidence-only correction boundary. Hardware exposure capability probing
-  remains the next safe route to preventing clipped highlights.
-- No new page, navigation item, dashboard card, or permanent field-test panel is
-  added. The primary product flow remains Cameras/Streams -> Review Queue -> Bird
-  Log -> Exports.
-- Next likely phase: Daylight Feeder Field Validation 3 — improve physical
-  exposure/framing, collect representative bird arrivals, measure bird recall
-  and nuisance rates, and compare the current MDv5a evidence against a newer
-  optional open model only if the captured frames are usable.
-
-Validation:
-
-- Diagnostic events are in-memory, transition-oriented, capped at 100, and
-  replaced with the camera session.
-- Diagnostic events contain no frame bytes, camera URLs, credentials, raw model
-  output, or arbitrary exception text.
-- Diagnostic events create no MotionEvidence, Events, Visits, ReviewLabels, Bird
-  Log entries, exports, analytics truth, media files, or model behavior.
-- Existing camera monitoring, privacy/ignore suppression, one-best-frame behavior,
-  correction truth, and optional analyzer boundaries remain unchanged.
-- Camera archive and Zone removal are explicit lifecycle actions. Archive stops
-  active runtime sessions without deleting Streams, Zones, evidence, review
-  truth, exports, or media. Zone deletion rejects linked activity/review context.
-- Camera controls are explicit, Windows/DirectShow-only, use list arguments
-  without a shell, require a stopped session, and create no media, evidence,
-  Event/Visit, ReviewLabel, export, or truth. Motion-resolution and image-quality
-  changes remain local analysis only.
-- Sample removal requires confirmation and at least one real Source, blocks when
-  sample-linked user work is present, and deletes no real camera graph or local
-  media files. Demo reset restores only the sample walkthrough.
-- The complete backend suite, frontend type-check, and frontend production build
-  pass before real-camera threshold changes begin.
-
-## Phase 24 — Product runtime and recovery
-
-Goal: make MockingBird one dependable local application before adding durable
-camera automation or ecosystem-specific integrations.
-
-Completed:
-
-- Phase 24A: single-app runtime and recovery foundation.
-- Phase 24B: verified local database-and-media backup, import, download, and
-  rollback-safe restore on the existing Local Data screen.
-- Phase 24C: audio-aware durable camera/monitor lifecycle design, separating
-  persisted user intent, actual runtime state, restore holds, and review truth.
-- Phase 24D: default-off Stream monitoring-policy/runtime-checkpoint schema,
-  read-only API/status UI, and side-effect-free live-session status polling.
-
-Next product-hardening work:
-
-- Phase 24E: disabled supervisor foundation with fake-adapter lifecycle,
-  app-instance/checkpoint reconciliation, one-Stream leases, stop ordering, and
-  deterministic backoff tests. Runtime activation remains unavailable.
-
-Design notes:
+This is the current planning authority. It intentionally describes completed
+foundations briefly and keeps detailed historical phase narration in
+[roadmap-history.md](roadmap-history.md) and the linked design documents.
+
+## Product outcome
+
+MockingBird is moving toward one dependable local field product:
+
+connect Source -> view Stream -> draw Zones -> monitor outdoor activity ->
+review Events/Visits -> correct labels/species -> build Bird Log, datasets,
+exports, and analytics.
+
+The current checkpoint is **Phase 24D complete**. Every Stream has default-off
+monitoring policy and runtime-checkpoint records, read-only lifecycle status,
+verified local backup/recovery, and one same-origin local application runtime.
+No camera or monitor starts automatically.
+
+The main missing product capability is validated automatic species
+identification. MegaDetector can add animal/person/vehicle proposal evidence,
+and the first BioCLIP 2 boundary can now create explicitly triggered ranked
+`SpeciesSuggestion` evidence on one saved Review Queue item at a time. That
+shadow path is a truth-building aid, not a selected production classifier or
+automatic post-activity runtime; current `unknown_bird` suggestions remain
+placeholders until replaced by real model evidence or explicit correction.
+
+## Completed foundations
+
+- Phases 0-6 established product doctrine, the universal product model, the
+  stream-first UI, local/demo media, the detection evidence model, the bird
+  feeder review vertical, and broader outdoor concepts.
+- Phases 7-9 established optional evidence-only model adapters, zone-aware
+  motion and MotionEvidence, species suggestions, reviewed classifier
+  readiness, and local export/training boundaries.
+- Phases 10-16 established product-level playback/provider contracts,
+  explicit external URL and folder media flows, generic webhook metadata
+  evidence, retention boundaries, MVP onboarding, and disabled worker metadata.
+- Phases 17-18 improved evidence review and classifier-readiness drill-down.
+- Phases 19-22 added explicit in-memory camera monitoring, browser/RTSP/local
+  USB playback, backend-owned live camera sessions, Zone overlays, best-frame
+  evidence, and optional identification assistance.
+- Phase 23 began real feeder-camera validation, camera lifecycle cleanup,
+  bounded diagnostics, field calibration, and optional local MDv5 proposal
+  verification.
+- Phases 24A-24D added the single local runtime, verified database-and-media
+  backup/restore, durable lifecycle design, and inert default-off monitoring
+  policy/runtime state.
+
+See [roadmap-history.md](roadmap-history.md) for the concise phase record.
+
+## Current priority 1: real visual species identification
+
+Goal: deliver the shortest complete identification loop:
+
+saved activity -> best frame -> animal/activity crop -> real ranked species
+suggestions -> Review Queue -> correction -> Bird Log
+
+The first saved-media evaluation completed on July 16, 2026. SpeciesNet did not
+clear the field-usefulness gate on the current feeder corpus. BioCLIP 2 was
+better at returning bird candidates, but species accuracy remains unmeasured
+because the local records have coarse bird/false-positive truth rather than
+species-level corrections. Several visually questionable predictions also had
+high scores, so no production runtime is selected yet.
+
+The active gate is now representative species-level correction truth plus
+substantially more non-bird activity examples from identification-quality
+captures. The eventual runtime must stay optional, local, unavailable-safe, and
+evidence-only.
+
+### Step A - saved-media classifier evaluation (complete)
+
+The completed evaluation recorded:
+
+- SpeciesNet crop/full-frame and combined-pipeline output on saved field media
+- BioCLIP 2 rankings against the same activity/detection crops
+- cold-start, cached, and per-image CPU inference cost
+- local runtime, dependency, model-size, and no-download behavior
+- six exposure-cleanup variants against an unchanged candidate bank
+
+SpeciesNet recognized bird as top-1 on only one of eight reviewed bird crops
+and produced no species-specific top-1 result. BioCLIP 2 returned an avian
+species first for the reviewed/candidate bird crops, but that result is biased
+by a bird-heavy candidate bank and is not species accuracy. Automatic
+post-capture exposure filters did not consistently improve either model and
+cannot recover clipped image detail.
+
+Evaluation media, model files, caches, and reports stay in ignored local paths.
+Zones may provide context but must not define the crop. Use detector boxes when
+credible and measured activity bounds as the fallback.
+
+### Step B - representative species truth gate
+
+Use the existing Review Queue correction path to build one frozen,
+representative field set from identification-quality best frames and activity
+crops. It must include explicit species corrections, ambiguous/unknown birds,
+and enough animal/person/vehicle/blank activity to measure false suggestions
+and abstention.
+
+An explicitly triggered, one-item-at-a-time BioCLIP shadow may run during this
+truth-building step. It can create ranked, candidate-relative, uncalibrated
+`SpeciesSuggestion` evidence to make correction faster, but its availability
+does not select the model, establish accuracy, enable automation, or create
+truth. The original frame and the actual detector/activity/full-frame input
+region remain visible as provenance.
+
+The first end-to-end shadow smoke completed on July 16, 2026: one existing
+saved Review Queue item used a credible animal-detection crop, returned a
+plausible species as rank 1, and created one pending `SpeciesSuggestion`.
+ReviewLabel, DetectionRun, DetectionProposal, export, camera, and monitoring
+state remained unchanged. This validates the product boundary, not model
+accuracy; the representative correction gate below still controls selection.
+
+Candidate labels must be genuinely local and seasonal, with explicit unknown
+and non-bird choices. Rerun the leading candidate against held-out corrections
+and record top-1, top-3, coverage, abstention, high-confidence mistakes, and
+non-bird specificity. This uses the existing product correction flow; it does
+not require a labeling or readiness page.
+
+### Step C - bounded Review Queue shadow integration
+
+The evaluation-only shadow from Step B stays manually triggered and processes
+one media-backed Visit at a time. After a candidate clears the truth gate, this
+same bounded seam may become the selected visual classifier path. It still
+creates ranked `SpeciesSuggestion` evidence only. Review Queue shows the best
+suggestion, alternatives, uncalibrated score, provenance, crop, and original
+frame through the existing correction flow. Accepting or changing a suggestion
+creates truth only when the user submits the correction.
+
+No new analyzer administration page, readiness surface, or parallel species
+workflow is required. Failures leave the Visit unidentified and reviewable.
+
+### Step D - automatic post-activity inference
+
+After saved-media accuracy and runtime behavior are acceptable, run the detector
+and selected classifier automatically for each eligible completed activity.
+Execution must be bounded, optional, observable, safely stoppable, and unable to
+create reviewed truth. It enriches the existing review candidate; it does not
+become a second event trigger or bypass Review Queue.
+
+### Visual identification exit criteria
+
+- a real local species model produces ranked suggestions on saved field media
+- top-1/top-3, abstention, non-bird specificity, and inference cost are recorded
+  against species-level reviewed labels
+- unusably clipped captures are reported before their predictions are treated
+  as meaningful evaluation evidence
+- activity/animal-centered crops work without requiring Zones
+- Review Queue exposes suggestions through the existing correction interaction
+- corrections feed Bird Log and provide evaluation truth
+- automatic post-activity inference fails safely without blocking capture or
+  review
+
+### Product work freeze
+
+Until these criteria pass, do not add new admin panels, readiness screens,
+provider abstractions, diagnostics surfaces, training scaffolding, or broad
+refactors. Targeted extraction is allowed only where the identification path
+touches an oversized component and the change delivers or protects this
+vertical slice. Audio follows the working visual path; it does not delay it.
+
+## Supporting engineering gate: Phase 24 hardening
+
+This gate continues only where it directly reduces risk for the identification
+vertical or later unattended capture. It is not the active feature backlog.
+Durable supervisor work still requires the applicable lifecycle gates before
+activation.
+
+This gate improves the complete Cameras/Streams -> Zones -> monitoring -> Review
+Queue -> correction -> Bird Log -> Exports flow. It does not change the product
+truth boundary.
+
+### Gate A - feedback and reproducibility
+
+Status:
+
+- Documentation authority, conditional routing, and repository-wide validation
+  tiers are defined in [development-workflow.md](development-workflow.md).
+- A hardware-free browser check covers correction -> Bird Log -> reviewed-only
+  export behavior using isolated local data.
+- Additional automation, formatting/type policy, and dependency reproducibility
+  work is added only when it protects the active identification vertical or a
+  release gate; it is not the next product feature.
+
+Exit criteria:
+
+- A clean checkout has one documented command or automated job for each
+  non-hardware validation tier.
+- Backend tests, frontend type-check/build, migration/backup compatibility, and
+  the critical smoke flow run automatically at the appropriate tier.
+- Hardware, models, cameras, generated media, and secrets are not required for
+  normal automated checks.
+
+### Gate B - browser and API contract safety net
+
+Add a small hardware-free browser suite for the primary path: create/configure
+a camera, reach Stream Detail, manage a Zone, exercise a deterministic
+monitoring/review candidate, submit correction truth, verify Bird Log, and
+verify reviewed-only export behavior.
+
+Generate frontend API types from Pydantic/OpenAPI or enforce an automated parity
+check so backend/frontend contract drift fails validation.
+
+### Gate C - targeted architecture seams
+
+Avoid a broad rewrite. When Phase 24E touches lifecycle behavior, extract the
+relevant camera/session/supervisor routes and repository operations into focused
+domain services. When primary browser flow work touches Streams or Stream
+Detail, extract focused components/hooks and scoped styles.
+
+New work should stop increasing the largest API, repository, page, and global
+style concentration points. Refactoring tasks must preserve behavior, include
+focused regression coverage, and avoid unrelated product features.
+
+### Gate D - measurable field benchmark
+
+Build an ignored/local, frozen set of representative feeder observations and
+record:
+
+- bird recall
+- nuisance candidates per camera-hour
+- candidate acceptance rate
+- median review time
+- stale/dropped frames
+- CPU use and storage growth per camera-hour
+
+Threshold, crop, focus, or analyzer comparisons should use the same benchmark.
+The full source frame remains evidence context and explicit user correction
+remains truth. Benchmark media and reports are never committed.
+
+### Gate E - resilience, privacy, security, and upgrades
+
+Before live-video continuity activation, validate camera/FFmpeg loss, hung
+processes, disk-full and database-locked behavior, restart during media writes,
+clock changes, and backup/restore while policy is armed.
+
+Decide and test:
+
+- loopback-only versus LAN exposure and authentication expectations
+- browser-origin/localhost request protection
+- secret-file permissions and redaction
+- whether Privacy Zones suppress only analysis or also persisted full-frame
+  media
+- every supported schema and backup upgrade path
+- startup, idle-memory, per-Stream CPU, frame-freshness, database-growth, and
+  media-growth budgets
+
+### Gate F - documentation maintenance
+
+Keep current system contracts, current roadmap, architectural decisions, and
+completed history separate. Link applicable guardrails instead of copying them
+into every task/design document. Product doctrine, privacy/lifecycle safety,
+and the evidence-versus-truth boundary remain prominent and canonical.
+
+### Engineering-gate sequencing
+
+- The representative truth gate and later bounded Review Queue shadow
+  integration do not wait for the durable supervisor.
+- Automatic post-activity inference requires focused failure, runtime-bound,
+  storage, privacy, and stop-behavior tests for that inference path.
+- Phase 24E may begin after Gate A's automated baseline and the relevant Gate C
+  lifecycle seam are in place. Its supervisor remains disabled and fake-adapter
+  tested.
+- Explicit live-video continuity must not activate until Gate B and the relevant
+  Gate E failure/privacy/security/upgrade decisions pass.
+- Phase 25 field-loop acceptance requires Gate D, long-run/soak results, and
+  declared performance/storage budgets.
+- New providers and unrelated model pathways do not take priority. The visual
+  species adapter above is the explicitly scoped core product milestone.
+
+## Deferred supporting work: Phase 24E-24G durable live continuity
+
+### Phase 24E - disabled supervisor foundation
+
+Add a bounded `DurableStreamSupervisor` foundation with fake-adapter lifecycle,
+app-instance/checkpoint reconciliation, one-Stream leases, deterministic
+backoff, and stop ordering.
+
+The supervisor remains unavailable for runtime activation. Tests use fake time
+and fake camera/session boundaries. Status reads stay side-effect free.
+
+### Phase 24F - explicit live-video continuity
+
+After the engineering gates pass, add explicit Stream-scoped arming for
+supported backend-owned RTSP/local USB/Windows DirectShow live video.
+
+Persisted desired policy and actual runtime state remain separate. Every Stream
+defaults off; backup, restore, migration, emergency stop, Source archive, Stop
+camera, and shutdown holds prevent surprise restart. External snapshot polling
+and future audio are outside this lifecycle.
+
+### Phase 24G - bounded idempotent review handoff
+
+Allow explicitly enabled durable monitoring to create or reuse at most one
+needs-review candidate per completed activity session under storage, quiet
+window, duplicate, Privacy Zone, and Ignore Zone limits.
+
+It may create evidence and unreviewed Event/Visit context only. It never creates
+ReviewLabels, marks Visits reviewed, runs identification automatically, writes
+Bird Log truth, or creates analytics/export truth.
+
+The separate optional visual-identification enrichment in Step C may run after
+an eligible candidate exists. It is not part of handoff, event triggering, or
+truth creation.
+
+Design authority:
 
 - [single-app-runtime-recovery-design.md](single-app-runtime-recovery-design.md)
 - [local-backup-recovery-design.md](local-backup-recovery-design.md)
 - [durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md)
 
-Validation:
+## Phase 25 - dependable field loop
 
-- The built frontend and existing API run from one same-origin application
-  process while Vite remains a development-only option.
-- Direct product routes, refresh, and browser back/forward preserve primary and
-  detail-page context without adding a routing dependency.
-- Optional review/export/analytics/model summaries can fail independently
-  without making Sources and Streams appear unreachable.
-- Local database startup records and validates a schema version, checks SQLite
-  integrity, and rejects unsupported newer or unmigrated older schemas.
-- The local launcher anchors relative data paths, validates startup, reuses an
-  existing healthy instance, and opens the browser only when ready.
-- Graceful shutdown cancels in-memory source monitors and stops live camera
-  sessions.
-- Local backups use SQLite's online backup mechanism and preserve the database
-  plus configured managed-media tree in one versioned, hashed artifact.
-- Backup creation/import and every restore verify archive paths, declared sizes,
-  SHA-256 hashes, SQLite integrity, and schema compatibility before keeping or
-  applying the artifact.
-- Restore requires confirmation, creates a verified pre-restore safety backup,
-  replaces database and media as one staged transaction, and rolls both back if
-  the restored repository cannot reopen.
-- Backup and recovery extend Local Data rather than adding an administration
-  panel. Cloud sync, scheduled jobs, retention cleanup, and cross-install media
-  path migration remain out of scope.
-- Durable monitoring design applies first to supported backend-owned live video,
-  not the snapshot Source monitor or general provider workers.
-- Durable desired policy defaults off and stays separate from actual process
-  state. Old `running` checkpoints become interrupted after restart.
-- Stream policy/runtime and live-session status routes are side-effect free.
-  Current in-memory auto-candidate quiet-window handling belongs to the active
-  monitor tick, never browser polling, and can create needs-review evidence
-  only, never ReviewLabels or reviewed truth.
-- Schema version 2 migrates every existing Stream to `off`/`stopped`, creates the
-  same records for new Streams, and keeps verified version-1 backups eligible
-  for the known safe migration during restore.
-- Backup/restore, migration, emergency-stop, and shutdown holds override armed
-  policy; a restored armed policy requires explicit resume.
-- Future audio can share lifecycle ownership patterns but requires independent
-  consent, privacy, retention, dependency, and evidence design. Video arming
-  never enables a microphone.
-- No camera or monitor starts on application startup. No worker, scheduler,
-  provider action, media/evidence creation, Event/Visit, ReviewLabel, export,
-  analytics truth, model runtime, or automatic truth behavior is added.
+Harden restart recovery, bounded storage, retention controls, camera/source
+health, long-run observability, support-safe diagnostics, and representative
+feeder validation. Acceptance uses the frozen field benchmark and declared
+performance/storage budgets from the engineering gate.
 
-## Forward sequence to a completed field product
+## Phase 26 - identification evidence
 
-- Phases 24E–24G: add a bounded disabled supervisor foundation, explicit
-  live-video continuity, then storage-limited idempotent review handoff. Audio
-  remains design-only during these phases.
-- Phase 25: harden the whole field loop with restart recovery, bounded storage,
-  retention controls, camera/source health, long-run observability, and
-  representative feeder validation.
-- Phase 26A: integrate an optional local visual identification adapter that
-  creates species suggestion evidence only.
-- Phase 26B: integrate optional local bird-audio evidence, initially through a
-  BirdNET-family adapter boundary, with microphone/privacy controls and no
-  automatic truth.
+- Phase 26A is now the active product milestone above: evaluate and integrate an
+  optional local visual identification adapter that creates ranked species
+  suggestion evidence only.
+- Phase 26B: integrate optional local bird-audio evidence through a separately
+  designed consent, microphone, privacy, retention, and dependency boundary.
 - Phase 26C: combine visual, audio, time, Zone, and reviewed local history into
-  ranked suggestions. Explicit user correction remains the only dataset-grade
+  ranked suggestions. Explicit correction remains the only dataset-grade
   species truth.
-- Phase 27: finish packaging, first-run setup, update/recovery policy,
-  accessibility, performance, and release acceptance for a dependable local
-  product.
+
+## Phase 27 - release acceptance
+
+Finish packaging, first-run setup, update/recovery policy, accessibility,
+performance, dependency reproducibility, upgrade support, and release
+acceptance for a dependable local product.
+
+## Cross-cutting roadmap invariants
+
+- Source adapters remain underneath Sources, Streams, Zones, Events, Visits,
+  review/correction, analytics, and exports.
+- MediaAssets, MotionEvidence, DetectionProposals, SpeciesSuggestions, and
+  external labels remain evidence/context until explicit correction.
+- Read/status/preview/dry-run routes are side-effect free. Writes are explicit,
+  scoped, bounded, and tested.
+- Privacy and Ignore Zones, local storage, retention, backups, and safe restart
+  behavior are first-class constraints.
+- Workers and durable monitoring default off, are observable and safely
+  stoppable, and cannot create reviewed truth.
+- Model runtimes, training dependencies, generated datasets, captured media,
+  benchmark artifacts, and caches require explicit scope and ignored local
+  paths.
+- Each implementation task uses the task packet and validation tiers in
+  [development-workflow.md](development-workflow.md).
+
+## Roadmap non-goals
+
+- No one-shot repository rewrite or coverage-percentage target.
+- No cloud dependency or telemetry requirement for the core product.
+- No new administration page merely for lifecycle or engineering controls.
+- No provider, audio, or unrelated automation expansion ahead of the active
+  visual identification milestone without explicit evidence and scope.

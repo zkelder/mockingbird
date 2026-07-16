@@ -114,7 +114,7 @@ export type ReviewIdentificationStatus =
   | "proposal_created"
   | "no_proposal"
   | "failed";
-export type FocusCropSource = "zone" | "activity" | "manual" | "none";
+export type FocusCropSource = "zone" | "activity" | "detector" | "manual" | "none";
 export type ExportStatus = "ready" | "building" | "failed";
 export type DetectionSource = "manual" | "demo_rule" | "future_model" | "integration";
 export type DetectionRunStatus = "pending" | "completed" | "failed";

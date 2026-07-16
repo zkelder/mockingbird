@@ -1621,7 +1621,11 @@ def _live_motion_quality_warnings(
     clipped_highlight_ratio = sum(pixel >= 245 for pixel in latest_pixels) / pixel_count
     clipped_shadow_ratio = sum(pixel <= 10 for pixel in latest_pixels) / pixel_count
 
-    if (mean_value >= 235 and contrast_range <= 35) or clipped_highlight_ratio >= 0.65:
+    # Downsampling softens white clipping, so a bright frame can lose useful
+    # identification detail before a majority of sampled pixels remain at 245+.
+    if (mean_value >= 235 and contrast_range <= 35) or (
+        mean_value >= 200 and clipped_highlight_ratio >= 0.40
+    ):
         warnings.append(
             "Camera image appears overexposed with clipped highlights; lower exposure or "
             "disable low-light compensation in camera controls."
@@ -7073,11 +7077,13 @@ async def list_review_queue() -> list[ReviewQueueItem]:
     "/api/review-queue/{target_type}/{target_id}/identify",
     response_model=ReviewIdentificationResponse,
 )
-async def identify_review_queue_item(
+def identify_review_queue_item(
     target_type: str,
     target_id: str,
     payload: ReviewIdentificationRequest | None = None,
 ) -> ReviewIdentificationResponse:
+    # Optional local classifiers are request-bound but CPU-heavy. A synchronous
+    # route lets FastAPI isolate this work from the main async event loop.
     if target_type not in {"event", "visit"}:
         raise _unsupported_target(target_type)
 

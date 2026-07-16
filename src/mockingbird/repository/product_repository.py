@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections import Counter
 import csv
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
+import math
+import os
 from pathlib import Path
 import re
 import shutil
@@ -35,6 +37,7 @@ from mockingbird.detectors.local_image_detector import (
 )
 from mockingbird.detectors.megadetector_adapter import (
     MEGADETECTOR_ADAPTER_ID,
+    MEGADETECTOR_DEFAULT_CONFIDENCE_THRESHOLD,
     MEGADETECTOR_MODEL_PATH_ENV,
     MEGADETECTOR_SETUP_HINT,
     MEGADETECTOR_SUPPORTED_LABELS,
@@ -44,13 +47,28 @@ from mockingbird.detectors.megadetector_adapter import (
     MegaDetectorModelFormatError,
     MegaDetectorModelFileError,
     MegaDetectorOutputError,
-    MegaDetectorProposal,
     MegaDetectorRuntimeUnavailableError,
     MegaDetectorStatus,
     MegaDetectorUnsupportedMediaError,
     get_megadetector_status,
     normalize_megadetector_label,
     run_megadetector_on_image,
+)
+from mockingbird.species.bioclip_adapter import (
+    BIOCLIP_ADAPTER_ID,
+    BIOCLIP_ADAPTER_NAME,
+    BioClipAdapterConfig,
+    BioClipAdapterStatus,
+    BioClipBusyError,
+    BioClipConfigurationError,
+    BioClipOutputError,
+    BioClipPrediction,
+    BioClipRankedSuggestion,
+    BioClipRuntimeUnavailableError,
+    BioClipUnsupportedImageError,
+    build_bioclip_config,
+    get_bioclip_status,
+    run_bioclip_from_image_loader,
 )
 from mockingbird.motion.activity_crop import (
     CropBoxNormalized,
@@ -264,6 +282,20 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
     "video/mp4": "video",
     "video/quicktime": "video",
 }
+
+BIOCLIP_MODEL_PATH_ENV = "MOCKINGBIRD_BIOCLIP_MODEL_PATH"
+BIOCLIP_LABELS_PATH_ENV = "MOCKINGBIRD_BIOCLIP_LABELS_PATH"
+BIOCLIP_EMBEDDING_CACHE_PATH_ENV = "MOCKINGBIRD_BIOCLIP_EMBEDDING_CACHE_PATH"
+BIOCLIP_DEVICE_ENV = "MOCKINGBIRD_BIOCLIP_DEVICE"
+BIOCLIP_SUPPORTED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+BIOCLIP_MAX_INPUT_PIXELS = 50_000_000
+BIOCLIP_REVIEW_TOP_K = 5
+BIOCLIP_SETUP_HINT = (
+    f"Set {BIOCLIP_MODEL_PATH_ENV}, {BIOCLIP_LABELS_PATH_ENV}, and "
+    f"{BIOCLIP_EMBEDDING_CACHE_PATH_ENV} to existing local BioCLIP artifacts. "
+    "The first bounded Review Queue integration is CPU-only, requires a precomputed "
+    "embedding cache, and never downloads or generates model artifacts."
+)
 
 EXTERNAL_URL_PREVIEW_EXTENSIONS = {
     "image/jpeg": ".jpg",
@@ -836,6 +868,29 @@ class _ReviewFocusCropContext:
     box_pixels: PixelBoundingBox | None
     label: str | None
     warnings: list[str]
+
+
+@dataclass(frozen=True)
+class _ReviewSpeciesCropContext:
+    source: str
+    box_normalized: BoundingBox
+    label: str
+    detection_proposal_id: str | None = None
+
+
+@dataclass(frozen=True)
+class _ReviewSpeciesRunContext:
+    local_path: str
+    media_file_size_bytes: int
+    media_file_mtime_ns: int
+    content_type: str
+    source_id: str | None
+    stream_id: str
+    event_id: str | None
+    visit_id: str | None
+    media_asset_id: str
+    motion_evidence_id: str | None
+    crop: _ReviewSpeciesCropContext
 
 
 @dataclass(frozen=True)
@@ -4954,62 +5009,69 @@ class ProductRepository:
     ) -> SpeciesSuggestionResponse:
         with self.session_factory() as session:
             with session.begin():
-                source_id = _clean_optional_text(payload.source_id)
-                stream_id = _clean_optional_text(payload.stream_id)
-                event_id = _clean_optional_text(payload.event_id)
-                visit_id = _clean_optional_text(payload.visit_id)
-                media_asset_id = _clean_optional_text(payload.media_asset_id)
-                motion_evidence_id = _clean_optional_text(payload.motion_evidence_id)
+                return self._create_species_suggestion_in_session(session, payload)
 
-                if source_id is not None and session.get(CameraSourceModel, source_id) is None:
-                    raise ValueError("missing_source")
-                if stream_id is not None and session.get(StreamModel, stream_id) is None:
-                    raise ValueError("missing_stream")
-                if event_id is not None and session.get(EventModel, event_id) is None:
-                    raise ValueError("missing_event")
-                if visit_id is not None and session.get(VisitModel, visit_id) is None:
-                    raise ValueError("missing_visit")
-                if (
-                    media_asset_id is not None
-                    and session.get(MediaAssetModel, media_asset_id) is None
-                ):
-                    raise ValueError("missing_media_asset")
-                if (
-                    motion_evidence_id is not None
-                    and session.get(MotionEvidenceModel, motion_evidence_id) is None
-                ):
-                    raise ValueError("missing_motion_evidence")
+    def _create_species_suggestion_in_session(
+        self,
+        session: Session,
+        payload: SpeciesSuggestionCreateRequest,
+    ) -> SpeciesSuggestionResponse:
+        source_id = _clean_optional_text(payload.source_id)
+        stream_id = _clean_optional_text(payload.stream_id)
+        event_id = _clean_optional_text(payload.event_id)
+        visit_id = _clean_optional_text(payload.visit_id)
+        media_asset_id = _clean_optional_text(payload.media_asset_id)
+        motion_evidence_id = _clean_optional_text(payload.motion_evidence_id)
 
-                suggestion_model = SpeciesSuggestionModel(
-                    id=self._next_id(session, SpeciesSuggestionModel, "species-suggestion"),
-                    source_id=source_id,
-                    stream_id=stream_id,
-                    event_id=event_id,
-                    visit_id=visit_id,
-                    media_asset_id=media_asset_id,
-                    motion_evidence_id=motion_evidence_id,
-                    adapter_id=payload.adapter_id.strip(),
-                    adapter_name=payload.adapter_name.strip(),
-                    suggested_label=payload.suggested_label.strip(),
-                    suggested_common_name=_clean_optional_text(payload.suggested_common_name),
-                    suggested_scientific_name=_clean_optional_text(
-                        payload.suggested_scientific_name
-                    ),
-                    confidence=payload.confidence,
-                    rank=payload.rank,
-                    alternatives_json=json.dumps(payload.alternatives, sort_keys=True),
-                    evidence_region_json=(
-                        json.dumps(payload.evidence_region, sort_keys=True)
-                        if payload.evidence_region is not None
-                        else None
-                    ),
-                    status=SpeciesSuggestionStatus.pending.value,
-                    created_at=datetime.now(UTC),
-                    notes=_clean_optional_text(payload.notes),
-                )
-                session.add(suggestion_model)
-                session.flush()
-                return _species_suggestion_from_model(suggestion_model)
+        if source_id is not None and session.get(CameraSourceModel, source_id) is None:
+            raise ValueError("missing_source")
+        if stream_id is not None and session.get(StreamModel, stream_id) is None:
+            raise ValueError("missing_stream")
+        if event_id is not None and session.get(EventModel, event_id) is None:
+            raise ValueError("missing_event")
+        if visit_id is not None and session.get(VisitModel, visit_id) is None:
+            raise ValueError("missing_visit")
+        if (
+            media_asset_id is not None
+            and session.get(MediaAssetModel, media_asset_id) is None
+        ):
+            raise ValueError("missing_media_asset")
+        if (
+            motion_evidence_id is not None
+            and session.get(MotionEvidenceModel, motion_evidence_id) is None
+        ):
+            raise ValueError("missing_motion_evidence")
+
+        suggestion_model = SpeciesSuggestionModel(
+            id=self._next_id(session, SpeciesSuggestionModel, "species-suggestion"),
+            source_id=source_id,
+            stream_id=stream_id,
+            event_id=event_id,
+            visit_id=visit_id,
+            media_asset_id=media_asset_id,
+            motion_evidence_id=motion_evidence_id,
+            adapter_id=payload.adapter_id.strip(),
+            adapter_name=payload.adapter_name.strip(),
+            suggested_label=payload.suggested_label.strip(),
+            suggested_common_name=_clean_optional_text(payload.suggested_common_name),
+            suggested_scientific_name=_clean_optional_text(
+                payload.suggested_scientific_name
+            ),
+            confidence=payload.confidence,
+            rank=payload.rank,
+            alternatives_json=json.dumps(payload.alternatives, sort_keys=True),
+            evidence_region_json=(
+                json.dumps(payload.evidence_region, sort_keys=True)
+                if payload.evidence_region is not None
+                else None
+            ),
+            status=SpeciesSuggestionStatus.pending.value,
+            created_at=datetime.now(UTC),
+            notes=_clean_optional_text(payload.notes),
+        )
+        session.add(suggestion_model)
+        session.flush()
+        return _species_suggestion_from_model(suggestion_model)
 
     def list_species_suggestions(
         self,
@@ -5234,6 +5296,10 @@ class ProductRepository:
                 payload,
                 activity_focus=activity_focus,
             )
+        if adapter.kind == ModelAdapterKind.species_classifier:
+            # The generic run response is detector-shaped. Species inference belongs
+            # to the bounded Review Queue path and persists SpeciesSuggestion only.
+            raise ValueError("species_classifier_review_queue_only")
         if adapter.status != ModelAdapterStatus.available:
             raise ValueError("adapter_unavailable")
 
@@ -6197,6 +6263,29 @@ class ProductRepository:
                 media_asset_id=media_asset_id,
             )
             zone_id = queue_item.zone_id or queue_item.primary_zone_id
+            species_run_context: _ReviewSpeciesRunContext | None = None
+            if summary.can_run and _review_item_has_active_restricted_zone(
+                session,
+                queue_item,
+            ):
+                summary = self._review_identification_error_summary(
+                    summary,
+                    ValueError("identification_zone_suppressed"),
+                )
+            elif (
+                summary.can_run
+                and summary.adapter_kind == ModelAdapterKind.species_classifier
+                and summary.adapter_id == BIOCLIP_ADAPTER_ID
+                and media_asset_id is not None
+            ):
+                try:
+                    species_run_context = self._review_species_run_context(
+                        session,
+                        queue_item,
+                        media_asset_id=media_asset_id,
+                    )
+                except ValueError as error:
+                    summary = self._review_identification_error_summary(summary, error)
 
         if not summary.can_run or summary.adapter_id is None or media_asset_id is None:
             return self._review_identification_response(
@@ -6207,6 +6296,38 @@ class ProductRepository:
             )
 
         adapter = _model_adapter_by_id(summary.adapter_id)
+        if adapter is not None and adapter.kind == ModelAdapterKind.species_classifier:
+            if adapter.id != BIOCLIP_ADAPTER_ID:
+                error_summary = self._review_identification_error_summary(
+                    summary,
+                    ValueError("species_classifier_not_supported"),
+                )
+                return self._review_identification_response(
+                    target_type=normalized_target_type,
+                    target_id=normalized_target_id,
+                    identification=error_summary,
+                    review_queue_item=queue_item,
+                )
+            if species_run_context is None:
+                error_summary = self._review_identification_error_summary(
+                    summary,
+                    ValueError("bioclip_input_unavailable"),
+                )
+                return self._review_identification_response(
+                    target_type=normalized_target_type,
+                    target_id=normalized_target_id,
+                    identification=error_summary,
+                    review_queue_item=queue_item,
+                )
+            return self._identify_review_queue_with_bioclip(
+                target_type=normalized_target_type,
+                target_id=normalized_target_id,
+                summary=summary,
+                queue_item=queue_item,
+                run_context=species_run_context,
+                request=request,
+            )
+
         requested_labels = request.requested_labels
         if adapter is not None and adapter.kind == ModelAdapterKind.demo and not requested_labels:
             requested_labels = ["unknown_bird"]
@@ -6337,6 +6458,388 @@ class ProductRepository:
             review_queue_item=refreshed_item,
         )
 
+    def _identify_review_queue_with_bioclip(
+        self,
+        *,
+        target_type: str,
+        target_id: str,
+        summary: ReviewIdentificationSummary,
+        queue_item: ReviewQueueItem,
+        run_context: _ReviewSpeciesRunContext,
+        request: ReviewIdentificationRequest,
+    ) -> ReviewIdentificationResponse:
+        # Image decode and optional model inference deliberately happen after the
+        # read session has closed. A slow local model must never hold a DB transaction.
+        try:
+            prediction = run_bioclip_from_image_loader(
+                lambda: _load_bioclip_input_image(
+                    local_path=run_context.local_path,
+                    expected_size_bytes=run_context.media_file_size_bytes,
+                    expected_mtime_ns=run_context.media_file_mtime_ns,
+                    content_type=run_context.content_type,
+                    crop=run_context.crop,
+                ),
+                _bioclip_config(),
+                top_k=BIOCLIP_REVIEW_TOP_K,
+            )
+            suggestion_payload = _bioclip_species_suggestion_payload(
+                prediction,
+                run_context=run_context,
+                request_notes=_clean_optional_text(request.notes),
+            )
+        except BioClipBusyError:
+            error = ValueError("bioclip_busy")
+        except BioClipConfigurationError:
+            error = ValueError("bioclip_configuration_error")
+        except BioClipRuntimeUnavailableError:
+            error = ValueError("bioclip_runtime_unavailable")
+        except BioClipUnsupportedImageError:
+            error = ValueError("bioclip_unsupported_image")
+        except BioClipOutputError:
+            error = ValueError("bioclip_failed")
+        except (OSError, ValueError) as caught:
+            reason = str(caught)
+            error = ValueError(
+                reason
+                if reason.startswith("bioclip_") or reason == "missing_media_file"
+                else "bioclip_failed"
+            )
+        else:
+            error = None
+
+        if error is not None:
+            error_summary = self._review_identification_error_summary(summary, error)
+            return self._review_identification_response(
+                target_type=target_type,
+                target_id=target_id,
+                identification=error_summary,
+                review_queue_item=queue_item,
+                warnings=[str(error)],
+            )
+
+        if suggestion_payload is None:
+            outcome = summary.model_copy(
+                update={
+                    "status": ReviewIdentificationStatus.no_proposal,
+                    "message": (
+                        "BioCLIP completed without a usable ranked suggestion. "
+                        "The candidate remains reviewable and no truth was created."
+                    ),
+                    "suggestion": None,
+                    "created_suggestion_ids": [],
+                    "created_proposal_ids": [],
+                    **_review_species_focus_fields(run_context.crop, queue_item),
+                }
+            )
+            return self._review_identification_response(
+                target_type=target_type,
+                target_id=target_id,
+                identification=outcome,
+                review_queue_item=queue_item,
+            )
+
+        try:
+            with self.session_factory() as session:
+                with session.begin():
+                    current_item = self._review_queue_item_by_target(
+                        session,
+                        target_type,
+                        target_id,
+                    )
+                    if current_item is None:
+                        raise ValueError("missing_review_candidate")
+                    if session.get(MediaAssetModel, run_context.media_asset_id) is None:
+                        raise ValueError("missing_media_asset")
+                    current_media_asset_id = current_item.best_media_asset_id or (
+                        current_item.media_asset.id
+                        if current_item.media_asset is not None
+                        else None
+                    )
+                    if current_media_asset_id != run_context.media_asset_id:
+                        raise ValueError("bioclip_media_not_review_frame")
+                    if not _bioclip_media_file_matches_run_context(run_context):
+                        raise ValueError("bioclip_media_changed")
+                    if _review_item_has_active_restricted_zone(
+                        session,
+                        current_item,
+                    ) or _review_species_crop_intersects_restricted_zone(
+                        session,
+                        stream_id=run_context.stream_id,
+                        crop=run_context.crop,
+                    ):
+                        raise ValueError("identification_zone_suppressed")
+
+                    self._supersede_pending_bioclip_suggestions(
+                        session,
+                        run_context=run_context,
+                    )
+                    suggestion = self._create_species_suggestion_in_session(
+                        session,
+                        suggestion_payload,
+                    )
+                    refreshed_item = self._review_queue_item_by_target(
+                        session,
+                        target_type,
+                        target_id,
+                    )
+                    refreshed_summary = (
+                        refreshed_item.identification
+                        if refreshed_item is not None
+                        and refreshed_item.identification is not None
+                        else summary
+                    )
+                    outcome = refreshed_summary.model_copy(
+                        update={
+                            "status": ReviewIdentificationStatus.suggestion_created,
+                            "message": (
+                                "BioCLIP created one ranked SpeciesSuggestion as "
+                                "candidate-relative, uncalibrated evidence. Review and "
+                                "explicit correction still create truth."
+                            ),
+                            "adapter_id": BIOCLIP_ADAPTER_ID,
+                            "adapter_name": BIOCLIP_ADAPTER_NAME,
+                            "adapter_kind": ModelAdapterKind.species_classifier,
+                            "adapter_status": summary.adapter_status,
+                            "adapter_is_demo": False,
+                            "setup_status": summary.setup_status,
+                            "suggestion": suggestion,
+                            "suggestion_count": max(
+                                refreshed_summary.suggestion_count,
+                                1,
+                            ),
+                            "unavailable_reason": None,
+                            "created_suggestion_ids": [suggestion.id],
+                            "created_proposal_ids": [],
+                            **_review_species_focus_fields(
+                                run_context.crop,
+                                refreshed_item or queue_item,
+                            ),
+                        }
+                    )
+                    return self._review_identification_response(
+                        target_type=target_type,
+                        target_id=target_id,
+                        identification=outcome,
+                        review_queue_item=refreshed_item,
+                    )
+        except ValueError as caught:
+            error_summary = self._review_identification_error_summary(summary, caught)
+            return self._review_identification_response(
+                target_type=target_type,
+                target_id=target_id,
+                identification=error_summary,
+                review_queue_item=queue_item,
+                warnings=[str(caught)],
+            )
+
+    def _review_species_run_context(
+        self,
+        session: Session,
+        item: ReviewQueueItem,
+        *,
+        media_asset_id: str,
+    ) -> _ReviewSpeciesRunContext:
+        media_asset = session.get(MediaAssetModel, media_asset_id)
+        if media_asset is None:
+            raise ValueError("missing_media_asset")
+        review_media_asset_id = item.best_media_asset_id or (
+            item.media_asset.id if item.media_asset is not None else None
+        )
+        if review_media_asset_id != media_asset_id:
+            # Activity/detector crop provenance belongs to the Review Queue item's
+            # selected frame. A same-Stream asset is not automatically part of
+            # this Event/Visit evidence graph.
+            raise ValueError("bioclip_media_not_review_frame")
+        if (
+            media_asset.media_type != "image"
+            or media_asset.content_type not in BIOCLIP_SUPPORTED_IMAGE_CONTENT_TYPES
+        ):
+            raise ValueError("bioclip_unsupported_media_type")
+        if media_asset.stream_id != item.stream_id:
+            raise ValueError("media_stream_mismatch")
+        media_path = Path(media_asset.local_path)
+        try:
+            media_stat = media_path.stat()
+        except OSError as error:
+            raise ValueError("missing_media_file") from error
+        if not media_path.is_file():
+            raise ValueError("missing_media_file")
+
+        evidence = self._motion_evidence_for_review_queue_item(
+            session,
+            event_id=item.event_id,
+            visit_id=item.visit_id,
+            media_asset_id=media_asset_id,
+        )
+        if _review_item_has_active_restricted_zone(session, item):
+            raise ValueError("identification_zone_suppressed")
+        crop = self._review_species_crop_context(
+            session,
+            item,
+            media_asset_id=media_asset_id,
+        )
+        if _review_species_crop_intersects_restricted_zone(
+            session,
+            stream_id=item.stream_id,
+            crop=crop,
+        ):
+            raise ValueError("identification_zone_suppressed")
+
+        return _ReviewSpeciesRunContext(
+            local_path=media_asset.local_path,
+            media_file_size_bytes=media_stat.st_size,
+            media_file_mtime_ns=media_stat.st_mtime_ns,
+            content_type=media_asset.content_type,
+            source_id=media_asset.source_id or item.source_id,
+            stream_id=item.stream_id,
+            event_id=item.event_id,
+            visit_id=item.visit_id,
+            media_asset_id=media_asset_id,
+            motion_evidence_id=evidence.id if evidence is not None else None,
+            crop=crop,
+        )
+
+    def _review_species_crop_context(
+        self,
+        session: Session,
+        item: ReviewQueueItem,
+        *,
+        media_asset_id: str,
+    ) -> _ReviewSpeciesCropContext:
+        proposal = self._credible_megadetector_animal_proposal(
+            session,
+            item,
+            media_asset_id=media_asset_id,
+        )
+        if proposal is not None:
+            bbox = _valid_detection_proposal_bbox(proposal)
+            assert bbox is not None
+            padded = plan_activity_crop_bounds(
+                left=bbox.x,
+                top=bbox.y,
+                right=bbox.x + bbox.width,
+                bottom=bbox.y + bbox.height,
+            )
+            if not padded.is_full_frame_fallback:
+                return _ReviewSpeciesCropContext(
+                    source="megadetector",
+                    box_normalized=_bounding_box_from_crop_box(
+                        padded.crop_box_normalized
+                    ),
+                    label="MegaDetector animal focus",
+                    detection_proposal_id=proposal.id,
+                )
+
+        if (
+            item.focus_crop_available
+            and item.focus_crop_source == FocusCropSource.activity
+            and item.focus_crop_box_normalized is not None
+        ):
+            return _ReviewSpeciesCropContext(
+                source="activity",
+                box_normalized=item.focus_crop_box_normalized,
+                label=item.focus_crop_label or "Detected activity focus",
+            )
+
+        return _ReviewSpeciesCropContext(
+            source="full_frame",
+            box_normalized=BoundingBox(x=0.0, y=0.0, width=1.0, height=1.0),
+            label="Full frame fallback",
+        )
+
+    def _credible_megadetector_animal_proposal(
+        self,
+        session: Session,
+        item: ReviewQueueItem,
+        *,
+        media_asset_id: str,
+    ) -> DetectionProposalModel | None:
+        candidates = self._review_identification_proposal_models(
+            session,
+            item,
+            media_asset_id=media_asset_id,
+        )
+        credible: list[DetectionProposalModel] = []
+        for proposal in candidates:
+            if proposal.media_asset_id != media_asset_id:
+                continue
+            if proposal.status == DetectionProposalStatus.rejected.value:
+                continue
+            if proposal.label not in {"animal", "unknown_animal"}:
+                continue
+            if (
+                not math.isfinite(proposal.confidence)
+                or proposal.confidence < MEGADETECTOR_DEFAULT_CONFIDENCE_THRESHOLD
+            ):
+                continue
+            if _valid_detection_proposal_bbox(proposal) is None:
+                continue
+            run = session.get(DetectionRunModel, proposal.run_id)
+            adapter = _model_adapter_for_detection_run(run)
+            if adapter is None or adapter.id != MEGADETECTOR_ADAPTER_ID:
+                continue
+            credible.append(proposal)
+        activity_focus = (
+            item.focus_crop_box_normalized
+            if item.focus_crop_available
+            and item.focus_crop_source == FocusCropSource.activity
+            else None
+        )
+        if activity_focus is not None:
+            related = [
+                proposal
+                for proposal in credible
+                if (
+                    (bbox := _valid_detection_proposal_bbox(proposal)) is not None
+                    and _normalized_box_overlap_ratio(bbox, activity_focus) > 0
+                )
+            ]
+            if not related:
+                # A detector box elsewhere in the frame is not evidence about the
+                # activity that created this review item.
+                return None
+            credible = related
+        return max(
+            credible,
+            key=lambda proposal: (
+                (
+                    _normalized_box_overlap_ratio(
+                        _valid_detection_proposal_bbox(proposal),
+                        activity_focus,
+                    )
+                    if activity_focus is not None
+                    else 0.0
+                ),
+                proposal.confidence,
+                _review_queue_timestamp(proposal.created_at),
+                proposal.id,
+            ),
+            default=None,
+        )
+
+    def _supersede_pending_bioclip_suggestions(
+        self,
+        session: Session,
+        *,
+        run_context: _ReviewSpeciesRunContext,
+    ) -> None:
+        filters = [
+            SpeciesSuggestionModel.adapter_id == BIOCLIP_ADAPTER_ID,
+            SpeciesSuggestionModel.media_asset_id == run_context.media_asset_id,
+            SpeciesSuggestionModel.status == SpeciesSuggestionStatus.pending.value,
+        ]
+        if run_context.visit_id is not None:
+            filters.append(SpeciesSuggestionModel.visit_id == run_context.visit_id)
+        elif run_context.event_id is not None:
+            filters.append(SpeciesSuggestionModel.event_id == run_context.event_id)
+        else:
+            return
+        prior_suggestions = session.scalars(
+            select(SpeciesSuggestionModel).where(*filters)
+        ).all()
+        for prior in prior_suggestions:
+            prior.status = SpeciesSuggestionStatus.superseded.value
+
     def _review_queue_item_by_target(
         self,
         session: Session,
@@ -6426,14 +6929,34 @@ class ProductRepository:
             if proposal_model is not None
             else None
         )
-        adapter = (
-            None
-            if requested_adapter_id is not None
-            else proposal_adapter
-        ) or self._select_review_identification_adapter(
+        suggestion_adapter = (
+            _model_adapter_by_id(suggestion.adapter_id)
+            if suggestion is not None
+            else None
+        )
+        selected_adapter = self._select_review_identification_adapter(
             requested_adapter_id=requested_adapter_id,
             media_asset_model=media_asset_model,
         )
+        if requested_adapter_id is not None:
+            adapter = selected_adapter
+        elif suggestion_adapter is not None:
+            adapter = suggestion_adapter
+        elif (
+            selected_adapter is not None
+            and (
+                selected_adapter.kind == ModelAdapterKind.species_classifier
+                or self._review_identification_adapter_can_run(
+                    selected_adapter,
+                    media_asset_model,
+                )
+            )
+        ):
+            # Species setup and runnable adapters own the identification action.
+            # Existing MegaDetector evidence remains available as classifier crop context.
+            adapter = selected_adapter
+        else:
+            adapter = proposal_adapter or selected_adapter
         adapter_supports_media = (
             self._review_identification_adapter_supports_media(adapter, media_asset_model)
             if adapter is not None
@@ -6458,6 +6981,28 @@ class ProductRepository:
         )
         supported_media_types = list(adapter.supported_media_types) if adapter is not None else []
         unavailable_reason: str | None = None
+        analysis_input_blocked = False
+        if can_run and adapter is not None and normalized_media_asset_id is not None:
+            crop: _ReviewSpeciesCropContext | None = None
+            if adapter.kind == ModelAdapterKind.species_classifier:
+                crop = self._review_species_crop_context(
+                    session,
+                    item,
+                    media_asset_id=normalized_media_asset_id,
+                )
+            elif adapter.kind == ModelAdapterKind.object_detector:
+                crop = _review_detector_input_crop_context(item, adapter.id)
+            if crop is not None and (
+                _review_item_has_active_restricted_zone(session, item)
+                or _review_species_crop_intersects_restricted_zone(
+                    session,
+                    stream_id=item.stream_id,
+                    crop=crop,
+                )
+            ):
+                can_run = False
+                analysis_input_blocked = True
+                unavailable_reason = "identification_zone_suppressed"
 
         if suggestion is not None:
             status = ReviewIdentificationStatus.suggestion_present
@@ -6479,6 +7024,12 @@ class ProductRepository:
             status = ReviewIdentificationStatus.unavailable_no_adapter
             unavailable_reason = "no_adapter_registered"
             message = "No identification adapter is registered for Review Queue assist."
+        elif analysis_input_blocked:
+            status = ReviewIdentificationStatus.unsupported_media
+            message = (
+                "Identification is blocked because its selected image region intersects "
+                "an active Privacy or Ignore Zone. No full-frame fallback is allowed."
+            )
         elif not adapter_supports_media:
             status = ReviewIdentificationStatus.unsupported_media
             unavailable_reason = (
@@ -6540,7 +7091,11 @@ class ProductRepository:
             proposal_count=len(proposal_models),
             created_suggestion_ids=[],
             created_proposal_ids=[],
-            **_review_identification_focus_fields(item),
+            **(
+                _review_species_suggestion_focus_fields(suggestion, item)
+                if suggestion is not None
+                else _review_identification_focus_fields(item)
+            ),
             creates_truth=False,
             creates_export=False,
         )
@@ -6555,9 +7110,9 @@ class ProductRepository:
         filters = []
         if item.visit_id:
             filters.append(SpeciesSuggestionModel.visit_id == item.visit_id)
-        if item.event_id:
+        elif item.event_id:
             filters.append(SpeciesSuggestionModel.event_id == item.event_id)
-        if media_asset_id:
+        elif media_asset_id:
             filters.append(SpeciesSuggestionModel.media_asset_id == media_asset_id)
         if not filters:
             return []
@@ -6633,13 +7188,27 @@ class ProductRepository:
             if self._review_identification_adapter_supports_media(adapter, media_asset_model)
         ]
         candidates = supported_adapters or real_adapters
+        runnable = [
+            adapter
+            for adapter in candidates
+            if self._review_identification_adapter_can_run(adapter, media_asset_model)
+        ]
         return next(
             (
                 adapter
-                for adapter in candidates
-                if self._review_identification_adapter_can_run(adapter, media_asset_model)
+                for adapter in runnable
+                if adapter.kind == ModelAdapterKind.species_classifier
             ),
-            candidates[0] if candidates else None,
+            runnable[0]
+            if runnable
+            else next(
+                (
+                    adapter
+                    for adapter in candidates
+                    if adapter.kind == ModelAdapterKind.species_classifier
+                ),
+                candidates[0] if candidates else None,
+            ),
         )
 
     def _review_identification_adapter_supports_media(
@@ -6676,18 +7245,30 @@ class ProductRepository:
     ) -> ReviewIdentificationSummary:
         reason = str(error)
         setup_errors = {
+            "bioclip_configuration_error",
+            "bioclip_not_configured",
             "local_detector_not_configured",
             "megadetector_not_configured",
             "megadetector_model_file_missing",
             "megadetector_model_format_unsupported",
         }
         unsupported_errors = {
+            "bioclip_input_too_large",
+            "bioclip_media_changed",
+            "bioclip_media_not_review_frame",
+            "bioclip_unsupported_image",
+            "bioclip_unsupported_media_type",
+            "identification_zone_suppressed",
             "local_detector_unsupported_media_type",
             "megadetector_unsupported_media_type",
             "megadetector_zone_suppressed",
+            "species_classifier_not_supported",
             "unsupported_media_type",
         }
         failed_errors = {
+            "bioclip_failed",
+            "bioclip_input_unavailable",
+            "bioclip_runtime_unavailable",
             "local_detector_failed",
             "local_detector_runtime_unavailable",
             "megadetector_runtime_unavailable",
@@ -6695,9 +7276,21 @@ class ProductRepository:
             "missing_media_file",
             "unsupported_detector_output",
         }
-        if reason in setup_errors:
+        if reason == "bioclip_busy":
+            status = ReviewIdentificationStatus.running
+            message = (
+                "Another species identification is already running. "
+                "No additional model process or evidence write was started."
+            )
+        elif reason in setup_errors:
             status = ReviewIdentificationStatus.setup_required
             message = "Identification setup is required before this candidate can be analyzed."
+        elif reason == "identification_zone_suppressed":
+            status = ReviewIdentificationStatus.unsupported_media
+            message = (
+                "Identification is blocked by an active Privacy or Ignore Zone. "
+                "No analyzer or full-frame fallback ran."
+            )
         elif reason in unsupported_errors:
             status = ReviewIdentificationStatus.unsupported_media
             message = "Identification adapter does not support this best-frame media type."
@@ -6742,18 +7335,25 @@ class ProductRepository:
         visit_id: str | None,
         media_asset_id: str | None,
     ) -> MotionEvidenceModel | None:
-        filters = []
+        target_filters = []
         if visit_id:
-            filters.append(MotionEvidenceModel.promoted_visit_id == visit_id)
+            target_filters.append(MotionEvidenceModel.promoted_visit_id == visit_id)
         if event_id:
-            filters.append(MotionEvidenceModel.promoted_event_id == event_id)
+            target_filters.append(MotionEvidenceModel.promoted_event_id == event_id)
         if media_asset_id:
-            filters.append(MotionEvidenceModel.snapshot_media_asset_id == media_asset_id)
+            media_filter = MotionEvidenceModel.snapshot_media_asset_id == media_asset_id
+            filters = (
+                [media_filter, or_(*target_filters)]
+                if target_filters
+                else [media_filter]
+            )
+        else:
+            filters = [or_(*target_filters)] if target_filters else []
         if not filters:
             return None
         return session.scalars(
             select(MotionEvidenceModel)
-            .where(or_(*filters))
+            .where(*filters)
             .order_by(MotionEvidenceModel.created_at.desc(), MotionEvidenceModel.id.desc())
         ).first()
 
@@ -10839,6 +11439,7 @@ def _model_adapters() -> tuple[ModelAdapter, ...]:
         *BASE_MODEL_ADAPTERS,
         _local_image_detector_adapter(),
         _megadetector_adapter(),
+        _bioclip_adapter(),
     )
 
 
@@ -10894,10 +11495,46 @@ def _megadetector_adapter() -> ModelAdapter:
     )
 
 
+def _bioclip_adapter() -> ModelAdapter:
+    status = get_bioclip_status(_bioclip_config())
+    return ModelAdapter(
+        id=BIOCLIP_ADAPTER_ID,
+        name=BIOCLIP_ADAPTER_NAME,
+        kind=ModelAdapterKind.species_classifier,
+        status=ModelAdapterStatus(status.status),
+        version="shadow-1",
+        description=(
+            "Optional local BioCLIP 2 ranked species suggestions for one saved "
+            "Review Queue image at a time. Scores are candidate-relative and "
+            "uncalibrated; explicit correction remains truth."
+        ),
+        supported_media_types=sorted(BIOCLIP_SUPPORTED_IMAGE_CONTENT_TYPES),
+        supported_labels=[],
+        creates_review_truth=False,
+        local_only=True,
+        notes=status.detail,
+        configuration_status=_model_adapter_configuration_status(
+            adapter_id=BIOCLIP_ADAPTER_ID,
+            status=status,
+            supported_media_types=sorted(BIOCLIP_SUPPORTED_IMAGE_CONTENT_TYPES),
+            setup_hint=BIOCLIP_SETUP_HINT,
+        ),
+    )
+
+
+def _bioclip_config() -> BioClipAdapterConfig:
+    return build_bioclip_config(
+        model_dir=os.getenv(BIOCLIP_MODEL_PATH_ENV),
+        labels_path=os.getenv(BIOCLIP_LABELS_PATH_ENV),
+        embedding_cache_path=os.getenv(BIOCLIP_EMBEDDING_CACHE_PATH_ENV),
+        device=os.getenv(BIOCLIP_DEVICE_ENV, "cpu"),
+    )
+
+
 def _model_adapter_configuration_status(
     *,
     adapter_id: str,
-    status: LocalDetectorStatus | MegaDetectorStatus,
+    status: LocalDetectorStatus | MegaDetectorStatus | BioClipAdapterStatus,
     supported_media_types: list[str],
     setup_hint: str,
 ) -> ModelAdapterConfigurationStatus:
@@ -10953,6 +11590,8 @@ def _model_adapter_required_env_var(adapter_id: str) -> str | None:
         return LOCAL_DETECTOR_MODEL_PATH_ENV
     if adapter_id == MEGADETECTOR_ADAPTER_ID:
         return MEGADETECTOR_MODEL_PATH_ENV
+    if adapter_id == BIOCLIP_ADAPTER_ID:
+        return BIOCLIP_MODEL_PATH_ENV
     return None
 
 
@@ -10962,6 +11601,12 @@ def _model_adapter_model_path_hint(adapter_id: str) -> str | None:
         return None
     if adapter_id == MEGADETECTOR_ADAPTER_ID:
         return f"Set {env_var} to a local MegaDetector-family model file."
+    if adapter_id == BIOCLIP_ADAPTER_ID:
+        return (
+            f"Set {BIOCLIP_MODEL_PATH_ENV} to a local BioCLIP model directory, "
+            f"{BIOCLIP_LABELS_PATH_ENV} to the frozen candidate labels, and "
+            f"{BIOCLIP_EMBEDDING_CACHE_PATH_ENV} to their precomputed embedding cache."
+        )
     return f"Set {env_var} to a local model file."
 
 
@@ -11405,6 +12050,526 @@ def _review_identification_focus_fields(item: ReviewQueueItem) -> dict[str, Any]
         "focus_crop_label": item.focus_crop_label,
         "focus_crop_warnings": list(item.focus_crop_warnings),
     }
+
+
+def _review_species_focus_fields(
+    crop: _ReviewSpeciesCropContext,
+    item: ReviewQueueItem,
+) -> dict[str, Any]:
+    if crop.source == "activity":
+        return {
+            "focus_crop_available": True,
+            "focus_crop_source": FocusCropSource.activity,
+            "focus_crop_box_normalized": crop.box_normalized,
+            "focus_crop_box_pixels": (
+                item.focus_crop_box_pixels
+                if item.focus_crop_source == FocusCropSource.activity
+                else None
+            ),
+            "focus_crop_label": crop.label,
+            "focus_crop_warnings": list(item.focus_crop_warnings),
+        }
+    if crop.source == "megadetector":
+        return {
+            "focus_crop_available": True,
+            "focus_crop_source": FocusCropSource.detector,
+            "focus_crop_box_normalized": crop.box_normalized,
+            "focus_crop_box_pixels": None,
+            "focus_crop_label": crop.label,
+            "focus_crop_warnings": _unique_strings(
+                [
+                    *item.focus_crop_warnings,
+                    "focus_crop_from_megadetector_animal_bbox",
+                    "focus_crop_pixels_unavailable",
+                ]
+            ),
+        }
+    return {
+        "focus_crop_available": False,
+        "focus_crop_source": FocusCropSource.none,
+        "focus_crop_box_normalized": None,
+        "focus_crop_box_pixels": None,
+        "focus_crop_label": crop.label,
+        "focus_crop_warnings": _unique_strings(
+            [*item.focus_crop_warnings, "focus_crop_full_frame_fallback"]
+        ),
+    }
+
+
+def _review_species_suggestion_focus_fields(
+    suggestion: SpeciesSuggestionResponse,
+    item: ReviewQueueItem,
+) -> dict[str, Any]:
+    region = suggestion.evidence_region
+    if not isinstance(region, dict):
+        return _review_identification_focus_fields(item)
+    source = region.get("source")
+    if source not in {"megadetector", "activity", "full_frame"}:
+        return _review_identification_focus_fields(item)
+    try:
+        box = BoundingBox(
+            x=float(region["x"]),
+            y=float(region["y"]),
+            width=float(region["width"]),
+            height=float(region["height"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return _review_identification_focus_fields(item)
+    if box.x + box.width > 1.0 or box.y + box.height > 1.0:
+        return _review_identification_focus_fields(item)
+    return _review_species_focus_fields(
+        _ReviewSpeciesCropContext(
+            source=source,
+            box_normalized=box,
+            label=(
+                "MegaDetector animal focus"
+                if source == "megadetector"
+                else "Detected activity focus"
+                if source == "activity"
+                else "Full frame fallback"
+            ),
+            detection_proposal_id=_clean_optional_text(
+                region.get("detection_proposal_id")
+                if isinstance(region.get("detection_proposal_id"), str)
+                else None
+            ),
+        ),
+        item,
+    )
+
+
+def _valid_detection_proposal_bbox(
+    proposal: DetectionProposalModel,
+) -> BoundingBox | None:
+    if not proposal.bbox_json:
+        return None
+    try:
+        payload = json.loads(proposal.bbox_json)
+        bbox = BoundingBox.model_validate(payload)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if (
+        not all(
+            math.isfinite(value)
+            for value in (bbox.x, bbox.y, bbox.width, bbox.height)
+        )
+        or bbox.x + bbox.width > 1.0
+        or bbox.y + bbox.height > 1.0
+    ):
+        return None
+    return bbox
+
+
+def _normalized_box_overlap_ratio(
+    first: BoundingBox | None,
+    second: BoundingBox | None,
+) -> float:
+    if first is None or second is None:
+        return 0.0
+    left = max(first.x, second.x)
+    top = max(first.y, second.y)
+    right = min(first.x + first.width, second.x + second.width)
+    bottom = min(first.y + first.height, second.y + second.height)
+    if right <= left or bottom <= top:
+        return 0.0
+    first_area = first.width * first.height
+    return ((right - left) * (bottom - top)) / first_area if first_area > 0 else 0.0
+
+
+def _media_file_identity_matches(
+    path: Path,
+    *,
+    expected_size_bytes: int,
+    expected_mtime_ns: int,
+) -> bool:
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    return (
+        path.is_file()
+        and stat.st_size == expected_size_bytes
+        and stat.st_mtime_ns == expected_mtime_ns
+    )
+
+
+def _bioclip_media_file_matches_run_context(
+    context: _ReviewSpeciesRunContext,
+) -> bool:
+    return _media_file_identity_matches(
+        Path(context.local_path),
+        expected_size_bytes=context.media_file_size_bytes,
+        expected_mtime_ns=context.media_file_mtime_ns,
+    )
+
+
+def _load_bioclip_input_image(
+    *,
+    local_path: str,
+    expected_size_bytes: int,
+    expected_mtime_ns: int,
+    content_type: str,
+    crop: _ReviewSpeciesCropContext,
+) -> Any:
+    if content_type not in BIOCLIP_SUPPORTED_IMAGE_CONTENT_TYPES:
+        raise ValueError("bioclip_unsupported_media_type")
+    path = Path(local_path)
+    if not path.exists() or not path.is_file():
+        raise ValueError("missing_media_file")
+    if not _media_file_identity_matches(
+        path,
+        expected_size_bytes=expected_size_bytes,
+        expected_mtime_ns=expected_mtime_ns,
+    ):
+        raise ValueError("bioclip_media_changed")
+
+    try:
+        from PIL import Image, UnidentifiedImageError
+    except ImportError as error:
+        raise BioClipRuntimeUnavailableError(
+            "Optional BioCLIP image runtime is unavailable."
+        ) from error
+
+    try:
+        with Image.open(path) as source:
+            width, height = source.size
+            if (
+                width < 1
+                or height < 1
+                or width * height > BIOCLIP_MAX_INPUT_PIXELS
+            ):
+                raise ValueError("bioclip_input_too_large")
+            source.load()
+            rgb = source.convert("RGB")
+    except ValueError:
+        raise
+    except (
+        Image.DecompressionBombError,
+        UnidentifiedImageError,
+        OSError,
+        SyntaxError,
+    ) as error:
+        raise BioClipUnsupportedImageError(
+            "BioCLIP could not decode the bounded local image."
+        ) from error
+    if not _media_file_identity_matches(
+        path,
+        expected_size_bytes=expected_size_bytes,
+        expected_mtime_ns=expected_mtime_ns,
+    ):
+        rgb.close()
+        raise ValueError("bioclip_media_changed")
+
+    box = crop.box_normalized
+    left = max(0, min(width - 1, math.floor(box.x * width)))
+    top = max(0, min(height - 1, math.floor(box.y * height)))
+    right = max(left + 1, min(width, math.ceil((box.x + box.width) * width)))
+    bottom = max(top + 1, min(height, math.ceil((box.y + box.height) * height)))
+    try:
+        result = rgb.crop((left, top, right, bottom)).copy()
+    except Exception as error:
+        raise BioClipUnsupportedImageError(
+            "BioCLIP could not prepare the bounded in-memory crop."
+        ) from error
+    finally:
+        rgb.close()
+    return result
+
+
+def _bioclip_species_suggestion_payload(
+    prediction: BioClipPrediction,
+    *,
+    run_context: _ReviewSpeciesRunContext,
+    request_notes: str | None,
+) -> SpeciesSuggestionCreateRequest | None:
+    ranked = tuple(prediction.suggestions)
+    if not ranked:
+        return None
+    primary = _bioclip_suggestion_fields(ranked[0])
+    alternatives = [
+        {
+            "rank": fields["rank"],
+            "label": fields["raw_label"],
+            "suggested_label": fields["suggested_label"],
+            "common_name": fields["common_name"],
+            "scientific_name": fields["scientific_name"],
+            "score": fields["score"],
+            "score_kind": fields["score_kind"],
+            "calibrated": False,
+        }
+        for fields in (
+            _bioclip_suggestion_fields(suggestion)
+            for suggestion in ranked[1:BIOCLIP_REVIEW_TOP_K]
+        )
+    ]
+    provenance = asdict(prediction.provenance)
+    evidence_region: dict[str, Any] = {
+        "source": run_context.crop.source,
+        "coordinate_space": "full_frame_normalized",
+        "score_semantics": primary["score_kind"],
+        "calibrated": False,
+        "model_provenance": provenance,
+        **run_context.crop.box_normalized.model_dump(),
+    }
+    if run_context.crop.detection_proposal_id is not None:
+        evidence_region["detection_proposal_id"] = (
+            run_context.crop.detection_proposal_id
+        )
+    generated_notes = (
+        "BioCLIP 2 Review Queue shadow suggestion; scores are candidate-relative "
+        "and uncalibrated, not reviewed truth or calibrated probability. "
+        f"crop_source={run_context.crop.source}; "
+        f"provenance={json.dumps(provenance, sort_keys=True)}"
+    )
+    return SpeciesSuggestionCreateRequest(
+        source_id=run_context.source_id,
+        stream_id=run_context.stream_id,
+        event_id=run_context.event_id,
+        visit_id=run_context.visit_id,
+        media_asset_id=run_context.media_asset_id,
+        motion_evidence_id=run_context.motion_evidence_id,
+        adapter_id=BIOCLIP_ADAPTER_ID,
+        adapter_name=BIOCLIP_ADAPTER_NAME,
+        suggested_label=primary["suggested_label"],
+        suggested_common_name=primary["common_name"],
+        suggested_scientific_name=primary["scientific_name"],
+        confidence=primary["score"],
+        rank=primary["rank"],
+        alternatives=alternatives,
+        evidence_region=evidence_region,
+        notes=(
+            _merge_notes(generated_notes, request_notes)
+            if request_notes is not None
+            else generated_notes
+        ),
+    )
+
+
+def _bioclip_suggestion_fields(
+    suggestion: BioClipRankedSuggestion,
+) -> dict[str, Any]:
+    raw_label = suggestion.label.strip()
+    common_name = _clean_optional_text(suggestion.common_name)
+    scientific_name = _clean_optional_text(suggestion.scientific_name)
+    if common_name is None or scientific_name is None:
+        match = re.fullmatch(
+            r"(?P<common>.+?)\s+\("
+            r"(?P<scientific>[A-Z][A-Za-z.-]+(?:\s+[a-z][A-Za-z.-]+)+)"
+            r"\)",
+            raw_label,
+        )
+        if match is not None:
+            common_name = common_name or match.group("common").strip()
+            scientific_name = scientific_name or match.group("scientific").strip()
+    normalized_label = _freeform_label(common_name or raw_label)
+    return {
+        "rank": suggestion.rank,
+        "raw_label": raw_label,
+        "suggested_label": normalized_label,
+        "common_name": common_name,
+        "scientific_name": scientific_name,
+        "score": suggestion.score,
+        "score_kind": suggestion.score_kind,
+    }
+
+
+def _review_item_has_active_restricted_zone(
+    session: Session,
+    item: ReviewQueueItem,
+) -> bool:
+    zone_ids = {
+        zone_id
+        for zone_id in (item.zone_id, item.primary_zone_id)
+        if zone_id is not None
+    }
+    evidence_filters = []
+    if item.visit_id is not None:
+        evidence_filters.append(MotionEvidenceModel.promoted_visit_id == item.visit_id)
+    if item.event_id is not None:
+        evidence_filters.append(MotionEvidenceModel.promoted_event_id == item.event_id)
+    if evidence_filters:
+        evidence = session.scalars(
+            select(MotionEvidenceModel)
+            .where(or_(*evidence_filters))
+            .order_by(
+                MotionEvidenceModel.created_at.desc(),
+                MotionEvidenceModel.id.desc(),
+            )
+        ).first()
+        if evidence is not None and evidence.zone_id is not None:
+            zone_ids.add(evidence.zone_id)
+
+    for zone_id in zone_ids:
+        zone = session.get(ZoneModel, zone_id)
+        if (
+            zone is not None
+            and zone.is_active
+            and zone.zone_type
+            in {ZoneType.privacy.value, ZoneType.ignore.value}
+        ):
+            return True
+    return False
+
+
+def _review_detector_input_crop_context(
+    item: ReviewQueueItem,
+    adapter_id: str,
+) -> _ReviewSpeciesCropContext:
+    if (
+        adapter_id == MEGADETECTOR_ADAPTER_ID
+        and item.focus_crop_available
+        and item.focus_crop_source == FocusCropSource.activity
+        and item.focus_crop_box_normalized is not None
+    ):
+        return _ReviewSpeciesCropContext(
+            source="activity",
+            box_normalized=item.focus_crop_box_normalized,
+            label=item.focus_crop_label or "Detected activity focus",
+        )
+    return _ReviewSpeciesCropContext(
+        source="full_frame",
+        box_normalized=BoundingBox(x=0.0, y=0.0, width=1.0, height=1.0),
+        label="Full frame fallback",
+    )
+
+
+def _review_species_crop_intersects_restricted_zone(
+    session: Session,
+    *,
+    stream_id: str,
+    crop: _ReviewSpeciesCropContext,
+) -> bool:
+    restricted_zones = session.scalars(
+        select(ZoneModel).where(
+            ZoneModel.stream_id == stream_id,
+            ZoneModel.is_active.is_(True),
+            ZoneModel.zone_type.in_(
+                [ZoneType.privacy.value, ZoneType.ignore.value]
+            ),
+        )
+    ).all()
+    if not restricted_zones:
+        return False
+    if crop.source == "full_frame":
+        return True
+    return any(
+        _normalized_box_intersects_zone_polygon(
+            crop.box_normalized,
+            zone.polygon_json,
+        )
+        for zone in restricted_zones
+    )
+
+
+def _normalized_box_intersects_zone_polygon(
+    box: BoundingBox,
+    polygon_json: str,
+) -> bool:
+    try:
+        payload = json.loads(polygon_json)
+        polygon = [
+            (float(point["x"]), float(point["y"]))
+            for point in payload
+            if isinstance(point, dict)
+        ]
+    except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+        return True
+    if (
+        len(polygon) < 3
+        or any(
+            not math.isfinite(value) or value < 0.0 or value > 1.0
+            for point in polygon
+            for value in point
+        )
+    ):
+        return True
+
+    left, top = box.x, box.y
+    right, bottom = box.x + box.width, box.y + box.height
+    rectangle = [(left, top), (right, top), (right, bottom), (left, bottom)]
+    if any(
+        left <= x <= right and top <= y <= bottom
+        for x, y in polygon
+    ):
+        return True
+    if any(_point_in_polygon(corner, polygon) for corner in rectangle):
+        return True
+
+    polygon_edges = list(zip(polygon, [*polygon[1:], polygon[0]], strict=True))
+    rectangle_edges = list(
+        zip(rectangle, [*rectangle[1:], rectangle[0]], strict=True)
+    )
+    return any(
+        _segments_intersect(first_start, first_end, second_start, second_end)
+        for first_start, first_end in polygon_edges
+        for second_start, second_end in rectangle_edges
+    )
+
+
+def _point_in_polygon(
+    point: tuple[float, float],
+    polygon: list[tuple[float, float]],
+) -> bool:
+    x, y = point
+    inside = False
+    previous = polygon[-1]
+    for current in polygon:
+        if _point_on_segment(point, previous, current):
+            return True
+        x1, y1 = previous
+        x2, y2 = current
+        if (y1 > y) != (y2 > y):
+            intersection_x = (x2 - x1) * (y - y1) / (y2 - y1) + x1
+            if x <= intersection_x:
+                inside = not inside
+        previous = current
+    return inside
+
+
+def _segments_intersect(
+    first_start: tuple[float, float],
+    first_end: tuple[float, float],
+    second_start: tuple[float, float],
+    second_end: tuple[float, float],
+) -> bool:
+    first_a = _orientation(first_start, first_end, second_start)
+    first_b = _orientation(first_start, first_end, second_end)
+    second_a = _orientation(second_start, second_end, first_start)
+    second_b = _orientation(second_start, second_end, first_end)
+    if first_a * first_b < 0 and second_a * second_b < 0:
+        return True
+    return (
+        (abs(first_a) <= 1e-12 and _point_on_segment(second_start, first_start, first_end))
+        or (abs(first_b) <= 1e-12 and _point_on_segment(second_end, first_start, first_end))
+        or (abs(second_a) <= 1e-12 and _point_on_segment(first_start, second_start, second_end))
+        or (abs(second_b) <= 1e-12 and _point_on_segment(first_end, second_start, second_end))
+    )
+
+
+def _orientation(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    point: tuple[float, float],
+) -> float:
+    return (end[0] - start[0]) * (point[1] - start[1]) - (
+        end[1] - start[1]
+    ) * (point[0] - start[0])
+
+
+def _point_on_segment(
+    point: tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> bool:
+    return (
+        abs(_orientation(start, end, point)) <= 1e-12
+        and min(start[0], end[0]) - 1e-12
+        <= point[0]
+        <= max(start[0], end[0]) + 1e-12
+        and min(start[1], end[1]) - 1e-12
+        <= point[1]
+        <= max(start[1], end[1]) + 1e-12
+    )
 
 
 def _review_focus_crop_proposal_note(item: ReviewQueueItem) -> str | None:

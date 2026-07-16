@@ -18,6 +18,7 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { ReviewFilterTabs, type ReviewFilterOption } from "../components/ReviewFilterTabs";
+import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
 import { StatusPill } from "../components/StatusPill";
 import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
 import { TaxonomyBadge } from "../components/TaxonomyBadge";
@@ -73,6 +74,15 @@ interface CorrectionHistoryGroup {
 interface ReviewEvidenceProposal {
   proposal: DetectionProposal;
   relation: "linked" | "same_media";
+}
+
+interface RankedSpeciesAlternative {
+  confidence: number | null;
+  commonName: string | null;
+  correctionLabel: string;
+  label: string;
+  rank: number;
+  scientificName: string | null;
 }
 
 interface ReviewItemFilterMetadata {
@@ -304,6 +314,122 @@ function focusCropBoxLabel(box: BoundingBox | null | undefined): string {
   return `Box ${focusCropPercent(box.x)}, ${focusCropPercent(box.y)} / ${focusCropPercent(
     box.width,
   )} x ${focusCropPercent(box.height)}`;
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function optionalNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function rankedSpeciesAlternatives(
+  identification: ReviewIdentificationSummary,
+): RankedSpeciesAlternative[] {
+  const suggestion = identification.suggestion;
+  if (!suggestion) {
+    return [];
+  }
+
+  return suggestion.alternatives
+    .map((alternative, index): RankedSpeciesAlternative | null => {
+      const label =
+        optionalString(alternative.label) ??
+        optionalString(alternative.suggested_label);
+      if (!label) {
+        return null;
+      }
+
+      const explicitRank = optionalNumber(alternative.rank);
+      return {
+        confidence:
+          optionalNumber(alternative.score) ??
+          optionalNumber(alternative.confidence),
+        commonName: optionalString(alternative.common_name),
+        correctionLabel:
+          optionalString(alternative.suggested_label) ?? label,
+        label,
+        rank:
+          explicitRank !== null && explicitRank > 0
+            ? Math.round(explicitRank)
+            : suggestion.rank + index + 1,
+        scientificName: optionalString(alternative.scientific_name),
+      };
+    })
+    .filter((alternative): alternative is RankedSpeciesAlternative => alternative !== null)
+    .sort((first, second) => first.rank - second.rank);
+}
+
+function pendingSuggestionIdForCorrection(
+  item: ReviewQueueItem,
+  correctionLabel: string,
+): string | null {
+  const suggestion = item.identification?.suggestion;
+  if (!suggestion || suggestion.status !== "pending") {
+    return null;
+  }
+  const correctionKey = taxonomyKey(correctionLabel);
+  if (!correctionKey) {
+    return null;
+  }
+  const candidateLabels = [
+    suggestion.suggested_label,
+    ...suggestion.alternatives
+      .map((alternative) => optionalString(alternative.suggested_label))
+      .filter((label): label is string => label !== null),
+  ];
+  return candidateLabels.some((label) => taxonomyKey(label) === correctionKey)
+    ? suggestion.id
+    : null;
+}
+
+function speciesEvidenceRegionSummary(
+  evidenceRegion: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!evidenceRegion) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  const source =
+    optionalString(evidenceRegion.source) ??
+    optionalString(evidenceRegion.crop_source);
+  if (source) {
+    parts.push(`${formatLabel(source)} source`);
+  }
+
+  const box = {
+    x: optionalNumber(evidenceRegion.x),
+    y: optionalNumber(evidenceRegion.y),
+    width: optionalNumber(evidenceRegion.width),
+    height: optionalNumber(evidenceRegion.height),
+  };
+  if (
+    box.x !== null &&
+    box.y !== null &&
+    box.width !== null &&
+    box.height !== null
+  ) {
+    parts.push(focusCropBoxLabel(box as BoundingBox));
+  }
+
+  return parts.length > 0 ? parts.join(" · ") : "Stored classifier crop metadata";
+}
+
+function speciesScoreLabel(identification: ReviewIdentificationSummary): string {
+  const adapterId =
+    identification.suggestion?.adapter_id ?? identification.adapter_id ?? "";
+  const scoreSemantics = optionalString(
+    identification.suggestion?.evidence_region?.score_semantics,
+  );
+  const normalizedSemantics = taxonomyKey(scoreSemantics ?? "");
+  return taxonomyKey(adapterId) === "bioclip_2" ||
+    normalizedSemantics.includes("uncalibrated") ||
+    normalizedSemantics.includes("candidate_bank") ||
+    normalizedSemantics.includes("candidate_relative")
+    ? "uncalibrated score"
+    : "confidence";
 }
 
 function focusCropPixelLabel(item: ReviewQueueItem): string {
@@ -1712,11 +1838,16 @@ export function ReviewQueuePage({
     setLastCorrectionSummary(null);
     try {
       const result = await onCreateCorrection(item, trimmedLabel, notes.trim());
+      let suggestionStatusWarning = "";
       if (acceptedSuggestionId) {
         try {
           await apiClient.updateSpeciesSuggestionStatus(acceptedSuggestionId, "accepted");
-        } catch {
-          // The ReviewLabel is truth; suggestion status is evidence polish only.
+        } catch (caught) {
+          const detail =
+            caught instanceof Error ? caught.message : "status update failed";
+          suggestionStatusWarning =
+            ` Suggestion evidence status was not updated (${detail});` +
+            " the correction is still saved truth.";
         }
       }
       await refreshReviewLabels();
@@ -1731,7 +1862,7 @@ export function ReviewQueuePage({
       setMessage(
         `Added to Bird Log. Correction saved as local dataset truth. ${result.review_queue_count} item${
           result.review_queue_count === 1 ? "" : "s"
-        } still need review.`,
+        } still need review.${suggestionStatusWarning}`,
       );
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Correction could not be saved.");
@@ -1742,10 +1873,18 @@ export function ReviewQueuePage({
 
   async function saveCorrection(item: ReviewQueueItem) {
     const draft = drafts[item.id] ?? { label: item.suggested_label ?? "", notes: "" };
-    await saveCorrectionWithLabel(item, draft.label, draft.notes);
+    await saveCorrectionWithLabel(
+      item,
+      draft.label,
+      draft.notes,
+      pendingSuggestionIdForCorrection(item, draft.label),
+    );
   }
 
   async function runIdentificationAssist(item: ReviewQueueItem) {
+    if (identifyingId !== null) {
+      return;
+    }
     const targetType = reviewQueueTargetType(item);
     const targetId = reviewQueueTargetId(item);
     const identification = item.identification;
@@ -1772,6 +1911,9 @@ export function ReviewQueuePage({
   }
 
   async function rejectIdentificationSuggestion(item: ReviewQueueItem) {
+    if (identifyingId !== null) {
+      return;
+    }
     const suggestionId = item.identification?.suggestion?.id;
     if (!suggestionId) {
       return;
@@ -1791,6 +1933,9 @@ export function ReviewQueuePage({
   }
 
   async function rejectIdentificationProposal(item: ReviewQueueItem) {
+    if (identifyingId !== null) {
+      return;
+    }
     const proposalId = item.identification?.proposal?.id;
     if (!proposalId) {
       return;
@@ -2101,6 +2246,14 @@ export function ReviewQueuePage({
           const isSelected = selectedTargetIds.includes(targetId);
           const isSelectable = canSelectForBulk(item);
           const identification = item.identification ?? null;
+          const identificationSuggestion = identification?.suggestion ?? null;
+          const linkedSpeciesSuggestion =
+            identificationSuggestion?.id === item.suggestion_id
+              ? identificationSuggestion
+              : null;
+          const suggestionMetricLabel = linkedSpeciesSuggestion
+            ? speciesSuggestionMetricLabel(linkedSpeciesSuggestion)
+            : "confidence";
           const identificationLabel = reviewIdentificationLabel(item);
           const itemHelperGroups = labelHelperGroups(
             uniqueLabelValues([
@@ -2265,7 +2418,7 @@ export function ReviewQueuePage({
                 reviewIdentificationCanRun(identification) ? (
                   <button
                     className="secondary-action"
-                    disabled={identifyingId === item.id || savingId === item.id}
+                    disabled={identifyingId !== null || savingId === item.id}
                     onClick={() => void runIdentificationAssist(item)}
                     type="button"
                   >
@@ -2414,7 +2567,14 @@ export function ReviewQueuePage({
                   <EvidenceBadge label="Unknown bird" tone="review" />
                 ) : null}
                 {item.suggestion_confidence != null ? (
-                  <EvidenceBadge label="Low-confidence suggestion" tone="quiet" />
+                  <EvidenceBadge
+                    label={
+                      suggestionMetricLabel === "uncalibrated score"
+                        ? "Uncalibrated model score"
+                        : "Suggestion evidence"
+                    }
+                    tone="quiet"
+                  />
                 ) : null}
                 {identification ? (
                   <EvidenceBadge
@@ -2437,7 +2597,12 @@ export function ReviewQueuePage({
                   Suggestion: {displayTaxonomyLabel(item.suggested_label ?? "unknown", taxonomyLabels)}
                 </span>
                 {item.suggestion_confidence != null ? (
-                  <span>Confidence: {formatConfidence(item.suggestion_confidence)}</span>
+                  <span>
+                    {suggestionMetricLabel === "uncalibrated score"
+                      ? "Uncalibrated score"
+                      : "Confidence"}
+                    : {formatConfidence(item.suggestion_confidence)}
+                  </span>
                 ) : null}
                 <span>Source: {sourceLabel}</span>
                 <span>Stream: {streamLabel}</span>
@@ -2486,7 +2651,11 @@ export function ReviewQueuePage({
                     <strong>{displayTaxonomyLabel(item.suggested_label ?? "unknown", taxonomyLabels)}</strong>
                     <small>
                       {item.suggestion_confidence != null
-                        ? `Low-confidence ${formatConfidence(item.suggestion_confidence)}. `
+                        ? `${
+                            suggestionMetricLabel === "uncalibrated score"
+                              ? "Uncalibrated score"
+                              : "Confidence"
+                          } ${formatConfidence(item.suggestion_confidence)}. `
                         : ""}
                       Suggestion only - confirm or correct.
                     </small>
@@ -2552,7 +2721,7 @@ export function ReviewQueuePage({
               </div>
               <IdentificationAssistPanel
                 identification={identification}
-                isBusy={identifyingId === item.id || savingId === item.id}
+                isBusy={identifyingId !== null || savingId === item.id}
                 onAcceptLabel={(label, suggestionId) =>
                   void saveCorrectionWithLabel(
                     item,
@@ -2718,6 +2887,13 @@ function IdentificationAssistPanel({
         identification.proposal?.label
       : null) ??
     null;
+  const suggestedDisplayLabel =
+    optionalString(identification.suggestion?.suggested_common_name) ??
+    (suggestedLabel
+      ? displayTaxonomyLabel(suggestedLabel, taxonomyLabels)
+      : "No suggestion");
+  const suggestedScientificName =
+    optionalString(identification.suggestion?.suggested_scientific_name);
   const confidence = reviewIdentificationConfidence(identification);
   const suggestionId = identification.suggestion?.id ?? null;
   const proposalId =
@@ -2742,6 +2918,11 @@ function IdentificationAssistPanel({
   const focusPixelLabel = identification.focus_crop_box_pixels
     ? `Pixels ${identification.focus_crop_box_pixels.x}, ${identification.focus_crop_box_pixels.y} / ${identification.focus_crop_box_pixels.width} x ${identification.focus_crop_box_pixels.height}`
     : "Pixel box unavailable";
+  const rankedAlternatives = rankedSpeciesAlternatives(identification);
+  const speciesCropSummary = speciesEvidenceRegionSummary(
+    identification.suggestion?.evidence_region,
+  );
+  const scoreLabel = speciesScoreLabel(identification);
 
   return (
     <details className="review-identification-assist review-secondary-details">
@@ -2777,7 +2958,7 @@ function IdentificationAssistPanel({
           </small>
         </div>
         <div className="data-row">
-          <span>Focus context</span>
+          <span>Crop provenance</span>
           <strong>
             {identification.focus_crop_available
               ? identification.focus_crop_label ?? "Activity focus"
@@ -2785,26 +2966,27 @@ function IdentificationAssistPanel({
           </strong>
           <small>
             {identification.focus_crop_available
-              ? `Best frame with ${formatLabel(
-                  identification.focus_crop_source,
-                )} crop context. ${focusCropBoxLabel(
-                  identification.focus_crop_box_normalized,
-                )}. ${focusPixelLabel}.`
-              : identification.focus_crop_warnings.length > 0
-                ? identification.focus_crop_warnings.map(formatQualityWarning).join(", ")
-                : "No focus crop metadata"}
+                ? `Best frame with ${formatLabel(
+                    identification.focus_crop_source,
+                  )} crop context. ${focusCropBoxLabel(
+                    identification.focus_crop_box_normalized,
+                  )}. ${focusPixelLabel}.${speciesCropSummary ? ` Classifier input: ${speciesCropSummary}.` : ""}`
+                : identification.focus_crop_warnings.length > 0
+                  ? identification.focus_crop_warnings.map(formatQualityWarning).join(", ")
+                  : speciesCropSummary
+                    ? `Classifier input: ${speciesCropSummary}.`
+                    : "Full best frame; no classifier crop metadata"}
           </small>
         </div>
         <div className="data-row">
           <span>Suggestion</span>
-          <strong>
-            {suggestedLabel ? displayTaxonomyLabel(suggestedLabel, taxonomyLabels) : "No suggestion"}
-          </strong>
+          <strong>{suggestedDisplayLabel}</strong>
           <small>
+            {suggestedScientificName ? `${suggestedScientificName}. ` : ""}
             {identification.adapter_is_demo
               ? "Placeholder evidence; no species confidence. "
               : confidence != null
-                ? `${formatConfidence(confidence)} confidence. `
+                ? `${formatConfidence(confidence)} ${scoreLabel}. `
                 : ""}
             {identification.suggestion_count + identification.proposal_count} suggestion evidence item
             {identification.suggestion_count + identification.proposal_count === 1 ? "" : "s"}
@@ -2826,6 +3008,43 @@ function IdentificationAssistPanel({
           </small>
         </div>
       </div>
+      {rankedAlternatives.length > 0 ? (
+        <div className="data-row">
+          <span>Ranked alternatives</span>
+          <strong>
+            {rankedAlternatives.length} competing model candidate
+            {rankedAlternatives.length === 1 ? "" : "s"}
+          </strong>
+          <div className="review-identification-actions">
+            {rankedAlternatives.map((alternative) => (
+              <button
+                aria-label={`Prefill correction with rank ${alternative.rank}, ${alternative.commonName ?? alternative.label}`}
+                className="secondary-action"
+                disabled={isBusy}
+                key={`${alternative.rank}:${alternative.correctionLabel}`}
+                onClick={() => onFillLabel(alternative.correctionLabel)}
+                title="Prefill only"
+                type="button"
+              >
+                #{alternative.rank}{" "}
+                {alternative.commonName ??
+                  displayTaxonomyLabel(alternative.label, taxonomyLabels)}
+                {alternative.scientificName
+                  ? ` (${alternative.scientificName})`
+                  : ""}
+                {" · "}
+                {alternative.confidence !== null
+                  ? `${formatConfidence(alternative.confidence)} ${scoreLabel}`
+                  : "score unavailable"}
+              </button>
+            ))}
+          </div>
+          <small>
+            Choosing an alternative only prefills the correction field. Submit the
+            correction separately to create reviewed truth.
+          </small>
+        </div>
+      ) : null}
       <details className="review-identification-setup-details" open={setupDetailsOpen}>
         <summary>Analyzer setup</summary>
         <div className="review-identification-setup-grid">

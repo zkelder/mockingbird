@@ -8,7 +8,6 @@ import pytest
 
 from mockingbird.api.main import (
     app,
-    capture_stream_local_camera_frame,
     configure_repository,
     get_live_camera_session_manager,
     get_stream_live_camera_session_mjpeg,
@@ -4735,10 +4734,10 @@ async def test_live_motion_reports_clipped_highlights_despite_dark_scene_details
     frame_0 = b"\xff\xd8live-clipped-0\xff\xd9"
     frame_1 = b"\xff\xd8live-clipped-1\xff\xd9"
     captured_at = datetime.now(UTC)
-    # Mirrors the feeder field frame: most pixels are clipped white while tree
-    # detail keeps the total contrast range high enough to fool a mean/range check.
-    clipped_frame = [[255 for _x in range(10)] for _y in range(9)] + [
-        [175 for _x in range(10)]
+    # Mirrors a field frame where roughly half the image is clipped white while
+    # usable-looking tree detail keeps the total contrast range high.
+    clipped_frame = [[255 for _x in range(10)] for _y in range(4)] + [
+        [180 for _x in range(10)] for _y in range(6)
     ]
     patch_camera_processes_to_fail(monkeypatch)
     patch_live_motion_decoder(

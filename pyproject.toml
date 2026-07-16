@@ -21,6 +21,9 @@ dependencies = [
 mockingbird-app = "mockingbird.runtime:main"
 
 [project.optional-dependencies]
+classifier-bioclip = [
+  "open-clip-torch>=3.3,<3.4; python_version < '3.14'",
+]
 detector-megadetector = [
   "megadetector>=10.0.22,<11.0; python_version < '3.14'",
 ]
