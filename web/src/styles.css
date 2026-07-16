@@ -2053,6 +2053,7 @@ a.secondary-action {
 
 .review-focus-crop-overlay {
   position: absolute;
+  z-index: 1;
   display: grid;
   min-width: 34px;
   min-height: 28px;
@@ -3381,6 +3382,76 @@ a.secondary-action {
   gap: 5px;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.review-proposal-overlay {
+  position: absolute;
+  z-index: 2;
+  min-width: 5px;
+  min-height: 5px;
+  border: 2px solid #d3c6ff;
+  border-radius: 4px;
+  background: rgb(211 198 255 / 10%);
+  box-shadow: 0 0 0 1px rgb(17 29 24 / 70%);
+  pointer-events: none;
+}
+
+.review-proposal-overlay > span {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: -2px;
+  border-radius: 5px;
+  padding: 2px 4px;
+  background: rgb(17 29 24 / 88%);
+  color: #ffffff;
+  font-size: 0.66rem;
+  font-weight: 850;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.review-proposal-overlay-animal {
+  border-color: #89dc64;
+  background: rgb(137 220 100 / 14%);
+}
+
+.review-proposal-overlay-person {
+  border-color: #67bde9;
+  background: rgb(103 189 233 / 14%);
+}
+
+.review-proposal-overlay-vehicle {
+  border-color: #e5a85d;
+  background: rgb(229 168 93 / 14%);
+}
+
+.review-proposal-overlay-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 8px;
+  background: #f7faf3;
+  color: #34473b;
+  font-size: 0.82rem;
+}
+
+.review-proposal-overlay-legend span {
+  border-left: 3px solid #d3c6ff;
+  padding-left: 6px;
+}
+
+.review-proposal-overlay-legend .review-proposal-legend-animal {
+  border-left-color: #72bd52;
+}
+
+.review-proposal-overlay-legend .review-proposal-legend-person {
+  border-left-color: #4b9dc7;
+}
+
+.review-proposal-overlay-legend .review-proposal-legend-vehicle {
+  border-left-color: #c78638;
 }
 
 .stream-monitoring-continuity {
@@ -6499,6 +6570,19 @@ a.secondary-action {
   .review-triage-bar {
     grid-template-columns: 1fr;
   }
+}
+
+.media-preview-image-stage {
+  position: relative;
+  display: grid;
+  width: 100%;
+  max-width: 100%;
+  place-items: center;
+}
+
+.media-preview-image-stage img {
+  width: 100%;
+  height: 100%;
 }
 
 @media (max-width: 640px) {

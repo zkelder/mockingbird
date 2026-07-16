@@ -93,6 +93,13 @@ the existing explicit saved-frame analysis action more prominently. These are
 review-ordering aids only: opening the page or changing a filter never runs the
 adapter, and proposal evidence never rejects, corrects, or reviews an item.
 
+When a proposal includes a bounding box, Review Queue may overlay that box on
+the original saved frame so reviewers can see what the analyzer labeled. The
+overlay uses the latest proposal run for that displayed frame, uses remapped
+full-frame coordinates, stays visually distinct from the measured activity
+focus, and remains evidence only. Mixed animal and vehicle/person evidence must
+stay visible rather than being presented as one unqualified classification.
+
 ## Output Mapping
 
 MegaDetector output maps into `DetectionProposal` evidence:

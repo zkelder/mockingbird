@@ -94,6 +94,8 @@ interface ReviewTriageSummary {
   confidence: number | null;
   hasAnalyzerRun: boolean;
   label: string | null;
+  secondaryConfidence: number | null;
+  secondaryLabel: string | null;
 }
 
 interface SourceStreamFilterOption {
@@ -204,16 +206,91 @@ function formatQualityWarning(warning: string): string {
   return warning.includes(" ") ? warning : formatLabel(warning);
 }
 
-function focusCropOverlayStyle(box: BoundingBox | null | undefined): CSSProperties | undefined {
+function normalizedOverlayStyle(box: BoundingBox | null | undefined): CSSProperties | undefined {
   if (!box) {
     return undefined;
   }
+  const left = Math.max(0, Math.min(1, box.x));
+  const top = Math.max(0, Math.min(1, box.y));
+  const right = Math.max(left, Math.min(1, box.x + box.width));
+  const bottom = Math.max(top, Math.min(1, box.y + box.height));
+  if (right <= left || bottom <= top) {
+    return undefined;
+  }
   return {
-    left: `${box.x * 100}%`,
-    top: `${box.y * 100}%`,
-    width: `${box.width * 100}%`,
-    height: `${box.height * 100}%`,
+    left: `${left * 100}%`,
+    top: `${top * 100}%`,
+    width: `${(right - left) * 100}%`,
+    height: `${(bottom - top) * 100}%`,
   };
+}
+
+type ProposalOverlayTone = "animal" | "person" | "vehicle" | "other";
+
+function proposalOverlayTone(
+  proposal: DetectionProposal,
+  taxonomyLabels: TaxonomyLabel[],
+): ProposalOverlayTone {
+  const value =
+    proposal.suggested_species ?? proposal.suggested_subject_label ?? proposal.label;
+  const key = taxonomyKey(value ?? "");
+  const taxonomy = findTaxonomyLabel(value, taxonomyLabels);
+  if (key === "person" || taxonomy?.category === "person") {
+    return "person";
+  }
+  if (key === "vehicle" || taxonomy?.category === "vehicle") {
+    return "vehicle";
+  }
+  if (
+    key === "animal" ||
+    key === "unknown_animal" ||
+    key === "bird" ||
+    key === "unknown_bird" ||
+    taxonomy?.category === "bird" ||
+    taxonomy?.category === "mammal" ||
+    taxonomy?.category === "pet"
+  ) {
+    return "animal";
+  }
+  return "other";
+}
+
+function proposalOverlayLabel(
+  proposal: DetectionProposal,
+  taxonomyLabels: TaxonomyLabel[],
+): string {
+  const value =
+    proposal.suggested_species ?? proposal.suggested_subject_label ?? proposal.label;
+  return `${displayTaxonomyLabel(value, taxonomyLabels)} ${formatConfidence(
+    proposal.confidence,
+  )}`;
+}
+
+function reviewProposalOverlays(
+  proposals: ReviewEvidenceProposal[],
+  mediaAssetId: string | null,
+): ReviewEvidenceProposal[] {
+  const candidates = proposals.filter(
+    ({ proposal }) =>
+      proposal.status !== "rejected" &&
+      proposal.bbox &&
+      Boolean(mediaAssetId) &&
+      proposal.media_asset_id === mediaAssetId,
+  );
+  const latestRunId = candidates.reduce<ReviewEvidenceProposal | null>((latest, current) => {
+    if (!latest) {
+      return current;
+    }
+    return new Date(current.proposal.created_at).getTime() >
+      new Date(latest.proposal.created_at).getTime()
+      ? current
+      : latest;
+  }, null)?.proposal.run_id;
+
+  return candidates
+    .filter(({ proposal }) => proposal.run_id === latestRunId)
+    .sort((first, second) => second.proposal.confidence - first.proposal.confidence)
+    .slice(0, 8);
 }
 
 function focusCropPercent(value: number): string {
@@ -638,6 +715,8 @@ function reviewTriageSummary(
       confidence: null,
       hasAnalyzerRun: false,
       label: item.suggested_label ?? "false_positive",
+      secondaryConfidence: null,
+      secondaryLabel: null,
     };
   }
 
@@ -665,6 +744,8 @@ function reviewTriageSummary(
       confidence: selected.proposal.confidence,
       hasAnalyzerRun: true,
       label: selected.triage.label,
+      secondaryConfidence: animal && vehicleOrPerson ? vehicleOrPerson.proposal.confidence : null,
+      secondaryLabel: animal && vehicleOrPerson ? vehicleOrPerson.triage.label : null,
     };
   }
 
@@ -677,6 +758,8 @@ function reviewTriageSummary(
     confidence: null,
     hasAnalyzerRun,
     label: null,
+    secondaryConfidence: null,
+    secondaryLabel: null,
   };
 }
 
@@ -875,7 +958,14 @@ function reviewTriageTitle(
   taxonomyLabels: TaxonomyLabel[],
 ): string {
   if (triage.category === "animal_evidence") {
-    return `Animal evidence: ${displayTaxonomyLabel(triage.label ?? "animal", taxonomyLabels)}`;
+    const animalLabel = displayTaxonomyLabel(triage.label ?? "animal", taxonomyLabels);
+    if (triage.secondaryLabel) {
+      return `${animalLabel} with ${displayTaxonomyLabel(
+        triage.secondaryLabel,
+        taxonomyLabels,
+      )} context`;
+    }
+    return `Animal evidence: ${animalLabel}`;
   }
   if (triage.category === "vehicle_person_evidence") {
     return `Other activity: ${displayTaxonomyLabel(triage.label ?? "vehicle", taxonomyLabels)}`;
@@ -895,6 +985,9 @@ function reviewTriageDescription(
   hasMedia: boolean,
 ): string {
   if (triage.category === "animal_evidence") {
+    if (triage.secondaryLabel) {
+      return "Animal evidence appears in a mixed scene with vehicle or person evidence. Inspect the boxes before correcting.";
+    }
     return "Review this likely wildlife activity first; the analyzer result remains evidence until correction.";
   }
   if (triage.category === "vehicle_person_evidence") {
@@ -2039,6 +2132,8 @@ export function ReviewQueuePage({
             confidence: null,
             hasAnalyzerRun: false,
             label: null,
+            secondaryConfidence: null,
+            secondaryLabel: null,
           };
           const sourceLabel = reviewQueueSourceLabel(item, itemSourceStreamMetadata);
           const streamLabel = reviewQueueStreamLabel(item, itemSourceStreamMetadata);
@@ -2055,11 +2150,35 @@ export function ReviewQueuePage({
             item.focus_crop_available && item.focus_crop_box_normalized ? (
               <span
                 className="review-focus-crop-overlay"
-                style={focusCropOverlayStyle(item.focus_crop_box_normalized)}
+                style={normalizedOverlayStyle(item.focus_crop_box_normalized)}
               >
                 <span>Activity focus</span>
               </span>
             ) : null;
+          const itemProposalOverlays = reviewProposalOverlays(
+            itemEvidenceProposals,
+            item.best_media_asset_id ?? item.media_asset?.id ?? null,
+          );
+          const labeledOverlayTones = new Set<ProposalOverlayTone>();
+          const analyzerProposalOverlays = itemProposalOverlays.map(({ proposal }) => {
+            const style = normalizedOverlayStyle(proposal.bbox);
+            if (!style) {
+              return null;
+            }
+            const tone = proposalOverlayTone(proposal, taxonomyLabels);
+            const showLabel = !labeledOverlayTones.has(tone);
+            labeledOverlayTones.add(tone);
+            return (
+              <span
+                aria-hidden="true"
+                className={`review-proposal-overlay review-proposal-overlay-${tone}`}
+                key={proposal.id}
+                style={style}
+              >
+                {showLabel ? <span>{proposalOverlayLabel(proposal, taxonomyLabels)}</span> : null}
+              </span>
+            );
+          });
           return (
             <article className="queue-card" key={item.id}>
               <div className="item-title-row">
@@ -2121,6 +2240,15 @@ export function ReviewQueuePage({
                             : "quiet"
                       }
                     />
+                    {itemTriage.secondaryLabel && itemTriage.secondaryConfidence != null ? (
+                      <EvidenceBadge
+                        label={`${displayTaxonomyLabel(
+                          itemTriage.secondaryLabel,
+                          taxonomyLabels,
+                        )} ${formatConfidence(itemTriage.secondaryConfidence)}`}
+                        tone="evidence"
+                      />
+                    ) : null}
                     <strong>{reviewTriageTitle(itemTriage, taxonomyLabels)}</strong>
                   </div>
                   <span>
@@ -2159,7 +2287,12 @@ export function ReviewQueuePage({
                     <MediaAssetPreview
                       asset={item.media_asset}
                       compact
-                      surfaceOverlay={focusCropOverlay}
+                      surfaceOverlay={
+                        <>
+                          {focusCropOverlay}
+                          {analyzerProposalOverlays}
+                        </>
+                      }
                     />
                   </div>
                 ) : null}
@@ -2220,6 +2353,17 @@ export function ReviewQueuePage({
                       </span>
                     )}
                   </div>
+                  {itemProposalOverlays.length > 0 ? (
+                    <div className="review-proposal-overlay-legend">
+                      <strong>Analyzer boxes</strong>
+                      <span className="review-proposal-legend-animal">Animal</span>
+                      <span className="review-proposal-legend-person">Person</span>
+                      <span className="review-proposal-legend-vehicle">Vehicle</span>
+                      <span>
+                        {itemProposalOverlays.length} shown - evidence only
+                      </span>
+                    </div>
+                  ) : null}
                   {item.image_quality_warnings.length > 0 ? (
                     <div className="review-quality-warnings">
                       <strong>Quality warnings</strong>

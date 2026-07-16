@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { apiClient } from "../api/client";
 import type { MediaAsset } from "../api/types";
 import { formatDateTime } from "../utils";
@@ -28,18 +28,45 @@ export function MediaAssetPreview({
   surfaceOverlay,
 }: MediaAssetPreviewProps) {
   const [previewFailed, setPreviewFailed] = useState(false);
+  const [imageDimensions, setImageDimensions] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
   const fileUrl = apiClient.mediaFileUrl(asset.id);
   const canPreview = !previewFailed && (asset.media_type === "image" || asset.media_type === "video");
+  const imageStageStyle: CSSProperties | undefined = imageDimensions
+    ? {
+        aspectRatio: `${imageDimensions.width} / ${imageDimensions.height}`,
+        width: `min(100%, ${Math.min(
+          imageDimensions.width,
+          (compact ? 220 : 420) * (imageDimensions.width / imageDimensions.height),
+        )}px)`,
+      }
+    : undefined;
 
   useEffect(() => {
     setPreviewFailed(false);
+    setImageDimensions(null);
   }, [asset.id]);
 
   return (
     <div className={compact ? "media-preview media-preview-compact" : "media-preview"}>
       <div className="media-preview-surface">
         {canPreview && asset.media_type === "image" ? (
-          <img alt={asset.original_filename} onError={() => setPreviewFailed(true)} src={fileUrl} />
+          <div className="media-preview-image-stage" style={imageStageStyle}>
+            <img
+              alt={asset.original_filename}
+              onError={() => setPreviewFailed(true)}
+              onLoad={(event) =>
+                setImageDimensions({
+                  width: event.currentTarget.naturalWidth,
+                  height: event.currentTarget.naturalHeight,
+                })
+              }
+              src={fileUrl}
+            />
+            {surfaceOverlay}
+          </div>
         ) : canPreview && asset.media_type === "video" ? (
           <video
             controls
@@ -54,7 +81,7 @@ export function MediaAssetPreview({
             <span>{asset.local_path}</span>
           </div>
         )}
-        {surfaceOverlay}
+        {canPreview && asset.media_type === "video" ? surfaceOverlay : null}
       </div>
       <div className="media-preview-meta">
         <strong>{asset.original_filename}</strong>
