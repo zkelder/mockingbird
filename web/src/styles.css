@@ -1628,6 +1628,85 @@ a.secondary-action {
   gap: 14px;
 }
 
+.review-triage-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(360px, 2fr) minmax(150px, auto);
+  gap: 14px;
+  align-items: end;
+  border: 1px solid #cdd9c9;
+  border-radius: 12px;
+  padding: 14px;
+  background: #f7faf3;
+}
+
+.review-triage-copy,
+.review-item-triage-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.review-triage-copy span,
+.review-item-triage-copy > span {
+  color: #5a695f;
+  font-size: 0.88rem;
+}
+
+.review-triage-order {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.review-triage-order select {
+  min-height: 40px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #18231d;
+}
+
+.review-item-triage {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #d7dfd3;
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 12px;
+  background: #fbfdf9;
+}
+
+.review-item-triage-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-item-triage-animal_evidence {
+  border-left-color: #50735d;
+  background: #f2f7ef;
+}
+
+.review-item-triage-vehicle_person_evidence {
+  border-left-color: #8a6b3f;
+  background: #faf7ef;
+}
+
+.review-item-triage-no_clear_proposal,
+.review-item-triage-not_analyzed {
+  border-left-color: #89968d;
+}
+
+.review-item-triage-false_positives {
+  border-left-color: #9a685f;
+  background: #fbf5f3;
+}
+
 .review-narrow-controls {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -6416,6 +6495,10 @@ a.secondary-action {
   .stream-panel-footer {
     grid-template-columns: 1fr;
   }
+
+  .review-triage-bar {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -6447,6 +6530,15 @@ a.secondary-action {
 
   .page-header-actions button,
   .hero-actions button {
+    width: 100%;
+  }
+
+  .review-item-triage {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .review-item-triage > button {
     width: 100%;
   }
 

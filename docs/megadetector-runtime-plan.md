@@ -87,6 +87,12 @@ It must not process video, extract frames, read live streams, add source/camera
 adapters, or run automatically. The existing Review Queue identification action
 can explicitly analyze the candidate's saved best frame.
 
+Review Queue triage may group already-loaded proposal evidence into animal,
+vehicle/person, no-clear-proposal, and not-yet-checked views. It may also expose
+the existing explicit saved-frame analysis action more prominently. These are
+review-ordering aids only: opening the page or changing a filter never runs the
+adapter, and proposal evidence never rejects, corrects, or reviews an item.
+
 ## Output Mapping
 
 MegaDetector output maps into `DetectionProposal` evidence:

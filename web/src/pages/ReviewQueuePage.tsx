@@ -26,13 +26,19 @@ import {
   findTaxonomyLabel,
   isBirdReviewLabel,
   isFalsePositiveLabel,
-  isUnknownAnimalLabel,
   isUnknownBirdLabel,
   taxonomyKey,
 } from "../components/taxonomy";
 import { formatDateTime, formatLabel } from "../utils";
 
-type ReviewFilter = "all" | "bird_species" | "unknown_animals" | "false_positives";
+type ReviewTriageCategory =
+  | "animal_evidence"
+  | "vehicle_person_evidence"
+  | "no_clear_proposal"
+  | "not_analyzed"
+  | "false_positives";
+type ReviewFilter = "all" | ReviewTriageCategory;
+type ReviewSort = "newest" | "animals_first";
 type ReviewTargetFilter = "all" | "event" | "visit";
 type ReviewEvidenceFilter =
   | "all"
@@ -80,6 +86,14 @@ interface ReviewItemFilterMetadata {
   sourceName: string | null;
   streamId: string | null;
   streamName: string | null;
+  triage: ReviewTriageSummary;
+}
+
+interface ReviewTriageSummary {
+  category: ReviewTriageCategory;
+  confidence: number | null;
+  hasAnalyzerRun: boolean;
+  label: string | null;
 }
 
 interface SourceStreamFilterOption {
@@ -563,6 +577,109 @@ function reviewEvidenceProposals(
     });
 }
 
+function triageCategoryForLabel(
+  value: string | null | undefined,
+  taxonomyLabels: TaxonomyLabel[],
+): ReviewTriageCategory | null {
+  const key = taxonomyKey(value ?? "");
+  const taxonomy = findTaxonomyLabel(value, taxonomyLabels);
+  if (key === "false_positive" || taxonomy?.category === "false_positive") {
+    return "false_positives";
+  }
+  if (
+    key === "person" ||
+    key === "vehicle" ||
+    taxonomy?.category === "person" ||
+    taxonomy?.category === "vehicle"
+  ) {
+    return "vehicle_person_evidence";
+  }
+  if (
+    key === "animal" ||
+    key === "unknown_animal" ||
+    key === "bird" ||
+    key === "unknown_bird" ||
+    taxonomy?.category === "bird" ||
+    taxonomy?.category === "mammal" ||
+    taxonomy?.category === "pet"
+  ) {
+    return "animal_evidence";
+  }
+  return null;
+}
+
+function triageProposal(
+  proposal: DetectionProposal,
+  taxonomyLabels: TaxonomyLabel[],
+): { category: ReviewTriageCategory; label: string } | null {
+  for (const value of [
+    proposal.suggested_species,
+    proposal.suggested_subject_label,
+    proposal.label,
+  ]) {
+    const category = triageCategoryForLabel(value, taxonomyLabels);
+    const label = value?.trim();
+    if (category && label) {
+      return { category, label };
+    }
+  }
+  return null;
+}
+
+function reviewTriageSummary(
+  item: ReviewQueueItem,
+  proposalEvidence: ReviewEvidenceProposal[],
+  detectionRuns: DetectionRun[],
+  taxonomyLabels: TaxonomyLabel[],
+): ReviewTriageSummary {
+  if (isFalsePositiveLabel(item.suggested_label, taxonomyLabels)) {
+    return {
+      category: "false_positives",
+      confidence: null,
+      hasAnalyzerRun: false,
+      label: item.suggested_label ?? "false_positive",
+    };
+  }
+
+  const activeProposals = proposalEvidence
+    .filter(({ proposal }) => proposal.status !== "rejected")
+    .map(({ proposal }) => ({ proposal, triage: triageProposal(proposal, taxonomyLabels) }))
+    .filter(
+      (
+        value,
+      ): value is {
+        proposal: DetectionProposal;
+        triage: { category: ReviewTriageCategory; label: string };
+      } => value.triage !== null,
+    );
+  const strongest = (category: ReviewTriageCategory) =>
+    activeProposals
+      .filter((value) => value.triage.category === category)
+      .sort((first, second) => second.proposal.confidence - first.proposal.confidence)[0];
+  const animal = strongest("animal_evidence");
+  const vehicleOrPerson = strongest("vehicle_person_evidence");
+  const selected = animal ?? vehicleOrPerson;
+  if (selected) {
+    return {
+      category: selected.triage.category,
+      confidence: selected.proposal.confidence,
+      hasAnalyzerRun: true,
+      label: selected.triage.label,
+    };
+  }
+
+  const mediaAssetId = item.best_media_asset_id ?? item.media_asset?.id ?? null;
+  const hasAnalyzerRun = Boolean(
+    mediaAssetId && detectionRuns.some((run) => run.media_asset_id === mediaAssetId),
+  );
+  return {
+    category: hasAnalyzerRun ? "no_clear_proposal" : "not_analyzed",
+    confidence: null,
+    hasAnalyzerRun,
+    label: null,
+  };
+}
+
 function reviewMotionEvidenceForQueueItem(
   item: ReviewQueueItem,
   motionEvidence: MotionEvidence[],
@@ -586,6 +703,7 @@ function reviewItemFilterMetadata(
   motionEvidence: MotionEvidence[],
   taxonomyLabels: TaxonomyLabel[],
   detectionRunsById: Map<string, DetectionRun>,
+  detectionRuns: DetectionRun[],
 ): ReviewItemFilterMetadata {
   const proposalEvidence = reviewEvidenceProposals(item, proposals);
   const motionEvidenceItems = reviewMotionEvidenceForQueueItem(item, motionEvidence);
@@ -651,6 +769,12 @@ function reviewItemFilterMetadata(
     sourceName,
     streamId,
     streamName,
+    triage: reviewTriageSummary(
+      item,
+      proposalEvidence,
+      detectionRuns,
+      taxonomyLabels,
+    ),
   };
 }
 
@@ -746,6 +870,62 @@ function reviewEvidenceFilterLabel(evidenceFilter: ReviewEvidenceFilter): string
   return labels[evidenceFilter];
 }
 
+function reviewTriageTitle(
+  triage: ReviewTriageSummary,
+  taxonomyLabels: TaxonomyLabel[],
+): string {
+  if (triage.category === "animal_evidence") {
+    return `Animal evidence: ${displayTaxonomyLabel(triage.label ?? "animal", taxonomyLabels)}`;
+  }
+  if (triage.category === "vehicle_person_evidence") {
+    return `Other activity: ${displayTaxonomyLabel(triage.label ?? "vehicle", taxonomyLabels)}`;
+  }
+  if (triage.category === "no_clear_proposal") {
+    return "Analyzer found no clear object";
+  }
+  if (triage.category === "false_positives") {
+    return "False-positive context";
+  }
+  return "Saved frame has not been checked";
+}
+
+function reviewTriageDescription(
+  triage: ReviewTriageSummary,
+  identification: ReviewIdentificationSummary | null,
+  hasMedia: boolean,
+): string {
+  if (triage.category === "animal_evidence") {
+    return "Review this likely wildlife activity first; the analyzer result remains evidence until correction.";
+  }
+  if (triage.category === "vehicle_person_evidence") {
+    return "Vehicle/person evidence can be reviewed or corrected without entering the Bird Log as a bird.";
+  }
+  if (triage.category === "no_clear_proposal") {
+    return "The saved frame was checked, but the analyzer returned no usable animal, person, or vehicle proposal.";
+  }
+  if (triage.category === "false_positives") {
+    return "This context is already marked as likely noise; correction still decides truth.";
+  }
+  if (!hasMedia) {
+    return "A saved best frame is required before optional identification can run.";
+  }
+  if (identification && reviewIdentificationCanRun(identification)) {
+    return "Check the saved best frame explicitly for animal, person, or vehicle evidence.";
+  }
+  return "Optional identification is not currently available; review the saved frame manually.";
+}
+
+function reviewTriageSortRank(category: ReviewTriageCategory): number {
+  const ranks: Record<ReviewTriageCategory, number> = {
+    animal_evidence: 0,
+    not_analyzed: 1,
+    no_clear_proposal: 2,
+    vehicle_person_evidence: 3,
+    false_positives: 4,
+  };
+  return ranks[category];
+}
+
 function sourceStreamFilterLabel(
   sourceStreamFilter: string,
   options: SourceStreamFilterOption[],
@@ -837,6 +1017,7 @@ export function ReviewQueuePage({
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [reviewLabels, setReviewLabels] = useState<ReviewLabel[]>([]);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
+  const [reviewSort, setReviewSort] = useState<ReviewSort>("newest");
   const [textSearch, setTextSearch] = useState("");
   const [targetTypeFilter, setTargetTypeFilter] = useState<ReviewTargetFilter>("all");
   const [evidenceFilter, setEvidenceFilter] = useState<ReviewEvidenceFilter>("all");
@@ -848,32 +1029,6 @@ export function ReviewQueuePage({
   const [identifyingId, setIdentifyingId] = useState<string | null>(null);
   const [isBulkSaving, setIsBulkSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-
-  const queueCounts = useMemo(
-    () =>
-      queueItems.reduce<Record<ReviewFilter, number>>(
-        (counts, item) => {
-          counts.all += 1;
-          if (isBirdReviewLabel(item.suggested_label, taxonomyLabels)) {
-            counts.bird_species += 1;
-          } else if (isUnknownAnimalLabel(item.suggested_label, taxonomyLabels)) {
-            counts.unknown_animals += 1;
-          } else if (isFalsePositiveLabel(item.suggested_label, taxonomyLabels)) {
-            counts.false_positives += 1;
-          }
-          return counts;
-        },
-        { all: 0, bird_species: 0, unknown_animals: 0, false_positives: 0 },
-      ),
-    [queueItems, taxonomyLabels],
-  );
-
-  const reviewFilters: ReviewFilterOption<ReviewFilter>[] = [
-    { value: "all", label: "All", count: queueCounts.all },
-    { value: "bird_species", label: "Bird/species", count: queueCounts.bird_species },
-    { value: "unknown_animals", label: "Unknown animals", count: queueCounts.unknown_animals },
-    { value: "false_positives", label: "False positives", count: queueCounts.false_positives },
-  ];
 
   const detectionRunsById = useMemo(
     () => new Map(detectionRuns.map((run) => [run.id, run])),
@@ -891,11 +1046,55 @@ export function ReviewQueuePage({
             motionEvidence,
             taxonomyLabels,
             detectionRunsById,
+            detectionRuns,
           ),
         ]),
       ),
-    [detectionProposals, detectionRunsById, motionEvidence, queueItems, taxonomyLabels],
+    [
+      detectionProposals,
+      detectionRuns,
+      detectionRunsById,
+      motionEvidence,
+      queueItems,
+      taxonomyLabels,
+    ],
   );
+
+  const queueCounts = useMemo(
+    () =>
+      queueItems.reduce<Record<ReviewFilter, number>>(
+        (counts, item) => {
+          counts.all += 1;
+          const category = filterMetadataByItemId.get(item.id)?.triage.category;
+          if (category) {
+            counts[category] += 1;
+          }
+          return counts;
+        },
+        {
+          all: 0,
+          animal_evidence: 0,
+          vehicle_person_evidence: 0,
+          no_clear_proposal: 0,
+          not_analyzed: 0,
+          false_positives: 0,
+        },
+      ),
+    [filterMetadataByItemId, queueItems],
+  );
+
+  const reviewFilters: ReviewFilterOption<ReviewFilter>[] = [
+    { value: "all", label: "All", count: queueCounts.all },
+    { value: "animal_evidence", label: "Animal evidence", count: queueCounts.animal_evidence },
+    {
+      value: "vehicle_person_evidence",
+      label: "Vehicle / person",
+      count: queueCounts.vehicle_person_evidence,
+    },
+    { value: "no_clear_proposal", label: "No clear proposal", count: queueCounts.no_clear_proposal },
+    { value: "not_analyzed", label: "Not checked", count: queueCounts.not_analyzed },
+    { value: "false_positives", label: "False positives", count: queueCounts.false_positives },
+  ];
 
   const sourceStreamOptions = useMemo(
     () => sourceStreamFilterOptions(filterMetadataByItemId),
@@ -906,27 +1105,12 @@ export function ReviewQueuePage({
     () => {
       const normalizedSearch = textSearch.trim().toLowerCase();
 
-      return queueItems.filter((item) => {
+      const matchingItems = queueItems.filter((item) => {
         const metadata = filterMetadataByItemId.get(item.id);
         if (!metadata) {
           return false;
         }
-        if (
-          reviewFilter === "bird_species" &&
-          !isBirdReviewLabel(item.suggested_label, taxonomyLabels)
-        ) {
-          return false;
-        }
-        if (
-          reviewFilter === "unknown_animals" &&
-          !isUnknownAnimalLabel(item.suggested_label, taxonomyLabels)
-        ) {
-          return false;
-        }
-        if (
-          reviewFilter === "false_positives" &&
-          !isFalsePositiveLabel(item.suggested_label, taxonomyLabels)
-        ) {
+        if (reviewFilter !== "all" && metadata.triage.category !== reviewFilter) {
           return false;
         }
 
@@ -951,17 +1135,34 @@ export function ReviewQueuePage({
 
         return true;
       });
+      if (reviewSort === "newest") {
+        return matchingItems;
+      }
+      return [...matchingItems].sort((first, second) => {
+        const firstTriage = filterMetadataByItemId.get(first.id)?.triage;
+        const secondTriage = filterMetadataByItemId.get(second.id)?.triage;
+        if (!firstTriage || !secondTriage) {
+          return 0;
+        }
+        const rankDelta =
+          reviewTriageSortRank(firstTriage.category) -
+          reviewTriageSortRank(secondTriage.category);
+        if (rankDelta !== 0) {
+          return rankDelta;
+        }
+        return (secondTriage.confidence ?? 0) - (firstTriage.confidence ?? 0);
+      });
     },
     [
       evidenceFilter,
       filterMetadataByItemId,
       queueItems,
       reviewFilter,
+      reviewSort,
       reviewStatusFilter,
       sourceStreamFilter,
       targetTypeFilter,
       textSearch,
-      taxonomyLabels,
     ],
   );
 
@@ -1007,6 +1208,13 @@ export function ReviewQueuePage({
         onClear: () => setReviewFilter("all"),
       });
     }
+    if (reviewSort !== "newest") {
+      chips.push({
+        key: "order",
+        label: "Order: Animals first",
+        onClear: () => setReviewSort("newest"),
+      });
+    }
     if (targetTypeFilter !== "all") {
       chips.push({
         key: "target",
@@ -1040,6 +1248,7 @@ export function ReviewQueuePage({
     evidenceFilter,
     reviewFilter,
     reviewFilters,
+    reviewSort,
     reviewStatusFilter,
     sourceStreamFilter,
     sourceStreamOptions,
@@ -1113,6 +1322,7 @@ export function ReviewQueuePage({
     }
     if (initialContext.source === "live-motion") {
       setReviewFilter("all");
+      setReviewSort("newest");
       setTargetTypeFilter("all");
       setEvidenceFilter("all");
       setSourceStreamFilter("all");
@@ -1316,6 +1526,7 @@ export function ReviewQueuePage({
 
   function resetReviewFilters() {
     setReviewFilter("all");
+    setReviewSort("newest");
     setTextSearch("");
     setTargetTypeFilter("all");
     setEvidenceFilter("all");
@@ -1558,6 +1769,33 @@ export function ReviewQueuePage({
         />
       ) : null}
       {queueItems.length > 0 ? (
+        <section className="review-triage-bar" aria-label="Review evidence triage">
+          <div className="review-triage-copy">
+            <strong>Review by analyzer evidence</strong>
+            <span>
+              Separate likely wildlife from vehicles, people, unchecked frames, and clear
+              misses. These groups are evidence only; correction still creates truth.
+            </span>
+          </div>
+          <ReviewFilterTabs
+            activeFilter={reviewFilter}
+            filters={reviewFilters}
+            label="Review evidence groups"
+            onChange={setReviewFilter}
+          />
+          <label className="review-triage-order">
+            Review order
+            <select
+              onChange={(event) => setReviewSort(event.target.value as ReviewSort)}
+              value={reviewSort}
+            >
+              <option value="newest">Newest first</option>
+              <option value="animals_first">Animal evidence first</option>
+            </select>
+          </label>
+        </section>
+      ) : null}
+      {queueItems.length > 0 ? (
         <details
           className="panel species-review-panel review-secondary-details"
           open={Boolean(readinessHandoffLabel)}
@@ -1569,14 +1807,8 @@ export function ReviewQueuePage({
             </strong>
           </summary>
           <span className="meta-text">
-            Narrow the queue by subject, evidence, camera, or review status.
+            Narrow the selected evidence group by subject, camera, or review status.
           </span>
-          <ReviewFilterTabs
-            activeFilter={reviewFilter}
-            filters={reviewFilters}
-            label="Review queue filters"
-            onChange={setReviewFilter}
-          />
           <div className="review-narrow-controls">
             <label>
               Search
@@ -1802,6 +2034,12 @@ export function ReviewQueuePage({
           const previousItemCorrections = itemReviewLabels.slice(1);
           const itemEvidenceProposals = reviewEvidenceProposals(item, detectionProposals);
           const itemSourceStreamMetadata = filterMetadataByItemId.get(item.id);
+          const itemTriage = itemSourceStreamMetadata?.triage ?? {
+            category: "not_analyzed" as const,
+            confidence: null,
+            hasAnalyzerRun: false,
+            label: null,
+          };
           const sourceLabel = reviewQueueSourceLabel(item, itemSourceStreamMetadata);
           const streamLabel = reviewQueueStreamLabel(item, itemSourceStreamMetadata);
           const zoneLabel = reviewItemZoneLabel(item);
@@ -1864,6 +2102,53 @@ export function ReviewQueuePage({
                 {item.reason} Suggestion evidence is not truth; your correction becomes local
                 dataset truth.
               </p>
+              <div className={`review-item-triage review-item-triage-${itemTriage.category}`}>
+                <div className="review-item-triage-copy">
+                  <div className="review-item-triage-heading">
+                    <EvidenceBadge
+                      label={
+                        itemTriage.confidence != null
+                          ? `${formatLabel(itemTriage.category)} ${formatConfidence(
+                              itemTriage.confidence,
+                            )}`
+                          : formatLabel(itemTriage.category)
+                      }
+                      tone={
+                        itemTriage.category === "animal_evidence"
+                          ? "review"
+                          : itemTriage.category === "vehicle_person_evidence"
+                            ? "evidence"
+                            : "quiet"
+                      }
+                    />
+                    <strong>{reviewTriageTitle(itemTriage, taxonomyLabels)}</strong>
+                  </div>
+                  <span>
+                    {reviewTriageDescription(
+                      itemTriage,
+                      identification,
+                      Boolean(item.best_media_asset_id ?? item.media_asset?.id),
+                    )}
+                  </span>
+                </div>
+                {(itemTriage.category === "not_analyzed" ||
+                  itemTriage.category === "no_clear_proposal") &&
+                identification &&
+                reviewIdentificationCanRun(identification) ? (
+                  <button
+                    className="secondary-action"
+                    disabled={identifyingId === item.id || savingId === item.id}
+                    onClick={() => void runIdentificationAssist(item)}
+                    type="button"
+                  >
+                    {identifyingId === item.id
+                      ? "Checking..."
+                      : itemTriage.category === "no_clear_proposal"
+                        ? "Check again"
+                        : "Check saved frame"}
+                  </button>
+                ) : null}
+              </div>
               <div
                 className={`review-candidate-context${
                   item.media_asset ? "" : " review-candidate-context-no-media"
