@@ -116,6 +116,18 @@ submitting a correction remains the sole species-truth action. Runtime package
 versions and artifact digests are retained with the evidence for reproducible
 evaluation.
 
+Evaluate already-stored BioCLIP suggestions against final ReviewLabel
+corrections without running a model or writing product state:
+
+```sh
+python scripts/evaluate_bioclip_field_truth.py
+python scripts/evaluate_bioclip_field_truth.py --json-output data/evaluations/bioclip-field-truth.json
+```
+
+The command opens local SQLite storage in query-only mode, keeps JSON reports
+under the ignored `data/` tree, and labels candidate-relative scores and
+unsupported historical metrics explicitly.
+
 ## Developer split mode
 
 Run the API:

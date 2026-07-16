@@ -111,6 +111,14 @@ ReviewLabel, DetectionRun, DetectionProposal, export, camera, and monitoring
 state remained unchanged. This validates the product boundary, not model
 accuracy; the representative correction gate below still controls selection.
 
+Phase 26A1 now provides a hard read-only field-truth evaluator over stored
+BioCLIP rankings and final exact-target ReviewLabels. The current local
+checkpoint has one eligible example and fifteen reviewed targets without
+BioCLIP evidence, so its result is descriptive only and cannot justify model
+selection. Top-1, stored top-3, crop, and reproducibility variants are available;
+complete candidate membership, inference duration, timeout, and failed-attempt
+counts remain unavailable until future runs persist that evidence.
+
 Candidate labels must be genuinely local and seasonal, with explicit unknown
 and non-bird choices. Rerun the leading candidate against held-out corrections
 and record top-1, top-3, coverage, abstention, high-confidence mistakes, and
