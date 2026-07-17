@@ -551,13 +551,14 @@ export interface WindowsCameraControlsResponse {
   stream_id: string;
   source_id?: string | null;
   status:
-    | "opened"
+    | "launched"
+    | "monitor_running"
     | "camera_running"
     | "camera_not_configured"
     | "ffmpeg_missing"
-    | "unsupported"
-    | "timed_out"
-    | "failed";
+    | "unsupported_platform"
+    | "controls_unavailable"
+    | "launch_failed";
   message: string;
   creates_media: boolean;
   creates_evidence: boolean;

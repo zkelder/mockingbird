@@ -1064,7 +1064,7 @@ export function StreamDetailPage({
     setCameraTuningMessage(null);
     try {
       const result = await apiClient.openWindowsCameraControls(detail.stream.id);
-      if (result.status === "opened") {
+      if (result.status === "launched") {
         setCameraTuningMessage([result.message, ...result.warnings].join(" "));
       } else {
         setCameraTuningError(result.message);
@@ -1676,10 +1676,16 @@ export function StreamDetailPage({
     detail.setupReview.readiness_level === "metadata_ready";
   const realLivePlayback = hasRealLivePlayback(detail.playback);
   const backendLiveSessionSupported = supportsBackendLiveSession(detail.playback);
+  const cameraCalibrationVisible =
+    sourceProviderConfig?.provider_key === "local_usb" &&
+    (backendLiveSessionSupported || detail.playback.live_stream_type === "windows_dshow");
   const liveSessionRunning = liveSession?.status === "running";
   const liveSessionStarting = liveSession?.status === "starting";
   const liveSessionFailed = liveSession?.status === "failed";
-  const liveMonitorRunning = liveSession?.monitor_running ?? isLiveMonitoring;
+  const liveMonitorRunning = Boolean(liveSession?.monitor_running || isLiveMonitoring);
+  const nativeCameraControlsBlocked =
+    liveMonitorRunning ||
+    ["starting", "running", "stopping"].includes(liveSession?.status ?? "");
   const liveUrl = liveStreamUrl(detail.playback, detail.stream.id);
   const liveElementKey = `${liveUrl ?? "no-live-url"}-${liveViewReloadToken}`;
   const liveViewStatusLabel =
@@ -2337,7 +2343,7 @@ export function StreamDetailPage({
             </div>
           </div>
 
-          {backendLiveSessionSupported && sourceProviderConfig?.provider_key === "local_usb" ? (
+          {cameraCalibrationVisible ? (
             <details className="stream-live-secondary-panel stream-live-collapsible-panel">
               <summary>
                 <span className="stream-live-panel-summary-copy">
@@ -2368,7 +2374,7 @@ export function StreamDetailPage({
                     <button
                       className="secondary-action"
                       disabled={
-                        liveSessionRunning ||
+                        nativeCameraControlsBlocked ||
                         isOpeningCameraControls ||
                         isStartingLiveSession ||
                         isStoppingLiveSession
@@ -2376,7 +2382,7 @@ export function StreamDetailPage({
                       onClick={() => void handleOpenCameraControls()}
                       type="button"
                     >
-                      {isOpeningCameraControls ? "Controls open..." : "Open exposure controls"}
+                      {isOpeningCameraControls ? "Launching..." : "Open native controls"}
                     </button>
                   ) : null}
                 </div>
@@ -2403,8 +2409,9 @@ export function StreamDetailPage({
               ) : null}
               <span className="stream-live-hint">
                 Size, framerate, and input format apply when the camera restarts. Windows
-                exposure, brightness, focus, and low-light compensation use the camera's real
-                driver controls; stop the camera before opening them.
+                exposure, gain, brightness, focus, and low-light compensation use the camera's
+                real driver controls. Stop the camera and monitoring before opening native
+                controls. MockingBird cannot read or persist these driver-managed values.
               </span>
               {cameraTuningMessage ? (
                 <span className="stream-live-hint">{cameraTuningMessage}</span>

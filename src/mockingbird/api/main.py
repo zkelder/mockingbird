@@ -6166,8 +6166,10 @@ async def open_stream_windows_camera_controls(
     if configuration.live_stream_type != windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
         return WindowsCameraControlsResponse(
             **common,
-            status="unsupported",
-            message="Hardware camera controls are currently available for Windows webcams.",
+            status="unsupported_platform",
+            message=(
+                "This Stream does not support an interactive Windows DirectShow window."
+            ),
         )
 
     snapshot = (
@@ -6175,66 +6177,87 @@ async def open_stream_windows_camera_controls(
         if _live_camera_session_manager is not None
         else None
     )
+    source_monitor_state = (
+        await _source_monitor_manager.status(stream_id)
+        if _source_monitor_manager is not None
+        else None
+    )
+    live_monitor_running = snapshot is not None and snapshot.monitor_running
+    source_monitor_running = (
+        source_monitor_state is not None
+        and source_monitor_state.status in {"starting", "monitoring"}
+    )
+    if live_monitor_running or source_monitor_running:
+        return WindowsCameraControlsResponse(
+            **common,
+            status="monitor_running",
+            message="Stop monitoring before opening native camera controls.",
+        )
     if snapshot is not None and snapshot.status in {"starting", "running", "stopping"}:
         return WindowsCameraControlsResponse(
             **common,
             status="camera_running",
-            message="Stop the camera before opening its hardware controls.",
+            message="Stop the camera before opening native camera controls.",
         )
 
-    bridge_status = windows_camera_bridge.windows_camera_status(
+    controls_status = windows_camera_bridge.windows_camera_controls_status(
         camera_name=configuration.windows_camera_name,
         ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
     )
-    if bridge_status == "camera_name_missing":
+    if controls_status == "camera_name_missing":
         return WindowsCameraControlsResponse(
             **common,
             status="camera_not_configured",
-            message="Choose a Windows camera before opening hardware controls.",
+            message="Configure a DirectShow camera name before opening native controls.",
         )
-    if bridge_status == "ffmpeg_missing":
+    if controls_status == "ffmpeg_missing":
         return WindowsCameraControlsResponse(
             **common,
             status="ffmpeg_missing",
-            message="Camera controls need FFmpeg. Install FFmpeg, then retry.",
+            message="Configure Windows ffmpeg.exe before opening native controls.",
         )
-    if bridge_status != "available":
+    if controls_status == "unsupported_platform":
         return WindowsCameraControlsResponse(
             **common,
-            status="unsupported",
-            message="Windows camera controls are unavailable on this host.",
+            status="unsupported_platform",
+            message=(
+                "This host configuration does not support an interactive DirectShow window."
+            ),
+        )
+    if controls_status != "available":
+        return WindowsCameraControlsResponse(
+            **common,
+            status="controls_unavailable",
+            message="Native Windows camera controls could not be launched on this host.",
         )
 
     try:
         completed = await asyncio.to_thread(
-            windows_camera_bridge.open_windows_dshow_camera_controls,
+            windows_camera_bridge.launch_windows_dshow_camera_controls,
             configuration.windows_camera_name or "",
             ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
         )
-    except subprocess.TimeoutExpired:
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         return WindowsCameraControlsResponse(
             **common,
-            status="timed_out",
-            message="Camera controls timed out. Close the driver window and retry.",
-        )
-    except (OSError, ValueError):
-        return WindowsCameraControlsResponse(
-            **common,
-            status="failed",
-            message="Camera controls could not open. Check the camera connection and retry.",
+            status="launch_failed",
+            message="Native camera controls could not be launched.",
         )
     if completed.returncode != 0:
         return WindowsCameraControlsResponse(
             **common,
-            status="failed",
-            message=(
-                "Camera controls closed without applying. Close other camera apps and retry."
-            ),
+            status="launch_failed",
+            message="Native camera controls could not be launched.",
         )
     return WindowsCameraControlsResponse(
         **common,
-        status="opened",
-        message="Camera controls closed. Start the camera and capture a frame to verify exposure.",
+        status="launched",
+        message=(
+            "Native Windows camera controls were launched. Adjust exposure, gain, or "
+            "low-light settings in the camera driver, close the native window, then "
+            "restart the camera and capture a test frame. MockingBird cannot read or "
+            "persist these driver-managed values."
+        ),
         warnings=[
             "Camera-driver settings may reset after reconnecting; verify the daylight image."
         ],

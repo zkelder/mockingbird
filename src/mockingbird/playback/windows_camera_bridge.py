@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import base64
+from collections.abc import Callable, Mapping
+import json
+import os
+from pathlib import PurePosixPath, PureWindowsPath
 import re
 import shutil
 import subprocess
@@ -13,8 +17,16 @@ from mockingbird.playback.rtsp_bridge import MJPEG_BOUNDARY, iter_multipart_mjpe
 
 WINDOWS_DSHOW_STREAM_TYPE = "windows_dshow"
 DEFAULT_WINDOWS_FFMPEG_BINARY = "ffmpeg"
+WINDOWS_POWERSHELL_BINARY = "powershell.exe"
+WINDOWS_CAMERA_CONTROLS_LAUNCH_TIMEOUT_SECONDS = 10.0
 
 _DANGEROUS_NAME_PATTERN = re.compile(r"[\x00\r\n]")
+_DANGEROUS_EXECUTABLE_PATH_PATTERN = re.compile(r'[\x00\r\n"]')
+_WINDOWS_DRIVE_PATH_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")
+_WSL_MOUNT_PATH_PATTERN = re.compile(r"^/mnt/([A-Za-z])/(.+)$")
+_WINDOWS_POWERSHELL_SUFFIX = (
+    "windows/system32/windowspowershell/v1.0/powershell.exe"
+)
 _VIDEO_DEVICE_PATTERN = re.compile(r'"([^"]+)"\s+\(video\)', re.IGNORECASE)
 
 
@@ -64,6 +76,174 @@ def windows_camera_status(
         ffmpeg_available = is_windows_ffmpeg_available(ffmpeg_binary_path)
     if not ffmpeg_available:
         return "ffmpeg_missing"
+    return "available"
+
+
+WhichFactory = Callable[[str], str | None]
+PathIsFile = Callable[[str], bool]
+HostEnvironment = Mapping[str, str]
+
+
+def _require_interactive_windows_host(
+    platform_name: str,
+    environment: HostEnvironment,
+) -> None:
+    if platform_name.startswith("win"):
+        return
+    if platform_name.startswith("linux") and any(
+        (environment.get(name) or "").strip()
+        for name in ("WSL_INTEROP", "WSL_DISTRO_NAME")
+    ):
+        return
+    raise ValueError("unsupported_platform")
+
+
+def _is_explicit_executable_path(value: str) -> bool:
+    return (
+        bool(_WINDOWS_DRIVE_PATH_PATTERN.match(value))
+        or "/" in value
+        or "\\" in value
+    )
+
+
+def _resolve_host_executable(
+    binary: str,
+    *,
+    which: WhichFactory,
+    path_is_file: PathIsFile,
+) -> str:
+    if _DANGEROUS_EXECUTABLE_PATH_PATTERN.search(binary):
+        raise ValueError("invalid_windows_executable_path")
+    resolved = binary if _is_explicit_executable_path(binary) else which(binary)
+    if not resolved or not path_is_file(resolved):
+        raise FileNotFoundError("windows_executable_missing")
+    return resolved
+
+
+def _wsl_mount_path_to_windows(path: str) -> str:
+    match = _WSL_MOUNT_PATH_PATTERN.fullmatch(path.replace("\\", "/"))
+    if match is None:
+        raise ValueError("unsupported_platform")
+    drive, remainder = match.groups()
+    windows_remainder = remainder.replace("/", "\\")
+    return f"{drive.upper()}:\\{windows_remainder}"
+
+
+def resolve_windows_ffmpeg_for_controls(
+    ffmpeg_binary_path: str | None,
+    *,
+    platform_name: str | None = None,
+    environment: HostEnvironment | None = None,
+    which: WhichFactory = shutil.which,
+    path_is_file: PathIsFile = os.path.isfile,
+) -> str:
+    """Resolve one validated ffmpeg.exe path for the Windows desktop launcher."""
+
+    host_platform = platform_name or sys.platform
+    host_environment = os.environ if environment is None else environment
+    _require_interactive_windows_host(host_platform, host_environment)
+
+    configured = normalize_windows_ffmpeg_binary(ffmpeg_binary_path)
+    resolved = _resolve_host_executable(
+        configured,
+        which=which,
+        path_is_file=path_is_file,
+    )
+    if host_platform.startswith("win"):
+        windows_path = PureWindowsPath(resolved)
+        if (
+            not _WINDOWS_DRIVE_PATH_PATTERN.match(resolved)
+            or not windows_path.is_absolute()
+            or windows_path.name.lower() != "ffmpeg.exe"
+        ):
+            raise ValueError("invalid_windows_executable_path")
+        return resolved
+
+    if PurePosixPath(resolved).name.lower() != "ffmpeg.exe":
+        raise ValueError("unsupported_platform")
+    return _wsl_mount_path_to_windows(resolved)
+
+
+def resolve_windows_powershell_for_controls(
+    *,
+    platform_name: str | None = None,
+    environment: HostEnvironment | None = None,
+    which: WhichFactory = shutil.which,
+    path_is_file: PathIsFile = os.path.isfile,
+) -> str:
+    """Resolve Windows PowerShell as a host-invocable interactive launcher."""
+
+    host_platform = platform_name or sys.platform
+    host_environment = os.environ if environment is None else environment
+    _require_interactive_windows_host(host_platform, host_environment)
+    resolved = _resolve_host_executable(
+        WINDOWS_POWERSHELL_BINARY,
+        which=which,
+        path_is_file=path_is_file,
+    )
+    if host_platform.startswith("linux"):
+        _wsl_mount_path_to_windows(resolved)
+        normalized_path = PurePosixPath(resolved).as_posix().lower()
+        if not normalized_path.endswith(f"/{_WINDOWS_POWERSHELL_SUFFIX}"):
+            raise ValueError("controls_unavailable")
+    else:
+        windows_path = PureWindowsPath(resolved)
+        system_root = PureWindowsPath(
+            host_environment.get("SystemRoot") or "C:\\Windows"
+        )
+        trusted_path = (
+            system_root
+            / "System32"
+            / "WindowsPowerShell"
+            / "v1.0"
+            / WINDOWS_POWERSHELL_BINARY
+        )
+        if (
+            not _WINDOWS_DRIVE_PATH_PATTERN.match(resolved)
+            or str(windows_path).lower() != str(trusted_path).lower()
+        ):
+            raise ValueError("controls_unavailable")
+    return resolved
+
+
+def windows_camera_controls_status(
+    *,
+    camera_name: str | None,
+    ffmpeg_binary_path: str | None = None,
+    platform_name: str | None = None,
+    environment: HostEnvironment | None = None,
+    which: WhichFactory = shutil.which,
+    path_is_file: PathIsFile = os.path.isfile,
+) -> str:
+    """Report whether an interactive DirectShow property page can be launched."""
+
+    if not validate_windows_camera_name(camera_name):
+        return "camera_name_missing"
+    try:
+        resolve_windows_ffmpeg_for_controls(
+            ffmpeg_binary_path,
+            platform_name=platform_name,
+            environment=environment,
+            which=which,
+            path_is_file=path_is_file,
+        )
+    except FileNotFoundError:
+        return "ffmpeg_missing"
+    except ValueError as error:
+        return (
+            "unsupported_platform"
+            if str(error) == "unsupported_platform"
+            else "controls_unavailable"
+        )
+    try:
+        resolve_windows_powershell_for_controls(
+            platform_name=platform_name,
+            environment=environment,
+            which=which,
+            path_is_file=path_is_file,
+        )
+    except (FileNotFoundError, ValueError):
+        return "controls_unavailable"
     return "available"
 
 
@@ -149,36 +329,104 @@ def build_windows_dshow_camera_controls_command(
     ]
 
 
-def open_windows_dshow_camera_controls(
+def build_windows_dshow_camera_controls_launcher_command(
     camera_name: str,
     *,
     ffmpeg_binary_path: str | None = None,
-    timeout_seconds: float = 180.0,
+    platform_name: str | None = None,
+    environment: HostEnvironment | None = None,
+    which: WhichFactory = shutil.which,
+    path_is_file: PathIsFile = os.path.isfile,
+) -> list[str]:
+    """Build a fixed PowerShell launcher with user values encoded only as data."""
+
+    powershell_binary = resolve_windows_powershell_for_controls(
+        platform_name=platform_name,
+        environment=environment,
+        which=which,
+        path_is_file=path_is_file,
+    )
+    windows_ffmpeg_binary = resolve_windows_ffmpeg_for_controls(
+        ffmpeg_binary_path,
+        platform_name=platform_name,
+        environment=environment,
+        which=which,
+        path_is_file=path_is_file,
+    )
+    ffmpeg_command = build_windows_dshow_camera_controls_command(
+        camera_name,
+        ffmpeg_binary_path=windows_ffmpeg_binary,
+    )
+    payload = base64.b64encode(
+        json.dumps(
+            {
+                "file_path": ffmpeg_command[0],
+                "argument_line": subprocess.list2cmdline(ffmpeg_command[1:]),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).decode("ascii")
+    script = "\n".join(
+        [
+            "$ErrorActionPreference = 'Stop'",
+            f"$payloadBytes = [Convert]::FromBase64String('{payload}')",
+            "$payloadJson = [Text.Encoding]::UTF8.GetString($payloadBytes)",
+            "$payload = $payloadJson | ConvertFrom-Json",
+            (
+                "$process = Start-Process -FilePath $payload.file_path "
+                "-ArgumentList $payload.argument_line -WindowStyle Normal "
+                "-PassThru -ErrorAction Stop"
+            ),
+            (
+                "if ($null -eq $process -or $process.Id -le 0) "
+                "{ throw 'camera_controls_process_not_started' }"
+            ),
+            "[Console]::Out.Write($process.Id)",
+        ]
+    )
+    encoded_script = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    return [
+        powershell_binary,
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        encoded_script,
+    ]
+
+
+def launch_windows_dshow_camera_controls(
+    camera_name: str,
+    *,
+    ffmpeg_binary_path: str | None = None,
+    platform_name: str | None = None,
+    environment: HostEnvironment | None = None,
+    which: WhichFactory = shutil.which,
+    path_is_file: PathIsFile = os.path.isfile,
+    timeout_seconds: float = WINDOWS_CAMERA_CONTROLS_LAUNCH_TIMEOUT_SECONDS,
     run_factory: RunFactory = subprocess.run,
 ) -> subprocess.CompletedProcess[str]:
-    """Open the camera driver's real controls after an explicit product action."""
+    """Launch the driver controls without owning the dialog's lifetime."""
 
     return run_factory(
-        build_windows_dshow_camera_controls_command(
+        build_windows_dshow_camera_controls_launcher_command(
             camera_name,
             ffmpeg_binary_path=ffmpeg_binary_path,
+            platform_name=platform_name,
+            environment=environment,
+            which=which,
+            path_is_file=path_is_file,
         ),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         stdin=subprocess.DEVNULL,
+        shell=False,
         text=True,
         encoding="utf-8",
         errors="replace",
         timeout=timeout_seconds,
         check=False,
-        # MockingBird normally runs without a console. This explicit interactive
-        # action needs its own visible Windows process so the driver page cannot
-        # remain hidden behind the local app.
-        creationflags=(
-            getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
-            if sys.platform.startswith("win")
-            else 0
-        ),
     )
 
 
@@ -343,21 +591,27 @@ def capture_windows_dshow_frame(
 __all__ = [
     "DEFAULT_WINDOWS_FFMPEG_BINARY",
     "MJPEG_BOUNDARY",
+    "WINDOWS_CAMERA_CONTROLS_LAUNCH_TIMEOUT_SECONDS",
     "WINDOWS_DSHOW_STREAM_TYPE",
+    "WINDOWS_POWERSHELL_BINARY",
     "build_windows_dshow_frame_capture_command",
     "build_windows_dshow_camera_controls_command",
+    "build_windows_dshow_camera_controls_launcher_command",
     "build_windows_dshow_list_devices_command",
     "build_windows_dshow_mjpeg_command",
     "capture_windows_dshow_frame",
     "is_windows_ffmpeg_available",
     "is_windows_ffmpeg_binary",
     "iter_multipart_mjpeg",
+    "launch_windows_dshow_camera_controls",
     "list_windows_dshow_video_devices",
     "normalize_windows_ffmpeg_binary",
-    "open_windows_dshow_camera_controls",
     "parse_windows_dshow_video_devices",
+    "resolve_windows_ffmpeg_for_controls",
+    "resolve_windows_powershell_for_controls",
     "start_windows_dshow_frame_capture_process",
     "start_windows_dshow_mjpeg_process",
     "validate_windows_camera_name",
+    "windows_camera_controls_status",
     "windows_camera_status",
 ]

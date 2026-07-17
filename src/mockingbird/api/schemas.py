@@ -129,13 +129,14 @@ class WindowsCameraDiscoveryStatus(str, Enum):
 
 
 class WindowsCameraControlsStatus(str, Enum):
-    opened = "opened"
+    launched = "launched"
+    monitor_running = "monitor_running"
     camera_running = "camera_running"
     camera_not_configured = "camera_not_configured"
     ffmpeg_missing = "ffmpeg_missing"
-    unsupported = "unsupported"
-    timed_out = "timed_out"
-    failed = "failed"
+    unsupported_platform = "unsupported_platform"
+    controls_unavailable = "controls_unavailable"
+    launch_failed = "launch_failed"
 
 
 class LiveMotionEvaluationStatus(str, Enum):

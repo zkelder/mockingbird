@@ -1,6 +1,9 @@
 import asyncio
+import base64
 from datetime import UTC, datetime, timedelta
+import json
 from pathlib import Path
+import re
 import subprocess
 
 import httpx
@@ -10,12 +13,14 @@ from mockingbird.api.main import (
     app,
     configure_repository,
     get_live_camera_session_manager,
+    get_source_monitor_manager,
     get_stream_live_camera_session_mjpeg,
     get_stream_local_mjpeg_bridge,
     get_stream_rtsp_mjpeg_bridge,
     get_stream_windows_dshow_mjpeg_bridge,
 )
 from mockingbird.api.schemas import SourceKind, SourceStatus
+from mockingbird.monitoring.source_monitor import SourceMonitorOptions
 from mockingbird.playback import (
     live_frame_cache,
     local_camera_bridge,
@@ -4622,7 +4627,28 @@ def test_windows_dshow_command_uses_list_args_and_safe_camera_name() -> None:
     assert windows_camera_bridge.validate_windows_camera_name("") is False
 
 
-def test_windows_dshow_camera_controls_use_explicit_property_dialog_without_shell() -> None:
+def _decode_camera_controls_launcher_script(command: list[str]) -> str:
+    encoded_index = command.index("-EncodedCommand") + 1
+    return base64.b64decode(command[encoded_index]).decode("utf-16-le")
+
+
+def _camera_controls_launcher_payload(script: str) -> dict[str, str]:
+    match = re.search(r"FromBase64String\('([A-Za-z0-9+/=]+)'\)", script)
+    assert match is not None
+    payload = json.loads(base64.b64decode(match.group(1)).decode("utf-8"))
+    assert isinstance(payload, dict)
+    assert all(isinstance(key, str) for key in payload)
+    assert all(isinstance(value, str) for value in payload.values())
+    return payload
+
+
+def test_windows_dshow_camera_controls_launch_interactively_without_waiting_for_dialog() -> None:
+    camera_name = 'EMEET SmartCam S600 & Patio; $(calc.exe) "Bird"'
+    ffmpeg_path = "C:\\Program Files & Tools\\FFmpeg\\bin\\ffmpeg.exe"
+    powershell_path = (
+        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+    )
+    existing_paths = {ffmpeg_path, powershell_path}
     calls: list[tuple[list[str], dict[str, object]]] = []
 
     def fake_run(
@@ -4632,32 +4658,282 @@ def test_windows_dshow_camera_controls_use_explicit_property_dialog_without_shel
         calls.append((command, kwargs))
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    result = windows_camera_bridge.open_windows_dshow_camera_controls(
-        "EMEET SmartCam S600",
-        ffmpeg_binary_path="C:\\ffmpeg\\bin\\ffmpeg.exe",
+    result = windows_camera_bridge.launch_windows_dshow_camera_controls(
+        camera_name,
+        ffmpeg_binary_path=ffmpeg_path,
+        platform_name="win32",
+        which=lambda name: powershell_path if name == "powershell.exe" else None,
+        path_is_file=lambda path: str(path) in existing_paths,
         run_factory=fake_run,
     )
 
     assert result.returncode == 0
-    assert calls[0][0] == [
-        "C:\\ffmpeg\\bin\\ffmpeg.exe",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-f",
-        "dshow",
-        "-show_video_device_dialog",
-        "true",
-        "-i",
-        "video=EMEET SmartCam S600",
-        "-t",
-        "0.2",
-        "-f",
-        "null",
-        "NUL",
-    ]
-    assert calls[0][1].get("shell") is not True
-    assert calls[0][1]["timeout"] == 180.0
+    assert len(calls) == 1
+    launcher_command, launcher_options = calls[0]
+    assert launcher_command == windows_camera_bridge.build_windows_dshow_camera_controls_launcher_command(
+        camera_name,
+        ffmpeg_binary_path=ffmpeg_path,
+        platform_name="win32",
+        which=lambda name: powershell_path if name == "powershell.exe" else None,
+        path_is_file=lambda path: str(path) in existing_paths,
+    )
+    assert launcher_command[0] == powershell_path
+    script = _decode_camera_controls_launcher_script(launcher_command)
+    assert "Start-Process" in script
+    assert "-WindowStyle Normal" in script
+    assert "-PassThru" in script
+    assert "-Wait" not in script
+    assert "WaitForExit" not in script
+    assert "-NoNewWindow" not in script
+    assert "Hidden" not in script
+    assert camera_name not in script
+    assert ffmpeg_path not in script
+    assert camera_name not in launcher_command
+    assert ffmpeg_path not in launcher_command
+    payload = _camera_controls_launcher_payload(script)
+    expected_ffmpeg_command = windows_camera_bridge.build_windows_dshow_camera_controls_command(
+        camera_name,
+        ffmpeg_binary_path=ffmpeg_path,
+    )
+    assert ffmpeg_path in payload.values()
+    assert subprocess.list2cmdline(expected_ffmpeg_command[1:]) in payload.values()
+    assert launcher_options.get("shell") is not True
+    assert launcher_options["timeout"] == 10.0
+    assert "env" not in launcher_options
+    assert launcher_options.get("creationflags", 0) != getattr(
+        subprocess,
+        "CREATE_NO_WINDOW",
+        -1,
+    )
+
+
+def test_windows_dshow_camera_controls_wsl_uses_windows_launcher_and_converts_path() -> None:
+    camera_name = "Backyard Camera & Birdbath"
+    wsl_ffmpeg_path = "/mnt/c/Program Files/FFmpeg/bin/ffmpeg.exe"
+    windows_ffmpeg_path = "C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe"
+    powershell_path = (
+        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    )
+    existing_paths = {wsl_ffmpeg_path, powershell_path}
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    result = windows_camera_bridge.launch_windows_dshow_camera_controls(
+        camera_name,
+        ffmpeg_binary_path=wsl_ffmpeg_path,
+        platform_name="linux",
+        environment={"WSL_INTEROP": "/run/WSL/1_interop"},
+        which=lambda name: powershell_path if name == "powershell.exe" else None,
+        path_is_file=lambda path: str(path) in existing_paths,
+        run_factory=fake_run,
+    )
+
+    assert result.returncode == 0
+    launcher_command, launcher_options = calls[0]
+    assert launcher_command[0] == powershell_path
+    script = _decode_camera_controls_launcher_script(launcher_command)
+    assert "Start-Process" in script
+    assert "-WindowStyle Normal" in script
+    assert "-Wait" not in script
+    assert camera_name not in script
+    assert wsl_ffmpeg_path not in script
+    payload = _camera_controls_launcher_payload(script)
+    expected_ffmpeg_command = windows_camera_bridge.build_windows_dshow_camera_controls_command(
+        camera_name,
+        ffmpeg_binary_path=windows_ffmpeg_path,
+    )
+    assert subprocess.list2cmdline(expected_ffmpeg_command[1:]) in payload.values()
+    assert "env" not in launcher_options
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "camera_name", "ffmpeg_path", "existing_paths", "powershell", "expected"),
+    [
+        (
+            "win32",
+            None,
+            "C:\\ffmpeg\\bin\\ffmpeg.exe",
+            {"C:\\ffmpeg\\bin\\ffmpeg.exe"},
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "camera_name_missing",
+        ),
+        (
+            "win32",
+            "EMEET SmartCam S600",
+            "C:\\missing\\ffmpeg.exe",
+            set(),
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "ffmpeg_missing",
+        ),
+        (
+            "win32",
+            "EMEET SmartCam S600",
+            "relative\\ffmpeg.exe",
+            {"relative\\ffmpeg.exe"},
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "controls_unavailable",
+        ),
+        (
+            "win32",
+            "EMEET SmartCam S600",
+            "C:\\tools\\not-ffmpeg.exe",
+            {"C:\\tools\\not-ffmpeg.exe"},
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "controls_unavailable",
+        ),
+        (
+            "linux",
+            "EMEET SmartCam S600",
+            "/mnt/c/ffmpeg/bin/ffmpeg.exe",
+            {"/mnt/c/ffmpeg/bin/ffmpeg.exe"},
+            None,
+            "controls_unavailable",
+        ),
+        (
+            "darwin",
+            "EMEET SmartCam S600",
+            "/Applications/ffmpeg.exe",
+            {"/Applications/ffmpeg.exe"},
+            None,
+            "unsupported_platform",
+        ),
+    ],
+)
+def test_windows_dshow_camera_controls_status_reports_setup_and_platform_failures(
+    platform_name: str,
+    camera_name: str | None,
+    ffmpeg_path: str,
+    existing_paths: set[str],
+    powershell: str | None,
+    expected: str,
+) -> None:
+    if powershell is not None:
+        existing_paths.add(powershell)
+
+    assert (
+        windows_camera_bridge.windows_camera_controls_status(
+            camera_name=camera_name,
+            ffmpeg_binary_path=ffmpeg_path,
+            platform_name=platform_name,
+            environment=(
+                {"WSL_INTEROP": "/run/WSL/1_interop"}
+                if platform_name == "linux"
+                else None
+            ),
+            which=lambda name: powershell if name == "powershell.exe" else None,
+            path_is_file=lambda path: str(path) in existing_paths,
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "ffmpeg_path", "resolved_ffmpeg", "powershell"),
+    [
+        (
+            "win32",
+            None,
+            "C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe",
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        ),
+        (
+            "linux",
+            "/mnt/c/Program Files/FFmpeg/bin/ffmpeg.exe",
+            "/mnt/c/Program Files/FFmpeg/bin/ffmpeg.exe",
+            "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+        ),
+    ],
+)
+def test_windows_dshow_camera_controls_status_accepts_native_windows_and_wsl(
+    platform_name: str,
+    ffmpeg_path: str | None,
+    resolved_ffmpeg: str,
+    powershell: str,
+) -> None:
+    existing_paths = {resolved_ffmpeg, powershell}
+
+    def resolve_binary(name: str) -> str | None:
+        if name in {"ffmpeg", "ffmpeg.exe"}:
+            return resolved_ffmpeg
+        if name == "powershell.exe":
+            return powershell
+        return None
+
+    assert (
+        windows_camera_bridge.windows_camera_controls_status(
+            camera_name="EMEET SmartCam S600",
+            ffmpeg_binary_path=ffmpeg_path,
+            platform_name=platform_name,
+            environment=(
+                {"WSL_INTEROP": "/run/WSL/1_interop"}
+                if platform_name == "linux"
+                else None
+            ),
+            which=resolve_binary,
+            path_is_file=lambda path: str(path) in existing_paths,
+        )
+        == "available"
+    )
+
+
+def test_windows_dshow_camera_controls_reject_untrusted_host_executables() -> None:
+    powershell_path = (
+        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    )
+    wsl_ffmpeg_path = "/mnt/c/ffmpeg/bin/ffmpeg.exe"
+    lookalike_paths = {wsl_ffmpeg_path, powershell_path}
+
+    assert (
+        windows_camera_bridge.windows_camera_controls_status(
+            camera_name="EMEET SmartCam S600",
+            ffmpeg_binary_path=wsl_ffmpeg_path,
+            platform_name="linux",
+            environment={},
+            which=lambda name: powershell_path if name == "powershell.exe" else None,
+            path_is_file=lambda path: str(path) in lookalike_paths,
+        )
+        == "unsupported_platform"
+    )
+
+    for ffmpeg_path in (
+        "\\\\server\\share\\ffmpeg.exe",
+        "\\\\?\\C:\\tools\\ffmpeg.exe",
+    ):
+        assert (
+            windows_camera_bridge.windows_camera_controls_status(
+                camera_name="EMEET SmartCam S600",
+                ffmpeg_binary_path=ffmpeg_path,
+                platform_name="win32",
+                environment={"SystemRoot": "C:\\Windows"},
+                which=lambda name: (
+                    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+                    if name == "powershell.exe"
+                    else None
+                ),
+                path_is_file=lambda path: str(path) == ffmpeg_path,
+            )
+            == "controls_unavailable"
+        )
+
+    shadowed_powershell = "C:\\worktree\\powershell.exe"
+    assert (
+        windows_camera_bridge.windows_camera_controls_status(
+            camera_name="EMEET SmartCam S600",
+            ffmpeg_binary_path="C:\\tools\\ffmpeg.exe",
+            platform_name="win32",
+            environment={"SystemRoot": "C:\\Windows"},
+            which=lambda name: shadowed_powershell if name == "powershell.exe" else None,
+            path_is_file=lambda path: str(path)
+            in {"C:\\tools\\ffmpeg.exe", shadowed_powershell},
+        )
+        == "controls_unavailable"
+    )
 
 
 def test_windows_camera_listing_parses_video_devices_without_shell() -> None:
@@ -4796,27 +5072,27 @@ async def test_windows_camera_discovery_explains_when_no_camera_is_connected(
     assert body["creates_truth"] is False
 
 
-async def test_windows_camera_controls_open_explicit_driver_dialog_without_creating_data(
+async def test_windows_camera_controls_launch_promptly_without_creating_or_registering_runtime(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    opened: list[tuple[str, str | None]] = []
+    launched: list[tuple[str, str | None]] = []
     monkeypatch.setattr(
-        "mockingbird.api.main.windows_camera_bridge.windows_camera_status",
+        "mockingbird.api.main.windows_camera_bridge.windows_camera_controls_status",
         lambda **kwargs: "available",
     )
 
-    def fake_open(
+    def fake_launch(
         camera_name: str,
         *,
         ffmpeg_binary_path: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        opened.append((camera_name, ffmpeg_binary_path))
-        return subprocess.CompletedProcess(["ffmpeg"], 0, stdout="", stderr="")
+        launched.append((camera_name, ffmpeg_binary_path))
+        return subprocess.CompletedProcess(["powershell.exe"], 0, stdout="", stderr="")
 
     monkeypatch.setattr(
-        "mockingbird.api.main.windows_camera_bridge.open_windows_dshow_camera_controls",
-        fake_open,
+        "mockingbird.api.main.windows_camera_bridge.launch_windows_dshow_camera_controls",
+        fake_launch,
     )
     await configure_windows_dshow_camera(
         client,
@@ -4824,21 +5100,32 @@ async def test_windows_camera_controls_open_explicit_driver_dialog_without_creat
         ffmpeg_binary_path="C:\\ffmpeg\\bin\\ffmpeg.exe",
     )
     before = await product_counts(client)
+    before_live = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    before_monitor = (await client.get(f"/api/streams/{STREAM_ID}/monitor/status")).json()
+    before_policy = (await client.get(f"/api/streams/{STREAM_ID}/monitoring-policy")).json()
+    before_runtime = (await client.get(f"/api/streams/{STREAM_ID}/runtime-status")).json()
 
     response = await client.post(f"/api/streams/{STREAM_ID}/camera-controls/open")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "opened"
+    assert body["status"] == "launched"
     assert body["stream_id"] == STREAM_ID
     assert body["source_id"] == SOURCE_ID
+    assert "launched" in body["message"].lower()
+    assert "changed" not in body["message"].lower()
+    assert "closed" not in body["message"].lower()
     assert body["creates_media"] is False
     assert body["creates_evidence"] is False
     assert body["creates_event"] is False
     assert body["creates_visit"] is False
     assert body["creates_truth"] is False
-    assert opened == [("EMEET SmartCam S600", "C:\\ffmpeg\\bin\\ffmpeg.exe")]
+    assert launched == [("EMEET SmartCam S600", "C:\\ffmpeg\\bin\\ffmpeg.exe")]
     assert await product_counts(client) == before
+    assert (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json() == before_live
+    assert (await client.get(f"/api/streams/{STREAM_ID}/monitor/status")).json() == before_monitor
+    assert (await client.get(f"/api/streams/{STREAM_ID}/monitoring-policy")).json() == before_policy
+    assert (await client.get(f"/api/streams/{STREAM_ID}/runtime-status")).json() == before_runtime
 
 
 async def test_windows_camera_controls_require_stopped_camera(
@@ -4846,9 +5133,20 @@ async def test_windows_camera_controls_require_stopped_camera(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_process = FakeFfmpegProcess([])
+    launch_calls = 0
     monkeypatch.setattr(
-        "mockingbird.api.main.windows_camera_bridge.windows_camera_status",
+        "mockingbird.api.main.windows_camera_bridge.windows_camera_controls_status",
         lambda **kwargs: "available",
+    )
+
+    def fail_if_launched(*args: object, **kwargs: object) -> object:
+        nonlocal launch_calls
+        launch_calls += 1
+        raise AssertionError("controls launcher must not run while the camera owns the device")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.launch_windows_dshow_camera_controls",
+        fail_if_launched,
     )
     monkeypatch.setattr(
         "mockingbird.api.main.windows_camera_bridge.start_windows_dshow_mjpeg_process",
@@ -4869,8 +5167,167 @@ async def test_windows_camera_controls_require_stopped_camera(
     assert response.json()["status"] == "camera_running"
     assert "Stop the camera" in response.json()["message"]
     assert await product_counts(client) == before
+    assert launch_calls == 0
+    assert fake_process.terminated is False
+    live_status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    assert live_status["status"] in {"starting", "running"}
     stop_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/stop")
     assert stop_response.status_code == 200
+
+
+async def test_windows_camera_controls_require_stopped_source_monitor_without_stopping_it(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launch_calls = 0
+
+    def fail_if_launched(*args: object, **kwargs: object) -> object:
+        nonlocal launch_calls
+        launch_calls += 1
+        raise AssertionError("controls launcher must not run while monitoring owns the source")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.launch_windows_dshow_camera_controls",
+        fail_if_launched,
+    )
+    await configure_windows_dshow_camera(
+        client,
+        camera_name="EMEET SmartCam S600",
+        ffmpeg_binary_path="C:\\ffmpeg\\bin\\ffmpeg.exe",
+    )
+    monitor_manager = get_source_monitor_manager()
+    started = await monitor_manager.start(
+        source_id=SOURCE_ID,
+        stream_id=STREAM_ID,
+        options=SourceMonitorOptions(),
+        autostart=False,
+    )
+    assert started.status == "monitoring"
+    before = await product_counts(client)
+    before_policy = (await client.get(f"/api/streams/{STREAM_ID}/monitoring-policy")).json()
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/camera-controls/open")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "monitor_running"
+    assert "Stop monitoring" in response.json()["message"]
+    assert launch_calls == 0
+    assert await product_counts(client) == before
+    still_running = await monitor_manager.status(STREAM_ID)
+    assert still_running is not None
+    assert still_running.status == "monitoring"
+    assert (await client.get(f"/api/streams/{STREAM_ID}/monitoring-policy")).json() == before_policy
+    live_status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    assert live_status["status"] == "stopped"
+    await monitor_manager.stop(STREAM_ID)
+
+
+@pytest.mark.parametrize(
+    ("bridge_status", "expected_status", "message_fragment"),
+    [
+        ("camera_name_missing", "camera_not_configured", "DirectShow camera name"),
+        ("ffmpeg_missing", "ffmpeg_missing", "ffmpeg"),
+        ("unsupported_platform", "unsupported_platform", "does not support"),
+        ("controls_unavailable", "controls_unavailable", "this host"),
+    ],
+)
+async def test_windows_camera_controls_report_honest_prelaunch_failures(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    bridge_status: str,
+    expected_status: str,
+    message_fragment: str,
+) -> None:
+    launch_calls = 0
+
+    def fail_if_launched(*args: object, **kwargs: object) -> object:
+        nonlocal launch_calls
+        launch_calls += 1
+        raise AssertionError("unavailable controls must not launch a process")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.windows_camera_controls_status",
+        lambda **kwargs: bridge_status,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.launch_windows_dshow_camera_controls",
+        fail_if_launched,
+    )
+    await configure_windows_dshow_camera(
+        client,
+        camera_name="EMEET SmartCam S600",
+        ffmpeg_binary_path="C:\\private camera tools\\ffmpeg.exe",
+    )
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/camera-controls/open")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == expected_status
+    assert message_fragment.lower() in body["message"].lower()
+    assert launch_calls == 0
+    assert await product_counts(client) == before
+    response_text = response.text.lower()
+    assert "private camera tools" not in response_text
+    assert "emeet smartcam" not in response_text
+    assert "start-process" not in response_text
+
+
+@pytest.mark.parametrize("failure_kind", ["nonzero", "os_error", "timeout"])
+async def test_windows_camera_controls_sanitize_launcher_failure(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    private_path = "C:\\Users\\private-user\\Secret Camera Tools\\ffmpeg.exe"
+    camera_name = "Private Patio Camera"
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.windows_camera_controls_status",
+        lambda **kwargs: "available",
+    )
+
+    def fail_launch(
+        *_args: object,
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        if failure_kind == "os_error":
+            raise OSError(f"could not execute {private_path} for {camera_name}")
+        if failure_kind == "timeout":
+            raise subprocess.TimeoutExpired(
+                ["powershell.exe", "-EncodedCommand", "private-command"],
+                10,
+            )
+        return subprocess.CompletedProcess(
+            ["powershell.exe", "-EncodedCommand", "private-command"],
+            1,
+            stdout="",
+            stderr=f"failed {private_path} {camera_name}",
+        )
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.windows_camera_bridge.launch_windows_dshow_camera_controls",
+        fail_launch,
+    )
+    await configure_windows_dshow_camera(
+        client,
+        camera_name=camera_name,
+        ffmpeg_binary_path=private_path,
+    )
+    before = await product_counts(client)
+
+    response = await client.post(f"/api/streams/{STREAM_ID}/camera-controls/open")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "launch_failed"
+    assert "could not be launched" in body["message"].lower()
+    assert await product_counts(client) == before
+    response_text = response.text.lower()
+    assert "private-user" not in response_text
+    assert "secret camera tools" not in response_text
+    assert camera_name.lower() not in response_text
+    assert "private-command" not in response_text
 
 
 def test_windows_dshow_frame_capture_command_uses_list_args() -> None:
