@@ -25,6 +25,18 @@ shadow path is a truth-building aid, not a selected production classifier or
 automatic post-activity runtime; current `unknown_bird` suggestions remain
 placeholders until replaced by real model evidence or explicit correction.
 
+## WSL activation checkpoint
+
+The active development checkout is now WSL-native at
+`/home/zkelder/projects/mockingbird-active`. The cross-install restore completed
+successfully, and the locally configured Windows `ffmpeg.exe`, native
+DirectShow controls, fresh live frames, and one daylight 3840 x 2160 capture
+were verified from WSL. Driver-managed exposure values remain outside
+MockingBird and are neither readable nor persisted. Representative field-truth
+collection is next; Playwright Chromium remains optional local WSL environment
+setup rather than a product blocker.
+
+
 ## Completed foundations
 
 - Phases 0-6 established product doctrine, the universal product model, the

@@ -5757,3 +5757,36 @@ async def test_playback_contract_creates_no_media_or_model_artifacts(
         for path in tmp_path.rglob("*")
         if path.is_file() and path.suffix.lower() in artifact_extensions
     ] == []
+
+
+def test_windows_dshow_controls_wsl_accepts_native_windows_ffmpeg_path() -> None:
+    windows_ffmpeg_path = "C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe"
+    wsl_ffmpeg_path = "/mnt/c/Program Files/FFmpeg/bin/ffmpeg.exe"
+    powershell_path = (
+        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    )
+    existing_paths = {wsl_ffmpeg_path, powershell_path}
+
+    command = windows_camera_bridge.build_windows_dshow_camera_controls_launcher_command(
+        "EMEET SmartCam S600",
+        ffmpeg_binary_path=windows_ffmpeg_path,
+        platform_name="linux",
+        environment={"WSL_INTEROP": "/run/WSL/1_interop"},
+        which=lambda name: powershell_path if name == "powershell.exe" else None,
+        path_is_file=lambda path: str(path) in existing_paths,
+    )
+
+    script = _decode_camera_controls_launcher_script(command)
+    payload = _camera_controls_launcher_payload(script)
+    assert windows_ffmpeg_path in payload.values()
+
+
+def test_windows_dshow_invocation_maps_native_windows_path_inside_wsl() -> None:
+    assert (
+        windows_camera_bridge.windows_ffmpeg_invocation_binary(
+            "C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe",
+            platform_name="linux",
+            environment={"WSL_DISTRO_NAME": "Ubuntu"},
+        )
+        == "/mnt/c/Program Files/FFmpeg/bin/ffmpeg.exe"
+    )

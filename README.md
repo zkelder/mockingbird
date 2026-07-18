@@ -56,6 +56,18 @@ starts automatically after application startup or restart. The next durable
 supervisor foundation is intentionally disabled until the engineering and
 lifecycle gates in [the roadmap](docs/roadmap.md) pass.
 
+## Active development checkout
+
+Active MockingBird development is WSL-native at
+`/home/zkelder/projects/mockingbird-active`. Cross-install restore completed
+successfully. Windows DirectShow uses a locally configured Windows
+`ffmpeg.exe`; native controls and a daylight 3840 x 2160 capture were verified
+from WSL. Driver-managed exposure values are not readable or persisted by
+MockingBird, so local exposure calibration remains field setup rather than an
+application feature. Representative field-truth collection is next. Installing
+Playwright Chromium in WSL remains an optional local environment task.
+
+
 ## Start the local app
 
 Requires Python 3.11+ and Node.js/npm for the initial frontend build.

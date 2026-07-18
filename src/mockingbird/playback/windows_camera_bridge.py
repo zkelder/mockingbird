@@ -129,6 +129,37 @@ def _wsl_mount_path_to_windows(path: str) -> str:
     return f"{drive.upper()}:\\{windows_remainder}"
 
 
+def _windows_drive_path_to_wsl_mount(path: str) -> str:
+    if not _WINDOWS_DRIVE_PATH_PATTERN.match(path):
+        raise ValueError("invalid_windows_executable_path")
+    drive = path[0].lower()
+    remainder = path[3:].replace("\\", "/")
+    return f"/mnt/{drive}/{remainder}"
+
+
+def windows_ffmpeg_invocation_binary(
+    ffmpeg_binary_path: str | None,
+    *,
+    platform_name: str | None = None,
+    environment: HostEnvironment | None = None,
+) -> str:
+    """Return the executable spelling required by the current process host."""
+
+    configured = normalize_windows_ffmpeg_binary(ffmpeg_binary_path)
+    host_platform = platform_name or sys.platform
+    host_environment = os.environ if environment is None else environment
+    if (
+        host_platform.startswith("linux")
+        and _WINDOWS_DRIVE_PATH_PATTERN.match(configured)
+        and any(
+            (host_environment.get(name) or "").strip()
+            for name in ("WSL_INTEROP", "WSL_DISTRO_NAME")
+        )
+    ):
+        return _windows_drive_path_to_wsl_mount(configured)
+    return configured
+
+
 def resolve_windows_ffmpeg_for_controls(
     ffmpeg_binary_path: str | None,
     *,
@@ -144,8 +175,13 @@ def resolve_windows_ffmpeg_for_controls(
     _require_interactive_windows_host(host_platform, host_environment)
 
     configured = normalize_windows_ffmpeg_binary(ffmpeg_binary_path)
-    resolved = _resolve_host_executable(
+    host_binary = windows_ffmpeg_invocation_binary(
         configured,
+        platform_name=host_platform,
+        environment=host_environment,
+    )
+    resolved = _resolve_host_executable(
+        host_binary,
         which=which,
         path_is_file=path_is_file,
     )
@@ -488,7 +524,7 @@ def start_windows_dshow_mjpeg_process(
 ) -> subprocess.Popen[bytes]:
     command = build_windows_dshow_mjpeg_command(
         camera_name,
-        ffmpeg_binary_path=ffmpeg_binary_path,
+        ffmpeg_binary_path=windows_ffmpeg_invocation_binary(ffmpeg_binary_path),
         input_format=input_format,
         video_size=video_size,
         framerate=framerate,
@@ -555,7 +591,7 @@ def start_windows_dshow_frame_capture_process(
 ) -> subprocess.Popen[bytes]:
     command = build_windows_dshow_frame_capture_command(
         camera_name,
-        ffmpeg_binary_path=ffmpeg_binary_path,
+        ffmpeg_binary_path=windows_ffmpeg_invocation_binary(ffmpeg_binary_path),
         input_format=input_format,
         video_size=video_size,
         framerate=framerate,
