@@ -63,6 +63,8 @@ from mockingbird.api.schemas import (
     FolderImportResult,
     LocalDataStatus,
     LocalBackupLibraryResponse,
+    LocalBackupRestorePlan,
+    LocalBackupRestorePlanRequest,
     LocalBackupRestoreRequest,
     LocalBackupRestoreResponse,
     LocalBackupSummary,
@@ -218,6 +220,7 @@ from mockingbird.source_providers import external_url_preview
 from mockingbird.storage.backup import (
     BackupSummaryData,
     BackupVerificationData,
+    RestorePlanData,
     LocalBackupConflictError,
     LocalBackupError,
     LocalBackupManager,
@@ -423,6 +426,44 @@ def _local_backup_verification_response(
         message=message,
     )
 
+
+def _local_backup_restore_plan(
+    data: RestorePlanData,
+    *,
+    dry_run: bool | None = None,
+    confirmed: bool | None = None,
+) -> LocalBackupRestorePlan:
+    def safe_layout(path: str) -> dict[str, object]:
+        windows = bool(len(path) >= 2 and path[1] == ":") or "\\" in path
+        normalized = path.replace("\\", "/").rstrip("/")
+        return {
+            "platform": "windows" if windows else "posix",
+            "absolute": (
+                bool(len(path) >= 3 and path[1] == ":" and path[2] in {"\\", "/"})
+                if windows
+                else Path(path).is_absolute()
+            ),
+            "leaf_name": normalized.rsplit("/", 1)[-1],
+        }
+
+    return LocalBackupRestorePlan(
+        database_schema_version=data.database_schema_version,
+        source_database_layout=safe_layout(data.source_database_path),
+        source_media_layout=safe_layout(data.source_media_root),
+        target_database_layout=safe_layout(data.target_database_path),
+        target_media_layout=safe_layout(data.target_media_root),
+        managed_database_reference_count=data.managed_database_reference_count,
+        media_archive_entry_count=data.media_archive_entry_count,
+        external_paths_preserved=list(data.external_paths_preserved),
+        warnings=list(data.warnings),
+        unsafe_paths=list(data.unsafe_paths),
+        collisions=list(data.collisions),
+        expected_entity_counts=dict(data.expected_entity_counts),
+        rebind_managed_storage=data.rebind_managed_storage,
+        dry_run=data.dry_run if dry_run is None else dry_run,
+        confirmed=data.confirmed if confirmed is None else confirmed,
+        restore_allowed=data.restore_allowed,
+    )
 
 def _local_backup_http_error(error: LocalBackupError) -> HTTPException:
     code = str(error)
@@ -7330,6 +7371,31 @@ def download_local_backup(backup_id: str) -> FileResponse:
 
 
 @app.post(
+    "/api/settings/backups/{backup_id}/restore-plan",
+    response_model=LocalBackupRestorePlan,
+)
+def plan_local_backup_restore(
+    backup_id: str,
+    payload: LocalBackupRestorePlanRequest,
+) -> LocalBackupRestorePlan:
+    if not _backup_operation_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409, detail="Another backup or restore is already running."
+        )
+    try:
+        manager = _local_backup_manager()
+        verification = manager.verify_backup(backup_id)
+        plan = manager.create_restore_plan(
+            verification,
+            rebind_managed_storage=payload.rebind_managed_storage,
+        )
+        return _local_backup_restore_plan(plan)
+    except LocalBackupError as error:
+        raise _local_backup_http_error(error) from error
+    finally:
+        _backup_operation_lock.release()
+
+@app.post(
     "/api/settings/backups/{backup_id}/restore",
     response_model=LocalBackupRestoreResponse,
 )
@@ -7351,7 +7417,12 @@ def restore_local_backup(
         repository = get_repository()
         manager = _local_backup_manager(repository)
         selected = manager.verify_backup(backup_id)
-        manager.assert_restore_compatible(selected)
+        restore_plan = manager.create_restore_plan(
+            selected,
+            rebind_managed_storage=payload.rebind_managed_storage,
+        )
+        if not restore_plan.restore_allowed:
+            raise LocalBackupValidationError("restore_plan_not_allowed")
 
         db_url = repository.db_url
         media_root = repository.media_root
@@ -7366,7 +7437,11 @@ def restore_local_backup(
         configure_repository(None)
         repository_closed = True
 
-        transaction = manager.replace_live_files(selected)
+        transaction = manager.replace_live_files(
+            selected,
+            rebind_managed_storage=payload.rebind_managed_storage,
+            plan=restore_plan,
+        )
         restored_repository = _open_product_repository(
             db_url=db_url,
             media_root=media_root,
@@ -7380,10 +7455,19 @@ def restore_local_backup(
         return LocalBackupRestoreResponse(
             restored_backup=_local_backup_summary(selected.backup),
             safety_backup=_local_backup_summary(safety.backup),
+            restore_plan=_local_backup_restore_plan(
+                restore_plan,
+                dry_run=False,
+                confirmed=True,
+            ),
             status=restored_status,
             message=(
-                "Backup restored and reopened. A verified pre-restore safety backup "
-                "was kept in the local backup library."
+                "Backup restored with managed storage rebound and reopened. "
+                if payload.rebind_managed_storage
+                else "Backup restored and reopened. "
+            )
+            + (
+                "A verified pre-restore safety backup was kept in the local backup library."
             ),
         )
     except LocalBackupError as error:

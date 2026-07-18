@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
 import sqlite3
@@ -32,6 +32,30 @@ COPY_CHUNK_BYTES = 1024 * 1024
 
 _BACKUP_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
+_VIRTUAL_REFERENCE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+
+_ENTITY_COUNT_TABLES = {
+    "sources": "camera_sources",
+    "streams": "streams",
+    "media_assets": "media_assets",
+    "events": "events",
+    "visits": "visits",
+    "review_labels": "review_labels",
+    "species_suggestions": "species_suggestions",
+    "bioclip_attempts": "bioclip_identification_attempts",
+    "dataset_exports": "dataset_exports",
+}
+_EXTERNAL_REFERENCE_CONFIG_KEYS = {
+    "device_url",
+    "ffmpeg_binary_path",
+    "folder_path",
+    "live_stream_url",
+    "local_camera_device",
+    "url",
+    "workspace_path",
+}
+_PATH_LIKE_CONFIG_KEY_PARTS = ("path", "root", "directory", "folder", "workspace")
 
 
 class LocalBackupError(RuntimeError):
@@ -83,6 +107,46 @@ class BackupLibraryData:
 class BackupVerificationData:
     backup: BackupSummaryData
     checked_at: datetime
+
+
+@dataclass(frozen=True)
+class _PortablePath:
+    style: str
+    drive: str
+    absolute: bool
+    parts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ManagedPathRebindData:
+    table: str
+    record_id: str
+    column: str
+    source_value: str
+    target_value: str
+    archive_relative_path: str
+
+
+@dataclass(frozen=True)
+class RestorePlanData:
+    backup_id: str
+    dry_run: bool
+    confirmed: bool
+    rebind_managed_storage: bool
+    restore_allowed: bool
+    database_schema_version: int
+    source_database_path: str
+    source_media_root: str
+    target_database_path: str
+    target_media_root: str
+    managed_database_reference_count: int
+    media_archive_entry_count: int
+    external_paths_preserved: tuple[str, ...]
+    warnings: tuple[str, ...]
+    unsafe_paths: tuple[str, ...]
+    collisions: tuple[str, ...]
+    expected_entity_counts: dict[str, int]
+    path_rebinds: tuple[ManagedPathRebindData, ...]
 
 
 @dataclass
@@ -152,6 +216,181 @@ def _is_within(path: Path, root: Path) -> bool:
 
 def _paths_overlap(first: Path, second: Path) -> bool:
     return first == second or _is_within(first, second) or _is_within(second, first)
+
+
+def _is_virtual_reference(value: str) -> bool:
+    return bool(_VIRTUAL_REFERENCE_PATTERN.match(value))
+
+
+def _portable_path(value: str, *, fallback_style: str | None = None) -> _PortablePath:
+    if not value or "\x00" in value:
+        raise LocalBackupValidationError("restore_managed_path_invalid")
+
+    use_windows = bool(_WINDOWS_DRIVE_PATTERN.match(value) or "\\" in value)
+    if fallback_style == "windows" and not value.startswith("/"):
+        use_windows = True
+
+    if use_windows:
+        raw = value.replace("/", "\\")
+        if any(part in {".", ".."} for part in raw.split("\\")):
+            raise LocalBackupValidationError("restore_managed_path_traversal")
+        path = PureWindowsPath(raw)
+        if path.root and not path.drive:
+            raise LocalBackupValidationError("restore_managed_path_absolute_child")
+        if path.drive and not path.is_absolute():
+            raise LocalBackupValidationError("restore_managed_path_drive_relative")
+        parts = tuple(part for part in path.parts if part != path.anchor)
+        return _PortablePath(
+            style="windows",
+            drive=path.drive.casefold(),
+            absolute=path.is_absolute(),
+            parts=parts,
+        )
+
+    if any(part in {".", ".."} for part in value.split("/")):
+        raise LocalBackupValidationError("restore_managed_path_traversal")
+    path = PurePosixPath(value)
+    parts = tuple(part for part in path.parts if part != path.anchor)
+    return _PortablePath(
+        style="posix",
+        drive="",
+        absolute=path.is_absolute(),
+        parts=parts,
+    )
+
+
+def _path_parts_equal(
+    first: Iterable[str], second: Iterable[str], *, style: str
+) -> bool:
+    first_parts = tuple(first)
+    second_parts = tuple(second)
+    if style == "windows":
+        return tuple(part.casefold() for part in first_parts) == tuple(
+            part.casefold() for part in second_parts
+        )
+    return first_parts == second_parts
+
+
+def _storage_paths_equal(source: str, target: str) -> bool:
+    try:
+        source_path = _portable_path(source)
+        target_path = _portable_path(target)
+    except LocalBackupValidationError:
+        return False
+    return (
+        source_path.style == target_path.style
+        and source_path.drive == target_path.drive
+        and source_path.absolute == target_path.absolute
+        and _path_parts_equal(
+            source_path.parts,
+            target_path.parts,
+            style=source_path.style,
+        )
+    )
+
+
+def _archive_relative_for_managed_path(
+    value: str,
+    *,
+    source_media_root: str,
+    archive_relative_paths: Iterable[str],
+) -> str:
+    source_root = _portable_path(source_media_root)
+    if not source_root.absolute:
+        raise LocalBackupValidationError("restore_source_media_root_not_absolute")
+    stored = _portable_path(value, fallback_style=source_root.style)
+
+    candidates: list[str] = []
+    for relative_path in archive_relative_paths:
+        relative_parts = PurePosixPath(relative_path).parts
+        if stored.absolute:
+            if stored.style != source_root.style or stored.drive != source_root.drive:
+                continue
+            if len(stored.parts) < len(source_root.parts):
+                continue
+            if not _path_parts_equal(
+                stored.parts[: len(source_root.parts)],
+                source_root.parts,
+                style=source_root.style,
+            ):
+                continue
+            tail = stored.parts[len(source_root.parts) :]
+            if _path_parts_equal(tail, relative_parts, style=source_root.style):
+                candidates.append(relative_path)
+            continue
+
+        if _path_parts_equal(stored.parts, relative_parts, style=source_root.style):
+            candidates.append(relative_path)
+            continue
+        if len(stored.parts) <= len(relative_parts):
+            continue
+        tail = stored.parts[-len(relative_parts) :]
+        prefix = stored.parts[: -len(relative_parts)]
+        if not _path_parts_equal(tail, relative_parts, style=source_root.style):
+            continue
+        if len(prefix) <= len(source_root.parts) and _path_parts_equal(
+            prefix,
+            source_root.parts[-len(prefix) :],
+            style=source_root.style,
+        ):
+            candidates.append(relative_path)
+
+    if len(candidates) != 1:
+        raise LocalBackupValidationError("restore_managed_path_not_in_archive")
+    return candidates[0]
+
+
+def _database_entity_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    tables = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    missing = set(_ENTITY_COUNT_TABLES.values()) - tables
+    if missing:
+        raise LocalBackupValidationError("restore_database_entity_tables_missing")
+    return {
+        label: int(connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+        for label, table in _ENTITY_COUNT_TABLES.items()
+    }
+
+
+def _database_external_path_fields(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    preserved: set[str] = set()
+    unsafe: set[str] = set()
+    rows = connection.execute(
+        "SELECT source_id, provider_key, config_json "
+        "FROM source_provider_configurations"
+    ).fetchall()
+    for source_id, provider_key, raw_config in rows:
+        try:
+            config = json.loads(raw_config)
+        except (TypeError, json.JSONDecodeError):
+            unsafe.add(f"source_provider_configurations.{source_id}.config_json")
+            continue
+        if not isinstance(config, dict):
+            unsafe.add(f"source_provider_configurations.{source_id}.config_json")
+            continue
+        for key, value in config.items():
+            if not isinstance(key, str) or not isinstance(value, str) or not value:
+                continue
+            field = f"source_provider_configurations.{provider_key}.{key}"
+            if key in _EXTERNAL_REFERENCE_CONFIG_KEYS:
+                preserved.add(field)
+            elif any(part in key.casefold() for part in _PATH_LIKE_CONFIG_KEY_PARTS):
+                unsafe.add(field)
+    return tuple(sorted(preserved)), tuple(sorted(unsafe))
+
+
+def _path_has_symlink_component(path: Path) -> bool:
+    candidate = path.expanduser().absolute()
+    for component in (candidate, *candidate.parents):
+        if component.exists() and component.is_symlink():
+            return True
+    return False
 
 
 def _validate_member_name(name: str) -> None:
@@ -288,8 +527,10 @@ class LocalBackupManager:
         except ValueError as error:
             raise LocalBackupUnsupportedError(str(error)) from error
 
-        self.database_path = _resolved(database_path)
-        self.media_root = _resolved(Path(media_root))
+        self.configured_database_path = database_path.expanduser().absolute()
+        self.database_path = _resolved(self.configured_database_path)
+        self.configured_media_root = Path(media_root).expanduser().absolute()
+        self.media_root = _resolved(self.configured_media_root)
         self.backup_root = _resolved(Path(backup_root) if backup_root else backup_root_from_env())
         self._validate_storage_layout()
 
@@ -484,8 +725,8 @@ class LocalBackupManager:
         )
         source_media_root = _require_string(source_layout.get("media_root"), "source_media_root")
         restore_compatible = (
-            _resolved(Path(source_database_path)) == self.database_path
-            and _resolved(Path(source_media_root)) == self.media_root
+            _storage_paths_equal(source_database_path, str(self.database_path))
+            and _storage_paths_equal(source_media_root, str(self.media_root))
         )
 
         database = _require_dict(manifest.get("database"), "database")
@@ -677,6 +918,305 @@ class LocalBackupManager:
             if temporary_path.exists():
                 temporary_path.unlink()
 
+    def create_restore_plan(
+        self,
+        verification: BackupVerificationData,
+        *,
+        rebind_managed_storage: bool = False,
+    ) -> RestorePlanData:
+        """Inspect a verified artifact without changing active product storage."""
+
+        current = self.verify_archive(verification.backup.archive_path)
+        if current.backup.id != verification.backup.id:
+            raise LocalBackupValidationError("backup_identity_changed")
+        if not current.backup.restore_compatible and not rebind_managed_storage:
+            raise LocalBackupConflictError("backup_storage_layout_mismatch")
+
+        temporary_database = (
+            self.backup_root / f".restore-plan-{uuid.uuid4().hex}.sqlite3"
+        )
+        archive: zipfile.ZipFile | None = None
+        try:
+            manifest, archive = self._read_manifest(current.backup.archive_path)
+            summary, database, media_entries = self._parse_manifest(
+                manifest,
+                current.backup.archive_path,
+                verification_status="verified",
+            )
+            info_by_name = self._validate_archive_members(
+                archive, database, media_entries
+            )
+            source_layout = _require_dict(
+                manifest.get("source_layout"), "source_layout"
+            )
+            source_database_path = _require_string(
+                source_layout.get("database_path"),
+                "source_database_path",
+            )
+            source_media_root = _require_string(
+                source_layout.get("media_root"),
+                "source_media_root",
+            )
+            with (
+                archive.open(info_by_name[DATABASE_MEMBER]) as source,
+                temporary_database.open("xb") as destination,
+            ):
+                size, digest = _hash_stream(source, destination)
+            if size != int(database["size_bytes"]) or digest != database["sha256"]:
+                raise LocalBackupValidationError("backup_database_hash_mismatch")
+            _validate_database_file(temporary_database)
+
+            with sqlite3.connect(temporary_database) as connection:
+                entity_counts = _database_entity_counts(connection)
+                external_paths, unknown_external_paths = _database_external_path_fields(
+                    connection
+                )
+                path_rebinds, unsafe_paths, collisions = (
+                    self._plan_managed_path_rebinds(
+                        connection,
+                        source_database_path=source_database_path,
+                        source_media_root=source_media_root,
+                        media_entries=media_entries,
+                        enabled=(
+                            rebind_managed_storage and not summary.restore_compatible
+                        ),
+                    )
+                )
+
+            warnings: list[str] = []
+            if rebind_managed_storage and not summary.restore_compatible:
+                warnings.append("managed_storage_layout_will_be_rebound")
+                unsafe_paths.extend(unknown_external_paths)
+            if external_paths:
+                warnings.append("external_provider_paths_will_be_preserved")
+            if self.database_path.exists() or self.media_root.exists():
+                warnings.append("existing_target_storage_will_be_replaced_atomically")
+
+            return RestorePlanData(
+                backup_id=summary.id,
+                dry_run=True,
+                confirmed=False,
+                rebind_managed_storage=rebind_managed_storage,
+                restore_allowed=not unsafe_paths and not collisions,
+                database_schema_version=summary.database_schema_version,
+                source_database_path=source_database_path,
+                source_media_root=source_media_root,
+                target_database_path=str(self.database_path),
+                target_media_root=str(self.media_root),
+                managed_database_reference_count=len(path_rebinds),
+                media_archive_entry_count=len(media_entries),
+                external_paths_preserved=external_paths,
+                warnings=tuple(warnings),
+                unsafe_paths=tuple(sorted(set(unsafe_paths))),
+                collisions=tuple(sorted(set(collisions))),
+                expected_entity_counts=entity_counts,
+                path_rebinds=tuple(path_rebinds),
+            )
+        finally:
+            if archive is not None:
+                archive.close()
+            if temporary_database.exists():
+                temporary_database.unlink()
+
+    def _plan_managed_path_rebinds(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        source_database_path: str,
+        source_media_root: str,
+        media_entries: list[dict[str, object]],
+        enabled: bool,
+    ) -> tuple[list[ManagedPathRebindData], list[str], list[str]]:
+        if not enabled:
+            return [], [], []
+
+        unsafe: list[str] = []
+        collisions: list[str] = []
+        rebinds: list[ManagedPathRebindData] = []
+        try:
+            source_database = _portable_path(source_database_path)
+            if not source_database.absolute:
+                unsafe.append("manifest.source_layout.database_path")
+        except LocalBackupValidationError:
+            unsafe.append("manifest.source_layout.database_path")
+
+        if _path_has_symlink_component(self.configured_database_path.parent):
+            unsafe.append("target.database_path_symlink")
+        if _path_has_symlink_component(self.configured_media_root):
+            unsafe.append("target.media_root_symlink")
+
+        archive_relative_paths = [
+            PurePosixPath(str(entry["path"])).relative_to("media").as_posix()
+            for entry in media_entries
+        ]
+        target_by_key: dict[str, str] = {}
+        for relative_path in archive_relative_paths:
+            target = self.media_root.joinpath(*PurePosixPath(relative_path).parts)
+            resolved_target = _resolved(target)
+            if not _is_within(resolved_target, self.media_root):
+                unsafe.append(f"archive.media.{relative_path}")
+                continue
+            portable_target = _portable_path(str(resolved_target))
+            key_parts = portable_target.parts
+            key = "/".join(
+                part.casefold() if portable_target.style == "windows" else part
+                for part in key_parts
+            )
+            previous = target_by_key.get(key)
+            if previous is not None and previous != relative_path:
+                collisions.extend((previous, relative_path))
+            else:
+                target_by_key[key] = relative_path
+
+        media_target_by_archive: dict[str, str] = {}
+        media_rows = connection.execute(
+            "SELECT id, local_path FROM media_assets ORDER BY id"
+        ).fetchall()
+        for media_id, local_path in media_rows:
+            field = f"media_assets.{media_id}.local_path"
+            try:
+                relative_path = _archive_relative_for_managed_path(
+                    str(local_path),
+                    source_media_root=source_media_root,
+                    archive_relative_paths=archive_relative_paths,
+                )
+            except LocalBackupValidationError:
+                unsafe.append(field)
+                continue
+            target = _resolved(
+                self.media_root.joinpath(*PurePosixPath(relative_path).parts)
+            )
+            if not _is_within(target, self.media_root):
+                unsafe.append(field)
+                continue
+            target_value = str(target)
+            media_target_by_archive[relative_path] = target_value
+            rebinds.append(
+                ManagedPathRebindData(
+                    table="media_assets",
+                    record_id=str(media_id),
+                    column="local_path",
+                    source_value=str(local_path),
+                    target_value=target_value,
+                    archive_relative_path=relative_path,
+                )
+            )
+
+        visit_rows = connection.execute(
+            "SELECT id, representative_media_path FROM visits "
+            "WHERE representative_media_path IS NOT NULL ORDER BY id"
+        ).fetchall()
+        for visit_id, media_path in visit_rows:
+            value = str(media_path)
+            if _is_virtual_reference(value):
+                continue
+            field = f"visits.{visit_id}.representative_media_path"
+            try:
+                relative_path = _archive_relative_for_managed_path(
+                    value,
+                    source_media_root=source_media_root,
+                    archive_relative_paths=archive_relative_paths,
+                )
+            except LocalBackupValidationError:
+                unsafe.append(field)
+                continue
+            target_value = media_target_by_archive.get(relative_path)
+            if target_value is None:
+                unsafe.append(field)
+                continue
+            rebinds.append(
+                ManagedPathRebindData(
+                    table="visits",
+                    record_id=str(visit_id),
+                    column="representative_media_path",
+                    source_value=value,
+                    target_value=target_value,
+                    archive_relative_path=relative_path,
+                )
+            )
+        return rebinds, unsafe, collisions
+
+    def _rebind_staged_database(
+        self,
+        staged_database: Path,
+        staged_media: Path,
+        plan: RestorePlanData,
+        media_entries: list[dict[str, object]],
+    ) -> None:
+        if not plan.restore_allowed:
+            raise LocalBackupValidationError("restore_managed_storage_rebind_rejected")
+
+        with sqlite3.connect(staged_database) as connection:
+            before_counts = _database_entity_counts(connection)
+            before_external = connection.execute(
+                "SELECT source_id, provider_key, config_json "
+                "FROM source_provider_configurations ORDER BY source_id"
+            ).fetchall()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                for item in plan.path_rebinds:
+                    if (item.table, item.column) not in {
+                        ("media_assets", "local_path"),
+                        ("visits", "representative_media_path"),
+                    }:
+                        raise LocalBackupValidationError(
+                            "restore_managed_path_classification_invalid"
+                        )
+                    result = connection.execute(
+                        f'UPDATE "{item.table}" SET "{item.column}" = ? '
+                        f'WHERE id = ? AND "{item.column}" = ?',
+                        (item.target_value, item.record_id, item.source_value),
+                    )
+                    if result.rowcount != 1:
+                        raise LocalBackupValidationError(
+                            "restore_managed_path_identity_changed"
+                        )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+            after_counts = _database_entity_counts(connection)
+            after_external = connection.execute(
+                "SELECT source_id, provider_key, config_json "
+                "FROM source_provider_configurations ORDER BY source_id"
+            ).fetchall()
+            if (
+                before_counts != plan.expected_entity_counts
+                or after_counts != before_counts
+            ):
+                raise LocalBackupValidationError("restore_entity_counts_changed")
+            if after_external != before_external:
+                raise LocalBackupValidationError("restore_external_paths_changed")
+            if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                raise LocalBackupValidationError("backup_database_integrity_failed")
+            if connection.execute("PRAGMA foreign_key_check").fetchall():
+                raise LocalBackupValidationError("restore_database_foreign_keys_failed")
+
+            for item in plan.path_rebinds:
+                row = connection.execute(
+                    f'SELECT "{item.column}" FROM "{item.table}" WHERE id = ?',
+                    (item.record_id,),
+                ).fetchone()
+                if row is None or row[0] != item.target_value:
+                    raise LocalBackupValidationError(
+                        "restore_managed_path_rebind_incomplete"
+                    )
+
+        entries_by_relative = {
+            PurePosixPath(str(entry["path"])).relative_to("media").as_posix(): entry
+            for entry in media_entries
+        }
+        for relative_path, entry in entries_by_relative.items():
+            staged_path = staged_media.joinpath(*PurePosixPath(relative_path).parts)
+            if not staged_path.is_file() or staged_path.is_symlink():
+                raise LocalBackupValidationError("restore_staged_media_missing")
+            if staged_path.stat().st_size != int(entry["size_bytes"]):
+                raise LocalBackupValidationError("backup_media_hash_mismatch")
+            if _hash_file(staged_path) != entry["sha256"]:
+                raise LocalBackupValidationError("backup_media_hash_mismatch")
+
+        _validate_database_file(staged_database)
     def assert_restore_compatible(self, verification: BackupVerificationData) -> None:
         if not verification.backup.restore_compatible:
             raise LocalBackupConflictError("backup_storage_layout_mismatch")
@@ -684,6 +1224,7 @@ class LocalBackupManager:
     def _extract_staged_restore(
         self,
         verification: BackupVerificationData,
+        plan: RestorePlanData | None = None,
     ) -> tuple[Path, Path]:
         token = uuid.uuid4().hex
         staged_database = self.database_path.parent / f".mockingbird-restore-{token}-database-staged"
@@ -721,6 +1262,8 @@ class LocalBackupManager:
                     size, digest = _hash_stream(source, destination)
                 if size != int(entry["size_bytes"]) or digest != entry["sha256"]:
                     raise LocalBackupValidationError("backup_media_hash_mismatch")
+            if plan is not None and plan.rebind_managed_storage:
+                self._rebind_staged_database(staged_database, staged_media, plan, media_entries)
             return staged_database, staged_media
         except Exception:
             _remove_generated_path(staged_database, self.database_path.parent)
@@ -733,11 +1276,32 @@ class LocalBackupManager:
     def replace_live_files(
         self,
         verification: BackupVerificationData,
+        *,
+        rebind_managed_storage: bool = False,
+        plan: RestorePlanData | None = None,
     ) -> RestoreFileTransaction:
         """Stage a verified artifact and replace live files, retaining rollback paths."""
 
-        self.assert_restore_compatible(verification)
-        staged_database, staged_media = self._extract_staged_restore(verification)
+        if rebind_managed_storage:
+            selected_plan = plan or self.create_restore_plan(
+                verification,
+                rebind_managed_storage=True,
+            )
+            if (
+                selected_plan.backup_id != verification.backup.id
+                or not selected_plan.rebind_managed_storage
+                or not selected_plan.restore_allowed
+            ):
+                raise LocalBackupValidationError(
+                    "restore_managed_storage_rebind_rejected"
+                )
+        else:
+            self.assert_restore_compatible(verification)
+            selected_plan = None
+        staged_database, staged_media = self._extract_staged_restore(
+            verification,
+            selected_plan,
+        )
         token = uuid.uuid4().hex
         rollback_database = (
             self.database_path.parent / f".mockingbird-restore-{token}-database-rollback"

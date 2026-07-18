@@ -2586,13 +2586,45 @@ class LocalBackupVerificationResponse(BaseModel):
     message: str
 
 
+class LocalBackupRestorePlanRequest(BaseModel):
+    rebind_managed_storage: bool = False
+
+
+class LocalBackupStorageLayout(BaseModel):
+    platform: str
+    absolute: bool
+    leaf_name: str
+
+
+class LocalBackupRestorePlan(BaseModel):
+    backup_valid: bool = True
+    database_schema_version: int = Field(ge=1)
+    source_database_layout: LocalBackupStorageLayout
+    source_media_layout: LocalBackupStorageLayout
+    target_database_layout: LocalBackupStorageLayout
+    target_media_layout: LocalBackupStorageLayout
+    managed_database_reference_count: int = Field(ge=0)
+    media_archive_entry_count: int = Field(ge=0)
+    external_paths_preserved: list[str]
+    warnings: list[str]
+    unsafe_paths: list[str]
+    collisions: list[str]
+    expected_entity_counts: dict[str, int]
+    rebind_managed_storage: bool
+    dry_run: bool
+    confirmed: bool
+    restore_allowed: bool
+
+
 class LocalBackupRestoreRequest(BaseModel):
     confirm: bool = False
+    rebind_managed_storage: bool = False
 
 
 class LocalBackupRestoreResponse(BaseModel):
     restored_backup: LocalBackupSummary
     safety_backup: LocalBackupSummary
+    restore_plan: LocalBackupRestorePlan
     status: LocalDataStatus
     message: str
 
