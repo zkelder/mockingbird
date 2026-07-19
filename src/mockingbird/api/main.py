@@ -164,7 +164,10 @@ from mockingbird.api.schemas import (
     WindowsCameraControlsResponse,
     WindowsCameraDiscoveryResponse,
     Zone,
+    ZoneActivitySensitivity,
     ZoneCreate,
+    ZoneMonitoringPolicy,
+    ZoneMonitoringPolicyUpdate,
     ZoneMutationResult,
     ZoneType,
     ZoneUpdate,
@@ -1375,26 +1378,39 @@ def _live_zone_min_changed_ratio(
 def _live_motion_zone_scoring_policy(
     *,
     zone_type: ZoneType | None,
+    zone_policy: ZoneMonitoringPolicy | None = None,
     base_min_changed_ratio: float,
     pixel_delta_threshold: float,
     focus_applied: bool = False,
     bird_sized_feeder_motion: bool = True,
 ) -> _LiveMotionZoneScoringPolicy:
+    policy_base_ratio = base_min_changed_ratio
+    if zone_policy is not None:
+        if zone_policy.activity_sensitivity == ZoneActivitySensitivity.low:
+            policy_base_ratio *= 2.0
+        elif (
+            zone_policy.activity_sensitivity == ZoneActivitySensitivity.high
+            and "activity_sensitivity" in zone_policy.customized_fields
+            and (not bird_sized_feeder_motion or zone_type not in _BIRD_FINE_MOTION_ZONE_TYPES)
+        ):
+            # Bird-focused Zones already receive the established fine-motion path.
+            policy_base_ratio *= 0.5
+
     if not bird_sized_feeder_motion or zone_type not in _BIRD_FINE_MOTION_ZONE_TYPES:
         return _LiveMotionZoneScoringPolicy(
-            min_changed_ratio=base_min_changed_ratio,
+            min_changed_ratio=policy_base_ratio,
             pixel_delta_threshold=pixel_delta_threshold,
             min_changed_pixels=1,
             threshold_source="requested",
             fine_motion_applied=False,
         )
 
-    threshold = max(0.001, base_min_changed_ratio * 0.5)
+    threshold = max(0.001, policy_base_ratio * 0.5)
     effective_pixel_delta = pixel_delta_threshold
     threshold_source = f"bird_{zone_type.value}_fine"
-    high_sensitivity = base_min_changed_ratio <= 0.004 or pixel_delta_threshold <= 12
+    high_sensitivity = policy_base_ratio <= 0.004 or pixel_delta_threshold <= 12
     if high_sensitivity:
-        threshold = max(0.0008, min(threshold, base_min_changed_ratio / 3.0))
+        threshold = max(0.0008, min(threshold, policy_base_ratio / 3.0))
         effective_pixel_delta = min(pixel_delta_threshold, 8.0)
         threshold_source = f"bird_{zone_type.value}_high_fine"
 
@@ -1441,9 +1457,11 @@ def _live_motion_sampler_result(
         for zone in motion_zones:
             zone_model = zones_by_id.get(zone.zone_id)
             zone_type = zone_model.zone_type if zone_model is not None else None
+            zone_policy = zone_model.monitoring_policy if zone_model is not None else None
             zone_focus_applied = focus_zone_id is not None and zone.zone_id == focus_zone_id
             scoring_policy = _live_motion_zone_scoring_policy(
                 zone_type=zone_type,
+                zone_policy=zone_policy,
                 base_min_changed_ratio=config.min_changed_ratio,
                 pixel_delta_threshold=config.pixel_delta_threshold,
                 focus_applied=zone_focus_applied,
@@ -1836,8 +1854,15 @@ def _live_activity_quiet_remaining_seconds(
     last_seen = _live_activity_datetime(activity.get("last_seen_at"))
     if last_seen is None or activity.get("review_activity_created"):
         return None
+    policy_snapshot = activity.get("monitoring_policy")
+    effective_quiet_seconds = (
+        policy_snapshot.get("quiet_period_seconds")
+        if isinstance(policy_snapshot, dict)
+        and isinstance(policy_snapshot.get("quiet_period_seconds"), int)
+        else quiet_seconds
+    )
     elapsed = max(0.0, (datetime.now(UTC) - last_seen).total_seconds())
-    return max(0, int(ceil(max(1, quiet_seconds) - elapsed)))
+    return max(0, int(ceil(max(1, effective_quiet_seconds) - elapsed)))
 
 
 def _live_activity_ready_for_review(
@@ -1847,6 +1872,8 @@ def _live_activity_ready_for_review(
 ) -> bool:
     if activity.get("review_activity_created"):
         return True
+    if activity.get("finalized_reason") == "brief_activity":
+        return False
     if int(activity.get("detection_count") or 0) <= 0:
         return False
     if activity.get("ready_for_review"):
@@ -1865,6 +1892,10 @@ def _live_activity_review_state(
 ) -> str:
     if activity.get("review_activity_created"):
         return "review_candidate_created"
+    if activity.get("finalized_reason") == "maximum_duration":
+        return "maximum_duration"
+    if activity.get("finalized_reason") == "brief_activity":
+        return "brief_activity_ignored"
     if int(activity.get("detection_count") or 0) <= 0 and int(
         activity.get("near_miss_count") or 0
     ) > 0:
@@ -2627,9 +2658,20 @@ def _ensure_live_activity_evidence_media_assets(
         return [], activity
 
     manager = get_live_camera_session_manager()
+    policy_snapshot = activity.get("monitoring_policy")
+    evidence_limit = (
+        int(policy_snapshot.get("maximum_evidence_frames"))
+        if isinstance(policy_snapshot, dict)
+        and isinstance(policy_snapshot.get("maximum_evidence_frames"), int)
+        else live_camera_session.DEFAULT_ACTIVITY_MAX_VISIT_EVIDENCE_FRAMES
+    )
     frames = manager.get_activity_evidence_frames(
         stream.id,
         str(activity_session_id),
+        max_frames=min(
+            live_camera_session.DEFAULT_ACTIVITY_MAX_VISIT_EVIDENCE_FRAMES,
+            max(1, evidence_limit),
+        ),
     )
     if not frames:
         return [], activity
@@ -3480,6 +3522,7 @@ def _evaluate_live_stream_motion(
     image_quality_warnings = _live_motion_quality_warnings(decoded_frames, all_zones)
     warnings.extend(image_quality_warnings)
     reviewable_zones: list[Zone] = []
+    has_active_activity_zone = False
     for zone in all_zones:
         if not zone.is_active:
             warnings.append(f"Inactive Zone skipped: {zone.name}.")
@@ -3489,6 +3532,10 @@ def _evaluate_live_stream_motion(
                 f"{zone.zone_type.value.replace('_', ' ').title()} Zone skipped: {zone.name}."
             )
             continue
+        has_active_activity_zone = True
+        if zone.monitoring_policy is None or not zone.monitoring_policy.monitoring_enabled:
+            warnings.append(f"Monitoring disabled for Zone: {zone.name}.")
+            continue
         reviewable_zones.append(zone)
 
     blocked_zones = [
@@ -3496,7 +3543,8 @@ def _evaluate_live_stream_motion(
         for zone in all_zones
         if zone.is_active and zone.zone_type.value in {"privacy", "ignore"}
     ]
-    uses_auto_regions = not reviewable_zones
+    # A user-disabled activity Zone must not quietly fall back to automatic capture.
+    uses_auto_regions = not reviewable_zones and not has_active_activity_zone
     region_source = "auto_regions" if uses_auto_regions else "user_zones"
     suppressed_auto_region_count = 0
     debug_cell_zones: list[MotionZoneInput] = []
@@ -3618,6 +3666,7 @@ def _evaluate_live_stream_motion(
     strongest_scoring_policy = (
         _live_motion_zone_scoring_policy(
             zone_type=strongest_zone_type,
+            zone_policy=(strongest_zone.monitoring_policy if strongest_zone else None),
             base_min_changed_ratio=request.min_changed_ratio,
             pixel_delta_threshold=request.pixel_delta_threshold,
             focus_applied=strongest_focus_applied,
@@ -3754,16 +3803,24 @@ def _evaluate_live_stream_motion(
         repository.list_motion_evidence(stream_id=stream.id)
     )
     has_reviewable_live_activity = bool(best_candidate)
+    strongest_zone_policy = strongest_zone.monitoring_policy if strongest_zone else None
     session_activity_signal = (
         burst_live_frame is not None
         and (
             (uses_auto_regions and activity_detected)
             or (
                 not uses_auto_regions
-                and strongest_zone_type
-                in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}
+                and strongest_zone_policy is not None
+                and strongest_zone_policy.monitoring_enabled
                 and strongest_zone_id is not None
-                and (activity_detected or near_miss)
+                and (
+                    activity_detected
+                    or (
+                        strongest_zone_type
+                        in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}
+                        and near_miss
+                    )
+                )
             )
         )
     )
@@ -3854,6 +3911,11 @@ def _evaluate_live_stream_motion(
                     else False
                 ),
                 "bird_sized_feeder_motion": request.bird_sized_feeder_motion,
+                "monitoring_policy": (
+                    strongest_zone_policy.model_dump(mode="json")
+                    if strongest_zone_policy is not None
+                    else None
+                ),
                 "image_quality_warnings": image_quality_warnings,
                 "near_miss": near_miss,
                 "margin_to_threshold": margin_to_threshold,
@@ -3861,7 +3923,11 @@ def _evaluate_live_stream_motion(
             },
             frame_bytes=burst_live_frame.frame_bytes,
             frame_content_type=burst_live_frame.content_type,
-            quiet_window_seconds=active_quiet_seconds,
+            quiet_window_seconds=(
+                strongest_zone_policy.quiet_period_seconds
+                if strongest_zone_policy is not None
+                else active_quiet_seconds
+            ),
         )
         live_activity_session = (
             activity_snapshot.as_dict() if activity_snapshot is not None else None
@@ -4642,6 +4708,37 @@ def _create_live_stream_motion_review_activity(
             warnings=["Near-miss-only activity remains status evidence, not review activity."],
         )
 
+    policy_snapshot = activity.get("monitoring_policy")
+    minimum_sustained_seconds = (
+        policy_snapshot.get("minimum_sustained_activity_seconds")
+        if isinstance(policy_snapshot, dict)
+        and isinstance(policy_snapshot.get("minimum_sustained_activity_seconds"), int)
+        else 0
+    )
+    started_at = _live_activity_datetime(activity.get("started_at"))
+    last_seen_at = _live_activity_datetime(activity.get("last_seen_at"))
+    session_seconds = (
+        max(0.0, (last_seen_at - started_at).total_seconds())
+        if started_at is not None and last_seen_at is not None
+        else 0.0
+    )
+    if (
+        activity.get("finalized_reason") == "brief_activity"
+        or session_seconds < minimum_sustained_seconds
+    ):
+        return _live_motion_review_activity_response(
+            stream_id=stream.id,
+            source_id=stream.source_id,
+            status="waiting_for_sustained_activity",
+            message="This Zone is waiting for sustained activity before opening a Visit.",
+            activity_detected=True,
+            activity_session_id=activity.get("activity_session_id"),
+            activity_detection_count=activity.get("detection_count") or 0,
+            activity_started_at=started_at,
+            activity_last_seen_at=last_seen_at,
+            warnings=["Very brief activity remains monitoring evidence, not a Visit."],
+        )
+
     zone_id = activity.get("zone_id")
     best_media_asset_id = activity.get("best_media_asset_id")
     if not best_media_asset_id and activity.get("activity_session_id"):
@@ -4704,6 +4801,7 @@ def _create_live_stream_motion_review_activity(
                     "activity_session_id": activity.get("activity_session_id"),
                     "activity_region_kind": activity.get("region_kind"),
                     "activity_region_id": activity.get("region_id"),
+                    "monitoring_policy": policy_snapshot,
                     "detection_count": activity.get("detection_count") or 1,
                     "near_miss_count": activity.get("near_miss_count") or 0,
                     "frames_evaluated_count": activity.get("frames_evaluated_count") or 0,
@@ -6833,6 +6931,63 @@ async def get_zone(zone_id: str) -> Zone:
     if zone is None:
         raise _not_found("Zone", zone_id)
     return zone
+
+
+def _zone_monitoring_policy_or_restricted(zone: Zone) -> ZoneMonitoringPolicy:
+    if zone.monitoring_policy is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Monitoring settings are unavailable for Privacy and Ignore Zones.",
+        )
+    return zone.monitoring_policy
+
+
+@app.get("/api/zones/{zone_id}/monitoring-policy", response_model=ZoneMonitoringPolicy)
+async def get_zone_monitoring_policy(zone_id: str) -> ZoneMonitoringPolicy:
+    zone = get_repository().get_zone(zone_id)
+    if zone is None:
+        raise _not_found("Zone", zone_id)
+    return _zone_monitoring_policy_or_restricted(zone)
+
+
+@app.put("/api/zones/{zone_id}/monitoring-policy", response_model=ZoneMonitoringPolicy)
+async def update_zone_monitoring_policy(
+    zone_id: str,
+    payload: ZoneMonitoringPolicyUpdate,
+) -> ZoneMonitoringPolicy:
+    repository = get_repository()
+    try:
+        zone = repository.update_zone_monitoring_policy(zone_id, payload)
+    except ValueError as error:
+        if str(error) == "restricted_zone_monitoring_policy":
+            raise HTTPException(
+                status_code=400,
+                detail="Monitoring settings are unavailable for Privacy and Ignore Zones.",
+            ) from error
+        raise
+    if zone is None:
+        raise _not_found("Zone", zone_id)
+    return _zone_monitoring_policy_or_restricted(zone)
+
+
+@app.post(
+    "/api/zones/{zone_id}/monitoring-policy/restore-defaults",
+    response_model=ZoneMonitoringPolicy,
+)
+async def restore_zone_monitoring_policy_defaults(zone_id: str) -> ZoneMonitoringPolicy:
+    repository = get_repository()
+    try:
+        zone = repository.restore_zone_monitoring_policy_defaults(zone_id)
+    except ValueError as error:
+        if str(error) == "restricted_zone_monitoring_policy":
+            raise HTTPException(
+                status_code=400,
+                detail="Monitoring settings are unavailable for Privacy and Ignore Zones.",
+            ) from error
+        raise
+    if zone is None:
+        raise _not_found("Zone", zone_id)
+    return _zone_monitoring_policy_or_restricted(zone)
 
 
 @app.post("/api/zones", response_model=ZoneMutationResult, status_code=201)

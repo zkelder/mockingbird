@@ -97,6 +97,7 @@ export type ZoneType =
   | "driveway"
   | "privacy"
   | "ignore";
+export type ZoneActivitySensitivity = "low" | "normal" | "high";
 
 export type ReviewStatus = "needs_review" | "reviewed" | "rejected";
 export type VisitReviewOutcome =
@@ -934,6 +935,28 @@ export interface Zone {
   zone_type: ZoneType;
   polygon: Point[];
   is_active: boolean;
+  monitoring_policy?: ZoneMonitoringPolicy | null;
+}
+
+export interface ZoneMonitoringPolicy {
+  monitoring_enabled: boolean;
+  activity_sensitivity: ZoneActivitySensitivity;
+  minimum_sustained_activity_seconds: number;
+  quiet_period_seconds: number;
+  maximum_visit_duration_seconds: number;
+  maximum_evidence_frames: number;
+  customized_fields: string[];
+  inherited_fields: string[];
+  uses_recommended_defaults: boolean;
+}
+
+export interface ZoneMonitoringPolicyUpdate {
+  monitoring_enabled?: boolean;
+  activity_sensitivity?: ZoneActivitySensitivity;
+  minimum_sustained_activity_seconds?: number;
+  quiet_period_seconds?: number;
+  maximum_visit_duration_seconds?: number;
+  maximum_evidence_frames?: number;
 }
 
 export interface ZoneCreate {

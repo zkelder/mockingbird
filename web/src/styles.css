@@ -4235,6 +4235,8 @@ a.secondary-action {
 .zone-workspace,
 .zone-edit-form,
 .draw-zone-panel,
+.zone-monitoring-form,
+.zone-monitoring-restricted,
 .zone-meaning {
   display: grid;
   gap: 10px;
@@ -4257,6 +4259,11 @@ a.secondary-action {
   font-size: 0.86rem;
 }
 
+.zone-list-button small {
+  color: #65756b;
+  font-size: 0.8rem;
+}
+
 .zone-list-button.selected {
   border-color: #2e6f5e;
   background: #eef7ee;
@@ -4267,13 +4274,16 @@ a.secondary-action {
 }
 
 .zone-edit-form,
-.draw-zone-panel {
+.draw-zone-panel,
+.zone-monitoring-form,
+.zone-monitoring-restricted {
   border-top: 1px solid #e0e7dd;
   padding-top: 12px;
 }
 
 .zone-edit-form label,
-.draw-zone-panel label {
+.draw-zone-panel label,
+.zone-monitoring-form label {
   display: grid;
   gap: 6px;
   color: #4f5f55;
@@ -4284,7 +4294,9 @@ a.secondary-action {
 .zone-edit-form input,
 .zone-edit-form select,
 .draw-zone-panel input,
-.draw-zone-panel select {
+.draw-zone-panel select,
+.zone-monitoring-form input,
+.zone-monitoring-form select {
   min-height: 40px;
   border: 1px solid #c6d0c2;
   border-radius: 8px;
@@ -4306,6 +4318,37 @@ a.secondary-action {
 .zone-action-row {
   display: flex;
   flex-wrap: wrap;
+  gap: 10px;
+}
+
+.zone-monitoring-form,
+.zone-monitoring-restricted {
+  gap: 10px;
+}
+
+.zone-monitoring-restricted span {
+  color: #58665d;
+  font-size: 0.9rem;
+}
+
+.zone-monitoring-advanced {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d8e1d4;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.zone-monitoring-advanced summary {
+  cursor: pointer;
+  color: #405248;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.zone-monitoring-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -7125,7 +7168,8 @@ a.secondary-action {
   .sampled-frame-result-list,
   .proposal-decision-panel,
   .promoted-review-context-grid,
-  .zone-editor-grid {
+  .zone-editor-grid,
+  .zone-monitoring-grid {
     grid-template-columns: 1fr;
   }
 

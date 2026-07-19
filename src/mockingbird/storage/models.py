@@ -135,6 +135,7 @@ class ZoneModel(Base):
     zone_type: Mapped[str] = mapped_column(String, nullable=False)
     polygon_json: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    monitoring_policy_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class EventModel(Base):

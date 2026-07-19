@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -25,6 +26,8 @@ from mockingbird.api.schemas import (
     ReviewStatus,
     SourceKind,
     SourceStatus,
+    ZoneActivitySensitivity,
+    ZoneMonitoringPolicyUpdate,
 )
 from mockingbird.monitoring.source_monitor import SourceMonitorOptions
 from mockingbird.playback import (
@@ -35,6 +38,7 @@ from mockingbird.playback import (
 )
 from mockingbird.playback.live_camera_session import (
     DEFAULT_ACTIVITY_MAX_VISIT_EVIDENCE_FRAMES,
+    _LiveCameraSession,
     _LiveActivitySession,
 )
 from mockingbird.repository.product_repository import ProductRepository
@@ -6470,6 +6474,296 @@ async def test_playback_contract_creates_no_media_or_model_artifacts(
         for path in tmp_path.rglob("*")
         if path.is_file() and path.suffix.lower() in artifact_extensions
     ] == []
+
+
+def test_zone_monitoring_policy_defaults_persist_and_restore(
+    isolated_repository: ProductRepository,
+) -> None:
+    feeder = isolated_repository.get_zone("zone-feeder")
+    ground = isolated_repository.get_zone("zone-ground")
+    ignored = isolated_repository.get_zone("zone-ignore-driveway-edge")
+
+    assert feeder is not None and feeder.monitoring_policy is not None
+    assert ground is not None and ground.monitoring_policy is not None
+    assert ignored is not None and ignored.monitoring_policy is None
+    assert feeder.monitoring_policy.activity_sensitivity == ZoneActivitySensitivity.high
+    assert feeder.monitoring_policy.quiet_period_seconds == 20
+    assert ground.monitoring_policy.quiet_period_seconds == 45
+    assert feeder.monitoring_policy.uses_recommended_defaults is True
+
+    updated = isolated_repository.update_zone_monitoring_policy(
+        feeder.id,
+        ZoneMonitoringPolicyUpdate(
+            minimum_sustained_activity_seconds=7,
+            maximum_evidence_frames=2,
+        ),
+    )
+    assert updated is not None and updated.monitoring_policy is not None
+    assert updated.monitoring_policy.minimum_sustained_activity_seconds == 7
+    assert updated.monitoring_policy.maximum_evidence_frames == 2
+    assert set(updated.monitoring_policy.customized_fields) == {
+        "minimum_sustained_activity_seconds",
+        "maximum_evidence_frames",
+    }
+
+    reloaded = ProductRepository(
+        db_url=isolated_repository.db_url,
+        media_root=isolated_repository.media_root,
+    )
+    try:
+        persisted = reloaded.get_zone(feeder.id)
+        assert persisted is not None and persisted.monitoring_policy is not None
+        assert persisted.monitoring_policy.minimum_sustained_activity_seconds == 7
+        assert persisted.monitoring_policy.maximum_evidence_frames == 2
+    finally:
+        reloaded.close()
+
+    restored = isolated_repository.restore_zone_monitoring_policy_defaults(feeder.id)
+    assert restored is not None and restored.monitoring_policy is not None
+    assert restored.monitoring_policy.uses_recommended_defaults is True
+    assert restored.monitoring_policy.minimum_sustained_activity_seconds == 2
+    assert restored.monitoring_policy.maximum_evidence_frames == 4
+
+
+async def test_zone_monitoring_policy_api_is_bounded_and_preserves_truth(
+    client: httpx.AsyncClient,
+) -> None:
+    before = await product_counts(client)
+    read_response = await client.get("/api/zones/zone-feeder/monitoring-policy")
+    assert read_response.status_code == 200
+    assert read_response.json()["uses_recommended_defaults"] is True
+
+    unknown_setting = await client.put(
+        "/api/zones/zone-feeder/monitoring-policy",
+        json={"unexpected": True},
+    )
+    assert unknown_setting.status_code == 422
+    out_of_range = await client.put(
+        "/api/zones/zone-feeder/monitoring-policy",
+        json={"maximum_evidence_frames": 5},
+    )
+    assert out_of_range.status_code == 422
+
+    updated = await client.put(
+        "/api/zones/zone-feeder/monitoring-policy",
+        json={"monitoring_enabled": False},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["monitoring_enabled"] is False
+    assert updated.json()["uses_recommended_defaults"] is False
+
+    restored = await client.post(
+        "/api/zones/zone-feeder/monitoring-policy/restore-defaults"
+    )
+    assert restored.status_code == 200
+    assert restored.json()["monitoring_enabled"] is True
+    assert restored.json()["uses_recommended_defaults"] is True
+
+    restricted = await client.put(
+        "/api/zones/zone-ignore-driveway-edge/monitoring-policy",
+        json={"monitoring_enabled": True},
+    )
+    assert restricted.status_code == 400
+    assert "Privacy and Ignore" in restricted.json()["detail"]
+    assert await product_counts(client) == before
+
+
+def test_zone_policy_lifecycle_uses_per_zone_quiet_maximum_and_evidence_limits() -> None:
+    started_at = datetime.now(UTC)
+
+    def values(
+        zone_id: str,
+        seen_at: datetime,
+        policy: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "region_key": f"zone:{zone_id}",
+            "region_kind": "zone",
+            "region_id": zone_id,
+            "zone_id": zone_id,
+            "zone_name": zone_id,
+            "zone_type": "feeder",
+            "activity_detected": True,
+            "last_seen_at": seen_at,
+            "best_frame_sequence": 1,
+            "best_frame_captured_at": seen_at,
+            "best_score": 0.9,
+            "monitoring_policy": policy,
+        }
+
+    brief = _LiveActivitySession.from_detection(
+        values(
+            "brief",
+            started_at,
+            {
+                "minimum_sustained_activity_seconds": 5,
+                "quiet_period_seconds": 10,
+                "maximum_visit_duration_seconds": 60,
+                "maximum_evidence_frames": 1,
+            },
+        ),
+        stream_id=STREAM_ID,
+        source_id=SOURCE_ID,
+        region_key="zone:brief",
+        now=started_at,
+        frame_bytes=b"brief",
+        frame_content_type="image/jpeg",
+    )
+    brief.mark_ready_for_review(quiet_seconds=30)
+    assert brief.ready_for_review is False
+    assert brief.review_state == "brief_activity_ignored"
+
+    session = _LiveCameraSession(
+        config=SimpleNamespace(
+            stream_id=STREAM_ID,
+            source_id=SOURCE_ID,
+            live_stream_type="rtsp",
+        ),
+        process=FakeFfmpegProcess([]),
+        max_runtime_seconds=300,
+    )
+    short_quiet = session.record_activity_detection(
+        values(
+            "short-quiet",
+            started_at - timedelta(seconds=10),
+            {
+                "minimum_sustained_activity_seconds": 0,
+                "quiet_period_seconds": 5,
+                "maximum_visit_duration_seconds": 60,
+                "maximum_evidence_frames": 1,
+            },
+        ),
+        frame_bytes=b"short-quiet",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+    long_quiet = session.record_activity_detection(
+        values(
+            "long-quiet",
+            started_at - timedelta(seconds=10),
+            {
+                "minimum_sustained_activity_seconds": 0,
+                "quiet_period_seconds": 20,
+                "maximum_visit_duration_seconds": 60,
+                "maximum_evidence_frames": 4,
+            },
+        ),
+        frame_bytes=b"long-quiet",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+    assert short_quiet is not None and long_quiet is not None
+    ready = session.mark_quiet_activity_sessions_ready_for_review(quiet_seconds=30)
+    assert [item.zone_id for item in ready] == ["short-quiet"]
+
+    maximum = session.record_activity_detection(
+        values(
+            "maximum",
+            started_at,
+            {
+                "minimum_sustained_activity_seconds": 0,
+                "quiet_period_seconds": 5,
+                "maximum_visit_duration_seconds": 5,
+                "maximum_evidence_frames": 1,
+            },
+        ),
+        frame_bytes=b"maximum-first",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=5,
+    )
+    assert maximum is not None
+    finalized = session.record_activity_detection(
+        values(
+            "maximum",
+            started_at + timedelta(seconds=6),
+            {
+                "minimum_sustained_activity_seconds": 0,
+                "quiet_period_seconds": 5,
+                "maximum_visit_duration_seconds": 5,
+                "maximum_evidence_frames": 1,
+            },
+        ),
+        frame_bytes=b"maximum-second",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=5,
+    )
+    assert finalized is not None
+    assert finalized.ready_for_review is True
+    assert finalized.review_state == "maximum_duration"
+
+    evidence_activity = _LiveActivitySession.from_detection(
+        values(
+            "evidence",
+            started_at,
+            {
+                "minimum_sustained_activity_seconds": 0,
+                "quiet_period_seconds": 5,
+                "maximum_visit_duration_seconds": 60,
+                "maximum_evidence_frames": 1,
+            },
+        ),
+        stream_id=STREAM_ID,
+        source_id=SOURCE_ID,
+        region_key="zone:evidence",
+        now=started_at,
+        frame_bytes=b"evidence-0",
+        frame_content_type="image/jpeg",
+    )
+    for index in range(1, 5):
+        evidence_activity.record_detection(
+            values("evidence", started_at + timedelta(seconds=index), {}),
+            now=started_at + timedelta(seconds=index),
+            frame_bytes=f"evidence-{index}".encode(),
+            frame_content_type="image/jpeg",
+        )
+    assert len(evidence_activity.evidence_frames(max_frames=1)) == 1
+
+
+async def test_disabled_zone_does_not_qualify_live_activity(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    disabled = await client.put(
+        "/api/zones/zone-feeder/monitoring-policy",
+        json={"monitoring_enabled": False},
+    )
+    assert disabled.status_code == 200
+    frame_0 = b"\xff\xd8zone-policy-off-0\xff\xd9"
+    frame_1 = b"\xff\xd8zone-policy-off-1\xff\xd9"
+    captured_at = datetime.now(UTC)
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frame_0: blank_frame(width=100, height=100),
+            frame_1: frame_with(
+                [(30, 40), (30, 41), (31, 40), (31, 41)],
+                width=100,
+                height=100,
+            ),
+        },
+    )
+    live_frame_cache.store_latest_frame(STREAM_ID, frame_0, captured_at=captured_at)
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_1,
+        captured_at=captured_at + timedelta(seconds=1),
+    )
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={
+            "save_best_frame": False,
+            "create_review_activity": False,
+            "min_triggered_frames": 1,
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["activity_detected"] is False
+    assert result["uses_auto_regions"] is False
+    assert "Monitoring disabled for Zone: Feeder." in result["warnings"]
+    assert result["creates_truth"] is False
 
 
 def test_windows_dshow_controls_wsl_accepts_native_windows_ffmpeg_path() -> None:

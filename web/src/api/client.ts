@@ -119,6 +119,8 @@ import type {
   WindowsCameraDiscoveryResponse,
   Zone,
   ZoneCreate,
+  ZoneMonitoringPolicy,
+  ZoneMonitoringPolicyUpdate,
   ZoneMutationResult,
   ZoneUpdate,
 } from "./types";
@@ -644,6 +646,23 @@ export const apiClient = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  getZoneMonitoringPolicy: (zoneId: string) =>
+    request<ZoneMonitoringPolicy>(
+      `/api/zones/${encodeURIComponent(zoneId)}/monitoring-policy`,
+    ),
+  updateZoneMonitoringPolicy: (zoneId: string, payload: ZoneMonitoringPolicyUpdate) =>
+    request<ZoneMonitoringPolicy>(
+      `/api/zones/${encodeURIComponent(zoneId)}/monitoring-policy`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      },
+    ),
+  restoreZoneMonitoringPolicyDefaults: (zoneId: string) =>
+    request<ZoneMonitoringPolicy>(
+      `/api/zones/${encodeURIComponent(zoneId)}/monitoring-policy/restore-defaults`,
+      { method: "POST" },
+    ),
   deleteZone: (zoneId: string) =>
     request<ZoneMutationResult>(`/api/zones/${zoneId}`, {
       method: "DELETE",

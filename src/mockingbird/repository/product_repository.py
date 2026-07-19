@@ -251,7 +251,10 @@ from mockingbird.api.schemas import (
     WorkerStatusResponse,
     WorkerStatusSummary,
     Zone,
+    ZoneActivitySensitivity,
     ZoneCreate,
+    ZoneMonitoringPolicy,
+    ZoneMonitoringPolicyUpdate,
     ZoneType,
     ZoneUpdate,
 )
@@ -303,6 +306,65 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
 # Live evidence is a short review aid, never a video archive. Keep a read-side
 # cap as a safeguard even if malformed historical scoring metadata is present.
 MAX_LIVE_VISIT_EVIDENCE_FRAMES = 4
+
+_ZONE_MONITORING_POLICY_FIELDS = (
+    "monitoring_enabled",
+    "activity_sensitivity",
+    "minimum_sustained_activity_seconds",
+    "quiet_period_seconds",
+    "maximum_visit_duration_seconds",
+    "maximum_evidence_frames",
+)
+_ZONE_MONITORING_DEFAULTS: dict[ZoneType, dict[str, Any]] = {
+    ZoneType.feeder: {
+        "monitoring_enabled": True,
+        "activity_sensitivity": ZoneActivitySensitivity.high,
+        "minimum_sustained_activity_seconds": 2,
+        "quiet_period_seconds": 20,
+        "maximum_visit_duration_seconds": 180,
+        "maximum_evidence_frames": 4,
+    },
+    ZoneType.birdbath: {
+        "monitoring_enabled": True,
+        "activity_sensitivity": ZoneActivitySensitivity.normal,
+        "minimum_sustained_activity_seconds": 3,
+        "quiet_period_seconds": 30,
+        "maximum_visit_duration_seconds": 240,
+        "maximum_evidence_frames": 4,
+    },
+    ZoneType.perch: {
+        "monitoring_enabled": True,
+        "activity_sensitivity": ZoneActivitySensitivity.high,
+        "minimum_sustained_activity_seconds": 2,
+        "quiet_period_seconds": 20,
+        "maximum_visit_duration_seconds": 180,
+        "maximum_evidence_frames": 4,
+    },
+    ZoneType.ground: {
+        "monitoring_enabled": True,
+        "activity_sensitivity": ZoneActivitySensitivity.normal,
+        "minimum_sustained_activity_seconds": 5,
+        "quiet_period_seconds": 45,
+        "maximum_visit_duration_seconds": 360,
+        "maximum_evidence_frames": 3,
+    },
+    ZoneType.yard: {
+        "monitoring_enabled": True,
+        "activity_sensitivity": ZoneActivitySensitivity.low,
+        "minimum_sustained_activity_seconds": 8,
+        "quiet_period_seconds": 60,
+        "maximum_visit_duration_seconds": 480,
+        "maximum_evidence_frames": 2,
+    },
+    ZoneType.driveway: {
+        "monitoring_enabled": True,
+        "activity_sensitivity": ZoneActivitySensitivity.low,
+        "minimum_sustained_activity_seconds": 10,
+        "quiet_period_seconds": 75,
+        "maximum_visit_duration_seconds": 600,
+        "maximum_evidence_frames": 2,
+    },
+}
 
 BIOCLIP_MODEL_PATH_ENV = "MOCKINGBIRD_BIOCLIP_MODEL_PATH"
 BIOCLIP_LABELS_PATH_ENV = "MOCKINGBIRD_BIOCLIP_LABELS_PATH"
@@ -3296,6 +3358,37 @@ class ProductRepository:
                 if payload.is_active is not None:
                     zone.is_active = payload.is_active
 
+                session.flush()
+                return _zone_from_model(zone)
+
+    def update_zone_monitoring_policy(
+        self,
+        zone_id: str,
+        payload: ZoneMonitoringPolicyUpdate,
+    ) -> Zone | None:
+        with self.session_factory() as session:
+            with session.begin():
+                zone = session.get(ZoneModel, zone_id)
+                if zone is None:
+                    return None
+                if ZoneType(zone.zone_type) in {ZoneType.privacy, ZoneType.ignore}:
+                    raise ValueError("restricted_zone_monitoring_policy")
+
+                overrides = _zone_monitoring_policy_overrides(zone.monitoring_policy_json)
+                overrides.update(payload.model_dump(exclude_none=True, mode="json"))
+                zone.monitoring_policy_json = json.dumps(overrides, sort_keys=True)
+                session.flush()
+                return _zone_from_model(zone)
+
+    def restore_zone_monitoring_policy_defaults(self, zone_id: str) -> Zone | None:
+        with self.session_factory() as session:
+            with session.begin():
+                zone = session.get(ZoneModel, zone_id)
+                if zone is None:
+                    return None
+                if ZoneType(zone.zone_type) in {ZoneType.privacy, ZoneType.ignore}:
+                    raise ValueError("restricted_zone_monitoring_policy")
+                zone.monitoring_policy_json = None
                 session.flush()
                 return _zone_from_model(zone)
 
@@ -13218,7 +13311,53 @@ def _zone_from_model(zone: ZoneModel) -> Zone:
         zone_type=ZoneType(zone.zone_type),
         polygon=[Point(**point) for point in json.loads(zone.polygon_json)],
         is_active=zone.is_active,
+        monitoring_policy=_effective_zone_monitoring_policy(
+            ZoneType(zone.zone_type),
+            zone.monitoring_policy_json,
+        ),
     )
+
+
+def _zone_monitoring_policy_overrides(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {key: parsed[key] for key in _ZONE_MONITORING_POLICY_FIELDS if key in parsed}
+
+
+def _effective_zone_monitoring_policy(
+    zone_type: ZoneType,
+    stored_overrides: str | None,
+) -> ZoneMonitoringPolicy | None:
+    # Privacy and Ignore Zones suppress activity before persistence; they never capture it.
+    if zone_type in {ZoneType.privacy, ZoneType.ignore}:
+        return None
+
+    defaults = dict(_ZONE_MONITORING_DEFAULTS[zone_type])
+    overrides = _zone_monitoring_policy_overrides(stored_overrides)
+    values = {**defaults, **overrides}
+    try:
+        return ZoneMonitoringPolicy(
+            **values,
+            customized_fields=sorted(overrides),
+            inherited_fields=[
+                field for field in _ZONE_MONITORING_POLICY_FIELDS if field not in overrides
+            ],
+            uses_recommended_defaults=not overrides,
+        )
+    except ValueError:
+        # An old or hand-edited local record must not disable safe monitoring defaults.
+        return ZoneMonitoringPolicy(
+            **defaults,
+            customized_fields=[],
+            inherited_fields=list(_ZONE_MONITORING_POLICY_FIELDS),
+            uses_recommended_defaults=True,
+        )
 
 
 def _detection_from_model(detection: DetectionModel) -> Detection:

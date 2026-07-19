@@ -150,6 +150,7 @@ class LiveActivitySessionSnapshot:
     zone_id: str | None
     zone_name: str | None
     zone_type: str | None
+    monitoring_policy: dict[str, Any] | None
     started_at: datetime
     last_seen_at: datetime
     detection_count: int
@@ -159,6 +160,7 @@ class LiveActivitySessionSnapshot:
     saved_candidate_count: int
     completed_at: datetime | None
     ready_for_review: bool
+    finalized_reason: str | None
     review_state: str
     start_frame_sequence: int | None
     end_frame_sequence: int | None
@@ -211,6 +213,7 @@ class LiveActivitySessionSnapshot:
             "zone_id": self.zone_id,
             "zone_name": self.zone_name,
             "zone_type": self.zone_type,
+            "monitoring_policy": dict(self.monitoring_policy or {}),
             "started_at": self.started_at,
             "last_seen_at": self.last_seen_at,
             "detection_count": self.detection_count,
@@ -220,6 +223,7 @@ class LiveActivitySessionSnapshot:
             "saved_candidate_count": self.saved_candidate_count,
             "completed_at": self.completed_at,
             "ready_for_review": self.ready_for_review,
+            "finalized_reason": self.finalized_reason,
             "review_state": self.review_state,
             "start_frame_sequence": self.start_frame_sequence,
             "end_frame_sequence": self.end_frame_sequence,
@@ -866,11 +870,34 @@ class _LiveCameraSession:
             now = _coerce_datetime(values.get("last_seen_at")) or datetime.now(UTC)
             region_key = str(values.get("region_key") or "unknown-region")
             existing = self.activity_sessions.get(region_key)
+            if (
+                existing is not None
+                and not existing.review_activity_created
+                and not existing.ready_for_review
+                and (now - existing.started_at).total_seconds()
+                >= existing.maximum_visit_duration_seconds()
+            ):
+                # Close at the session's captured policy boundary before a later
+                # configuration edit or restart can change the meaning of the Visit.
+                existing._finalize_for_review(
+                    quiet_seconds=existing.quiet_period_seconds(quiet_window_seconds),
+                    reason="maximum_duration",
+                    force_sustained=True,
+                )
+                snapshot = existing.snapshot()
+                self.current_activity_session_id = snapshot.activity_session_id
+                self.last_activity = snapshot.as_dict()
+                self._record_diagnostic_event_locked(
+                    "activity_ready_for_review",
+                    status=snapshot.review_state,
+                    activity=snapshot,
+                )
+                return snapshot
             starts_new_session = (
                 existing is None
-                or (now - existing.last_seen_at).total_seconds() > quiet_window_seconds
-                or (now - existing.started_at).total_seconds()
-                > DEFAULT_ACTIVITY_MAX_SESSION_SECONDS
+                or existing.ready_for_review
+                or (now - existing.last_seen_at).total_seconds()
+                > existing.quiet_period_seconds(quiet_window_seconds)
             )
             previous_detection_count = existing.detection_count if existing is not None else 0
             previous_near_miss_count = existing.near_miss_count if existing is not None else 0
@@ -1038,7 +1065,9 @@ class _LiveCameraSession:
             if activity is None:
                 return None
             already_ready = activity.ready_for_review
-            activity.mark_ready_for_review(quiet_seconds=quiet_seconds)
+            activity.mark_ready_for_review(
+                quiet_seconds=activity.quiet_period_seconds(quiet_seconds)
+            )
             snapshot = activity.snapshot()
             self.last_activity = snapshot.as_dict()
             if not already_ready and snapshot.ready_for_review:
@@ -1067,13 +1096,15 @@ class _LiveCameraSession:
             for activity in self.activity_sessions.values():
                 if activity.review_activity_created or activity.detection_count <= 0:
                     continue
+                activity_quiet_seconds = activity.quiet_period_seconds(quiet_seconds)
                 elapsed_seconds = (now - activity.last_seen_at).total_seconds()
-                if elapsed_seconds < quiet_seconds:
+                if elapsed_seconds < activity_quiet_seconds:
                     continue
                 was_ready = activity.ready_for_review
-                activity.mark_ready_for_review(quiet_seconds=quiet_seconds)
+                activity.mark_ready_for_review(quiet_seconds=activity_quiet_seconds)
                 snapshot = activity.snapshot()
-                ready.append(snapshot)
+                if snapshot.ready_for_review:
+                    ready.append(snapshot)
                 if not was_ready:
                     self.last_activity = snapshot.as_dict()
                     self._record_diagnostic_event_locked(
@@ -1424,6 +1455,7 @@ class _LiveActivitySession:
     zone_id: str | None
     zone_name: str | None
     zone_type: str | None
+    monitoring_policy: dict[str, Any] | None
     started_at: datetime
     last_seen_at: datetime
     detection_count: int
@@ -1431,6 +1463,7 @@ class _LiveActivitySession:
     frames_evaluated_count: int
     completed_at: datetime | None
     ready_for_review: bool
+    finalized_reason: str | None
     start_frame_sequence: int | None
     end_frame_sequence: int | None
     best_frame_sequence: int | None
@@ -1496,6 +1529,11 @@ class _LiveActivitySession:
             zone_id=_optional_str(values.get("zone_id")),
             zone_name=_optional_str(values.get("zone_name")),
             zone_type=_optional_str(values.get("zone_type")),
+            monitoring_policy=(
+                dict(values["monitoring_policy"])
+                if isinstance(values.get("monitoring_policy"), Mapping)
+                else None
+            ),
             started_at=now,
             last_seen_at=now,
             detection_count=0,
@@ -1503,6 +1541,7 @@ class _LiveActivitySession:
             frames_evaluated_count=0,
             completed_at=None,
             ready_for_review=False,
+            finalized_reason=None,
             start_frame_sequence=None,
             end_frame_sequence=None,
             best_frame_sequence=None,
@@ -1568,6 +1607,7 @@ class _LiveActivitySession:
         self.last_seen_at = now
         self.completed_at = None
         self.ready_for_review = False
+        self.finalized_reason = None
         self.current_changed_ratio = _optional_float(values.get("changed_ratio"))
         self.current_changed_pixels = _optional_int(values.get("changed_pixels"))
         self.current_total_scored_pixels = _optional_int(
@@ -1629,6 +1669,57 @@ class _LiveActivitySession:
     def _append_candidate_frame(self, candidate: _LiveActivityCandidateFrame) -> None:
         # Burst candidates are in-memory evidence only and capped per activity session.
         self.candidate_frames.append(candidate)
+
+    def _policy_seconds(self, key: str, fallback: int, *, minimum: int) -> int:
+        value = (self.monitoring_policy or {}).get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return max(minimum, value)
+        return max(minimum, fallback)
+
+    def quiet_period_seconds(self, fallback: int) -> int:
+        return self._policy_seconds("quiet_period_seconds", fallback, minimum=1)
+
+    def maximum_visit_duration_seconds(self) -> int:
+        return self._policy_seconds(
+            "maximum_visit_duration_seconds",
+            DEFAULT_ACTIVITY_MAX_SESSION_SECONDS,
+            minimum=1,
+        )
+
+    def minimum_sustained_activity_seconds(self) -> int:
+        return self._policy_seconds("minimum_sustained_activity_seconds", 0, minimum=0)
+
+    def is_sustained(self) -> bool:
+        if self.detection_count <= 0:
+            return False
+        return (
+            self.last_seen_at - self.started_at
+        ).total_seconds() >= self.minimum_sustained_activity_seconds()
+
+    def _finalize_for_review(
+        self,
+        *,
+        quiet_seconds: int,
+        reason: str = "quiet_period",
+        force_sustained: bool = False,
+    ) -> None:
+        if self.review_activity_created:
+            self.ready_for_review = True
+            if self.completed_at is None:
+                self.completed_at = self.last_seen_at
+            return
+        if not force_sustained and not self.is_sustained():
+            self.ready_for_review = False
+            self.completed_at = self.last_seen_at + _timedelta_seconds(
+                self.quiet_period_seconds(quiet_seconds)
+            )
+            self.finalized_reason = "brief_activity"
+            return
+        self.ready_for_review = True
+        self.completed_at = self.last_seen_at + _timedelta_seconds(
+            self.quiet_period_seconds(quiet_seconds)
+        )
+        self.finalized_reason = reason
 
     def evidence_frames(
         self,
@@ -1775,13 +1866,7 @@ class _LiveActivitySession:
         self._emit_notification_once("review_candidate_ready")
 
     def mark_ready_for_review(self, *, quiet_seconds: int) -> None:
-        if self.review_activity_created:
-            self.ready_for_review = True
-            if self.completed_at is None:
-                self.completed_at = self.last_seen_at
-            return
-        self.ready_for_review = True
-        self.completed_at = self.last_seen_at + _timedelta_seconds(quiet_seconds)
+        self._finalize_for_review(quiet_seconds=quiet_seconds)
 
     @property
     def review_state(self) -> str:
@@ -1789,6 +1874,10 @@ class _LiveActivitySession:
             return "review_candidate_created"
         if self.detection_count == 0 and self.near_miss_count > 0:
             return "tentative_burst"
+        if self.finalized_reason == "maximum_duration":
+            return "maximum_duration"
+        if self.finalized_reason == "brief_activity":
+            return "brief_activity_ignored"
         if self.ready_for_review:
             return "ready_for_review"
         return "waiting_for_quiet"
@@ -1804,6 +1893,7 @@ class _LiveActivitySession:
             zone_id=self.zone_id,
             zone_name=self.zone_name,
             zone_type=self.zone_type,
+            monitoring_policy=dict(self.monitoring_policy or {}),
             started_at=self.started_at,
             last_seen_at=self.last_seen_at,
             detection_count=self.detection_count,
@@ -1813,6 +1903,7 @@ class _LiveActivitySession:
             saved_candidate_count=self.saved_candidate_count,
             completed_at=self.completed_at,
             ready_for_review=self.ready_for_review,
+            finalized_reason=self.finalized_reason,
             review_state=self.review_state,
             start_frame_sequence=self.start_frame_sequence,
             end_frame_sequence=self.end_frame_sequence,

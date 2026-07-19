@@ -27,6 +27,9 @@ import type {
   VisitDetail,
   VisitEvidenceFrame,
   Zone,
+  ZoneActivitySensitivity,
+  ZoneMonitoringPolicy,
+  ZoneMonitoringPolicyUpdate,
   ZoneType,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
@@ -80,6 +83,15 @@ interface ZoneDraft {
   name: string;
   zone_type: ZoneType;
   is_active: boolean;
+}
+
+interface ZoneMonitoringDraft {
+  monitoring_enabled: boolean;
+  activity_sensitivity: ZoneActivitySensitivity;
+  minimum_sustained_activity_seconds: number;
+  quiet_period_seconds: number;
+  maximum_visit_duration_seconds: number;
+  maximum_evidence_frames: number;
 }
 
 interface MediaRenderSize {
@@ -141,6 +153,44 @@ const liveMonitorSensitivitySettings: Record<
   },
 };
 const liveMonitorSensitivityOptions: LiveMonitorSensitivity[] = ["low", "normal", "high"];
+const zoneMonitoringSensitivityOptions: ZoneActivitySensitivity[] = ["low", "normal", "high"];
+
+function zoneMonitoringDraftFromPolicy(policy: ZoneMonitoringPolicy): ZoneMonitoringDraft {
+  return {
+    monitoring_enabled: policy.monitoring_enabled,
+    activity_sensitivity: policy.activity_sensitivity,
+    minimum_sustained_activity_seconds: policy.minimum_sustained_activity_seconds,
+    quiet_period_seconds: policy.quiet_period_seconds,
+    maximum_visit_duration_seconds: policy.maximum_visit_duration_seconds,
+    maximum_evidence_frames: policy.maximum_evidence_frames,
+  };
+}
+
+function zoneMonitoringSummary(policy: ZoneMonitoringPolicy): string {
+  return `${formatLabel(policy.activity_sensitivity)} sensitivity · ignore activity under ${policy.minimum_sustained_activity_seconds}s · finish after ${policy.quiet_period_seconds}s quiet`;
+}
+
+function zoneSessionPolicyStatus(activity: Record<string, unknown> | null): string | null {
+  if (!activity) return null;
+  if (activity.finalized_reason === "maximum_duration") {
+    return "Visit finalized at this Zone's maximum length.";
+  }
+  if (activity.finalized_reason === "brief_activity") {
+    return "Very brief activity was ignored.";
+  }
+  if (activity.ready_for_review) return "Visit is finalized and ready for review.";
+  const policy = activity.monitoring_policy;
+  const duration = typeof activity.session_duration_seconds === "number"
+    ? activity.session_duration_seconds
+    : 0;
+  const sustained = policy && typeof policy === "object" && "minimum_sustained_activity_seconds" in policy
+    ? (policy as { minimum_sustained_activity_seconds?: unknown }).minimum_sustained_activity_seconds
+    : 0;
+  if (typeof sustained === "number" && duration < sustained) {
+    return "Waiting for sustained activity before opening a Visit.";
+  }
+  return "Activity is open; waiting through this Zone's quiet period.";
+}
 
 function pendingAutoCreateReviewCandidatesStorageKey(streamId: string) {
   return `mockingbird:${streamId}:pending-auto-create-review-candidates`;
@@ -579,6 +629,9 @@ export function StreamDetailPage({
   const [isLoadingRecentVisitDetail, setIsLoadingRecentVisitDetail] = useState(false);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [zoneDraft, setZoneDraft] = useState<ZoneDraft | null>(null);
+  const [zoneMonitoringDraft, setZoneMonitoringDraft] = useState<ZoneMonitoringDraft | null>(
+    null,
+  );
   const [drawMode, setDrawMode] = useState(false);
   const [redrawZoneId, setRedrawZoneId] = useState<string | null>(null);
   const [drawStart, setDrawStart] = useState<Point | null>(null);
@@ -588,6 +641,7 @@ export function StreamDetailPage({
   const [zoneMessage, setZoneMessage] = useState<string | null>(null);
   const [zoneError, setZoneError] = useState<string | null>(null);
   const [isSavingZone, setIsSavingZone] = useState(false);
+  const [isSavingZoneMonitoring, setIsSavingZoneMonitoring] = useState(false);
   const [deleteZoneConfirmId, setDeleteZoneConfirmId] = useState<string | null>(null);
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   const [liveViewState, setLiveViewState] = useState<LiveViewState>("idle");
@@ -1101,6 +1155,7 @@ export function StreamDetailPage({
   useEffect(() => {
     if (!selectedZone) {
       setZoneDraft(null);
+      setZoneMonitoringDraft(null);
       return;
     }
 
@@ -1109,6 +1164,11 @@ export function StreamDetailPage({
       zone_type: selectedZone.zone_type,
       is_active: selectedZone.is_active,
     });
+    setZoneMonitoringDraft(
+      selectedZone.monitoring_policy
+        ? zoneMonitoringDraftFromPolicy(selectedZone.monitoring_policy)
+        : null,
+    );
   }, [selectedZone]);
 
   useEffect(() => {
@@ -1129,6 +1189,19 @@ export function StreamDetailPage({
 
   function replaceZones(zones: Zone[]) {
     setDetail((current) => (current ? { ...current, zones } : current));
+  }
+
+  function replaceZoneMonitoringPolicy(zoneId: string, policy: ZoneMonitoringPolicy) {
+    setDetail((current) =>
+      current
+        ? {
+            ...current,
+            zones: current.zones.map((zone) =>
+              zone.id === zoneId ? { ...zone, monitoring_policy: policy } : zone,
+            ),
+          }
+        : current,
+    );
   }
 
   function updateCameraTuningDraft(key: CameraTuningKey, value: string) {
@@ -1595,6 +1668,70 @@ export function StreamDetailPage({
       setZoneError(caught instanceof Error ? caught.message : "Could not save zone.");
     } finally {
       setIsSavingZone(false);
+    }
+  }
+
+  async function handleSaveZoneMonitoring(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedZone || !selectedZone.monitoring_policy || !zoneMonitoringDraft) {
+      return;
+    }
+
+    const current = selectedZone.monitoring_policy;
+    const changes: ZoneMonitoringPolicyUpdate = {};
+    const fields: Array<keyof ZoneMonitoringDraft> = [
+      "monitoring_enabled",
+      "activity_sensitivity",
+      "minimum_sustained_activity_seconds",
+      "quiet_period_seconds",
+      "maximum_visit_duration_seconds",
+      "maximum_evidence_frames",
+    ];
+    for (const field of fields) {
+      if (zoneMonitoringDraft[field] !== current[field]) {
+        Object.assign(changes, { [field]: zoneMonitoringDraft[field] });
+      }
+    }
+    if (Object.keys(changes).length === 0) {
+      setZoneMessage("Monitoring settings are unchanged.");
+      return;
+    }
+
+    setIsSavingZoneMonitoring(true);
+    setZoneError(null);
+    setZoneMessage(null);
+    try {
+      const policy = await apiClient.updateZoneMonitoringPolicy(selectedZone.id, changes);
+      replaceZoneMonitoringPolicy(selectedZone.id, policy);
+      setZoneMonitoringDraft(zoneMonitoringDraftFromPolicy(policy));
+      setZoneMessage("Monitoring settings saved. They apply to future activity sessions.");
+    } catch (caught) {
+      setZoneError(
+        caught instanceof Error ? caught.message : "Could not save Zone monitoring settings.",
+      );
+    } finally {
+      setIsSavingZoneMonitoring(false);
+    }
+  }
+
+  async function handleRestoreZoneMonitoringDefaults() {
+    if (!selectedZone || !selectedZone.monitoring_policy) {
+      return;
+    }
+    setIsSavingZoneMonitoring(true);
+    setZoneError(null);
+    setZoneMessage(null);
+    try {
+      const policy = await apiClient.restoreZoneMonitoringPolicyDefaults(selectedZone.id);
+      replaceZoneMonitoringPolicy(selectedZone.id, policy);
+      setZoneMonitoringDraft(zoneMonitoringDraftFromPolicy(policy));
+      setZoneMessage("Recommended monitoring settings restored for future activity sessions.");
+    } catch (caught) {
+      setZoneError(
+        caught instanceof Error ? caught.message : "Could not restore recommended settings.",
+      );
+    } finally {
+      setIsSavingZoneMonitoring(false);
     }
   }
 
@@ -3510,6 +3647,13 @@ export function StreamDetailPage({
                 >
                   <span>{zone.name}</span>
                   <strong>{formatLabel(zone.zone_type)}</strong>
+                  <small>
+                    {zone.monitoring_policy
+                      ? zone.monitoring_policy.monitoring_enabled
+                        ? "Monitoring on"
+                        : "Monitoring off"
+                      : "Suppression zone"}
+                  </small>
                 </button>
               ))}
             </div>
@@ -3589,6 +3733,170 @@ export function StreamDetailPage({
                     </button>
                   </div>
                 </form>
+              ) : null}
+
+              {selectedZone && selectedZone.monitoring_policy && zoneMonitoringDraft && !drawMode ? (
+                <form className="zone-monitoring-form" onSubmit={handleSaveZoneMonitoring}>
+                  <div className="item-title-row">
+                    <div>
+                      <strong>Monitoring</strong>
+                      <span className="meta-text">
+                        {selectedZone.monitoring_policy.uses_recommended_defaults
+                          ? "Recommended settings for this Zone type"
+                          : "Custom settings for this Zone"}
+                      </span>
+                    </div>
+                    <StatusPill
+                      label={
+                        zoneMonitoringDraft.monitoring_enabled ? "Monitoring on" : "Monitoring off"
+                      }
+                      tone={zoneMonitoringDraft.monitoring_enabled ? "good" : "quiet"}
+                    />
+                  </div>
+                  <label className="checkbox-row">
+                    <input
+                      checked={zoneMonitoringDraft.monitoring_enabled}
+                      onChange={(event) =>
+                        setZoneMonitoringDraft((current) =>
+                          current ? { ...current, monitoring_enabled: event.target.checked } : current,
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    Monitor activity in this Zone
+                  </label>
+                  <label>
+                    Activity sensitivity
+                    <select
+                      value={zoneMonitoringDraft.activity_sensitivity}
+                      onChange={(event) =>
+                        setZoneMonitoringDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                activity_sensitivity: event.target.value as ZoneActivitySensitivity,
+                              }
+                            : current,
+                        )
+                      }
+                    >
+                      {zoneMonitoringSensitivityOptions.map((sensitivity) => (
+                        <option key={sensitivity} value={sensitivity}>
+                          {formatLabel(sensitivity)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <span className="meta-text">{zoneMonitoringSummary(selectedZone.monitoring_policy)}</span>
+                  <details className="zone-monitoring-advanced">
+                    <summary>Advanced timing and evidence</summary>
+                    <div className="zone-monitoring-grid">
+                      <label>
+                        Ignore very brief activity (seconds)
+                        <input
+                          min="0"
+                          max="60"
+                          onChange={(event) =>
+                            setZoneMonitoringDraft((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    minimum_sustained_activity_seconds: Number(event.target.value),
+                                  }
+                                : current,
+                            )
+                          }
+                          type="number"
+                          value={zoneMonitoringDraft.minimum_sustained_activity_seconds}
+                        />
+                      </label>
+                      <label>
+                        Finish Visit after quiet (seconds)
+                        <input
+                          min="5"
+                          max="300"
+                          onChange={(event) =>
+                            setZoneMonitoringDraft((current) =>
+                              current
+                                ? { ...current, quiet_period_seconds: Number(event.target.value) }
+                                : current,
+                            )
+                          }
+                          type="number"
+                          value={zoneMonitoringDraft.quiet_period_seconds}
+                        />
+                      </label>
+                      <label>
+                        Maximum Visit length (seconds)
+                        <input
+                          min="30"
+                          max="900"
+                          onChange={(event) =>
+                            setZoneMonitoringDraft((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    maximum_visit_duration_seconds: Number(event.target.value),
+                                  }
+                                : current,
+                            )
+                          }
+                          type="number"
+                          value={zoneMonitoringDraft.maximum_visit_duration_seconds}
+                        />
+                      </label>
+                      <label>
+                        Evidence frames
+                        <input
+                          min="1"
+                          max="4"
+                          onChange={(event) =>
+                            setZoneMonitoringDraft((current) =>
+                              current
+                                ? { ...current, maximum_evidence_frames: Number(event.target.value) }
+                                : current,
+                            )
+                          }
+                          type="number"
+                          value={zoneMonitoringDraft.maximum_evidence_frames}
+                        />
+                      </label>
+                    </div>
+                  </details>
+                  {(() => {
+                    const activity = (liveSession?.current_activity_session ??
+                      liveSession?.last_activity ?? null) as Record<string, unknown> | null;
+                    const status = activity?.zone_id === selectedZone.id
+                      ? zoneSessionPolicyStatus(activity)
+                      : null;
+                    return status ? <span className="meta-text">{status}</span> : null;
+                  })()}
+                  <div className="zone-action-row">
+                    <button
+                      className="primary-action"
+                      disabled={isSavingZoneMonitoring}
+                      type="submit"
+                    >
+                      Save monitoring
+                    </button>
+                    <button
+                      className="secondary-action"
+                      disabled={isSavingZoneMonitoring}
+                      onClick={() => void handleRestoreZoneMonitoringDefaults()}
+                      type="button"
+                    >
+                      Restore recommended settings
+                    </button>
+                  </div>
+                  <span className="meta-text">Changes affect future activity sessions.</span>
+                </form>
+              ) : selectedZone && !drawMode ? (
+                <div className="zone-monitoring-restricted">
+                  <strong>Suppression only</strong>
+                  <span>
+                    Privacy and Ignore Zones do not capture activity or expose monitoring controls.
+                  </span>
+                </div>
               ) : !drawMode ? (
                 <span className="meta-text">No zone selected.</span>
               ) : null}

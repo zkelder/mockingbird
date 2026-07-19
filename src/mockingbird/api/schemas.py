@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SourceKind(str, Enum):
@@ -159,6 +159,12 @@ class ZoneType(str, Enum):
     driveway = "driveway"
     privacy = "privacy"
     ignore = "ignore"
+
+
+class ZoneActivitySensitivity(str, Enum):
+    low = "low"
+    normal = "normal"
+    high = "high"
 
 
 class ReviewStatus(str, Enum):
@@ -1192,6 +1198,40 @@ class Zone(BaseModel):
     zone_type: ZoneType
     polygon: list[Point]
     is_active: bool
+    monitoring_policy: ZoneMonitoringPolicy | None = None
+
+
+class ZoneMonitoringPolicy(BaseModel):
+    """Effective product settings for future activity sessions in one Zone."""
+
+    monitoring_enabled: bool
+    activity_sensitivity: ZoneActivitySensitivity
+    minimum_sustained_activity_seconds: int = Field(ge=0, le=60)
+    quiet_period_seconds: int = Field(ge=5, le=300)
+    maximum_visit_duration_seconds: int = Field(ge=30, le=900)
+    maximum_evidence_frames: int = Field(ge=1, le=4)
+    customized_fields: list[str] = Field(default_factory=list)
+    inherited_fields: list[str] = Field(default_factory=list)
+    uses_recommended_defaults: bool = True
+
+
+class ZoneMonitoringPolicyUpdate(BaseModel):
+    """Explicit overrides only; omitted values keep the Zone-type recommendation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    monitoring_enabled: bool | None = None
+    activity_sensitivity: ZoneActivitySensitivity | None = None
+    minimum_sustained_activity_seconds: int | None = Field(default=None, ge=0, le=60)
+    quiet_period_seconds: int | None = Field(default=None, ge=5, le=300)
+    maximum_visit_duration_seconds: int | None = Field(default=None, ge=30, le=900)
+    maximum_evidence_frames: int | None = Field(default=None, ge=1, le=4)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "ZoneMonitoringPolicyUpdate":
+        if not self.model_dump(exclude_none=True):
+            raise ValueError("Provide at least one monitoring setting to update.")
+        return self
 
 
 class ZoneCreate(BaseModel):
