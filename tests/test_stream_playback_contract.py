@@ -9,6 +9,7 @@ import subprocess
 import httpx
 import pytest
 
+from mockingbird.api import main as api_main
 from mockingbird.api.main import (
     app,
     configure_repository,
@@ -19,7 +20,12 @@ from mockingbird.api.main import (
     get_stream_rtsp_mjpeg_bridge,
     get_stream_windows_dshow_mjpeg_bridge,
 )
-from mockingbird.api.schemas import SourceKind, SourceStatus
+from mockingbird.api.schemas import (
+    DashboardStreamRuntimeStatus,
+    ReviewStatus,
+    SourceKind,
+    SourceStatus,
+)
 from mockingbird.monitoring.source_monitor import SourceMonitorOptions
 from mockingbird.playback import (
     live_frame_cache,
@@ -27,9 +33,20 @@ from mockingbird.playback import (
     rtsp_bridge,
     windows_camera_bridge,
 )
+from mockingbird.playback.live_camera_session import (
+    DEFAULT_ACTIVITY_MAX_VISIT_EVIDENCE_FRAMES,
+    _LiveActivitySession,
+)
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.sampler.saved_media_frames import SavedMediaFrame
-from mockingbird.storage.models import CameraSourceModel, StreamModel
+from mockingbird.storage.models import (
+    CameraSourceModel,
+    EventModel,
+    MediaAssetModel,
+    StreamModel,
+    VisitModel,
+    ZoneModel,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -141,6 +158,450 @@ def add_stream_without_zones(
     return stream_id
 
 
+def add_stream_visit_history(repository: ProductRepository, tmp_path: Path) -> None:
+    """Add isolated Visit history that exercises the Stream-scoped read surface."""
+
+    captured_at = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+    visits = [
+        (
+            "event-history-needs-review",
+            "visit-history-needs-review",
+            captured_at + timedelta(minutes=1),
+            "zone-history-feeder",
+            "needs_review",
+            None,
+            "history-needs-review.jpg",
+        ),
+        (
+            "event-history-confirmed",
+            "visit-history-confirmed",
+            captured_at + timedelta(minutes=2),
+            "zone-history-feeder",
+            "reviewed",
+            "northern_cardinal",
+            "history-confirmed.jpg",
+        ),
+        (
+            "event-history-false-positive",
+            "visit-history-false-positive",
+            captured_at + timedelta(minutes=3),
+            "zone-history-ground",
+            "reviewed",
+            "false_positive",
+            "history-false-positive.jpg",
+        ),
+        (
+            "event-history-blank",
+            "visit-history-blank",
+            captured_at + timedelta(minutes=4),
+            "zone-history-ground",
+            "reviewed",
+            "blank",
+            "history-blank.jpg",
+        ),
+    ]
+    other_stream_id = add_stream_without_zones(repository, stream_id="stream-history-other")
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add_all(
+                [
+                    ZoneModel(
+                        id="zone-history-feeder",
+                        stream_id=STREAM_ID,
+                        name="History feeder",
+                        zone_type="feeder",
+                        polygon_json="[]",
+                        is_active=True,
+                    ),
+                    ZoneModel(
+                        id="zone-history-ground",
+                        stream_id=STREAM_ID,
+                        name="History ground",
+                        zone_type="ground",
+                        polygon_json="[]",
+                        is_active=True,
+                    ),
+                ]
+            )
+            for event_id, visit_id, started_at, zone_id, review_status, label, filename in visits:
+                local_path = tmp_path / filename
+                session.add(
+                    MediaAssetModel(
+                        id=f"media-{visit_id}",
+                        source_id=SOURCE_ID,
+                        stream_id=STREAM_ID,
+                        filename=filename,
+                        content_type="image/jpeg",
+                        media_type="image",
+                        local_path=str(local_path),
+                        original_filename=filename,
+                        file_size_bytes=16,
+                        created_at=started_at,
+                        notes="Visit history fixture",
+                    )
+                )
+                session.add(
+                    EventModel(
+                        id=event_id,
+                        stream_id=STREAM_ID,
+                        title=f"History {visit_id}",
+                        event_type="history_fixture",
+                        started_at=started_at,
+                        ended_at=started_at + timedelta(seconds=45),
+                        primary_zone_id=zone_id,
+                        review_status=review_status,
+                    )
+                )
+                session.add(
+                    VisitModel(
+                        id=visit_id,
+                        event_id=event_id,
+                        subject_label="unknown_bird",
+                        species_guess="northern_cardinal" if label is None else None,
+                        confidence=None,
+                        reviewed_label=label,
+                        review_status=review_status,
+                        representative_media_path=str(local_path),
+                    )
+                )
+            session.add(
+                EventModel(
+                    id="event-history-other-stream",
+                    stream_id=other_stream_id,
+                    title="Other stream Visit",
+                    event_type="history_fixture",
+                    started_at=captured_at + timedelta(minutes=5),
+                    ended_at=None,
+                    primary_zone_id=None,
+                    review_status="needs_review",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id="visit-history-other-stream",
+                    event_id="event-history-other-stream",
+                    subject_label="unknown_bird",
+                    species_guess=None,
+                    confidence=None,
+                    reviewed_label=None,
+                    review_status="needs_review",
+                    representative_media_path=None,
+                )
+            )
+
+
+async def test_stream_recent_visit_history_is_scoped_bounded_and_safe(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    tmp_path: Path,
+) -> None:
+    add_stream_visit_history(isolated_repository, tmp_path)
+
+    bounded = await client.get(f"/api/streams/{STREAM_ID}/visits", params={"limit": 3})
+    assert bounded.status_code == 200
+    recent_visits = bounded.json()
+    assert [visit["id"] for visit in recent_visits] == [
+        "visit-history-blank",
+        "visit-history-false-positive",
+        "visit-history-confirmed",
+    ]
+    assert all(visit["stream_id"] == STREAM_ID for visit in recent_visits)
+    assert "visit-history-other-stream" not in {visit["id"] for visit in recent_visits}
+    assert all(
+        visit["primary_evidence"]["preview_url"].startswith("/api/media/")
+        for visit in recent_visits
+    )
+    assert str(tmp_path) not in str(recent_visits)
+
+    invalid_limit = await client.get(f"/api/streams/{STREAM_ID}/visits", params={"limit": 51})
+    assert invalid_limit.status_code == 422
+
+    needs_review = await client.get(
+        f"/api/streams/{STREAM_ID}/visits",
+        params={"review_status": "needs_review"},
+    )
+    assert needs_review.status_code == 200
+    assert "visit-history-needs-review" in {visit["id"] for visit in needs_review.json()}
+    assert all(visit["review_status"] == "needs_review" for visit in needs_review.json())
+
+    suggestion = await client.post(
+        "/api/species-suggestions/mock",
+        json={"visit_id": "visit-history-needs-review", "suggested_label": "blue_jay"},
+    )
+    assert suggestion.status_code == 201
+    with_suggestion = await client.get(
+        f"/api/streams/{STREAM_ID}/visits",
+        params={"review_status": "needs_review"},
+    )
+    history_suggestion = next(
+        visit
+        for visit in with_suggestion.json()
+        if visit["id"] == "visit-history-needs-review"
+    )
+    assert history_suggestion["has_suggestion"] is True
+    assert history_suggestion["suggested_label"] == "blue_jay"
+    assert history_suggestion["reviewed_label"] is None
+    assert history_suggestion["review_status"] == "needs_review"
+
+    ground_zone = await client.get(
+        f"/api/streams/{STREAM_ID}/visits",
+        params={"zone_id": "zone-history-ground"},
+    )
+    assert ground_zone.status_code == 200
+    assert [visit["id"] for visit in ground_zone.json()[:2]] == [
+        "visit-history-blank",
+        "visit-history-false-positive",
+    ]
+    assert all(visit["zone_type"] == "ground" for visit in ground_zone.json())
+
+    reviewed = await client.get(
+        f"/api/streams/{STREAM_ID}/visits",
+        params={"review_status": "reviewed"},
+    )
+    assert reviewed.status_code == 200
+    reviewed_by_id = {visit["id"]: visit for visit in reviewed.json()}
+    assert reviewed_by_id["visit-history-confirmed"]["reviewed_label"] == "northern_cardinal"
+    assert reviewed_by_id["visit-history-confirmed"]["review_outcome"] == "confirmed_bird"
+    assert reviewed_by_id["visit-history-false-positive"]["review_outcome"] == "false_positive"
+    assert reviewed_by_id["visit-history-blank"]["review_outcome"] == "blank"
+
+    other_stream = await client.get("/api/streams/stream-history-other/visits")
+    assert other_stream.status_code == 200
+    assert [visit["id"] for visit in other_stream.json()] == ["visit-history-other-stream"]
+
+    invalid_zone_scope = await client.get(
+        "/api/streams/stream-history-other/visits",
+        params={"zone_id": "zone-history-ground"},
+    )
+    assert invalid_zone_scope.status_code == 400
+
+    detail = await client.get("/api/visits/visit-history-confirmed/detail")
+    assert detail.status_code == 200
+    evidence_frames = detail.json()["evidence_frames"]
+    assert len(evidence_frames) == 1
+    assert evidence_frames[0]["is_primary"] is True
+    assert evidence_frames[0]["preview_url"] == "/api/media/media-visit-history-confirmed/file"
+    assert str(tmp_path) not in str(detail.json())
+
+
+def add_dashboard_today_visits(repository: ProductRepository, tmp_path: Path) -> str:
+    """Create local-day truth and evidence cases for the operations Dashboard."""
+
+    local_now = datetime.now().astimezone().replace(microsecond=0)
+    records = [
+        ("needs", "needs_review", None, True, 45),
+        ("bird", "reviewed", "northern_mockingbird", True, 40),
+        ("squirrel", "reviewed", "squirrel", True, 35),
+        ("false", "reviewed", "false_positive", True, 30),
+        ("blank", "reviewed", "blank", True, 25),
+        ("unknown", "reviewed", "unknown_bird", False, 20),
+    ]
+    other_stream_id = add_stream_without_zones(repository, stream_id="stream-dashboard-other")
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                ZoneModel(
+                    id="zone-dashboard-today",
+                    stream_id=STREAM_ID,
+                    name="Today feeder",
+                    zone_type="feeder",
+                    polygon_json="[]",
+                    is_active=True,
+                )
+            )
+            for index, (kind, review_status, label, has_media, minutes_ago) in enumerate(records):
+                started_at = local_now - timedelta(minutes=minutes_ago)
+                visit_id = f"visit-dashboard-{kind}"
+                local_path = tmp_path / f"dashboard-{kind}.jpg"
+                if has_media:
+                    session.add(
+                        MediaAssetModel(
+                            id=f"media-{visit_id}",
+                            source_id=SOURCE_ID,
+                            stream_id=STREAM_ID,
+                            filename=f"dashboard-{kind}.jpg",
+                            content_type="image/jpeg",
+                            media_type="image",
+                            local_path=str(local_path),
+                            original_filename=f"dashboard-{kind}.jpg",
+                            file_size_bytes=16,
+                            created_at=started_at,
+                            notes="Dashboard operations fixture",
+                        )
+                    )
+                session.add(
+                    EventModel(
+                        id=f"event-dashboard-{kind}",
+                        stream_id=STREAM_ID,
+                        title=f"Dashboard {kind}",
+                        event_type="dashboard_fixture",
+                        started_at=started_at,
+                        ended_at=started_at + timedelta(seconds=45),
+                        primary_zone_id="zone-dashboard-today",
+                        review_status=review_status,
+                    )
+                )
+                session.add(
+                    VisitModel(
+                        id=visit_id,
+                        event_id=f"event-dashboard-{kind}",
+                        subject_label="unknown_bird",
+                        species_guess="northern_mockingbird" if kind == "needs" else None,
+                        confidence=None,
+                        reviewed_label=label,
+                        review_status=review_status,
+                        representative_media_path=str(local_path) if has_media else None,
+                    )
+                )
+            session.add(
+                EventModel(
+                    id="event-dashboard-other-needs",
+                    stream_id=other_stream_id,
+                    title="Other Stream Dashboard review",
+                    event_type="dashboard_fixture",
+                    started_at=local_now - timedelta(minutes=10),
+                    ended_at=None,
+                    primary_zone_id=None,
+                    review_status="needs_review",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id="visit-dashboard-other-needs",
+                    event_id="event-dashboard-other-needs",
+                    subject_label="unknown_bird",
+                    species_guess=None,
+                    confidence=None,
+                    reviewed_label=None,
+                    review_status="needs_review",
+                    representative_media_path=None,
+                )
+            )
+    return local_now.isoformat()
+
+
+async def test_dashboard_summary_uses_reviewed_truth_and_bounded_safe_visits(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    tmp_path: Path,
+) -> None:
+    local_now = add_dashboard_today_visits(isolated_repository, tmp_path)
+    suggestion = await client.post(
+        "/api/species-suggestions/mock",
+        json={"visit_id": "visit-dashboard-needs", "suggested_label": "blue_jay"},
+    )
+    assert suggestion.status_code == 201
+
+    runtime = {
+        STREAM_ID: DashboardStreamRuntimeStatus(
+            monitoring_active=True,
+            monitor_control="live_motion",
+            can_stop_monitor=True,
+            open_activity_session_count=2,
+            ready_activity_session_count=1,
+        )
+    }
+    summary = isolated_repository.dashboard_summary(
+        runtime,
+        now=datetime.fromisoformat(local_now),
+    )
+
+    expected_needs_review = sum(
+        visit.review_status == ReviewStatus.needs_review
+        for visit in isolated_repository.list_visits()
+    )
+    assert summary.headline.needs_review_visit_count == expected_needs_review
+    assert summary.headline.monitored_stream_count == 1
+    assert summary.headline.open_activity_session_count == 2
+    assert summary.headline.reviewed_observation_count_today == 1
+    assert {observation.label for observation in summary.today_observations} == {
+        "northern_mockingbird"
+    }
+    assert "blue_jay" not in {observation.label for observation in summary.today_observations}
+    assert "false_positive" not in {observation.label for observation in summary.today_observations}
+    assert "blank" not in {observation.label for observation in summary.today_observations}
+    assert {observation.label for observation in summary.reviewed_non_bird_activity} == {"squirrel"}
+
+    streams_by_id = {stream.stream_id: stream for stream in summary.streams}
+    assert streams_by_id[STREAM_ID].needs_review_visit_count >= 1
+    assert streams_by_id["stream-dashboard-other"].needs_review_visit_count == 1
+    assert streams_by_id[STREAM_ID].latest_visit is not None
+
+    needs_by_id = {visit.id: visit for visit in summary.needs_review_visits}
+    assert needs_by_id["visit-dashboard-needs"].has_suggestion is True
+    assert needs_by_id["visit-dashboard-needs"].review_status == ReviewStatus.needs_review
+    assert needs_by_id["visit-dashboard-other-needs"].stream_id == "stream-dashboard-other"
+    assert any(visit.id == "visit-dashboard-unknown" and visit.primary_evidence is None for visit in summary.recent_activity)
+    for visit in [*summary.needs_review_visits, *summary.recent_activity]:
+        if visit.primary_evidence is not None:
+            assert visit.primary_evidence.preview_url.startswith("/api/media/")
+    assert str(tmp_path) not in summary.model_dump_json()
+    assert len(summary.streams) <= 50
+    assert len(summary.needs_review_visits) <= 12
+    assert len(summary.today_observations) <= 12
+    assert len(summary.recent_activity) <= 25
+    assert [visit.activity_started_at for visit in summary.recent_activity] == sorted(
+        (visit.activity_started_at for visit in summary.recent_activity),
+        reverse=True,
+    )
+
+    response = await client.get("/api/dashboard/summary")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["headline"]["needs_review_visit_count"] == expected_needs_review
+    assert payload["needs_review_visits"][0]["id"] == "visit-dashboard-other-needs"
+
+
+def test_dashboard_summary_serializes_an_empty_stream_installation(
+    isolated_repository: ProductRepository,
+) -> None:
+    with isolated_repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id="source-dashboard-empty",
+                    name="Empty Dashboard Source",
+                    kind=SourceKind.manual_upload.value,
+                    status=SourceStatus.connected.value,
+                    description="No Streams yet.",
+                )
+            )
+    removed = isolated_repository.remove_sample_data(confirm=True)
+    assert removed.removed is True
+
+    summary = isolated_repository.dashboard_summary(now=datetime.now().astimezone())
+    assert summary.headline.configured_stream_count == 0
+    assert summary.headline.needs_review_visit_count == 0
+    assert summary.streams == []
+    assert summary.needs_review_visits == []
+    assert summary.today_observations == []
+    assert summary.recent_activity == []
+
+
+def test_dashboard_summary_keeps_other_streams_when_one_readiness_check_fails(
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    other_stream_id = add_stream_without_zones(
+        isolated_repository,
+        stream_id="stream-dashboard-readiness-failure",
+    )
+    original_status = isolated_repository.get_stream_playback_status
+
+    def status_with_one_failure(stream_id: str):
+        if stream_id == other_stream_id:
+            raise RuntimeError("fixture readiness failure")
+        return original_status(stream_id)
+
+    monkeypatch.setattr(isolated_repository, "get_stream_playback_status", status_with_one_failure)
+    summary = isolated_repository.dashboard_summary(now=datetime.now().astimezone())
+    streams_by_id = {stream.stream_id: stream for stream in summary.streams}
+
+    assert streams_by_id[STREAM_ID].availability_status != "unavailable"
+    assert streams_by_id[other_stream_id].availability_status == "unavailable"
+    assert any("temporarily unavailable" in warning for warning in summary.warnings)
+
+
 def test_live_frame_cache_returns_fresh_latest_frame() -> None:
     captured_at = datetime.now(UTC)
     frame_bytes = b"\xff\xd8live-frame\xff\xd9"
@@ -176,6 +637,50 @@ def test_live_frame_cache_ignores_stale_frame() -> None:
     )
 
     assert cached is None
+
+
+def test_live_activity_evidence_selector_is_bounded_ordered_and_primary() -> None:
+    started_at = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+    def values(index: int) -> dict[str, object]:
+        captured_at = started_at + timedelta(seconds=index)
+        return {
+            "activity_detected": True,
+            "best_frame_sequence": index,
+            "best_frame_captured_at": captured_at,
+            "best_frame_width": 640,
+            "best_frame_height": 480,
+            "best_score": float(index),
+        }
+
+    activity = _LiveActivitySession.from_detection(
+        values(0),
+        stream_id=STREAM_ID,
+        source_id=SOURCE_ID,
+        region_key="zone:bounded-evidence",
+        now=started_at,
+        frame_bytes=b"frame-0",
+        frame_content_type="image/jpeg",
+    )
+    for index in range(1, 36):
+        activity.record_detection(
+            values(index),
+            now=started_at + timedelta(seconds=index),
+            frame_bytes=f"frame-{index}".encode(),
+            frame_content_type="image/jpeg",
+        )
+
+    frames = activity.evidence_frames(max_frames=99)
+
+    assert 1 <= len(frames) <= DEFAULT_ACTIVITY_MAX_VISIT_EVIDENCE_FRAMES
+    assert [frame.captured_at for frame in frames] == sorted(
+        frame.captured_at for frame in frames
+    )
+    assert len({frame.frame_key for frame in frames}) == len(frames)
+    assert sum(frame.is_primary for frame in frames) == 1
+    assert next(frame for frame in frames if frame.is_primary).sequence == 35
+    assert frames[0].sequence == 0
+    assert frames[-1].sequence == 35
 
 
 def blank_frame(*, width: int = 4, height: int = 4) -> list[list[int]]:
@@ -3046,14 +3551,15 @@ async def test_unattended_monitoring_auto_creates_review_candidate_after_quiet_o
     )
     assert queue_item["identification"]["creates_truth"] is False
     assert queue_item["identification"]["can_run"] is False
-    assert queue_item["suggested_label"] == "unknown_bird"
+    assert queue_item["suggested_label"] == "unknown_animal"
+    assert queue_item["suggestion_id"] is None
 
     after_auto = await product_counts(client)
     assert after_auto["media_assets"] == before["media_assets"] + 1
     assert after_auto["motion_evidence"] == before["motion_evidence"] + 1
     assert after_auto["events"] == before["events"] + 1
     assert after_auto["visits"] == before["visits"] + 1
-    assert after_auto["species_suggestions"] == before["species_suggestions"] + 1
+    assert after_auto["species_suggestions"] == before["species_suggestions"]
     assert after_auto["review_labels"] == before["review_labels"]
     assert after_auto["detection_proposals"] == before["detection_proposals"]
     assert after_auto["dataset_exports"] == before["dataset_exports"]
@@ -3108,6 +3614,178 @@ async def test_unattended_monitoring_auto_creates_review_candidate_after_quiet_o
         corrected_coverage["reviewed_record_count"]
         == before_coverage["reviewed_record_count"] + 1
     )
+    corrected_analytics = (await client.get("/api/analytics/summary")).json()
+    assert (
+        corrected_analytics["species_counts"].get("northern_cardinal", 0)
+        == before_analytics["species_counts"].get("northern_cardinal", 0) + 1
+    )
+    assert "northern_cardinal" in corrected_analytics["species_label_ids"]
+    export_response = await client.post(
+        "/api/dataset-exports",
+        json={"name": "Reviewed unattended live activity", "reviewed_only": True},
+    )
+    assert export_response.status_code == 201
+    export_manifest = export_response.json()["manifest"]
+    assert any(
+        record["visit_id"] == auto_status["activity_visit_id"]
+        and record["label"] == "northern_cardinal"
+        and record["reviewed"] is True
+        for record in export_manifest["records"]
+    )
+
+
+async def test_unattended_monitoring_closes_each_quiet_zone_once(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A quiet Zone closes independently while another Zone remains active."""
+
+    fake_process = FakeFfmpegProcess([])
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, **kwargs: fake_process,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+    started = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert started.status_code == 200
+
+    manager = get_live_camera_session_manager()
+    monitored = manager.start_monitor(
+        STREAM_ID,
+        lambda: {"activity_detected": False},
+        interval_seconds=10,
+        auto_create_review_candidates=True,
+        auto_review_quiet_seconds=1,
+        auto_review_min_detections=1,
+    )
+    assert monitored is not None
+    before = await product_counts(client)
+    now = datetime.now(UTC)
+
+    def record_zone_activity(
+        *,
+        zone_id: str,
+        zone_name: str,
+        zone_type: str,
+        seen_at: datetime,
+        sequence: int,
+        frame: bytes,
+    ):
+        return manager.record_activity_detection(
+            STREAM_ID,
+            {
+                "region_key": f"zone:{zone_id}",
+                "region_kind": "zone",
+                "region_id": zone_id,
+                "zone_id": zone_id,
+                "zone_name": zone_name,
+                "zone_type": zone_type,
+                "activity_detected": True,
+                "last_seen_at": seen_at,
+                "frames_evaluated_count": 1,
+                "start_frame_sequence": sequence,
+                "end_frame_sequence": sequence,
+                "best_frame_sequence": sequence,
+                "best_frame_captured_at": seen_at,
+                "best_score": 0.8,
+                "changed_ratio": 0.04,
+                "changed_pixels": 40,
+                "total_scored_pixels": 1000,
+                "effective_threshold_used": 0.02,
+                "threshold_source": "requested",
+                "activity_left": 0.1,
+                "activity_top": 0.2,
+                "activity_right": 0.4,
+                "activity_bottom": 0.5,
+                "activity_changed_pixel_count": 40,
+            },
+            frame_bytes=frame,
+            frame_content_type="image/jpeg",
+            quiet_window_seconds=1,
+        )
+
+    feeder = record_zone_activity(
+        zone_id="zone-feeder",
+        zone_name="Feeder",
+        zone_type="feeder",
+        seen_at=now - timedelta(seconds=2),
+        sequence=10,
+        frame=b"\xff\xd8quiet-feeder\xff\xd9",
+    )
+    ground = record_zone_activity(
+        zone_id="zone-ground",
+        zone_name="Ground below feeder",
+        zone_type="ground",
+        seen_at=now,
+        sequence=11,
+        frame=b"\xff\xd8active-ground\xff\xd9",
+    )
+    assert feeder is not None
+    assert ground is not None
+
+    first_result = api_main._maybe_auto_create_live_review_candidate(STREAM_ID)
+    assert first_result is not None
+    assert first_result.review_activity_created is True
+    assert first_result.activity_session_id == feeder.activity_session_id
+    assert first_result.suggested_label is None
+    first_status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    assert first_status["open_activity_session_count"] == 1
+    assert first_status["open_activity_zone_names"] == ["Ground below feeder"]
+    assert first_status["ready_activity_session_count"] == 0
+    assert first_status["latest_activity_review_queue_item_id"] == first_result.review_queue_item_id
+    first_counts = await product_counts(client)
+    assert first_counts["media_assets"] == before["media_assets"] + 1
+    assert first_counts["motion_evidence"] == before["motion_evidence"] + 1
+    assert first_counts["events"] == before["events"] + 1
+    assert first_counts["visits"] == before["visits"] + 1
+    assert first_counts["species_suggestions"] == before["species_suggestions"]
+    assert api_main._maybe_auto_create_live_review_candidate(STREAM_ID) is None
+    assert await product_counts(client) == first_counts
+
+    # The still-open ground session gets its own eventual candidate, never a
+    # duplicate of the completed feeder session.
+    updated_ground = record_zone_activity(
+        zone_id="zone-ground",
+        zone_name="Ground below feeder",
+        zone_type="ground",
+        seen_at=now - timedelta(seconds=2),
+        sequence=12,
+        frame=b"\xff\xd8quiet-ground\xff\xd9",
+    )
+    assert updated_ground is not None
+    assert updated_ground.activity_session_id == ground.activity_session_id
+    second_result = api_main._maybe_auto_create_live_review_candidate(STREAM_ID)
+    assert second_result is not None
+    assert second_result.review_activity_created is True
+    assert second_result.activity_session_id == ground.activity_session_id
+    assert second_result.review_queue_item_id != first_result.review_queue_item_id
+    assert api_main._maybe_auto_create_live_review_candidate(STREAM_ID) is None
+    second_status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
+    assert second_status["open_activity_session_count"] == 0
+    assert second_status["ready_activity_session_count"] == 0
+    assert second_status["latest_activity_review_queue_item_id"] == second_result.review_queue_item_id
+    final_counts = await product_counts(client)
+    assert final_counts["media_assets"] == before["media_assets"] + 3
+    assert final_counts["motion_evidence"] == before["motion_evidence"] + 2
+    assert final_counts["events"] == before["events"] + 2
+    assert final_counts["visits"] == before["visits"] + 2
+    assert final_counts["species_suggestions"] == before["species_suggestions"]
+
+    first_detail = (await client.get(f"/api/visits/{first_result.visit_id}/detail")).json()
+    second_detail = (await client.get(f"/api/visits/{second_result.visit_id}/detail")).json()
+    first_evidence_ids = {
+        frame["media_asset_id"] for frame in first_detail["evidence_frames"]
+    }
+    second_evidence_ids = {
+        frame["media_asset_id"] for frame in second_detail["evidence_frames"]
+    }
+    assert first_evidence_ids
+    assert second_evidence_ids
+    assert first_evidence_ids.isdisjoint(second_evidence_ids)
 
 
 async def test_unattended_monitoring_respects_min_detection_gate(
@@ -3541,7 +4219,7 @@ async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(
     assert created["creates_truth"] is False
 
     after_create = await product_counts(client)
-    assert after_create["media_assets"] == before["media_assets"] + 1
+    assert after_create["media_assets"] == before["media_assets"] + 2
     assert after_create["motion_evidence"] == before["motion_evidence"] + 1
     assert after_create["events"] == before["events"] + 1
     assert after_create["visits"] == before["visits"] + 1
@@ -3574,6 +4252,25 @@ async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(
     assert queue_item["suggested_label"] == "unknown_bird"
     assert queue_item["fine_motion_applied"] is True
     assert queue_item["threshold_source"] == "bird_feeder_high_fine"
+    evidence_frames = queue_item["evidence_frames"]
+    assert 1 < len(evidence_frames) <= 4
+    assert [frame["captured_at"] for frame in evidence_frames] == sorted(
+        frame["captured_at"] for frame in evidence_frames
+    )
+    assert [frame["media_asset_id"] for frame in evidence_frames] == list(
+        dict.fromkeys(frame["media_asset_id"] for frame in evidence_frames)
+    )
+    assert sum(frame["is_primary"] for frame in evidence_frames) == 1
+    assert next(frame for frame in evidence_frames if frame["is_primary"])[
+        "media_asset_id"
+    ] == created["media_asset_id"]
+    assert all("local_path" not in frame for frame in evidence_frames)
+    assert all(frame["preview_url"].startswith("/api/media/") for frame in evidence_frames)
+
+    visit_detail = (await client.get(f"/api/visits/{created['visit_id']}/detail")).json()
+    assert [frame["media_asset_id"] for frame in visit_detail["evidence_frames"]] == [
+        frame["media_asset_id"] for frame in evidence_frames
+    ]
 
     duplicate_response = await client.post(
         f"/api/streams/{STREAM_ID}/live-motion/review-activity"
@@ -3613,6 +4310,22 @@ async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(
     corrected_counts = await product_counts(client)
     assert corrected_counts["review_labels"] == after_create["review_labels"] + 1
     assert corrected_counts["dataset_exports"] == after_create["dataset_exports"]
+    false_positive_analytics = (await client.get("/api/analytics/summary")).json()
+    assert false_positive_analytics["species_counts"]["false_positive"] >= 1
+    assert false_positive_analytics["label_categories"]["false_positive"] == "false_positive"
+    assert "false_positive" not in false_positive_analytics["species_label_ids"]
+    false_positive_export = await client.post(
+        "/api/dataset-exports",
+        json={"name": "Reviewed grouped activity outcomes", "reviewed_only": True},
+    )
+    assert false_positive_export.status_code == 201
+    false_positive_record = next(
+        record
+        for record in false_positive_export.json()["manifest"]["records"]
+        if record["visit_id"] == created["visit_id"]
+    )
+    assert false_positive_record["label"] == "false_positive"
+    assert false_positive_record["is_species"] is False
 
 
 async def test_small_feeder_activity_capture_and_review_handoff_keep_monitor_running(

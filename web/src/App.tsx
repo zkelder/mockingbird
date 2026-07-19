@@ -355,11 +355,11 @@ export default function App() {
   }
 
   function renderPage() {
-    if (isLoading) {
+    if (isLoading && page !== "dashboard") {
       return <div className="panel">Loading MockingBird...</div>;
     }
 
-    if (error) {
+    if (error && page !== "dashboard") {
       return (
         <div className="error-panel">
           <strong>Could not reach the MockingBird API.</strong>
@@ -376,25 +376,11 @@ export default function App() {
       return (
         <DashboardPage
           health={data.health}
-          sources={data.sources}
-          streams={data.streams}
-          analytics={data.analytics}
-          datasetCoverage={data.datasetCoverage}
-          datasetQuality={data.datasetQuality}
-          modelReadiness={data.modelReadiness}
-          reviewQueue={data.reviewQueue}
-          exports={data.exports}
           onOpenStream={openStream}
           onOpenStreams={() => setPage("streams")}
-          onOpenImport={() => setPage("import")}
-          onOpenMotionEvidence={() => setPage("motion-evidence")}
-          onOpenSavedMediaRetention={() => setPage("saved-media-retention")}
-          onOpenModelAdapters={() => setPage("model-adapters")}
-          onOpenClassifierReadiness={() => setPage("classifier-readiness")}
-          onOpenDetectionProposals={() => setPage("detection-proposals")}
-          onOpenWorkerStatus={() => setPage("worker-status")}
-          onOpenReview={() => openReviewQueue()}
-          onOpenExports={() => setPage("exports")}
+          onOpenReview={openReviewQueue}
+          onOpenBirdLog={() => setPage("bird-log")}
+          onOpenVisit={openVisit}
         />
       );
     }

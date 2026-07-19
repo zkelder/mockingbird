@@ -167,6 +167,17 @@ class ReviewStatus(str, Enum):
     rejected = "rejected"
 
 
+class VisitReviewOutcome(str, Enum):
+    needs_review = "needs_review"
+    confirmed_bird = "confirmed_bird"
+    false_positive = "false_positive"
+    blank = "blank"
+    ambiguous = "ambiguous"
+    non_bird = "non_bird"
+    reviewed_other = "reviewed_other"
+    rejected = "rejected"
+
+
 class ReviewQueueBulkCorrectionTargetType(str, Enum):
     event = "event"
     visit = "visit"
@@ -842,6 +853,10 @@ class LiveCameraSessionStatusResponse(BaseModel):
     last_auto_review_visit_id: str | None = None
     last_auto_review_queue_item_id: str | None = None
     last_motion_evaluation_at: datetime | None = None
+    open_activity_session_count: int = Field(default=0, ge=0)
+    open_activity_zone_names: list[str] = Field(default_factory=list)
+    ready_activity_session_count: int = Field(default=0, ge=0)
+    latest_activity_review_queue_item_id: str | None = None
     current_activity_session: dict[str, Any] | None = None
     current_activity_session_id: str | None = None
     activity_started_at: datetime | None = None
@@ -1246,6 +1261,114 @@ class MediaAsset(BaseModel):
     notes: str | None = None
 
 
+class VisitEvidenceFrame(BaseModel):
+    # Bounded, observational media for one Visit. Never expose its local path.
+    media_asset_id: str
+    preview_url: str
+    captured_at: datetime
+    relative_position: float = Field(ge=0, le=1)
+    frame_sequence: int | None = Field(default=None, ge=0)
+    is_primary: bool
+    content_type: str
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
+
+
+class StreamVisitSummary(BaseModel):
+    # Compact, Stream-scoped history. Full evidence is loaded only on inspection.
+    id: str
+    event_id: str
+    stream_id: str
+    captured_at: datetime
+    activity_started_at: datetime
+    activity_ended_at: datetime | None = None
+    duration_seconds: float = Field(ge=0)
+    zone_id: str | None = None
+    zone_name: str | None = None
+    zone_type: ZoneType | None = None
+    review_status: ReviewStatus
+    reviewed_label: str | None = None
+    review_outcome: VisitReviewOutcome
+    suggested_label: str | None = None
+    has_suggestion: bool = False
+    evidence_frame_count: int = Field(ge=0)
+    primary_evidence: VisitEvidenceFrame | None = None
+
+
+class DashboardStreamRuntimeStatus(BaseModel):
+    """Read-only runtime facts collected without starting a camera or monitor."""
+
+    monitoring_active: bool = False
+    monitor_control: str = "none"
+    can_start_monitor: bool = False
+    can_stop_monitor: bool = False
+    open_activity_session_count: int = Field(default=0, ge=0)
+    ready_activity_session_count: int = Field(default=0, ge=0)
+
+
+class DashboardVisitSummary(StreamVisitSummary):
+    # Product context for a compact cross-Stream Visit row; evidence stays bounded.
+    stream_name: str
+    source_id: str
+    source_name: str
+
+
+class DashboardStreamSummary(BaseModel):
+    stream_id: str
+    stream_name: str
+    source_id: str
+    source_name: str
+    availability_status: StreamPlaybackStatusValue
+    availability_message: str
+    monitoring_active: bool = False
+    monitor_control: str = "none"
+    can_start_monitor: bool = False
+    can_stop_monitor: bool = False
+    open_activity_session_count: int = Field(default=0, ge=0)
+    ready_activity_session_count: int = Field(default=0, ge=0)
+    needs_review_visit_count: int = Field(default=0, ge=0)
+    latest_visit: DashboardVisitSummary | None = None
+
+
+class DashboardReviewedObservation(BaseModel):
+    # One reviewed label grouping; suggestions never reach this serializer.
+    label: str
+    display_name: str
+    category: LabelCategory
+    observation_count: int = Field(ge=1)
+    latest_visit: DashboardVisitSummary
+
+
+class DashboardHeadline(BaseModel):
+    configured_stream_count: int = Field(ge=0)
+    monitored_stream_count: int = Field(ge=0)
+    open_activity_session_count: int = Field(ge=0)
+    needs_review_visit_count: int = Field(ge=0)
+    reviewed_observation_count_today: int = Field(ge=0)
+
+
+class DashboardSummary(BaseModel):
+    # Bounded daily operations surface; never a full Visit-detail payload.
+    local_day: str
+    generated_at: datetime
+    headline: DashboardHeadline
+    streams: list[DashboardStreamSummary] = Field(default_factory=list, max_length=50)
+    needs_review_visits: list[DashboardVisitSummary] = Field(
+        default_factory=list,
+        max_length=12,
+    )
+    today_observations: list[DashboardReviewedObservation] = Field(
+        default_factory=list,
+        max_length=12,
+    )
+    reviewed_non_bird_activity: list[DashboardReviewedObservation] = Field(
+        default_factory=list,
+        max_length=8,
+    )
+    recent_activity: list[DashboardVisitSummary] = Field(default_factory=list, max_length=25)
+    warnings: list[str] = Field(default_factory=list, max_length=12)
+
+
 class DetectionRun(BaseModel):
     id: str
     media_asset_id: str
@@ -1468,7 +1591,16 @@ class MotionEvaluateSequenceRequest(BaseModel):
     notes: str | None = None
 
 
-MotionScoringConfigValue = str | int | float | bool | list[str] | None
+MotionEvidenceFrameConfigValue = str | int | float | bool | None
+MotionScoringConfigValue = (
+    str
+    | int
+    | float
+    | bool
+    | list[str]
+    | list[dict[str, MotionEvidenceFrameConfigValue]]
+    | None
+)
 
 
 class MotionEvidenceCreateRequest(BaseModel):
@@ -2132,6 +2264,7 @@ class ReviewQueueItem(BaseModel):
     focus_crop_warnings: list[str] = Field(default_factory=list)
     identification: ReviewIdentificationSummary | None = None
     media_asset: MediaAsset | None = None
+    evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
     review_status: ReviewStatus
     reason: str
 
@@ -2820,6 +2953,7 @@ class VisitDetail(BaseModel):
     detections: list[Detection]
     motion_evidence: MotionEvidenceResponse | None = None
     media_asset: MediaAsset | None = None
+    evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
     detection_proposals: list[DetectionProposal] = Field(default_factory=list)
     detection_runs: list[DetectionRun] = Field(default_factory=list)
     review_labels: list[ReviewLabel]

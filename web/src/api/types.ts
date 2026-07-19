@@ -99,6 +99,15 @@ export type ZoneType =
   | "ignore";
 
 export type ReviewStatus = "needs_review" | "reviewed" | "rejected";
+export type VisitReviewOutcome =
+  | "needs_review"
+  | "confirmed_bird"
+  | "false_positive"
+  | "blank"
+  | "ambiguous"
+  | "non_bird"
+  | "reviewed_other"
+  | "rejected";
 export type ReviewIdentificationStatus =
   | "suggestion_present"
   | "proposal_present"
@@ -591,6 +600,10 @@ export interface LiveCameraSessionStatus {
   last_auto_review_visit_id?: string | null;
   last_auto_review_queue_item_id?: string | null;
   last_motion_evaluation_at?: string | null;
+  open_activity_session_count: number;
+  open_activity_zone_names: string[];
+  ready_activity_session_count: number;
+  latest_activity_review_queue_item_id?: string | null;
   current_activity_session?: Record<string, unknown> | null;
   current_activity_session_id?: string | null;
   activity_started_at?: string | null;
@@ -986,6 +999,89 @@ export interface MediaAsset {
   file_size_bytes: number;
   created_at: string;
   notes?: string | null;
+}
+
+export interface VisitEvidenceFrame {
+  media_asset_id: string;
+  preview_url: string;
+  captured_at: string;
+  relative_position: number;
+  frame_sequence?: number | null;
+  is_primary: boolean;
+  content_type: string;
+  width?: number | null;
+  height?: number | null;
+}
+
+export interface StreamVisitSummary {
+  id: string;
+  event_id: string;
+  stream_id: string;
+  captured_at: string;
+  activity_started_at: string;
+  activity_ended_at?: string | null;
+  duration_seconds: number;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  zone_type?: ZoneType | null;
+  review_status: ReviewStatus;
+  reviewed_label?: string | null;
+  review_outcome: VisitReviewOutcome;
+  suggested_label?: string | null;
+  has_suggestion: boolean;
+  evidence_frame_count: number;
+  primary_evidence?: VisitEvidenceFrame | null;
+}
+
+export interface DashboardVisitSummary extends StreamVisitSummary {
+  stream_name: string;
+  source_id: string;
+  source_name: string;
+}
+
+export interface DashboardStreamSummary {
+  stream_id: string;
+  stream_name: string;
+  source_id: string;
+  source_name: string;
+  availability_status: StreamPlaybackStatusValue;
+  availability_message: string;
+  monitoring_active: boolean;
+  monitor_control: "none" | "live_motion" | "source_monitor";
+  can_start_monitor: boolean;
+  can_stop_monitor: boolean;
+  open_activity_session_count: number;
+  ready_activity_session_count: number;
+  needs_review_visit_count: number;
+  latest_visit?: DashboardVisitSummary | null;
+}
+
+export interface DashboardReviewedObservation {
+  label: string;
+  display_name: string;
+  category: LabelCategory;
+  observation_count: number;
+  latest_visit: DashboardVisitSummary;
+}
+
+export interface DashboardHeadline {
+  configured_stream_count: number;
+  monitored_stream_count: number;
+  open_activity_session_count: number;
+  needs_review_visit_count: number;
+  reviewed_observation_count_today: number;
+}
+
+export interface DashboardSummary {
+  local_day: string;
+  generated_at: string;
+  headline: DashboardHeadline;
+  streams: DashboardStreamSummary[];
+  needs_review_visits: DashboardVisitSummary[];
+  today_observations: DashboardReviewedObservation[];
+  reviewed_non_bird_activity: DashboardReviewedObservation[];
+  recent_activity: DashboardVisitSummary[];
+  warnings: string[];
 }
 
 export interface MediaImportResult {
@@ -2040,6 +2136,7 @@ export interface ReviewQueueItem {
   focus_crop_warnings: string[];
   identification?: ReviewIdentificationSummary | null;
   media_asset?: MediaAsset | null;
+  evidence_frames: VisitEvidenceFrame[];
   review_status: ReviewStatus;
   reason: string;
 }
@@ -2145,6 +2242,7 @@ export interface VisitDetail {
   detections: Detection[];
   motion_evidence?: MotionEvidence | null;
   media_asset?: MediaAsset | null;
+  evidence_frames: VisitEvidenceFrame[];
   detection_proposals: DetectionProposal[];
   detection_runs: DetectionRun[];
   review_labels: ReviewLabel[];

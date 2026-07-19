@@ -13,7 +13,7 @@ import sys
 import threading
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse, Response, StreamingResponse
 
@@ -35,6 +35,8 @@ from mockingbird.api.schemas import (
     DatasetExportDetail,
     DatasetExportManifest,
     DatasetQualitySummary,
+    DashboardStreamRuntimeStatus,
+    DashboardSummary,
     DemoDetectionRunCreate,
     DemoDetectionRunResult,
     DetectionProposal,
@@ -150,6 +152,7 @@ from mockingbird.api.schemas import (
     StreamPlaybackStatus,
     StreamPlaybackStatusResponse,
     StreamRuntimeStatusResponse,
+    StreamVisitSummary,
     TaxonomyLabel,
     Visit,
     VisitDetail,
@@ -1932,6 +1935,12 @@ def _live_camera_session_response(
         last_auto_review_visit_id=snapshot.last_auto_review_visit_id,
         last_auto_review_queue_item_id=snapshot.last_auto_review_queue_item_id,
         last_motion_evaluation_at=snapshot.last_motion_evaluation_at,
+        open_activity_session_count=snapshot.open_activity_session_count,
+        open_activity_zone_names=snapshot.open_activity_zone_names,
+        ready_activity_session_count=snapshot.ready_activity_session_count,
+        latest_activity_review_queue_item_id=(
+            snapshot.latest_activity_review_queue_item_id
+        ),
         **_live_activity_session_status_fields(
             snapshot.current_activity_session,
             quiet_seconds=snapshot.auto_review_quiet_seconds,
@@ -2602,6 +2611,74 @@ def _ensure_live_activity_best_media_asset(
     if updated is None:
         return media_asset.id, {**activity, "best_media_asset_id": media_asset.id}
     return media_asset.id, updated.as_dict()
+
+
+def _ensure_live_activity_evidence_media_assets(
+    *,
+    repository: ProductRepository,
+    stream: Stream,
+    activity: dict[str, Any],
+    best_media_asset_id: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Persist the activity session's tiny frame sample without creating video."""
+
+    activity_session_id = activity.get("activity_session_id")
+    if not activity_session_id:
+        return [], activity
+
+    manager = get_live_camera_session_manager()
+    frames = manager.get_activity_evidence_frames(
+        stream.id,
+        str(activity_session_id),
+    )
+    if not frames:
+        return [], activity
+
+    configuration = repository.get_stream_live_playback_config(stream.id)
+    persisted: list[dict[str, Any]] = []
+    for frame in frames:
+        media_asset_id = best_media_asset_id if frame.is_primary else frame.media_asset_id
+        if media_asset_id and repository.get_media_asset(media_asset_id) is None:
+            media_asset_id = None
+        if media_asset_id is None:
+            try:
+                media_asset = repository.create_live_motion_frame_media_asset(
+                    source_id=stream.source_id,
+                    stream_id=stream.id,
+                    content=frame.frame_bytes,
+                    content_type=frame.content_type or "image/jpeg",
+                    captured_at=frame.captured_at,
+                    frame_sequence=frame.sequence or 0,
+                    playback_type=configuration.live_stream_type if configuration else None,
+                    note=(
+                        "Saved bounded supporting frame from live activity session "
+                        "for explicit review; this is not a video recording."
+                    ),
+                )
+            except ValueError as error:
+                raise _media_import_error(error) from error
+            media_asset_id = media_asset.id
+            manager.mark_activity_evidence_media_asset(
+                stream.id,
+                str(activity_session_id),
+                frame.frame_key,
+                media_asset_id,
+            )
+
+        persisted.append(
+            {
+                "activity_session_id": str(activity_session_id),
+                "media_asset_id": media_asset_id,
+                "captured_at": frame.captured_at.isoformat(),
+                "frame_sequence": frame.sequence,
+                "is_primary": frame.is_primary,
+                "width": frame.width,
+                "height": frame.height,
+            }
+        )
+
+    updated = manager.get_activity_session(stream.id, str(activity_session_id))
+    return persisted, updated.as_dict() if updated is not None else activity
 
 
 def _frame_summary_for_media_asset(
@@ -4502,14 +4579,19 @@ def _create_live_stream_motion_review_activity(
     stream_id: str,
     *,
     auto_created: bool = False,
+    activity_session_id: str | None = None,
 ) -> LiveMotionReviewActivityResponse:
     repository = get_repository()
     stream = repository.get_stream(stream_id)
     if stream is None:
         raise _not_found("Stream", stream_id)
-    snapshot = get_live_camera_session_manager().status(stream_id)
+    manager = get_live_camera_session_manager()
+    snapshot = manager.status(stream_id)
     activity = None
-    if snapshot is not None:
+    if activity_session_id:
+        selected_activity = manager.get_activity_session(stream_id, activity_session_id)
+        activity = selected_activity.as_dict() if selected_activity is not None else None
+    elif snapshot is not None:
         activity = snapshot.current_activity_session or snapshot.last_activity
     if not activity:
         return _live_motion_review_activity_response(
@@ -4583,6 +4665,13 @@ def _create_live_stream_motion_review_activity(
             warnings=["Create review activity requires saved best-frame evidence."],
         )
 
+    evidence_frames, activity = _ensure_live_activity_evidence_media_assets(
+        repository=repository,
+        stream=stream,
+        activity=activity,
+        best_media_asset_id=str(best_media_asset_id),
+    )
+
     zone_name = activity.get("zone_name")
     zone_type = activity.get("zone_type")
     live_activity_suggestion = _live_activity_suggestion_for_zone(
@@ -4620,6 +4709,8 @@ def _create_live_stream_motion_review_activity(
                     "frames_evaluated_count": activity.get("frames_evaluated_count") or 0,
                     "candidate_frame_count": activity.get("candidate_frame_count") or 0,
                     "saved_candidate_count": activity.get("saved_candidate_count") or 0,
+                    "visit_evidence_frame_limit": len(evidence_frames),
+                    "visit_evidence_frames": evidence_frames,
                     "activity_started_at": str(activity.get("started_at"))
                     if activity.get("started_at")
                     else "",
@@ -4671,7 +4762,7 @@ def _create_live_stream_motion_review_activity(
                 ),
                 visit_label_hint=(
                     live_activity_suggestion.label
-                    if live_activity_suggestion is not None
+                    if not auto_created and live_activity_suggestion is not None
                     else "unknown_animal"
                 ),
                 notes=(
@@ -4691,7 +4782,11 @@ def _create_live_stream_motion_review_activity(
         raise HTTPException(status_code=409, detail="Live review activity could not be created.")
 
     suggestion: SpeciesSuggestionResponse | None = None
-    if promoted.visit_id and live_activity_suggestion is not None:
+    if (
+        not auto_created
+        and promoted.visit_id
+        and live_activity_suggestion is not None
+    ):
         try:
             suggestion = repository.create_species_suggestion(
                 SpeciesSuggestionCreateRequest(
@@ -4731,7 +4826,6 @@ def _create_live_stream_motion_review_activity(
         "suggestion_confidence": suggestion.confidence if suggestion else None,
         "creates_truth": False,
     }
-    manager = get_live_camera_session_manager()
     activity_session_id = activity.get("activity_session_id")
     if activity_session_id:
         manager.mark_activity_review_created(
@@ -4839,27 +4933,34 @@ async def create_live_stream_motion_review_activity(
     return _create_live_stream_motion_review_activity(stream_id)
 
 
-def _refresh_live_activity_review_state(stream_id: str) -> dict[str, Any] | None:
+def _refresh_live_activity_review_state(
+    stream_id: str,
+    *,
+    activity_session_id: str | None = None,
+) -> dict[str, Any] | None:
     manager = get_live_camera_session_manager()
     snapshot = manager.status(stream_id)
     if snapshot is None:
         return None
-    activity = snapshot.current_activity_session or snapshot.last_activity
+    if activity_session_id:
+        selected_activity = manager.get_activity_session(stream_id, activity_session_id)
+        activity = selected_activity.as_dict() if selected_activity is not None else None
+    else:
+        activity = snapshot.current_activity_session or snapshot.last_activity
     if not activity:
         return None
-    activity_session_id = activity.get("activity_session_id")
-    if not activity_session_id:
+    selected_session_id = activity.get("activity_session_id")
+    if not selected_session_id:
         return activity
     quiet_seconds = snapshot.auto_review_quiet_seconds
     if _live_activity_ready_for_review(activity, quiet_seconds=quiet_seconds):
         updated = manager.mark_activity_ready_for_review(
             stream_id,
-            str(activity_session_id),
+            str(selected_session_id),
             quiet_seconds=quiet_seconds,
         )
         return updated.as_dict() if updated is not None else activity
     return activity
-
 
 def _maybe_auto_create_live_review_candidate(
     stream_id: str,
@@ -4873,48 +4974,53 @@ def _maybe_auto_create_live_review_candidate(
     ):
         return None
 
-    activity = _refresh_live_activity_review_state(stream_id)
-    if not activity or activity.get("review_activity_created"):
-        return None
-    if not _live_activity_ready_for_review(
-        activity,
+    # A Stream can have independent live sessions in several named Zones. Close
+    # every elapsed session on this monitor tick so new activity in one Zone
+    # cannot strand a quiet session in another.
+    ready_sessions = manager.mark_quiet_activity_sessions_ready_for_review(
+        stream_id,
         quiet_seconds=snapshot.auto_review_quiet_seconds,
-    ):
-        return None
-    if int(activity.get("detection_count") or 0) < snapshot.auto_review_min_detections:
-        return None
-    if not activity.get("zone_id"):
-        manager.record_auto_review_error(
-            stream_id,
-            "Auto-create requires completed activity in a named reviewable Zone.",
-        )
-        return None
+    )
+    latest_result: LiveMotionReviewActivityResponse | None = None
+    for activity in ready_sessions:
+        if activity.review_activity_created:
+            continue
+        if activity.detection_count < snapshot.auto_review_min_detections:
+            continue
+        if not activity.zone_id:
+            manager.record_auto_review_error(
+                stream_id,
+                "Auto-create requires completed activity in a named reviewable Zone.",
+            )
+            continue
 
-    try:
-        result = _create_live_stream_motion_review_activity(
-            stream_id,
-            auto_created=True,
-        )
-    except HTTPException as error:
-        manager.record_auto_review_error(stream_id, str(error.detail))
-        return None
+        try:
+            result = _create_live_stream_motion_review_activity(
+                stream_id,
+                auto_created=True,
+                activity_session_id=activity.activity_session_id,
+            )
+        except HTTPException as error:
+            manager.record_auto_review_error(stream_id, str(error.detail))
+            continue
 
-    if result.review_activity_created and result.motion_evidence_id:
-        manager.record_auto_review_created(
-            stream_id,
-            {
-                "created_at": datetime.now(UTC),
-                "motion_evidence_id": result.motion_evidence_id,
-                "event_id": result.event_id,
-                "visit_id": result.visit_id,
-                "review_queue_item_id": result.review_queue_item_id,
-            },
-        )
-        return result
-    if result.status not in {"already_exists", "created"}:
-        manager.record_auto_review_error(stream_id, result.message)
-    return result
-
+        if result.review_activity_created and result.motion_evidence_id:
+            manager.record_auto_review_created(
+                stream_id,
+                {
+                    "created_at": datetime.now(UTC),
+                    "motion_evidence_id": result.motion_evidence_id,
+                    "event_id": result.event_id,
+                    "visit_id": result.visit_id,
+                    "review_queue_item_id": result.review_queue_item_id,
+                },
+            )
+            latest_result = result
+        elif result.status not in {"already_exists", "created"}:
+            manager.record_auto_review_error(stream_id, result.message)
+        else:
+            latest_result = result
+    return latest_result
 
 def _live_frame_timestamp(
     frames: list[live_frame_cache.LiveFrame],
@@ -5984,6 +6090,67 @@ async def list_streams() -> list[Stream]:
     return get_repository().list_streams()
 
 
+async def _dashboard_runtime_by_stream(
+    repository: ProductRepository,
+) -> dict[str, DashboardStreamRuntimeStatus]:
+    """Read runtime facts only; Dashboard polling must never start monitoring."""
+
+    runtime_by_stream: dict[str, DashboardStreamRuntimeStatus] = {}
+    live_manager = get_live_camera_session_manager()
+    source_monitor_manager = get_source_monitor_manager()
+    for stream in repository.list_streams()[:50]:
+        live_snapshot = live_manager.status(stream.id)
+        source_monitor = await source_monitor_manager.status(stream.id)
+        live_active = bool(live_snapshot and live_snapshot.monitor_running)
+        source_active = bool(
+            source_monitor and source_monitor.status in {"starting", "monitoring"}
+        )
+        live_session_ready = bool(
+            live_snapshot and live_snapshot.status in {"starting", "running"}
+        )
+        source = repository.get_source(stream.source_id)
+        configuration = repository.get_source_provider_configuration(stream.source_id)
+        source_monitor_ready = bool(
+            source is not None
+            and source.status != SourceStatus.archived
+            and configuration
+            and configuration.provider_key == "external_url"
+            and configuration.safe_config_preview.get("url") not in {None, "not_configured"}
+        )
+        if source_active:
+            monitor_control = "source_monitor"
+        elif live_active or live_session_ready:
+            monitor_control = "live_motion"
+        elif source_monitor_ready:
+            monitor_control = "source_monitor"
+        else:
+            monitor_control = "none"
+
+        runtime_by_stream[stream.id] = DashboardStreamRuntimeStatus(
+            monitoring_active=live_active or source_active,
+            monitor_control=monitor_control,
+            can_start_monitor=(
+                not (live_active or source_active)
+                and (live_session_ready or source_monitor_ready)
+            ),
+            can_stop_monitor=live_active or source_active,
+            open_activity_session_count=(
+                live_snapshot.open_activity_session_count if live_snapshot else 0
+            ),
+            ready_activity_session_count=(
+                live_snapshot.ready_activity_session_count if live_snapshot else 0
+            ),
+        )
+    return runtime_by_stream
+
+
+@app.get("/api/dashboard/summary", response_model=DashboardSummary)
+async def get_dashboard_summary() -> DashboardSummary:
+    repository = get_repository()
+    runtime_by_stream = await _dashboard_runtime_by_stream(repository)
+    return repository.dashboard_summary(runtime_by_stream)
+
+
 @app.get("/api/streams/{stream_id}", response_model=Stream)
 async def get_stream(stream_id: str) -> Stream:
     stream = get_repository().get_stream(stream_id)
@@ -6622,6 +6789,39 @@ async def list_stream_events(stream_id: str) -> list[Event]:
     return repository.events_for_stream(stream_id)
 
 
+@app.get("/api/streams/{stream_id}/visits", response_model=list[StreamVisitSummary])
+async def list_stream_recent_visits(
+    stream_id: str,
+    limit: int = Query(default=12, ge=1, le=50),
+    review_status: ReviewStatus | None = None,
+    zone_id: str | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+) -> list[StreamVisitSummary]:
+    repository = get_repository()
+    stream = repository.get_stream(stream_id)
+    if stream is None:
+        raise _not_found("Stream", stream_id)
+    if zone_id is not None:
+        zone = repository.get_zone(zone_id)
+        if zone is None:
+            raise _not_found("Zone", zone_id)
+        if zone.stream_id != stream.id:
+            raise HTTPException(status_code=400, detail="Zone does not belong to this Stream.")
+    if end_at is not None and start_at is not None and end_at < start_at:
+        raise HTTPException(status_code=400, detail="End date must not be before start date.")
+
+    # This read stays bounded and Stream-scoped; detail evidence remains lazy.
+    return repository.recent_visits_for_stream(
+        stream.id,
+        limit=limit,
+        review_status=review_status,
+        zone_id=zone_id,
+        start_at=start_at,
+        end_at=end_at,
+    )
+
+
 @app.get("/api/zones", response_model=list[Zone])
 async def list_zones() -> list[Zone]:
     return get_repository().list_zones()
@@ -6799,6 +6999,7 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         detections=event.detections,
         motion_evidence=repository.motion_evidence_for_visit(visit.id),
         media_asset=repository.media_asset_for_path(visit.representative_media_path),
+        evidence_frames=repository.visit_evidence_frames(visit.id),
         detection_proposals=detection_proposals,
         detection_runs=_detection_runs_for_proposals(repository, detection_proposals),
         review_labels=(

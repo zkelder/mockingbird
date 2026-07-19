@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 import csv
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import math
@@ -116,6 +116,12 @@ from mockingbird.api.schemas import (
     DatasetExportRecord,
     DatasetQualityIssue,
     DatasetQualitySummary,
+    DashboardHeadline,
+    DashboardReviewedObservation,
+    DashboardStreamRuntimeStatus,
+    DashboardStreamSummary,
+    DashboardSummary,
+    DashboardVisitSummary,
     DemoDetectionRunCreate,
     DemoDetectionRunResult,
     Detection,
@@ -232,8 +238,11 @@ from mockingbird.api.schemas import (
     StreamPlaybackStatusValue,
     StreamRuntimeState,
     StreamRuntimeStatusResponse,
+    StreamVisitSummary,
     TaxonomyLabel,
     Visit,
+    VisitEvidenceFrame,
+    VisitReviewOutcome,
     WebhookMotionEvidenceRequest,
     WebhookMotionEvidenceResponse,
     WebhookPayloadCandidate,
@@ -290,6 +299,10 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
     "video/mp4": "video",
     "video/quicktime": "video",
 }
+
+# Live evidence is a short review aid, never a video archive. Keep a read-side
+# cap as a safeguard even if malformed historical scoring metadata is present.
+MAX_LIVE_VISIT_EVIDENCE_FRAMES = 4
 
 BIOCLIP_MODEL_PATH_ENV = "MOCKINGBIRD_BIOCLIP_MODEL_PATH"
 BIOCLIP_LABELS_PATH_ENV = "MOCKINGBIRD_BIOCLIP_LABELS_PATH"
@@ -3369,6 +3382,451 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._visits_for_event(session, event_id)
 
+    def recent_visits_for_stream(
+        self,
+        stream_id: str,
+        *,
+        limit: int = 12,
+        review_status: ReviewStatus | None = None,
+        zone_id: str | None = None,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> list[StreamVisitSummary]:
+        """Read a bounded Visit history without crossing the requested Stream."""
+
+        bounded_limit = max(1, min(limit, 50))
+        with self.session_factory() as session:
+            query = (
+                select(VisitModel, EventModel)
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .where(EventModel.stream_id == stream_id)
+            )
+            if review_status is not None:
+                query = query.where(VisitModel.review_status == review_status.value)
+            if zone_id is not None:
+                query = query.where(EventModel.primary_zone_id == zone_id)
+            if start_at is not None:
+                query = query.where(EventModel.started_at >= start_at)
+            if end_at is not None:
+                query = query.where(EventModel.started_at <= end_at)
+            rows = session.execute(
+                query.order_by(
+                    EventModel.started_at.desc(),
+                    EventModel.id.desc(),
+                    VisitModel.id.desc(),
+                ).limit(bounded_limit)
+            ).all()
+            return [
+                self._stream_visit_summary_from_models(session, visit, event)
+                for visit, event in rows
+            ]
+
+    def _stream_visit_summary_from_models(
+        self,
+        session: Session,
+        visit: VisitModel,
+        event: EventModel,
+    ) -> StreamVisitSummary:
+        evidence = session.scalars(
+            select(MotionEvidenceModel)
+            .where(MotionEvidenceModel.promoted_visit_id == visit.id)
+            .order_by(MotionEvidenceModel.created_at.desc(), MotionEvidenceModel.id.desc())
+        ).first()
+        evidence_frames = (
+            self._visit_evidence_frames_from_model(session, evidence)
+            if evidence is not None
+            else []
+        )
+        primary_evidence = next(
+            (frame for frame in evidence_frames if frame.is_primary),
+            evidence_frames[0] if evidence_frames else None,
+        )
+        if primary_evidence is None:
+            asset = self._media_asset_for_path_from_session(
+                session,
+                visit.representative_media_path,
+            )
+            if asset is not None and asset.stream_id == event.stream_id:
+                primary_evidence = VisitEvidenceFrame(
+                    media_asset_id=asset.id,
+                    preview_url=f"/api/media/{asset.id}/file",
+                    captured_at=asset.created_at,
+                    relative_position=0.0,
+                    frame_sequence=None,
+                    is_primary=True,
+                    content_type=asset.content_type,
+                )
+                evidence_frames = [primary_evidence]
+
+        activity_started_at, activity_ended_at = self._visit_activity_window(
+            event,
+            evidence,
+        )
+        reviewed_label = self._visit_reviewed_label(session, visit, event)
+        suggestion = session.scalars(
+            select(SpeciesSuggestionModel)
+            .where(SpeciesSuggestionModel.visit_id == visit.id)
+            .order_by(
+                SpeciesSuggestionModel.created_at.desc(),
+                SpeciesSuggestionModel.rank,
+                SpeciesSuggestionModel.id.desc(),
+            )
+        ).first()
+        zone = (
+            session.get(ZoneModel, event.primary_zone_id)
+            if event.primary_zone_id is not None
+            else None
+        )
+        if zone is not None and zone.stream_id != event.stream_id:
+            zone = None
+
+        duration_seconds = (
+            max(0.0, (activity_ended_at - activity_started_at).total_seconds())
+            if activity_ended_at is not None
+            else 0.0
+        )
+        return StreamVisitSummary(
+            id=visit.id,
+            event_id=event.id,
+            stream_id=event.stream_id,
+            captured_at=(
+                primary_evidence.captured_at if primary_evidence is not None else activity_started_at
+            ),
+            activity_started_at=activity_started_at,
+            activity_ended_at=activity_ended_at,
+            duration_seconds=duration_seconds,
+            zone_id=zone.id if zone is not None else None,
+            zone_name=zone.name if zone is not None else None,
+            zone_type=ZoneType(zone.zone_type) if zone is not None else None,
+            review_status=ReviewStatus(visit.review_status),
+            reviewed_label=reviewed_label,
+            review_outcome=self._visit_review_outcome(
+                session,
+                review_status=ReviewStatus(visit.review_status),
+                reviewed_label=reviewed_label,
+            ),
+            suggested_label=suggestion.suggested_label if suggestion is not None else None,
+            has_suggestion=suggestion is not None,
+            evidence_frame_count=len(evidence_frames),
+            primary_evidence=primary_evidence,
+        )
+
+    def _visit_activity_window(
+        self,
+        event: EventModel,
+        evidence: MotionEvidenceModel | None,
+    ) -> tuple[datetime, datetime | None]:
+        started_at = _as_utc(event.started_at)
+        ended_at = _as_utc(event.ended_at) if event.ended_at is not None else None
+        if evidence is None:
+            return started_at, ended_at
+        try:
+            config = dict(json.loads(evidence.scoring_config_json))
+        except (TypeError, ValueError):
+            return started_at, ended_at
+        return (
+            _optional_datetime(config.get("activity_started_at")) or started_at,
+            _optional_datetime(config.get("activity_last_seen_at")) or ended_at,
+        )
+
+    def _visit_reviewed_label(
+        self,
+        session: Session,
+        visit: VisitModel,
+        event: EventModel,
+    ) -> str | None:
+        if visit.reviewed_label:
+            return visit.reviewed_label
+        labels = [
+            *self._review_label_models_for_visit(session, visit.id),
+            *self._review_label_models_for_event(session, event.id),
+        ]
+        return max(labels, key=lambda label: label.created_at).label if labels else None
+
+    def _visit_review_outcome(
+        self,
+        session: Session,
+        *,
+        review_status: ReviewStatus,
+        reviewed_label: str | None,
+    ) -> VisitReviewOutcome:
+        if review_status == ReviewStatus.needs_review:
+            return VisitReviewOutcome.needs_review
+        if review_status == ReviewStatus.rejected:
+            return VisitReviewOutcome.rejected
+        if not reviewed_label:
+            return VisitReviewOutcome.reviewed_other
+
+        key = _taxonomy_key(reviewed_label)
+        if key == "false_positive":
+            return VisitReviewOutcome.false_positive
+        if key in {"blank", "empty", "no_activity", "no_animal"}:
+            return VisitReviewOutcome.blank
+        if key in {"ambiguous", "unknown_bird", "unknown_animal", "unknown"}:
+            return VisitReviewOutcome.ambiguous
+
+        taxonomy = self._taxonomy_label_model_for_input(session, reviewed_label)
+        if taxonomy is not None:
+            if taxonomy.category == LabelCategory.bird.value:
+                return VisitReviewOutcome.confirmed_bird
+            if taxonomy.category == LabelCategory.false_positive.value:
+                return VisitReviewOutcome.false_positive
+            return VisitReviewOutcome.non_bird
+        return VisitReviewOutcome.reviewed_other
+
+    def dashboard_summary(
+        self,
+        runtime_by_stream: dict[str, DashboardStreamRuntimeStatus] | None = None,
+        *,
+        now: datetime | None = None,
+    ) -> DashboardSummary:
+        """Build the bounded landing-page view from product state, never suggestions."""
+
+        runtime_by_stream = runtime_by_stream or {}
+        local_now = (now or datetime.now().astimezone()).astimezone()
+        local_day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        next_local_day_start = local_day_start + timedelta(days=1)
+        day_start = _as_utc(local_day_start)
+        day_end = _as_utc(next_local_day_start)
+
+        with self.session_factory() as session:
+            configured_stream_count = session.scalar(select(func.count(StreamModel.id))) or 0
+            stream_models = session.scalars(
+                select(StreamModel).order_by(StreamModel.id).limit(50)
+            ).all()
+            sources_by_id = {
+                source.id: source
+                for source in session.scalars(
+                    select(CameraSourceModel).where(
+                        CameraSourceModel.id.in_({stream.source_id for stream in stream_models})
+                    )
+                ).all()
+            }
+            needs_review_visit_count = (
+                session.scalar(
+                    select(func.count(VisitModel.id))
+                    .join(EventModel, VisitModel.event_id == EventModel.id)
+                    .where(VisitModel.review_status == ReviewStatus.needs_review.value)
+                )
+                or 0
+            )
+            needs_review_counts = dict(
+                session.execute(
+                    select(EventModel.stream_id, func.count(VisitModel.id))
+                    .join(VisitModel, VisitModel.event_id == EventModel.id)
+                    .where(VisitModel.review_status == ReviewStatus.needs_review.value)
+                    .group_by(EventModel.stream_id)
+                ).all()
+            )
+
+            warnings: list[str] = []
+            stream_summaries: list[DashboardStreamSummary] = []
+            for stream in stream_models:
+                source = sources_by_id.get(stream.source_id)
+                source_name = source.name if source is not None else "Unavailable Source"
+                try:
+                    playback = self.get_stream_playback_status(stream.id)
+                except Exception:
+                    # One unavailable adapter must not empty the operations view.
+                    playback = None
+                    warnings.append(f"Readiness is temporarily unavailable for {stream.name}.")
+                latest_row = session.execute(
+                    select(VisitModel, EventModel)
+                    .join(EventModel, VisitModel.event_id == EventModel.id)
+                    .where(EventModel.stream_id == stream.id)
+                    .order_by(
+                        EventModel.started_at.desc(),
+                        EventModel.id.desc(),
+                        VisitModel.id.desc(),
+                    )
+                    .limit(1)
+                ).first()
+                latest_visit = (
+                    self._dashboard_visit_summary_from_models(session, latest_row[0], latest_row[1])
+                    if latest_row is not None
+                    else None
+                )
+                runtime = runtime_by_stream.get(stream.id, DashboardStreamRuntimeStatus())
+                stream_summaries.append(
+                    DashboardStreamSummary(
+                        stream_id=stream.id,
+                        stream_name=stream.name,
+                        source_id=stream.source_id,
+                        source_name=source_name,
+                        availability_status=(
+                            playback.status
+                            if playback is not None
+                            else StreamPlaybackStatusValue.unavailable
+                        ),
+                        availability_message=(
+                            playback.message
+                            if playback is not None
+                            else "Readiness is temporarily unavailable."
+                        ),
+                        monitoring_active=runtime.monitoring_active,
+                        monitor_control=runtime.monitor_control,
+                        can_start_monitor=runtime.can_start_monitor,
+                        can_stop_monitor=runtime.can_stop_monitor,
+                        open_activity_session_count=runtime.open_activity_session_count,
+                        ready_activity_session_count=runtime.ready_activity_session_count,
+                        needs_review_visit_count=needs_review_counts.get(stream.id, 0),
+                        latest_visit=latest_visit,
+                    )
+                )
+
+            recent_rows = session.execute(
+                select(VisitModel, EventModel)
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .order_by(
+                    EventModel.started_at.desc(),
+                    EventModel.id.desc(),
+                    VisitModel.id.desc(),
+                )
+                .limit(25)
+            ).all()
+            recent_activity = [
+                self._dashboard_visit_summary_from_models(session, visit, event)
+                for visit, event in recent_rows
+            ]
+            # The query is bounded so the landing surface cannot become an event log.
+
+            needs_review_visits = [
+                visit
+                for visit in recent_activity
+                if visit.review_status == ReviewStatus.needs_review
+            ][:12]
+            if len(needs_review_visits) < 12:
+                needs_rows = session.execute(
+                    select(VisitModel, EventModel)
+                    .join(EventModel, VisitModel.event_id == EventModel.id)
+                    .where(VisitModel.review_status == ReviewStatus.needs_review.value)
+                    .order_by(
+                        EventModel.started_at.desc(),
+                        EventModel.id.desc(),
+                        VisitModel.id.desc(),
+                    )
+                    .limit(12)
+                ).all()
+                needs_review_visits = [
+                    self._dashboard_visit_summary_from_models(session, visit, event)
+                    for visit, event in needs_rows
+                ]
+
+            reviewed_today_rows = session.execute(
+                select(VisitModel, EventModel)
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .where(
+                    VisitModel.review_status == ReviewStatus.reviewed.value,
+                    EventModel.started_at >= day_start,
+                    EventModel.started_at < day_end,
+                )
+                .order_by(
+                    EventModel.started_at.desc(),
+                    EventModel.id.desc(),
+                    VisitModel.id.desc(),
+                )
+            ).all()
+            bird_observations, non_bird_activity = self._dashboard_reviewed_observations(
+                session,
+                reviewed_today_rows,
+            )
+
+            return DashboardSummary(
+                local_day=local_day_start.date().isoformat(),
+                generated_at=_as_utc(local_now),
+                headline=DashboardHeadline(
+                    configured_stream_count=configured_stream_count,
+                    monitored_stream_count=sum(
+                        summary.monitoring_active for summary in stream_summaries
+                    ),
+                    open_activity_session_count=sum(
+                        summary.open_activity_session_count
+                        for summary in stream_summaries
+                    ),
+                    needs_review_visit_count=needs_review_visit_count,
+                    reviewed_observation_count_today=sum(
+                        observation.observation_count for observation in bird_observations
+                    ),
+                ),
+                streams=stream_summaries,
+                needs_review_visits=needs_review_visits,
+                today_observations=bird_observations,
+                reviewed_non_bird_activity=non_bird_activity,
+                recent_activity=recent_activity,
+                warnings=warnings[:12],
+            )
+
+    def _dashboard_visit_summary_from_models(
+        self,
+        session: Session,
+        visit: VisitModel,
+        event: EventModel,
+    ) -> DashboardVisitSummary:
+        stream = session.get(StreamModel, event.stream_id)
+        if stream is None:
+            raise ValueError("dashboard_visit_missing_stream")
+        source = session.get(CameraSourceModel, stream.source_id)
+        return DashboardVisitSummary(
+            **self._stream_visit_summary_from_models(session, visit, event).model_dump(),
+            stream_name=stream.name,
+            source_id=stream.source_id,
+            source_name=source.name if source is not None else "Unavailable Source",
+        )
+
+    def _dashboard_reviewed_observations(
+        self,
+        session: Session,
+        rows: list[tuple[VisitModel, EventModel]],
+    ) -> tuple[list[DashboardReviewedObservation], list[DashboardReviewedObservation]]:
+        birds: dict[str, list[DashboardVisitSummary]] = {}
+        non_birds: dict[str, list[DashboardVisitSummary]] = {}
+        for visit, event in rows:
+            summary = self._dashboard_visit_summary_from_models(session, visit, event)
+            if not summary.reviewed_label:
+                continue
+            normalized_label = self._normalize_label_from_session(session, summary.reviewed_label)
+            if summary.review_outcome == VisitReviewOutcome.confirmed_bird:
+                birds.setdefault(normalized_label, []).append(summary)
+            elif summary.review_outcome == VisitReviewOutcome.non_bird:
+                non_birds.setdefault(normalized_label, []).append(summary)
+
+        def grouped(
+            values: dict[str, list[DashboardVisitSummary]],
+            *,
+            limit: int,
+        ) -> list[DashboardReviewedObservation]:
+            observations: list[DashboardReviewedObservation] = []
+            for label, summaries in values.items():
+                latest = max(
+                    summaries,
+                    key=lambda summary: (summary.activity_started_at, summary.id),
+                )
+                taxonomy = self._taxonomy_label_model_for_input(session, label)
+                observations.append(
+                    DashboardReviewedObservation(
+                        label=label,
+                        display_name=(taxonomy.display_name if taxonomy is not None else label),
+                        category=(
+                            LabelCategory(taxonomy.category)
+                            if taxonomy is not None
+                            else LabelCategory.unknown
+                        ),
+                        observation_count=len(summaries),
+                        latest_visit=latest,
+                    )
+                )
+            return sorted(
+                observations,
+                key=lambda observation: (
+                    observation.latest_visit.activity_started_at,
+                    observation.label,
+                ),
+                reverse=True,
+            )[:limit]
+
+        # Reviewed bird truth and reviewed non-bird activity are intentionally separate.
+        return grouped(birds, limit=12), grouped(non_birds, limit=8)
+
     def list_media_assets(self) -> list[MediaAsset]:
         with self.session_factory() as session:
             assets = session.scalars(
@@ -4852,6 +5310,144 @@ class ProductRepository:
                 .order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
             ).first()
             return _motion_evidence_from_model(evidence_model) if evidence_model else None
+
+    def visit_evidence_frames(self, visit_id: str) -> list[VisitEvidenceFrame]:
+        """Return bounded evidence, retaining a legacy Visit's primary image when present."""
+
+        with self.session_factory() as session:
+            visit = session.get(VisitModel, visit_id)
+            if visit is None:
+                return []
+            event = session.get(EventModel, visit.event_id)
+            if event is None:
+                return []
+            evidence_model = session.scalars(
+                select(MotionEvidenceModel)
+                .where(MotionEvidenceModel.promoted_visit_id == visit_id)
+                .order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
+            ).first()
+            evidence_frames = (
+                self._visit_evidence_frames_from_model(session, evidence_model)
+                if evidence_model is not None
+                else []
+            )
+            if evidence_frames:
+                return evidence_frames
+
+            # Older one-frame Visits predate live activity sequences. Preserve
+            # that evidence shape without exposing a local filesystem path.
+            asset = self._media_asset_for_path_from_session(
+                session,
+                visit.representative_media_path,
+            )
+            if asset is None or asset.stream_id != event.stream_id:
+                return []
+            return [
+                VisitEvidenceFrame(
+                    media_asset_id=asset.id,
+                    preview_url=f"/api/media/{asset.id}/file",
+                    captured_at=asset.created_at,
+                    relative_position=0.0,
+                    frame_sequence=None,
+                    is_primary=True,
+                    content_type=asset.content_type,
+                )
+            ]
+
+    def _visit_evidence_frames_from_model(
+        self,
+        session: Session,
+        evidence: MotionEvidenceModel,
+    ) -> list[VisitEvidenceFrame]:
+        try:
+            config = dict(json.loads(evidence.scoring_config_json))
+        except (TypeError, ValueError):
+            return []
+        if config.get("source") != "live_stream_motion_session_activity":
+            return []
+
+        activity_session_id = _optional_string(config.get("activity_session_id"))
+        raw_frames = config.get("visit_evidence_frames")
+        if not activity_session_id or not isinstance(raw_frames, list):
+            return []
+
+        parsed: list[tuple[datetime, int | None, str, bool, str, int | None, int | None]] = []
+        seen_media_ids: set[str] = set()
+        for raw_frame in raw_frames[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]:
+            if not isinstance(raw_frame, dict):
+                continue
+            if raw_frame.get("activity_session_id") != activity_session_id:
+                continue
+            media_asset_id = _optional_string(raw_frame.get("media_asset_id"))
+            captured_at = _optional_datetime(raw_frame.get("captured_at"))
+            if media_asset_id is None or captured_at is None or media_asset_id in seen_media_ids:
+                continue
+            asset = session.get(MediaAssetModel, media_asset_id)
+            # Evidence can only surface media from this evidence's Stream. This
+            # prevents a malformed association from exposing another Visit's frame.
+            if asset is None or asset.stream_id != evidence.stream_id:
+                continue
+            seen_media_ids.add(media_asset_id)
+            parsed.append(
+                (
+                    captured_at,
+                    _optional_int(raw_frame.get("frame_sequence")),
+                    media_asset_id,
+                    bool(raw_frame.get("is_primary")),
+                    asset.content_type,
+                    _optional_int(raw_frame.get("width")),
+                    _optional_int(raw_frame.get("height")),
+                )
+            )
+
+        if not parsed:
+            return []
+
+        parsed.sort(key=lambda frame: (frame[0], frame[1] if frame[1] is not None else -1))
+        primary_media_asset_id = next(
+            (
+                frame[2]
+                for frame in parsed
+                if frame[2] == evidence.snapshot_media_asset_id
+            ),
+            next((frame[2] for frame in parsed if frame[3]), parsed[0][2]),
+        )
+        first_capture = parsed[0][0]
+        last_capture = parsed[-1][0]
+        duration_seconds = (last_capture - first_capture).total_seconds()
+        return [
+            VisitEvidenceFrame(
+                media_asset_id=media_asset_id,
+                preview_url=f"/api/media/{media_asset_id}/file",
+                captured_at=captured_at,
+                relative_position=(
+                    0.0
+                    if duration_seconds <= 0
+                    else max(
+                        0.0,
+                        min(
+                            1.0,
+                            (captured_at - first_capture).total_seconds()
+                            / duration_seconds,
+                        ),
+                    )
+                ),
+                frame_sequence=frame_sequence,
+                is_primary=media_asset_id == primary_media_asset_id,
+                content_type=content_type,
+                width=width if width and width > 0 else None,
+                height=height if height and height > 0 else None,
+            )
+            for (
+                captured_at,
+                frame_sequence,
+                media_asset_id,
+                _is_primary,
+                content_type,
+                width,
+                height,
+            ) in parsed
+        ]
 
     def ignore_motion_evidence(self, evidence_id: str) -> MotionEvidenceResponse | None:
         with self.session_factory() as session:
@@ -9292,6 +9888,11 @@ class ProductRepository:
                 visit_id=visit.id,
                 media_asset_id=media_asset.id if media_asset else None,
             )
+            evidence_frames = (
+                self._visit_evidence_frames_from_model(session, evidence)
+                if evidence is not None
+                else []
+            )
             activity_context = self._review_queue_activity_context(evidence)
             best_media_asset_id = (
                 media_asset.id
@@ -9339,6 +9940,7 @@ class ProductRepository:
                 suggestion_creates_truth=False,
                 **_review_focus_crop_fields(focus_crop_context),
                 media_asset=media_asset,
+                evidence_frames=evidence_frames,
                 review_status=visit.review_status,
                 reason="Confirm or correct the suggested species label.",
             )

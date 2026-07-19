@@ -25,7 +25,10 @@ DEFAULT_MAX_RUNTIME_SECONDS = 30 * 60
 DEFAULT_AUTO_REVIEW_QUIET_SECONDS = 30
 DEFAULT_AUTO_REVIEW_MIN_DETECTIONS = 1
 DEFAULT_ACTIVITY_MAX_CANDIDATE_FRAMES = 30
-DEFAULT_ACTIVITY_MAX_SAVED_CANDIDATES = 1
+# A completed visit keeps a deliberately small sample rather than a recording.
+# The selector accepts a lower caller-configured limit, but never exceeds this cap.
+DEFAULT_ACTIVITY_MAX_VISIT_EVIDENCE_FRAMES = 4
+DEFAULT_ACTIVITY_MAX_SAVED_CANDIDATES = DEFAULT_ACTIVITY_MAX_VISIT_EVIDENCE_FRAMES
 DEFAULT_ACTIVITY_MAX_SESSION_SECONDS = 5 * 60
 DEFAULT_MAX_DIAGNOSTIC_EVENTS = 100
 SUPPORTED_SESSION_TYPES = {
@@ -111,6 +114,10 @@ class LiveCameraSessionSnapshot:
     last_auto_review_queue_item_id: str | None
     last_motion_evaluation_at: datetime | None
     current_activity_session: dict[str, Any] | None
+    open_activity_session_count: int
+    open_activity_zone_names: list[str]
+    ready_activity_session_count: int
+    latest_activity_review_queue_item_id: str | None
     last_activity: dict[str, Any] | None
     last_motion_result: dict[str, Any] | None
     last_error: str | None
@@ -266,6 +273,22 @@ class LiveActivityBestFrame:
 
 
 @dataclass(frozen=True)
+class LiveActivityEvidenceFrame:
+    """One bounded, in-memory frame selected for a completed activity Visit."""
+
+    activity_session_id: str
+    frame_key: str
+    media_asset_id: str | None
+    sequence: int | None
+    captured_at: datetime
+    frame_bytes: bytes
+    content_type: str | None
+    width: int | None
+    height: int | None
+    is_primary: bool
+
+
+@dataclass(frozen=True)
 class _LiveActivityCandidateFrame:
     sequence: int | None
     captured_at: datetime
@@ -277,6 +300,8 @@ class _LiveActivityCandidateFrame:
     activity_detected: bool
     frame_bytes: bytes | None
     content_type: str | None
+    width: int | None
+    height: int | None
 
 
 class LiveCameraSessionManager:
@@ -462,6 +487,22 @@ class LiveCameraSessionManager:
             return None
         return session.get_activity_best_frame(activity_session_id)
 
+    def get_activity_evidence_frames(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+        *,
+        max_frames: int = DEFAULT_ACTIVITY_MAX_VISIT_EVIDENCE_FRAMES,
+    ) -> list[LiveActivityEvidenceFrame]:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return []
+        return session.get_activity_evidence_frames(
+            activity_session_id,
+            max_frames=max_frames,
+        )
+
     def mark_activity_media_asset(
         self,
         stream_id: str,
@@ -473,6 +514,23 @@ class LiveCameraSessionManager:
         if session is None:
             return None
         return session.mark_activity_media_asset(activity_session_id, media_asset_id)
+
+    def mark_activity_evidence_media_asset(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+        frame_key: str,
+        media_asset_id: str,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.mark_activity_evidence_media_asset(
+            activity_session_id,
+            frame_key,
+            media_asset_id,
+        )
 
     def mark_activity_review_created(
         self,
@@ -499,6 +557,22 @@ class LiveCameraSessionManager:
             return None
         return session.mark_activity_ready_for_review(
             activity_session_id,
+            quiet_seconds=quiet_seconds,
+        )
+
+    def mark_quiet_activity_sessions_ready_for_review(
+        self,
+        stream_id: str,
+        *,
+        quiet_seconds: int,
+    ) -> list[LiveActivitySessionSnapshot]:
+        """Close elapsed zone sessions during a monitor tick, never a status read."""
+
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return []
+        return session.mark_quiet_activity_sessions_ready_for_review(
             quiet_seconds=quiet_seconds,
         )
 
@@ -875,6 +949,18 @@ class _LiveCameraSession:
                 sequence=activity.best_frame_sequence,
             )
 
+    def get_activity_evidence_frames(
+        self,
+        activity_session_id: str,
+        *,
+        max_frames: int,
+    ) -> list[LiveActivityEvidenceFrame]:
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            if activity is None:
+                return []
+            return activity.evidence_frames(max_frames=max_frames)
+
     def mark_activity_media_asset(
         self,
         activity_session_id: str,
@@ -898,6 +984,26 @@ class _LiveCameraSession:
                     status=snapshot.review_state,
                     activity=snapshot,
                 )
+            return snapshot
+
+    def mark_activity_evidence_media_asset(
+        self,
+        activity_session_id: str,
+        frame_key: str,
+        media_asset_id: str,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            if activity is None:
+                return None
+            activity.evidence_media_asset_ids[frame_key] = media_asset_id
+            activity.saved_candidate_count = min(
+                DEFAULT_ACTIVITY_MAX_SAVED_CANDIDATES,
+                len(activity.evidence_media_asset_ids)
+                + (1 if activity.best_media_asset_id is not None else 0),
+            )
+            snapshot = activity.snapshot()
+            self.last_activity = snapshot.as_dict()
             return snapshot
 
     def mark_activity_review_created(
@@ -942,6 +1048,43 @@ class _LiveCameraSession:
                     activity=snapshot,
                 )
             return snapshot
+
+    def mark_quiet_activity_sessions_ready_for_review(
+        self,
+        *,
+        quiet_seconds: int,
+    ) -> list[LiveActivitySessionSnapshot]:
+        """Mark elapsed activity bursts ready without creating product records.
+
+        The monitor owns this transition so a status read remains side-effect free.
+        Sessions are keyed by Stream and zone/activity region, allowing a quiet
+        feeder burst to close even while motion continues elsewhere on the Stream.
+        """
+
+        with self._lock:
+            now = datetime.now(UTC)
+            ready: list[LiveActivitySessionSnapshot] = []
+            for activity in self.activity_sessions.values():
+                if activity.review_activity_created or activity.detection_count <= 0:
+                    continue
+                elapsed_seconds = (now - activity.last_seen_at).total_seconds()
+                if elapsed_seconds < quiet_seconds:
+                    continue
+                was_ready = activity.ready_for_review
+                activity.mark_ready_for_review(quiet_seconds=quiet_seconds)
+                snapshot = activity.snapshot()
+                ready.append(snapshot)
+                if not was_ready:
+                    self.last_activity = snapshot.as_dict()
+                    self._record_diagnostic_event_locked(
+                        "activity_ready_for_review",
+                        status=snapshot.review_state,
+                        activity=snapshot,
+                    )
+            return sorted(
+                ready,
+                key=lambda activity: (activity.last_seen_at, activity.activity_session_id),
+            )
 
     def record_auto_review_created(self, values: Mapping[str, Any]) -> None:
         with self._lock:
@@ -1089,6 +1232,40 @@ class _LiveCameraSession:
     def snapshot(self) -> LiveCameraSessionSnapshot:
         with self._lock:
             current_activity = self._activity_session(self.current_activity_session_id)
+            activity_snapshots = [activity.snapshot() for activity in self.activity_sessions.values()]
+            open_activity_sessions = [
+                activity
+                for activity in activity_snapshots
+                if activity.detection_count > 0
+                and not activity.ready_for_review
+                and not activity.review_activity_created
+            ]
+            ready_activity_sessions = [
+                activity
+                for activity in activity_snapshots
+                if activity.detection_count > 0
+                and activity.ready_for_review
+                and not activity.review_activity_created
+            ]
+            reviewed_activity_sessions = [
+                activity
+                for activity in activity_snapshots
+                if activity.review_activity_created and activity.review_queue_item_id
+            ]
+            latest_reviewed_activity = max(
+                reviewed_activity_sessions,
+                key=lambda activity: (activity.last_seen_at, activity.activity_session_id),
+                default=None,
+            )
+            open_zone_names = list(
+                dict.fromkeys(
+                    activity.zone_name or activity.region_id or "Activity area"
+                    for activity in sorted(
+                        open_activity_sessions,
+                        key=lambda activity: (activity.started_at, activity.activity_session_id),
+                    )
+                )
+            )[:5]
             return LiveCameraSessionSnapshot(
                 stream_id=self.stream_id,
                 source_id=self.source_id,
@@ -1115,6 +1292,14 @@ class _LiveCameraSession:
                 current_activity_session=(
                     current_activity.snapshot().as_dict()
                     if current_activity is not None
+                    else None
+                ),
+                open_activity_session_count=len(open_activity_sessions),
+                open_activity_zone_names=open_zone_names,
+                ready_activity_session_count=len(ready_activity_sessions),
+                latest_activity_review_queue_item_id=(
+                    latest_reviewed_activity.review_queue_item_id
+                    if latest_reviewed_activity is not None
                     else None
                 ),
                 last_activity=dict(self.last_activity) if self.last_activity else None,
@@ -1274,6 +1459,8 @@ class _LiveActivitySession:
     near_miss: bool
     margin_to_threshold: float | None
     candidate_frames: deque[_LiveActivityCandidateFrame]
+    first_candidate_frame: _LiveActivityCandidateFrame | None
+    evidence_media_asset_ids: dict[str, str]
     saved_candidate_count: int = 0
     notification_event: str | None = None
     _emitted_notification_events: set[str] | None = None
@@ -1344,6 +1531,8 @@ class _LiveActivitySession:
             near_miss=False,
             margin_to_threshold=None,
             candidate_frames=deque(maxlen=DEFAULT_ACTIVITY_MAX_CANDIDATE_FRAMES),
+            first_candidate_frame=None,
+            evidence_media_asset_ids={},
             _emitted_notification_events=set(),
         )
         session.record_detection(
@@ -1393,20 +1582,25 @@ class _LiveActivitySession:
         self.near_miss = near_miss
         self.margin_to_threshold = _optional_float(values.get("margin_to_threshold"))
         candidate_score = _optional_float(values.get("best_score"))
-        self._append_candidate_frame(
-            _LiveActivityCandidateFrame(
-                sequence=_optional_int(values.get("best_frame_sequence")),
-                captured_at=_coerce_datetime(values.get("best_frame_captured_at")) or now,
-                score=candidate_score,
-                changed_ratio=self.current_changed_ratio,
-                changed_pixels=self.current_changed_pixels,
-                total_scored_pixels=self.current_total_scored_pixels,
-                near_miss=near_miss,
-                activity_detected=activity_detected,
-                frame_bytes=frame_bytes,
-                content_type=frame_content_type,
-            )
+        candidate_frame = _LiveActivityCandidateFrame(
+            sequence=_optional_int(values.get("best_frame_sequence")),
+            captured_at=_coerce_datetime(values.get("best_frame_captured_at")) or now,
+            score=candidate_score,
+            changed_ratio=self.current_changed_ratio,
+            changed_pixels=self.current_changed_pixels,
+            total_scored_pixels=self.current_total_scored_pixels,
+            near_miss=near_miss,
+            activity_detected=activity_detected,
+            frame_bytes=frame_bytes,
+            content_type=frame_content_type,
+            width=_optional_int(values.get("best_frame_width")),
+            height=_optional_int(values.get("best_frame_height")),
         )
+        if self.first_candidate_frame is None and candidate_frame.frame_bytes is not None:
+            # Preserve the true beginning with one reference while the normal
+            # candidate deque remains a capped rolling buffer.
+            self.first_candidate_frame = candidate_frame
+        self._append_candidate_frame(candidate_frame)
         if self.best_score is None or (
             candidate_score is not None and candidate_score > self.best_score
         ):
@@ -1435,6 +1629,120 @@ class _LiveActivitySession:
     def _append_candidate_frame(self, candidate: _LiveActivityCandidateFrame) -> None:
         # Burst candidates are in-memory evidence only and capped per activity session.
         self.candidate_frames.append(candidate)
+
+    def evidence_frames(
+        self,
+        *,
+        max_frames: int,
+    ) -> list[LiveActivityEvidenceFrame]:
+        """Select a stable beginning/middle/best/end sample from the capped burst."""
+
+        limit = max(1, min(int(max_frames), DEFAULT_ACTIVITY_MAX_VISIT_EVIDENCE_FRAMES))
+        primary = self._primary_evidence_candidate()
+        if primary is None:
+            return []
+
+        candidates = sorted(
+            (
+                candidate
+                for candidate in (self.first_candidate_frame, *self.candidate_frames)
+                if candidate is not None and candidate.frame_bytes is not None
+            ),
+            key=lambda candidate: (candidate.captured_at, candidate.sequence or -1),
+        )
+        deduplicated: list[tuple[str, _LiveActivityCandidateFrame]] = []
+        seen_keys: set[str] = set()
+        seen_content: set[str] = set()
+
+        def add(candidate: _LiveActivityCandidateFrame) -> None:
+            if candidate.frame_bytes is None:
+                return
+            frame_key = self._candidate_frame_key(candidate)
+            content_key = sha1(candidate.frame_bytes).hexdigest()
+            if frame_key in seen_keys or content_key in seen_content:
+                return
+            seen_keys.add(frame_key)
+            seen_content.add(content_key)
+            deduplicated.append((frame_key, candidate))
+
+        # Add the best frame first so an exact duplicate can never displace the
+        # primary thumbnail. The final response is still chronological.
+        add(primary)
+        for candidate in candidates:
+            add(candidate)
+
+        if not deduplicated:
+            return []
+
+        ordered = sorted(
+            deduplicated,
+            key=lambda item: (item[1].captured_at, item[1].sequence or -1),
+        )
+        primary_key = self._candidate_frame_key(primary)
+        selected_keys: list[str] = []
+
+        def select(frame_key: str) -> None:
+            if frame_key not in selected_keys and len(selected_keys) < limit:
+                selected_keys.append(frame_key)
+
+        if limit == 1:
+            select(primary_key)
+        else:
+            # The primary thumbnail is mandatory even when a caller chooses a
+            # smaller cap than the default four-frame beginning/middle/best/end set.
+            select(primary_key)
+            select(ordered[0][0])
+            select(ordered[len(ordered) // 2][0])
+            select(ordered[-1][0])
+            if len(selected_keys) < limit:
+                for frame_key, _candidate in ordered:
+                    select(frame_key)
+
+        selected = [item for item in ordered if item[0] in selected_keys]
+        return [
+            LiveActivityEvidenceFrame(
+                activity_session_id=self.activity_session_id,
+                frame_key=frame_key,
+                media_asset_id=(
+                    self.best_media_asset_id
+                    if frame_key == primary_key
+                    else self.evidence_media_asset_ids.get(frame_key)
+                ),
+                sequence=candidate.sequence,
+                captured_at=candidate.captured_at,
+                frame_bytes=candidate.frame_bytes or b"",
+                content_type=candidate.content_type,
+                width=candidate.width,
+                height=candidate.height,
+                is_primary=frame_key == primary_key,
+            )
+            for frame_key, candidate in selected
+        ]
+
+    def _primary_evidence_candidate(self) -> _LiveActivityCandidateFrame | None:
+        if self.best_frame_bytes is None or self.best_frame_captured_at is None:
+            return None
+        return _LiveActivityCandidateFrame(
+            sequence=self.best_frame_sequence,
+            captured_at=self.best_frame_captured_at,
+            score=self.best_score,
+            changed_ratio=self.best_changed_ratio,
+            changed_pixels=self.best_changed_pixels,
+            total_scored_pixels=self.best_total_scored_pixels,
+            near_miss=False,
+            activity_detected=True,
+            frame_bytes=self.best_frame_bytes,
+            content_type=self.best_frame_content_type,
+            width=self.best_frame_width,
+            height=self.best_frame_height,
+        )
+
+    @staticmethod
+    def _candidate_frame_key(candidate: _LiveActivityCandidateFrame) -> str:
+        if candidate.sequence is not None:
+            return f"sequence:{candidate.sequence}"
+        digest = sha1(candidate.frame_bytes or b"").hexdigest()[:16]
+        return f"captured:{candidate.captured_at.isoformat()}:{digest}"
 
     def _emit_notification_once(self, event: str) -> None:
         emitted = self._emitted_notification_events

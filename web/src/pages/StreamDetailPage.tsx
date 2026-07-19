@@ -22,12 +22,17 @@ import type {
   StreamMonitoringPolicy,
   StreamPlaybackStatus,
   StreamRuntimeStatus,
+  StreamVisitSummary,
   Visit,
+  VisitDetail,
+  VisitEvidenceFrame,
   Zone,
   ZoneType,
 } from "../api/types";
+import { EmptyState } from "../components/EmptyState";
 import { StatusPill } from "../components/StatusPill";
 import { StreamPanel } from "../components/StreamPanel";
+import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
 import { formatDateTime, formatLabel } from "../utils";
 
 interface StreamDetailPageProps {
@@ -55,7 +60,10 @@ interface StreamDetailState {
   zones: Zone[];
   events: Event[];
   visitsByEvent: Record<string, Visit[]>;
+  recentVisits: StreamVisitSummary[];
 }
+
+type RecentVisitFilter = "all" | "needs_review" | "reviewed" | "review_outcomes";
 
 const zoneTypeOptions: ZoneType[] = [
   "feeder",
@@ -288,6 +296,54 @@ function streamImageMediaAssets(mediaAssets: MediaAsset[], streamId: string): Me
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
 }
 
+function formatVisitDuration(durationSeconds: number): string {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    return "Instant";
+  }
+  if (durationSeconds < 60) {
+    return `${Math.round(durationSeconds)} sec`;
+  }
+  const minutes = Math.floor(durationSeconds / 60);
+  const seconds = Math.round(durationSeconds % 60);
+  return seconds ? `${minutes} min ${seconds} sec` : `${minutes} min`;
+}
+
+function reviewOutcomeLabel(visit: StreamVisitSummary): string {
+  if (visit.review_status === "needs_review") {
+    return "Needs review";
+  }
+  if (visit.review_outcome === "confirmed_bird" && visit.reviewed_label) {
+    return `Confirmed: ${formatLabel(visit.reviewed_label)}`;
+  }
+  if (visit.reviewed_label) {
+    return `Reviewed outcome: ${formatLabel(visit.reviewed_label)}`;
+  }
+  return formatLabel(visit.review_outcome);
+}
+
+function visitEvidenceFrames(detail: VisitDetail, summary: StreamVisitSummary): VisitEvidenceFrame[] {
+  return detail.evidence_frames.length > 0
+    ? detail.evidence_frames
+    : summary.primary_evidence
+      ? [summary.primary_evidence]
+      : [];
+}
+
+function VisitEvidenceThumbnail({ evidence }: { evidence: VisitEvidenceFrame | null | undefined }) {
+  const [unavailable, setUnavailable] = useState(false);
+  if (!evidence || unavailable) {
+    return <div className="stream-visit-thumbnail stream-visit-thumbnail-unavailable">Preview unavailable</div>;
+  }
+  return (
+    <img
+      alt="Primary Visit evidence"
+      className="stream-visit-thumbnail"
+      onError={() => setUnavailable(true)}
+      src={`${apiClient.baseUrl}${evidence.preview_url}`}
+    />
+  );
+}
+
 function oldestFirstMediaAssets(mediaAssets: MediaAsset[]): MediaAsset[] {
   return [...mediaAssets].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
 }
@@ -511,6 +567,16 @@ export function StreamDetailPage({
   const [detail, setDetail] = useState<StreamDetailState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [recentVisitFilter, setRecentVisitFilter] = useState<RecentVisitFilter>("all");
+  const [recentVisitZoneId, setRecentVisitZoneId] = useState("all");
+  const [recentVisitsRefreshToken, setRecentVisitsRefreshToken] = useState(0);
+  const [recentVisitsError, setRecentVisitsError] = useState<string | null>(null);
+  const [isLoadingRecentVisits, setIsLoadingRecentVisits] = useState(false);
+  const [selectedRecentVisitId, setSelectedRecentVisitId] = useState<string | null>(null);
+  const [selectedRecentVisitDetail, setSelectedRecentVisitDetail] =
+    useState<VisitDetail | null>(null);
+  const [recentVisitDetailError, setRecentVisitDetailError] = useState<string | null>(null);
+  const [isLoadingRecentVisitDetail, setIsLoadingRecentVisitDetail] = useState(false);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [zoneDraft, setZoneDraft] = useState<ZoneDraft | null>(null);
   const [drawMode, setDrawMode] = useState(false);
@@ -559,7 +625,7 @@ export function StreamDetailPage({
   const [
     pendingAutoCreateReviewCandidates,
     setPendingAutoCreateReviewCandidates,
-  ] = useState(() => readPendingAutoCreateReviewCandidates(streamId) ?? false);
+  ] = useState(() => readPendingAutoCreateReviewCandidates(streamId) ?? true);
   const [
     backendAutoCreateReviewCandidates,
     setBackendAutoCreateReviewCandidates,
@@ -754,6 +820,14 @@ export function StreamDetailPage({
       setDrawMode(false);
       setDraftPolygon(null);
       setDrawStart(null);
+      setRecentVisitFilter("all");
+      setRecentVisitZoneId("all");
+      setRecentVisitsError(null);
+      setIsLoadingRecentVisits(false);
+      setSelectedRecentVisitId(null);
+      setSelectedRecentVisitDetail(null);
+      setRecentVisitDetailError(null);
+      setIsLoadingRecentVisitDetail(false);
       setLiveViewOpen(false);
       setLiveViewState("idle");
       setLiveViewReloadToken(0);
@@ -798,12 +872,13 @@ export function StreamDetailPage({
       lastReviewNoticeRef.current = null;
       try {
         const stream = await apiClient.getStream(streamId);
-        const [playback, setupReview, providerConfiguration, zones, events] = await Promise.all([
+        const [playback, setupReview, providerConfiguration, zones, events, recentVisits] = await Promise.all([
           apiClient.getStreamPlaybackStatus(streamId),
           apiClient.getSourceSetupReview(stream.source_id),
           apiClient.getSourceProviderConfiguration(stream.source_id),
           apiClient.getStreamZones(streamId),
           apiClient.getStreamEvents(streamId),
+          apiClient.getStreamRecentVisits(streamId, { limit: 12 }),
         ]);
         const visitPairs = await Promise.all(
           events.map(async (event) => [event.id, await apiClient.getEventVisits(event.id)] as const),
@@ -816,6 +891,7 @@ export function StreamDetailPage({
             zones,
             events,
             visitsByEvent: Object.fromEntries(visitPairs),
+            recentVisits,
           });
           setSourceProviderConfig(providerConfiguration);
           setCameraTuningDraft(cameraTuningDraftFromConfig(providerConfiguration));
@@ -837,6 +913,63 @@ export function StreamDetailPage({
       isMounted = false;
     };
   }, [streamId]);
+
+  useEffect(() => {
+    if (detail?.stream.id !== streamId) {
+      return;
+    }
+    let isCurrent = true;
+    const reviewStatus =
+      recentVisitFilter === "needs_review"
+        ? "needs_review"
+        : recentVisitFilter === "reviewed" || recentVisitFilter === "review_outcomes"
+          ? "reviewed"
+          : undefined;
+
+    async function loadRecentVisits() {
+      setIsLoadingRecentVisits(true);
+      setRecentVisitsError(null);
+      try {
+        const visits = await apiClient.getStreamRecentVisits(streamId, {
+          limit: 12,
+          review_status: reviewStatus,
+          zone_id: recentVisitZoneId === "all" ? undefined : recentVisitZoneId,
+        });
+        const visibleVisits =
+          recentVisitFilter === "review_outcomes"
+            ? visits.filter((visit) => visit.review_outcome !== "confirmed_bird")
+            : visits;
+        if (isCurrent) {
+          setDetail((current) =>
+            current && current.stream.id === streamId
+              ? { ...current, recentVisits: visibleVisits }
+              : current,
+          );
+        }
+      } catch (caught) {
+        if (isCurrent) {
+          setRecentVisitsError(
+            caught instanceof Error ? caught.message : "Could not load recent Visits.",
+          );
+        }
+      } finally {
+        if (isCurrent) {
+          setIsLoadingRecentVisits(false);
+        }
+      }
+    }
+
+    void loadRecentVisits();
+    return () => {
+      isCurrent = false;
+    };
+  }, [
+    detail?.stream.id,
+    recentVisitFilter,
+    recentVisitZoneId,
+    recentVisitsRefreshToken,
+    streamId,
+  ]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1662,6 +1795,26 @@ export function StreamDetailPage({
     }
   }
 
+  async function handleInspectRecentVisit(summary: StreamVisitSummary) {
+    setSelectedRecentVisitId(summary.id);
+    setSelectedRecentVisitDetail(null);
+    setRecentVisitDetailError(null);
+    setIsLoadingRecentVisitDetail(true);
+    try {
+      const visitDetail = await apiClient.getVisitDetail(summary.id);
+      if (visitDetail.stream.id !== streamId) {
+        throw new Error("This Visit is not part of the open Stream.");
+      }
+      setSelectedRecentVisitDetail(visitDetail);
+    } catch (caught) {
+      setRecentVisitDetailError(
+        caught instanceof Error ? caught.message : "Could not load Visit evidence.",
+      );
+    } finally {
+      setIsLoadingRecentVisitDetail(false);
+    }
+  }
+
   if (isLoading) {
     return <div className="panel">Loading stream...</div>;
   }
@@ -1949,6 +2102,14 @@ export function StreamDetailPage({
       : null;
   const liveAutoReviewError =
     liveSession?.auto_review_last_error ?? liveMotionResult?.auto_review_last_error ?? null;
+  const liveOpenActivitySessionCount = liveSession?.open_activity_session_count ?? 0;
+  const liveOpenActivityZones = liveSession?.open_activity_zone_names ?? [];
+  const liveReadyActivitySessionCount = liveSession?.ready_activity_session_count ?? 0;
+  const liveLatestReviewQueueItemId =
+    liveSession?.latest_activity_review_queue_item_id ??
+    liveSession?.last_auto_review_queue_item_id ??
+    liveMotionResult?.review_queue_item_id ??
+    null;
   const liveSensitivityLabel = liveMonitorSensitivitySettings[liveMonitorSensitivity].label;
   const liveStrongestChangeLabel = formatPercent(liveMotionResult?.strongest_changed_ratio);
   const liveStrongestThresholdLabel = formatPercent(
@@ -2303,6 +2464,26 @@ export function StreamDetailPage({
                 <strong>Review Queue</strong>{" "}
                 {streamReviewCount > 0 ? `${streamReviewCount} candidate(s)` : "clear"}
               </span>
+              <span>
+                <strong>Zone sessions</strong>{" "}
+                {liveOpenActivitySessionCount > 0
+                  ? `${liveOpenActivitySessionCount} open${
+                      liveOpenActivityZones.length > 0
+                        ? `: ${liveOpenActivityZones.join(", ")}`
+                        : ""
+                    }`
+                  : "none open"}
+              </span>
+              {liveReadyActivitySessionCount > 0 ? (
+                <span>
+                  <strong>Ready for review</strong> {liveReadyActivitySessionCount}
+                </span>
+              ) : null}
+              {liveLatestReviewQueueItemId ? (
+                <span>
+                  <strong>Latest candidate</strong> ready in Review Queue
+                </span>
+              ) : null}
               {backendLiveSessionSupported ? (
                 <span>
                   <strong>Newest frame</strong> {liveSessionNewestFrameLabel}
@@ -3520,6 +3701,209 @@ export function StreamDetailPage({
               </>
             )}
           </div>
+        </div>
+      </section>
+
+      <section className="panel stream-recent-visits">
+        <div className="section-heading">
+          <div>
+            <h2>Recent Visits</h2>
+            <p className="meta-text">The newest 12 Visits on this Stream. Review corrections remain the source of truth.</p>
+          </div>
+          <span className="meta-text">Stream history</span>
+        </div>
+        <div className="stream-visit-filter-row">
+          <label>
+            Show
+            <select
+              aria-label="Filter recent Visits by review status"
+              onChange={(event) => setRecentVisitFilter(event.target.value as RecentVisitFilter)}
+              value={recentVisitFilter}
+            >
+              <option value="all">All Visits</option>
+              <option value="needs_review">Needs review</option>
+              <option value="reviewed">Reviewed</option>
+              <option value="review_outcomes">Dismissed, false, or blank outcomes</option>
+            </select>
+          </label>
+          <label>
+            Zone
+            <select
+              aria-label="Filter recent Visits by Zone"
+              onChange={(event) => setRecentVisitZoneId(event.target.value)}
+              value={recentVisitZoneId}
+            >
+              <option value="all">All configured zones</option>
+              {detail.zones.map((zone) => (
+                <option key={zone.id} value={zone.id}>
+                  {zone.name} ({formatLabel(zone.zone_type)})
+                </option>
+              ))}
+            </select>
+          </label>
+          {detail.zones.length === 0 ? (
+            <span className="meta-text">No configured zones yet; unzoned Visits remain visible.</span>
+          ) : null}
+        </div>
+
+        {recentVisitsError ? (
+          <div className="stream-visit-history-error" role="alert">
+            <span>{recentVisitsError}</span>
+            <button
+              className="secondary-action"
+              onClick={() => setRecentVisitsRefreshToken((token) => token + 1)}
+              type="button"
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
+        {isLoadingRecentVisits ? <span className="meta-text">Loading recent Visits…</span> : null}
+        {!isLoadingRecentVisits && !recentVisitsError && detail.recentVisits.length === 0 ? (
+          <EmptyState
+            description={
+              recentVisitFilter === "all" && recentVisitZoneId === "all"
+                ? "No Visits have been captured for this Stream yet."
+                : "No Visits match these review and Zone filters."
+            }
+            title="No recent Visits"
+          />
+        ) : null}
+        <div className="stream-visit-list">
+          {detail.recentVisits.map((visit) => {
+            const isSelected = selectedRecentVisitId === visit.id;
+            const reviewNeedsAttention = visit.review_status === "needs_review";
+            return (
+              <article className="stream-visit-card" key={visit.id}>
+                <VisitEvidenceThumbnail evidence={visit.primary_evidence} />
+                <div className="stream-visit-card-body">
+                  <div className="item-title-row">
+                    <div>
+                      <h3>{formatDateTime(visit.captured_at)}</h3>
+                      <span className="meta-text">
+                        {visit.zone_name
+                          ? visit.zone_type
+                            ? `${visit.zone_name} (${formatLabel(visit.zone_type)})`
+                            : visit.zone_name
+                          : "No Zone assigned"}
+                      </span>
+                    </div>
+                    <StatusPill
+                      label={formatLabel(visit.review_status)}
+                      tone={reviewNeedsAttention ? "review" : "good"}
+                    />
+                  </div>
+                  <div className="stream-visit-facts">
+                    <span>
+                      Activity: {formatDateTime(visit.activity_started_at)}
+                      {visit.activity_ended_at ? ` – ${formatDateTime(visit.activity_ended_at)}` : ""}
+                    </span>
+                    <span>Duration: {formatVisitDuration(visit.duration_seconds)}</span>
+                    <span>
+                      {visit.evidence_frame_count > 1
+                        ? `${visit.evidence_frame_count} evidence frames`
+                        : visit.evidence_frame_count === 1
+                          ? "1 evidence frame"
+                          : "No saved evidence"}
+                    </span>
+                  </div>
+                  <div className="stream-visit-outcomes">
+                    <strong>{reviewOutcomeLabel(visit)}</strong>
+                    {visit.has_suggestion ? (
+                      <span className="tag">
+                        Suggestion: {visit.suggested_label ? formatLabel(visit.suggested_label) : "available"}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="detail-actions">
+                    <button
+                      className="secondary-action"
+                      onClick={() => void handleInspectRecentVisit(visit)}
+                      type="button"
+                    >
+                      {isSelected ? "Reload evidence" : "Inspect"}
+                    </button>
+                    {reviewNeedsAttention ? (
+                      <button
+                        className="primary-action"
+                        onClick={() =>
+                          onOpenReview({
+                            source: "live-motion",
+                            search: visit.id,
+                            status: "unreviewed",
+                          })
+                        }
+                        type="button"
+                      >
+                        Review in Queue
+                      </button>
+                    ) : (
+                      <button
+                        className="text-action"
+                        onClick={() => onOpenVisit(visit.id)}
+                        type="button"
+                      >
+                        Open Visit detail
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {isSelected ? (
+                  <div className="stream-visit-inspection">
+                    <div className="item-title-row">
+                      <h3>Visit evidence</h3>
+                      <button
+                        className="text-action"
+                        onClick={() => {
+                          setSelectedRecentVisitId(null);
+                          setSelectedRecentVisitDetail(null);
+                          setRecentVisitDetailError(null);
+                        }}
+                        type="button"
+                      >
+                        Close
+                      </button>
+                    </div>
+                    {isLoadingRecentVisitDetail ? <span className="meta-text">Loading evidence…</span> : null}
+                    {recentVisitDetailError ? (
+                      <div className="stream-visit-history-error" role="alert">
+                        <span>{recentVisitDetailError}</span>
+                        <button
+                          className="secondary-action"
+                          onClick={() => void handleInspectRecentVisit(visit)}
+                          type="button"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : null}
+                    {selectedRecentVisitDetail && !isLoadingRecentVisitDetail ? (
+                      <>
+                        {visitEvidenceFrames(selectedRecentVisitDetail, visit).length > 0 ? (
+                          <VisitEvidenceSequence
+                            frames={visitEvidenceFrames(selectedRecentVisitDetail, visit)}
+                            surfaceOverlay={<StatusPill label={formatLabel(visit.review_status)} tone={reviewNeedsAttention ? "review" : "good"} />}
+                          />
+                        ) : (
+                          <div className="stream-visit-thumbnail-unavailable">
+                            No saved evidence is available for this Visit.
+                          </div>
+                        )}
+                        <div className="stream-visit-inspection-facts">
+                          <span>Captured: {formatDateTime(visit.captured_at)}</span>
+                          <span>
+                            Activity: {formatDateTime(visit.activity_started_at)}
+                            {visit.activity_ended_at ? ` – ${formatDateTime(visit.activity_ended_at)}` : ""}
+                          </span>
+                          <span>Current review: {reviewOutcomeLabel(visit)}</span>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
         </div>
       </section>
 

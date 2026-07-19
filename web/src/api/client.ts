@@ -16,6 +16,7 @@ import type {
   DatasetExportDetail,
   DatasetExportManifest,
   DatasetQualitySummary,
+  DashboardSummary,
   DemoDetectionRunCreate,
   DemoDetectionRunResult,
   DetectionProposal,
@@ -109,6 +110,7 @@ import type {
   StreamMonitoringPolicy,
   StreamPlaybackStatus,
   StreamRuntimeStatus,
+  StreamVisitSummary,
   TaxonomyLabel,
   Visit,
   VisitDetail,
@@ -295,6 +297,7 @@ export const apiClient = {
     request<SourceMonitorStatusResponse>(
       `/api/streams/${encodeURIComponent(streamId)}/monitor/status`,
     ),
+  getDashboardSummary: () => request<DashboardSummary>("/api/dashboard/summary"),
   getStreams: () => request<Stream[]>("/api/streams"),
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),
   getStreamPlaybackStatus: (streamId: string) =>
@@ -395,6 +398,37 @@ export const apiClient = {
     ),
   getStreamZones: (streamId: string) => request<Zone[]>(`/api/streams/${streamId}/zones`),
   getStreamEvents: (streamId: string) => request<Event[]>(`/api/streams/${streamId}/events`),
+  getStreamRecentVisits: (
+    streamId: string,
+    params: {
+      limit?: number;
+      review_status?: "needs_review" | "reviewed" | "rejected";
+      zone_id?: string;
+      start_at?: string;
+      end_at?: string;
+    } = {},
+  ) => {
+    const searchParams = new URLSearchParams();
+    if (params.limit != null) {
+      searchParams.set("limit", String(params.limit));
+    }
+    if (params.review_status) {
+      searchParams.set("review_status", params.review_status);
+    }
+    if (params.zone_id) {
+      searchParams.set("zone_id", params.zone_id);
+    }
+    if (params.start_at) {
+      searchParams.set("start_at", params.start_at);
+    }
+    if (params.end_at) {
+      searchParams.set("end_at", params.end_at);
+    }
+    const query = searchParams.toString();
+    return request<StreamVisitSummary[]>(
+      `/api/streams/${encodeURIComponent(streamId)}/visits${query ? `?${query}` : ""}`,
+    );
+  },
   getEventVisits: (eventId: string) => request<Visit[]>(`/api/events/${eventId}/visits`),
   getEventDetail: (eventId: string) => request<EventDetail>(`/api/events/${eventId}/detail`),
   getVisitDetail: (visitId: string) => request<VisitDetail>(`/api/visits/${visitId}/detail`),

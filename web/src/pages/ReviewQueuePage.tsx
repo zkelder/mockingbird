@@ -18,6 +18,7 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { ReviewFilterTabs, type ReviewFilterOption } from "../components/ReviewFilterTabs";
+import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
 import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
 import { StatusPill } from "../components/StatusPill";
 import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
@@ -2292,6 +2293,7 @@ export function ReviewQueuePage({
           const streamLabel = reviewQueueStreamLabel(item, itemSourceStreamMetadata);
           const zoneLabel = reviewItemZoneLabel(item);
           const isLiveActivity = isLiveActivityReviewItem(item);
+          const evidenceFrames = item.evidence_frames ?? [];
           const hasActivityDiagnostics =
             isLiveActivity ||
             item.focus_crop_available ||
@@ -2435,7 +2437,19 @@ export function ReviewQueuePage({
                   item.media_asset ? "" : " review-candidate-context-no-media"
                 }`}
               >
-                {item.media_asset ? (
+                {evidenceFrames.length > 0 ? (
+                  <div className="review-candidate-media">
+                    <VisitEvidenceSequence
+                      frames={evidenceFrames}
+                      surfaceOverlay={
+                        <>
+                          {focusCropOverlay}
+                          {analyzerProposalOverlays}
+                        </>
+                      }
+                    />
+                  </div>
+                ) : item.media_asset ? (
                   <div className="review-candidate-media">
                     <MediaAssetPreview
                       asset={item.media_asset}
@@ -2475,6 +2489,9 @@ export function ReviewQueuePage({
                     ) : null}
                     {item.candidate_frame_count > 0 ? (
                       <span>{item.candidate_frame_count} candidate frame{item.candidate_frame_count === 1 ? "" : "s"}</span>
+                    ) : null}
+                    {evidenceFrames.length > 0 ? (
+                      <span>{evidenceFrames.length} review frame{evidenceFrames.length === 1 ? "" : "s"}</span>
                     ) : null}
                     {item.best_changed_ratio != null ? (
                       <span>Best change {formatPercent(item.best_changed_ratio)}</span>
