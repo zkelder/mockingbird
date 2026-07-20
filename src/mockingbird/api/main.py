@@ -19,6 +19,13 @@ from starlette.responses import FileResponse, Response, StreamingResponse
 
 from mockingbird.api.schemas import (
     AnalyticsSummary,
+    ActivityLibraryExportSelectionRequest,
+    ActivityLibraryExportSelectionResponse,
+    ActivityLibrarySavedView,
+    ActivityLibrarySavedViewCreate,
+    ActivityLibrarySavedViewUpdate,
+    ActivityLibrarySearchRequest,
+    ActivityLibrarySearchResponse,
     AdapterEvaluationSummary,
     CameraSource,
     CameraSourceCreate,
@@ -7145,6 +7152,74 @@ async def list_event_visits(event_id: str) -> list[Visit]:
 @app.get("/api/visits", response_model=list[Visit])
 async def list_visits() -> list[Visit]:
     return get_repository().list_visits()
+
+
+@app.post("/api/activity-library/search", response_model=ActivityLibrarySearchResponse)
+async def search_activity_library(
+    payload: ActivityLibrarySearchRequest,
+) -> ActivityLibrarySearchResponse:
+    return get_repository().search_activity_library(payload)
+
+
+@app.get("/api/activity-library/saved-views", response_model=list[ActivityLibrarySavedView])
+async def list_activity_library_saved_views() -> list[ActivityLibrarySavedView]:
+    return get_repository().list_activity_library_saved_views()
+
+
+@app.post(
+    "/api/activity-library/saved-views",
+    response_model=ActivityLibrarySavedView,
+    status_code=201,
+)
+async def create_activity_library_saved_view(
+    payload: ActivityLibrarySavedViewCreate,
+) -> ActivityLibrarySavedView:
+    try:
+        return get_repository().create_activity_library_saved_view(payload)
+    except ValueError as error:
+        if str(error) == "activity_library_saved_view_limit":
+            raise HTTPException(
+                status_code=409,
+                detail="You can save up to 15 Activity Library views.",
+            ) from error
+        raise HTTPException(status_code=400, detail="Saved view name is required.") from error
+
+
+@app.patch(
+    "/api/activity-library/saved-views/{view_id}",
+    response_model=ActivityLibrarySavedView,
+)
+async def update_activity_library_saved_view(
+    view_id: str,
+    payload: ActivityLibrarySavedViewUpdate,
+) -> ActivityLibrarySavedView:
+    try:
+        saved_view = get_repository().update_activity_library_saved_view(view_id, payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="Saved view name is required.") from error
+    if saved_view is None:
+        raise _not_found("Activity Library saved view", view_id)
+    return saved_view
+
+
+@app.delete("/api/activity-library/saved-views/{view_id}", status_code=204)
+async def delete_activity_library_saved_view(view_id: str) -> Response:
+    if not get_repository().delete_activity_library_saved_view(view_id):
+        raise _not_found("Activity Library saved view", view_id)
+    return Response(status_code=204)
+
+
+@app.post(
+    "/api/activity-library/export-selection",
+    response_model=ActivityLibraryExportSelectionResponse,
+)
+async def create_activity_library_export_selection(
+    payload: ActivityLibraryExportSelectionRequest,
+) -> ActivityLibraryExportSelectionResponse:
+    try:
+        return get_repository().create_activity_library_export_selection(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="Selected Visit export could not be created.") from error
 
 
 @app.get("/api/visits/{visit_id}/correction-history", response_model=VisitReviewHistory)

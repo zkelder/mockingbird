@@ -13,6 +13,7 @@ export type Page =
   | "stream-detail"
   | "event-detail"
   | "visit-detail"
+  | "activity-library"
   | "review"
   | "bird-log"
   | "analytics"
@@ -41,6 +42,7 @@ const pagePaths: Partial<Record<Page, string>> = {
   "species-suggestions": "/species-suggestions",
   "classifier-readiness": "/classifier-readiness",
   "classifier-manifest": "/classifier-manifest",
+  "activity-library": "/activity",
   review: "/review",
   "bird-log": "/bird-log",
   analytics: "/analytics",

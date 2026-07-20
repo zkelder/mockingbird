@@ -1,4 +1,11 @@
 import type {
+  ActivityLibraryExportSelectionRequest,
+  ActivityLibraryExportSelectionResponse,
+  ActivityLibrarySavedView,
+  ActivityLibrarySavedViewCreate,
+  ActivityLibrarySavedViewUpdate,
+  ActivityLibrarySearchRequest,
+  ActivityLibrarySearchResponse,
   AdapterEvaluationSummary,
   AnalyticsSummary,
   CameraSource,
@@ -185,6 +192,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(detail, response.status);
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return (await response.json()) as T;
 }
 
@@ -325,6 +336,7 @@ export const apiClient = {
     ),
   getDashboardSummary: () => request<DashboardSummary>("/api/dashboard/summary"),
   getStreams: () => request<Stream[]>("/api/streams"),
+  getZones: () => request<Zone[]>("/api/zones"),
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),
   getStreamPlaybackStatus: (streamId: string) =>
     request<StreamPlaybackStatus>(`/api/streams/${streamId}/playback`),
@@ -727,6 +739,35 @@ export const apiClient = {
     }),
   getReviewQueue: () => request<ReviewQueueItem[]>("/api/review-queue"),
   getReviewLabels: () => request<ReviewLabel[]>("/api/review-labels"),
+  searchActivityLibrary: (payload: ActivityLibrarySearchRequest) =>
+    request<ActivityLibrarySearchResponse>("/api/activity-library/search", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getActivityLibrarySavedViews: () =>
+    request<ActivityLibrarySavedView[]>("/api/activity-library/saved-views"),
+  createActivityLibrarySavedView: (payload: ActivityLibrarySavedViewCreate) =>
+    request<ActivityLibrarySavedView>("/api/activity-library/saved-views", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateActivityLibrarySavedView: (viewId: string, payload: ActivityLibrarySavedViewUpdate) =>
+    request<ActivityLibrarySavedView>(
+      `/api/activity-library/saved-views/${encodeURIComponent(viewId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      },
+    ),
+  deleteActivityLibrarySavedView: (viewId: string) =>
+    request<void>(`/api/activity-library/saved-views/${encodeURIComponent(viewId)}`, {
+      method: "DELETE",
+    }),
+  createActivityLibraryExportSelection: (payload: ActivityLibraryExportSelectionRequest) =>
+    request<ActivityLibraryExportSelectionResponse>("/api/activity-library/export-selection", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   getDatasetExports: () => request<DatasetExport[]>("/api/dataset-exports"),
   getDatasetExport: (exportId: string) =>
     request<DatasetExportDetail>(`/api/dataset-exports/${exportId}`),

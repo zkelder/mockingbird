@@ -546,3 +546,16 @@ class DatasetExportModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    selected_visit_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ActivityLibrarySavedViewModel(Base):
+    """Local organizational metadata; it never duplicates Visit evidence or truth."""
+
+    __tablename__ = "activity_library_saved_views"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    filters_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

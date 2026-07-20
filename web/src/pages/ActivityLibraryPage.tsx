@@ -1,0 +1,543 @@
+import { useEffect, useMemo, useState } from "react";
+import { apiClient } from "../api/client";
+import type {
+  ActivityLibraryFilters,
+  ActivityLibraryReviewFilter,
+  ActivityLibrarySavedView,
+  ActivityLibraryVisitSummary,
+  CameraSource,
+  Stream,
+  Zone,
+} from "../api/types";
+import { EmptyState } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
+import { StatusPill } from "../components/StatusPill";
+import { formatDateTime, formatLabel } from "../utils";
+
+const MAX_SELECTION = 50;
+
+const defaultFilters: ActivityLibraryFilters = {
+  review_filter: "all",
+};
+
+const reviewFilterOptions: Array<{ value: ActivityLibraryReviewFilter; label: string }> = [
+  { value: "all", label: "All activity" },
+  { value: "needs_review", label: "Needs review" },
+  { value: "reviewed_observation", label: "Reviewed observations" },
+  { value: "non_bird", label: "Non-bird activity" },
+  { value: "blank_false", label: "Blank / false activity" },
+  { value: "ambiguous_unknown", label: "Ambiguous / unknown" },
+];
+
+interface ActivityLibraryPageProps {
+  sources: CameraSource[];
+  streams: Stream[];
+  onOpenVisit: (visitId: string) => void;
+  onOpenFocusedFastReview: (visitIds: string[]) => void;
+  onOpenExports: () => void;
+}
+
+function dateInputValue(value?: string | null): string {
+  return value ? value.slice(0, 10) : "";
+}
+
+function normalizedFilters(filters: ActivityLibraryFilters): ActivityLibraryFilters {
+  return {
+    ...defaultFilters,
+    ...filters,
+    stream_id: filters.stream_id || null,
+    source_id: filters.source_id || null,
+    zone_id: filters.zone_id || null,
+    confirmed_label: filters.confirmed_label?.trim() || null,
+    search: filters.search?.trim() || null,
+    start_at: dateInputValue(filters.start_at),
+    end_at: dateInputValue(filters.end_at),
+  };
+}
+
+function filtersFromUrl(): { filters: ActivityLibraryFilters; offset: number } {
+  const params = new URLSearchParams(window.location.search);
+  const review = params.get("review") as ActivityLibraryReviewFilter | null;
+  const validReview = reviewFilterOptions.some((option) => option.value === review);
+  const parsedOffset = Number.parseInt(params.get("offset") ?? "0", 10);
+  return {
+    filters: normalizedFilters({
+      review_filter: validReview && review ? review : "all",
+      stream_id: params.get("stream"),
+      source_id: params.get("source"),
+      zone_id: params.get("zone"),
+      confirmed_label: params.get("label"),
+      has_suggestion:
+        params.get("suggestion") === "1"
+          ? true
+          : params.get("suggestion") === "0"
+            ? false
+            : null,
+      search: params.get("q"),
+      start_at: params.get("from"),
+      end_at: params.get("to"),
+    }),
+    offset: Number.isFinite(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0,
+  };
+}
+
+function writeLibraryUrl(filters: ActivityLibraryFilters, offset: number, replace = false): void {
+  const params = new URLSearchParams();
+  if (filters.review_filter && filters.review_filter !== "all") {
+    params.set("review", filters.review_filter);
+  }
+  if (filters.stream_id) params.set("stream", filters.stream_id);
+  if (filters.source_id) params.set("source", filters.source_id);
+  if (filters.zone_id) params.set("zone", filters.zone_id);
+  if (filters.confirmed_label) params.set("label", filters.confirmed_label);
+  if (filters.has_suggestion === true) params.set("suggestion", "1");
+  if (filters.has_suggestion === false) params.set("suggestion", "0");
+  if (filters.search) params.set("q", filters.search);
+  if (filters.start_at) params.set("from", dateInputValue(filters.start_at));
+  if (filters.end_at) params.set("to", dateInputValue(filters.end_at));
+  if (offset > 0) params.set("offset", String(offset));
+  const path = `/activity${params.size ? `?${params.toString()}` : ""}`;
+  if (replace) {
+    window.history.replaceState({}, "", path);
+  } else if (`${window.location.pathname}${window.location.search}` !== path) {
+    window.history.pushState({}, "", path);
+  }
+}
+
+function apiDateBounds(filters: ActivityLibraryFilters): ActivityLibraryFilters {
+  return {
+    ...filters,
+    start_at: filters.start_at ? `${dateInputValue(filters.start_at)}T00:00:00Z` : null,
+    end_at: filters.end_at ? `${dateInputValue(filters.end_at)}T23:59:59.999Z` : null,
+  };
+}
+
+function durationLabel(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)} sec`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} min ${Math.round(seconds % 60)} sec`;
+}
+
+function outcomeTone(outcome: ActivityLibraryVisitSummary["review_outcome"]): "good" | "review" | "quiet" {
+  if (outcome === "confirmed_bird" || outcome === "reviewed_other") return "good";
+  if (outcome === "needs_review") return "review";
+  return "quiet";
+}
+
+export function ActivityLibraryPage({
+  sources,
+  streams,
+  onOpenVisit,
+  onOpenFocusedFastReview,
+  onOpenExports,
+}: ActivityLibraryPageProps) {
+  const initial = useMemo(filtersFromUrl, []);
+  const [filters, setFilters] = useState<ActivityLibraryFilters>(initial.filters);
+  const [offset, setOffset] = useState(initial.offset);
+  const [visits, setVisits] = useState<ActivityLibraryVisitSummary[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [zones, setZones] = useState<Zone[]>([]);
+  const [savedViews, setSavedViews] = useState<ActivityLibrarySavedView[]>([]);
+  const [saveName, setSaveName] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [message, setMessage] = useState<string | null>(null);
+  const [thumbnailFailures, setThumbnailFailures] = useState<Set<string>>(new Set());
+
+  const selectedVisits = useMemo(
+    () => visits.filter((visit) => selectedIds.includes(visit.id)),
+    [selectedIds, visits],
+  );
+  const selectedNeedsReviewIds = useMemo(
+    () =>
+      selectedVisits
+        .filter((visit) => visit.review_outcome === "needs_review")
+        .map((visit) => visit.id),
+    [selectedVisits],
+  );
+
+  async function refreshSavedViews() {
+    try {
+      setSavedViews(await apiClient.getActivityLibrarySavedViews());
+    } catch {
+      // Activity search remains available when optional organizational metadata cannot load.
+    }
+  }
+
+  useEffect(() => {
+    void refreshSavedViews();
+    let active = true;
+    void apiClient
+      .getZones()
+      .then((loadedZones) => {
+        if (active) setZones(loadedZones);
+      })
+      .catch(() => {
+        if (active) setZones([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    setError(null);
+    void apiClient
+      .searchActivityLibrary({ ...apiDateBounds(filters), page_size: 24, offset })
+      .then((result) => {
+        if (!active) return;
+        setVisits(result.visits);
+        setHasMore(result.has_more);
+      })
+      .catch((caught) => {
+        if (active) {
+          setError(caught instanceof Error ? caught.message : "Could not refresh activity.");
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [filters, offset, refreshVersion]);
+
+  useEffect(() => {
+    function handlePopState() {
+      const next = filtersFromUrl();
+      setFilters(next.filters);
+      setOffset(next.offset);
+      setSelectedIds([]);
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  function commitFilters(next: ActivityLibraryFilters) {
+    const normalized = normalizedFilters(next);
+    setFilters(normalized);
+    setOffset(0);
+    setSelectedIds([]);
+    setMessage(null);
+    writeLibraryUrl(normalized, 0);
+  }
+
+  function goToOffset(nextOffset: number) {
+    setOffset(Math.max(0, nextOffset));
+    setSelectedIds([]);
+    writeLibraryUrl(filters, Math.max(0, nextOffset));
+  }
+
+  function toggleSelected(visitId: string, selected: boolean) {
+    setSelectedIds((current) => {
+      if (!selected) return current.filter((id) => id !== visitId);
+      if (current.includes(visitId)) return current;
+      if (current.length >= MAX_SELECTION) {
+        setMessage(`Select up to ${MAX_SELECTION} Visits at a time.`);
+        return current;
+      }
+      return [...current, visitId];
+    });
+  }
+
+  async function saveCurrentView() {
+    const name = saveName.trim();
+    if (!name) {
+      setMessage("Name this view before saving it.");
+      return;
+    }
+    try {
+      await apiClient.createActivityLibrarySavedView({ name, filters });
+      setSaveName("");
+      setMessage(`Saved “${name}”.`);
+      await refreshSavedViews();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not save this view.");
+    }
+  }
+
+  async function renameSavedView(view: ActivityLibrarySavedView) {
+    const name = window.prompt("Rename saved view", view.name)?.trim();
+    if (!name || name === view.name) return;
+    try {
+      await apiClient.updateActivityLibrarySavedView(view.id, { name });
+      await refreshSavedViews();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not rename this view.");
+    }
+  }
+
+  async function deleteSavedView(view: ActivityLibrarySavedView) {
+    if (!window.confirm(`Delete saved view “${view.name}”?`)) return;
+    try {
+      await apiClient.deleteActivityLibrarySavedView(view.id);
+      await refreshSavedViews();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not delete this view.");
+    }
+  }
+
+  async function exportSelected() {
+    if (selectedIds.length === 0) return;
+    try {
+      const result = await apiClient.createActivityLibraryExportSelection({
+        name: `Activity Library selection ${new Date().toLocaleDateString()}`,
+        visit_ids: selectedIds,
+      });
+      const excluded = result.excluded.length;
+      if (result.export) {
+        setMessage(
+          `Created reviewed export with ${result.included_visit_ids.length} Visit${
+            result.included_visit_ids.length === 1 ? "" : "s"
+          }${excluded ? `; ${excluded} unresolved or superseded Visit${excluded === 1 ? " was" : "s were"} excluded` : ""}.`,
+        );
+      } else {
+        setMessage("No selected Visits had current reviewed truth to export.");
+      }
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not create the reviewed export.");
+    }
+  }
+
+  const selectedStreamMissing = Boolean(
+    filters.stream_id && !streams.some((stream) => stream.id === filters.stream_id),
+  );
+  const selectedSourceMissing = Boolean(
+    filters.source_id && !sources.some((source) => source.id === filters.source_id),
+  );
+  const selectedZoneMissing = Boolean(
+    filters.zone_id && !zones.some((zone) => zone.id === filters.zone_id),
+  );
+  const isDefaultView =
+    filters.review_filter === "all" &&
+    !filters.stream_id &&
+    !filters.source_id &&
+    !filters.zone_id &&
+    !filters.confirmed_label &&
+    filters.has_suggestion === null &&
+    !filters.search &&
+    !filters.start_at &&
+    !filters.end_at;
+
+  return (
+    <div className="page-stack activity-library-page">
+      <PageHeader
+        eyebrow="Activity Library"
+        title="Find captured activity"
+        description="Search active Visits across Streams, then inspect evidence, review unresolved activity, or export only existing reviewed truth."
+      />
+
+      <section className="panel activity-library-filters">
+        <div className="activity-filter-grid">
+          <label>
+            Activity
+            <select
+              value={filters.review_filter ?? "all"}
+              onChange={(event) => commitFilters({ ...filters, review_filter: event.target.value as ActivityLibraryReviewFilter })}
+            >
+              {reviewFilterOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Stream
+            <select
+              value={filters.stream_id ?? ""}
+              onChange={(event) => commitFilters({ ...filters, stream_id: event.target.value || null })}
+            >
+              <option value="">All Streams</option>
+              {selectedStreamMissing ? <option value={filters.stream_id ?? ""}>Unavailable Stream</option> : null}
+              {streams.map((stream) => <option key={stream.id} value={stream.id}>{stream.name}</option>)}
+            </select>
+          </label>
+          <label>
+            Camera / Source
+            <select
+              value={filters.source_id ?? ""}
+              onChange={(event) => commitFilters({ ...filters, source_id: event.target.value || null })}
+            >
+              <option value="">All cameras</option>
+              {selectedSourceMissing ? <option value={filters.source_id ?? ""}>Unavailable camera</option> : null}
+              {sources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
+            </select>
+          </label>
+          <label>
+            Zone
+            <select
+              value={filters.zone_id ?? ""}
+              onChange={(event) => commitFilters({ ...filters, zone_id: event.target.value || null })}
+            >
+              <option value="">All Zones</option>
+              {selectedZoneMissing ? <option value={filters.zone_id ?? ""}>Unavailable Zone</option> : null}
+              {zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}
+            </select>
+          </label>
+          <label>
+            Suggestion evidence
+            <select
+              value={filters.has_suggestion === true ? "yes" : filters.has_suggestion === false ? "no" : "all"}
+              onChange={(event) => commitFilters({
+                ...filters,
+                has_suggestion: event.target.value === "yes" ? true : event.target.value === "no" ? false : null,
+              })}
+            >
+              <option value="all">Any suggestion state</option>
+              <option value="yes">Has suggestion evidence</option>
+              <option value="no">No suggestion evidence</option>
+            </select>
+          </label>
+          <label>
+            From
+            <input type="date" value={dateInputValue(filters.start_at)} onChange={(event) => commitFilters({ ...filters, start_at: event.target.value || null })} />
+          </label>
+          <label>
+            To
+            <input type="date" value={dateInputValue(filters.end_at)} onChange={(event) => commitFilters({ ...filters, end_at: event.target.value || null })} />
+          </label>
+          <label>
+            Confirmed label
+            <input
+              value={filters.confirmed_label ?? ""}
+              onChange={(event) => setFilters({ ...filters, confirmed_label: event.target.value })}
+              onBlur={() => commitFilters(filters)}
+              placeholder="e.g. northern cardinal"
+            />
+          </label>
+          <label className="activity-search-field">
+            Search labels, Streams, Sources, or Zones
+            <input
+              value={filters.search ?? ""}
+              onChange={(event) => setFilters({ ...filters, search: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitFilters(filters);
+                }
+              }}
+              onBlur={() => commitFilters(filters)}
+              placeholder="Search activity"
+            />
+          </label>
+        </div>
+        <div className="activity-library-filter-actions">
+          <button className="secondary-action" onClick={() => commitFilters(defaultFilters)} type="button">Reset filters</button>
+          <label className="activity-save-view">
+            <span>Save current view</span>
+            <input value={saveName} onChange={(event) => setSaveName(event.target.value)} placeholder="View name" maxLength={80} />
+          </label>
+          <button className="secondary-action" onClick={() => void saveCurrentView()} type="button">Save view</button>
+        </div>
+      </section>
+
+      {savedViews.length > 0 ? (
+        <section className="panel activity-saved-views">
+          <div className="section-heading"><div><h2>Saved views</h2><p>Local filter presets only; they do not run in the background.</p></div></div>
+          <div className="activity-saved-view-list">
+            {savedViews.map((view) => (
+              <div key={view.id} className="activity-saved-view">
+                <button className="text-action" type="button" onClick={() => commitFilters(view.filters)}>{view.name}</button>
+                <span>
+                  {reviewFilterOptions.find((option) => option.value === (view.filters.review_filter ?? "all"))?.label ?? "Saved filters"}
+                </span>
+                <button className="text-action" type="button" onClick={() => void renameSavedView(view)}>Rename</button>
+                <button className="text-action destructive-action" type="button" onClick={() => void deleteSavedView(view)}>Delete</button>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {selectedIds.length > 0 ? (
+        <section className="notice-panel activity-library-selection" role="status">
+          <strong>{selectedIds.length} selected</strong>
+          <span>
+            {selectedNeedsReviewIds.length} needs review; reviewed export will exclude unresolved or superseded Visits.
+          </span>
+          <div>
+            <button
+              className="primary-action"
+              disabled={selectedNeedsReviewIds.length === 0}
+              onClick={() => onOpenFocusedFastReview(selectedNeedsReviewIds)}
+              type="button"
+            >
+              Open selected in Fast Review
+            </button>
+            <button className="secondary-action" onClick={() => void exportSelected()} type="button">Export selected reviewed</button>
+            <button className="text-action" onClick={() => setSelectedIds([])} type="button">Clear selection</button>
+            {message?.startsWith("Created reviewed export") ? <button className="text-action" onClick={onOpenExports} type="button">Open Exports</button> : null}
+          </div>
+          {message ? <span>{message}</span> : null}
+        </section>
+      ) : null}
+
+      {message && selectedIds.length === 0 ? <div className="notice-panel" role="status">{message}</div> : null}
+      {error ? <div className="error-panel"><strong>Could not refresh Activity Library.</strong><span>{error}</span><button className="secondary-action" onClick={() => setRefreshVersion((value) => value + 1)} type="button">Retry</button></div> : null}
+
+      <section className="activity-library-results">
+        <div className="section-heading">
+          <div><h2>{isDefaultView ? "Newest active Visits" : "Matching active Visits"}</h2><p>Newest first. Superseded Visits remain on their provenance links, not in this list.</p></div>
+          {isLoading ? <span className="meta-text">Refreshing…</span> : null}
+        </div>
+        {visits.length === 0 && !isLoading ? (
+          <EmptyState
+            title={isDefaultView ? "No captured activity yet" : "No active Visits match these filters"}
+            description={isDefaultView ? "Capture or import activity to start a Visit history." : "Try clearing a filter or widening the date range."}
+            action={!isDefaultView ? <button className="secondary-action" onClick={() => commitFilters(defaultFilters)} type="button">Reset filters</button> : undefined}
+          />
+        ) : (
+          <div className="activity-visit-list">
+            {visits.map((visit) => {
+              const thumbnailUnavailable = !visit.primary_evidence || thumbnailFailures.has(visit.id);
+              const selected = selectedIds.includes(visit.id);
+              return (
+                <article className="panel activity-visit-card" key={visit.id}>
+                  <label className="activity-select-control">
+                    <input checked={selected} onChange={(event) => toggleSelected(visit.id, event.target.checked)} type="checkbox" />
+                    <span>Select</span>
+                  </label>
+                  {thumbnailUnavailable ? (
+                    <div className="activity-thumbnail activity-thumbnail-missing">No preview</div>
+                  ) : (
+                    <img
+                      alt="Primary Visit evidence"
+                      className="activity-thumbnail"
+                      onError={() => setThumbnailFailures((current) => new Set([...current, visit.id]))}
+                      src={`${apiClient.baseUrl}${visit.primary_evidence?.preview_url ?? ""}`}
+                    />
+                  )}
+                  <div className="activity-visit-summary">
+                    <div className="activity-visit-title">
+                      <strong>{formatDateTime(visit.activity_started_at)}</strong>
+                      <StatusPill label={formatLabel(visit.review_outcome)} tone={outcomeTone(visit.review_outcome)} />
+                    </div>
+                    <span>{durationLabel(visit.duration_seconds)} · {visit.stream_name} · {visit.source_name}</span>
+                    <span>Zone: {visit.zone_name ?? "No Zone"}</span>
+                    {visit.reviewed_label ? <span>Confirmed: {formatLabel(visit.reviewed_label)}</span> : null}
+                    {visit.has_suggestion ? <span>Suggestion evidence: {formatLabel(visit.suggested_label ?? "available")}</span> : null}
+                    {visit.evidence_frame_count > 1 ? <span>{visit.evidence_frame_count} evidence frames</span> : null}
+                    {visit.curation_actions.length > 0 ? <span>Curated: {visit.curation_actions.map(formatLabel).join(", ")}</span> : null}
+                  </div>
+                  <div className="activity-visit-actions">
+                    <button className="secondary-action" onClick={() => onOpenVisit(visit.id)} type="button">Open Visit</button>
+                    {visit.review_outcome === "needs_review" ? <button className="text-action" onClick={() => onOpenFocusedFastReview([visit.id])} type="button">Fast Review</button> : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <div className="activity-library-pagination">
+        <button className="secondary-action" disabled={offset === 0 || isLoading} onClick={() => goToOffset(Math.max(0, offset - 24))} type="button">Newer</button>
+        <span>{offset > 0 ? `Showing page ${Math.floor(offset / 24) + 1}` : "Showing newest activity"}</span>
+        <button className="secondary-action" disabled={!hasMore || isLoading} onClick={() => goToOffset(offset + 24)} type="button">Older</button>
+      </div>
+    </div>
+  );
+}

@@ -14,6 +14,7 @@ import type {
   Stream,
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { ActivityLibraryPage } from "./pages/ActivityLibraryPage";
 import { BirdLogPage } from "./pages/BirdLogPage";
 import { ClassifierManifestPage } from "./pages/ClassifierManifestPage";
 import { ClassifierReadinessPage } from "./pages/ClassifierReadinessPage";
@@ -79,6 +80,7 @@ const initialData: AppData = {
 const productNavItems: Array<{ page: Page; label: string }> = [
   { page: "dashboard", label: "Overview" },
   { page: "streams", label: "Cameras / Streams" },
+  { page: "activity-library", label: "Activity Library" },
   { page: "review", label: "Review Queue" },
   { page: "bird-log", label: "Bird Log" },
   { page: "exports", label: "Exports / Data" },
@@ -296,6 +298,19 @@ export default function App() {
   function openReviewQueue(context?: ReviewQueueInitialContext | null) {
     setReviewQueueInitialContext(context ?? null);
     setPage("review");
+  }
+
+  function openFocusedFastReview(visitIds: string[]) {
+    const boundedVisitIds = visitIds.slice(0, 50);
+    if (boundedVisitIds.length === 0) {
+      return;
+    }
+    openReviewQueue({
+      source: "activity-library",
+      status: "unreviewed",
+      visitIds: boundedVisitIds,
+      openFastReview: true,
+    });
   }
 
   function openReviewQueueForClassifierLabel(label: string) {
@@ -578,6 +593,18 @@ export default function App() {
           onOpenMotionEvidence={openMotionEvidence}
           onCorrectionSaved={refreshAfterVisitCorrection}
           correctionPrefill={visitCorrectionPrefill}
+        />
+      );
+    }
+
+    if (page === "activity-library") {
+      return (
+        <ActivityLibraryPage
+          sources={data.sources}
+          streams={data.streams}
+          onOpenVisit={openVisit}
+          onOpenFocusedFastReview={openFocusedFastReview}
+          onOpenExports={() => setPage("exports")}
         />
       );
     }

@@ -52,11 +52,13 @@ export type ReviewStatusFilter = "unreviewed" | "reviewed" | "all";
 type LabelValidationStatus = "empty" | "suggested" | "recent" | "taxonomy" | "custom";
 
 export interface ReviewQueueInitialContext {
-  source?: "classifier-readiness" | "live-motion";
+  source?: "activity-library" | "classifier-readiness" | "live-motion";
   sourceLabel?: string | null;
   search?: string | null;
   correctionLabel?: string | null;
   status?: ReviewStatusFilter | null;
+  visitIds?: string[];
+  openFastReview?: boolean;
 }
 
 interface LabelHelperGroup {
@@ -1252,6 +1254,8 @@ export function ReviewQueuePage({
   const [isBulkSaving, setIsBulkSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [fastReviewRequest, setFastReviewRequest] = useState<ReviewQueueItem | null>(null);
+  const [scopedVisitIds, setScopedVisitIds] = useState<Set<string> | null>(null);
+  const [shouldOpenFocusedFastReview, setShouldOpenFocusedFastReview] = useState(false);
 
   const detectionRunsById = useMemo(
     () => new Map(detectionRuns.map((run) => [run.id, run])),
@@ -1329,6 +1333,9 @@ export function ReviewQueuePage({
       const normalizedSearch = textSearch.trim().toLowerCase();
 
       const matchingItems = queueItems.filter((item) => {
+        if (scopedVisitIds && !scopedVisitIds.has(reviewQueueTargetId(item))) {
+          return false;
+        }
         const metadata = filterMetadataByItemId.get(item.id);
         if (!metadata) {
           return false;
@@ -1383,6 +1390,7 @@ export function ReviewQueuePage({
       reviewFilter,
       reviewSort,
       reviewStatusFilter,
+      scopedVisitIds,
       sourceStreamFilter,
       targetTypeFilter,
       textSearch,
@@ -1550,6 +1558,18 @@ export function ReviewQueuePage({
       setEvidenceFilter("all");
       setSourceStreamFilter("all");
     }
+    if (initialContext.source === "activity-library") {
+      setReviewFilter("all");
+      setReviewSort("newest");
+      setTargetTypeFilter("visit");
+      setEvidenceFilter("all");
+      setSourceStreamFilter("all");
+      setScopedVisitIds(new Set((initialContext.visitIds ?? []).slice(0, 50)));
+      setShouldOpenFocusedFastReview(Boolean(initialContext.openFastReview));
+    } else {
+      setScopedVisitIds(null);
+      setShouldOpenFocusedFastReview(false);
+    }
     if (initialContext.status) {
       setReviewStatusFilter(initialContext.status);
     }
@@ -1565,6 +1585,19 @@ export function ReviewQueuePage({
     );
     onInitialContextConsumed?.();
   }, [initialContext, onInitialContextConsumed]);
+
+  useEffect(() => {
+    if (!shouldOpenFocusedFastReview) {
+      return;
+    }
+    const firstUnresolved = filteredItems.find(
+      (item) => item.target_type === "visit" && item.review_status === "needs_review",
+    );
+    if (firstUnresolved) {
+      setFastReviewRequest(firstUnresolved);
+    }
+    setShouldOpenFocusedFastReview(false);
+  }, [filteredItems, shouldOpenFocusedFastReview]);
 
   useEffect(() => {
     setQueueItems(items);

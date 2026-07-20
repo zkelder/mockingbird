@@ -1064,6 +1064,60 @@ export interface DashboardVisitSummary extends StreamVisitSummary {
   source_name: string;
 }
 
+export type ActivityLibraryReviewFilter =
+  | "all"
+  | "needs_review"
+  | "reviewed_observation"
+  | "non_bird"
+  | "blank_false"
+  | "ambiguous_unknown";
+
+export interface ActivityLibraryFilters {
+  review_filter?: ActivityLibraryReviewFilter;
+  stream_id?: string | null;
+  source_id?: string | null;
+  zone_id?: string | null;
+  confirmed_label?: string | null;
+  has_suggestion?: boolean | null;
+  search?: string | null;
+  start_at?: string | null;
+  end_at?: string | null;
+  include_superseded?: boolean;
+}
+
+export interface ActivityLibrarySearchRequest extends ActivityLibraryFilters {
+  page_size?: number;
+  offset?: number;
+}
+
+export interface ActivityLibraryVisitSummary extends DashboardVisitSummary {
+  curation_actions: string[];
+}
+
+export interface ActivityLibrarySearchResponse {
+  visits: ActivityLibraryVisitSummary[];
+  has_more: boolean;
+  next_offset?: number | null;
+}
+
+export interface ActivityLibrarySavedView {
+  id: string;
+  name: string;
+  filters: ActivityLibraryFilters;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ActivityLibrarySavedViewCreate {
+  name: string;
+  filters: ActivityLibraryFilters;
+}
+
+export interface ActivityLibrarySavedViewUpdate {
+  name?: string;
+  filters?: ActivityLibraryFilters;
+}
+
 export interface DashboardStreamSummary {
   stream_id: string;
   stream_name: string;
@@ -2488,6 +2542,7 @@ export interface DatasetExport {
   include_zone_context: boolean;
   record_count: number;
   created_at: string;
+  selected_visit_ids?: string[] | null;
 }
 
 export interface DatasetExportCreate {
@@ -2495,6 +2550,7 @@ export interface DatasetExportCreate {
   reviewed_only?: boolean;
   include_detections?: boolean;
   include_zone_context?: boolean;
+  selected_visit_ids?: string[] | null;
 }
 
 export interface DatasetExportRecord {
@@ -2529,6 +2585,22 @@ export interface DatasetExportManifest {
 export interface DatasetExportDetail {
   export: DatasetExport;
   manifest: DatasetExportManifest;
+}
+
+export interface ActivityLibraryExportSelectionRequest {
+  name: string;
+  visit_ids: string[];
+}
+
+export interface ActivityLibraryExportExclusion {
+  visit_id: string;
+  reason: string;
+}
+
+export interface ActivityLibraryExportSelectionResponse {
+  export?: DatasetExportDetail | null;
+  included_visit_ids: string[];
+  excluded: ActivityLibraryExportExclusion[];
 }
 
 export interface DatasetCoverageSpecies {

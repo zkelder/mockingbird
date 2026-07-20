@@ -1451,6 +1451,71 @@ class StreamVisitSummary(BaseModel):
     primary_evidence: VisitEvidenceFrame | None = None
 
 
+class ActivityLibraryReviewFilter(str, Enum):
+    all = "all"
+    needs_review = "needs_review"
+    reviewed_observation = "reviewed_observation"
+    non_bird = "non_bird"
+    blank_false = "blank_false"
+    ambiguous_unknown = "ambiguous_unknown"
+
+
+class ActivityLibraryFilters(BaseModel):
+    """Strict, local-only filters for a bounded cross-Stream Visit search."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    review_filter: ActivityLibraryReviewFilter = ActivityLibraryReviewFilter.all
+    stream_id: str | None = Field(default=None, min_length=1, max_length=256)
+    source_id: str | None = Field(default=None, min_length=1, max_length=256)
+    zone_id: str | None = Field(default=None, min_length=1, max_length=256)
+    confirmed_label: str | None = Field(default=None, min_length=1, max_length=256)
+    has_suggestion: bool | None = None
+    search: str | None = Field(default=None, max_length=256)
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    include_superseded: bool = False
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "ActivityLibraryFilters":
+        if self.start_at and self.end_at and self.end_at < self.start_at:
+            raise ValueError("end_at must be on or after start_at")
+        return self
+
+
+class ActivityLibrarySearchRequest(ActivityLibraryFilters):
+    page_size: int = Field(default=24, ge=1, le=50)
+    offset: int = Field(default=0, ge=0, le=10_000)
+
+
+class ActivityLibrarySavedView(BaseModel):
+    id: str
+    name: str
+    filters: ActivityLibraryFilters
+    created_at: datetime
+    updated_at: datetime
+
+
+class ActivityLibrarySavedViewCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=80)
+    filters: ActivityLibraryFilters
+
+
+class ActivityLibrarySavedViewUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    filters: ActivityLibraryFilters | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "ActivityLibrarySavedViewUpdate":
+        if self.name is None and self.filters is None:
+            raise ValueError("Provide a name or filters to update this saved view")
+        return self
+
+
 class DashboardStreamRuntimeStatus(BaseModel):
     """Read-only runtime facts collected without starting a camera or monitor."""
 
@@ -1523,6 +1588,17 @@ class DashboardSummary(BaseModel):
     )
     recent_activity: list[DashboardVisitSummary] = Field(default_factory=list, max_length=25)
     warnings: list[str] = Field(default_factory=list, max_length=12)
+
+
+class ActivityLibraryVisitSummary(DashboardVisitSummary):
+    # Structural curation is provenance context, never a second review truth.
+    curation_actions: list[str] = Field(default_factory=list, max_length=8)
+
+
+class ActivityLibrarySearchResponse(BaseModel):
+    visits: list[ActivityLibraryVisitSummary] = Field(default_factory=list, max_length=50)
+    has_more: bool
+    next_offset: int | None = Field(default=None, ge=0)
 
 
 class DetectionRun(BaseModel):
@@ -2557,6 +2633,7 @@ class DatasetExport(BaseModel):
     include_zone_context: bool = True
     record_count: int = Field(ge=0)
     created_at: datetime
+    selected_visit_ids: list[str] | None = Field(default=None, max_length=50)
 
 
 class DatasetExportCreate(BaseModel):
@@ -2564,6 +2641,17 @@ class DatasetExportCreate(BaseModel):
     reviewed_only: bool = True
     include_detections: bool = True
     include_zone_context: bool = True
+    selected_visit_ids: list[str] | None = Field(default=None, max_length=50)
+
+    @field_validator("selected_visit_ids")
+    @classmethod
+    def validate_selected_visit_ids(cls, values: list[str] | None) -> list[str] | None:
+        if values is None:
+            return None
+        normalized = [value.strip() for value in values]
+        if not all(normalized) or len(set(normalized)) != len(normalized):
+            raise ValueError("selected_visit_ids must be unique non-empty Visit IDs")
+        return normalized
 
 
 class DatasetExportRecord(BaseModel):
@@ -2598,6 +2686,32 @@ class DatasetExportManifest(BaseModel):
 class DatasetExportDetail(BaseModel):
     export: DatasetExport
     manifest: DatasetExportManifest
+
+
+class ActivityLibraryExportSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    visit_ids: list[str] = Field(min_length=1, max_length=50)
+
+    @field_validator("visit_ids")
+    @classmethod
+    def validate_visit_ids(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if not all(normalized) or len(set(normalized)) != len(normalized):
+            raise ValueError("visit_ids must be unique non-empty Visit IDs")
+        return normalized
+
+
+class ActivityLibraryExportExclusion(BaseModel):
+    visit_id: str
+    reason: str
+
+
+class ActivityLibraryExportSelectionResponse(BaseModel):
+    export: DatasetExportDetail | None = None
+    included_visit_ids: list[str] = Field(default_factory=list, max_length=50)
+    excluded: list[ActivityLibraryExportExclusion] = Field(default_factory=list, max_length=50)
 
 
 class DatasetCoverageSpecies(BaseModel):

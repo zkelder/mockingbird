@@ -87,6 +87,17 @@ from mockingbird.api.schemas import (
     AdapterEvaluationOutcome,
     AdapterEvaluationSummary,
     AnalyticsSummary,
+    ActivityLibraryExportExclusion,
+    ActivityLibraryExportSelectionRequest,
+    ActivityLibraryExportSelectionResponse,
+    ActivityLibraryFilters,
+    ActivityLibraryReviewFilter,
+    ActivityLibrarySavedView,
+    ActivityLibrarySavedViewCreate,
+    ActivityLibrarySavedViewUpdate,
+    ActivityLibrarySearchRequest,
+    ActivityLibrarySearchResponse,
+    ActivityLibraryVisitSummary,
     BoundingBox,
     CameraSource,
     CameraSourceCreate,
@@ -298,6 +309,7 @@ from mockingbird.storage.database import (
     resolve_database_url,
 )
 from mockingbird.storage.models import (
+    ActivityLibrarySavedViewModel,
     Base,
     BioClipIdentificationAttemptModel,
     CameraSourceModel,
@@ -339,6 +351,7 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
 MAX_LIVE_VISIT_EVIDENCE_FRAMES = 4
 MAX_VISIT_MERGE_CANDIDATES = 10
 MAX_VISIT_MERGE_GAP = timedelta(minutes=30)
+MAX_ACTIVITY_LIBRARY_SAVED_VIEWS = 15
 
 
 class FastReviewConflictError(ValueError):
@@ -3523,6 +3536,370 @@ class ProductRepository:
     def visits_for_event(self, event_id: str) -> list[Visit]:
         with self.session_factory() as session:
             return self._visits_for_event(session, event_id)
+
+    def search_activity_library(
+        self,
+        payload: ActivityLibrarySearchRequest,
+    ) -> ActivityLibrarySearchResponse:
+        """Read one stable, bounded newest-first page of cross-Stream activity."""
+
+        with self.session_factory() as session:
+            effective_zone_id = func.coalesce(VisitModel.zone_id, EventModel.primary_zone_id)
+            latest_visit_label = (
+                select(ReviewLabelModel.label)
+                .where(
+                    ReviewLabelModel.target_type == "visit",
+                    ReviewLabelModel.target_id == VisitModel.id,
+                )
+                .order_by(ReviewLabelModel.created_at.desc(), ReviewLabelModel.id.desc())
+                .limit(1)
+                .scalar_subquery()
+            )
+            latest_event_label = (
+                select(ReviewLabelModel.label)
+                .where(
+                    ReviewLabelModel.target_type == "event",
+                    ReviewLabelModel.target_id == EventModel.id,
+                )
+                .order_by(ReviewLabelModel.created_at.desc(), ReviewLabelModel.id.desc())
+                .limit(1)
+                .scalar_subquery()
+            )
+            effective_reviewed_label = func.coalesce(
+                VisitModel.reviewed_label,
+                latest_visit_label,
+                latest_event_label,
+            )
+            review_label_key = func.lower(effective_reviewed_label)
+            suggestion_exists = (
+                select(SpeciesSuggestionModel.id)
+                .where(SpeciesSuggestionModel.visit_id == VisitModel.id)
+                .exists()
+            )
+            query = (
+                select(
+                    VisitModel,
+                    EventModel,
+                    StreamModel,
+                    CameraSourceModel,
+                    ZoneModel,
+                )
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .join(StreamModel, EventModel.stream_id == StreamModel.id)
+                .outerjoin(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                .outerjoin(ZoneModel, ZoneModel.id == effective_zone_id)
+                .outerjoin(
+                    TaxonomyLabelModel,
+                    func.lower(TaxonomyLabelModel.label) == review_label_key,
+                )
+            )
+
+            # Provenance is opt-in: active Visits are the current product truth by default.
+            if not payload.include_superseded:
+                query = query.where(VisitModel.is_superseded.is_(False))
+            if payload.stream_id is not None:
+                query = query.where(EventModel.stream_id == payload.stream_id)
+            if payload.source_id is not None:
+                query = query.where(StreamModel.source_id == payload.source_id)
+            if payload.zone_id is not None:
+                query = query.where(effective_zone_id == payload.zone_id)
+            if payload.start_at is not None:
+                query = query.where(EventModel.started_at >= payload.start_at)
+            if payload.end_at is not None:
+                query = query.where(EventModel.started_at <= payload.end_at)
+            if payload.confirmed_label is not None:
+                query = query.where(
+                    review_label_key
+                    == payload.confirmed_label.strip().lower()
+                )
+            if payload.has_suggestion is True:
+                query = query.where(suggestion_exists)
+            elif payload.has_suggestion is False:
+                query = query.where(~suggestion_exists)
+
+            blank_keys = {"blank", "empty", "no_activity", "no_animal"}
+            ambiguous_keys = {"ambiguous", "unknown_bird", "unknown_animal", "unknown"}
+            non_bird_keys = {"non_bird", "non_bird_activity"}
+            if payload.review_filter == ActivityLibraryReviewFilter.needs_review:
+                query = query.where(VisitModel.review_status == ReviewStatus.needs_review.value)
+            elif payload.review_filter == ActivityLibraryReviewFilter.reviewed_observation:
+                query = query.where(VisitModel.review_status == ReviewStatus.reviewed.value)
+                query = query.where(
+                    or_(
+                        TaxonomyLabelModel.category == LabelCategory.bird.value,
+                        and_(
+                            TaxonomyLabelModel.id.is_(None),
+                            effective_reviewed_label.is_not(None),
+                            ~review_label_key.in_(
+                                {"false_positive", *blank_keys, *ambiguous_keys, *non_bird_keys}
+                            ),
+                        ),
+                    )
+                )
+            elif payload.review_filter == ActivityLibraryReviewFilter.non_bird:
+                query = query.where(VisitModel.review_status == ReviewStatus.reviewed.value).where(
+                    or_(
+                        review_label_key.in_(non_bird_keys),
+                        and_(
+                            TaxonomyLabelModel.id.is_not(None),
+                            TaxonomyLabelModel.category.not_in(
+                                [LabelCategory.bird.value, LabelCategory.false_positive.value]
+                            ),
+                        ),
+                    )
+                )
+            elif payload.review_filter == ActivityLibraryReviewFilter.blank_false:
+                query = query.where(VisitModel.review_status == ReviewStatus.reviewed.value).where(
+                    or_(
+                        review_label_key.in_({"false_positive", *blank_keys}),
+                        TaxonomyLabelModel.category == LabelCategory.false_positive.value,
+                    )
+                )
+            elif payload.review_filter == ActivityLibraryReviewFilter.ambiguous_unknown:
+                query = query.where(VisitModel.review_status == ReviewStatus.reviewed.value).where(
+                    review_label_key.in_(ambiguous_keys)
+                )
+
+            search = (payload.search or "").strip().lower()
+            if search:
+                pattern = f"%{search}%"
+                suggestion_match = (
+                    select(SpeciesSuggestionModel.id)
+                    .where(
+                        SpeciesSuggestionModel.visit_id == VisitModel.id,
+                        func.lower(SpeciesSuggestionModel.suggested_label).like(pattern),
+                    )
+                    .exists()
+                )
+                query = query.where(
+                    or_(
+                        func.lower(VisitModel.subject_label).like(pattern),
+                        func.lower(VisitModel.species_guess).like(pattern),
+                        review_label_key.like(pattern),
+                        func.lower(StreamModel.name).like(pattern),
+                        func.lower(CameraSourceModel.name).like(pattern),
+                        func.lower(ZoneModel.name).like(pattern),
+                        suggestion_match,
+                    )
+                )
+
+            # Event timestamp plus immutable IDs makes offset pages deterministic when times tie.
+            rows = session.execute(
+                query.order_by(
+                    EventModel.started_at.desc(),
+                    EventModel.id.desc(),
+                    VisitModel.id.desc(),
+                )
+                .offset(payload.offset)
+                .limit(payload.page_size + 1)
+            ).all()
+            has_more = len(rows) > payload.page_size
+            summaries = [
+                self._activity_library_visit_summary_from_models(
+                    session,
+                    visit,
+                    event,
+                    stream,
+                    source,
+                )
+                for visit, event, stream, source, _zone in rows[: payload.page_size]
+            ]
+            summaries = [
+                summary
+                for summary in summaries
+                if self._activity_library_review_filter_matches(
+                    summary,
+                    payload.review_filter,
+                )
+            ]
+            return ActivityLibrarySearchResponse(
+                visits=summaries,
+                has_more=has_more,
+                next_offset=(payload.offset + payload.page_size) if has_more else None,
+            )
+
+    def _activity_library_visit_summary_from_models(
+        self,
+        session: Session,
+        visit: VisitModel,
+        event: EventModel,
+        stream: StreamModel,
+        source: CameraSourceModel | None,
+    ) -> ActivityLibraryVisitSummary:
+        history = session.scalars(
+            select(VisitCurationHistoryModel)
+            .where(VisitCurationHistoryModel.visit_id == visit.id)
+            .order_by(
+                VisitCurationHistoryModel.created_at.desc(),
+                VisitCurationHistoryModel.id.desc(),
+            )
+            .limit(8)
+        ).all()
+        return ActivityLibraryVisitSummary(
+            **self._stream_visit_summary_from_models(session, visit, event).model_dump(),
+            stream_name=stream.name,
+            source_id=stream.source_id,
+            source_name=source.name if source is not None else "Unavailable Source",
+            curation_actions=[entry.action for entry in history],
+        )
+
+    def _activity_library_review_filter_matches(
+        self,
+        summary: ActivityLibraryVisitSummary,
+        review_filter: ActivityLibraryReviewFilter,
+    ) -> bool:
+        # Outcome is resolved through the existing Visit truth helper, never suggestion evidence.
+        if review_filter == ActivityLibraryReviewFilter.all:
+            return True
+        if review_filter == ActivityLibraryReviewFilter.needs_review:
+            return summary.review_outcome == VisitReviewOutcome.needs_review
+        if review_filter == ActivityLibraryReviewFilter.reviewed_observation:
+            return summary.review_outcome in {
+                VisitReviewOutcome.confirmed_bird,
+                VisitReviewOutcome.reviewed_other,
+            }
+        if review_filter == ActivityLibraryReviewFilter.non_bird:
+            return summary.review_outcome == VisitReviewOutcome.non_bird
+        if review_filter == ActivityLibraryReviewFilter.blank_false:
+            return summary.review_outcome in {
+                VisitReviewOutcome.blank,
+                VisitReviewOutcome.false_positive,
+            }
+        return summary.review_outcome == VisitReviewOutcome.ambiguous
+
+    def list_activity_library_saved_views(self) -> list[ActivityLibrarySavedView]:
+        with self.session_factory() as session:
+            models = session.scalars(
+                select(ActivityLibrarySavedViewModel).order_by(
+                    ActivityLibrarySavedViewModel.updated_at.desc(),
+                    ActivityLibrarySavedViewModel.id.desc(),
+                )
+            ).all()
+            return [self._activity_library_saved_view_from_model(model) for model in models]
+
+    def create_activity_library_saved_view(
+        self,
+        payload: ActivityLibrarySavedViewCreate,
+    ) -> ActivityLibrarySavedView:
+        name = payload.name.strip()
+        if not name:
+            raise ValueError("activity_library_saved_view_name_required")
+        with self.session_factory() as session:
+            with session.begin():
+                count = session.scalar(select(func.count(ActivityLibrarySavedViewModel.id))) or 0
+                if count >= MAX_ACTIVITY_LIBRARY_SAVED_VIEWS:
+                    raise ValueError("activity_library_saved_view_limit")
+                now = datetime.now(UTC)
+                model = ActivityLibrarySavedViewModel(
+                    id=self._next_id(
+                        session,
+                        ActivityLibrarySavedViewModel,
+                        "activity-view",
+                    ),
+                    name=name,
+                    filters_json=json.dumps(payload.filters.model_dump(mode="json")),
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(model)
+                session.flush()
+                return self._activity_library_saved_view_from_model(model)
+
+    def update_activity_library_saved_view(
+        self,
+        view_id: str,
+        payload: ActivityLibrarySavedViewUpdate,
+    ) -> ActivityLibrarySavedView | None:
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(ActivityLibrarySavedViewModel, view_id)
+                if model is None:
+                    return None
+                if payload.name is not None:
+                    name = payload.name.strip()
+                    if not name:
+                        raise ValueError("activity_library_saved_view_name_required")
+                    model.name = name
+                if payload.filters is not None:
+                    # Saved definitions pass the same strict server schema as live searches.
+                    model.filters_json = json.dumps(payload.filters.model_dump(mode="json"))
+                model.updated_at = datetime.now(UTC)
+                session.flush()
+                return self._activity_library_saved_view_from_model(model)
+
+    def delete_activity_library_saved_view(self, view_id: str) -> bool:
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(ActivityLibrarySavedViewModel, view_id)
+                if model is None:
+                    return False
+                session.delete(model)
+                return True
+
+    def _activity_library_saved_view_from_model(
+        self,
+        model: ActivityLibrarySavedViewModel,
+    ) -> ActivityLibrarySavedView:
+        return ActivityLibrarySavedView(
+            id=model.id,
+            name=model.name,
+            filters=ActivityLibraryFilters.model_validate(json.loads(model.filters_json)),
+            created_at=_as_utc(model.created_at),
+            updated_at=_as_utc(model.updated_at),
+        )
+
+    def create_activity_library_export_selection(
+        self,
+        payload: ActivityLibraryExportSelectionRequest,
+    ) -> ActivityLibraryExportSelectionResponse:
+        included: list[str] = []
+        excluded: list[ActivityLibraryExportExclusion] = []
+        with self.session_factory() as session:
+            for visit_id in payload.visit_ids:
+                visit_model = session.get(VisitModel, visit_id)
+                if visit_model is None:
+                    excluded.append(
+                        ActivityLibraryExportExclusion(visit_id=visit_id, reason="missing_visit")
+                    )
+                    continue
+                if visit_model.is_superseded:
+                    excluded.append(
+                        ActivityLibraryExportExclusion(visit_id=visit_id, reason="superseded")
+                    )
+                    continue
+                visit = _visit_from_model(visit_model)
+                if not self._visit_is_dataset_ready(session, visit):
+                    excluded.append(
+                        ActivityLibraryExportExclusion(
+                            visit_id=visit_id,
+                            reason="needs_review",
+                        )
+                    )
+                    continue
+                included.append(visit_id)
+
+        if not included:
+            return ActivityLibraryExportSelectionResponse(
+                included_visit_ids=[],
+                excluded=excluded,
+            )
+
+        # Selection only narrows the existing reviewed-export engine; it never writes truth.
+        dataset_export = self.create_dataset_export(
+            DatasetExportCreate(
+                name=payload.name.strip(),
+                reviewed_only=True,
+                selected_visit_ids=included,
+            )
+        )
+        manifest = self.build_dataset_manifest(dataset_export.id)
+        if manifest is None:
+            raise ValueError("activity_library_export_missing")
+        return ActivityLibraryExportSelectionResponse(
+            export=DatasetExportDetail(export=dataset_export, manifest=manifest),
+            included_visit_ids=included,
+            excluded=excluded,
+        )
 
     def recent_visits_for_stream(
         self,
@@ -10255,6 +10632,7 @@ class ProductRepository:
                     include_zone_context=payload.include_zone_context,
                     record_count=0,
                     created_at=datetime.now(UTC),
+                    selected_visit_ids=payload.selected_visit_ids,
                 )
                 records, _ = self._export_records_for_current_reviews(session, dataset_export)
                 model = DatasetExportModel(
@@ -10266,6 +10644,11 @@ class ProductRepository:
                     include_zone_context=dataset_export.include_zone_context,
                     record_count=len(records),
                     created_at=dataset_export.created_at,
+                    selected_visit_ids_json=(
+                        json.dumps(dataset_export.selected_visit_ids)
+                        if dataset_export.selected_visit_ids is not None
+                        else None
+                    ),
                 )
                 session.add(model)
                 session.flush()
@@ -11425,10 +11808,17 @@ class ProductRepository:
         records: list[DatasetExportRecord] = []
         skipped_reasons: Counter[str] = Counter()
         visits = self._visits_for_eventless_query(session)
+        selected_visit_ids = (
+            set(export.selected_visit_ids)
+            if export.selected_visit_ids is not None
+            else None
+        )
         event_ids_with_visits = {visit.event_id for visit in visits}
         event_ids_with_any_visits = set(session.scalars(select(VisitModel.event_id)).all())
 
         for visit in visits:
+            if selected_visit_ids is not None and visit.id not in selected_visit_ids:
+                continue
             event_model = session.get(EventModel, visit.event_id)
             if event_model is None:
                 skipped_reasons["missing_event"] += 1
@@ -11451,6 +11841,8 @@ class ProductRepository:
         event_ids_with_any_visits = set(session.scalars(select(VisitModel.event_id)).all())
         event_models = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
         for event_model in event_models:
+            if selected_visit_ids is not None:
+                continue
             if event_model.id in event_ids_with_visits or event_model.id in event_ids_with_any_visits:
                 continue
 
@@ -16255,6 +16647,14 @@ def _review_history_action_for_model(label: ReviewLabelModel) -> str:
 
 
 def _dataset_export_from_model(dataset_export: DatasetExportModel) -> DatasetExport:
+    selected_visit_ids: list[str] | None = None
+    if dataset_export.selected_visit_ids_json:
+        try:
+            parsed = json.loads(dataset_export.selected_visit_ids_json)
+            if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+                selected_visit_ids = parsed
+        except (TypeError, ValueError):
+            selected_visit_ids = None
     return DatasetExport(
         id=dataset_export.id,
         name=dataset_export.name,
@@ -16264,6 +16664,7 @@ def _dataset_export_from_model(dataset_export: DatasetExportModel) -> DatasetExp
         include_zone_context=dataset_export.include_zone_context,
         record_count=dataset_export.record_count,
         created_at=_as_utc(dataset_export.created_at),
+        selected_visit_ids=selected_visit_ids,
     )
 
 

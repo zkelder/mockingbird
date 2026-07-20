@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 8
+CURRENT_DATABASE_SCHEMA_VERSION = 9
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -306,6 +306,22 @@ def _migrate_to_visit_curation(connection: Connection) -> None:
     Base.metadata.tables["visit_curation_history"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_activity_library(connection: Connection) -> None:
+    """Add local Activity Library preferences and optional bounded export scope."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Activity Library migration requires local SQLite storage."
+        )
+    connection.exec_driver_sql(
+        "ALTER TABLE dataset_exports ADD COLUMN selected_visit_ids_json TEXT"
+    )
+    Base.metadata.tables["activity_library_saved_views"].create(
+        bind=connection,
+        checkfirst=True,
+    )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -314,6 +330,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     6: _migrate_to_fast_review_reversals,
     7: _migrate_to_review_label_revisions,
     8: _migrate_to_visit_curation,
+    9: _migrate_to_activity_library,
 }
 
 
