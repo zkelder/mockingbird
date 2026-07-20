@@ -179,6 +179,15 @@ from mockingbird.api.schemas import (
     SourceSetupReviewResponse,
     SourceStatus,
     Stream,
+    StorageCleanupExecuteRequest,
+    StorageCleanupHistoryResponse,
+    StorageCleanupPreviewResponse,
+    StorageCleanupPurgeRequest,
+    StorageCleanupRestoreRequest,
+    StorageCleanupResult,
+    StorageRetentionSettings,
+    StorageRetentionSettingsUpdate,
+    StorageSummary,
     StreamMonitoringMutationResponse,
     StreamMonitoringPolicyResponse,
     StreamMonitoringPolicyUpdate,
@@ -281,6 +290,7 @@ from mockingbird.storage.backup import (
     LocalBackupValidationError,
 )
 from mockingbird.storage.database import create_database_engine
+from mockingbird.storage.retention_service import LocalStorageRetentionService
 from mockingbird.web_app import frontend_response
 
 
@@ -288,11 +298,15 @@ from mockingbird.web_app import frontend_response
 async def _app_lifespan(_app: FastAPI):
     """Validate local data, restore explicit monitoring intent, and stop safely."""
 
-    get_repository()
+    repository = get_repository()
     get_durable_monitoring_supervisor().start()
+    if repository.storage_retention_settings().automatic_cleanup_enabled:
+        get_local_storage_retention_service().start()
     try:
         yield
     finally:
+        if _local_storage_retention_service is not None:
+            _local_storage_retention_service.shutdown()
         if _durable_monitoring_supervisor is not None:
             _durable_monitoring_supervisor.shutdown(reason="api_shutdown")
         if _source_monitor_manager is not None:
@@ -412,6 +426,7 @@ _repository: ProductRepository | None = None
 _source_monitor_manager: SourceMonitorManager | None = None
 _live_camera_session_manager: live_camera_session.LiveCameraSessionManager | None = None
 _durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
+_local_storage_retention_service: LocalStorageRetentionService | None = None
 _backup_operation_lock = threading.Lock()
 _repository_access_lock = threading.RLock()
 
@@ -437,10 +452,13 @@ def configure_repository(repository: ProductRepository | None) -> None:
 
 
 def _stop_runtime_activity(*, reason: str) -> None:
-    global _durable_monitoring_supervisor, _source_monitor_manager, _live_camera_session_manager
+    global _durable_monitoring_supervisor, _local_storage_retention_service, _source_monitor_manager, _live_camera_session_manager
     if _durable_monitoring_supervisor is not None:
         _durable_monitoring_supervisor.shutdown(reason=reason)
         _durable_monitoring_supervisor = None
+    if _local_storage_retention_service is not None:
+        _local_storage_retention_service.shutdown()
+        _local_storage_retention_service = None
     if _source_monitor_manager is not None:
         _source_monitor_manager.cancel_all()
         _source_monitor_manager = None
@@ -605,6 +623,43 @@ def get_durable_monitoring_supervisor() -> DurableMonitoringSupervisor:
             stop_camera=_supervisor_stop_camera,
         )
     return _durable_monitoring_supervisor
+
+
+def _run_automatic_storage_maintenance() -> None:
+    """Share one local maintenance window with backup and restore operations."""
+
+    if not _backup_operation_lock.acquire(blocking=False):
+        return
+    try:
+        repository = get_repository()
+        settings = repository.storage_retention_settings()
+        if not settings.automatic_cleanup_enabled:
+            return
+        repository.purge_expired_storage_recovery()
+        repository.run_automatic_storage_retention()
+    finally:
+        _backup_operation_lock.release()
+
+
+def get_local_storage_retention_service() -> LocalStorageRetentionService:
+    """Return the single local maintenance scheduler; it never owns media policy."""
+
+    global _local_storage_retention_service
+    if _local_storage_retention_service is None:
+        _local_storage_retention_service = LocalStorageRetentionService(
+            run_maintenance=_run_automatic_storage_maintenance,
+        )
+    return _local_storage_retention_service
+
+
+def _sync_local_storage_retention_service(*, enabled: bool) -> None:
+    """Run the optional scheduler only while explicit durable policy permits it."""
+
+    global _local_storage_retention_service
+    if enabled:
+        get_local_storage_retention_service().start()
+    elif _local_storage_retention_service is not None:
+        _local_storage_retention_service.shutdown()
 
 
 def _not_found(product_type: str, product_id: str) -> HTTPException:
@@ -8201,6 +8256,141 @@ async def get_analytics_summary() -> AnalyticsSummary:
 @app.get("/api/settings/local-data", response_model=LocalDataStatus)
 async def get_local_data_status() -> LocalDataStatus:
     return get_repository().local_data_status()
+
+
+def _storage_retention_http_error(error: ValueError) -> HTTPException:
+    messages = {
+        "storage_cleanup_requires_confirmation": "Confirm cleanup before moving any managed media to recovery.",
+        "storage_cleanup_preview_missing": "That cleanup preview is no longer available. Generate a new preview.",
+        "storage_cleanup_preview_expired": "That cleanup preview expired. Generate a new preview.",
+        "storage_cleanup_preview_stale": "Managed storage or the retention policy changed. Generate a new preview.",
+        "storage_cleanup_idempotency_conflict": "This request key belongs to a different cleanup preview.",
+        "storage_cleanup_restore_unavailable": "That cleanup batch is not available for recovery.",
+        "storage_cleanup_purge_requires_confirmation": "Confirm permanent purge after the recovery window has ended.",
+        "storage_cleanup_purge_unavailable": "That cleanup batch is not available for permanent purge.",
+        "storage_cleanup_recovery_active": "Recovery is still available, so permanent purge is not allowed yet.",
+    }
+    conflicts = {
+        "storage_cleanup_busy",
+        "storage_cleanup_preview_stale",
+        "storage_cleanup_idempotency_conflict",
+        "storage_cleanup_recovery_active",
+    }
+    return HTTPException(
+        status_code=409 if str(error) in conflicts else 400,
+        detail=messages.get(str(error), "The local storage operation could not be completed safely."),
+    )
+
+
+def _acquire_storage_maintenance_window() -> None:
+    if not _backup_operation_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail="A local backup, restore, or storage cleanup is already running.",
+        )
+
+
+@app.get("/api/settings/storage-retention/summary", response_model=StorageSummary)
+def get_storage_retention_summary() -> StorageSummary:
+    return get_repository().storage_summary()
+
+
+@app.get("/api/settings/storage-retention", response_model=StorageRetentionSettings)
+def get_storage_retention_settings() -> StorageRetentionSettings:
+    return get_repository().storage_retention_settings()
+
+
+@app.put("/api/settings/storage-retention", response_model=StorageRetentionSettings)
+def update_storage_retention_settings(
+    payload: StorageRetentionSettingsUpdate,
+) -> StorageRetentionSettings:
+    _acquire_storage_maintenance_window()
+    try:
+        settings, _idempotent = get_repository().update_storage_retention_settings(payload)
+        _sync_local_storage_retention_service(
+            enabled=settings.automatic_cleanup_enabled,
+        )
+        return settings
+    finally:
+        _backup_operation_lock.release()
+
+
+@app.post(
+    "/api/settings/storage-retention/cleanup-preview",
+    response_model=StorageCleanupPreviewResponse,
+)
+def preview_storage_retention_cleanup() -> StorageCleanupPreviewResponse:
+    _acquire_storage_maintenance_window()
+    try:
+        return get_repository().preview_storage_cleanup()
+    finally:
+        _backup_operation_lock.release()
+
+
+@app.post(
+    "/api/settings/storage-retention/cleanup",
+    response_model=StorageCleanupResult,
+)
+def execute_storage_retention_cleanup(
+    payload: StorageCleanupExecuteRequest,
+) -> StorageCleanupResult:
+    _acquire_storage_maintenance_window()
+    try:
+        return get_repository().execute_storage_cleanup(payload)
+    except ValueError as error:
+        raise _storage_retention_http_error(error) from error
+    finally:
+        _backup_operation_lock.release()
+
+
+@app.get(
+    "/api/settings/storage-retention/cleanup-history",
+    response_model=StorageCleanupHistoryResponse,
+)
+def get_storage_retention_cleanup_history(
+    limit: int = Query(default=20, ge=1, le=30),
+) -> StorageCleanupHistoryResponse:
+    return get_repository().storage_cleanup_history(limit=limit)
+
+
+@app.post(
+    "/api/settings/storage-retention/cleanup-history/{batch_id}/restore",
+    response_model=StorageCleanupResult,
+)
+def restore_storage_retention_cleanup(
+    batch_id: str,
+    payload: StorageCleanupRestoreRequest,
+) -> StorageCleanupResult:
+    _acquire_storage_maintenance_window()
+    try:
+        result = get_repository().restore_storage_cleanup_batch(batch_id, payload)
+        if result is None:
+            raise _not_found("Storage cleanup batch", batch_id)
+        return result
+    except ValueError as error:
+        raise _storage_retention_http_error(error) from error
+    finally:
+        _backup_operation_lock.release()
+
+
+@app.post(
+    "/api/settings/storage-retention/cleanup-history/{batch_id}/purge",
+    response_model=StorageCleanupResult,
+)
+def purge_storage_retention_cleanup(
+    batch_id: str,
+    payload: StorageCleanupPurgeRequest,
+) -> StorageCleanupResult:
+    _acquire_storage_maintenance_window()
+    try:
+        result = get_repository().purge_storage_cleanup_batch(batch_id, payload)
+        if result is None:
+            raise _not_found("Storage cleanup batch", batch_id)
+        return result
+    except ValueError as error:
+        raise _storage_retention_http_error(error) from error
+    finally:
+        _backup_operation_lock.release()
 
 
 @app.get("/api/settings/backups", response_model=LocalBackupLibraryResponse)

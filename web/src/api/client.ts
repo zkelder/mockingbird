@@ -58,6 +58,12 @@ import type {
   LocalBackupRestoreResponse,
   LocalBackupVerificationResponse,
   LocalDataStatus,
+  StorageCleanupHistoryResponse,
+  StorageCleanupPreviewResponse,
+  StorageCleanupResult,
+  StorageRetentionSettings,
+  StorageRetentionSettingsUpdate,
+  StorageSummary,
   MediaAsset,
   MediaImportResult,
   LiveMotionEvaluateRequest,
@@ -814,6 +820,43 @@ export const apiClient = {
     request<DatasetQualitySummary>("/api/dataset-quality/summary"),
   getAnalyticsSummary: () => request<AnalyticsSummary>("/api/analytics/summary"),
   getLocalDataStatus: () => request<LocalDataStatus>("/api/settings/local-data"),
+  getStorageRetentionSummary: () =>
+    request<StorageSummary>("/api/settings/storage-retention/summary"),
+  getStorageRetentionSettings: () =>
+    request<StorageRetentionSettings>("/api/settings/storage-retention"),
+  updateStorageRetentionSettings: (payload: StorageRetentionSettingsUpdate) =>
+    request<StorageRetentionSettings>("/api/settings/storage-retention", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  previewStorageRetentionCleanup: () =>
+    request<StorageCleanupPreviewResponse>("/api/settings/storage-retention/cleanup-preview", {
+      method: "POST",
+    }),
+  executeStorageRetentionCleanup: (payload: {
+    preview_token: string;
+    confirm: boolean;
+    idempotency_key: string;
+  }) =>
+    request<StorageCleanupResult>("/api/settings/storage-retention/cleanup", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getStorageRetentionCleanupHistory: () =>
+    request<StorageCleanupHistoryResponse>("/api/settings/storage-retention/cleanup-history"),
+  restoreStorageRetentionCleanup: (batchId: string, idempotencyKey: string) =>
+    request<StorageCleanupResult>(
+      `/api/settings/storage-retention/cleanup-history/${encodeURIComponent(batchId)}/restore`,
+      { method: "POST", body: JSON.stringify({ idempotency_key: idempotencyKey }) },
+    ),
+  purgeStorageRetentionCleanup: (batchId: string, idempotencyKey: string) =>
+    request<StorageCleanupResult>(
+      `/api/settings/storage-retention/cleanup-history/${encodeURIComponent(batchId)}/purge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ confirm: true, idempotency_key: idempotencyKey }),
+      },
+    ),
   getLocalBackups: () => request<LocalBackupLibraryResponse>("/api/settings/backups"),
   createLocalBackup: () =>
     request<LocalBackupVerificationResponse>("/api/settings/backups", {

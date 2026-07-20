@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
-import type { LocalBackupSummary, LocalDataStatus } from "../api/types";
+import type {
+  LocalBackupSummary,
+  LocalDataStatus,
+  StorageCleanupHistoryItem,
+  StorageCleanupPreviewResponse,
+  StorageRetentionSettings,
+  StorageSummary,
+} from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
@@ -35,6 +42,17 @@ function formatBackupTime(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+function storageRequestKey(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function cleanupBatchCanPurge(batch: StorageCleanupHistoryItem) {
+  if (!batch.recovery_expires_at || !["quarantined", "restore_conflict"].includes(batch.state)) {
+    return false;
+  }
+  return new Date(batch.recovery_expires_at).getTime() <= Date.now();
+}
+
 export function LocalDataPage({
   onOpenDashboard,
   onOpenImport,
@@ -55,6 +73,14 @@ export function LocalDataPage({
   const [confirmingRestoreId, setConfirmingRestoreId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [storageSummary, setStorageSummary] = useState<StorageSummary | null>(null);
+  const [storageSettings, setStorageSettings] = useState<StorageRetentionSettings | null>(null);
+  const [cleanupHistory, setCleanupHistory] = useState<StorageCleanupHistoryItem[]>([]);
+  const [cleanupPreview, setCleanupPreview] = useState<StorageCleanupPreviewResponse | null>(null);
+  const [isLoadingStorage, setIsLoadingStorage] = useState(true);
+  const [storageOperation, setStorageOperation] = useState<string | null>(null);
+  const [isConfirmingCleanup, setIsConfirmingCleanup] = useState(false);
+  const [confirmingPurgeId, setConfirmingPurgeId] = useState<string | null>(null);
 
   async function loadStatus(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
@@ -91,9 +117,33 @@ export function LocalDataPage({
     }
   }
 
+  async function loadStorage(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
+      setIsLoadingStorage(true);
+    }
+    try {
+      const [summary, settings, history] = await Promise.all([
+        apiClient.getStorageRetentionSummary(),
+        apiClient.getStorageRetentionSettings(),
+        apiClient.getStorageRetentionCleanupHistory(),
+      ]);
+      setStorageSummary(summary);
+      setStorageSettings(settings);
+      setCleanupHistory(history.items);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not load storage retention status.");
+    } finally {
+      if (showLoading) {
+        setIsLoadingStorage(false);
+      }
+    }
+  }
+
   useEffect(() => {
     void loadStatus();
     void loadBackups();
+    void loadStorage();
   }, []);
 
   function upsertBackup(backup: LocalBackupSummary) {
@@ -171,6 +221,114 @@ export function LocalDataPage({
       setError(caught instanceof Error ? caught.message : "Could not restore that backup.");
     } finally {
       setBackupOperation(null);
+    }
+  }
+
+  async function saveStorageSettings() {
+    if (!storageSettings) {
+      return;
+    }
+    setStorageOperation("settings");
+    setError(null);
+    setMessage(null);
+    try {
+      const { persisted, recommended_defaults, updated_at, last_automatic_run_at, last_automatic_result, message: _message, policy_revision: _revision, ...payload } = storageSettings;
+      const updated = await apiClient.updateStorageRetentionSettings({
+        ...payload,
+        idempotency_key: storageRequestKey("storage-settings"),
+      });
+      setStorageSettings(updated);
+      setMessage(updated.message);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not update storage retention settings.");
+    } finally {
+      setStorageOperation(null);
+    }
+  }
+
+  async function previewStorageCleanup() {
+    setStorageOperation("preview");
+    setError(null);
+    setMessage(null);
+    setIsConfirmingCleanup(false);
+    try {
+      const preview = await apiClient.previewStorageRetentionCleanup();
+      setCleanupPreview(preview);
+      setMessage(preview.message);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not preview cleanup.");
+    } finally {
+      setStorageOperation(null);
+    }
+  }
+
+  async function executeStorageCleanup() {
+    if (!cleanupPreview) {
+      return;
+    }
+    if (!isConfirmingCleanup) {
+      setIsConfirmingCleanup(true);
+      return;
+    }
+    setStorageOperation("cleanup");
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await apiClient.executeStorageRetentionCleanup({
+        preview_token: cleanupPreview.preview_token,
+        confirm: true,
+        idempotency_key: storageRequestKey("storage-cleanup"),
+      });
+      setMessage(result.message);
+      setCleanupPreview(null);
+      setIsConfirmingCleanup(false);
+      await loadStorage({ showLoading: false });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not move eligible media to recovery.");
+    } finally {
+      setStorageOperation(null);
+    }
+  }
+
+  async function restoreStorageCleanup(batchId: string) {
+    setStorageOperation(`restore:${batchId}`);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await apiClient.restoreStorageRetentionCleanup(
+        batchId,
+        storageRequestKey("storage-restore"),
+      );
+      setMessage(result.message);
+      await loadStorage({ showLoading: false });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not restore the recovery batch.");
+    } finally {
+      setStorageOperation(null);
+    }
+  }
+
+  async function purgeStorageCleanup(batchId: string) {
+    if (confirmingPurgeId !== batchId) {
+      setConfirmingPurgeId(batchId);
+      setMessage(null);
+      return;
+    }
+    setStorageOperation(`purge:${batchId}`);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await apiClient.purgeStorageRetentionCleanup(
+        batchId,
+        storageRequestKey("storage-purge"),
+      );
+      setConfirmingPurgeId(null);
+      setMessage(result.message);
+      await loadStorage({ showLoading: false });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not permanently delete that recovery batch.");
+    } finally {
+      setStorageOperation(null);
     }
   }
 
@@ -267,8 +425,8 @@ export function LocalDataPage({
                 />
               </div>
               <div className="data-row">
-                <span>Location</span>
-                <strong>{status.database_path ?? status.database_url}</strong>
+                <span>Storage</span>
+                <strong>Local SQLite database</strong>
               </div>
               <div className="data-row">
                 <span>Configuration</span>
@@ -325,6 +483,267 @@ export function LocalDataPage({
                 </button>
               </div>
             </div>
+          </section>
+
+          <section className="panel local-data-card">
+            <div className="section-heading">
+              <div>
+                <h2>Storage &amp; Retention</h2>
+                <p>Previewed cleanup keeps protected evidence and moves eligible media to local recovery first.</p>
+              </div>
+              <StatusPill
+                label={storageSettings?.automatic_cleanup_enabled ? "Automatic cleanup on" : "Automatic cleanup off"}
+                tone={storageSettings?.automatic_cleanup_enabled ? "review" : "good"}
+              />
+            </div>
+
+            {isLoadingStorage ? <div className="backup-empty">Loading storage safety status...</div> : null}
+            {!isLoadingStorage && storageSummary ? (
+              <>
+                <section className="metric-grid" aria-label="Managed storage summary">
+                  <MetricCard
+                    label="Managed media"
+                    value={storageSummary.total_managed_media_count}
+                    detail={formatBytes(storageSummary.total_managed_media_bytes)}
+                  />
+                  <MetricCard
+                    label="Active Visit evidence"
+                    value={storageSummary.active_visit_media_count}
+                    detail={formatBytes(storageSummary.active_visit_media_bytes)}
+                  />
+                  <MetricCard
+                    label="Superseded only"
+                    value={storageSummary.superseded_only_media_count}
+                    detail={formatBytes(storageSummary.superseded_only_media_bytes)}
+                  />
+                  <MetricCard
+                    label="Orphaned managed media"
+                    value={storageSummary.orphaned_managed_media_count}
+                    detail={formatBytes(storageSummary.orphaned_managed_media_bytes)}
+                  />
+                </section>
+                <div className="data-row">
+                  <span>Oldest managed file</span>
+                  <strong>{storageSummary.oldest_managed_media_at ? formatBackupTime(storageSummary.oldest_managed_media_at) : "None"}</strong>
+                </div>
+                <div className="data-row">
+                  <span>Newest managed file</span>
+                  <strong>{storageSummary.newest_managed_media_at ? formatBackupTime(storageSummary.newest_managed_media_at) : "None"}</strong>
+                </div>
+                <div className="data-row">
+                  <span>Local database</span>
+                  <strong>{storageSummary.approximate_database_bytes === null || storageSummary.approximate_database_bytes === undefined ? "Size unavailable" : formatBytes(storageSummary.approximate_database_bytes)}</strong>
+                </div>
+                <div className="data-row">
+                  <span>Protected review context</span>
+                  <strong>
+                    {storageSummary.unresolved_visit_evidence_count} unresolved · {storageSummary.reviewed_bird_wildlife_evidence_count} reviewed wildlife · {storageSummary.reviewed_non_bird_blank_ambiguous_evidence_count} reviewed other
+                  </strong>
+                </div>
+                {storageSummary.storage_warning ? <div className="notice-panel">{storageSummary.storage_warning}</div> : null}
+              </>
+            ) : null}
+
+            {storageSettings ? (
+              <>
+                <div className="notice-panel">
+                  <strong>Safe default</strong>
+                  <span>Automatic cleanup starts off. Active primary evidence, unresolved work, reviewed wildlife, export context, incomplete files, and uncertain links are retained.</span>
+                </div>
+                <div className="backup-meta-grid">
+                  <label className="data-row">
+                    <span>Automatic cleanup</span>
+                    <input
+                      checked={storageSettings.automatic_cleanup_enabled}
+                      disabled={storageOperation !== null}
+                      onChange={(event) => setStorageSettings({ ...storageSettings, automatic_cleanup_enabled: event.target.checked })}
+                      type="checkbox"
+                    />
+                  </label>
+                  <label className="data-row">
+                    <span>Frequency</span>
+                    <select
+                      disabled={storageOperation !== null}
+                      onChange={(event) => setStorageSettings({ ...storageSettings, cleanup_frequency: event.target.value as StorageRetentionSettings["cleanup_frequency"] })}
+                      value={storageSettings.cleanup_frequency}
+                    >
+                      <option value="weekly">Weekly</option>
+                      <option value="daily">Daily</option>
+                    </select>
+                  </label>
+                  <label className="data-row">
+                    <span>Reviewed other evidence age</span>
+                    <select
+                      disabled={storageOperation !== null}
+                      onChange={(event) => setStorageSettings({ ...storageSettings, reviewed_non_bird_age_days: Number(event.target.value) })}
+                      value={storageSettings.reviewed_non_bird_age_days}
+                    >
+                      <option value={30}>30 days</option>
+                      <option value={90}>90 days</option>
+                      <option value={180}>180 days</option>
+                      <option value={365}>1 year</option>
+                    </select>
+                  </label>
+                  <label className="data-row">
+                    <span>Superseded evidence age</span>
+                    <select
+                      disabled={storageOperation !== null}
+                      onChange={(event) => setStorageSettings({ ...storageSettings, superseded_evidence_age_days: Number(event.target.value) })}
+                      value={storageSettings.superseded_evidence_age_days}
+                    >
+                      <option value={30}>30 days</option>
+                      <option value={90}>90 days</option>
+                      <option value={180}>180 days</option>
+                      <option value={365}>1 year</option>
+                    </select>
+                  </label>
+                  <label className="data-row">
+                    <span>Orphaned media age</span>
+                    <select
+                      disabled={storageOperation !== null}
+                      onChange={(event) => setStorageSettings({ ...storageSettings, orphaned_media_age_days: Number(event.target.value) })}
+                      value={storageSettings.orphaned_media_age_days}
+                    >
+                      <option value={7}>7 days</option>
+                      <option value={30}>30 days</option>
+                      <option value={90}>90 days</option>
+                      <option value={180}>180 days</option>
+                    </select>
+                  </label>
+                  <label className="data-row">
+                    <span>Managed-media target</span>
+                    <select
+                      disabled={storageOperation !== null}
+                      onChange={(event) => setStorageSettings({ ...storageSettings, maximum_managed_media_bytes: event.target.value === "none" ? null : Number(event.target.value) })}
+                      value={storageSettings.maximum_managed_media_bytes ?? "none"}
+                    >
+                      <option value="none">No target</option>
+                      <option value={1_073_741_824}>1 GB</option>
+                      <option value={5_368_709_120}>5 GB</option>
+                      <option value={10_737_418_240}>10 GB</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="local-data-actions">
+                  <span className="secondary-action">Unresolved Visit evidence is always protected</span>
+                  <label className="secondary-action">
+                    <input
+                      checked={storageSettings.retain_reviewed_bird_wildlife_evidence}
+                      disabled={storageOperation !== null}
+                      onChange={(event) => setStorageSettings({ ...storageSettings, retain_reviewed_bird_wildlife_evidence: event.target.checked })}
+                      type="checkbox"
+                    />
+                    Keep reviewed wildlife evidence
+                  </label>
+                  <button className="secondary-action" disabled={storageOperation !== null} onClick={() => void saveStorageSettings()} type="button">
+                    {storageOperation === "settings" ? "Saving..." : "Save retention settings"}
+                  </button>
+                </div>
+                <div className="data-row">
+                  <span>Last automatic maintenance</span>
+                  <strong>{storageSettings.last_automatic_run_at ? formatBackupTime(storageSettings.last_automatic_run_at) : "Not run"}</strong>
+                </div>
+              </>
+            ) : null}
+
+            <div className="local-data-actions">
+              <button className="primary-action" disabled={storageOperation !== null} onClick={() => void previewStorageCleanup()} type="button">
+                {storageOperation === "preview" ? "Calculating preview..." : "Preview cleanup"}
+              </button>
+              <button className="secondary-action" disabled={storageOperation !== null} onClick={() => void loadStorage()} type="button">
+                Refresh storage status
+              </button>
+            </div>
+
+            {cleanupPreview ? (
+              <div className="notice-panel">
+                <strong>Eligible to remove: {cleanupPreview.eligible_media_count} item{cleanupPreview.eligible_media_count === 1 ? "" : "s"} · {formatBytes(cleanupPreview.estimated_recoverable_bytes)} recoverable</strong>
+                <span>Preview expires {formatBackupTime(cleanupPreview.expires_at)}. The server selected categories only; this page never selects media files.</span>
+                {cleanupPreview.categories.map((category) => (
+                  <span key={category.category}>{category.category.replace(/_/g, " ")}: {category.media_count} · {formatBytes(category.bytes)}</span>
+                ))}
+                <strong>Protected evidence</strong>
+                {cleanupPreview.protected_counts.map((category) => (
+                  <span key={category.category}>{category.category.replace(/_/g, " ")}: {category.media_count} retained · {formatBytes(category.bytes)}</span>
+                ))}
+                <span>Affected Visits: {cleanupPreview.affected_visit_count}</span>
+                {cleanupPreview.warnings.map((warning) => <span key={warning}>{warning}</span>)}
+                {isConfirmingCleanup ? <span>Confirm to move this unchanged preview into recovery. No reviewed truth is created or deleted.</span> : null}
+                <div className="local-data-actions">
+                  <button
+                    className={isConfirmingCleanup ? "primary-action" : "secondary-action"}
+                    disabled={storageOperation !== null || cleanupPreview.eligible_media_count === 0}
+                    onClick={() => void executeStorageCleanup()}
+                    type="button"
+                  >
+                    {storageOperation === "cleanup" ? "Moving to recovery..." : isConfirmingCleanup ? "Confirm: Move to recovery" : "Move to recovery"}
+                  </button>
+                  <button className="secondary-action" disabled={storageOperation !== null} onClick={() => { setCleanupPreview(null); setIsConfirmingCleanup(false); }} type="button">Discard preview</button>
+                </div>
+              </div>
+            ) : null}
+
+            {cleanupHistory.length > 0 ? (
+              <div className="backup-list">
+                {cleanupHistory.map((batch) => (
+                  <article className="backup-card" key={batch.batch_id}>
+                    <div className="section-heading">
+                      <div>
+                        <strong>{batch.origin === "automatic" ? "Automatic cleanup" : "Manual cleanup"}</strong>
+                        <span className="meta-text">{formatBackupTime(batch.created_at)}</span>
+                      </div>
+                      <StatusPill label={batch.state.replace(/_/g, " ")} tone={batch.can_restore ? "review" : "quiet"} />
+                    </div>
+                    <div className="backup-meta-grid">
+                      <div className="data-row"><span>Moved to recovery</span><strong>{batch.media_count} · {formatBytes(batch.recovered_bytes)}</strong></div>
+                      <div className="data-row"><span>Recovery deadline</span><strong>{batch.recovery_expires_at ? formatBackupTime(batch.recovery_expires_at) : "Not available"}</strong></div>
+                      <div className="data-row"><span>Skipped / failed</span><strong>{batch.skipped_count} / {batch.failed_count}</strong></div>
+                      <div className="data-row"><span>Permanently deleted</span><strong>{batch.permanently_purged_count}</strong></div>
+                    </div>
+                    <p>{batch.message}</p>
+                    {batch.can_restore ? (
+                      <div className="local-data-actions">
+                        <button className="secondary-action" disabled={storageOperation !== null} onClick={() => void restoreStorageCleanup(batch.batch_id)} type="button">
+                          {storageOperation === `restore:${batch.batch_id}` ? "Restoring..." : "Restore media"}
+                        </button>
+                      </div>
+                    ) : null}
+                    {cleanupBatchCanPurge(batch) ? (
+                      <div className="local-data-actions">
+                        {confirmingPurgeId === batch.batch_id ? (
+                          <div className="notice-panel">
+                            <strong>Confirm permanent deletion</strong>
+                            <span>The recovery window has ended. This cannot be undone.</span>
+                          </div>
+                        ) : null}
+                        <button
+                          className={confirmingPurgeId === batch.batch_id ? "primary-action" : "secondary-action"}
+                          disabled={storageOperation !== null}
+                          onClick={() => void purgeStorageCleanup(batch.batch_id)}
+                          type="button"
+                        >
+                          {storageOperation === `purge:${batch.batch_id}`
+                            ? "Permanently deleting..."
+                            : confirmingPurgeId === batch.batch_id
+                              ? "Confirm: Permanently delete"
+                              : "Permanently delete"}
+                        </button>
+                        {confirmingPurgeId === batch.batch_id ? (
+                          <button
+                            className="secondary-action"
+                            disabled={storageOperation !== null}
+                            onClick={() => setConfirmingPurgeId(null)}
+                            type="button"
+                          >
+                            Cancel
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            ) : null}
           </section>
 
           <section className="panel local-data-card">

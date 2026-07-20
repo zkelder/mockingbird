@@ -5,6 +5,7 @@ import type {
   DashboardSummary,
   DashboardVisitSummary,
   HealthStatus,
+  StorageSummary,
   StreamRuntimeStatus,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
@@ -130,6 +131,7 @@ export function DashboardPage({
     Record<string, StreamRuntimeStatus>
   >({});
   const [durableActionId, setDurableActionId] = useState<string | null>(null);
+  const [storageSummary, setStorageSummary] = useState<StorageSummary | null>(null);
 
   const refreshDashboard = useCallback(async (initialLoad = false) => {
     if (initialLoad) {
@@ -138,11 +140,13 @@ export function DashboardPage({
       setIsRefreshing(true);
     }
     try {
-      const [nextSummary, monitoringStatuses] = await Promise.all([
+      const [nextSummary, monitoringStatuses, nextStorageSummary] = await Promise.all([
         apiClient.getDashboardSummary(),
         apiClient.getStreamMonitoringStatuses().catch(() => null),
+        apiClient.getStorageRetentionSummary().catch(() => null),
       ]);
       setSummary(nextSummary);
+      setStorageSummary(nextStorageSummary);
       if (monitoringStatuses) {
         setDurableStatusByStream(
           Object.fromEntries(
@@ -283,6 +287,11 @@ export function DashboardPage({
         <div className="dashboard-refresh-notice" role="status">
           <span>{summary.warnings[0]}</span>
           {summary.warnings.length > 1 ? <span>+{summary.warnings.length - 1} more Stream updates</span> : null}
+        </div>
+      ) : null}
+      {storageSummary?.storage_warning ? (
+        <div className="dashboard-refresh-notice" role="status">
+          <span>{storageSummary.storage_warning}</span>
         </div>
       ) : null}
 

@@ -48,6 +48,9 @@ MockingBird currently provides:
   or downloaded automatically
 - verified local database-and-managed-media backup, import, download, and
   rollback-safe restore
+- Storage & Retention controls that default off, preview policy-selected media,
+  preserve review/export context, and move cleanup candidates to recoverable
+  local quarantine before any later expiry purge
 - default-off durable monitoring policy/runtime-checkpoint records and
   side-effect-free lifecycle status
 
@@ -57,6 +60,11 @@ app-owned supervisor restores that saved intent after startup, waits for a
 healthy frame before evaluation, and uses bounded recovery. Enable/disable and
 retry remain explicit, status reads have no side effects, and monitoring never
 creates reviewed Bird Log truth.
+
+Local Data also keeps storage maintenance separate from the product loop.
+Automatic cleanup is off by default; it performs a fresh bounded local policy
+pass only when enabled, never accepts browser-supplied media lists, and shares
+the local maintenance window with backup and restore work.
 
 ## Active development checkout
 

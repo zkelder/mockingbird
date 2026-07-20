@@ -1,0 +1,653 @@
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from zipfile import ZipFile
+
+import pytest
+from sqlalchemy import func, select
+
+from mockingbird.api.schemas import (
+    StorageCleanupExecuteRequest,
+    StorageCleanupPurgeRequest,
+    StorageCleanupRestoreRequest,
+    StorageRetentionFrequency,
+    StorageRetentionSettingsUpdate,
+)
+from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.storage.backup import LocalBackupManager
+from mockingbird.storage.models import (
+    EventModel,
+    MediaAssetModel,
+    ReviewLabelModel,
+    StorageCleanupBatchModel,
+    StorageCleanupItemModel,
+    StorageRetentionSettingsModel,
+    StreamModel,
+    VisitEvidenceLinkModel,
+    VisitModel,
+)
+
+
+@pytest.fixture
+def repository(tmp_path: Path) -> ProductRepository:
+    product_repository = ProductRepository(
+        db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
+        media_root=tmp_path / "media",
+    )
+    yield product_repository
+    product_repository.close()
+
+
+def _add_media(
+    repository: ProductRepository,
+    *,
+    media_id: str,
+    age_days: int = 45,
+    size_bytes: int = 64,
+) -> Path:
+    path = repository.media_root / f"{media_id}.bin"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x" * size_bytes)
+    with repository.session_factory() as session:
+        with session.begin():
+            stream = session.scalar(select(StreamModel).order_by(StreamModel.id))
+            assert stream is not None
+            session.add(
+                MediaAssetModel(
+                    id=media_id,
+                    source_id=stream.source_id,
+                    stream_id=stream.id,
+                    filename=path.name,
+                    content_type="application/octet-stream",
+                    media_type="image",
+                    local_path=str(path),
+                    original_filename=path.name,
+                    file_size_bytes=size_bytes,
+                    created_at=datetime.now(UTC) - timedelta(days=age_days),
+                    notes="retention test media",
+                )
+            )
+    return path
+
+
+def _settings_payload(key: str, **overrides: object) -> StorageRetentionSettingsUpdate:
+    values: dict[str, object] = {
+        "automatic_cleanup_enabled": False,
+        "cleanup_frequency": StorageRetentionFrequency.weekly,
+        "retain_unresolved_visit_evidence": True,
+        "retain_reviewed_bird_wildlife_evidence": True,
+        "reviewed_non_bird_age_days": 180,
+        "superseded_evidence_age_days": 90,
+        "orphaned_media_age_days": 30,
+        "maximum_managed_media_bytes": None,
+        "idempotency_key": key,
+    }
+    values.update(overrides)
+    return StorageRetentionSettingsUpdate(**values)
+
+
+def _add_active_visit_with_evidence(
+    repository: ProductRepository,
+    *,
+    visit_id: str,
+    evidence: list[tuple[str, bool]],
+    review_status: str,
+    reviewed_label: str | None,
+) -> None:
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            assets = [session.get(MediaAssetModel, media_id) for media_id, _primary in evidence]
+            assert all(asset is not None for asset in assets)
+            primary_asset = next(
+                (asset for asset, (_media_id, is_primary) in zip(assets, evidence) if is_primary),
+                None,
+            )
+            first_asset = assets[0]
+            assert first_asset is not None
+            event = EventModel(
+                id=f"{visit_id}-event",
+                stream_id=first_asset.stream_id,
+                title="Retention safety activity",
+                event_type="activity",
+                started_at=now,
+                ended_at=now,
+                primary_zone_id=None,
+                review_status=review_status,
+            )
+            visit = VisitModel(
+                id=visit_id,
+                event_id=event.id,
+                subject_label=reviewed_label or "unknown",
+                species_guess=None,
+                confidence=None,
+                reviewed_label=reviewed_label,
+                review_status=review_status,
+                representative_media_path=primary_asset.local_path if primary_asset else None,
+                zone_id=None,
+                is_superseded=False,
+            )
+            session.add_all((event, visit))
+            for index, ((media_id, is_primary), asset) in enumerate(zip(evidence, assets)):
+                assert asset is not None
+                session.add(
+                    VisitEvidenceLinkModel(
+                        id=f"{visit_id}-link-{index}",
+                        visit_id=visit.id,
+                        media_asset_id=media_id,
+                        captured_at=now,
+                        frame_sequence=index,
+                        sort_order=index,
+                        is_primary=is_primary,
+                        created_at=now,
+                    )
+                )
+
+
+def test_default_storage_retention_read_is_safe_off_and_does_not_persist_policy(
+    repository: ProductRepository,
+) -> None:
+    with repository.session_factory() as session:
+        assert session.scalar(select(func.count(StorageRetentionSettingsModel.singleton_id))) == 0
+
+    settings = repository.storage_retention_settings()
+
+    assert settings.automatic_cleanup_enabled is False
+    assert settings.persisted is False
+    assert settings.recommended_defaults is True
+    with repository.session_factory() as session:
+        assert session.scalar(select(func.count(StorageRetentionSettingsModel.singleton_id))) == 0
+
+
+def test_storage_schema_initialization_leaves_existing_managed_files_untouched(
+    tmp_path: Path,
+) -> None:
+    media_root = tmp_path / "media"
+    existing_path = media_root / "existing-before-retention.bin"
+    existing_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_path.write_bytes(b"preexisting-media")
+
+    initialized = ProductRepository(
+        db_url=f"sqlite:///{tmp_path / 'migration.sqlite3'}",
+        media_root=media_root,
+    )
+    try:
+        assert initialized.schema_status.current_version >= 11
+        assert existing_path.read_bytes() == b"preexisting-media"
+    finally:
+        initialized.close()
+
+
+def test_preview_stale_recovery_restore_and_idempotent_settings(
+    repository: ProductRepository,
+) -> None:
+    first_path = _add_media(repository, media_id="retention-orphan-old", age_days=50)
+    settings, already_applied = repository.update_storage_retention_settings(
+        _settings_payload("retention-settings-one")
+    )
+    repeated, repeated_applied = repository.update_storage_retention_settings(
+        _settings_payload("retention-settings-one")
+    )
+    assert already_applied is False
+    assert repeated_applied is True
+    assert repeated.policy_revision == settings.policy_revision
+
+    stale_preview = repository.preview_storage_cleanup()
+    _add_media(repository, media_id="retention-orphan-new", age_days=45)
+    with pytest.raises(ValueError, match="storage_cleanup_preview_stale"):
+        repository.execute_storage_cleanup(
+            StorageCleanupExecuteRequest(
+                preview_token=stale_preview.preview_token,
+                confirm=True,
+                idempotency_key="retention-stale-cleanup",
+            )
+        )
+    assert first_path.exists()
+
+    preview = repository.preview_storage_cleanup()
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-cleanup-one",
+        )
+    )
+    assert result.state == "quarantined"
+    assert not first_path.exists()
+    assert repository.storage_cleanup_history().items[0].can_restore is True
+    repeated_cleanup = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-cleanup-one",
+        )
+    )
+    assert repeated_cleanup.idempotent is True
+
+    restored = repository.restore_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupRestoreRequest(idempotency_key="retention-restore-one"),
+    )
+    assert restored is not None and restored.state == "restored"
+    assert first_path.exists()
+    repeated_restore = repository.restore_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupRestoreRequest(idempotency_key="retention-restore-one"),
+    )
+    assert repeated_restore is not None and repeated_restore.idempotent is True
+
+
+def test_interrupted_move_remains_recoverable_without_removing_links(
+    repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_path = _add_media(repository, media_id="retention-interrupted-move", age_days=365)
+    preview = repository.preview_storage_cleanup()
+    real_move = repository._move_storage_item_to_recovery
+
+    def move_then_interrupt(item: StorageCleanupItemModel) -> bool:
+        assert real_move(item)
+        raise OSError("simulated interruption after recovery move")
+
+    monkeypatch.setattr(repository, "_move_storage_item_to_recovery", move_then_interrupt)
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-interrupted-move",
+        )
+    )
+
+    assert result.state == "staging"
+    assert not original_path.exists()
+    assert repository.storage_cleanup_history().items[0].can_restore is True
+    restored = repository.restore_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupRestoreRequest(idempotency_key="retention-interrupted-move-restore"),
+    )
+    assert restored is not None and restored.state == "restored"
+    assert original_path.exists()
+
+
+def test_active_unresolved_visit_evidence_is_protected_and_summarized(
+    repository: ProductRepository,
+) -> None:
+    media_id = "retention-unresolved-primary"
+    path = _add_media(repository, media_id=media_id, age_days=365)
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            asset = session.get(MediaAssetModel, media_id)
+            assert asset is not None
+            event = EventModel(
+                id="retention-unresolved-event",
+                stream_id=asset.stream_id,
+                title="Unresolved outdoor activity",
+                event_type="activity",
+                started_at=now,
+                ended_at=now,
+                primary_zone_id=None,
+                review_status="needs_review",
+            )
+            visit = VisitModel(
+                id="retention-unresolved-visit",
+                event_id=event.id,
+                subject_label="unknown",
+                species_guess=None,
+                confidence=None,
+                reviewed_label=None,
+                review_status="needs_review",
+                representative_media_path=str(path),
+                zone_id=None,
+                is_superseded=False,
+            )
+            session.add_all((event, visit))
+            session.add(
+                VisitEvidenceLinkModel(
+                    id="retention-unresolved-link",
+                    visit_id=visit.id,
+                    media_asset_id=asset.id,
+                    captured_at=now,
+                    frame_sequence=None,
+                    sort_order=0,
+                    is_primary=True,
+                    created_at=now,
+                )
+            )
+
+    summary = repository.storage_summary()
+    preview = repository.preview_storage_cleanup()
+
+    assert summary.active_visit_media_count == 1
+    assert summary.unresolved_visit_evidence_count == 1
+    assert preview.eligible_media_count == 0
+    assert any(item.category == "unresolved_visit_evidence" for item in preview.protected_counts)
+    assert path.exists()
+
+
+def test_unresolved_secondary_evidence_is_always_protected(
+    repository: ProductRepository,
+) -> None:
+    _add_media(repository, media_id="retention-unresolved-primary", age_days=365)
+    secondary_path = _add_media(repository, media_id="retention-unresolved-secondary", age_days=365)
+    _add_active_visit_with_evidence(
+        repository,
+        visit_id="retention-unresolved-secondary-visit",
+        evidence=[
+            ("retention-unresolved-primary", True),
+            ("retention-unresolved-secondary", False),
+        ],
+        review_status="needs_review",
+        reviewed_label=None,
+    )
+    repository.update_storage_retention_settings(
+        _settings_payload("retention-unresolved-policy", retain_unresolved_visit_evidence=False)
+    )
+
+    preview = repository.preview_storage_cleanup()
+
+    assert preview.eligible_media_count == 0
+    assert any(item.category == "unresolved_visit_evidence" for item in preview.protected_counts)
+    assert secondary_path.exists()
+
+
+def test_reviewed_wildlife_secondary_evidence_follows_explicit_policy_without_changing_truth(
+    repository: ProductRepository,
+) -> None:
+    primary_path = _add_media(repository, media_id="retention-bird-primary", age_days=365)
+    secondary_path = _add_media(repository, media_id="retention-bird-secondary", age_days=365)
+    _add_active_visit_with_evidence(
+        repository,
+        visit_id="retention-bird-visit",
+        evidence=[("retention-bird-primary", True), ("retention-bird-secondary", False)],
+        review_status="reviewed",
+        reviewed_label="bird",
+    )
+    repository.update_storage_retention_settings(
+        _settings_payload("retention-bird-protected", reviewed_non_bird_age_days=30)
+    )
+    protected_preview = repository.preview_storage_cleanup()
+    assert protected_preview.eligible_media_count == 0
+    assert any(
+        item.category == "reviewed_bird_wildlife_evidence"
+        for item in protected_preview.protected_counts
+    )
+
+    repository.update_storage_retention_settings(
+        _settings_payload(
+            "retention-bird-explicit-permission",
+            retain_reviewed_bird_wildlife_evidence=False,
+            reviewed_non_bird_age_days=30,
+        )
+    )
+    preview = repository.preview_storage_cleanup()
+    assert preview.eligible_media_count == 1
+    assert any(item.category == "reviewed_bird_wildlife_secondary" for item in preview.categories)
+    assert any("reduce secondary Visit evidence" in warning for warning in preview.warnings)
+    with repository.session_factory() as session:
+        truth_before = [
+            (label.id, label.target_type, label.target_id, label.label, label.notes)
+            for label in session.scalars(select(ReviewLabelModel).order_by(ReviewLabelModel.id))
+        ]
+
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-bird-cleanup",
+        )
+    )
+    assert result.state == "quarantined"
+    assert primary_path.exists()
+    assert not secondary_path.exists()
+    with repository.session_factory() as session:
+        visit = session.get(VisitModel, "retention-bird-visit")
+        assert visit is not None
+        assert visit.review_status == "reviewed"
+        assert visit.reviewed_label == "bird"
+        assert session.scalar(
+            select(func.count(VisitEvidenceLinkModel.id)).where(
+                VisitEvidenceLinkModel.visit_id == visit.id
+            )
+        ) == 1
+        truth_after = [
+            (label.id, label.target_type, label.target_id, label.label, label.notes)
+            for label in session.scalars(select(ReviewLabelModel).order_by(ReviewLabelModel.id))
+        ]
+    assert truth_after == truth_before
+
+
+def test_shared_media_linked_to_a_protected_visit_is_never_eligible(
+    repository: ProductRepository,
+) -> None:
+    _add_media(repository, media_id="retention-shared-protected-primary", age_days=365)
+    _add_media(repository, media_id="retention-shared-reviewed-primary", age_days=365)
+    shared_path = _add_media(repository, media_id="retention-shared-secondary", age_days=365)
+    _add_active_visit_with_evidence(
+        repository,
+        visit_id="retention-shared-protected-visit",
+        evidence=[
+            ("retention-shared-protected-primary", True),
+            ("retention-shared-secondary", False),
+        ],
+        review_status="needs_review",
+        reviewed_label=None,
+    )
+    _add_active_visit_with_evidence(
+        repository,
+        visit_id="retention-shared-reviewed-visit",
+        evidence=[
+            ("retention-shared-reviewed-primary", True),
+            ("retention-shared-secondary", False),
+        ],
+        review_status="reviewed",
+        reviewed_label="non_bird",
+    )
+    repository.update_storage_retention_settings(
+        _settings_payload(
+            "retention-shared-policy",
+            retain_unresolved_visit_evidence=False,
+            reviewed_non_bird_age_days=30,
+        )
+    )
+
+    preview = repository.preview_storage_cleanup()
+
+    assert preview.eligible_media_count == 0
+    assert any(item.category == "unresolved_visit_evidence" for item in preview.protected_counts)
+    assert shared_path.exists()
+
+
+def test_restore_conflict_preserves_unrelated_destination_file(
+    repository: ProductRepository,
+) -> None:
+    original_path = _add_media(repository, media_id="retention-restore-conflict", age_days=365)
+    preview = repository.preview_storage_cleanup()
+    cleanup = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-restore-conflict-cleanup",
+        )
+    )
+    original_path.write_bytes(b"unrelated-new-file")
+
+    restored = repository.restore_storage_cleanup_batch(
+        cleanup.batch_id,
+        StorageCleanupRestoreRequest(idempotency_key="retention-restore-conflict"),
+    )
+
+    assert restored is not None and restored.state == "restore_conflict"
+    assert original_path.read_bytes() == b"unrelated-new-file"
+    assert restored.failed_count >= 1
+
+
+def test_unmanaged_and_incomplete_media_are_never_eligible(
+    repository: ProductRepository,
+    tmp_path: Path,
+) -> None:
+    incomplete_path = _add_media(repository, media_id="retention-incomplete", age_days=365)
+    outside_path = tmp_path / "outside-managed-media.bin"
+    outside_path.write_bytes(b"outside")
+    with repository.session_factory() as session:
+        with session.begin():
+            incomplete = session.get(MediaAssetModel, "retention-incomplete")
+            stream = session.scalar(select(StreamModel).order_by(StreamModel.id))
+            assert incomplete is not None and stream is not None
+            incomplete.file_size_bytes += 1
+            session.add(
+                MediaAssetModel(
+                    id="retention-outside",
+                    source_id=stream.source_id,
+                    stream_id=stream.id,
+                    filename=outside_path.name,
+                    content_type="application/octet-stream",
+                    media_type="image",
+                    local_path=str(outside_path),
+                    original_filename=outside_path.name,
+                    file_size_bytes=outside_path.stat().st_size,
+                    created_at=datetime.now(UTC) - timedelta(days=365),
+                    notes="outside storage must remain untouched",
+                )
+            )
+
+    preview = repository.preview_storage_cleanup()
+
+    assert preview.eligible_media_count == 0
+    protected = {item.category for item in preview.protected_counts}
+    assert "integrity_mismatch" in protected
+    assert "outside_managed_storage" in protected
+    assert incomplete_path.exists()
+    assert outside_path.exists()
+
+
+def test_purge_rejects_recoverable_media_and_then_purges_only_after_expiry(
+    repository: ProductRepository,
+) -> None:
+    original_path = _add_media(repository, media_id="retention-purge", age_days=365)
+    preview = repository.preview_storage_cleanup()
+    cleanup = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-purge-cleanup",
+        )
+    )
+    assert not original_path.exists()
+    with pytest.raises(ValueError, match="storage_cleanup_recovery_active"):
+        repository.purge_storage_cleanup_batch(
+            cleanup.batch_id,
+            StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-purge-early"),
+        )
+    with repository.session_factory() as session:
+        with session.begin():
+            batch = session.get(StorageCleanupBatchModel, cleanup.batch_id)
+            assert batch is not None
+            batch.recovery_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    purged = repository.purge_storage_cleanup_batch(
+        cleanup.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-purge-expired"),
+    )
+    assert purged is not None and purged.state == "purged"
+    assert purged.moved_to_recovery_count == 1
+    repeated = repository.purge_storage_cleanup_batch(
+        cleanup.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-purge-expired"),
+    )
+    assert repeated is not None and repeated.idempotent is True
+
+
+def test_storage_target_removes_oldest_eligible_media_first(
+    repository: ProductRepository,
+) -> None:
+    older_path = _add_media(
+        repository,
+        media_id="retention-target-older",
+        age_days=60,
+        size_bytes=1_048_576,
+    )
+    newer_path = _add_media(
+        repository,
+        media_id="retention-target-newer",
+        age_days=45,
+        size_bytes=1_048_576,
+    )
+    repository.update_storage_retention_settings(
+        _settings_payload(
+            "retention-target-settings",
+            maximum_managed_media_bytes=1_048_576,
+        )
+    )
+
+    preview = repository.preview_storage_cleanup()
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-target-cleanup",
+        )
+    )
+
+    assert preview.eligible_media_count == 1
+    assert result.moved_to_recovery_count == 1
+    assert not older_path.exists()
+    assert newer_path.exists()
+
+
+def test_storage_target_stops_at_protected_media_boundary(
+    repository: ProductRepository,
+) -> None:
+    _add_media(
+        repository,
+        media_id="retention-protected-target-primary",
+        age_days=365,
+        size_bytes=1_048_577,
+    )
+    _add_active_visit_with_evidence(
+        repository,
+        visit_id="retention-protected-target-visit",
+        evidence=[("retention-protected-target-primary", True)],
+        review_status="needs_review",
+        reviewed_label=None,
+    )
+    repository.update_storage_retention_settings(
+        _settings_payload(
+            "retention-protected-target-settings",
+            maximum_managed_media_bytes=1_048_576,
+        )
+    )
+
+    summary = repository.storage_summary()
+    preview = repository.preview_storage_cleanup()
+
+    assert preview.eligible_media_count == 0
+    assert summary.storage_warning == (
+        "Storage target could not be reached because protected evidence was retained."
+    )
+
+
+def test_complete_backup_includes_recoverable_media_and_metadata(
+    repository: ProductRepository,
+    tmp_path: Path,
+) -> None:
+    _add_media(repository, media_id="retention-backup-recovery", age_days=365)
+    preview = repository.preview_storage_cleanup()
+    cleanup = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-backup-recovery-cleanup",
+        )
+    )
+    manager = LocalBackupManager(
+        db_url=repository.db_url,
+        media_root=repository.media_root,
+        backup_root=tmp_path / "backups",
+    )
+
+    verification = manager.create_backup()
+
+    assert verification.backup.database_schema_version >= 11
+    with ZipFile(verification.backup.archive_path) as archive:
+        names = archive.namelist()
+    assert any(name.startswith(f"media/.recovery/{cleanup.batch_id}/") for name in names)

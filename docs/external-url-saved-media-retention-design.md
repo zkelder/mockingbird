@@ -24,6 +24,12 @@ file-only cleanup route for low-risk unlinked saved preview media. It deletes no
 MediaAsset records, MotionEvidence, Events, Visits, ReviewLabels,
 DatasetExports, or truth.
 
+This legacy direct file-only action is now retired. Storage & Retention in Local
+Data is the current cleanup boundary: it creates a server-owned preview, moves
+eligible managed media to recoverable local quarantine, and later purges only
+after the recovery window. The legacy route rejects direct deletion rather than
+providing a parallel irreversible path.
+
 ## Product Flow Covered
 
 external_url Source setup -> explicit preview fetch -> explicit save as
@@ -38,9 +44,10 @@ retention/cleanup decision.
 - Media-to-evidence creates pending MotionEvidence only.
 - Promotion creates Event/Visit only through the explicit route.
 - Correction creates ReviewLabel truth.
-- Confirmed low-risk file cleanup can delete only an unlinked saved preview file.
-- Record deletion, protected cleanup, background cleanup, and bulk destructive
-  cleanup remain future work.
+- The saved-preview report and dry-run remain read-only compatibility surfaces.
+- Direct file-only cleanup is rejected in favor of recoverable Storage &
+  Retention cleanup in Local Data.
+- Record deletion and any cleanup of protected evidence remain out of scope.
 - Saved preview media lives under ignored local data/media storage.
 
 ## Retention Principles
@@ -52,6 +59,22 @@ retention/cleanup decision.
 - No deleting reviewed/truth-linked media without warnings.
 - No silently breaking MotionEvidence, Event, or Visit provenance.
 - Cleanup must distinguish file deletion from record deletion.
+
+## Current Storage & Retention Contract
+
+Storage & Retention is disabled by default. A user first receives a
+server-generated preview of policy-eligible managed media, then explicitly
+confirms a move to local recovery; the browser never supplies deletion
+authority. Active primary and unresolved Visit evidence, reviewed bird/wildlife
+evidence unless policy explicitly permits secondary cleanup, export context,
+incomplete files, shared protected media, symlinks, and uncertain ownership all
+remain protected.
+
+Recovery remains available for a 14-day local window before an explicit or
+eligible automatic purge. Automatic retention is optional, calculates fresh
+eligibility each run, and shares the local maintenance window with backup and
+restore. Because recovery stays under managed storage, a complete local backup
+preserves both the quarantined files and their recovery metadata.
 
 ## Media States
 
@@ -295,17 +318,20 @@ Future tests should prove:
 - no URL fetch required for cleanup
 - no secret leakage
 
-Phase 12F cleanup tests add coverage for confirmation, mode rejection, low-risk
-file deletion, missing files, linked/protected rejection, unsafe paths, symlink
+Historical Phase 12F tests covered confirmation, mode rejection, low-risk file
+deletion, missing files, linked/protected rejection, unsafe paths, symlink
 paths, no record deletion, no truth mutation, no URL fetch, and no detector or
-model calls.
+model calls. Current cleanup coverage belongs to the recoverable Storage &
+Retention contract.
 
 ## Recommended Future Phases
 
 - Phase 12D: saved media retention report/dry-run API, no deletion.
 - Phase 12E: saved media retention UI, dry-run only.
-- Phase 12F: low-risk unlinked saved media file cleanup implementation.
-- Next likely Phase 12G: cleanup UI polish/audit trail design.
+- Phase 12F: historical low-risk unlinked saved media file cleanup implementation,
+  now retired in favor of recoverable local cleanup.
+- Phase 25: current bounded Storage & Retention policy, recovery audit, and
+  optional app-owned automatic maintenance.
 - Alternative next: Phase 13A next provider boundary design.
 - Later: protected media/archive policy.
 

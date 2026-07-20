@@ -3043,6 +3043,139 @@ class LocalDataStatus(BaseModel):
     local_first_note: str
 
 
+class StorageRetentionFrequency(str, Enum):
+    daily = "daily"
+    weekly = "weekly"
+
+
+class StorageRetentionSettings(BaseModel):
+    automatic_cleanup_enabled: bool = False
+    cleanup_frequency: StorageRetentionFrequency = StorageRetentionFrequency.weekly
+    retain_unresolved_visit_evidence: bool = True
+    retain_reviewed_bird_wildlife_evidence: bool = True
+    reviewed_non_bird_age_days: int = Field(default=180, ge=30, le=3650)
+    superseded_evidence_age_days: int = Field(default=90, ge=14, le=3650)
+    orphaned_media_age_days: int = Field(default=30, ge=7, le=3650)
+    maximum_managed_media_bytes: int | None = Field(default=None, ge=1_048_576)
+    policy_revision: int = Field(ge=1)
+    persisted: bool
+    recommended_defaults: bool
+    updated_at: datetime | None = None
+    last_automatic_run_at: datetime | None = None
+    last_automatic_result: str | None = None
+    message: str
+
+
+class StorageRetentionSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    automatic_cleanup_enabled: bool
+    cleanup_frequency: StorageRetentionFrequency
+    retain_unresolved_visit_evidence: bool
+    retain_reviewed_bird_wildlife_evidence: bool
+    reviewed_non_bird_age_days: int = Field(ge=30, le=3650)
+    superseded_evidence_age_days: int = Field(ge=14, le=3650)
+    orphaned_media_age_days: int = Field(ge=7, le=3650)
+    maximum_managed_media_bytes: int | None = Field(default=None, ge=1_048_576)
+    idempotency_key: str = Field(min_length=8, max_length=120)
+
+
+class StorageSummary(BaseModel):
+    total_managed_media_bytes: int = Field(ge=0)
+    total_managed_media_count: int = Field(ge=0)
+    oldest_managed_media_at: datetime | None = None
+    newest_managed_media_at: datetime | None = None
+    approximate_database_bytes: int | None = Field(default=None, ge=0)
+    active_visit_media_count: int = Field(ge=0)
+    active_visit_media_bytes: int = Field(ge=0)
+    superseded_only_media_count: int = Field(ge=0)
+    superseded_only_media_bytes: int = Field(ge=0)
+    orphaned_managed_media_count: int = Field(ge=0)
+    orphaned_managed_media_bytes: int = Field(ge=0)
+    unresolved_visit_evidence_count: int = Field(ge=0)
+    reviewed_bird_wildlife_evidence_count: int = Field(ge=0)
+    reviewed_non_bird_blank_ambiguous_evidence_count: int = Field(ge=0)
+    storage_warning: str | None = None
+    message: str
+
+
+class StorageCleanupCategorySummary(BaseModel):
+    category: str
+    media_count: int = Field(ge=0)
+    bytes: int = Field(ge=0)
+
+
+class StorageCleanupPreviewResponse(BaseModel):
+    preview_token: str
+    generated_at: datetime
+    expires_at: datetime
+    eligible_media_count: int = Field(ge=0)
+    estimated_recoverable_bytes: int = Field(ge=0)
+    categories: list[StorageCleanupCategorySummary] = Field(default_factory=list)
+    oldest_eligible_at: datetime | None = None
+    newest_eligible_at: datetime | None = None
+    affected_visit_count: int = Field(ge=0)
+    protected_counts: list[StorageCleanupCategorySummary] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    message: str
+    creates_review_truth: bool = False
+
+
+class StorageCleanupExecuteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preview_token: str = Field(min_length=8, max_length=160)
+    confirm: bool = False
+    idempotency_key: str = Field(min_length=8, max_length=120)
+
+
+class StorageCleanupResult(BaseModel):
+    batch_id: str
+    state: str
+    moved_to_recovery_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    recovered_bytes: int = Field(ge=0)
+    recovery_expires_at: datetime | None = None
+    message: str
+    warnings: list[str] = Field(default_factory=list)
+    idempotent: bool = False
+    creates_review_truth: bool = False
+
+
+class StorageCleanupHistoryItem(BaseModel):
+    batch_id: str
+    origin: str
+    state: str
+    created_at: datetime
+    media_count: int = Field(ge=0)
+    recovered_bytes: int = Field(ge=0)
+    permanently_purged_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    recovery_expires_at: datetime | None = None
+    message: str
+    can_restore: bool = False
+
+
+class StorageCleanupHistoryResponse(BaseModel):
+    items: list[StorageCleanupHistoryItem] = Field(default_factory=list)
+    message: str
+
+
+class StorageCleanupRestoreRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(min_length=8, max_length=120)
+
+
+class StorageCleanupPurgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: bool = False
+    idempotency_key: str = Field(min_length=8, max_length=120)
+
+
 class LocalBackupKind(str, Enum):
     manual = "manual"
     pre_restore = "pre_restore"

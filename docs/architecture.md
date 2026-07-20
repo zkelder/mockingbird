@@ -29,7 +29,7 @@ raw model/provider output.
 - monitoring and evidence handoff
 - Review Queue, Event Detail, and Visit Detail
 - Bird Log, Analytics, Dataset Exports, and Classifier Readiness
-- Local Data backup/recovery and saved-media retention
+- Local Data backup/recovery and Storage & Retention
 
 The primary navigation flow is Cameras/Streams -> Review Queue -> Bird Log ->
 Exports. Advanced evidence, provider diagnostics, and optional analyzers support
@@ -65,6 +65,14 @@ Managed media lives under configured local roots. Database and managed media
 form one backup graph: backup/restore verifies paths, sizes, hashes, SQLite
 integrity, and schema compatibility before mutation. Restore creates a verified
 pre-restore safety backup and can roll database and media back together.
+
+Storage & Retention remains local and policy-led: defaults are disabled, server
+previews select only validated eligible assets, and confirmed cleanup moves files
+to managed recovery before unlinking eligible evidence associations. Primary,
+unresolved, reviewed wildlife, export-referenced, incomplete, symlinked, and
+otherwise ambiguous media fails closed. Automatic maintenance is bounded to one
+app-owned worker, uses a fresh policy pass rather than a browser preview, and
+shares its maintenance window with backup and restore.
 
 ### Local intelligence
 

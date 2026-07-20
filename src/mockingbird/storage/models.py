@@ -279,6 +279,96 @@ class MediaAssetModel(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class StorageRetentionSettingsModel(Base):
+    """One durable, deliberately conservative local media-retention policy."""
+
+    __tablename__ = "storage_retention_settings"
+
+    singleton_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    automatic_cleanup_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    cleanup_frequency: Mapped[str] = mapped_column(String, nullable=False)
+    retain_unresolved_visit_evidence: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    retain_reviewed_bird_wildlife_evidence: Mapped[bool] = mapped_column(
+        Boolean, nullable=False
+    )
+    reviewed_non_bird_age_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    superseded_evidence_age_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    orphaned_media_age_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    maximum_managed_media_bytes: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    policy_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_automatic_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_automatic_result: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Settings writes have their own request identity; automatic-run status remains
+    # an operational observation and must never double as an idempotency ledger.
+    last_settings_idempotency_key: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+
+
+class StorageCleanupBatchModel(Base):
+    """Durable preview, quarantine, restore, and purge audit state for managed media."""
+
+    __tablename__ = "storage_cleanup_batches"
+    __table_args__ = (
+        UniqueConstraint("preview_token", name="uq_storage_cleanup_preview_token"),
+        UniqueConstraint("idempotency_key", name="uq_storage_cleanup_idempotency_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    origin: Mapped[str] = mapped_column(String, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    preview_token: Mapped[str] = mapped_column(String, nullable=False)
+    state_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
+    policy_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_restore_idempotency_key: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    last_purge_idempotency_key: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    recovery_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    summary_json: Mapped[str] = mapped_column(Text, nullable=False)
+    safe_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class StorageCleanupItemModel(Base):
+    """One staged managed-media move, with enough metadata for compatible restoration."""
+
+    __tablename__ = "storage_cleanup_items"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "media_asset_id", name="uq_storage_cleanup_item"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("storage_cleanup_batches.id"), nullable=False
+    )
+    media_asset_id: Mapped[str] = mapped_column(
+        ForeignKey("media_assets.id"), nullable=False
+    )
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    original_local_path: Mapped[str] = mapped_column(Text, nullable=False)
+    quarantine_relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    evidence_links_json: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class DetectionRunModel(Base):
     __tablename__ = "detection_runs"
 

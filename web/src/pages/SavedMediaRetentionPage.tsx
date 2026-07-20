@@ -114,27 +114,17 @@ function isEvidenceCreationEligible(item: SavedMediaRetentionItem): boolean {
 
 function RetentionItemCard({
   item,
-  cleanupConfirmed,
   evidenceSelected,
-  isCleaning,
   isEvidenceCreating,
   isEvidenceSelectable,
-  onCleanupConfirmChange,
   onEvidenceSelectionChange,
-  onRunCleanup,
 }: {
   item: SavedMediaRetentionItem;
-  cleanupConfirmed: boolean;
   evidenceSelected: boolean;
-  isCleaning: boolean;
   isEvidenceCreating: boolean;
   isEvidenceSelectable: boolean;
-  onCleanupConfirmChange: (mediaAssetId: string, confirmed: boolean) => void;
   onEvidenceSelectionChange: (mediaAssetId: string, selected: boolean) => void;
-  onRunCleanup: (mediaAssetId: string) => void;
 }) {
-  const canCleanFile = isCleanupEligible(item);
-
   return (
     <article className="retention-item-card">
       <div className="section-heading">
@@ -212,35 +202,10 @@ function RetentionItemCard({
 
       <RetentionWarningList warnings={item.warnings} />
 
-      {canCleanFile ? (
-        <div className="retention-cleanup-action">
-          <div>
-            <strong>Low-risk file cleanup</strong>
-            <span>
-              This deletes the local file only. The MediaAsset record remains. No evidence,
-              Events, Visits, labels, or truth are deleted.
-            </span>
-          </div>
-          <label className="checkbox-row retention-cleanup-confirm">
-            <input
-              checked={cleanupConfirmed}
-              onChange={(event) =>
-                onCleanupConfirmChange(item.media_asset_id, event.target.checked)
-              }
-              type="checkbox"
-            />
-            Confirm local file-only cleanup
-          </label>
-          <button
-            className="danger-action"
-            disabled={!cleanupConfirmed || isCleaning}
-            onClick={() => onRunCleanup(item.media_asset_id)}
-            type="button"
-          >
-            Delete local file
-          </button>
+      <div className="notice-panel compact-notice">
+        <strong>Recoverable cleanup</strong>
+        <span>Direct file deletion is retired. Use Storage &amp; Retention in Local Data to preview and recoverably clean eligible managed media.</span>
         </div>
-      ) : null}
     </article>
   );
 }
@@ -445,7 +410,7 @@ export function SavedMediaRetentionPage() {
       <PageHeader
         eyebrow="Advanced storage"
         title="Saved Media Retention"
-        description="Advanced local storage visibility for saved preview media, risk, dry-run planning, and low-risk file cleanup."
+        description="Advanced local storage visibility for saved preview media, risk, and compatibility dry-run planning."
         actions={
           <button className="secondary-action" onClick={() => void loadReport({ showLoading: false })}>
             Refresh report
@@ -454,8 +419,8 @@ export function SavedMediaRetentionPage() {
       />
 
       <section className="notice-panel retention-boundary-panel">
-        <strong>File-only cleanup boundary</strong>
-        <span>Low-risk cleanup deletes a confirmed local file only. Records and truth remain.</span>
+        <strong>Recoverable cleanup boundary</strong>
+        <span>Direct file deletion is retired. Use Storage &amp; Retention in Local Data for a server-owned preview and recovery window.</span>
       </section>
 
       <section className="panel retention-report-status">
@@ -793,16 +758,12 @@ export function SavedMediaRetentionPage() {
           <div className="retention-item-list">
             {sortedItems.map((item) => (
               <RetentionItemCard
-                cleanupConfirmed={Boolean(cleanupConfirmedById[item.media_asset_id])}
                 evidenceSelected={selectedEvidenceMediaIds.includes(item.media_asset_id)}
-                isCleaning={cleaningMediaId === item.media_asset_id}
                 isEvidenceCreating={isCreatingEvidence}
                 isEvidenceSelectable={isEvidenceCreationEligible(item)}
                 item={item}
                 key={item.media_asset_id}
-                onCleanupConfirmChange={updateCleanupConfirmation}
                 onEvidenceSelectionChange={toggleEvidenceSelection}
-                onRunCleanup={(mediaAssetId) => void runCleanup(mediaAssetId)}
               />
             ))}
           </div>

@@ -2773,6 +2773,113 @@ export interface LocalBackupRestoreResponse {
   message: string;
 }
 
+export type StorageRetentionFrequency = "daily" | "weekly";
+
+export interface StorageRetentionSettings {
+  automatic_cleanup_enabled: boolean;
+  cleanup_frequency: StorageRetentionFrequency;
+  retain_unresolved_visit_evidence: boolean;
+  retain_reviewed_bird_wildlife_evidence: boolean;
+  reviewed_non_bird_age_days: number;
+  superseded_evidence_age_days: number;
+  orphaned_media_age_days: number;
+  maximum_managed_media_bytes?: number | null;
+  policy_revision: number;
+  persisted: boolean;
+  recommended_defaults: boolean;
+  updated_at?: string | null;
+  last_automatic_run_at?: string | null;
+  last_automatic_result?: string | null;
+  message: string;
+}
+
+export interface StorageRetentionSettingsUpdate {
+  automatic_cleanup_enabled: boolean;
+  cleanup_frequency: StorageRetentionFrequency;
+  retain_unresolved_visit_evidence: boolean;
+  retain_reviewed_bird_wildlife_evidence: boolean;
+  reviewed_non_bird_age_days: number;
+  superseded_evidence_age_days: number;
+  orphaned_media_age_days: number;
+  maximum_managed_media_bytes?: number | null;
+  idempotency_key: string;
+}
+
+export interface StorageSummary {
+  total_managed_media_bytes: number;
+  total_managed_media_count: number;
+  oldest_managed_media_at?: string | null;
+  newest_managed_media_at?: string | null;
+  approximate_database_bytes?: number | null;
+  active_visit_media_count: number;
+  active_visit_media_bytes: number;
+  superseded_only_media_count: number;
+  superseded_only_media_bytes: number;
+  orphaned_managed_media_count: number;
+  orphaned_managed_media_bytes: number;
+  unresolved_visit_evidence_count: number;
+  reviewed_bird_wildlife_evidence_count: number;
+  reviewed_non_bird_blank_ambiguous_evidence_count: number;
+  storage_warning?: string | null;
+  message: string;
+}
+
+export interface StorageCleanupCategorySummary {
+  category: string;
+  media_count: number;
+  bytes: number;
+}
+
+export interface StorageCleanupPreviewResponse {
+  preview_token: string;
+  generated_at: string;
+  expires_at: string;
+  eligible_media_count: number;
+  estimated_recoverable_bytes: number;
+  categories: StorageCleanupCategorySummary[];
+  oldest_eligible_at?: string | null;
+  newest_eligible_at?: string | null;
+  affected_visit_count: number;
+  protected_counts: StorageCleanupCategorySummary[];
+  warnings: string[];
+  message: string;
+  creates_review_truth: boolean;
+}
+
+export interface StorageCleanupResult {
+  batch_id: string;
+  state: string;
+  moved_to_recovery_count: number;
+  skipped_count: number;
+  failed_count: number;
+  recovered_bytes: number;
+  recovery_expires_at?: string | null;
+  message: string;
+  warnings: string[];
+  idempotent: boolean;
+  creates_review_truth: boolean;
+}
+
+export interface StorageCleanupHistoryItem {
+  batch_id: string;
+  origin: string;
+  state: string;
+  created_at: string;
+  media_count: number;
+  recovered_bytes: number;
+  permanently_purged_count: number;
+  skipped_count: number;
+  failed_count: number;
+  recovery_expires_at?: string | null;
+  message: string;
+  can_restore: boolean;
+}
+
+export interface StorageCleanupHistoryResponse {
+  items: StorageCleanupHistoryItem[];
+  message: string;
+}
+
 export interface SampleDataRemovalResponse {
   removed: boolean;
   removed_counts: Record<string, number>;

@@ -13,8 +13,9 @@ import os
 from pathlib import Path
 import re
 import shutil
+import threading
 import time
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import urlsplit, urlunsplit
 import uuid
 
@@ -261,6 +262,18 @@ from mockingbird.api.schemas import (
     StreamPlaybackStatusValue,
     StreamRuntimeState,
     StreamRuntimeStatusResponse,
+    StorageCleanupCategorySummary,
+    StorageCleanupExecuteRequest,
+    StorageCleanupHistoryItem,
+    StorageCleanupHistoryResponse,
+    StorageCleanupPreviewResponse,
+    StorageCleanupPurgeRequest,
+    StorageCleanupRestoreRequest,
+    StorageCleanupResult,
+    StorageRetentionFrequency,
+    StorageRetentionSettings,
+    StorageRetentionSettingsUpdate,
+    StorageSummary,
     StreamVisitSummary,
     TaxonomyLabel,
     Visit,
@@ -328,6 +341,9 @@ from mockingbird.storage.models import (
     StreamMonitoringPolicyModel,
     StreamMonitoringOperationModel,
     StreamRuntimeCheckpointModel,
+    StorageCleanupBatchModel,
+    StorageCleanupItemModel,
+    StorageRetentionSettingsModel,
     TaxonomyLabelModel,
     VisitCurationHistoryModel,
     VisitEvidenceLinkModel,
@@ -354,6 +370,33 @@ MAX_LIVE_VISIT_EVIDENCE_FRAMES = 4
 MAX_VISIT_MERGE_CANDIDATES = 10
 MAX_VISIT_MERGE_GAP = timedelta(minutes=30)
 MAX_ACTIVITY_LIBRARY_SAVED_VIEWS = 15
+MAX_STORAGE_CLEANUP_PREVIEW_ITEMS = 200
+MAX_STORAGE_CLEANUP_HISTORY_ITEMS = 30
+STORAGE_CLEANUP_PREVIEW_TTL = timedelta(minutes=15)
+STORAGE_CLEANUP_RECOVERY_WINDOW = timedelta(days=14)
+DEFAULT_STORAGE_REVIEWED_NON_BIRD_AGE_DAYS = 180
+DEFAULT_STORAGE_SUPERSEDED_AGE_DAYS = 90
+DEFAULT_STORAGE_ORPHANED_AGE_DAYS = 30
+
+
+@dataclass(frozen=True)
+class _StorageRetentionCandidate:
+    asset_id: str
+    category: str
+    local_path: Path
+    relative_path: Path
+    file_size_bytes: int
+    created_at: datetime
+    affected_visit_ids: tuple[str, ...]
+    evidence_links: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class _StorageRetentionEvaluation:
+    candidates: tuple[_StorageRetentionCandidate, ...]
+    protected_counts: Counter[str]
+    protected_bytes: Counter[str]
+    warnings: tuple[str, ...]
 
 
 class FastReviewConflictError(ValueError):
@@ -1334,6 +1377,7 @@ class ProductRepository:
         self.engine = engine or create_database_engine(self.db_url)
         self.schema_status = initialize_database(self.engine)
         self.session_factory = create_session_factory(self.engine)
+        self._storage_retention_lock = threading.Lock()
         self.seed_if_empty()
 
     def close(self) -> None:
@@ -4831,6 +4875,1304 @@ class ProductRepository:
             return None
         return Path(asset.local_path)
 
+    def storage_retention_settings(self) -> StorageRetentionSettings:
+        """Read retention intent without creating settings or starting cleanup."""
+
+        with self.session_factory() as session:
+            model = session.get(StorageRetentionSettingsModel, 1)
+            return self._storage_retention_settings_response(model)
+
+    def update_storage_retention_settings(
+        self,
+        payload: StorageRetentionSettingsUpdate,
+    ) -> tuple[StorageRetentionSettings, bool]:
+        """Persist explicit bounded retention intent; migration itself never enables it."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(StorageRetentionSettingsModel, 1)
+                if (
+                    model is not None
+                    and model.last_settings_idempotency_key == payload.idempotency_key
+                ):
+                    return self._storage_retention_settings_response(model), True
+                if model is None:
+                    model = StorageRetentionSettingsModel(
+                        singleton_id=1,
+                        automatic_cleanup_enabled=payload.automatic_cleanup_enabled,
+                        cleanup_frequency=payload.cleanup_frequency.value,
+                        # Active needs-review evidence is a product protection, not
+                        # an operator tradeoff. Keep the stored compatibility field
+                        # true even if an older caller supplied false.
+                        retain_unresolved_visit_evidence=True,
+                        retain_reviewed_bird_wildlife_evidence=(
+                            payload.retain_reviewed_bird_wildlife_evidence
+                        ),
+                        reviewed_non_bird_age_days=payload.reviewed_non_bird_age_days,
+                        superseded_evidence_age_days=payload.superseded_evidence_age_days,
+                        orphaned_media_age_days=payload.orphaned_media_age_days,
+                        maximum_managed_media_bytes=payload.maximum_managed_media_bytes,
+                        policy_revision=1,
+                        updated_at=now,
+                        last_automatic_run_at=None,
+                        last_automatic_result=None,
+                        last_settings_idempotency_key=payload.idempotency_key,
+                    )
+                    session.add(model)
+                else:
+                    model.automatic_cleanup_enabled = payload.automatic_cleanup_enabled
+                    model.cleanup_frequency = payload.cleanup_frequency.value
+                    model.retain_unresolved_visit_evidence = True
+                    model.retain_reviewed_bird_wildlife_evidence = (
+                        payload.retain_reviewed_bird_wildlife_evidence
+                    )
+                    model.reviewed_non_bird_age_days = payload.reviewed_non_bird_age_days
+                    model.superseded_evidence_age_days = payload.superseded_evidence_age_days
+                    model.orphaned_media_age_days = payload.orphaned_media_age_days
+                    model.maximum_managed_media_bytes = payload.maximum_managed_media_bytes
+                    model.policy_revision += 1
+                    model.updated_at = now
+                    model.last_settings_idempotency_key = payload.idempotency_key
+                session.flush()
+                return self._storage_retention_settings_response(model), False
+
+    def storage_summary(self) -> StorageSummary:
+        """Summarize managed media with no path disclosure and no filesystem mutation."""
+
+        with self.session_factory() as session:
+            settings = session.get(StorageRetentionSettingsModel, 1)
+            assets = session.scalars(
+                select(MediaAssetModel).order_by(MediaAssetModel.created_at, MediaAssetModel.id)
+            ).all()
+            totals = Counter[str]()
+            total_bytes = 0
+            oldest: datetime | None = None
+            newest: datetime | None = None
+            active_count = superseded_count = orphaned_count = 0
+            active_bytes = superseded_bytes = orphaned_bytes = 0
+            unresolved_count = reviewed_wildlife_count = reviewed_other_count = 0
+            for asset in assets:
+                path, relative_path, size, safe_reason = self._storage_managed_media_path(asset)
+                if path is None or relative_path is None or size is None:
+                    continue
+                total_bytes += size
+                created_at = _as_utc(asset.created_at)
+                oldest = created_at if oldest is None or created_at < oldest else oldest
+                newest = created_at if newest is None or created_at > newest else newest
+                links = session.scalars(
+                    select(VisitEvidenceLinkModel).where(
+                        VisitEvidenceLinkModel.media_asset_id == asset.id
+                    )
+                ).all()
+                visits = [session.get(VisitModel, link.visit_id) for link in links]
+                visit_models = [visit for visit in visits if visit is not None]
+                active_visits = [visit for visit in visit_models if not visit.is_superseded]
+                if active_visits:
+                    active_count += 1
+                    active_bytes += size
+                elif visit_models and all(visit.is_superseded for visit in visit_models):
+                    superseded_count += 1
+                    superseded_bytes += size
+                elif not links and not self._storage_has_non_visit_reference(session, asset.id):
+                    orphaned_count += 1
+                    orphaned_bytes += size
+                if any(visit.review_status == ReviewStatus.needs_review.value for visit in active_visits):
+                    unresolved_count += 1
+                if any(
+                    visit.review_status == ReviewStatus.reviewed.value
+                    and self._storage_visit_is_wildlife(session, visit)
+                    for visit in active_visits
+                ):
+                    reviewed_wildlife_count += 1
+                if any(
+                    visit.review_status == ReviewStatus.reviewed.value
+                    and not self._storage_visit_is_wildlife(session, visit)
+                    for visit in active_visits
+                ):
+                    reviewed_other_count += 1
+
+            database_bytes: int | None = None
+            database_path = _database_path_from_url(self.db_url)
+            if database_path:
+                try:
+                    database_bytes = Path(database_path).stat().st_size
+                except OSError:
+                    database_bytes = None
+            target = settings.maximum_managed_media_bytes if settings else None
+            warning = (
+                "Storage target could not be reached because protected evidence was retained."
+                if target is not None and total_bytes > target
+                else None
+            )
+            return StorageSummary(
+                total_managed_media_bytes=total_bytes,
+                total_managed_media_count=sum(1 for asset in assets if self._storage_managed_media_path(asset)[0] is not None),
+                oldest_managed_media_at=oldest,
+                newest_managed_media_at=newest,
+                approximate_database_bytes=database_bytes,
+                active_visit_media_count=active_count,
+                active_visit_media_bytes=active_bytes,
+                superseded_only_media_count=superseded_count,
+                superseded_only_media_bytes=superseded_bytes,
+                orphaned_managed_media_count=orphaned_count,
+                orphaned_managed_media_bytes=orphaned_bytes,
+                unresolved_visit_evidence_count=unresolved_count,
+                reviewed_bird_wildlife_evidence_count=reviewed_wildlife_count,
+                reviewed_non_bird_blank_ambiguous_evidence_count=reviewed_other_count,
+                storage_warning=warning,
+                message="Managed media is summarized locally. Protected evidence is counted but never treated as cleanup permission.",
+            )
+
+    def preview_storage_cleanup(
+        self,
+        *,
+        origin: str = "manual",
+    ) -> StorageCleanupPreviewResponse:
+        """Create a bounded server-owned cleanup plan; the browser never chooses media IDs."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                settings_model = session.get(StorageRetentionSettingsModel, 1)
+                settings = self._storage_retention_settings_response(settings_model)
+                evaluation = self._storage_retention_evaluation(session, settings, now)
+                candidates = self._storage_candidates_for_target(
+                    evaluation.candidates,
+                    settings.maximum_managed_media_bytes,
+                    self._storage_total_managed_bytes(session),
+                )[:MAX_STORAGE_CLEANUP_PREVIEW_ITEMS]
+                fingerprint = self._storage_cleanup_fingerprint(candidates, settings)
+                batch = StorageCleanupBatchModel(
+                    id=f"storage-cleanup-{uuid.uuid4().hex}",
+                    origin=origin,
+                    state="previewed",
+                    preview_token=uuid.uuid4().hex,
+                    state_fingerprint=fingerprint,
+                    policy_revision=settings.policy_revision,
+                    idempotency_key=None,
+                    created_at=now,
+                    executed_at=None,
+                    recovery_expires_at=None,
+                    restored_at=None,
+                    purged_at=None,
+                    summary_json=json.dumps({"preview_count": len(candidates)}, sort_keys=True),
+                    safe_error=None,
+                )
+                session.add(batch)
+                session.flush()
+                return self._storage_cleanup_preview_response(
+                    batch=batch,
+                    candidates=candidates,
+                    evaluation=evaluation,
+                    now=now,
+                    capped=len(evaluation.candidates) > len(candidates),
+                )
+
+    def execute_storage_cleanup(
+        self,
+        payload: StorageCleanupExecuteRequest,
+    ) -> StorageCleanupResult:
+        """Move a still-valid preview into managed recovery before unlinking evidence."""
+
+        if not payload.confirm:
+            raise ValueError("storage_cleanup_requires_confirmation")
+        if not self._storage_retention_lock.acquire(blocking=False):
+            raise ValueError("storage_cleanup_busy")
+        try:
+            now = datetime.now(UTC)
+            with self.session_factory() as session:
+                with session.begin():
+                    existing = session.scalar(
+                        select(StorageCleanupBatchModel).where(
+                            StorageCleanupBatchModel.idempotency_key == payload.idempotency_key
+                        )
+                    )
+                    if existing is not None:
+                        if existing.preview_token != payload.preview_token:
+                            raise ValueError("storage_cleanup_idempotency_conflict")
+                        return self._storage_cleanup_result_from_batch(existing, idempotent=True)
+                    batch = session.scalar(
+                        select(StorageCleanupBatchModel).where(
+                            StorageCleanupBatchModel.preview_token == payload.preview_token
+                        )
+                    )
+                    if batch is None:
+                        raise ValueError("storage_cleanup_preview_missing")
+                    if (
+                        batch.state != "previewed"
+                        or now - _as_utc(batch.created_at) > STORAGE_CLEANUP_PREVIEW_TTL
+                    ):
+                        raise ValueError("storage_cleanup_preview_expired")
+                    settings = self._storage_retention_settings_response(
+                        session.get(StorageRetentionSettingsModel, 1)
+                    )
+                    evaluation = self._storage_retention_evaluation(session, settings, now)
+                    candidates = self._storage_candidates_for_target(
+                        evaluation.candidates,
+                        settings.maximum_managed_media_bytes,
+                        self._storage_total_managed_bytes(session),
+                    )[:MAX_STORAGE_CLEANUP_PREVIEW_ITEMS]
+                    if self._storage_cleanup_fingerprint(candidates, settings) != batch.state_fingerprint:
+                        raise ValueError("storage_cleanup_preview_stale")
+                    batch.idempotency_key = payload.idempotency_key
+                    batch.state = "staging"
+                    batch.executed_at = now
+                    batch.recovery_expires_at = now + STORAGE_CLEANUP_RECOVERY_WINDOW
+                    batch.summary_json = json.dumps(
+                        {"planned_count": len(candidates), "skipped_count": 0, "failed_count": 0},
+                        sort_keys=True,
+                    )
+                    for candidate in candidates:
+                        session.add(
+                            StorageCleanupItemModel(
+                                id=f"storage-cleanup-item-{uuid.uuid4().hex}",
+                                batch_id=batch.id,
+                                media_asset_id=candidate.asset_id,
+                                category=candidate.category,
+                                original_local_path=str(candidate.local_path),
+                                quarantine_relative_path=str(candidate.relative_path),
+                                file_size_bytes=candidate.file_size_bytes,
+                                evidence_links_json=json.dumps(candidate.evidence_links),
+                                state="staged",
+                                created_at=now,
+                                restored_at=None,
+                                purged_at=None,
+                            )
+                        )
+                    batch_id = batch.id
+
+            with self.session_factory() as session:
+                item_ids = list(session.scalars(
+                    select(StorageCleanupItemModel.id).where(
+                        StorageCleanupItemModel.batch_id == batch_id
+                    )
+                ))
+            for item_id in item_ids:
+                try:
+                    with self.session_factory() as session:
+                        with session.begin():
+                            item = session.get(StorageCleanupItemModel, item_id)
+                            if item is None or item.state != "staged":
+                                continue
+                            if not self._storage_cleanup_item_is_still_eligible_in_session(
+                                session,
+                                item,
+                                now=now,
+                            ):
+                                item.state = "failed"
+                                continue
+                            # Acquire the local database write boundary before moving a
+                            # file. This serializes final Visit changes with the last
+                            # eligibility check, filesystem move, and link removal.
+                            item.state = "moving"
+                            session.flush()
+                            if not self._storage_cleanup_item_is_still_eligible_in_session(
+                                session,
+                                item,
+                                now=now,
+                            ):
+                                item.state = "failed"
+                                continue
+                            if not self._move_storage_item_to_recovery(item):
+                                item.state = "failed"
+                                continue
+                            current_links = session.scalars(
+                                select(VisitEvidenceLinkModel).where(
+                                    VisitEvidenceLinkModel.media_asset_id == item.media_asset_id
+                                )
+                            ).all()
+                            expected_links = self._storage_link_snapshot_signature(
+                                _json_list(item.evidence_links_json)
+                            )
+                            actual_links = self._storage_link_snapshot_signature(
+                                self._storage_link_snapshot(link) for link in current_links
+                            )
+                            if actual_links != expected_links:
+                                # No link is removed if product context changed. Put the
+                                # media back when possible; otherwise retain a durable
+                                # moving state so recovery remains available.
+                                item.state = (
+                                    "failed"
+                                    if self._restore_storage_item_from_recovery(item)
+                                    else "moving"
+                                )
+                                continue
+                            for link in current_links:
+                                session.delete(link)
+                            item.state = "quarantined"
+                except Exception:
+                    # A failure after a filesystem move rolls its database transaction
+                    # back to staged. Final reconciliation below detects the recovery
+                    # file and leaves that batch recoverable rather than successful.
+                    continue
+
+            with self.session_factory() as session:
+                with session.begin():
+                    persisted_batch = session.get(StorageCleanupBatchModel, batch_id)
+                    persisted_items = session.scalars(
+                    select(StorageCleanupItemModel).where(
+                        StorageCleanupItemModel.batch_id == batch_id
+                    )
+                    ).all()
+                    moved_count = 0
+                    recovered_bytes = 0
+                    recoverable_staged_count = 0
+                    for item in persisted_items:
+                        if item.state == "quarantined":
+                            moved_count += 1
+                            recovered_bytes += item.file_size_bytes
+                            continue
+                        if item.state in {"staged", "moving"} and self._storage_item_has_recovery_file(
+                            item
+                        ):
+                            recoverable_staged_count += 1
+                            continue
+                        if item.state != "failed":
+                            item.state = "failed"
+                    if persisted_batch is None:
+                        raise ValueError("storage_cleanup_preview_missing")
+                    failed_count = sum(item.state == "failed" for item in persisted_items)
+                    persisted_batch.state = (
+                        "staging"
+                        if recoverable_staged_count
+                        else "quarantined"
+                        if moved_count
+                        else "failed"
+                    )
+                    persisted_batch.summary_json = json.dumps(
+                        {
+                            "media_count": moved_count,
+                            "recovered_bytes": recovered_bytes,
+                            "skipped_count": 0,
+                            "failed_count": failed_count,
+                            "recoverable_staged_count": recoverable_staged_count,
+                            "permanently_purged_count": 0,
+                        },
+                        sort_keys=True,
+                    )
+                    persisted_batch.safe_error = (
+                        "Cleanup was interrupted after a recoverable file move; no evidence links were removed for unfinished items."
+                        if recoverable_staged_count
+                        else "Some media could not be moved to recovery; no links were removed for those files."
+                        if failed_count
+                        else None
+                    )
+                    session.flush()
+                    return self._storage_cleanup_result_from_batch(persisted_batch)
+        finally:
+            self._storage_retention_lock.release()
+
+    def storage_cleanup_history(self, *, limit: int = MAX_STORAGE_CLEANUP_HISTORY_ITEMS) -> StorageCleanupHistoryResponse:
+        with self.session_factory() as session:
+            batches = session.scalars(
+                select(StorageCleanupBatchModel)
+                .where(StorageCleanupBatchModel.state != "previewed")
+                .order_by(StorageCleanupBatchModel.created_at.desc(), StorageCleanupBatchModel.id.desc())
+                .limit(max(1, min(limit, MAX_STORAGE_CLEANUP_HISTORY_ITEMS)))
+            ).all()
+            return StorageCleanupHistoryResponse(
+                items=[self._storage_cleanup_history_item(batch) for batch in batches],
+                message="Cleanup history is local and bounded. Recovery remains available only before its deadline.",
+            )
+
+    def restore_storage_cleanup_batch(
+        self,
+        batch_id: str,
+        payload: StorageCleanupRestoreRequest,
+    ) -> StorageCleanupResult | None:
+        """Restore staged files only when their managed destination remains unoccupied."""
+
+        if not self._storage_retention_lock.acquire(blocking=False):
+            raise ValueError("storage_cleanup_busy")
+        try:
+            with self.session_factory() as session:
+                batch = session.get(StorageCleanupBatchModel, batch_id)
+                if batch is None:
+                    return None
+                if batch.last_restore_idempotency_key == payload.idempotency_key:
+                    return self._storage_cleanup_result_from_batch(batch, idempotent=True)
+                if batch.state == "restored":
+                    return self._storage_cleanup_result_from_batch(batch, idempotent=True)
+                if batch.state not in {"quarantined", "staging"}:
+                    raise ValueError("storage_cleanup_restore_unavailable")
+                items = session.scalars(
+                    select(StorageCleanupItemModel).where(
+                        StorageCleanupItemModel.batch_id == batch.id,
+                        StorageCleanupItemModel.state.in_(
+                            ("quarantined", "moved", "moving", "staged")
+                        ),
+                    )
+                ).all()
+            conflicts = 0
+            restored_ids: list[str] = []
+            for item in items:
+                if not self._storage_cleanup_item_snapshot_is_valid(item):
+                    conflicts += 1
+                elif self._restore_storage_item_from_recovery(item):
+                    restored_ids.append(item.id)
+                else:
+                    conflicts += 1
+            now = datetime.now(UTC)
+            with self.session_factory() as session:
+                with session.begin():
+                    batch = session.get(StorageCleanupBatchModel, batch_id)
+                    if batch is None:
+                        return None
+                    items = session.scalars(
+                        select(StorageCleanupItemModel).where(
+                            StorageCleanupItemModel.batch_id == batch.id
+                        )
+                    ).all()
+                    restored_count = 0
+                    for item in items:
+                        if item.id not in restored_ids:
+                            continue
+                        asset = session.get(MediaAssetModel, item.media_asset_id)
+                        if asset is None:
+                            item.state = "failed"
+                            conflicts += 1
+                            continue
+                        for link_payload in _json_list(item.evidence_links_json):
+                            visit = session.get(VisitModel, link_payload.get("visit_id"))
+                            if visit is None:
+                                continue
+                            existing = session.scalar(
+                                select(VisitEvidenceLinkModel).where(
+                                    VisitEvidenceLinkModel.visit_id == visit.id,
+                                    VisitEvidenceLinkModel.media_asset_id == asset.id,
+                                )
+                            )
+                            if existing is None:
+                                restored_primary = bool(link_payload.get("is_primary", False))
+                                if restored_primary:
+                                    another_primary = session.scalar(
+                                        select(VisitEvidenceLinkModel.id).where(
+                                            VisitEvidenceLinkModel.visit_id == visit.id,
+                                            VisitEvidenceLinkModel.is_primary.is_(True),
+                                        )
+                                    )
+                                    restored_primary = another_primary is None
+                                session.add(
+                                    VisitEvidenceLinkModel(
+                                        id=str(link_payload["id"]),
+                                        visit_id=visit.id,
+                                        media_asset_id=asset.id,
+                                        captured_at=_parse_datetime(link_payload["captured_at"]),
+                                        frame_sequence=link_payload.get("frame_sequence"),
+                                        sort_order=int(link_payload.get("sort_order", 0)),
+                                        is_primary=restored_primary,
+                                        created_at=_parse_datetime(link_payload["created_at"]),
+                                    )
+                                )
+                                if restored_primary and not visit.representative_media_path:
+                                    visit.representative_media_path = asset.local_path
+                        item.state = "restored"
+                        item.restored_at = now
+                        restored_count += 1
+                    batch.state = "restored" if conflicts == 0 else "restore_conflict"
+                    batch.restored_at = now if conflicts == 0 else None
+                    batch.safe_error = (
+                        "Some media could not be restored because its original location or product context changed."
+                        if conflicts
+                        else None
+                    )
+                    batch.last_restore_idempotency_key = payload.idempotency_key
+                    summary = _json_object(batch.summary_json)
+                    summary["restored_count"] = restored_count
+                    summary["failed_count"] = int(summary.get("failed_count", 0)) + conflicts
+                    batch.summary_json = json.dumps(summary, sort_keys=True)
+                    return self._storage_cleanup_result_from_batch(batch, idempotent=False)
+        finally:
+            self._storage_retention_lock.release()
+
+    def purge_storage_cleanup_batch(
+        self,
+        batch_id: str,
+        payload: StorageCleanupPurgeRequest,
+        *,
+        allow_before_deadline: bool = False,
+    ) -> StorageCleanupResult | None:
+        if not payload.confirm:
+            raise ValueError("storage_cleanup_purge_requires_confirmation")
+        if not self._storage_retention_lock.acquire(blocking=False):
+            raise ValueError("storage_cleanup_busy")
+        try:
+            now = datetime.now(UTC)
+            with self.session_factory() as session:
+                batch = session.get(StorageCleanupBatchModel, batch_id)
+                if batch is None:
+                    return None
+                if batch.last_purge_idempotency_key == payload.idempotency_key:
+                    return self._storage_cleanup_result_from_batch(batch, idempotent=True)
+                if batch.state == "purged":
+                    return self._storage_cleanup_result_from_batch(batch, idempotent=True)
+                if batch.state not in {"quarantined", "restore_conflict"}:
+                    raise ValueError("storage_cleanup_purge_unavailable")
+                if (
+                    not allow_before_deadline
+                    and batch.recovery_expires_at is not None
+                    and _as_utc(batch.recovery_expires_at) > now
+                ):
+                    raise ValueError("storage_cleanup_recovery_active")
+                items = session.scalars(
+                    select(StorageCleanupItemModel).where(
+                        StorageCleanupItemModel.batch_id == batch.id,
+                        StorageCleanupItemModel.state == "quarantined",
+                    )
+                ).all()
+            purged_ids = [item.id for item in items if self._purge_storage_item(item)]
+            with self.session_factory() as session:
+                with session.begin():
+                    batch = session.get(StorageCleanupBatchModel, batch_id)
+                    if batch is None:
+                        return None
+                    items = session.scalars(
+                        select(StorageCleanupItemModel).where(
+                            StorageCleanupItemModel.batch_id == batch.id
+                        )
+                    ).all()
+                    purged_count = 0
+                    for item in items:
+                        if item.id in purged_ids:
+                            item.state = "purged"
+                            item.purged_at = now
+                            purged_count += 1
+                    remaining = any(item.state == "quarantined" for item in items)
+                    batch.state = "restore_conflict" if remaining else "purged"
+                    batch.purged_at = now if not remaining else None
+                    summary = _json_object(batch.summary_json)
+                    summary["permanently_purged_count"] = int(
+                        summary.get("permanently_purged_count", 0)
+                    ) + purged_count
+                    batch.summary_json = json.dumps(summary, sort_keys=True)
+                    batch.last_purge_idempotency_key = payload.idempotency_key
+                    return self._storage_cleanup_result_from_batch(batch)
+        finally:
+            self._storage_retention_lock.release()
+
+    def run_automatic_storage_retention(self) -> StorageCleanupResult | None:
+        """Run one fresh, local policy pass; browser previews are never reused automatically."""
+
+        settings = self.storage_retention_settings()
+        if not settings.automatic_cleanup_enabled:
+            return None
+        now = datetime.now(UTC)
+        if settings.last_automatic_run_at is not None:
+            cadence = timedelta(days=1 if settings.cleanup_frequency == "daily" else 7)
+            if _as_utc(settings.last_automatic_run_at) + cadence > now:
+                return None
+        preview = self.preview_storage_cleanup(origin="automatic")
+        if preview.eligible_media_count == 0:
+            with self.session_factory() as session:
+                with session.begin():
+                    model = session.get(StorageRetentionSettingsModel, 1)
+                    if model is not None:
+                        model.last_automatic_run_at = now
+                        model.last_automatic_result = "no_eligible_media"
+            return None
+        result = self.execute_storage_cleanup(
+            StorageCleanupExecuteRequest(
+                preview_token=preview.preview_token,
+                confirm=True,
+                idempotency_key=f"automatic-retention-{now.strftime('%Y%m%d%H')}",
+            )
+        )
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(StorageRetentionSettingsModel, 1)
+                if model is not None:
+                    model.last_automatic_run_at = now
+                    model.last_automatic_result = result.state
+        return result
+
+    def purge_expired_storage_recovery(self) -> int:
+        """Purge only expired quarantined files; disabled automatic retention never calls this."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            batch_ids = session.scalars(
+                select(StorageCleanupBatchModel.id).where(
+                    StorageCleanupBatchModel.state.in_(("quarantined", "restore_conflict")),
+                    StorageCleanupBatchModel.recovery_expires_at.is_not(None),
+                    StorageCleanupBatchModel.recovery_expires_at <= now,
+                )
+            ).all()
+        purged = 0
+        for batch_id in batch_ids[:MAX_STORAGE_CLEANUP_HISTORY_ITEMS]:
+            result = self.purge_storage_cleanup_batch(
+                batch_id,
+                StorageCleanupPurgeRequest(
+                    confirm=True,
+                    idempotency_key=f"automatic-purge-{batch_id}",
+                ),
+                allow_before_deadline=True,
+            )
+            if result is not None:
+                purged += result.moved_to_recovery_count
+        return purged
+
+    def _storage_retention_settings_response(
+        self,
+        model: StorageRetentionSettingsModel | None,
+    ) -> StorageRetentionSettings:
+        if model is None:
+            return StorageRetentionSettings(
+                persisted=False,
+                recommended_defaults=True,
+                policy_revision=1,
+                message="Automatic cleanup is disabled by default. Existing media remains untouched until you preview and confirm cleanup.",
+            )
+        recommended = (
+            not model.automatic_cleanup_enabled
+            and model.cleanup_frequency == StorageRetentionFrequency.weekly.value
+            and model.retain_unresolved_visit_evidence
+            and model.retain_reviewed_bird_wildlife_evidence
+            and model.reviewed_non_bird_age_days == DEFAULT_STORAGE_REVIEWED_NON_BIRD_AGE_DAYS
+            and model.superseded_evidence_age_days == DEFAULT_STORAGE_SUPERSEDED_AGE_DAYS
+            and model.orphaned_media_age_days == DEFAULT_STORAGE_ORPHANED_AGE_DAYS
+            and model.maximum_managed_media_bytes is None
+        )
+        return StorageRetentionSettings(
+            automatic_cleanup_enabled=model.automatic_cleanup_enabled,
+            cleanup_frequency=StorageRetentionFrequency(model.cleanup_frequency),
+            retain_unresolved_visit_evidence=True,
+            retain_reviewed_bird_wildlife_evidence=(
+                model.retain_reviewed_bird_wildlife_evidence
+            ),
+            reviewed_non_bird_age_days=model.reviewed_non_bird_age_days,
+            superseded_evidence_age_days=model.superseded_evidence_age_days,
+            orphaned_media_age_days=model.orphaned_media_age_days,
+            maximum_managed_media_bytes=model.maximum_managed_media_bytes,
+            policy_revision=model.policy_revision,
+            persisted=True,
+            recommended_defaults=recommended,
+            updated_at=model.updated_at,
+            last_automatic_run_at=model.last_automatic_run_at,
+            last_automatic_result=model.last_automatic_result,
+            message=(
+                "Automatic cleanup is enabled. Every run calculates a fresh local preview and keeps protected evidence."
+                if model.automatic_cleanup_enabled
+                else "Automatic cleanup is disabled. Preview and confirm cleanup before any managed file moves to recovery."
+            ),
+        )
+
+    def _storage_managed_media_path(
+        self,
+        asset: MediaAssetModel,
+    ) -> tuple[Path | None, Path | None, int | None, str | None]:
+        """Fail closed for paths, symlinks, missing files, and integrity mismatches."""
+
+        try:
+            root = self.media_root.resolve()
+            raw = Path(asset.local_path)
+            raw_candidates = [raw] if raw.is_absolute() else [raw, self.media_root / raw]
+            candidate = next(
+                (
+                    item.absolute()
+                    for item in raw_candidates
+                    if item.absolute().resolve(strict=False).is_relative_to(root)
+                ),
+                None,
+            )
+        except OSError:
+            return None, None, None, "path_integrity"
+        if candidate is None:
+            return None, None, None, "outside_managed_storage"
+        resolved = candidate.resolve(strict=False)
+        if not resolved.is_relative_to(root):
+            return None, None, None, "outside_managed_storage"
+        relative = resolved.relative_to(root)
+        if not relative.parts or relative.parts[0] == ".recovery":
+            return None, None, None, "recovery_or_ambiguous_path"
+        current = root
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                return None, None, None, "symlink_path"
+        if not candidate.exists() or not candidate.is_file():
+            return None, None, None, "missing_or_incomplete_file"
+        try:
+            size = candidate.stat().st_size
+        except OSError:
+            return None, None, None, "path_integrity"
+        if size != asset.file_size_bytes:
+            return None, None, None, "integrity_mismatch"
+        return candidate, relative, size, None
+
+    def _storage_has_non_visit_reference(self, session: Session, media_asset_id: str) -> bool:
+        """Any reference outside Visit links is ownership context, not safe orphan evidence."""
+
+        reference_queries = (
+            select(MotionEvidenceModel.id).where(
+                MotionEvidenceModel.snapshot_media_asset_id == media_asset_id
+            ),
+            select(DetectionRunModel.id).where(DetectionRunModel.media_asset_id == media_asset_id),
+            select(DetectionProposalModel.id).where(
+                DetectionProposalModel.media_asset_id == media_asset_id
+            ),
+            select(SpeciesSuggestionModel.id).where(
+                SpeciesSuggestionModel.media_asset_id == media_asset_id
+            ),
+            select(BioClipIdentificationAttemptModel.id).where(
+                BioClipIdentificationAttemptModel.media_asset_id == media_asset_id
+            ),
+        )
+        return any(session.scalar(query.limit(1)) is not None for query in reference_queries)
+
+    def _storage_visit_is_wildlife(self, session: Session, visit: VisitModel) -> bool:
+        label = (visit.reviewed_label or visit.subject_label or "").strip()
+        taxonomy = session.scalar(
+            select(TaxonomyLabelModel).where(TaxonomyLabelModel.label == label)
+        )
+        if taxonomy is not None:
+            return taxonomy.category in {LabelCategory.bird.value, LabelCategory.mammal.value}
+        return label in {"bird", "unknown_bird", "wildlife"}
+
+    def _storage_visit_required_by_export(self, session: Session, visit: VisitModel) -> bool:
+        if visit.review_status != ReviewStatus.reviewed.value:
+            return False
+        exports = session.scalars(select(DatasetExportModel)).all()
+        for export in exports:
+            selected = _json_list(export.selected_visit_ids_json)
+            if selected and visit.id in selected:
+                return True
+            if not selected and export.reviewed_only:
+                return True
+        return False
+
+    def _storage_active_visit_has_valid_primary(
+        self,
+        session: Session,
+        visit: VisitModel,
+    ) -> bool:
+        """Fail closed when an active Visit has evidence but no retained primary frame."""
+
+        links = session.scalars(
+            select(VisitEvidenceLinkModel).where(VisitEvidenceLinkModel.visit_id == visit.id)
+        ).all()
+        if not links:
+            return True
+        for link in links:
+            asset = session.get(MediaAssetModel, link.media_asset_id)
+            if asset is None:
+                continue
+            is_representative = visit.representative_media_path == asset.local_path
+            if (link.is_primary or is_representative) and self._storage_managed_media_path(asset)[0] is not None:
+                return True
+        return False
+
+    def _storage_retention_evaluation(
+        self,
+        session: Session,
+        settings: StorageRetentionSettings,
+        now: datetime,
+    ) -> _StorageRetentionEvaluation:
+        candidates: list[_StorageRetentionCandidate] = []
+        protected_counts: Counter[str] = Counter()
+        protected_bytes: Counter[str] = Counter()
+        warnings: list[str] = []
+        assets = session.scalars(
+            select(MediaAssetModel).order_by(MediaAssetModel.created_at, MediaAssetModel.id)
+        ).all()
+        for asset in assets:
+            path, relative, size, unsafe_reason = self._storage_managed_media_path(asset)
+            if path is None or relative is None or size is None:
+                protected_counts[unsafe_reason or "ambiguous_media"] += 1
+                continue
+            age_days = max(0, (now - _as_utc(asset.created_at)).days)
+            links = session.scalars(
+                select(VisitEvidenceLinkModel).where(
+                    VisitEvidenceLinkModel.media_asset_id == asset.id
+                )
+            ).all()
+            visits_by_link = [(link, session.get(VisitModel, link.visit_id)) for link in links]
+            if any(visit is None for _link, visit in visits_by_link):
+                protected_counts["ambiguous_visit_linkage"] += 1
+                protected_bytes["ambiguous_visit_linkage"] += size
+                continue
+            visits = [visit for _link, visit in visits_by_link if visit is not None]
+            # Older records can have a representative path without a materialized
+            # VisitEvidenceLink. Treat that ambiguous legacy relationship as protected.
+            legacy_representative_visits = session.scalars(
+                select(VisitModel).where(VisitModel.representative_media_path == asset.local_path)
+            ).all()
+            if legacy_representative_visits and not links:
+                protected_counts["legacy_representative_evidence"] += 1
+                protected_bytes["legacy_representative_evidence"] += size
+                continue
+            active_pairs = [
+                (link, visit)
+                for link, visit in visits_by_link
+                if visit is not None and not visit.is_superseded
+            ]
+            non_visit_reference = self._storage_has_non_visit_reference(session, asset.id)
+            if not links and not non_visit_reference:
+                if age_days >= settings.orphaned_media_age_days:
+                    candidates.append(
+                        _StorageRetentionCandidate(
+                            asset_id=asset.id,
+                            category="orphaned_managed_media",
+                            local_path=path,
+                            relative_path=relative,
+                            file_size_bytes=size,
+                            created_at=_as_utc(asset.created_at),
+                            affected_visit_ids=(),
+                            evidence_links=(),
+                        )
+                    )
+                else:
+                    protected_counts["orphaned_media_too_recent"] += 1
+                    protected_bytes["orphaned_media_too_recent"] += size
+                continue
+            if non_visit_reference:
+                protected_counts["linked_evidence_or_analysis"] += 1
+                protected_bytes["linked_evidence_or_analysis"] += size
+                continue
+            if active_pairs:
+                # A single asset with both active and superseded Visit links has
+                # ambiguous recovery context. Keep it until that relationship is
+                # explicitly resolved rather than moving media behind either Visit.
+                if len(active_pairs) != len(visits_by_link):
+                    protected_counts["mixed_visit_lineage_evidence"] += 1
+                    protected_bytes["mixed_visit_lineage_evidence"] += size
+                    continue
+                active_visits = [visit for _link, visit in active_pairs]
+                if any(visit.review_status == ReviewStatus.needs_review.value for visit in active_visits):
+                    protected_counts["unresolved_visit_evidence"] += 1
+                    protected_bytes["unresolved_visit_evidence"] += size
+                    continue
+                if any(
+                    not self._storage_active_visit_has_valid_primary(session, visit)
+                    for visit in active_visits
+                ):
+                    protected_counts["active_visit_missing_valid_primary"] += 1
+                    protected_bytes["active_visit_missing_valid_primary"] += size
+                    continue
+                if any(
+                    link.is_primary or visit.representative_media_path == asset.local_path
+                    for link, visit in active_pairs
+                ):
+                    protected_counts["active_visit_primary_evidence"] += 1
+                    protected_bytes["active_visit_primary_evidence"] += size
+                    continue
+                if any(self._storage_visit_required_by_export(session, visit) for visit in active_visits):
+                    protected_counts["retained_export_context"] += 1
+                    protected_bytes["retained_export_context"] += size
+                    continue
+                has_wildlife = any(
+                    visit.review_status == ReviewStatus.reviewed.value
+                    and self._storage_visit_is_wildlife(session, visit)
+                    for visit in active_visits
+                )
+                if has_wildlife and settings.retain_reviewed_bird_wildlife_evidence:
+                    protected_counts["reviewed_bird_wildlife_evidence"] += 1
+                    protected_bytes["reviewed_bird_wildlife_evidence"] += size
+                    continue
+                if (
+                    all(visit.review_status == ReviewStatus.reviewed.value for visit in active_visits)
+                    and age_days >= settings.reviewed_non_bird_age_days
+                ):
+                    category = (
+                        "reviewed_bird_wildlife_secondary"
+                        if has_wildlife
+                        else "reviewed_non_bird_secondary"
+                    )
+                    candidates.append(
+                        _StorageRetentionCandidate(
+                            asset_id=asset.id,
+                            category=category,
+                            local_path=path,
+                            relative_path=relative,
+                            file_size_bytes=size,
+                            created_at=_as_utc(asset.created_at),
+                            affected_visit_ids=tuple(sorted({visit.id for visit in active_visits})),
+                            evidence_links=tuple(
+                                self._storage_link_snapshot(link) for link, _visit in active_pairs
+                            ),
+                        )
+                    )
+                else:
+                    protected_counts["active_visit_evidence"] += 1
+                    protected_bytes["active_visit_evidence"] += size
+                continue
+            if visits and all(visit.is_superseded for visit in visits):
+                if age_days >= settings.superseded_evidence_age_days:
+                    candidates.append(
+                        _StorageRetentionCandidate(
+                            asset_id=asset.id,
+                            category="superseded_only_evidence",
+                            local_path=path,
+                            relative_path=relative,
+                            file_size_bytes=size,
+                            created_at=_as_utc(asset.created_at),
+                            affected_visit_ids=tuple(sorted({visit.id for visit in visits})),
+                            evidence_links=tuple(
+                                self._storage_link_snapshot(link) for link, _visit in visits_by_link
+                            ),
+                        )
+                    )
+                else:
+                    protected_counts["superseded_evidence_too_recent"] += 1
+                    protected_bytes["superseded_evidence_too_recent"] += size
+                continue
+            protected_counts["ambiguous_media_linkage"] += 1
+            protected_bytes["ambiguous_media_linkage"] += size
+        if protected_counts.get("integrity_mismatch", 0):
+            warnings.append("Some managed media failed integrity checks and was retained.")
+        return _StorageRetentionEvaluation(
+            candidates=tuple(candidates),
+            protected_counts=protected_counts,
+            protected_bytes=protected_bytes,
+            warnings=tuple(warnings),
+        )
+
+    def _storage_link_snapshot(self, link: VisitEvidenceLinkModel) -> dict[str, Any]:
+        return {
+            "id": link.id,
+            "visit_id": link.visit_id,
+            "captured_at": _as_utc(link.captured_at).isoformat(),
+            "frame_sequence": link.frame_sequence,
+            "sort_order": link.sort_order,
+            "is_primary": link.is_primary,
+            "created_at": _as_utc(link.created_at).isoformat(),
+        }
+
+    def _storage_total_managed_bytes(self, session: Session) -> int:
+        total = 0
+        for asset in session.scalars(select(MediaAssetModel)).all():
+            _path, _relative, size, _reason = self._storage_managed_media_path(asset)
+            total += size or 0
+        return total
+
+    def _storage_candidates_for_target(
+        self,
+        candidates: tuple[_StorageRetentionCandidate, ...],
+        target_bytes: int | None,
+        total_bytes: int,
+    ) -> list[_StorageRetentionCandidate]:
+        ordered = sorted(candidates, key=lambda item: (item.created_at, item.asset_id))
+        if target_bytes is None or total_bytes <= target_bytes:
+            return ordered
+        needed = total_bytes - target_bytes
+        selected: list[_StorageRetentionCandidate] = []
+        reclaimed = 0
+        for candidate in ordered:
+            selected.append(candidate)
+            reclaimed += candidate.file_size_bytes
+            if reclaimed >= needed:
+                break
+        return selected
+
+    def _storage_cleanup_fingerprint(
+        self,
+        candidates: list[_StorageRetentionCandidate],
+        settings: StorageRetentionSettings,
+    ) -> str:
+        state = {
+            "policy_revision": settings.policy_revision,
+            "maximum_managed_media_bytes": settings.maximum_managed_media_bytes,
+            "candidates": [
+                {
+                    "asset_id": candidate.asset_id,
+                    "category": candidate.category,
+                    "size": candidate.file_size_bytes,
+                    "created_at": candidate.created_at.isoformat(),
+                    "links": [link["id"] for link in candidate.evidence_links],
+                }
+                for candidate in candidates
+            ],
+        }
+        return hashlib.sha256(json.dumps(state, sort_keys=True).encode("utf-8")).hexdigest()
+
+    def _storage_cleanup_preview_response(
+        self,
+        *,
+        batch: StorageCleanupBatchModel,
+        candidates: list[_StorageRetentionCandidate],
+        evaluation: _StorageRetentionEvaluation,
+        now: datetime,
+        capped: bool,
+    ) -> StorageCleanupPreviewResponse:
+        category_counts: Counter[str] = Counter(candidate.category for candidate in candidates)
+        category_bytes: Counter[str] = Counter()
+        for candidate in candidates:
+            category_bytes[candidate.category] += candidate.file_size_bytes
+        categories = [
+            StorageCleanupCategorySummary(
+                category=category,
+                media_count=category_counts[category],
+                bytes=category_bytes[category],
+            )
+            for category in sorted(category_counts)
+        ]
+        protected = [
+            StorageCleanupCategorySummary(
+                category=category,
+                media_count=evaluation.protected_counts[category],
+                bytes=evaluation.protected_bytes[category],
+            )
+            for category in sorted(evaluation.protected_counts)
+        ]
+        warnings = list(evaluation.warnings)
+        if any(candidate.category.endswith("_secondary") for candidate in candidates):
+            warnings.append(
+                "Eligible cleanup would reduce secondary Visit evidence; each active Visit retains its primary frame."
+            )
+        if capped:
+            warnings.append("Preview is bounded. Run cleanup and preview again to continue with remaining eligible media.")
+        if not candidates:
+            warnings.append("No managed media is currently eligible. Protected evidence was retained.")
+        return StorageCleanupPreviewResponse(
+            preview_token=batch.preview_token,
+            generated_at=now,
+            expires_at=now + STORAGE_CLEANUP_PREVIEW_TTL,
+            eligible_media_count=len(candidates),
+            estimated_recoverable_bytes=sum(candidate.file_size_bytes for candidate in candidates),
+            categories=categories,
+            oldest_eligible_at=min((candidate.created_at for candidate in candidates), default=None),
+            newest_eligible_at=max((candidate.created_at for candidate in candidates), default=None),
+            affected_visit_count=len(
+                {visit_id for candidate in candidates for visit_id in candidate.affected_visit_ids}
+            ),
+            protected_counts=protected,
+            warnings=warnings,
+            message="Preview only. No media or evidence links moved until you confirm this unchanged server-issued plan.",
+        )
+
+    def _storage_recovery_root(self) -> Path:
+        return self.media_root / ".recovery"
+
+    def _storage_recovery_path_for_item(self, item: StorageCleanupItemModel) -> Path | None:
+        try:
+            relative = Path(item.quarantine_relative_path or "")
+            if relative.is_absolute() or not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+                return None
+            managed_root = self.media_root.resolve()
+            configured_root = self._storage_recovery_root()
+            if configured_root.exists() and configured_root.is_symlink():
+                return None
+            root = configured_root.resolve(strict=False)
+            if not root.is_relative_to(managed_root):
+                return None
+            candidate = (root / item.batch_id / relative).resolve(strict=False)
+            return candidate if candidate.is_relative_to(root) else None
+        except OSError:
+            return None
+
+    def _storage_cleanup_item_is_still_eligible(
+        self,
+        item: StorageCleanupItemModel,
+        *,
+        now: datetime,
+    ) -> bool:
+        """Reject a staged move when Visit or file state changed after preview."""
+
+        with self.session_factory() as session:
+            return self._storage_cleanup_item_is_still_eligible_in_session(
+                session,
+                item,
+                now=now,
+            )
+
+    def _storage_cleanup_item_is_still_eligible_in_session(
+        self,
+        session: Session,
+        item: StorageCleanupItemModel,
+        *,
+        now: datetime,
+    ) -> bool:
+        """Check the complete current policy from within the caller's transaction."""
+
+        settings = self._storage_retention_settings_response(
+            session.get(StorageRetentionSettingsModel, 1)
+        )
+        evaluation = self._storage_retention_evaluation(session, settings, now)
+        candidate = next(
+            (
+                value
+                for value in evaluation.candidates
+                if value.asset_id == item.media_asset_id
+            ),
+            None,
+        )
+        if candidate is None:
+            return False
+        expected_links = self._storage_link_snapshot_signature(
+            _json_list(item.evidence_links_json)
+        )
+        return (
+            candidate.category == item.category
+            and candidate.local_path == Path(item.original_local_path)
+            and candidate.file_size_bytes == item.file_size_bytes
+            and self._storage_link_snapshot_signature(candidate.evidence_links)
+            == expected_links
+        )
+
+    @staticmethod
+    def _storage_link_snapshot_signature(
+        snapshots: Iterable[dict[str, Any]],
+    ) -> tuple[str, ...]:
+        """Compare links independent of database return order."""
+
+        return tuple(
+            sorted(json.dumps(snapshot, sort_keys=True, default=str) for snapshot in snapshots)
+        )
+
+    def _storage_cleanup_item_snapshot_is_valid(self, item: StorageCleanupItemModel) -> bool:
+        """Never restore a file unless its durable link snapshot can be reconstructed."""
+
+        for link in _json_list(item.evidence_links_json):
+            if not isinstance(link.get("id"), str) or not isinstance(link.get("visit_id"), str):
+                return False
+            if _parse_datetime(link.get("captured_at")) is None:
+                return False
+            if _parse_datetime(link.get("created_at")) is None:
+                return False
+        return True
+
+    def _storage_item_has_recovery_file(self, item: StorageCleanupItemModel) -> bool:
+        """Recognize only a complete, managed recovery file as recoverable staging."""
+
+        try:
+            path = self._storage_recovery_path_for_item(item)
+            return bool(
+                path is not None
+                and path.exists()
+                and path.is_file()
+                and not path.is_symlink()
+                and path.stat().st_size == item.file_size_bytes
+                and not Path(item.original_local_path).exists()
+            )
+        except OSError:
+            return False
+
+    def _move_storage_item_to_recovery(self, item: StorageCleanupItemModel) -> bool:
+        """Filesystem movement is staged after a durable DB record, never an unlink first."""
+
+        try:
+            source = Path(item.original_local_path)
+            root = self.media_root.resolve()
+            resolved_source = source.resolve(strict=False)
+            if (
+                not resolved_source.is_relative_to(root)
+                or not resolved_source.relative_to(root).parts
+                or resolved_source.relative_to(root).parts[0] == ".recovery"
+                or not source.exists()
+                or not source.is_file()
+                or source.is_symlink()
+                or source.stat().st_size != item.file_size_bytes
+            ):
+                return False
+            target = self._storage_recovery_path_for_item(item)
+            if target is None or target.exists():
+                return False
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.parent.is_symlink():
+                return False
+            source.replace(target)
+            return True
+        except OSError:
+            return False
+
+    def _restore_storage_item_from_recovery(self, item: StorageCleanupItemModel) -> bool:
+        try:
+            source = self._storage_recovery_path_for_item(item)
+            target = Path(item.original_local_path)
+            root = self.media_root.resolve()
+            resolved_target = target.resolve(strict=False)
+            if (
+                source is None
+                or not source.exists()
+                or not source.is_file()
+                or source.is_symlink()
+                or not resolved_target.is_relative_to(root)
+                or not resolved_target.relative_to(root).parts
+                or resolved_target.relative_to(root).parts[0] == ".recovery"
+                or target.exists()
+            ):
+                return False
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.parent.is_symlink():
+                return False
+            source.replace(target)
+            return True
+        except OSError:
+            return False
+
+    def _purge_storage_item(self, item: StorageCleanupItemModel) -> bool:
+        try:
+            path = self._storage_recovery_path_for_item(item)
+            if path is None:
+                return False
+            if not path.exists():
+                return True
+            if not path.is_file() or path.is_symlink():
+                return False
+            path.unlink()
+            return True
+        except OSError:
+            return False
+
+    def _storage_cleanup_result_from_batch(
+        self,
+        batch: StorageCleanupBatchModel,
+        *,
+        idempotent: bool = False,
+    ) -> StorageCleanupResult:
+        summary = _json_object(batch.summary_json)
+        return StorageCleanupResult(
+            batch_id=batch.id,
+            state=batch.state,
+            moved_to_recovery_count=int(summary.get("media_count", 0)),
+            skipped_count=int(summary.get("skipped_count", 0)),
+            failed_count=int(summary.get("failed_count", 0)),
+            recovered_bytes=int(summary.get("recovered_bytes", 0)),
+            recovery_expires_at=batch.recovery_expires_at,
+            message=(
+                "Media moved to recovery. You can restore it until the recovery deadline."
+                if batch.state == "quarantined"
+                else "Cleanup completed with recoverable conflicts; inspect the local cleanup history."
+                if batch.state == "restore_conflict"
+                else "Media was restored safely."
+                if batch.state == "restored"
+                else "Recovery media was permanently purged."
+                if batch.state == "purged"
+                else "Cleanup was interrupted after a recoverable file move; restore remains available."
+                if batch.state == "staging"
+                else "Cleanup did not move any media."
+            ),
+            warnings=[batch.safe_error] if batch.safe_error else [],
+            idempotent=idempotent,
+        )
+
+    def _storage_cleanup_history_item(
+        self,
+        batch: StorageCleanupBatchModel,
+    ) -> StorageCleanupHistoryItem:
+        summary = _json_object(batch.summary_json)
+        return StorageCleanupHistoryItem(
+            batch_id=batch.id,
+            origin=batch.origin,
+            state=batch.state,
+            created_at=batch.created_at,
+            media_count=int(summary.get("media_count", summary.get("planned_count", 0))),
+            recovered_bytes=int(summary.get("recovered_bytes", 0)),
+            permanently_purged_count=int(summary.get("permanently_purged_count", 0)),
+            skipped_count=int(summary.get("skipped_count", 0)),
+            failed_count=int(summary.get("failed_count", 0)),
+            recovery_expires_at=batch.recovery_expires_at,
+            message=(
+                batch.safe_error
+                or "Managed media was moved only after a confirmed local cleanup preview."
+            ),
+            can_restore=(
+                batch.state in {"quarantined", "staging"}
+                and batch.recovery_expires_at is not None
+                and _as_utc(batch.recovery_expires_at) > datetime.now(UTC)
+            ),
+        )
+
     def saved_preview_retention_report(self) -> SavedMediaRetentionReportResponse:
         with self.session_factory() as session:
             asset_models = session.scalars(
@@ -5191,6 +6533,27 @@ class ProductRepository:
             local_path = asset_model.local_path
 
         warnings = list(item.warnings)
+        warnings.append(
+            "Direct irreversible file deletion is retired; use Storage & Retention preview and recovery instead."
+        )
+        return SavedMediaCleanupResponse(
+            media_asset_id=item.media_asset_id,
+            status="rejected",
+            risk_level=item.risk_level,
+            media_state=item.media_state,
+            file_deleted=False,
+            record_deleted=False,
+            creates_truth=False,
+            deletes_truth=False,
+            message=(
+                "Direct file-only cleanup is no longer available. Preview a recoverable "
+                "cleanup from Local Data instead."
+            ),
+            file_name=item.file_name,
+            size_bytes=item.size_bytes,
+            warnings=warnings,
+        )
+
         if item.risk_level != "low" or item.media_state != "saved_unlinked":
             warnings.append(
                 "Phase 12F cleanup is limited to low-risk unlinked saved preview media."
@@ -15944,6 +17307,24 @@ def _json_object(value: str | None) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_list(value: str | None) -> list[dict[str, Any]]:
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return _as_utc(parsed)
 
 
 def _json_string_list(value: str | None) -> list[str]:

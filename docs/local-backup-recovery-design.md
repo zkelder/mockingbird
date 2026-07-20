@@ -75,8 +75,10 @@ The existing Local Data screen provides:
 - **Restore** — uses a two-step confirmation and explains the automatic safety
   backup and temporary camera stop.
 
-Backup listing is read-only. There is no scheduled backup, cloud sync, retention
-cleanup, or background worker in this phase.
+Backup listing is read-only. There is no scheduled backup or cloud sync.
+Storage & Retention maintenance is a separate, optional local service: it is
+disabled by default, shares the backup/restore maintenance window, and skips a
+run rather than overlapping a backup or restore.
 
 ## Future durable-runtime coordination
 
@@ -98,6 +100,12 @@ remain the only dataset-grade truth.
 The bundle includes the configured managed-media tree so unreferenced but still
 locally managed files are not silently omitted. Files outside that root are not
 copied or deleted.
+
+Recoverable retention media stays inside that managed-media tree. A complete
+backup therefore preserves both the local quarantine and its durable recovery
+metadata; restore returns the same recovery window rather than silently
+purging it. Automatic retention never runs while backup or restore holds the
+local maintenance window.
 
 ## Files allowed
 

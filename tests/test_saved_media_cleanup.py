@@ -193,7 +193,7 @@ async def test_cleanup_requires_confirmation_and_delete_file_only_mode(
     assert isolated_repository.get_media_asset(media_asset_id) is not None
 
 
-async def test_low_risk_unlinked_cleanup_deletes_one_file_and_preserves_truth_boundary(
+async def test_low_risk_unlinked_cleanup_is_retired_without_changing_media_or_truth(
     client: httpx.AsyncClient,
     isolated_repository: ProductRepository,
     monkeypatch: pytest.MonkeyPatch,
@@ -234,10 +234,10 @@ async def test_low_risk_unlinked_cleanup_deletes_one_file_and_preserves_truth_bo
     assert response.status_code == 200
     body = response.json()
 
-    assert body["status"] == "deleted_file"
+    assert body["status"] == "rejected"
     assert body["risk_level"] == "low"
     assert body["media_state"] == "saved_unlinked"
-    assert body["file_deleted"] is True
+    assert body["file_deleted"] is False
     assert body["record_deleted"] is False
     assert body["creates_truth"] is False
     assert body["deletes_truth"] is False
@@ -245,22 +245,20 @@ async def test_low_risk_unlinked_cleanup_deletes_one_file_and_preserves_truth_bo
     assert str(path) not in str(body)
     assert str(isolated_repository.media_root) not in str(body)
 
-    assert not path.exists()
+    assert "no longer available" in body["message"]
+    assert path.exists()
     assert untouched_path.exists()
     assert isolated_repository.get_media_asset(media_asset_id) is not None
 
-    expected_files = dict(before_files)
-    expected_files.pop(str(path.relative_to(isolated_repository.media_root)))
-    assert media_file_snapshot(isolated_repository) == expected_files
+    assert media_file_snapshot(isolated_repository) == before_files
     assert await product_counts(client) == before_counts
 
-    stale_item = await report_item(client, media_asset_id)
-    assert stale_item["risk_level"] == "low"
-    assert stale_item["media_state"] == "saved_unlinked"
-    assert any("missing or stale" in warning for warning in stale_item["warnings"])
+    current_item = await report_item(client, media_asset_id)
+    assert current_item["risk_level"] == "low"
+    assert current_item["media_state"] == "saved_unlinked"
 
 
-async def test_cleanup_missing_low_risk_file_returns_already_missing_without_deleting_record(
+async def test_cleanup_missing_low_risk_file_is_retired_without_deleting_record(
     client: httpx.AsyncClient,
     isolated_repository: ProductRepository,
 ) -> None:
@@ -273,11 +271,12 @@ async def test_cleanup_missing_low_risk_file_returns_already_missing_without_del
     assert response.status_code == 200
     body = response.json()
 
-    assert body["status"] == "already_missing"
+    assert body["status"] == "rejected"
     assert body["file_deleted"] is False
     assert body["record_deleted"] is False
     assert body["creates_truth"] is False
     assert body["deletes_truth"] is False
+    assert "no longer available" in body["message"]
     assert isolated_repository.get_media_asset(media_asset_id) is not None
     assert await product_counts(client) == before_counts
 
@@ -400,7 +399,7 @@ async def test_cleanup_rejects_paths_outside_media_root(
     assert body["status"] == "rejected"
     assert body["file_deleted"] is False
     assert body["record_deleted"] is False
-    assert "outside the media root" in body["message"]
+    assert "no longer available" in body["message"]
     assert str(outside_path) not in str(body)
     assert outside_path.exists()
     assert await product_counts(client) == before_counts
@@ -432,7 +431,7 @@ async def test_cleanup_rejects_symlink_media_path(
     assert body["status"] == "rejected"
     assert body["file_deleted"] is False
     assert body["record_deleted"] is False
-    assert "symlink" in body["message"].lower()
+    assert "no longer available" in body["message"]
     assert target_path.exists()
     assert symlink_path.is_symlink()
     assert await product_counts(client) == before_counts

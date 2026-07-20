@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 10
+CURRENT_DATABASE_SCHEMA_VERSION = 13
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -331,6 +331,53 @@ def _migrate_to_durable_monitoring_operations(connection: Connection) -> None:
     )
 
 
+def _migrate_to_storage_retention(connection: Connection) -> None:
+    """Add safe-disabled retention state without touching existing managed media."""
+
+    Base.metadata.tables["storage_retention_settings"].create(
+        bind=connection,
+        checkfirst=True,
+    )
+    Base.metadata.tables["storage_cleanup_batches"].create(
+        bind=connection,
+        checkfirst=True,
+    )
+    Base.metadata.tables["storage_cleanup_items"].create(
+        bind=connection,
+        checkfirst=True,
+    )
+
+
+def _migrate_to_storage_retention_settings_idempotency(
+    connection: Connection,
+) -> None:
+    """Add request identity without changing an existing retention policy."""
+
+    columns = {
+        column["name"]
+        for column in inspect(connection).get_columns("storage_retention_settings")
+    }
+    if "last_settings_idempotency_key" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE storage_retention_settings "
+            "ADD COLUMN last_settings_idempotency_key VARCHAR"
+        )
+
+
+def _migrate_to_storage_cleanup_action_idempotency(connection: Connection) -> None:
+    """Record restore and purge retries without changing retained media."""
+
+    columns = {
+        column["name"]
+        for column in inspect(connection).get_columns("storage_cleanup_batches")
+    }
+    for column in ("last_restore_idempotency_key", "last_purge_idempotency_key"):
+        if column not in columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE storage_cleanup_batches ADD COLUMN {column} VARCHAR"
+            )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -341,6 +388,9 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     8: _migrate_to_visit_curation,
     9: _migrate_to_activity_library,
     10: _migrate_to_durable_monitoring_operations,
+    11: _migrate_to_storage_retention,
+    12: _migrate_to_storage_retention_settings_idempotency,
+    13: _migrate_to_storage_cleanup_action_idempotency,
 }
 
 
