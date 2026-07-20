@@ -50,6 +50,12 @@ from mockingbird.api.schemas import (
     ExternalUrlPreviewResponse,
     ExternalUrlPreviewSaveRequest,
     ExternalUrlPreviewSaveResponse,
+    FastReviewCorrectionCreate,
+    FastReviewCorrectionResponse,
+    FastReviewQueueNavigationRequest,
+    FastReviewQueueNavigationResponse,
+    FastReviewUndoRequest,
+    FastReviewUndoResponse,
     LocalCameraFrameCaptureResponse,
     LiveCameraSessionDiagnosticsResponse,
     LiveCameraSessionStatusResponse,
@@ -207,7 +213,11 @@ from mockingbird.playback import (
     rtsp_bridge,
     windows_camera_bridge,
 )
-from mockingbird.repository.product_repository import ProductRepository, StreamLivePlaybackConfig
+from mockingbird.repository.product_repository import (
+    FastReviewConflictError,
+    ProductRepository,
+    StreamLivePlaybackConfig,
+)
 from mockingbird.sampler import (
     SamplerConfig,
     SamplerContext,
@@ -7491,6 +7501,54 @@ async def decide_detection_proposal(
 @app.get("/api/review-queue", response_model=list[ReviewQueueItem])
 async def list_review_queue() -> list[ReviewQueueItem]:
     return get_repository().review_queue_items()
+
+
+@app.post(
+    "/api/review-queue/fast/navigate",
+    response_model=FastReviewQueueNavigationResponse,
+)
+async def navigate_fast_review_queue(
+    payload: FastReviewQueueNavigationRequest,
+) -> FastReviewQueueNavigationResponse:
+    return get_repository().navigate_fast_review_queue(payload)
+
+
+@app.post(
+    "/api/review-queue/fast/correct",
+    response_model=FastReviewCorrectionResponse,
+)
+async def create_fast_review_correction(
+    payload: FastReviewCorrectionCreate,
+) -> FastReviewCorrectionResponse:
+    try:
+        return get_repository().create_fast_review_correction(payload)
+    except FastReviewConflictError as error:
+        # A queued Visit can be corrected in another tab; never append a second truth row.
+        raise HTTPException(status_code=409, detail="Fast Review item is stale or already resolved.") from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", payload.target_id) from error
+        if str(error) == "fast_review_visits_only":
+            raise HTTPException(status_code=400, detail="Fast Review is available for Visits only.") from error
+        raise HTTPException(status_code=400, detail="Fast Review correction could not be saved.") from error
+
+
+@app.post(
+    "/api/review-queue/fast/undo",
+    response_model=FastReviewUndoResponse,
+)
+async def undo_fast_review_correction(
+    payload: FastReviewUndoRequest,
+) -> FastReviewUndoResponse:
+    try:
+        return get_repository().undo_fast_review_correction(payload)
+    except FastReviewConflictError as error:
+        # Undo is deliberately limited to the caller's latest un-replaced correction.
+        raise HTTPException(status_code=409, detail="Fast Review undo is no longer available.") from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", payload.review_label_id) from error
+        raise HTTPException(status_code=400, detail="Fast Review undo could not be completed.") from error
 
 
 @app.post(

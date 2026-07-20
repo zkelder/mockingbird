@@ -151,6 +151,12 @@ from mockingbird.api.schemas import (
     FolderImportEvidenceBatchDryRunResponse,
     FolderImportPreview,
     FolderImportResult,
+    FastReviewCorrectionCreate,
+    FastReviewCorrectionResponse,
+    FastReviewQueueNavigationRequest,
+    FastReviewQueueNavigationResponse,
+    FastReviewUndoRequest,
+    FastReviewUndoResponse,
     FolderImportSkippedFile,
     LabelCategory,
     LocalDataStatus,
@@ -306,6 +312,10 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
 # Live evidence is a short review aid, never a video archive. Keep a read-side
 # cap as a safeguard even if malformed historical scoring metadata is present.
 MAX_LIVE_VISIT_EVIDENCE_FRAMES = 4
+
+
+class FastReviewConflictError(ValueError):
+    """The visible review snapshot no longer matches the current truth state."""
 
 _ZONE_MONITORING_POLICY_FIELDS = (
     "monitoring_enabled",
@@ -3657,6 +3667,8 @@ class ProductRepository:
             return VisitReviewOutcome.blank
         if key in {"ambiguous", "unknown_bird", "unknown_animal", "unknown"}:
             return VisitReviewOutcome.ambiguous
+        if key in {"non_bird", "non_bird_activity"}:
+            return VisitReviewOutcome.non_bird
 
         taxonomy = self._taxonomy_label_model_for_input(session, reviewed_label)
         if taxonomy is not None:
@@ -6929,7 +6941,10 @@ class ProductRepository:
             labels = session.scalars(
                 select(ReviewLabelModel).order_by(ReviewLabelModel.created_at, ReviewLabelModel.id)
             ).all()
-            return [_review_label_from_model(label) for label in labels]
+            return [
+                _review_label_from_model(label)
+                for label in self._effective_review_label_models(labels)
+            ]
 
     def review_labels_for_event(self, event_id: str) -> list[ReviewLabel]:
         with self.session_factory() as session:
@@ -6947,7 +6962,7 @@ class ProductRepository:
             ).all()
             return [
                 _review_label_from_model(label)
-                for label in labels
+                for label in self._effective_review_label_models(labels)
                 if (label.target_type == "event" and label.target_id == event_id)
                 or (label.target_type == "visit" and label.target_id in visit_ids)
             ]
@@ -6959,18 +6974,35 @@ class ProductRepository:
     ) -> ReviewCorrectionResult:
         with self.session_factory() as session:
             with session.begin():
-                review_label, visit, event = self._create_review_label_in_session(
+                return self._create_review_label_result_in_session(
                     session,
                     payload,
                     created_at,
                 )
-                return ReviewCorrectionResult(
-                    review_label=review_label,
-                    visit=visit,
-                    event=event,
-                    review_queue_count=len(self._review_queue_items(session)),
-                    analytics=self._analytics_summary(session),
-                )
+
+    def _create_review_label_result_in_session(
+        self,
+        session: Session,
+        payload: ReviewCorrectionCreate,
+        created_at: datetime | None = None,
+        *,
+        fast_review_session_id: str | None = None,
+        fast_review_idempotency_key: str | None = None,
+    ) -> ReviewCorrectionResult:
+        review_label, visit, event = self._create_review_label_in_session(
+            session,
+            payload,
+            created_at,
+            fast_review_session_id=fast_review_session_id,
+            fast_review_idempotency_key=fast_review_idempotency_key,
+        )
+        return ReviewCorrectionResult(
+            review_label=review_label,
+            visit=visit,
+            event=event,
+            review_queue_count=len(self._review_queue_items(session)),
+            analytics=self._analytics_summary(session),
+        )
 
     def bulk_correct_review_queue_items(
         self,
@@ -7081,6 +7113,211 @@ class ProductRepository:
     def review_queue_items(self) -> list[ReviewQueueItem]:
         with self.session_factory() as session:
             return self._review_queue_items(session)
+
+    def navigate_fast_review_queue(
+        self,
+        payload: FastReviewQueueNavigationRequest,
+    ) -> FastReviewQueueNavigationResponse:
+        """Resolve one item from a bounded client-filtered snapshot.
+
+        The client supplies its current filter order; the repository verifies each
+        target remains unresolved and, when requested, remains on the same Stream.
+        That keeps a fast review session from drifting into a different queue view.
+        """
+
+        with self.session_factory() as session:
+            current_queue = {
+                (item.target_type, item.target_id): item
+                for item in self._review_queue_items(session)
+            }
+            ordered_keys: list[tuple[str, str]] = []
+            seen_keys: set[tuple[str, str]] = set()
+            for target in payload.ordered_targets:
+                key = (target.target_type.value, target.target_id)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                ordered_keys.append(key)
+
+            unresolved_keys = [
+                key
+                for key in ordered_keys
+                if key in current_queue
+                and (
+                    payload.stream_id is None
+                    or current_queue[key].stream_id == payload.stream_id
+                )
+            ]
+            current_key = (
+                (payload.current_target.target_type.value, payload.current_target.target_id)
+                if payload.current_target is not None
+                else None
+            )
+            current_index = ordered_keys.index(current_key) if current_key in ordered_keys else None
+            candidate_keys = (
+                ordered_keys[current_index + 1 :]
+                if payload.direction.value == "next" and current_index is not None
+                else list(reversed(ordered_keys[:current_index]))
+                if payload.direction.value == "previous" and current_index is not None
+                else ordered_keys
+                if payload.direction.value == "next"
+                else list(reversed(ordered_keys))
+            )
+            next_key = next((key for key in candidate_keys if key in unresolved_keys), None)
+            if next_key is None:
+                message = (
+                    "This is the last unresolved Visit in this filtered queue."
+                    if current_key in unresolved_keys
+                    else "No unresolved Visit remains in this filtered queue."
+                )
+                return FastReviewQueueNavigationResponse(
+                    unresolved_count=len(unresolved_keys),
+                    message=message,
+                )
+
+            return FastReviewQueueNavigationResponse(
+                item=current_queue[next_key],
+                position=unresolved_keys.index(next_key) + 1,
+                unresolved_count=len(unresolved_keys),
+                message="Next unresolved Visit selected from the current filtered queue.",
+            )
+
+    def create_fast_review_correction(
+        self,
+        payload: FastReviewCorrectionCreate,
+    ) -> FastReviewCorrectionResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                existing = session.scalar(
+                    select(ReviewLabelModel).where(
+                        ReviewLabelModel.fast_review_idempotency_key == payload.idempotency_key
+                    )
+                )
+                if existing is not None:
+                    if (
+                        existing.reversal_of_review_label_id is not None
+                        or existing.fast_review_session_id != payload.review_session_id
+                        or existing.target_type != payload.target_type.value
+                        or existing.target_id != payload.target_id
+                    ):
+                        raise FastReviewConflictError("fast_review_idempotency_conflict")
+                    return FastReviewCorrectionResponse(
+                        result=self._review_correction_result_for_model(session, existing),
+                        idempotent=True,
+                        undo_state_token=self._review_state_token(
+                            session,
+                            existing.target_type,
+                            existing.target_id,
+                        ),
+                    )
+
+                if payload.target_type != ReviewQueueBulkCorrectionTargetType.visit:
+                    raise ValueError("fast_review_visits_only")
+                visit = session.get(VisitModel, payload.target_id)
+                if visit is None:
+                    raise ValueError("missing_visit")
+                if self._review_state_token(session, "visit", visit.id) != payload.expected_state_token:
+                    raise FastReviewConflictError("stale_review_item")
+                if visit.review_status != ReviewStatus.needs_review.value:
+                    raise FastReviewConflictError("review_item_already_resolved")
+
+                # Fast Review calls the established ReviewLabel writer; suggestion evidence
+                # is only a prefilled label until this explicit action completes.
+                result = self._create_review_label_result_in_session(
+                    session,
+                    ReviewCorrectionCreate(
+                        target_type="visit",
+                        target_id=visit.id,
+                        label=payload.label,
+                        notes=payload.notes,
+                    ),
+                    fast_review_session_id=payload.review_session_id,
+                    fast_review_idempotency_key=payload.idempotency_key,
+                )
+                return FastReviewCorrectionResponse(
+                    result=result,
+                    undo_state_token=self._review_state_token(session, "visit", visit.id),
+                )
+
+    def undo_fast_review_correction(
+        self,
+        payload: FastReviewUndoRequest,
+    ) -> FastReviewUndoResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                repeated_reversal = session.scalar(
+                    select(ReviewLabelModel).where(
+                        ReviewLabelModel.fast_review_idempotency_key == payload.idempotency_key
+                    )
+                )
+                if repeated_reversal is not None:
+                    if (
+                        repeated_reversal.reversal_of_review_label_id != payload.review_label_id
+                        or repeated_reversal.fast_review_session_id != payload.review_session_id
+                    ):
+                        raise FastReviewConflictError("fast_review_idempotency_conflict")
+                    return self._fast_review_undo_response(
+                        session,
+                        repeated_reversal,
+                        idempotent=True,
+                    )
+
+                original = session.get(ReviewLabelModel, payload.review_label_id)
+                if (
+                    original is None
+                    or original.reversal_of_review_label_id is not None
+                    or original.fast_review_session_id != payload.review_session_id
+                    or original.target_type != "visit"
+                    or original.prior_review_status is None
+                ):
+                    raise FastReviewConflictError("fast_review_undo_unavailable")
+                if self._review_state_token(session, original.target_type, original.target_id) != payload.expected_state_token:
+                    raise FastReviewConflictError("stale_review_item")
+
+                latest_session_correction = session.scalars(
+                    select(ReviewLabelModel)
+                    .where(
+                        ReviewLabelModel.fast_review_session_id == payload.review_session_id,
+                        ReviewLabelModel.reversal_of_review_label_id.is_(None),
+                    )
+                    .order_by(ReviewLabelModel.created_at.desc(), ReviewLabelModel.id.desc())
+                ).first()
+                if latest_session_correction is None or latest_session_correction.id != original.id:
+                    raise FastReviewConflictError("fast_review_undo_not_latest")
+
+                effective_labels = self._review_label_models_for_visit(session, original.target_id)
+                latest = max(
+                    effective_labels,
+                    key=lambda label: (label.created_at, label.id),
+                    default=None,
+                )
+                if latest is None or latest.id != original.id:
+                    # A later correction is authoritative; never undo past it.
+                    raise FastReviewConflictError("fast_review_undo_replaced")
+
+                visit = session.get(VisitModel, original.target_id)
+                if visit is None:
+                    raise ValueError("missing_visit")
+                event = session.get(EventModel, visit.event_id)
+                visit.review_status = original.prior_review_status
+                visit.reviewed_label = original.prior_reviewed_label
+                if event is not None and original.prior_event_review_status is not None:
+                    event.review_status = original.prior_event_review_status
+
+                reversal = ReviewLabelModel(
+                    id=self._next_id(session, ReviewLabelModel, "review-label"),
+                    target_type=original.target_type,
+                    target_id=original.target_id,
+                    label=original.label,
+                    notes="Fast Review undo. The prior review state was restored.",
+                    created_at=datetime.now(UTC),
+                    reversal_of_review_label_id=original.id,
+                    fast_review_session_id=payload.review_session_id,
+                    fast_review_idempotency_key=payload.idempotency_key,
+                )
+                session.add(reversal)
+                session.flush()
+                return self._fast_review_undo_response(session, reversal)
 
     def identify_review_queue_item(
         self,
@@ -9516,7 +9753,7 @@ class ProductRepository:
         session: Session,
         event_id: str,
     ) -> list[ReviewLabelModel]:
-        return list(
+        labels = list(
             session.scalars(
                 select(ReviewLabelModel)
                 .where(
@@ -9526,13 +9763,14 @@ class ProductRepository:
                 .order_by(ReviewLabelModel.created_at, ReviewLabelModel.id)
             ).all()
         )
+        return self._effective_review_label_models(labels)
 
     def _review_label_models_for_visit(
         self,
         session: Session,
         visit_id: str,
     ) -> list[ReviewLabelModel]:
-        return list(
+        labels = list(
             session.scalars(
                 select(ReviewLabelModel)
                 .where(
@@ -9541,6 +9779,97 @@ class ProductRepository:
                 )
                 .order_by(ReviewLabelModel.created_at, ReviewLabelModel.id)
             ).all()
+        )
+        return self._effective_review_label_models(labels)
+
+    def _effective_review_label_models(
+        self,
+        labels: list[ReviewLabelModel],
+    ) -> list[ReviewLabelModel]:
+        reversed_label_ids = {
+            label.reversal_of_review_label_id
+            for label in labels
+            if label.reversal_of_review_label_id is not None
+        }
+        return [
+            label
+            for label in labels
+            if label.reversal_of_review_label_id is None and label.id not in reversed_label_ids
+        ]
+
+    def _review_state_token(
+        self,
+        session: Session,
+        target_type: str,
+        target_id: str,
+    ) -> str:
+        if target_type == "visit":
+            visit = session.get(VisitModel, target_id)
+            if visit is None:
+                return "missing"
+            labels = self._review_label_models_for_visit(session, target_id)
+            return _review_state_token_value(
+                target_type,
+                target_id,
+                visit.review_status,
+                visit.reviewed_label,
+                _latest_review_label_model_id(labels),
+            )
+        if target_type == "event":
+            event = session.get(EventModel, target_id)
+            if event is None:
+                return "missing"
+            labels = self._review_label_models_for_event(session, target_id)
+            return _review_state_token_value(
+                target_type,
+                target_id,
+                event.review_status,
+                None,
+                _latest_review_label_model_id(labels),
+            )
+        return "missing"
+
+    def _review_correction_result_for_model(
+        self,
+        session: Session,
+        label_model: ReviewLabelModel,
+    ) -> ReviewCorrectionResult:
+        visit: Visit | None = None
+        event: Event | None = None
+        if label_model.target_type == "visit":
+            visit_model = session.get(VisitModel, label_model.target_id)
+            if visit_model is not None:
+                visit = _visit_from_model(visit_model)
+                event_model = session.get(EventModel, visit_model.event_id)
+                if event_model is not None:
+                    event = self._event_from_model(session, event_model)
+        elif label_model.target_type == "event":
+            event_model = session.get(EventModel, label_model.target_id)
+            if event_model is not None:
+                event = self._event_from_model(session, event_model)
+        return ReviewCorrectionResult(
+            review_label=_review_label_from_model(label_model),
+            visit=visit,
+            event=event,
+            review_queue_count=len(self._review_queue_items(session)),
+            analytics=self._analytics_summary(session),
+        )
+
+    def _fast_review_undo_response(
+        self,
+        session: Session,
+        reversal: ReviewLabelModel,
+        *,
+        idempotent: bool = False,
+    ) -> FastReviewUndoResponse:
+        return FastReviewUndoResponse(
+            reversal_review_label_id=reversal.id,
+            target_type=ReviewQueueBulkCorrectionTargetType(reversal.target_type),
+            target_id=reversal.target_id,
+            review_queue_count=len(self._review_queue_items(session)),
+            analytics=self._analytics_summary(session),
+            idempotent=idempotent,
+            message="The Fast Review correction was reversed and the prior review state restored.",
         )
 
     def _review_labels_for_event(self, session: Session, event_id: str) -> list[ReviewLabel]:
@@ -9560,6 +9889,9 @@ class ProductRepository:
         session: Session,
         payload: ReviewCorrectionCreate,
         created_at: datetime | None = None,
+        *,
+        fast_review_session_id: str | None = None,
+        fast_review_idempotency_key: str | None = None,
     ) -> tuple[ReviewLabel, Visit | None, Event | None]:
         normalized_label = self._normalize_label_from_session(session, payload.label)
         label_model = ReviewLabelModel(
@@ -9569,6 +9901,8 @@ class ProductRepository:
             label=normalized_label,
             notes=payload.notes,
             created_at=created_at or datetime.now(UTC),
+            fast_review_session_id=fast_review_session_id,
+            fast_review_idempotency_key=fast_review_idempotency_key,
         )
 
         visit: Visit | None = None
@@ -9579,11 +9913,18 @@ class ProductRepository:
             if visit_model is None:
                 raise ValueError("missing_visit")
 
+            event_model = session.get(EventModel, visit_model.event_id)
+            if fast_review_session_id is not None:
+                label_model.prior_review_status = visit_model.review_status
+                label_model.prior_reviewed_label = visit_model.reviewed_label
+                label_model.prior_event_review_status = (
+                    event_model.review_status if event_model is not None else None
+                )
+
             session.add(label_model)
             visit_model.reviewed_label = normalized_label
             visit_model.review_status = ReviewStatus.reviewed.value
 
-            event_model = session.get(EventModel, visit_model.event_id)
             if event_model is not None:
                 child_visits = self._visit_models_for_event(session, event_model.id)
                 if all(
@@ -10035,6 +10376,7 @@ class ProductRepository:
                 media_asset=media_asset,
                 evidence_frames=evidence_frames,
                 review_status=visit.review_status,
+                review_state_token=self._review_state_token(session, "visit", visit.id),
                 reason="Confirm or correct the suggested species label.",
             )
             queue_item.identification = self._review_identification_summary_for_item(
@@ -10106,6 +10448,7 @@ class ProductRepository:
                 **_review_focus_crop_fields(focus_crop_context),
                 media_asset=media_asset,
                 review_status=event.review_status,
+                review_state_token=self._review_state_token(session, "event", event.id),
                 reason="Review detected outdoor activity and correct the event meaning.",
             )
             queue_item.identification = self._review_identification_summary_for_item(
@@ -13471,6 +13814,24 @@ def _review_queue_timestamp(value: datetime) -> float:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.timestamp()
+
+
+def _latest_review_label_model_id(labels: list[ReviewLabelModel]) -> str:
+    latest = max(labels, key=lambda label: (label.created_at, label.id), default=None)
+    return latest.id if latest is not None else ""
+
+
+def _review_state_token_value(
+    target_type: str,
+    target_id: str,
+    review_status: str,
+    reviewed_label: str | None,
+    latest_review_label_id: str,
+) -> str:
+    state = "|".join(
+        (target_type, target_id, review_status, reviewed_label or "", latest_review_label_id)
+    )
+    return hashlib.sha256(state.encode("utf-8")).hexdigest()[:24]
 
 
 def _empty_review_focus_crop_context(warnings: list[str]) -> _ReviewFocusCropContext:

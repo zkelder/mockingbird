@@ -6,6 +6,19 @@ import { formatDateTime } from "../utils";
 interface VisitEvidenceSequenceProps {
   frames: VisitEvidenceFrame[];
   surfaceOverlay?: ReactNode;
+  keyboardControls?: boolean;
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  );
 }
 
 function relativeLabel(frame: VisitEvidenceFrame): string {
@@ -16,6 +29,7 @@ function relativeLabel(frame: VisitEvidenceFrame): string {
 export function VisitEvidenceSequence({
   frames,
   surfaceOverlay,
+  keyboardControls = false,
 }: VisitEvidenceSequenceProps) {
   const initialFrameIndex = Math.max(0, frames.findIndex((frame) => frame.is_primary));
   const [selectedIndex, setSelectedIndex] = useState(initialFrameIndex);
@@ -44,6 +58,29 @@ export function VisitEvidenceSequence({
     }, 1000 / playbackSpeed);
     return () => window.clearInterval(timer);
   }, [canPlay, frames.length, isPlaying, playbackSpeed]);
+
+  useEffect(() => {
+    if (!keyboardControls || !canPlay) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) {
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setSelectedIndex((current) => (current - 1 + frames.length) % frames.length);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        setSelectedIndex((current) => (current + 1) % frames.length);
+      } else if (event.code === "Space") {
+        event.preventDefault();
+        setIsPlaying((playing) => !playing);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [canPlay, frames.length, keyboardControls]);
 
   if (!selectedFrame) {
     return null;
@@ -81,6 +118,7 @@ export function VisitEvidenceSequence({
             setSelectedIndex((current) => (current - 1 + frames.length) % frames.length)
           }
           type="button"
+          title="Previous evidence frame (Left Arrow in Fast Review)"
         >
           Previous
         </button>
@@ -89,6 +127,7 @@ export function VisitEvidenceSequence({
           disabled={!canPlay}
           onClick={() => setIsPlaying((playing) => !playing)}
           type="button"
+          title="Play or pause evidence (Space in Fast Review)"
         >
           {isPlaying ? "Pause" : "Play"}
         </button>
@@ -97,6 +136,7 @@ export function VisitEvidenceSequence({
           disabled={!canPlay}
           onClick={() => setSelectedIndex((current) => (current + 1) % frames.length)}
           type="button"
+          title="Next evidence frame (Right Arrow in Fast Review)"
         >
           Next
         </button>

@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 5
+CURRENT_DATABASE_SCHEMA_VERSION = 6
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -230,11 +230,44 @@ def _migrate_to_zone_monitoring_policy_overrides(connection: Connection) -> None
     )
 
 
+def _migrate_to_fast_review_reversals(connection: Connection) -> None:
+    """Add append-only Fast Review undo metadata without changing prior truth."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Fast Review reversal migration requires local SQLite storage."
+        )
+    connection.exec_driver_sql(
+        "ALTER TABLE review_labels ADD COLUMN reversal_of_review_label_id TEXT"
+    )
+    connection.exec_driver_sql(
+        "ALTER TABLE review_labels ADD COLUMN prior_review_status TEXT"
+    )
+    connection.exec_driver_sql(
+        "ALTER TABLE review_labels ADD COLUMN prior_reviewed_label TEXT"
+    )
+    connection.exec_driver_sql(
+        "ALTER TABLE review_labels ADD COLUMN prior_event_review_status TEXT"
+    )
+    connection.exec_driver_sql(
+        "ALTER TABLE review_labels ADD COLUMN fast_review_session_id TEXT"
+    )
+    connection.exec_driver_sql(
+        "ALTER TABLE review_labels ADD COLUMN fast_review_idempotency_key TEXT"
+    )
+    connection.exec_driver_sql(
+        "CREATE UNIQUE INDEX review_labels_fast_review_idempotency_key "
+        "ON review_labels(fast_review_idempotency_key) "
+        "WHERE fast_review_idempotency_key IS NOT NULL"
+    )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
     4: _migrate_to_bioclip_identification_attempt_evidence,
     5: _migrate_to_zone_monitoring_policy_overrides,
+    6: _migrate_to_fast_review_reversals,
 }
 
 

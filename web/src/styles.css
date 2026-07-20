@@ -2135,6 +2135,136 @@ a.secondary-action {
   justify-content: flex-start;
 }
 
+.fast-review-launcher,
+.fast-review-complete,
+.fast-review-panel,
+.fast-review-header,
+.fast-review-context,
+.fast-review-content,
+.fast-review-form,
+.fast-review-actions,
+.fast-review-suggestions,
+.fast-review-undo,
+.fast-review-shortcuts {
+  display: grid;
+  gap: 12px;
+}
+
+.fast-review-launcher,
+.fast-review-complete,
+.fast-review-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.fast-review-launcher h2,
+.fast-review-launcher p,
+.fast-review-complete h2,
+.fast-review-complete p,
+.fast-review-header h2,
+.fast-review-header p {
+  margin: 5px 0 0;
+}
+
+.fast-review-launcher p,
+.fast-review-complete p,
+.fast-review-header p,
+.fast-review-shortcuts span {
+  color: #4f5f55;
+}
+
+.fast-review-context {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.fast-review-context .data-row,
+.fast-review-suggestions,
+.fast-review-undo,
+.fast-review-shortcuts {
+  border: 1px solid #dce3d8;
+  border-radius: 9px;
+  padding: 10px;
+  background: #fbfdf9;
+}
+
+.fast-review-context .data-row,
+.fast-review-form label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fast-review-content {
+  grid-template-columns: minmax(280px, 1.2fr) minmax(300px, 1fr);
+  align-items: start;
+}
+
+.fast-review-evidence,
+.fast-review-form {
+  min-width: 0;
+}
+
+.fast-review-evidence .media-preview-surface {
+  aspect-ratio: 4 / 3;
+}
+
+.fast-review-form label {
+  display: grid;
+  gap: 6px;
+  color: #4f5f55;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.fast-review-form textarea {
+  min-height: 74px;
+  border: 1px solid #c6d0c2;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: #18231d;
+  resize: vertical;
+}
+
+.fast-review-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.fast-review-actions .primary-action {
+  grid-column: 1 / -1;
+}
+
+.fast-review-undo {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-color: #bfd8b8;
+  background: #f3fbef;
+}
+
+.fast-review-shortcuts {
+  color: #34473b;
+  font-size: 0.82rem;
+}
+
+.fast-review-shortcuts summary {
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.fast-review-shortcuts[open] summary {
+  margin-bottom: 6px;
+}
+
+.fast-review-no-evidence {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  border: 1px dashed #b9c8b4;
+  border-radius: 9px;
+  padding: 20px;
+  color: #627168;
+  text-align: center;
+}
+
 .review-candidate-context,
 .review-candidate-body,
 .review-diagnostic-details,
@@ -7280,6 +7410,23 @@ a.secondary-action {
   }
 
   .dashboard-visit-row .detail-actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .fast-review-launcher,
+  .fast-review-complete,
+  .fast-review-header,
+  .fast-review-content,
+  .fast-review-context,
+  .fast-review-undo {
+    grid-template-columns: 1fr;
+  }
+
+  .fast-review-header .detail-actions,
+  .fast-review-launcher .primary-action,
+  .fast-review-complete .secondary-action {
     width: 100%;
   }
 }

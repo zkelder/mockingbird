@@ -78,6 +78,12 @@ import type {
   MotionEvaluateSequenceResponse,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
+  FastReviewCorrectionCreate,
+  FastReviewCorrectionResponse,
+  FastReviewQueueNavigationRequest,
+  FastReviewQueueNavigationResponse,
+  FastReviewUndoRequest,
+  FastReviewUndoResponse,
   ReviewIdentificationRequest,
   ReviewIdentificationResponse,
   ReviewLabel,
@@ -724,6 +730,21 @@ export const apiClient = {
     }),
   createReviewLabel: (payload: ReviewCorrectionCreate) =>
     request<ReviewCorrectionResult>("/api/review-labels", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  navigateFastReviewQueue: (payload: FastReviewQueueNavigationRequest) =>
+    request<FastReviewQueueNavigationResponse>("/api/review-queue/fast/navigate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  createFastReviewCorrection: (payload: FastReviewCorrectionCreate) =>
+    request<FastReviewCorrectionResponse>("/api/review-queue/fast/correct", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  undoFastReviewCorrection: (payload: FastReviewUndoRequest) =>
+    request<FastReviewUndoResponse>("/api/review-queue/fast/undo", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

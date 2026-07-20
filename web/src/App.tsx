@@ -587,6 +587,7 @@ export default function App() {
           items={data.reviewQueue}
           initialContext={reviewQueueInitialContext}
           onCreateCorrection={createCorrection}
+          onFastReviewChanged={() => loadAppData({ showLoading: false })}
           onInitialContextConsumed={() => setReviewQueueInitialContext(null)}
           onOpenEvent={openEvent}
           onOpenAnalytics={() => setPage("analytics")}

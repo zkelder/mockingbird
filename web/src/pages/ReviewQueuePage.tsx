@@ -1205,6 +1205,7 @@ interface ReviewQueuePageProps {
     label: string,
     notes: string,
   ) => Promise<ReviewCorrectionResult>;
+  onFastReviewChanged: () => Promise<void>;
   onInitialContextConsumed?: () => void;
   onOpenEvent: (eventId: string) => void;
   onOpenAnalytics: () => void;
@@ -1217,6 +1218,7 @@ export function ReviewQueuePage({
   items,
   initialContext,
   onCreateCorrection,
+  onFastReviewChanged,
   onInitialContextConsumed,
   onOpenEvent,
   onOpenAnalytics,
@@ -1249,6 +1251,7 @@ export function ReviewQueuePage({
   const [identifyingId, setIdentifyingId] = useState<string | null>(null);
   const [isBulkSaving, setIsBulkSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [fastReviewRequest, setFastReviewRequest] = useState<ReviewQueueItem | null>(null);
 
   const detectionRunsById = useMemo(
     () => new Map(detectionRuns.map((run) => [run.id, run])),
@@ -2227,6 +2230,18 @@ export function ReviewQueuePage({
           ) : null}
         </details>
       ) : null}
+      <FastReviewPanel
+        items={filteredItems.filter(
+          (item) => item.target_type === "visit" && item.review_status === "needs_review",
+        )}
+        recentLabelValues={recentLabelValues}
+        taxonomyLabelValues={taxonomyLabelValues}
+        taxonomyLabels={taxonomyLabels}
+        onQueueItemsChange={setQueueItems}
+        onReviewChanged={onFastReviewChanged}
+        requestedItem={fastReviewRequest}
+        onRequestedItemConsumed={() => setFastReviewRequest(null)}
+      />
       <CorrectionAuditPanel
         groups={correctionAuditGroups}
         onOpenEvent={onOpenEvent}
@@ -2349,6 +2364,11 @@ export function ReviewQueuePage({
                   ) : item.event_id ? (
                     <button className="text-action" onClick={() => onOpenEvent(item.event_id!)}>
                       Event detail
+                    </button>
+                  ) : null}
+                  {item.target_type === "visit" && item.review_status === "needs_review" ? (
+                    <button className="text-action" onClick={() => setFastReviewRequest(item)} type="button">
+                      Fast review
                     </button>
                   ) : null}
                   <StatusPill label={formatLabel(item.review_status)} tone="review" />
@@ -2869,6 +2889,533 @@ export function ReviewQueuePage({
         ) : null}
       </div>
     </div>
+  );
+}
+
+interface FastReviewUndoState {
+  label: string;
+  reviewLabelId: string;
+  stateToken: string;
+  targetId: string;
+}
+
+function createFastReviewKey(prefix: string): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return prefix + "-" + crypto.randomUUID();
+  }
+  return prefix + "-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+}
+
+function isFastReviewTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  );
+}
+
+function fastReviewDuration(item: ReviewQueueItem): string {
+  if (!item.activity_started_at || !item.activity_last_seen_at) {
+    return "Duration unavailable";
+  }
+  const seconds = Math.max(
+    0,
+    Math.round(
+      (new Date(item.activity_last_seen_at).getTime() -
+        new Date(item.activity_started_at).getTime()) /
+        1000,
+    ),
+  );
+  if (seconds < 60) {
+    return seconds + "s";
+  }
+  return Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
+}
+
+function FastReviewPanel({
+  items,
+  recentLabelValues,
+  taxonomyLabelValues,
+  taxonomyLabels,
+  onQueueItemsChange,
+  onReviewChanged,
+  requestedItem,
+  onRequestedItemConsumed,
+}: {
+  items: ReviewQueueItem[];
+  recentLabelValues: string[];
+  taxonomyLabelValues: string[];
+  taxonomyLabels: TaxonomyLabel[];
+  onQueueItemsChange: (items: ReviewQueueItem[]) => void;
+  onReviewChanged: () => Promise<void>;
+  requestedItem: ReviewQueueItem | null;
+  onRequestedItemConsumed: () => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [activeItem, setActiveItem] = useState<ReviewQueueItem | null>(null);
+  const [draftLabel, setDraftLabel] = useState("");
+  const [draftNotes, setDraftNotes] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [processedCount, setProcessedCount] = useState(0);
+  const [undoState, setUndoState] = useState<FastReviewUndoState | null>(null);
+  const [reviewSessionId] = useState(() => createFastReviewKey("fast-review-session"));
+
+  // Navigation accepts a bounded snapshot rather than the full queue. Its order is
+  // exactly the active Review Queue order, so filters and Stream scoping are retained.
+  const boundedItems = useMemo(() => items.slice(0, 200), [items]);
+  const orderedTargets = useMemo(
+    () =>
+      boundedItems.map((item) => ({
+        target_type: "visit" as const,
+        target_id: reviewQueueTargetId(item),
+      })),
+    [boundedItems],
+  );
+  const scopedStreamId = useMemo(() => {
+    const streamIds = new Set(boundedItems.map((item) => item.stream_id));
+    return streamIds.size === 1 ? boundedItems[0]?.stream_id ?? null : null;
+  }, [boundedItems]);
+  const suggestedLabels = useMemo(
+    () =>
+      uniqueLabelValues(
+        activeItem
+          ? [activeItem.suggested_label, reviewIdentificationLabel(activeItem)]
+          : [],
+      ),
+    [activeItem],
+  );
+  const helperGroups = useMemo(
+    () => labelHelperGroups(suggestedLabels, recentLabelValues, taxonomyLabelValues),
+    [recentLabelValues, suggestedLabels, taxonomyLabelValues],
+  );
+  const labelValidation = useMemo(
+    () =>
+      classifyCorrectionLabel(draftLabel, {
+        recentLabels: recentLabelValues,
+        suggestedLabels,
+        taxonomyLabelValues,
+        taxonomyLabels,
+      }),
+    [draftLabel, recentLabelValues, suggestedLabels, taxonomyLabelValues, taxonomyLabels],
+  );
+
+  useEffect(() => {
+    if (!activeItem) {
+      return;
+    }
+    const refreshed = items.find(
+      (item) => reviewQueueTargetId(item) === reviewQueueTargetId(activeItem),
+    );
+    if (refreshed) {
+      setActiveItem(refreshed);
+    } else if (isOpen && !isSaving && !isNavigating) {
+      setActiveItem(null);
+      setMessage("Filters changed. Reopen Fast Review to continue within the new queue.");
+    }
+  }, [activeItem, isNavigating, isOpen, isSaving, items]);
+
+  function selectItem(item: ReviewQueueItem) {
+    setActiveItem(item);
+    setDraftLabel(item.suggested_label ?? "");
+    setDraftNotes("");
+    setMessage(null);
+    setIsOpen(true);
+  }
+
+  useEffect(() => {
+    if (!requestedItem) {
+      return;
+    }
+    const matchingItem = items.find((item) => item.id === requestedItem.id);
+    if (matchingItem) {
+      selectItem(matchingItem);
+    }
+    onRequestedItemConsumed();
+  }, [items, onRequestedItemConsumed, requestedItem]);
+
+  async function refreshProductState(): Promise<ReviewQueueItem[]> {
+    const refreshed = await apiClient.getReviewQueue();
+    onQueueItemsChange(refreshed);
+    await onReviewChanged();
+    return refreshed;
+  }
+
+  async function navigate(direction: "next" | "previous", current = activeItem) {
+    if (!current || orderedTargets.length === 0) {
+      return;
+    }
+    setIsNavigating(true);
+    setMessage(null);
+    try {
+      const response = await apiClient.navigateFastReviewQueue({
+        ordered_targets: orderedTargets,
+        current_target: {
+          target_type: "visit",
+          target_id: reviewQueueTargetId(current),
+        },
+        direction,
+        stream_id: scopedStreamId,
+      });
+      if (!response.item) {
+        setActiveItem(null);
+        setMessage(response.message);
+        return;
+      }
+      setActiveItem(response.item);
+      setDraftLabel(response.item.suggested_label ?? "");
+      setDraftNotes("");
+      setMessage(
+        String(response.position ?? 1) +
+          " of " +
+          response.unresolved_count +
+          " unresolved Visit" +
+          (response.unresolved_count === 1 ? "" : "s") +
+          " in this filtered queue.",
+      );
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not move through Fast Review.");
+    } finally {
+      setIsNavigating(false);
+    }
+  }
+
+  async function saveAndNext(label = draftLabel, notes = draftNotes) {
+    if (!activeItem || isSaving) {
+      return;
+    }
+    const trimmedLabel = label.trim();
+    if (!trimmedLabel) {
+      setMessage("Choose or type a correction label before saving.");
+      return;
+    }
+
+    setIsSaving(true);
+    setMessage(null);
+    try {
+      const response = await apiClient.createFastReviewCorrection({
+        target_type: "visit",
+        target_id: reviewQueueTargetId(activeItem),
+        label: trimmedLabel,
+        notes: notes.trim() || null,
+        review_session_id: reviewSessionId,
+        idempotency_key: createFastReviewKey("fast-review-save"),
+        expected_state_token: activeItem.review_state_token,
+      });
+      setUndoState({
+        label: response.result.review_label.label,
+        reviewLabelId: response.result.review_label.id,
+        stateToken: response.undo_state_token,
+        targetId: response.result.review_label.target_id,
+      });
+      setProcessedCount((count) => count + (response.idempotent ? 0 : 1));
+      await refreshProductState();
+      await navigate("next", activeItem);
+    } catch (caught) {
+      setMessage(
+        caught instanceof Error
+          ? caught.message
+          : "Correction could not be saved. This Visit may have changed elsewhere.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function undoLastCorrection() {
+    if (!undoState || isSaving) {
+      return;
+    }
+    setIsSaving(true);
+    setMessage(null);
+    try {
+      await apiClient.undoFastReviewCorrection({
+        review_label_id: undoState.reviewLabelId,
+        review_session_id: reviewSessionId,
+        idempotency_key: createFastReviewKey("fast-review-undo"),
+        expected_state_token: undoState.stateToken,
+      });
+      const refreshed = await refreshProductState();
+      const restored = refreshed.find(
+        (item) => item.target_type === "visit" && reviewQueueTargetId(item) === undoState.targetId,
+      );
+      if (restored) {
+        setActiveItem(restored);
+        setDraftLabel(restored.suggested_label ?? "");
+        setDraftNotes("");
+      }
+      setUndoState(null);
+      setProcessedCount((count) => Math.max(0, count - 1));
+      setMessage("Correction undone. The Visit is back in its prior review state.");
+    } catch (caught) {
+      setMessage(
+        caught instanceof Error
+          ? caught.message
+          : "Undo is no longer available because a newer correction replaced it.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!isOpen || !activeItem) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isFastReviewTypingTarget(event.target)) {
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        void saveAndNext();
+        return;
+      }
+      if (event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        void navigate("next");
+      } else if (event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        void navigate("previous");
+      } else if (event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        void saveAndNext("blank", "Marked blank or no activity in Fast Review.");
+      } else if (event.key.toLowerCase() === "x") {
+        event.preventDefault();
+        void saveAndNext("non_bird", "Marked non-bird activity in Fast Review.");
+      } else if (event.key.toLowerCase() === "u") {
+        event.preventDefault();
+        void saveAndNext("ambiguous", "Marked ambiguous activity in Fast Review.");
+      } else if (event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        void undoLastCorrection();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeItem, draftLabel, draftNotes, isOpen, isSaving, undoState]);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  if (!isOpen) {
+    return (
+      <section className="panel fast-review-launcher">
+        <div>
+          <span className="eyebrow">Focused workflow</span>
+          <h2>Fast Review</h2>
+          <p>
+            Review one unresolved Visit at a time with evidence, explicit correction actions,
+            and save-and-next. The current queue filters stay in effect.
+          </p>
+          {items.length > 200 ? (
+            <span className="meta-text">Fast Review uses the first 200 matching Visits at a time.</span>
+          ) : null}
+        </div>
+        <button className="primary-action" onClick={() => selectItem(boundedItems[0])} type="button">
+          Start Fast Review ({Math.min(items.length, 200)})
+        </button>
+      </section>
+    );
+  }
+
+  if (!activeItem) {
+    return (
+      <section className="panel fast-review-complete">
+        <div>
+          <span className="eyebrow">Fast Review</span>
+          <h2>Filtered queue complete</h2>
+          <p>{message ?? "No unresolved Visits remain in this filtered queue."}</p>
+        </div>
+        <button className="secondary-action" onClick={() => setIsOpen(false)} type="button">
+          Return to Review Queue
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel fast-review-panel" aria-label="Fast Review">
+      <div className="fast-review-header">
+        <div>
+          <span className="eyebrow">Fast Review</span>
+          <h2>{activeItem.title}</h2>
+          <p>
+            {processedCount} reviewed this session · {Math.min(boundedItems.length, 200)} matching
+            unresolved Visit{boundedItems.length === 1 ? "" : "s"}
+          </p>
+        </div>
+        <div className="detail-actions">
+          <button
+            className="secondary-action"
+            disabled={isNavigating || isSaving}
+            onClick={() => void navigate("previous")}
+            type="button"
+          >
+            Previous Visit
+          </button>
+          <button
+            className="secondary-action"
+            disabled={isNavigating || isSaving}
+            onClick={() => void navigate("next")}
+            type="button"
+          >
+            Next Visit
+          </button>
+          <button className="text-action" onClick={() => setIsOpen(false)} type="button">
+            Exit
+          </button>
+        </div>
+      </div>
+      {message ? <div className="notice-panel fast-review-message">{message}</div> : null}
+      <div className="fast-review-context">
+        <div className="data-row">
+          <span>Stream</span>
+          <strong>{reviewQueueStreamLabel(activeItem)}</strong>
+          <small>{reviewQueueSourceLabel(activeItem)}</small>
+        </div>
+        <div className="data-row">
+          <span>Zone</span>
+          <strong>{reviewItemZoneLabel(activeItem)}</strong>
+          <small>{activeItem.activity_session_id ? "Live activity Visit" : "Review Queue Visit"}</small>
+        </div>
+        <div className="data-row">
+          <span>Visit time</span>
+          <strong>
+            {activeItem.activity_started_at
+              ? formatDateTime(activeItem.activity_started_at)
+              : activeItem.media_asset?.created_at
+                ? formatDateTime(activeItem.media_asset.created_at)
+                : "Unavailable"}
+          </strong>
+          <small>Duration {fastReviewDuration(activeItem)}</small>
+        </div>
+        <div className="data-row">
+          <span>Queue progress</span>
+          <strong>{boundedItems.findIndex((item) => item.id === activeItem.id) + 1} / {boundedItems.length}</strong>
+          <small>Current active filters only</small>
+        </div>
+      </div>
+      <div className="fast-review-content">
+        <div className="fast-review-evidence">
+          {activeItem.evidence_frames.length > 0 ? (
+            <VisitEvidenceSequence
+              frames={activeItem.evidence_frames}
+              keyboardControls
+            />
+          ) : activeItem.media_asset ? (
+            <MediaAssetPreview asset={activeItem.media_asset} compact />
+          ) : (
+            <div className="fast-review-no-evidence">No saved evidence frame is available for this Visit.</div>
+          )}
+        </div>
+        <div className="fast-review-form">
+          <div className="fast-review-suggestions">
+            <strong>Evidence-only suggestions</strong>
+            {suggestedLabels.length > 0 ? (
+              <div className="label-helper-chips">
+                {suggestedLabels.map((label) => (
+                  <button key={label} onClick={() => setDraftLabel(label)} type="button">
+                    Use suggestion: {displayTaxonomyLabel(label, taxonomyLabels)}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <span className="meta-text">No species suggestion is available for this Visit.</span>
+            )}
+            {activeItem.suggestion_confidence != null ? (
+              <span className="meta-text">
+                Evidence score: {formatConfidence(activeItem.suggestion_confidence)}. It is not an accepted label.
+              </span>
+            ) : null}
+            <span className="field-helper">Choosing a suggestion only fills the label. Save confirms truth.</span>
+          </div>
+          <TaxonomyLabelInput
+            label="Confirm species or wildlife label"
+            labels={taxonomyLabels}
+            onChange={setDraftLabel}
+            placeholder="Search existing species or label"
+            value={draftLabel}
+          />
+          <LabelValidationLine status={labelValidation} />
+          <LabelHelperChips
+            groups={helperGroups}
+            onSelect={setDraftLabel}
+            taxonomyLabels={taxonomyLabels}
+          />
+          <label>
+            Notes
+            <textarea
+              onChange={(event) => setDraftNotes(event.target.value)}
+              placeholder="optional review note"
+              value={draftNotes}
+            />
+          </label>
+          <div className="fast-review-actions">
+            <button
+              className="primary-action"
+              disabled={isSaving || !draftLabel.trim()}
+              onClick={() => void saveAndNext()}
+              type="button"
+            >
+              {isSaving ? "Saving..." : "Save & Next"}
+            </button>
+            <button
+              className="secondary-action"
+              disabled={isSaving}
+              onClick={() => void saveAndNext("blank", "Marked blank or no activity in Fast Review.")}
+              type="button"
+            >
+              Blank / no activity
+            </button>
+            <button
+              className="secondary-action"
+              disabled={isSaving}
+              onClick={() => void saveAndNext("false_positive", "Marked false activity in Fast Review.")}
+              type="button"
+            >
+              False activity
+            </button>
+            <button
+              className="secondary-action"
+              disabled={isSaving}
+              onClick={() => void saveAndNext("non_bird", "Marked non-bird activity in Fast Review.")}
+              type="button"
+            >
+              Non-bird activity
+            </button>
+            <button
+              className="secondary-action"
+              disabled={isSaving}
+              onClick={() => void saveAndNext("ambiguous", "Marked ambiguous activity in Fast Review.")}
+              type="button"
+            >
+              Ambiguous / unknown
+            </button>
+          </div>
+          {undoState ? (
+            <div className="fast-review-undo">
+              <span>Saved {displayTaxonomyLabel(undoState.label, taxonomyLabels)}.</span>
+              <button className="text-action" disabled={isSaving} onClick={() => void undoLastCorrection()} type="button">
+                Undo last correction
+              </button>
+            </div>
+          ) : null}
+          <details className="fast-review-shortcuts">
+            <summary>Keyboard shortcuts</summary>
+            <span>Left / Right: evidence frame · Space: play/pause · Ctrl/Cmd+Enter: save & next</span>
+            <span>N / P: next / previous Visit · B: blank · X: non-bird · U: ambiguous · Z: undo</span>
+            <span>Shortcuts are paused while typing in a search or notes field.</span>
+          </details>
+        </div>
+      </div>
+    </section>
   );
 }
 

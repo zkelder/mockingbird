@@ -465,6 +465,12 @@ class ReviewLabelModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    reversal_of_review_label_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    prior_review_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    prior_reviewed_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    prior_event_review_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    fast_review_session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    fast_review_idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class DatasetExportModel(Base):

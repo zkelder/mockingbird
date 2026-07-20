@@ -195,6 +195,11 @@ class ReviewQueueBulkCorrectionResultStatus(str, Enum):
     failed = "failed"
 
 
+class FastReviewNavigationDirection(str, Enum):
+    next = "next"
+    previous = "previous"
+
+
 class ReviewIdentificationStatus(str, Enum):
     suggestion_present = "suggestion_present"
     proposal_present = "proposal_present"
@@ -2306,6 +2311,7 @@ class ReviewQueueItem(BaseModel):
     media_asset: MediaAsset | None = None
     evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
     review_status: ReviewStatus
+    review_state_token: str = ""
     reason: str
 
 
@@ -2331,6 +2337,43 @@ class ReviewCorrectionCreate(BaseModel):
     target_id: str
     label: str
     notes: str | None = None
+
+
+class FastReviewQueueTarget(BaseModel):
+    target_type: ReviewQueueBulkCorrectionTargetType
+    target_id: str = Field(min_length=1, max_length=256)
+
+
+class FastReviewQueueNavigationRequest(BaseModel):
+    """A bounded client-filtered queue snapshot for one navigation decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ordered_targets: list[FastReviewQueueTarget] = Field(min_length=1, max_length=200)
+    current_target: FastReviewQueueTarget | None = None
+    direction: FastReviewNavigationDirection = FastReviewNavigationDirection.next
+    stream_id: str | None = Field(default=None, max_length=256)
+
+
+class FastReviewQueueNavigationResponse(BaseModel):
+    item: ReviewQueueItem | None = None
+    position: int | None = Field(default=None, ge=1)
+    unresolved_count: int = Field(ge=0)
+    message: str
+
+
+class FastReviewCorrectionCreate(BaseModel):
+    """An explicit, conflict-aware request that still writes a normal ReviewLabel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_type: ReviewQueueBulkCorrectionTargetType
+    target_id: str = Field(min_length=1, max_length=256)
+    label: str = Field(min_length=1, max_length=256)
+    notes: str | None = Field(default=None, max_length=4000)
+    review_session_id: str = Field(min_length=1, max_length=128)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    expected_state_token: str = Field(min_length=1, max_length=256)
 
 
 class ReviewQueueBulkCorrectionRequest(BaseModel):
@@ -2820,6 +2863,33 @@ class ReviewCorrectionResult(BaseModel):
     event: Event | None = None
     review_queue_count: int = Field(ge=0)
     analytics: AnalyticsSummary
+
+
+class FastReviewCorrectionResponse(BaseModel):
+    result: ReviewCorrectionResult
+    idempotent: bool = False
+    undo_state_token: str
+
+
+class FastReviewUndoRequest(BaseModel):
+    """Reverse only the caller's newest Fast Review correction, append-only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    review_label_id: str = Field(min_length=1, max_length=256)
+    review_session_id: str = Field(min_length=1, max_length=128)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    expected_state_token: str = Field(min_length=1, max_length=256)
+
+
+class FastReviewUndoResponse(BaseModel):
+    reversal_review_label_id: str
+    target_type: ReviewQueueBulkCorrectionTargetType
+    target_id: str
+    review_queue_count: int = Field(ge=0)
+    analytics: AnalyticsSummary
+    idempotent: bool = False
+    message: str
 
 
 class MediaImportResult(BaseModel):

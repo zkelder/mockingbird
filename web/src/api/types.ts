@@ -2161,6 +2161,7 @@ export interface ReviewQueueItem {
   media_asset?: MediaAsset | null;
   evidence_frames: VisitEvidenceFrame[];
   review_status: ReviewStatus;
+  review_state_token: string;
   reason: string;
 }
 
@@ -2193,6 +2194,60 @@ export interface ReviewCorrectionResult {
   event?: Event | null;
   review_queue_count: number;
   analytics: AnalyticsSummary;
+}
+
+export type FastReviewNavigationDirection = "next" | "previous";
+
+export interface FastReviewQueueTarget {
+  target_type: ReviewQueueBulkCorrectionTargetType;
+  target_id: string;
+}
+
+export interface FastReviewQueueNavigationRequest {
+  ordered_targets: FastReviewQueueTarget[];
+  current_target?: FastReviewQueueTarget | null;
+  direction?: FastReviewNavigationDirection;
+  stream_id?: string | null;
+}
+
+export interface FastReviewQueueNavigationResponse {
+  item?: ReviewQueueItem | null;
+  position?: number | null;
+  unresolved_count: number;
+  message: string;
+}
+
+export interface FastReviewCorrectionCreate {
+  target_type: ReviewQueueBulkCorrectionTargetType;
+  target_id: string;
+  label: string;
+  notes?: string | null;
+  review_session_id: string;
+  idempotency_key: string;
+  expected_state_token: string;
+}
+
+export interface FastReviewCorrectionResponse {
+  result: ReviewCorrectionResult;
+  idempotent: boolean;
+  undo_state_token: string;
+}
+
+export interface FastReviewUndoRequest {
+  review_label_id: string;
+  review_session_id: string;
+  idempotency_key: string;
+  expected_state_token: string;
+}
+
+export interface FastReviewUndoResponse {
+  reversal_review_label_id: string;
+  target_type: ReviewQueueBulkCorrectionTargetType;
+  target_id: string;
+  review_queue_count: number;
+  analytics: AnalyticsSummary;
+  idempotent: boolean;
+  message: string;
 }
 
 export type ReviewQueueBulkCorrectionTargetType = "event" | "visit";
