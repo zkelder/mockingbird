@@ -3,10 +3,10 @@ import { apiClient } from "../api/client";
 import type {
   MediaAsset,
   MotionEvidence,
-  ReviewLabel,
   SpeciesSuggestion,
   TaxonomyLabel,
   VisitDetail,
+  VisitReviewHistoryEntry,
 } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
 import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEvidenceCard";
@@ -16,6 +16,7 @@ import { StatusPill } from "../components/StatusPill";
 import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
 import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
 import { TaxonomyBadge } from "../components/TaxonomyBadge";
+import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
 import { displayTaxonomyLabel, findTaxonomyLabel, isBirdReviewLabel } from "../components/taxonomy";
 import { formatDateTime, formatLabel } from "../utils";
 
@@ -40,14 +41,12 @@ interface VisitCorrectionPrefill {
 
 const visitCorrectionTruthCopy = "Corrections are the source of truth for analytics and exports.";
 
-function compareReviewLabelsNewestFirst(first: ReviewLabel, second: ReviewLabel): number {
-  const timeDelta =
-    new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
-  return timeDelta !== 0 ? timeDelta : second.id.localeCompare(first.id);
-}
-
-function sortReviewLabelsNewestFirst(labels: ReviewLabel[]): ReviewLabel[] {
-  return [...labels].sort(compareReviewLabelsNewestFirst);
+function newReviewRequestKey(prefix: string): string {
+  const uniquePart =
+    typeof crypto?.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}-${uniquePart}`;
 }
 
 export function VisitDetailPage({
@@ -75,6 +74,10 @@ export function VisitDetailPage({
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [label, setLabel] = useState("");
   const [notes, setNotes] = useState("");
+  const [isEditingReviewed, setIsEditingReviewed] = useState(false);
+  const [isReopening, setIsReopening] = useState(false);
+  const [revisionIdempotencyKey, setRevisionIdempotencyKey] = useState<string | null>(null);
+  const [reopenIdempotencyKey, setReopenIdempotencyKey] = useState<string | null>(null);
   const incomingCorrectionPrefill =
     correctionPrefill?.visitId === visitId ? correctionPrefill : null;
   const activeCorrectionPrefill =
@@ -136,6 +139,9 @@ export function VisitDetailPage({
     setNotes("");
     setMockSuggestedLabel("");
     setCorrectionSuggestionId(incomingCorrectionPrefill?.speciesSuggestionId ?? null);
+    setIsEditingReviewed(false);
+    setRevisionIdempotencyKey(null);
+    setReopenIdempotencyKey(null);
     void loadDetail({ prefillLabel: incomingCorrectionPrefill?.label });
   }, [visitId, incomingCorrectionPrefill?.speciesSuggestionId]);
 
@@ -308,6 +314,102 @@ export function VisitDetailPage({
     }
   }
 
+  function beginReviewedRevision() {
+    if (!detail) {
+      return;
+    }
+    setLabel(
+      detail.visit.reviewed_label ?? detail.visit.species_guess ?? detail.visit.subject_label,
+    );
+    setNotes("");
+    setCorrectionSuggestionId(null);
+    setRevisionIdempotencyKey(null);
+    setIsEditingReviewed(true);
+    setMessage("Review the evidence and save a new identification when ready.");
+  }
+
+  function cancelReviewedRevision() {
+    setIsEditingReviewed(false);
+    setRevisionIdempotencyKey(null);
+    setNotes("");
+    setMessage("Revision canceled. The current reviewed correction is unchanged.");
+  }
+
+  async function saveReviewedRevision(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedLabel = label.trim();
+    if (!detail || !trimmedLabel) {
+      setMessage("Add a label before saving a revised identification.");
+      return;
+    }
+
+    const idempotencyKey = revisionIdempotencyKey ?? newReviewRequestKey("visit-revision");
+    setRevisionIdempotencyKey(idempotencyKey);
+    setIsSaving(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const result = await apiClient.reviseVisitReview(visitId, {
+        label: trimmedLabel,
+        notes: notes.trim() || undefined,
+        expected_state_token: detail.review_state_token,
+        idempotency_key: idempotencyKey,
+      });
+      setIsEditingReviewed(false);
+      setRevisionIdempotencyKey(null);
+      setMessage(
+        result.idempotent
+          ? "The revised identification was already saved."
+          : `${displayTaxonomyLabel(result.result.review_label.label, taxonomyLabels)} is now the current reviewed truth.`,
+      );
+      await loadDetail({ showLoading: false });
+      await onCorrectionSaved();
+    } catch (caught) {
+      setMessage(
+        caught instanceof Error
+          ? caught.message
+          : "The revised identification could not be saved.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function reopenReviewedVisit() {
+    if (!detail) {
+      return;
+    }
+    if (
+      !reopenIdempotencyKey &&
+      !window.confirm(
+        "Reopen this Visit for review? Its current correction will remain in history but no longer count as truth.",
+      )
+    ) {
+      return;
+    }
+
+    const idempotencyKey = reopenIdempotencyKey ?? newReviewRequestKey("visit-reopen");
+    setReopenIdempotencyKey(idempotencyKey);
+    setIsReopening(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const result = await apiClient.reopenVisitReview(visitId, {
+        expected_state_token: detail.review_state_token,
+        idempotency_key: idempotencyKey,
+      });
+      setIsEditingReviewed(false);
+      setReopenIdempotencyKey(null);
+      setMessage(result.message);
+      await loadDetail({ showLoading: false });
+      await onCorrectionSaved();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "The Visit could not be reopened.");
+    } finally {
+      setIsReopening(false);
+    }
+  }
+
   if (isLoading) {
     return <div className="panel">Loading visit detail...</div>;
   }
@@ -318,9 +420,8 @@ export function VisitDetailPage({
 
   const visitLabel = detail.visit.reviewed_label ?? detail.visit.species_guess ?? detail.visit.subject_label;
   const runById = new Map(detail.detection_runs.map((run) => [run.id, run]));
-  const reviewLabelsNewestFirst = sortReviewLabelsNewestFirst(detail.review_labels);
-  const latestReviewLabel = reviewLabelsNewestFirst[0] ?? null;
-  const olderReviewLabels = reviewLabelsNewestFirst.slice(1);
+  const currentCorrection = detail.correction_history.find((entry) => entry.is_current) ?? null;
+  const priorCorrections = detail.correction_history.filter((entry) => !entry.is_current);
   const subjectTaxonomy = findTaxonomyLabel(detail.visit.subject_label, taxonomyLabels);
   const speciesGuessTaxonomy = findTaxonomyLabel(detail.visit.species_guess, taxonomyLabels);
   const reviewedTaxonomy = findTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels);
@@ -539,10 +640,10 @@ export function VisitDetailPage({
         />
       ) : null}
 
-      {latestReviewLabel ? (
+      {currentCorrection ? (
         <CorrectionTruthPanel
-          latest={latestReviewLabel}
-          older={olderReviewLabels}
+          latest={currentCorrection}
+          older={priorCorrections}
           taxonomyLabels={taxonomyLabels}
         />
       ) : null}
@@ -666,7 +767,7 @@ export function VisitDetailPage({
               {hasFolderImportMedia ? "Folder-imported media" : "Saved media"} does not confirm a
               label before review.
             </span>
-            {detail.review_labels.length === 0 ? (
+            {detail.correction_history.length === 0 ? (
               <span>No label has been confirmed yet.</span>
             ) : null}
           </div>
@@ -753,14 +854,14 @@ export function VisitDetailPage({
             <h2>Correction history</h2>
           </div>
           <div className="history-list">
-            {reviewLabelsNewestFirst.map((reviewLabel) => (
-              <ReviewLabelHistoryItem
-                key={reviewLabel.id}
-                reviewLabel={reviewLabel}
+            {detail.correction_history.map((entry) => (
+              <CorrectionHistoryItem
+                key={`${entry.created_at}-${entry.action}-${entry.label ?? ""}`}
+                entry={entry}
                 taxonomyLabels={taxonomyLabels}
               />
             ))}
-            {reviewLabelsNewestFirst.length === 0 ? (
+            {detail.correction_history.length === 0 ? (
               <span className="meta-text">No correction history yet.</span>
             ) : null}
           </div>
@@ -954,6 +1055,101 @@ export function VisitDetailPage({
             <h2>Dataset readiness</h2>
             <p>{detail.review_summary}</p>
           </div>
+          <div className="detail-actions">
+            <button
+              className="primary-action"
+              disabled={isSaving || isReopening}
+              onClick={beginReviewedRevision}
+              type="button"
+            >
+              Edit identification
+            </button>
+            <button
+              className="secondary-action"
+              disabled={isSaving || isReopening}
+              onClick={() => void reopenReviewedVisit()}
+              type="button"
+            >
+              {isReopening ? "Reopening..." : "Reopen as needs review"}
+            </button>
+          </div>
+          {isEditingReviewed ? (
+            <section className="species-suggestion-review-context">
+              <div className="section-heading">
+                <div>
+                  <h3>Revise reviewed outcome</h3>
+                  <span className="meta-text">
+                    The current correction stays in history. Saving creates a new reviewed truth.
+                  </span>
+                </div>
+                <EvidenceBadge label="Explicit revision" tone="truth" />
+              </div>
+              <div className="correction-truth-note">
+                <strong>Current reviewed correction</strong>
+                <span>
+                  {currentCorrection
+                    ? `${displayTaxonomyLabel(currentCorrection.label ?? "unknown", taxonomyLabels)} saved ${formatDateTime(currentCorrection.created_at)}.`
+                    : "No current correction is available; refresh this Visit before revising it."}
+                </span>
+              </div>
+              <div className="promoted-review-context-grid">
+                <ContextItem label="Stream" value={detail.stream.name} />
+                <ContextItem
+                  label="Zone"
+                  value={
+                    detail.primary_zone
+                      ? `${detail.primary_zone.name} (${formatLabel(detail.primary_zone.zone_type)})`
+                      : "Unzoned"
+                  }
+                />
+                <ContextItem label="Visit date and time" value={formatDateTime(detail.event.started_at)} />
+                <ContextItem
+                  label="Suggestions"
+                  value={
+                    speciesSuggestions.length > 0
+                      ? `${speciesSuggestions.length} evidence-only suggestion${speciesSuggestions.length === 1 ? "" : "s"}`
+                      : "No suggestions"
+                  }
+                />
+              </div>
+              {detail.evidence_frames.length > 0 ? (
+                <VisitEvidenceSequence frames={detail.evidence_frames} />
+              ) : detail.media_asset ? (
+                <MediaAssetPreview asset={detail.media_asset} />
+              ) : (
+                <span className="meta-text">No saved evidence frame is attached to this Visit.</span>
+              )}
+              <p className="evidence-panel-copy">
+                Suggestions remain evidence only while revising. They are never accepted or
+                promoted automatically.
+              </p>
+              <form className="correction-form" onSubmit={saveReviewedRevision}>
+                <TaxonomyLabelInput
+                  label={isSpeciesVisit ? "Revised species or outcome" : "Revised outcome"}
+                  labels={taxonomyLabels}
+                  value={label}
+                  onChange={setLabel}
+                  placeholder="supported species, non_bird, blank, ambiguous, or false_positive"
+                />
+                <label>
+                  Revision reason
+                  <textarea
+                    value={notes}
+                    onChange={(event) => setNotes(event.target.value)}
+                    placeholder="optional short reason for this change"
+                  />
+                </label>
+                <div className="detail-actions">
+                  <button className="primary-action" disabled={isSaving} type="submit">
+                    {isSaving ? "Saving..." : "Save revised identification"}
+                  </button>
+                  <button className="secondary-action" onClick={cancelReviewedRevision} type="button">
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </section>
+          ) : null}
           <button className="secondary-action" onClick={onOpenExports}>
             Open Dataset Exports
           </button>
@@ -1053,8 +1249,8 @@ function CorrectionTruthPanel({
   older,
   taxonomyLabels,
 }: {
-  latest: ReviewLabel;
-  older: ReviewLabel[];
+  latest: VisitReviewHistoryEntry;
+  older: VisitReviewHistoryEntry[];
   taxonomyLabels: TaxonomyLabel[];
 }) {
   return (
@@ -1063,15 +1259,15 @@ function CorrectionTruthPanel({
         <div>
           <h2>Latest correction truth</h2>
           <span className="meta-text">
-            ReviewLabel history is the audit trail for analytics and exports.
+            Correction history is the audit trail for analytics and exports.
           </span>
         </div>
         <EvidenceBadge label="Correction truth" tone="truth" />
       </div>
       <div className="correction-truth-latest">
-        <strong>{displayTaxonomyLabel(latest.label, taxonomyLabels)}</strong>
+        <strong>{displayTaxonomyLabel(latest.label ?? "unknown", taxonomyLabels)}</strong>
         <span>
-          {formatLabel(latest.target_type)} correction - {formatDateTime(latest.created_at)}
+          {latest.action} - {formatDateTime(latest.created_at)}
         </span>
         {latest.notes ? <p>{latest.notes}</p> : null}
       </div>
@@ -1079,10 +1275,10 @@ function CorrectionTruthPanel({
         <details className="correction-history-details">
           <summary>{older.length} older correction{older.length === 1 ? "" : "s"}</summary>
           <div className="history-list">
-            {older.map((label) => (
-              <ReviewLabelHistoryItem
-                key={label.id}
-                reviewLabel={label}
+            {older.map((entry) => (
+              <CorrectionHistoryItem
+                key={`${entry.created_at}-${entry.action}-${entry.label ?? ""}`}
+                entry={entry}
                 taxonomyLabels={taxonomyLabels}
               />
             ))}
@@ -1093,21 +1289,21 @@ function CorrectionTruthPanel({
   );
 }
 
-function ReviewLabelHistoryItem({
-  reviewLabel,
+function CorrectionHistoryItem({
+  entry,
   taxonomyLabels,
 }: {
-  reviewLabel: ReviewLabel;
+  entry: VisitReviewHistoryEntry;
   taxonomyLabels: TaxonomyLabel[];
 }) {
   return (
     <div className="history-item">
-      <strong>{displayTaxonomyLabel(reviewLabel.label, taxonomyLabels)}</strong>
+      <strong>{displayTaxonomyLabel(entry.label ?? "unknown", taxonomyLabels)}</strong>
       <span>
-        {formatLabel(reviewLabel.target_type)} correction -{" "}
-        {formatDateTime(reviewLabel.created_at)}
+        {entry.action} - {formatDateTime(entry.created_at)}
+        {entry.is_current ? " - Current" : ""}
       </span>
-      {reviewLabel.notes ? <p>{reviewLabel.notes}</p> : null}
+      {entry.notes ? <p>{entry.notes}</p> : null}
     </div>
   );
 }

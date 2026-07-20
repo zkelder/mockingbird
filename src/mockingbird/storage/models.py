@@ -471,6 +471,9 @@ class ReviewLabelModel(Base):
     prior_event_review_status: Mapped[str | None] = mapped_column(String, nullable=True)
     fast_review_session_id: Mapped[str | None] = mapped_column(String, nullable=True)
     fast_review_idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    supersedes_review_label_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    review_action: Mapped[str | None] = mapped_column(String, nullable=True)
+    revision_idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class DatasetExportModel(Base):

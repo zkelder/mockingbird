@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 6
+CURRENT_DATABASE_SCHEMA_VERSION = 7
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -262,12 +262,36 @@ def _migrate_to_fast_review_reversals(connection: Connection) -> None:
     )
 
 
+def _migrate_to_review_label_revisions(connection: Connection) -> None:
+    """Add append-only reviewed-Visit revision metadata without changing old truth."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Review-label revision migration requires local SQLite storage."
+        )
+    connection.exec_driver_sql(
+        "ALTER TABLE review_labels ADD COLUMN supersedes_review_label_id TEXT"
+    )
+    connection.exec_driver_sql(
+        "ALTER TABLE review_labels ADD COLUMN review_action TEXT"
+    )
+    connection.exec_driver_sql(
+        "ALTER TABLE review_labels ADD COLUMN revision_idempotency_key TEXT"
+    )
+    connection.exec_driver_sql(
+        "CREATE UNIQUE INDEX review_labels_revision_idempotency_key "
+        "ON review_labels(revision_idempotency_key) "
+        "WHERE revision_idempotency_key IS NOT NULL"
+    )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
     4: _migrate_to_bioclip_identification_attempt_evidence,
     5: _migrate_to_zone_monitoring_policy_overrides,
     6: _migrate_to_fast_review_reversals,
+    7: _migrate_to_review_label_revisions,
 }
 
 

@@ -78,6 +78,11 @@ import type {
   MotionEvaluateSequenceResponse,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
+  VisitReviewHistory,
+  VisitReviewReopenCreate,
+  VisitReviewReopenResponse,
+  VisitReviewRevisionCreate,
+  VisitReviewRevisionResponse,
   FastReviewCorrectionCreate,
   FastReviewCorrectionResponse,
   FastReviewQueueNavigationRequest,
@@ -733,6 +738,26 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  getVisitReviewHistory: (visitId: string) =>
+    request<VisitReviewHistory>(
+      `/api/visits/${encodeURIComponent(visitId)}/correction-history`,
+    ),
+  reviseVisitReview: (visitId: string, payload: VisitReviewRevisionCreate) =>
+    request<VisitReviewRevisionResponse>(
+      `/api/visits/${encodeURIComponent(visitId)}/revision`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+  reopenVisitReview: (visitId: string, payload: VisitReviewReopenCreate) =>
+    request<VisitReviewReopenResponse>(
+      `/api/visits/${encodeURIComponent(visitId)}/reopen`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
   navigateFastReviewQueue: (payload: FastReviewQueueNavigationRequest) =>
     request<FastReviewQueueNavigationResponse>("/api/review-queue/fast/navigate", {
       method: "POST",

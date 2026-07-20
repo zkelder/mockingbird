@@ -186,6 +186,12 @@ from mockingbird.api.schemas import (
     Point,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
+    VisitReviewHistory,
+    VisitReviewHistoryEntry,
+    VisitReviewReopenCreate,
+    VisitReviewReopenResponse,
+    VisitReviewRevisionCreate,
+    VisitReviewRevisionResponse,
     ReviewIdentificationRequest,
     ReviewIdentificationResponse,
     ReviewIdentificationStatus,
@@ -316,6 +322,10 @@ MAX_LIVE_VISIT_EVIDENCE_FRAMES = 4
 
 class FastReviewConflictError(ValueError):
     """The visible review snapshot no longer matches the current truth state."""
+
+
+class ReviewRevisionConflictError(ValueError):
+    """A reviewed Visit changed before an append-only revision could be applied."""
 
 _ZONE_MONITORING_POLICY_FIELDS = (
     "monitoring_enabled",
@@ -6954,6 +6964,13 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._review_labels_for_visit(session, visit_id)
 
+    def visit_review_history(self, visit_id: str) -> VisitReviewHistory | None:
+        with self.session_factory() as session:
+            visit = session.get(VisitModel, visit_id)
+            if visit is None:
+                return None
+            return self._visit_review_history_from_session(session, visit)
+
     def review_labels_for_event_tree(self, event_id: str) -> list[ReviewLabel]:
         with self.session_factory() as session:
             visit_ids = {visit.id for visit in self._visits_for_event(session, event_id)}
@@ -6980,6 +6997,120 @@ class ProductRepository:
                     created_at,
                 )
 
+    def revise_visit_review(
+        self,
+        visit_id: str,
+        payload: VisitReviewRevisionCreate,
+    ) -> VisitReviewRevisionResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                existing = session.scalar(
+                    select(ReviewLabelModel).where(
+                        ReviewLabelModel.revision_idempotency_key == payload.idempotency_key
+                    )
+                )
+                normalized_label = self._normalize_label_from_session(session, payload.label)
+                normalized_notes = _clean_optional_text(payload.notes)
+                if existing is not None:
+                    if (
+                        existing.review_action != "revision"
+                        or existing.target_type != "visit"
+                        or existing.target_id != visit_id
+                        or existing.label != normalized_label
+                        or _clean_optional_text(existing.notes) != normalized_notes
+                    ):
+                        raise ReviewRevisionConflictError("review_revision_idempotency_conflict")
+                    return VisitReviewRevisionResponse(
+                        result=self._review_correction_result_for_model(session, existing),
+                        review_state_token=self._review_state_token(session, "visit", visit_id),
+                        idempotent=True,
+                    )
+
+                visit = session.get(VisitModel, visit_id)
+                if visit is None:
+                    raise ValueError("missing_visit")
+                event = session.get(EventModel, visit.event_id)
+                if event is None:
+                    raise ValueError("missing_event")
+                if self._review_state_token(session, "visit", visit.id) != payload.expected_state_token:
+                    raise ReviewRevisionConflictError("stale_reviewed_visit")
+                current = self._current_effective_review_label_model_for_visit(session, visit.id)
+                if visit.review_status != ReviewStatus.reviewed.value or current is None:
+                    raise ReviewRevisionConflictError("review_revision_unavailable")
+
+                # A revision is a new explicit truth row. It never changes the prior label.
+                result = self._create_review_label_result_in_session(
+                    session,
+                    ReviewCorrectionCreate(
+                        target_type="visit",
+                        target_id=visit.id,
+                        label=normalized_label,
+                        notes=normalized_notes,
+                    ),
+                    supersedes_review_label_id=current.id,
+                    review_action="revision",
+                    revision_idempotency_key=payload.idempotency_key,
+                )
+                return VisitReviewRevisionResponse(
+                    result=result,
+                    review_state_token=self._review_state_token(session, "visit", visit.id),
+                )
+
+    def reopen_visit_review(
+        self,
+        visit_id: str,
+        payload: VisitReviewReopenCreate,
+    ) -> VisitReviewReopenResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                existing = session.scalar(
+                    select(ReviewLabelModel).where(
+                        ReviewLabelModel.revision_idempotency_key == payload.idempotency_key
+                    )
+                )
+                normalized_notes = _clean_optional_text(payload.notes)
+                if existing is not None:
+                    if (
+                        existing.review_action != "reopen"
+                        or existing.target_type != "visit"
+                        or existing.target_id != visit_id
+                        or _clean_optional_text(existing.notes) != normalized_notes
+                    ):
+                        raise ReviewRevisionConflictError("review_reopen_idempotency_conflict")
+                    return self._visit_review_reopen_response(session, visit_id, idempotent=True)
+
+                visit = session.get(VisitModel, visit_id)
+                if visit is None:
+                    raise ValueError("missing_visit")
+                event = session.get(EventModel, visit.event_id)
+                if event is None:
+                    raise ValueError("missing_event")
+                if self._review_state_token(session, "visit", visit.id) != payload.expected_state_token:
+                    raise ReviewRevisionConflictError("stale_reviewed_visit")
+                current = self._current_effective_review_label_model_for_visit(session, visit.id)
+                if visit.review_status != ReviewStatus.reviewed.value or current is None:
+                    raise ReviewRevisionConflictError("review_reopen_unavailable")
+
+                # Reopen replaces effective truth with an append-only transition; media and evidence stay put.
+                session.add(
+                    ReviewLabelModel(
+                        id=self._next_id(session, ReviewLabelModel, "review-label"),
+                        target_type="visit",
+                        target_id=visit.id,
+                        label=current.label,
+                        notes=normalized_notes,
+                        created_at=datetime.now(UTC),
+                        supersedes_review_label_id=current.id,
+                        review_action="reopen",
+                        revision_idempotency_key=payload.idempotency_key,
+                    )
+                )
+                visit.reviewed_label = None
+                visit.review_status = ReviewStatus.needs_review.value
+                event.review_status = ReviewStatus.needs_review.value
+                session.flush()
+                return self._visit_review_reopen_response(session, visit.id)
+
     def _create_review_label_result_in_session(
         self,
         session: Session,
@@ -6988,6 +7119,9 @@ class ProductRepository:
         *,
         fast_review_session_id: str | None = None,
         fast_review_idempotency_key: str | None = None,
+        supersedes_review_label_id: str | None = None,
+        review_action: str | None = None,
+        revision_idempotency_key: str | None = None,
     ) -> ReviewCorrectionResult:
         review_label, visit, event = self._create_review_label_in_session(
             session,
@@ -6995,6 +7129,9 @@ class ProductRepository:
             created_at,
             fast_review_session_id=fast_review_session_id,
             fast_review_idempotency_key=fast_review_idempotency_key,
+            supersedes_review_label_id=supersedes_review_label_id,
+            review_action=review_action,
+            revision_idempotency_key=revision_idempotency_key,
         )
         return ReviewCorrectionResult(
             review_label=review_label,
@@ -9782,20 +9919,94 @@ class ProductRepository:
         )
         return self._effective_review_label_models(labels)
 
+    def _review_label_history_models_for_visit(
+        self,
+        session: Session,
+        visit_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[ReviewLabelModel]:
+        bounded_limit = max(1, min(limit, 50))
+        return list(
+            session.scalars(
+                select(ReviewLabelModel)
+                .where(
+                    ReviewLabelModel.target_type == "visit",
+                    ReviewLabelModel.target_id == visit_id,
+                )
+                .order_by(ReviewLabelModel.created_at.desc(), ReviewLabelModel.id.desc())
+                .limit(bounded_limit)
+            ).all()
+        )
+
     def _effective_review_label_models(
         self,
         labels: list[ReviewLabelModel],
     ) -> list[ReviewLabelModel]:
+        """Resolve exactly one current truth row per target from append-only history."""
+
         reversed_label_ids = {
             label.reversal_of_review_label_id
             for label in labels
             if label.reversal_of_review_label_id is not None
         }
-        return [
-            label
+        superseded_label_ids = {
+            label.supersedes_review_label_id
             for label in labels
-            if label.reversal_of_review_label_id is None and label.id not in reversed_label_ids
+            if label.supersedes_review_label_id is not None
+        }
+        effective_by_target: dict[tuple[str, str], ReviewLabelModel] = {}
+        for label in labels:
+            if (
+                label.reversal_of_review_label_id is not None
+                or label.id in reversed_label_ids
+                or label.id in superseded_label_ids
+                or label.review_action == "reopen"
+            ):
+                continue
+            target_key = (label.target_type, label.target_id)
+            current = effective_by_target.get(target_key)
+            if current is None or (label.created_at, label.id) > (current.created_at, current.id):
+                effective_by_target[target_key] = label
+        return sorted(
+            effective_by_target.values(),
+            key=lambda label: (label.created_at, label.id),
+        )
+
+    def _current_effective_review_label_model_for_visit(
+        self,
+        session: Session,
+        visit_id: str,
+    ) -> ReviewLabelModel | None:
+        return max(
+            self._review_label_models_for_visit(session, visit_id),
+            key=lambda label: (label.created_at, label.id),
+            default=None,
+        )
+
+    def _visit_review_history_from_session(
+        self,
+        session: Session,
+        visit: VisitModel,
+    ) -> VisitReviewHistory:
+        current = self._current_effective_review_label_model_for_visit(session, visit.id)
+        entries = [
+            VisitReviewHistoryEntry(
+                action=_review_history_action_for_model(label),
+                label=label.label,
+                notes=label.notes,
+                created_at=_as_utc(label.created_at),
+                is_current=current is not None and label.id == current.id,
+            )
+            for label in self._review_label_history_models_for_visit(session, visit.id)
         ]
+        return VisitReviewHistory(
+            visit_id=visit.id,
+            review_status=ReviewStatus(visit.review_status),
+            reviewed_label=visit.reviewed_label,
+            review_state_token=self._review_state_token(session, "visit", visit.id),
+            entries=entries,
+        )
 
     def _review_state_token(
         self,
@@ -9855,6 +10066,29 @@ class ProductRepository:
             analytics=self._analytics_summary(session),
         )
 
+    def _visit_review_reopen_response(
+        self,
+        session: Session,
+        visit_id: str,
+        *,
+        idempotent: bool = False,
+    ) -> VisitReviewReopenResponse:
+        visit = session.get(VisitModel, visit_id)
+        if visit is None:
+            raise ValueError("missing_visit")
+        event = session.get(EventModel, visit.event_id)
+        if event is None:
+            raise ValueError("missing_event")
+        return VisitReviewReopenResponse(
+            visit=_visit_from_model(visit),
+            event=self._event_from_model(session, event),
+            review_queue_count=len(self._review_queue_items(session)),
+            analytics=self._analytics_summary(session),
+            review_state_token=self._review_state_token(session, "visit", visit.id),
+            idempotent=idempotent,
+            message="This Visit was reopened and is ready for another explicit correction.",
+        )
+
     def _fast_review_undo_response(
         self,
         session: Session,
@@ -9892,6 +10126,9 @@ class ProductRepository:
         *,
         fast_review_session_id: str | None = None,
         fast_review_idempotency_key: str | None = None,
+        supersedes_review_label_id: str | None = None,
+        review_action: str | None = None,
+        revision_idempotency_key: str | None = None,
     ) -> tuple[ReviewLabel, Visit | None, Event | None]:
         normalized_label = self._normalize_label_from_session(session, payload.label)
         label_model = ReviewLabelModel(
@@ -9903,6 +10140,9 @@ class ProductRepository:
             created_at=created_at or datetime.now(UTC),
             fast_review_session_id=fast_review_session_id,
             fast_review_idempotency_key=fast_review_idempotency_key,
+            supersedes_review_label_id=supersedes_review_label_id,
+            review_action=review_action,
+            revision_idempotency_key=revision_idempotency_key,
         )
 
         visit: Visit | None = None
@@ -11919,7 +12159,10 @@ class ProductRepository:
         labels = session.scalars(
             select(ReviewLabelModel).order_by(ReviewLabelModel.created_at, ReviewLabelModel.id)
         ).all()
-        return [_review_label_from_model(label) for label in labels]
+        return [
+            _review_label_from_model(label)
+            for label in self._effective_review_label_models(list(labels))
+        ]
 
     def _visits_for_eventless_query(self, session: Session) -> list[Visit]:
         visits = session.scalars(select(VisitModel).order_by(VisitModel.id)).all()
@@ -14956,6 +15199,18 @@ def _review_label_from_model(label: ReviewLabelModel) -> ReviewLabel:
         notes=label.notes,
         created_at=_as_utc(label.created_at),
     )
+
+
+def _review_history_action_for_model(label: ReviewLabelModel) -> str:
+    if label.reversal_of_review_label_id is not None:
+        return "Undid correction"
+    if label.review_action == "revision":
+        return "Revised identification"
+    if label.review_action == "reopen":
+        return "Reopened for review"
+    if label.fast_review_session_id is not None:
+        return "Fast Review correction"
+    return "Correction"
 
 
 def _dataset_export_from_model(dataset_export: DatasetExportModel) -> DatasetExport:

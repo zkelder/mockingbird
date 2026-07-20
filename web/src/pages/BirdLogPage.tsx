@@ -522,7 +522,7 @@ export function BirdLogPage({
                             }
                             type="button"
                           >
-                            View reviewed result
+                            {entry.targetType === "visit" ? "Edit identification" : "View reviewed result"}
                           </button>
                           {entry.mediaAsset ? (
                             <a

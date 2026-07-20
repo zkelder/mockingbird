@@ -118,6 +118,11 @@ from mockingbird.api.schemas import (
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
+    VisitReviewHistory,
+    VisitReviewReopenCreate,
+    VisitReviewReopenResponse,
+    VisitReviewRevisionCreate,
+    VisitReviewRevisionResponse,
     ReviewIdentificationRequest,
     ReviewIdentificationResponse,
     ReviewQueueBulkCorrectionRequest,
@@ -216,6 +221,7 @@ from mockingbird.playback import (
 from mockingbird.repository.product_repository import (
     FastReviewConflictError,
     ProductRepository,
+    ReviewRevisionConflictError,
     StreamLivePlaybackConfig,
 )
 from mockingbird.sampler import (
@@ -7127,6 +7133,14 @@ async def list_visits() -> list[Visit]:
     return get_repository().list_visits()
 
 
+@app.get("/api/visits/{visit_id}/correction-history", response_model=VisitReviewHistory)
+async def get_visit_correction_history(visit_id: str) -> VisitReviewHistory:
+    history = get_repository().visit_review_history(visit_id)
+    if history is None:
+        raise _not_found("Visit", visit_id)
+    return history
+
+
 @app.get("/api/visits/{visit_id}", response_model=Visit)
 async def get_visit(visit_id: str) -> Visit:
     visit = get_repository().get_visit(visit_id)
@@ -7152,6 +7166,9 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
 
     dataset_ready = repository.visit_is_dataset_ready(visit)
     detection_proposals = repository.detection_proposals_for_visit(visit.id)
+    review_history = repository.visit_review_history(visit.id)
+    if review_history is None:
+        raise _not_found("Visit", visit_id)
     return VisitDetail(
         visit=visit,
         event=event,
@@ -7171,9 +7188,53 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
             repository.review_labels_for_event(event.id)
             + repository.review_labels_for_visit(visit.id)
         ),
+        correction_history=review_history.entries,
+        review_state_token=review_history.review_state_token,
         dataset_ready=dataset_ready,
         review_summary=repository.review_summary_for_dataset_state(dataset_ready),
     )
+
+
+@app.post(
+    "/api/visits/{visit_id}/revision",
+    response_model=VisitReviewRevisionResponse,
+)
+async def revise_visit_review(
+    visit_id: str,
+    payload: VisitReviewRevisionCreate,
+) -> VisitReviewRevisionResponse:
+    try:
+        return get_repository().revise_visit_review(visit_id, payload)
+    except ReviewRevisionConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This reviewed Visit changed. Refresh it before saving a revision.",
+        ) from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        raise HTTPException(status_code=400, detail="The reviewed Visit could not be revised.") from error
+
+
+@app.post(
+    "/api/visits/{visit_id}/reopen",
+    response_model=VisitReviewReopenResponse,
+)
+async def reopen_visit_review(
+    visit_id: str,
+    payload: VisitReviewReopenCreate,
+) -> VisitReviewReopenResponse:
+    try:
+        return get_repository().reopen_visit_review(visit_id, payload)
+    except ReviewRevisionConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This reviewed Visit changed. Refresh it before reopening it.",
+        ) from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        raise HTTPException(status_code=400, detail="The reviewed Visit could not be reopened.") from error
 
 
 @app.get("/api/media", response_model=list[MediaAsset])

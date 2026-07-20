@@ -2339,6 +2339,27 @@ class ReviewCorrectionCreate(BaseModel):
     notes: str | None = None
 
 
+class VisitReviewRevisionCreate(BaseModel):
+    """Replace the current reviewed Visit truth without changing its history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=256)
+    notes: str | None = Field(default=None, max_length=4000)
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitReviewReopenCreate(BaseModel):
+    """Deliberately remove current reviewed truth and return the Visit to review."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    notes: str | None = Field(default=None, max_length=4000)
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
 class FastReviewQueueTarget(BaseModel):
     target_type: ReviewQueueBulkCorrectionTargetType
     target_id: str = Field(min_length=1, max_length=256)
@@ -2865,6 +2886,40 @@ class ReviewCorrectionResult(BaseModel):
     analytics: AnalyticsSummary
 
 
+class VisitReviewRevisionResponse(BaseModel):
+    result: ReviewCorrectionResult
+    review_state_token: str
+    idempotent: bool = False
+
+
+class VisitReviewReopenResponse(BaseModel):
+    visit: Visit
+    event: Event
+    review_queue_count: int = Field(ge=0)
+    analytics: AnalyticsSummary
+    review_state_token: str
+    idempotent: bool = False
+    message: str
+
+
+class VisitReviewHistoryEntry(BaseModel):
+    """A user-facing correction history entry with no internal identifier exposure."""
+
+    action: str
+    label: str | None = None
+    notes: str | None = None
+    created_at: datetime
+    is_current: bool = False
+
+
+class VisitReviewHistory(BaseModel):
+    visit_id: str
+    review_status: ReviewStatus
+    reviewed_label: str | None = None
+    review_state_token: str
+    entries: list[VisitReviewHistoryEntry] = Field(default_factory=list)
+
+
 class FastReviewCorrectionResponse(BaseModel):
     result: ReviewCorrectionResult
     idempotent: bool = False
@@ -3051,6 +3106,8 @@ class EventDetail(BaseModel):
     detection_proposals: list[DetectionProposal] = Field(default_factory=list)
     detection_runs: list[DetectionRun] = Field(default_factory=list)
     review_labels: list[ReviewLabel]
+    correction_history: list[VisitReviewHistoryEntry] = Field(default_factory=list)
+    review_state_token: str = ""
     dataset_ready: bool
     review_summary: str
 

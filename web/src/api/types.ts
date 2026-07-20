@@ -2196,6 +2196,51 @@ export interface ReviewCorrectionResult {
   analytics: AnalyticsSummary;
 }
 
+export interface VisitReviewRevisionCreate {
+  label: string;
+  notes?: string | null;
+  expected_state_token: string;
+  idempotency_key: string;
+}
+
+export interface VisitReviewReopenCreate {
+  notes?: string | null;
+  expected_state_token: string;
+  idempotency_key: string;
+}
+
+export interface VisitReviewRevisionResponse {
+  result: ReviewCorrectionResult;
+  review_state_token: string;
+  idempotent: boolean;
+}
+
+export interface VisitReviewReopenResponse {
+  visit: Visit;
+  event: Event;
+  review_queue_count: number;
+  analytics: AnalyticsSummary;
+  review_state_token: string;
+  idempotent: boolean;
+  message: string;
+}
+
+export interface VisitReviewHistoryEntry {
+  action: string;
+  label?: string | null;
+  notes?: string | null;
+  created_at: string;
+  is_current: boolean;
+}
+
+export interface VisitReviewHistory {
+  visit_id: string;
+  review_status: ReviewStatus;
+  reviewed_label?: string | null;
+  review_state_token: string;
+  entries: VisitReviewHistoryEntry[];
+}
+
 export type FastReviewNavigationDirection = "next" | "previous";
 
 export interface FastReviewQueueTarget {
@@ -2324,6 +2369,8 @@ export interface VisitDetail {
   detection_proposals: DetectionProposal[];
   detection_runs: DetectionRun[];
   review_labels: ReviewLabel[];
+  correction_history: VisitReviewHistoryEntry[];
+  review_state_token: string;
   dataset_ready: boolean;
   review_summary: string;
 }
