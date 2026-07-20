@@ -118,11 +118,24 @@ from mockingbird.api.schemas import (
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
+    VisitEvidenceCurationRequest,
+    VisitEvidenceCurationResponse,
+    VisitMergeCandidatesResponse,
+    VisitMergePreview,
+    VisitMergePreviewRequest,
+    VisitMergeRequest,
+    VisitMergeResponse,
     VisitReviewHistory,
     VisitReviewReopenCreate,
     VisitReviewReopenResponse,
     VisitReviewRevisionCreate,
     VisitReviewRevisionResponse,
+    VisitSplitPreview,
+    VisitSplitPreviewRequest,
+    VisitSplitRequest,
+    VisitSplitResponse,
+    VisitZoneReassignmentRequest,
+    VisitZoneReassignmentResponse,
     ReviewIdentificationRequest,
     ReviewIdentificationResponse,
     ReviewQueueBulkCorrectionRequest,
@@ -222,6 +235,7 @@ from mockingbird.repository.product_repository import (
     FastReviewConflictError,
     ProductRepository,
     ReviewRevisionConflictError,
+    VisitCurationConflictError,
     StreamLivePlaybackConfig,
 )
 from mockingbird.sampler import (
@@ -7174,8 +7188,8 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         event=event,
         stream=stream,
         primary_zone=(
-            repository.get_zone(event.primary_zone_id)
-            if event.primary_zone_id is not None
+            repository.get_zone(visit.zone_id or event.primary_zone_id)
+            if (visit.zone_id or event.primary_zone_id) is not None
             else None
         ),
         detections=event.detections,
@@ -7189,10 +7203,152 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
             + repository.review_labels_for_visit(visit.id)
         ),
         correction_history=review_history.entries,
+        curation_history=repository.visit_curation_history(visit.id),
+        resulting_visits=repository.resulting_visits_for(visit.id),
+        eligible_zones=[
+            zone
+            for zone in repository.zones_for_stream(event.stream_id)
+            if zone.is_active and zone.zone_type not in {ZoneType.privacy, ZoneType.ignore}
+        ],
         review_state_token=review_history.review_state_token,
         dataset_ready=dataset_ready,
         review_summary=repository.review_summary_for_dataset_state(dataset_ready),
     )
+
+
+@app.post(
+    "/api/visits/{visit_id}/evidence-curation",
+    response_model=VisitEvidenceCurationResponse,
+)
+async def curate_visit_evidence(
+    visit_id: str,
+    payload: VisitEvidenceCurationRequest,
+) -> VisitEvidenceCurationResponse:
+    try:
+        return get_repository().curate_visit_evidence(visit_id, payload)
+    except VisitCurationConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This Visit changed. Refresh it before saving evidence curation.",
+        ) from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        raise HTTPException(status_code=400, detail="Visit evidence selection is not valid.") from error
+
+
+@app.post("/api/visits/{visit_id}/split/preview", response_model=VisitSplitPreview)
+async def preview_visit_split(
+    visit_id: str,
+    payload: VisitSplitPreviewRequest,
+) -> VisitSplitPreview:
+    try:
+        return get_repository().preview_visit_split(visit_id, payload)
+    except VisitCurationConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This Visit changed. Refresh it before previewing the split.",
+        ) from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        raise HTTPException(
+            status_code=400,
+            detail="Choose a boundary that leaves evidence in both resulting Visits.",
+        ) from error
+
+
+@app.post("/api/visits/{visit_id}/split", response_model=VisitSplitResponse)
+async def split_visit(visit_id: str, payload: VisitSplitRequest) -> VisitSplitResponse:
+    try:
+        return get_repository().split_visit(visit_id, payload)
+    except VisitCurationConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This Visit changed. Refresh it before splitting.",
+        ) from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        raise HTTPException(
+            status_code=400,
+            detail="The Visit could not be split with this evidence boundary.",
+        ) from error
+
+
+@app.get(
+    "/api/visits/{visit_id}/merge-candidates",
+    response_model=VisitMergeCandidatesResponse,
+)
+async def list_visit_merge_candidates(visit_id: str) -> VisitMergeCandidatesResponse:
+    try:
+        return get_repository().merge_candidates_for_visit(visit_id)
+    except VisitCurationConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This Visit is no longer available to merge.",
+        ) from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        raise HTTPException(status_code=400, detail="Merge candidates are not available.") from error
+
+
+@app.post("/api/visits/{visit_id}/merge/preview", response_model=VisitMergePreview)
+async def preview_visit_merge(
+    visit_id: str,
+    payload: VisitMergePreviewRequest,
+) -> VisitMergePreview:
+    try:
+        return get_repository().preview_visit_merge(visit_id, payload)
+    except VisitCurationConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This Visit changed. Refresh it before previewing the merge.",
+        ) from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        raise HTTPException(
+            status_code=400,
+            detail="These Visits are not eligible to merge.",
+        ) from error
+
+
+@app.post("/api/visits/{visit_id}/merge", response_model=VisitMergeResponse)
+async def merge_visits(visit_id: str, payload: VisitMergeRequest) -> VisitMergeResponse:
+    try:
+        return get_repository().merge_visits(visit_id, payload)
+    except VisitCurationConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="The merge preview is no longer current. Refresh it before merging.",
+        ) from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        raise HTTPException(status_code=400, detail="These Visits cannot be merged.") from error
+
+
+@app.post("/api/visits/{visit_id}/zone", response_model=VisitZoneReassignmentResponse)
+async def reassign_visit_zone(
+    visit_id: str,
+    payload: VisitZoneReassignmentRequest,
+) -> VisitZoneReassignmentResponse:
+    try:
+        return get_repository().reassign_visit_zone(visit_id, payload)
+    except VisitCurationConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This Visit changed. Refresh it before moving it to another Zone.",
+        ) from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        raise HTTPException(
+            status_code=400,
+            detail="Choose an active ordinary Zone on this Stream.",
+        ) from error
 
 
 @app.post(

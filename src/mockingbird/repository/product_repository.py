@@ -253,8 +253,24 @@ from mockingbird.api.schemas import (
     StreamVisitSummary,
     TaxonomyLabel,
     Visit,
+    VisitCurationHistoryEntry,
+    VisitCurationSequencePreview,
+    VisitEvidenceCurationRequest,
+    VisitEvidenceCurationResponse,
     VisitEvidenceFrame,
+    VisitMergeCandidate,
+    VisitMergeCandidatesResponse,
+    VisitMergePreview,
+    VisitMergePreviewRequest,
+    VisitMergeRequest,
+    VisitMergeResponse,
     VisitReviewOutcome,
+    VisitSplitPreview,
+    VisitSplitPreviewRequest,
+    VisitSplitRequest,
+    VisitSplitResponse,
+    VisitZoneReassignmentRequest,
+    VisitZoneReassignmentResponse,
     WebhookMotionEvidenceRequest,
     WebhookMotionEvidenceResponse,
     WebhookPayloadCandidate,
@@ -299,6 +315,9 @@ from mockingbird.storage.models import (
     StreamMonitoringPolicyModel,
     StreamRuntimeCheckpointModel,
     TaxonomyLabelModel,
+    VisitCurationHistoryModel,
+    VisitEvidenceLinkModel,
+    VisitRelationshipModel,
     VisitModel,
     ZoneModel,
 )
@@ -318,6 +337,8 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
 # Live evidence is a short review aid, never a video archive. Keep a read-side
 # cap as a safeguard even if malformed historical scoring metadata is present.
 MAX_LIVE_VISIT_EVIDENCE_FRAMES = 4
+MAX_VISIT_MERGE_CANDIDATES = 10
+MAX_VISIT_MERGE_GAP = timedelta(minutes=30)
 
 
 class FastReviewConflictError(ValueError):
@@ -326,6 +347,10 @@ class FastReviewConflictError(ValueError):
 
 class ReviewRevisionConflictError(ValueError):
     """A reviewed Visit changed before an append-only revision could be applied."""
+
+
+class VisitCurationConflictError(ValueError):
+    """A Visit or merge snapshot changed before structural curation could be applied."""
 
 _ZONE_MONITORING_POLICY_FIELDS = (
     "monitoring_enabled",
@@ -3483,7 +3508,11 @@ class ProductRepository:
 
     def list_visits(self) -> list[Visit]:
         with self.session_factory() as session:
-            visits = session.scalars(select(VisitModel).order_by(VisitModel.id)).all()
+            visits = session.scalars(
+                select(VisitModel)
+                .where(VisitModel.is_superseded.is_(False))
+                .order_by(VisitModel.id)
+            ).all()
             return [_visit_from_model(visit) for visit in visits]
 
     def get_visit(self, visit_id: str) -> Visit | None:
@@ -3512,12 +3541,17 @@ class ProductRepository:
             query = (
                 select(VisitModel, EventModel)
                 .join(EventModel, VisitModel.event_id == EventModel.id)
-                .where(EventModel.stream_id == stream_id)
+                .where(
+                    EventModel.stream_id == stream_id,
+                    VisitModel.is_superseded.is_(False),
+                )
             )
             if review_status is not None:
                 query = query.where(VisitModel.review_status == review_status.value)
             if zone_id is not None:
-                query = query.where(EventModel.primary_zone_id == zone_id)
+                query = query.where(
+                    func.coalesce(VisitModel.zone_id, EventModel.primary_zone_id) == zone_id
+                )
             if start_at is not None:
                 query = query.where(EventModel.started_at >= start_at)
             if end_at is not None:
@@ -3540,40 +3574,16 @@ class ProductRepository:
         visit: VisitModel,
         event: EventModel,
     ) -> StreamVisitSummary:
-        evidence = session.scalars(
-            select(MotionEvidenceModel)
-            .where(MotionEvidenceModel.promoted_visit_id == visit.id)
-            .order_by(MotionEvidenceModel.created_at.desc(), MotionEvidenceModel.id.desc())
-        ).first()
-        evidence_frames = (
-            self._visit_evidence_frames_from_model(session, evidence)
-            if evidence is not None
-            else []
-        )
+        evidence = self._motion_evidence_model_for_visit(session, visit.id)
+        evidence_frames = self._visit_evidence_frames_from_visit(session, visit, event)
         primary_evidence = next(
             (frame for frame in evidence_frames if frame.is_primary),
             evidence_frames[0] if evidence_frames else None,
         )
-        if primary_evidence is None:
-            asset = self._media_asset_for_path_from_session(
-                session,
-                visit.representative_media_path,
-            )
-            if asset is not None and asset.stream_id == event.stream_id:
-                primary_evidence = VisitEvidenceFrame(
-                    media_asset_id=asset.id,
-                    preview_url=f"/api/media/{asset.id}/file",
-                    captured_at=asset.created_at,
-                    relative_position=0.0,
-                    frame_sequence=None,
-                    is_primary=True,
-                    content_type=asset.content_type,
-                )
-                evidence_frames = [primary_evidence]
-
-        activity_started_at, activity_ended_at = self._visit_activity_window(
+        activity_started_at, activity_ended_at = self._visit_activity_window_for_frames(
             event,
             evidence,
+            evidence_frames,
         )
         reviewed_label = self._visit_reviewed_label(session, visit, event)
         suggestion = session.scalars(
@@ -3585,9 +3595,10 @@ class ProductRepository:
                 SpeciesSuggestionModel.id.desc(),
             )
         ).first()
+        effective_zone_id = visit.zone_id or event.primary_zone_id
         zone = (
-            session.get(ZoneModel, event.primary_zone_id)
-            if event.primary_zone_id is not None
+            session.get(ZoneModel, effective_zone_id)
+            if effective_zone_id is not None
             else None
         )
         if zone is not None and zone.stream_id != event.stream_id:
@@ -3641,6 +3652,24 @@ class ProductRepository:
             _optional_datetime(config.get("activity_started_at")) or started_at,
             _optional_datetime(config.get("activity_last_seen_at")) or ended_at,
         )
+
+    def _visit_activity_window_for_frames(
+        self,
+        event: EventModel,
+        evidence: MotionEvidenceModel | None,
+        frames: list[VisitEvidenceFrame],
+    ) -> tuple[datetime, datetime | None]:
+        if frames:
+            ordered = sorted(
+                frames,
+                key=lambda frame: (
+                    frame.captured_at,
+                    frame.frame_sequence if frame.frame_sequence is not None else -1,
+                    frame.media_asset_id,
+                ),
+            )
+            return ordered[0].captured_at, ordered[-1].captured_at
+        return self._visit_activity_window(event, evidence)
 
     def _visit_reviewed_label(
         self,
@@ -3721,7 +3750,10 @@ class ProductRepository:
                 session.scalar(
                     select(func.count(VisitModel.id))
                     .join(EventModel, VisitModel.event_id == EventModel.id)
-                    .where(VisitModel.review_status == ReviewStatus.needs_review.value)
+                    .where(
+                        VisitModel.review_status == ReviewStatus.needs_review.value,
+                        VisitModel.is_superseded.is_(False),
+                    )
                 )
                 or 0
             )
@@ -3729,7 +3761,10 @@ class ProductRepository:
                 session.execute(
                     select(EventModel.stream_id, func.count(VisitModel.id))
                     .join(VisitModel, VisitModel.event_id == EventModel.id)
-                    .where(VisitModel.review_status == ReviewStatus.needs_review.value)
+                    .where(
+                        VisitModel.review_status == ReviewStatus.needs_review.value,
+                        VisitModel.is_superseded.is_(False),
+                    )
                     .group_by(EventModel.stream_id)
                 ).all()
             )
@@ -3748,7 +3783,10 @@ class ProductRepository:
                 latest_row = session.execute(
                     select(VisitModel, EventModel)
                     .join(EventModel, VisitModel.event_id == EventModel.id)
-                    .where(EventModel.stream_id == stream.id)
+                    .where(
+                        EventModel.stream_id == stream.id,
+                        VisitModel.is_superseded.is_(False),
+                    )
                     .order_by(
                         EventModel.started_at.desc(),
                         EventModel.id.desc(),
@@ -3792,6 +3830,7 @@ class ProductRepository:
             recent_rows = session.execute(
                 select(VisitModel, EventModel)
                 .join(EventModel, VisitModel.event_id == EventModel.id)
+                .where(VisitModel.is_superseded.is_(False))
                 .order_by(
                     EventModel.started_at.desc(),
                     EventModel.id.desc(),
@@ -3814,7 +3853,10 @@ class ProductRepository:
                 needs_rows = session.execute(
                     select(VisitModel, EventModel)
                     .join(EventModel, VisitModel.event_id == EventModel.id)
-                    .where(VisitModel.review_status == ReviewStatus.needs_review.value)
+                    .where(
+                        VisitModel.review_status == ReviewStatus.needs_review.value,
+                        VisitModel.is_superseded.is_(False),
+                    )
                     .order_by(
                         EventModel.started_at.desc(),
                         EventModel.id.desc(),
@@ -3832,6 +3874,7 @@ class ProductRepository:
                 .join(EventModel, VisitModel.event_id == EventModel.id)
                 .where(
                     VisitModel.review_status == ReviewStatus.reviewed.value,
+                    VisitModel.is_superseded.is_(False),
                     EventModel.started_at >= day_start,
                     EventModel.started_at < day_end,
                 )
@@ -5436,38 +5479,928 @@ class ProductRepository:
             event = session.get(EventModel, visit.event_id)
             if event is None:
                 return []
-            evidence_model = session.scalars(
-                select(MotionEvidenceModel)
-                .where(MotionEvidenceModel.promoted_visit_id == visit_id)
-                .order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
-            ).first()
-            evidence_frames = (
-                self._visit_evidence_frames_from_model(session, evidence_model)
-                if evidence_model is not None
-                else []
-            )
-            if evidence_frames:
-                return evidence_frames
+            return self._visit_evidence_frames_from_visit(session, visit, event)
 
-            # Older one-frame Visits predate live activity sequences. Preserve
-            # that evidence shape without exposing a local filesystem path.
-            asset = self._media_asset_for_path_from_session(
-                session,
-                visit.representative_media_path,
-            )
-            if asset is None or asset.stream_id != event.stream_id:
-                return []
-            return [
-                VisitEvidenceFrame(
-                    media_asset_id=asset.id,
-                    preview_url=f"/api/media/{asset.id}/file",
-                    captured_at=asset.created_at,
-                    relative_position=0.0,
-                    frame_sequence=None,
-                    is_primary=True,
-                    content_type=asset.content_type,
+    def _visit_evidence_link_models(
+        self,
+        session: Session,
+        visit_id: str,
+    ) -> list[VisitEvidenceLinkModel]:
+        return list(
+            session.scalars(
+                select(VisitEvidenceLinkModel)
+                .where(VisitEvidenceLinkModel.visit_id == visit_id)
+                .order_by(
+                    VisitEvidenceLinkModel.captured_at,
+                    VisitEvidenceLinkModel.frame_sequence,
+                    VisitEvidenceLinkModel.sort_order,
+                    VisitEvidenceLinkModel.id,
                 )
+            ).all()
+        )
+
+    def _visit_evidence_frames_from_links(
+        self,
+        session: Session,
+        *,
+        visit: VisitModel,
+        event: EventModel,
+        links: list[VisitEvidenceLinkModel],
+    ) -> list[VisitEvidenceFrame]:
+        parsed: list[tuple[VisitEvidenceLinkModel, MediaAssetModel]] = []
+        seen_media_ids: set[str] = set()
+        for link in links[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]:
+            if link.media_asset_id in seen_media_ids:
+                continue
+            asset = session.get(MediaAssetModel, link.media_asset_id)
+            # Evidence ownership stays Stream-scoped even when a historic link
+            # is malformed. Curation must never reveal media from another Stream.
+            if asset is None or asset.stream_id != event.stream_id:
+                continue
+            seen_media_ids.add(link.media_asset_id)
+            parsed.append((link, asset))
+        if not parsed:
+            return []
+
+        parsed.sort(
+            key=lambda item: (
+                _as_utc(item[0].captured_at),
+                item[0].frame_sequence if item[0].frame_sequence is not None else -1,
+                item[0].sort_order,
+                item[0].media_asset_id,
+            )
+        )
+        primary_id = next((link.media_asset_id for link, _asset in parsed if link.is_primary), parsed[0][0].media_asset_id)
+        first_capture = _as_utc(parsed[0][0].captured_at)
+        last_capture = _as_utc(parsed[-1][0].captured_at)
+        duration_seconds = (last_capture - first_capture).total_seconds()
+        return [
+            VisitEvidenceFrame(
+                media_asset_id=link.media_asset_id,
+                preview_url=f"/api/media/{link.media_asset_id}/file",
+                captured_at=_as_utc(link.captured_at),
+                relative_position=(
+                    0.0
+                    if duration_seconds <= 0
+                    else max(
+                        0.0,
+                        min(
+                            1.0,
+                            (_as_utc(link.captured_at) - first_capture).total_seconds()
+                            / duration_seconds,
+                        ),
+                    )
+                ),
+                frame_sequence=link.frame_sequence,
+                is_primary=link.media_asset_id == primary_id,
+                content_type=asset.content_type,
+            )
+            for link, asset in parsed
+        ]
+
+    def _motion_evidence_model_for_visit(
+        self,
+        session: Session,
+        visit_id: str,
+    ) -> MotionEvidenceModel | None:
+        return session.scalars(
+            select(MotionEvidenceModel)
+            .where(MotionEvidenceModel.promoted_visit_id == visit_id)
+            .order_by(MotionEvidenceModel.created_at, MotionEvidenceModel.id)
+        ).first()
+
+    def _visit_evidence_frames_from_visit(
+        self,
+        session: Session,
+        visit: VisitModel,
+        event: EventModel,
+    ) -> list[VisitEvidenceFrame]:
+        links = self._visit_evidence_link_models(session, visit.id)
+        if links:
+            return self._visit_evidence_frames_from_links(
+                session,
+                visit=visit,
+                event=event,
+                links=links,
+            )
+        evidence_model = self._motion_evidence_model_for_visit(session, visit.id)
+        evidence_frames = (
+            self._visit_evidence_frames_from_model(session, evidence_model)
+            if evidence_model is not None
+            else []
+        )
+        if evidence_frames:
+            return evidence_frames
+
+        # Older one-frame Visits predate live activity sequences. Preserve that
+        # evidence shape without exposing a local filesystem path.
+        asset = self._media_asset_for_path_from_session(session, visit.representative_media_path)
+        if asset is None or asset.stream_id != event.stream_id:
+            return []
+        return [
+            VisitEvidenceFrame(
+                media_asset_id=asset.id,
+                preview_url=f"/api/media/{asset.id}/file",
+                captured_at=asset.created_at,
+                relative_position=0.0,
+                frame_sequence=None,
+                is_primary=True,
+                content_type=asset.content_type,
+            )
+        ]
+
+    def _ensure_visit_evidence_links(
+        self,
+        session: Session,
+        *,
+        visit: VisitModel,
+        event: EventModel,
+    ) -> list[VisitEvidenceLinkModel]:
+        links = self._visit_evidence_link_models(session, visit.id)
+        if links:
+            return links
+        frames = self._visit_evidence_frames_from_visit(session, visit, event)
+        created_at = datetime.now(UTC)
+        for index, frame in enumerate(frames):
+            session.add(
+                VisitEvidenceLinkModel(
+                    id=f"visit-evidence-{uuid.uuid4().hex}",
+                    visit_id=visit.id,
+                    media_asset_id=frame.media_asset_id,
+                    captured_at=frame.captured_at,
+                    frame_sequence=frame.frame_sequence,
+                    sort_order=index,
+                    is_primary=frame.is_primary,
+                    created_at=created_at,
+                )
+            )
+        session.flush()
+        return self._visit_evidence_link_models(session, visit.id)
+
+    def _visit_curation_entries_from_session(
+        self,
+        session: Session,
+        visit_id: str,
+    ) -> list[VisitCurationHistoryEntry]:
+        entries = session.scalars(
+            select(VisitCurationHistoryModel)
+            .where(VisitCurationHistoryModel.visit_id == visit_id)
+            .order_by(VisitCurationHistoryModel.created_at.desc(), VisitCurationHistoryModel.id.desc())
+            .limit(50)
+        ).all()
+        result: list[VisitCurationHistoryEntry] = []
+        for entry in entries:
+            details = _json_object(entry.details_json)
+            if entry.action == "evidence_curation":
+                message = "Updated the primary evidence and supporting evidence."
+            elif entry.action == "split":
+                message = "Split into two Visits. Original Visit retained in history."
+            elif entry.action == "merge":
+                message = "Merged into a newer Visit. Original Visit retained in history."
+            elif entry.action == "merged_from":
+                message = "Merged from earlier Visits."
+            elif entry.action == "zone_reassigned":
+                prior_zone = session.get(ZoneModel, entry.prior_zone_id) if entry.prior_zone_id else None
+                destination = session.get(ZoneModel, details.get("zone_id")) if details.get("zone_id") else None
+                if prior_zone is not None and destination is not None:
+                    message = f"Moved from {prior_zone.name} to {destination.name}."
+                elif destination is not None:
+                    message = f"Moved to {destination.name}."
+                else:
+                    message = "Moved to another activity Zone."
+            else:
+                message = "Visit curation was updated."
+            result.append(
+                VisitCurationHistoryEntry(
+                    action=entry.action,
+                    message=message,
+                    created_at=_as_utc(entry.created_at),
+                )
+            )
+        return result
+
+    def visit_curation_history(self, visit_id: str) -> list[VisitCurationHistoryEntry]:
+        with self.session_factory() as session:
+            if session.get(VisitModel, visit_id) is None:
+                return []
+            return self._visit_curation_entries_from_session(session, visit_id)
+
+    def resulting_visits_for(self, visit_id: str) -> list[Visit]:
+        with self.session_factory() as session:
+            relationships = session.scalars(
+                select(VisitRelationshipModel)
+                .where(VisitRelationshipModel.source_visit_id == visit_id)
+                .order_by(VisitRelationshipModel.created_at, VisitRelationshipModel.result_visit_id)
+            ).all()
+            return [
+                _visit_from_model(visit)
+                for relation in relationships
+                if (visit := session.get(VisitModel, relation.result_visit_id)) is not None
             ]
+
+    def _record_visit_curation(
+        self,
+        session: Session,
+        *,
+        visit_id: str,
+        action: str,
+        created_at: datetime,
+        prior_zone_id: str | None = None,
+        result_visit_ids: list[str] | None = None,
+        details: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> VisitCurationHistoryModel:
+        history = VisitCurationHistoryModel(
+            id=f"visit-curation-{uuid.uuid4().hex}",
+            visit_id=visit_id,
+            action=action,
+            prior_zone_id=prior_zone_id,
+            result_visit_ids_json=json.dumps(result_visit_ids) if result_visit_ids else None,
+            details_json=json.dumps(details, sort_keys=True) if details else None,
+            idempotency_key=idempotency_key,
+            created_at=created_at,
+        )
+        session.add(history)
+        return history
+
+    def _curation_idempotency_entry(
+        self,
+        session: Session,
+        key: str,
+    ) -> VisitCurationHistoryModel | None:
+        return session.scalar(
+            select(VisitCurationHistoryModel).where(
+                VisitCurationHistoryModel.idempotency_key == key
+            )
+        )
+
+    def _visit_curation_state(self, session: Session, visit: VisitModel) -> str:
+        links = self._visit_evidence_link_models(session, visit.id)
+        link_state = ",".join(
+            f"{link.media_asset_id}:{_as_utc(link.captured_at).isoformat()}:"
+            f"{link.frame_sequence}:{link.sort_order}:{int(link.is_primary)}"
+            for link in links
+        )
+        results = ",".join(
+            relation.result_visit_id
+            for relation in session.scalars(
+                select(VisitRelationshipModel)
+                .where(VisitRelationshipModel.source_visit_id == visit.id)
+                .order_by(VisitRelationshipModel.result_visit_id)
+            ).all()
+        )
+        return f"{visit.zone_id or ''}|{int(visit.is_superseded)}|{link_state}|{results}"
+
+    def _require_active_visit(
+        self,
+        session: Session,
+        visit_id: str,
+    ) -> tuple[VisitModel, EventModel]:
+        visit = session.get(VisitModel, visit_id)
+        if visit is None:
+            raise ValueError("missing_visit")
+        if visit.is_superseded:
+            raise VisitCurationConflictError("visit_superseded")
+        event = session.get(EventModel, visit.event_id)
+        if event is None:
+            raise ValueError("missing_event")
+        return visit, event
+
+    def _require_visit_state(
+        self,
+        session: Session,
+        visit: VisitModel,
+        expected_state_token: str,
+    ) -> None:
+        if self._review_state_token(session, "visit", visit.id) != expected_state_token:
+            raise VisitCurationConflictError("stale_visit_curation")
+
+    def _sequence_preview(
+        self,
+        frames: list[VisitEvidenceFrame],
+    ) -> VisitCurationSequencePreview:
+        ordered = sorted(
+            frames,
+            key=lambda frame: (
+                frame.captured_at,
+                frame.frame_sequence if frame.frame_sequence is not None else -1,
+                frame.media_asset_id,
+            ),
+        )
+        return VisitCurationSequencePreview(
+            evidence_frames=ordered,
+            activity_started_at=ordered[0].captured_at if ordered else None,
+            activity_ended_at=ordered[-1].captured_at if ordered else None,
+            evidence_count=len(ordered),
+        )
+
+    def curate_visit_evidence(
+        self,
+        visit_id: str,
+        payload: VisitEvidenceCurationRequest,
+    ) -> VisitEvidenceCurationResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                existing = self._curation_idempotency_entry(session, payload.idempotency_key)
+                if existing is not None:
+                    if existing.action != "evidence_curation" or existing.visit_id != visit_id:
+                        raise VisitCurationConflictError("curation_idempotency_conflict")
+                    visit = session.get(VisitModel, visit_id)
+                    event = session.get(EventModel, visit.event_id) if visit else None
+                    if visit is None or event is None:
+                        raise ValueError("missing_visit")
+                    return VisitEvidenceCurationResponse(
+                        visit=_visit_from_model(visit),
+                        evidence_frames=self._visit_evidence_frames_from_visit(session, visit, event),
+                        review_state_token=self._review_state_token(session, "visit", visit.id),
+                        idempotent=True,
+                        message="Visit evidence was already saved.",
+                    )
+
+                visit, event = self._require_active_visit(session, visit_id)
+                self._require_visit_state(session, visit, payload.expected_state_token)
+                links = self._ensure_visit_evidence_links(session, visit=visit, event=event)
+                current_ids = {link.media_asset_id for link in links}
+                retained_ids = list(dict.fromkeys(payload.retained_media_asset_ids))
+                if (
+                    len(retained_ids) != len(payload.retained_media_asset_ids)
+                    or not retained_ids
+                    or len(retained_ids) > MAX_LIVE_VISIT_EVIDENCE_FRAMES
+                    or not set(retained_ids).issubset(current_ids)
+                    or payload.primary_media_asset_id not in retained_ids
+                ):
+                    raise ValueError("invalid_visit_evidence_selection")
+                for link in links:
+                    if link.media_asset_id not in retained_ids:
+                        # This unlinks review evidence only. The MediaAsset can
+                        # still be referenced by other Visits and retention rules.
+                        session.delete(link)
+                    else:
+                        link.is_primary = link.media_asset_id == payload.primary_media_asset_id
+                primary_asset = session.get(MediaAssetModel, payload.primary_media_asset_id)
+                if primary_asset is None or primary_asset.stream_id != event.stream_id:
+                    raise ValueError("media_stream_mismatch")
+                visit.representative_media_path = primary_asset.local_path
+                self._record_visit_curation(
+                    session,
+                    visit_id=visit.id,
+                    action="evidence_curation",
+                    created_at=datetime.now(UTC),
+                    details={
+                        "retained_media_asset_ids": retained_ids,
+                        "primary_media_asset_id": payload.primary_media_asset_id,
+                    },
+                    idempotency_key=payload.idempotency_key,
+                )
+                session.flush()
+                return VisitEvidenceCurationResponse(
+                    visit=_visit_from_model(visit),
+                    evidence_frames=self._visit_evidence_frames_from_visit(session, visit, event),
+                    review_state_token=self._review_state_token(session, "visit", visit.id),
+                    message="Visit evidence updated. The original media files were retained.",
+                )
+
+    def preview_visit_split(
+        self,
+        visit_id: str,
+        payload: VisitSplitPreviewRequest,
+    ) -> VisitSplitPreview:
+        with self.session_factory() as session:
+            visit, event = self._require_active_visit(session, visit_id)
+            self._require_visit_state(session, visit, payload.expected_state_token)
+            first, second = self._split_evidence_frames(
+                self._visit_evidence_frames_from_visit(session, visit, event),
+                payload.boundary_after_media_asset_id,
+            )
+            implication = (
+                "Both resulting Visits will need review; the original correction remains in history."
+                if visit.review_status == ReviewStatus.reviewed.value
+                else "Both resulting Visits will be available in Review Queue."
+            )
+            return VisitSplitPreview(
+                first=self._sequence_preview(first),
+                second=self._sequence_preview(second),
+                review_implication=implication,
+                state_token=self._review_state_token(session, "visit", visit.id),
+            )
+
+    def _split_evidence_frames(
+        self,
+        frames: list[VisitEvidenceFrame],
+        boundary_after_media_asset_id: str,
+    ) -> tuple[list[VisitEvidenceFrame], list[VisitEvidenceFrame]]:
+        boundary = next(
+            (index for index, frame in enumerate(frames) if frame.media_asset_id == boundary_after_media_asset_id),
+            None,
+        )
+        if boundary is None or boundary < 0 or boundary >= len(frames) - 1:
+            raise ValueError("invalid_split_boundary")
+        first = frames[: boundary + 1]
+        second = frames[boundary + 1 :]
+        if not first or not second:
+            raise ValueError("invalid_split_boundary")
+        return self._with_primary(first), self._with_primary(second)
+
+    def _with_primary(
+        self,
+        frames: list[VisitEvidenceFrame],
+        preferred_primary_id: str | None = None,
+    ) -> list[VisitEvidenceFrame]:
+        primary_id = preferred_primary_id if preferred_primary_id in {frame.media_asset_id for frame in frames} else next(
+            (frame.media_asset_id for frame in frames if frame.is_primary),
+            frames[0].media_asset_id,
+        )
+        return [frame.model_copy(update={"is_primary": frame.media_asset_id == primary_id}) for frame in frames]
+
+    def split_visit(self, visit_id: str, payload: VisitSplitRequest) -> VisitSplitResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                existing = self._curation_idempotency_entry(session, payload.idempotency_key)
+                if existing is not None:
+                    if existing.action != "split" or existing.visit_id != visit_id:
+                        raise VisitCurationConflictError("curation_idempotency_conflict")
+                    source = session.get(VisitModel, visit_id)
+                    result_ids = _json_string_list(existing.result_visit_ids_json)
+                    results = [session.get(VisitModel, result_id) for result_id in result_ids]
+                    if source is None or len(results) != 2 or any(result is None for result in results):
+                        raise VisitCurationConflictError("curation_idempotency_incomplete")
+                    return VisitSplitResponse(
+                        source_visit=_visit_from_model(source),
+                        resulting_visits=[_visit_from_model(result) for result in results if result is not None],
+                        review_state_token=self._review_state_token(session, "visit", results[0].id),
+                        idempotent=True,
+                        message="This Visit was already split. The original remains in history.",
+                    )
+                source, event = self._require_active_visit(session, visit_id)
+                self._require_visit_state(session, source, payload.expected_state_token)
+                frames = self._visit_evidence_frames_from_visit(session, source, event)
+                first_frames, second_frames = self._split_evidence_frames(
+                    frames,
+                    payload.boundary_after_media_asset_id,
+                )
+                if len(first_frames) > MAX_LIVE_VISIT_EVIDENCE_FRAMES or len(second_frames) > MAX_LIVE_VISIT_EVIDENCE_FRAMES:
+                    raise ValueError("visit_evidence_limit")
+                self._ensure_visit_evidence_links(session, visit=source, event=event)
+                created_at = datetime.now(UTC)
+                results: list[VisitModel] = []
+                for frames_for_result in (first_frames, second_frames):
+                    primary = next(frame for frame in frames_for_result if frame.is_primary)
+                    primary_asset = session.get(MediaAssetModel, primary.media_asset_id)
+                    if primary_asset is None or primary_asset.stream_id != event.stream_id:
+                        raise ValueError("media_stream_mismatch")
+                    result = VisitModel(
+                        id=self._next_id(session, VisitModel, "visit-curated"),
+                        event_id=event.id,
+                        subject_label=source.subject_label,
+                        species_guess=source.species_guess,
+                        confidence=source.confidence,
+                        reviewed_label=None,
+                        review_status=ReviewStatus.needs_review.value,
+                        representative_media_path=primary_asset.local_path,
+                        zone_id=source.zone_id or event.primary_zone_id,
+                        is_superseded=False,
+                    )
+                    session.add(result)
+                    session.flush()
+                    for order, frame in enumerate(frames_for_result):
+                        session.add(
+                            VisitEvidenceLinkModel(
+                                id=f"visit-evidence-{uuid.uuid4().hex}",
+                                visit_id=result.id,
+                                media_asset_id=frame.media_asset_id,
+                                captured_at=frame.captured_at,
+                                frame_sequence=frame.frame_sequence,
+                                sort_order=order,
+                                is_primary=frame.is_primary,
+                                created_at=created_at,
+                            )
+                        )
+                    session.add(
+                        VisitRelationshipModel(
+                            id=f"visit-relationship-{uuid.uuid4().hex}",
+                            source_visit_id=source.id,
+                            result_visit_id=result.id,
+                            relationship_type="split",
+                            created_at=created_at,
+                        )
+                    )
+                    results.append(result)
+                source.is_superseded = True
+                event.review_status = ReviewStatus.needs_review.value
+                self._record_visit_curation(
+                    session,
+                    visit_id=source.id,
+                    action="split",
+                    created_at=created_at,
+                    result_visit_ids=[result.id for result in results],
+                    idempotency_key=payload.idempotency_key,
+                )
+                for result in results:
+                    self._record_visit_curation(
+                        session,
+                        visit_id=result.id,
+                        action="split_from",
+                        created_at=created_at,
+                        details={"source_visit_id": source.id},
+                    )
+                session.flush()
+                return VisitSplitResponse(
+                    source_visit=_visit_from_model(source),
+                    resulting_visits=[_visit_from_model(result) for result in results],
+                    review_state_token=self._review_state_token(session, "visit", results[0].id),
+                    message="Visit split into two new Visits. Review each result before it contributes truth.",
+                )
+
+    def _visit_time_bounds(
+        self,
+        session: Session,
+        visit: VisitModel,
+        event: EventModel,
+    ) -> tuple[datetime, datetime]:
+        frames = self._visit_evidence_frames_from_visit(session, visit, event)
+        start, end = self._visit_activity_window_for_frames(
+            event,
+            self._motion_evidence_model_for_visit(session, visit.id),
+            frames,
+        )
+        return start, end or start
+
+    def _visit_merge_gap_seconds(
+        self,
+        session: Session,
+        left: VisitModel,
+        left_event: EventModel,
+        right: VisitModel,
+        right_event: EventModel,
+    ) -> float:
+        left_start, left_end = self._visit_time_bounds(session, left, left_event)
+        right_start, right_end = self._visit_time_bounds(session, right, right_event)
+        if right_start < left_start:
+            left_start, left_end, right_start, right_end = right_start, right_end, left_start, left_end
+        return max(0.0, (right_start - left_end).total_seconds())
+
+    def _visit_merge_source_models(
+        self,
+        session: Session,
+        visit_id: str,
+        candidate_ids: list[str],
+    ) -> list[tuple[VisitModel, EventModel]]:
+        if len(candidate_ids) != len(set(candidate_ids)) or visit_id in candidate_ids:
+            raise ValueError("invalid_merge_candidates")
+        if not candidate_ids or len(candidate_ids) >= MAX_VISIT_MERGE_CANDIDATES:
+            raise ValueError("invalid_merge_candidates")
+        source, source_event = self._require_active_visit(session, visit_id)
+        source_zone_id = source.zone_id or source_event.primary_zone_id
+        if source_zone_id is None:
+            raise ValueError("merge_requires_zone")
+        source_stream = session.get(StreamModel, source_event.stream_id)
+        if source_stream is None:
+            raise ValueError("missing_stream")
+        models: list[tuple[VisitModel, EventModel]] = [(source, source_event)]
+        for candidate_id in candidate_ids:
+            candidate, candidate_event = self._require_active_visit(session, candidate_id)
+            candidate_zone_id = candidate.zone_id or candidate_event.primary_zone_id
+            candidate_stream = session.get(StreamModel, candidate_event.stream_id)
+            if (
+                candidate_event.stream_id != source_event.stream_id
+                or candidate_zone_id != source_zone_id
+                or candidate_stream is None
+                or candidate_stream.source_id != source_stream.source_id
+            ):
+                raise ValueError("merge_stream_or_zone_mismatch")
+            models.append((candidate, candidate_event))
+        models.sort(
+            key=lambda item: (*self._visit_time_bounds(session, item[0], item[1]), item[0].id)
+        )
+        for (left, left_event), (right, right_event) in zip(models, models[1:]):
+            gap = self._visit_merge_gap_seconds(session, left, left_event, right, right_event)
+            if gap > MAX_VISIT_MERGE_GAP.total_seconds():
+                raise ValueError("merge_time_gap_exceeded")
+        return models
+
+    def _merge_state_token(
+        self,
+        session: Session,
+        models: list[tuple[VisitModel, EventModel]],
+    ) -> str:
+        state = "|".join(
+            f"{visit.id}:{self._review_state_token(session, 'visit', visit.id)}"
+            for visit, _event in models
+        )
+        return hashlib.sha256(state.encode("utf-8")).hexdigest()[:24]
+
+    def _merged_evidence_frames(
+        self,
+        session: Session,
+        models: list[tuple[VisitModel, EventModel]],
+        *,
+        preferred_primary_visit_id: str,
+    ) -> list[VisitEvidenceFrame]:
+        frames_by_media_id: dict[str, VisitEvidenceFrame] = {}
+        preferred_primary_id: str | None = None
+        for visit, event in models:
+            for frame in self._visit_evidence_frames_from_visit(session, visit, event):
+                existing = frames_by_media_id.get(frame.media_asset_id)
+                if existing is None or (
+                    frame.captured_at,
+                    frame.frame_sequence if frame.frame_sequence is not None else -1,
+                ) < (
+                    existing.captured_at,
+                    existing.frame_sequence if existing.frame_sequence is not None else -1,
+                ):
+                    frames_by_media_id[frame.media_asset_id] = frame
+                if visit.id == preferred_primary_visit_id and frame.is_primary:
+                    preferred_primary_id = frame.media_asset_id
+        frames = sorted(
+            frames_by_media_id.values(),
+            key=lambda frame: (
+                frame.captured_at,
+                frame.frame_sequence if frame.frame_sequence is not None else -1,
+                frame.media_asset_id,
+            ),
+        )
+        if len(frames) > MAX_LIVE_VISIT_EVIDENCE_FRAMES:
+            raise ValueError("merge_evidence_limit")
+        if not frames:
+            raise ValueError("merge_requires_evidence")
+        return self._with_primary(frames, preferred_primary_id)
+
+    def _merge_reviewed_label(
+        self,
+        session: Session,
+        models: list[tuple[VisitModel, EventModel]],
+    ) -> str | None:
+        labels: list[str] = []
+        for visit, event in models:
+            if visit.review_status != ReviewStatus.reviewed.value:
+                return None
+            label = self._visit_reviewed_label(session, visit, event)
+            if label is None or self._visit_review_outcome(
+                session,
+                review_status=ReviewStatus.reviewed,
+                reviewed_label=label,
+            ) != VisitReviewOutcome.confirmed_bird:
+                return None
+            labels.append(self._normalize_label_from_session(session, label))
+        return labels[0] if labels and len(set(labels)) == 1 else None
+
+    def merge_candidates_for_visit(self, visit_id: str) -> VisitMergeCandidatesResponse:
+        with self.session_factory() as session:
+            source, source_event = self._require_active_visit(session, visit_id)
+            source_zone_id = source.zone_id or source_event.primary_zone_id
+            if source_zone_id is None:
+                return VisitMergeCandidatesResponse(
+                    candidates=[],
+                    maximum_gap_seconds=int(MAX_VISIT_MERGE_GAP.total_seconds()),
+                )
+            candidates: list[VisitMergeCandidate] = []
+            rows = session.execute(
+                select(VisitModel, EventModel)
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .where(
+                    VisitModel.is_superseded.is_(False),
+                    VisitModel.id != source.id,
+                    EventModel.stream_id == source_event.stream_id,
+                    func.coalesce(VisitModel.zone_id, EventModel.primary_zone_id) == source_zone_id,
+                )
+                .order_by(EventModel.started_at.desc(), VisitModel.id)
+                .limit(MAX_VISIT_MERGE_CANDIDATES * 5)
+            ).all()
+            for candidate, candidate_event in rows:
+                gap = self._visit_merge_gap_seconds(
+                    session,
+                    source,
+                    source_event,
+                    candidate,
+                    candidate_event,
+                )
+                if gap <= MAX_VISIT_MERGE_GAP.total_seconds():
+                    candidates.append(
+                        VisitMergeCandidate(
+                            visit=self._stream_visit_summary_from_models(
+                                session,
+                                candidate,
+                                candidate_event,
+                            ),
+                            gap_seconds=gap,
+                        )
+                    )
+            candidates.sort(key=lambda candidate: (candidate.gap_seconds, candidate.visit.id))
+            return VisitMergeCandidatesResponse(
+                candidates=candidates[:MAX_VISIT_MERGE_CANDIDATES],
+                maximum_gap_seconds=int(MAX_VISIT_MERGE_GAP.total_seconds()),
+            )
+
+    def preview_visit_merge(
+        self,
+        visit_id: str,
+        payload: VisitMergePreviewRequest,
+    ) -> VisitMergePreview:
+        with self.session_factory() as session:
+            source, _event = self._require_active_visit(session, visit_id)
+            self._require_visit_state(session, source, payload.expected_state_token)
+            models = self._visit_merge_source_models(session, visit_id, payload.candidate_visit_ids)
+            merged_frames = self._merged_evidence_frames(
+                session,
+                models,
+                preferred_primary_visit_id=source.id,
+            )
+            safe_label = self._merge_reviewed_label(session, models)
+            implication = (
+                f"Matching reviewed bird correction {safe_label} can be retained."
+                if safe_label is not None
+                else "The merged Visit will need review; source corrections remain in history."
+            )
+            return VisitMergePreview(
+                source_visits=[_visit_from_model(visit) for visit, _event in models],
+                combined=self._sequence_preview(merged_frames),
+                review_implication=implication,
+                state_token=self._merge_state_token(session, models),
+            )
+
+    def merge_visits(self, visit_id: str, payload: VisitMergeRequest) -> VisitMergeResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                existing = self._curation_idempotency_entry(session, payload.idempotency_key)
+                if existing is not None:
+                    if existing.action != "merge" or existing.visit_id != visit_id:
+                        raise VisitCurationConflictError("curation_idempotency_conflict")
+                    result_ids = _json_string_list(existing.result_visit_ids_json)
+                    result = session.get(VisitModel, result_ids[0]) if len(result_ids) == 1 else None
+                    source_ids = _json_object(existing.details_json).get("source_visit_ids", [])
+                    sources = [session.get(VisitModel, source_id) for source_id in source_ids]
+                    if result is None or any(source is None for source in sources):
+                        raise VisitCurationConflictError("curation_idempotency_incomplete")
+                    return VisitMergeResponse(
+                        visit=_visit_from_model(result),
+                        source_visits=[_visit_from_model(source) for source in sources if source is not None],
+                        review_state_token=self._review_state_token(session, "visit", result.id),
+                        idempotent=True,
+                        message="These Visits were already merged. Earlier Visits remain in history.",
+                    )
+                source, _source_event = self._require_active_visit(session, visit_id)
+                models = self._visit_merge_source_models(session, visit_id, payload.candidate_visit_ids)
+                if self._merge_state_token(session, models) != payload.expected_state_token:
+                    raise VisitCurationConflictError("stale_merge_preview")
+                merged_frames = self._merged_evidence_frames(
+                    session,
+                    models,
+                    preferred_primary_visit_id=source.id,
+                )
+                first_start, _ = self._visit_time_bounds(session, models[0][0], models[0][1])
+                _, last_end = self._visit_time_bounds(session, models[-1][0], models[-1][1])
+                source_event = models[0][1]
+                zone_id = models[0][0].zone_id or source_event.primary_zone_id
+                safe_label = self._merge_reviewed_label(session, models)
+                created_at = datetime.now(UTC)
+                new_event = EventModel(
+                    id=self._next_id(session, EventModel, "event-curated"),
+                    stream_id=source_event.stream_id,
+                    title="Merged outdoor activity",
+                    event_type=source_event.event_type,
+                    started_at=first_start,
+                    ended_at=last_end,
+                    primary_zone_id=zone_id,
+                    review_status=(
+                        ReviewStatus.reviewed.value
+                        if safe_label is not None
+                        else ReviewStatus.needs_review.value
+                    ),
+                )
+                primary = next(frame for frame in merged_frames if frame.is_primary)
+                primary_asset = session.get(MediaAssetModel, primary.media_asset_id)
+                if primary_asset is None or primary_asset.stream_id != source_event.stream_id:
+                    raise ValueError("media_stream_mismatch")
+                merged_visit = VisitModel(
+                    id=self._next_id(session, VisitModel, "visit-curated"),
+                    event_id=new_event.id,
+                    subject_label=source.subject_label,
+                    species_guess=source.species_guess,
+                    confidence=source.confidence,
+                    reviewed_label=safe_label,
+                    review_status=(
+                        ReviewStatus.reviewed.value
+                        if safe_label is not None
+                        else ReviewStatus.needs_review.value
+                    ),
+                    representative_media_path=primary_asset.local_path,
+                    zone_id=zone_id,
+                    is_superseded=False,
+                )
+                session.add_all([new_event, merged_visit])
+                session.flush()
+                for order, frame in enumerate(merged_frames):
+                    session.add(
+                        VisitEvidenceLinkModel(
+                            id=f"visit-evidence-{uuid.uuid4().hex}",
+                            visit_id=merged_visit.id,
+                            media_asset_id=frame.media_asset_id,
+                            captured_at=frame.captured_at,
+                            frame_sequence=frame.frame_sequence,
+                            sort_order=order,
+                            is_primary=frame.is_primary,
+                            created_at=created_at,
+                        )
+                    )
+                if safe_label is not None:
+                    session.add(
+                        ReviewLabelModel(
+                            id=self._next_id(session, ReviewLabelModel, "review-label"),
+                            target_type="visit",
+                            target_id=merged_visit.id,
+                            label=safe_label,
+                            notes="Retained after merging Visits with the same reviewed bird correction.",
+                            created_at=created_at,
+                            review_action="merge_inherited",
+                        )
+                    )
+                source_ids = [visit.id for visit, _event in models]
+                for index, (old_visit, _old_event) in enumerate(models):
+                    old_visit.is_superseded = True
+                    session.add(
+                        VisitRelationshipModel(
+                            id=f"visit-relationship-{uuid.uuid4().hex}",
+                            source_visit_id=old_visit.id,
+                            result_visit_id=merged_visit.id,
+                            relationship_type="merge",
+                            created_at=created_at,
+                        )
+                    )
+                    self._record_visit_curation(
+                        session,
+                        visit_id=old_visit.id,
+                        action="merge",
+                        created_at=created_at,
+                        result_visit_ids=[merged_visit.id],
+                        details={"source_visit_ids": source_ids},
+                        idempotency_key=payload.idempotency_key if index == 0 else None,
+                    )
+                self._record_visit_curation(
+                    session,
+                    visit_id=merged_visit.id,
+                    action="merged_from",
+                    created_at=created_at,
+                    details={"source_visit_ids": source_ids},
+                )
+                session.flush()
+                return VisitMergeResponse(
+                    visit=_visit_from_model(merged_visit),
+                    source_visits=[_visit_from_model(old_visit) for old_visit, _event in models],
+                    review_state_token=self._review_state_token(session, "visit", merged_visit.id),
+                    message=(
+                        "Visits merged and the matching reviewed bird correction was retained."
+                        if safe_label is not None
+                        else "Visits merged. Review the merged Visit before it contributes truth."
+                    ),
+                )
+
+    def reassign_visit_zone(
+        self,
+        visit_id: str,
+        payload: VisitZoneReassignmentRequest,
+    ) -> VisitZoneReassignmentResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                existing = self._curation_idempotency_entry(session, payload.idempotency_key)
+                if existing is not None:
+                    if existing.action != "zone_reassigned" or existing.visit_id != visit_id:
+                        raise VisitCurationConflictError("curation_idempotency_conflict")
+                    visit = session.get(VisitModel, visit_id)
+                    if visit is None:
+                        raise ValueError("missing_visit")
+                    return VisitZoneReassignmentResponse(
+                        visit=_visit_from_model(visit),
+                        review_state_token=self._review_state_token(session, "visit", visit.id),
+                        idempotent=True,
+                        message="Visit Zone was already updated.",
+                    )
+                visit, event = self._require_active_visit(session, visit_id)
+                self._require_visit_state(session, visit, payload.expected_state_token)
+                destination = session.get(ZoneModel, payload.zone_id)
+                if (
+                    destination is None
+                    or destination.stream_id != event.stream_id
+                    or not destination.is_active
+                    or destination.zone_type in {ZoneType.privacy.value, ZoneType.ignore.value}
+                ):
+                    raise ValueError("invalid_visit_zone")
+                prior_zone_id = visit.zone_id or event.primary_zone_id
+                visit.zone_id = destination.id
+                self._record_visit_curation(
+                    session,
+                    visit_id=visit.id,
+                    action="zone_reassigned",
+                    prior_zone_id=prior_zone_id,
+                    created_at=datetime.now(UTC),
+                    details={"zone_id": destination.id},
+                    idempotency_key=payload.idempotency_key,
+                )
+                session.flush()
+                return VisitZoneReassignmentResponse(
+                    visit=_visit_from_model(visit),
+                    review_state_token=self._review_state_token(session, "visit", visit.id),
+                    message=f"Visit moved to {destination.name}. Media and correction history were preserved.",
+                )
 
     def _visit_evidence_frames_from_model(
         self,
@@ -6954,6 +7887,17 @@ class ProductRepository:
             return [
                 _review_label_from_model(label)
                 for label in self._effective_review_label_models(labels)
+                if label.target_type != "visit"
+                or (
+                    (visit := session.get(VisitModel, label.target_id)) is not None
+                    and not visit.is_superseded
+                )
+                if label.target_type != "event"
+                or not session.scalar(
+                    select(func.count(VisitModel.id)).where(
+                        VisitModel.event_id == label.target_id
+                    )
+                )
             ]
 
     def review_labels_for_event(self, event_id: str) -> list[ReviewLabel]:
@@ -7029,6 +7973,8 @@ class ProductRepository:
                 visit = session.get(VisitModel, visit_id)
                 if visit is None:
                     raise ValueError("missing_visit")
+                if visit.is_superseded:
+                    raise ReviewRevisionConflictError("review_revision_unavailable")
                 event = session.get(EventModel, visit.event_id)
                 if event is None:
                     raise ValueError("missing_event")
@@ -7082,6 +8028,8 @@ class ProductRepository:
                 visit = session.get(VisitModel, visit_id)
                 if visit is None:
                     raise ValueError("missing_visit")
+                if visit.is_superseded:
+                    raise ReviewRevisionConflictError("review_reopen_unavailable")
                 event = session.get(EventModel, visit.event_id)
                 if event is None:
                     raise ValueError("missing_event")
@@ -9878,7 +10826,12 @@ class ProductRepository:
     def _visit_models_for_event(self, session: Session, event_id: str) -> list[VisitModel]:
         return list(
             session.scalars(
-                select(VisitModel).where(VisitModel.event_id == event_id).order_by(VisitModel.id)
+                select(VisitModel)
+                .where(
+                    VisitModel.event_id == event_id,
+                    VisitModel.is_superseded.is_(False),
+                )
+                .order_by(VisitModel.id)
             ).all()
         )
 
@@ -10025,6 +10978,7 @@ class ProductRepository:
                 visit.review_status,
                 visit.reviewed_label,
                 _latest_review_label_model_id(labels),
+                self._visit_curation_state(session, visit),
             )
         if target_type == "event":
             event = session.get(EventModel, target_id)
@@ -10152,6 +11106,8 @@ class ProductRepository:
             visit_model = session.get(VisitModel, payload.target_id)
             if visit_model is None:
                 raise ValueError("missing_visit")
+            if visit_model.is_superseded:
+                raise ValueError("visit_superseded")
 
             event_model = session.get(EventModel, visit_model.event_id)
             if fast_review_session_id is not None:
@@ -10200,6 +11156,8 @@ class ProductRepository:
             visit_model = session.get(VisitModel, target_id)
             if visit_model is None:
                 return "Visit was not found."
+            if visit_model.is_superseded:
+                return "Visit was superseded by curation and is retained only in history."
             if visit_model.review_status != ReviewStatus.needs_review.value:
                 return "Visit is already reviewed or not eligible for Review Queue correction."
             if session.get(EventModel, visit_model.event_id) is None:
@@ -10237,6 +11195,9 @@ class ProductRepository:
         )
 
     def _visit_is_dataset_ready(self, session: Session, visit: Visit) -> bool:
+        visit_model = session.get(VisitModel, visit.id)
+        if visit_model is None or visit_model.is_superseded:
+            return False
         return visit.review_status == ReviewStatus.reviewed and (
             visit.reviewed_label is not None
             or bool(self._review_label_models_for_visit(session, visit.id))
@@ -10247,6 +11208,11 @@ class ProductRepository:
         visits = self._visits_for_event(session, event.id)
         if visits:
             return all(self._visit_is_dataset_ready(session, visit) for visit in visits)
+
+        if session.scalar(
+            select(func.count(VisitModel.id)).where(VisitModel.event_id == event.id)
+        ):
+            return False
 
         return event.review_status == ReviewStatus.reviewed and bool(
             self._review_label_models_for_event(session, event.id)
@@ -10312,6 +11278,8 @@ class ProductRepository:
         if proposal_model.visit_id is not None:
             visit_model = session.get(VisitModel, proposal_model.visit_id)
             if visit_model is not None:
+                if visit_model.is_superseded:
+                    return None, ReviewStatus.needs_review
                 visit_status = ReviewStatus(visit_model.review_status)
                 visit_label = visit_model.reviewed_label or self._latest_label(
                     self._review_labels_for_visit(session, visit_model.id)
@@ -10375,7 +11343,7 @@ class ProductRepository:
         export: DatasetExport,
     ) -> DatasetExportRecord:
         zone_id, zone_name, zone_type = (
-            self._zone_context(session, event.primary_zone_id)
+            self._zone_context(session, visit.zone_id or event.primary_zone_id)
             if export.include_zone_context
             else (None, None, None)
         )
@@ -10458,6 +11426,7 @@ class ProductRepository:
         skipped_reasons: Counter[str] = Counter()
         visits = self._visits_for_eventless_query(session)
         event_ids_with_visits = {visit.event_id for visit in visits}
+        event_ids_with_any_visits = set(session.scalars(select(VisitModel.event_id)).all())
 
         for visit in visits:
             event_model = session.get(EventModel, visit.event_id)
@@ -10479,9 +11448,10 @@ class ProductRepository:
 
             records.append(self._visit_export_record(session, visit, event, stream, export))
 
+        event_ids_with_any_visits = set(session.scalars(select(VisitModel.event_id)).all())
         event_models = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
         for event_model in event_models:
-            if event_model.id in event_ids_with_visits:
+            if event_model.id in event_ids_with_visits or event_model.id in event_ids_with_any_visits:
                 continue
 
             stream_model = session.get(StreamModel, event_model.stream_id)
@@ -10530,7 +11500,10 @@ class ProductRepository:
                 continue
 
             event = self._event_from_model(session, event_model)
-            zone_id, zone_name, zone_type = self._zone_context(session, event.primary_zone_id)
+            zone_id, zone_name, zone_type = self._zone_context(
+                session,
+                visit.zone_id or event.primary_zone_id,
+            )
             suggestion_model = session.scalars(
                 select(SpeciesSuggestionModel)
                 .where(
@@ -10562,10 +11535,13 @@ class ProductRepository:
                 visit_id=visit.id,
                 media_asset_id=media_asset.id if media_asset else None,
             )
-            evidence_frames = (
-                self._visit_evidence_frames_from_model(session, evidence)
-                if evidence is not None
-                else []
+            visit_model = session.get(VisitModel, visit.id)
+            if visit_model is None:
+                continue
+            evidence_frames = self._visit_evidence_frames_from_visit(
+                session,
+                visit_model,
+                event_model,
             )
             activity_context = self._review_queue_activity_context(evidence)
             best_media_asset_id = (
@@ -10627,10 +11603,17 @@ class ProductRepository:
             recency_by_item_id[queue_item.id] = _review_queue_timestamp(event.started_at)
 
         visit_event_ids = {item.event_id for item in queue if item.event_id is not None}
+        event_ids_with_historical_visits = set(
+            session.scalars(select(VisitModel.event_id)).all()
+        )
         event_models = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
         for event_model in event_models:
             event = self._event_from_model(session, event_model)
-            if event.review_status != ReviewStatus.needs_review or event.id in visit_event_ids:
+            if (
+                event.review_status != ReviewStatus.needs_review
+                or event.id in visit_event_ids
+                or event.id in event_ids_with_historical_visits
+            ):
                 continue
             zone_id, zone_name, zone_type = self._zone_context(session, event.primary_zone_id)
             stream_name, source_id, source_name = self._review_queue_stream_context(
@@ -10943,7 +11926,7 @@ class ProductRepository:
 
         event_models = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
         for event_model in event_models:
-            if event_model.id in event_ids_with_visits:
+            if event_model.id in event_ids_with_visits or event_model.id in event_ids_with_any_visits:
                 continue
             if session.get(StreamModel, event_model.stream_id) is None:
                 continue
@@ -11090,6 +12073,7 @@ class ProductRepository:
 
         visits = self._visits_for_eventless_query(session)
         event_ids_with_visits = {visit.event_id for visit in visits}
+        event_ids_with_any_visits = set(session.scalars(select(VisitModel.event_id)).all())
 
         for visit in visits:
             event_model = session.get(EventModel, visit.event_id)
@@ -11113,7 +12097,7 @@ class ProductRepository:
 
         event_models = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
         for event_model in event_models:
-            if event_model.id in event_ids_with_visits:
+            if event_model.id in event_ids_with_visits or event_model.id in event_ids_with_any_visits:
                 continue
             if session.get(StreamModel, event_model.stream_id) is None:
                 continue
@@ -12099,9 +13083,14 @@ class ProductRepository:
                 writer.writerow({field: row.get(field) for field in fieldnames})
 
     def _analytics_summary(self, session: Session) -> AnalyticsSummary:
+        event_ids_with_any_visits = set(session.scalars(select(VisitModel.event_id)).all())
+        active_event_ids = {
+            visit.event_id for visit in self._visits_for_eventless_query(session)
+        }
         events = [
             self._event_from_model(session, event)
             for event in session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
+            if event.id not in event_ids_with_any_visits or event.id in active_event_ids
         ]
         visits = self._visits_for_eventless_query(session)
         review_labels = self.list_review_labels_from_session(session)
@@ -12122,7 +13111,10 @@ class ProductRepository:
         for label in review_labels:
             if label.target_type == "visit":
                 continue
-            if label.target_type == "event" and label.target_id in visit_event_ids:
+            if label.target_type == "event" and (
+                label.target_id in visit_event_ids
+                or label.target_id in event_ids_with_any_visits
+            ):
                 continue
             species_counts[self._normalize_label_from_session(session, label.label)] += 1
 
@@ -12140,8 +13132,14 @@ class ProductRepository:
                 species_label_ids.append(label)
 
         zone_activity_counts: Counter[str] = Counter()
+        events_by_id = {event.id: event for event in events}
+        for visit in visits:
+            event = events_by_id.get(visit.event_id)
+            zone_id = visit.zone_id or (event.primary_zone_id if event is not None else None)
+            if zone_id is not None:
+                zone_activity_counts[zone_id] += 1
         for event in events:
-            if event.primary_zone_id is not None:
+            if event.id not in visit_event_ids and event.primary_zone_id is not None:
                 zone_activity_counts[event.primary_zone_id] += 1
 
         return AnalyticsSummary(
@@ -12162,10 +13160,27 @@ class ProductRepository:
         return [
             _review_label_from_model(label)
             for label in self._effective_review_label_models(list(labels))
+            if label.target_type != "visit"
+            or (
+                (visit := session.get(VisitModel, label.target_id)) is not None
+                and not visit.is_superseded
+            )
+            if label.target_type != "event"
+            or not session.scalar(
+                select(func.count(VisitModel.id)).where(
+                    VisitModel.event_id == label.target_id
+                )
+            )
         ]
 
     def _visits_for_eventless_query(self, session: Session) -> list[Visit]:
-        visits = session.scalars(select(VisitModel).order_by(VisitModel.id)).all()
+        # Every active product surface shares this resolver so split and merge
+        # provenance remains auditable without becoming duplicate observation truth.
+        visits = session.scalars(
+            select(VisitModel)
+            .where(VisitModel.is_superseded.is_(False))
+            .order_by(VisitModel.id)
+        ).all()
         return [_visit_from_model(visit) for visit in visits]
 
     def _next_id(self, session: Session, model: type, prefix: str) -> str:
@@ -13967,6 +14982,8 @@ def _visit_from_model(visit: VisitModel) -> Visit:
         reviewed_label=visit.reviewed_label,
         review_status=ReviewStatus(visit.review_status),
         representative_media_path=visit.representative_media_path,
+        zone_id=visit.zone_id,
+        is_superseded=visit.is_superseded,
     )
 
 
@@ -14070,11 +15087,35 @@ def _review_state_token_value(
     review_status: str,
     reviewed_label: str | None,
     latest_review_label_id: str,
+    curation_state: str = "",
 ) -> str:
     state = "|".join(
-        (target_type, target_id, review_status, reviewed_label or "", latest_review_label_id)
+        (
+            target_type,
+            target_id,
+            review_status,
+            reviewed_label or "",
+            latest_review_label_id,
+            curation_state,
+        )
     )
     return hashlib.sha256(state.encode("utf-8")).hexdigest()[:24]
+
+
+def _json_object(value: str | None) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_string_list(value: str | None) -> list[str]:
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [item for item in parsed if isinstance(item, str)] if isinstance(parsed, list) else []
 
 
 def _empty_review_focus_crop_context(warnings: list[str]) -> _ReviewFocusCropContext:

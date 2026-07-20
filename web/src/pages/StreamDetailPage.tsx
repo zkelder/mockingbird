@@ -4154,6 +4154,13 @@ export function StreamDetailPage({
                         Open Visit detail
                       </button>
                     )}
+                    <button
+                      className="text-action"
+                      onClick={() => onOpenVisit(visit.id)}
+                      type="button"
+                    >
+                      Merge nearby
+                    </button>
                   </div>
                 </div>
                 {isSelected ? (

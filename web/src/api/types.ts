@@ -1008,6 +1008,8 @@ export interface Visit {
   reviewed_label?: string | null;
   review_status: ReviewStatus;
   representative_media_path?: string | null;
+  zone_id?: string | null;
+  is_superseded: boolean;
 }
 
 export interface MediaAsset {
@@ -2241,6 +2243,105 @@ export interface VisitReviewHistory {
   entries: VisitReviewHistoryEntry[];
 }
 
+export interface VisitCurationHistoryEntry {
+  action: string;
+  message: string;
+  created_at: string;
+}
+
+export interface VisitCurationSequencePreview {
+  evidence_frames: VisitEvidenceFrame[];
+  activity_started_at?: string | null;
+  activity_ended_at?: string | null;
+  evidence_count: number;
+}
+
+export interface VisitEvidenceCurationRequest {
+  retained_media_asset_ids: string[];
+  primary_media_asset_id: string;
+  expected_state_token: string;
+  idempotency_key: string;
+}
+
+export interface VisitEvidenceCurationResponse {
+  visit: Visit;
+  evidence_frames: VisitEvidenceFrame[];
+  review_state_token: string;
+  idempotent: boolean;
+  message: string;
+}
+
+export interface VisitSplitPreviewRequest {
+  boundary_after_media_asset_id: string;
+  expected_state_token: string;
+}
+
+export interface VisitSplitPreview {
+  first: VisitCurationSequencePreview;
+  second: VisitCurationSequencePreview;
+  review_implication: string;
+  state_token: string;
+}
+
+export interface VisitSplitRequest extends VisitSplitPreviewRequest {
+  idempotency_key: string;
+}
+
+export interface VisitSplitResponse {
+  source_visit: Visit;
+  resulting_visits: Visit[];
+  review_state_token: string;
+  idempotent: boolean;
+  message: string;
+}
+
+export interface VisitMergeCandidate {
+  visit: StreamVisitSummary;
+  gap_seconds: number;
+}
+
+export interface VisitMergeCandidatesResponse {
+  candidates: VisitMergeCandidate[];
+  maximum_gap_seconds: number;
+}
+
+export interface VisitMergePreviewRequest {
+  candidate_visit_ids: string[];
+  expected_state_token: string;
+}
+
+export interface VisitMergePreview {
+  source_visits: Visit[];
+  combined: VisitCurationSequencePreview;
+  review_implication: string;
+  state_token: string;
+}
+
+export interface VisitMergeRequest extends VisitMergePreviewRequest {
+  idempotency_key: string;
+}
+
+export interface VisitMergeResponse {
+  visit: Visit;
+  source_visits: Visit[];
+  review_state_token: string;
+  idempotent: boolean;
+  message: string;
+}
+
+export interface VisitZoneReassignmentRequest {
+  zone_id: string;
+  expected_state_token: string;
+  idempotency_key: string;
+}
+
+export interface VisitZoneReassignmentResponse {
+  visit: Visit;
+  review_state_token: string;
+  idempotent: boolean;
+  message: string;
+}
+
 export type FastReviewNavigationDirection = "next" | "previous";
 
 export interface FastReviewQueueTarget {
@@ -2370,6 +2471,9 @@ export interface VisitDetail {
   detection_runs: DetectionRun[];
   review_labels: ReviewLabel[];
   correction_history: VisitReviewHistoryEntry[];
+  curation_history: VisitCurationHistoryEntry[];
+  resulting_visits: Visit[];
+  eligible_zones: Zone[];
   review_state_token: string;
   dataset_ready: boolean;
   review_summary: string;

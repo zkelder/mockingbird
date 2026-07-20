@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 7
+CURRENT_DATABASE_SCHEMA_VERSION = 8
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -285,6 +285,27 @@ def _migrate_to_review_label_revisions(connection: Connection) -> None:
     )
 
 
+def _migrate_to_visit_curation(connection: Connection) -> None:
+    """Add durable Visit curation links without changing historical media or truth."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Visit curation migration requires local SQLite storage."
+        )
+    connection.exec_driver_sql("ALTER TABLE visits ADD COLUMN zone_id VARCHAR")
+    connection.exec_driver_sql(
+        "ALTER TABLE visits ADD COLUMN is_superseded BOOLEAN NOT NULL DEFAULT 0"
+    )
+    connection.exec_driver_sql(
+        "UPDATE visits SET zone_id = ("
+        "SELECT primary_zone_id FROM events WHERE events.id = visits.event_id"
+        ") WHERE zone_id IS NULL"
+    )
+    Base.metadata.tables["visit_evidence_links"].create(bind=connection, checkfirst=True)
+    Base.metadata.tables["visit_relationships"].create(bind=connection, checkfirst=True)
+    Base.metadata.tables["visit_curation_history"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -292,6 +313,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     5: _migrate_to_zone_monitoring_policy_overrides,
     6: _migrate_to_fast_review_reversals,
     7: _migrate_to_review_label_revisions,
+    8: _migrate_to_visit_curation,
 }
 
 

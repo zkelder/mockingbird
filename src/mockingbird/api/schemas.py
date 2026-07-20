@@ -1289,6 +1289,8 @@ class Visit(BaseModel):
     reviewed_label: str | None = None
     review_status: ReviewStatus
     representative_media_path: str | None = None
+    zone_id: str | None = None
+    is_superseded: bool = False
 
 
 class MediaAsset(BaseModel):
@@ -1317,6 +1319,115 @@ class VisitEvidenceFrame(BaseModel):
     content_type: str
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
+
+
+class VisitCurationHistoryEntry(BaseModel):
+    """Plain-language structural history; API IDs are navigation data, never copy."""
+
+    action: str
+    message: str
+    created_at: datetime
+
+
+class VisitCurationSequencePreview(BaseModel):
+    evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
+    activity_started_at: datetime | None = None
+    activity_ended_at: datetime | None = None
+    evidence_count: int = Field(ge=0)
+
+
+class VisitEvidenceCurationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    retained_media_asset_ids: list[str] = Field(min_length=1, max_length=4)
+    primary_media_asset_id: str = Field(min_length=1, max_length=256)
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitEvidenceCurationResponse(BaseModel):
+    visit: Visit
+    evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
+    review_state_token: str
+    idempotent: bool = False
+    message: str
+
+
+class VisitSplitPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    boundary_after_media_asset_id: str = Field(min_length=1, max_length=256)
+    expected_state_token: str = Field(min_length=1, max_length=256)
+
+
+class VisitSplitPreview(BaseModel):
+    first: VisitCurationSequencePreview
+    second: VisitCurationSequencePreview
+    review_implication: str
+    state_token: str
+
+
+class VisitSplitRequest(VisitSplitPreviewRequest):
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitSplitResponse(BaseModel):
+    source_visit: Visit
+    resulting_visits: list[Visit] = Field(min_length=2, max_length=2)
+    review_state_token: str
+    idempotent: bool = False
+    message: str
+
+
+class VisitMergeCandidate(BaseModel):
+    visit: "StreamVisitSummary"
+    gap_seconds: float = Field(ge=0)
+
+
+class VisitMergeCandidatesResponse(BaseModel):
+    candidates: list[VisitMergeCandidate] = Field(default_factory=list)
+    maximum_gap_seconds: int = Field(ge=1)
+
+
+class VisitMergePreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_visit_ids: list[str] = Field(min_length=1, max_length=9)
+    expected_state_token: str = Field(min_length=1, max_length=256)
+
+
+class VisitMergePreview(BaseModel):
+    source_visits: list[Visit] = Field(min_length=2, max_length=10)
+    combined: VisitCurationSequencePreview
+    review_implication: str
+    state_token: str
+
+
+class VisitMergeRequest(VisitMergePreviewRequest):
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitMergeResponse(BaseModel):
+    visit: Visit
+    source_visits: list[Visit] = Field(min_length=2, max_length=10)
+    review_state_token: str
+    idempotent: bool = False
+    message: str
+
+
+class VisitZoneReassignmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    zone_id: str = Field(min_length=1, max_length=256)
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitZoneReassignmentResponse(BaseModel):
+    visit: Visit
+    review_state_token: str
+    idempotent: bool = False
+    message: str
 
 
 class StreamVisitSummary(BaseModel):
@@ -3107,6 +3218,9 @@ class EventDetail(BaseModel):
     detection_runs: list[DetectionRun] = Field(default_factory=list)
     review_labels: list[ReviewLabel]
     correction_history: list[VisitReviewHistoryEntry] = Field(default_factory=list)
+    curation_history: list[VisitCurationHistoryEntry] = Field(default_factory=list)
+    resulting_visits: list[Visit] = Field(default_factory=list)
+    eligible_zones: list[Zone] = Field(default_factory=list)
     review_state_token: str = ""
     dataset_ready: bool
     review_summary: str

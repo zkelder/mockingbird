@@ -179,6 +179,63 @@ class VisitModel(Base):
     reviewed_label: Mapped[str | None] = mapped_column(String, nullable=True)
     review_status: Mapped[str] = mapped_column(String, nullable=False)
     representative_media_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    # A Visit can be reassigned without rewriting the Event's original context.
+    zone_id: Mapped[str | None] = mapped_column(ForeignKey("zones.id"), nullable=True)
+    is_superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class VisitEvidenceLinkModel(Base):
+    """A bounded Visit-to-media association; deleting a link never deletes media."""
+
+    __tablename__ = "visit_evidence_links"
+    __table_args__ = (
+        UniqueConstraint("visit_id", "media_asset_id", name="uq_visit_evidence_media"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), nullable=False)
+    media_asset_id: Mapped[str] = mapped_column(ForeignKey("media_assets.id"), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    frame_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class VisitRelationshipModel(Base):
+    """Durable split/merge provenance between a superseded Visit and its result."""
+
+    __tablename__ = "visit_relationships"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_visit_id",
+            "result_visit_id",
+            "relationship_type",
+            name="uq_visit_relationship",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), nullable=False)
+    result_visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), nullable=False)
+    relationship_type: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class VisitCurationHistoryModel(Base):
+    """Append-only, user-facing audit facts for structural Visit curation."""
+
+    __tablename__ = "visit_curation_history"
+    __table_args__ = (UniqueConstraint("idempotency_key", name="uq_visit_curation_key"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    prior_zone_id: Mapped[str | None] = mapped_column(ForeignKey("zones.id"), nullable=True)
+    result_visit_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class MediaAssetModel(Base):

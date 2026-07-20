@@ -1,0 +1,332 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import httpx
+import pytest
+from sqlalchemy import select
+
+from mockingbird.api.main import app, configure_repository
+from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.storage.models import (
+    EventModel,
+    MediaAssetModel,
+    ReviewLabelModel,
+    VisitEvidenceLinkModel,
+    VisitModel,
+    ZoneModel,
+)
+
+
+STREAM_ID = "stream-backyard-feeder"
+SOURCE_ID = "source-backyard-demo"
+FEEDER_ZONE_ID = "zone-feeder"
+GROUND_ZONE_ID = "zone-ground"
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+def isolated_repository(tmp_path: Path) -> ProductRepository:
+    repository = ProductRepository(
+        db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
+        media_root=tmp_path / "media",
+    )
+    configure_repository(repository)
+    yield repository
+    configure_repository(None)
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
+async def client():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+        yield api_client
+
+
+def add_visit(
+    repository: ProductRepository,
+    *,
+    visit_id: str,
+    event_id: str,
+    zone_id: str = FEEDER_ZONE_ID,
+    captured_at: datetime | None = None,
+    frame_count: int = 3,
+    shared_media_ids: list[str] | None = None,
+) -> list[str]:
+    """Create bounded local evidence without writing any real media files."""
+
+    started_at = captured_at or datetime.now(UTC)
+    media_ids = shared_media_ids or [f"media-{visit_id}-{index}" for index in range(frame_count)]
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                EventModel(
+                    id=event_id,
+                    stream_id=STREAM_ID,
+                    title=f"Curation fixture {visit_id}",
+                    event_type="motion_evidence",
+                    started_at=started_at,
+                    ended_at=started_at + timedelta(seconds=frame_count - 1),
+                    primary_zone_id=zone_id,
+                    review_status="needs_review",
+                )
+            )
+            for index, media_id in enumerate(media_ids):
+                if session.get(MediaAssetModel, media_id) is None:
+                    session.add(
+                        MediaAssetModel(
+                            id=media_id,
+                            source_id=SOURCE_ID,
+                            stream_id=STREAM_ID,
+                            filename=f"{media_id}.jpg",
+                            content_type="image/jpeg",
+                            media_type="image",
+                            local_path=f"fixture/{media_id}.jpg",
+                            original_filename=f"{media_id}.jpg",
+                            file_size_bytes=12,
+                            created_at=started_at + timedelta(seconds=index),
+                            notes="Curation fixture evidence.",
+                        )
+                    )
+            session.add(
+                VisitModel(
+                    id=visit_id,
+                    event_id=event_id,
+                    subject_label="bird",
+                    species_guess="northern_cardinal",
+                    confidence=None,
+                    reviewed_label=None,
+                    review_status="needs_review",
+                    representative_media_path=f"fixture/{media_ids[0]}.jpg",
+                    zone_id=zone_id,
+                    is_superseded=False,
+                )
+            )
+            for index, media_id in enumerate(media_ids):
+                session.add(
+                    VisitEvidenceLinkModel(
+                        id=f"link-{visit_id}-{media_id}",
+                        visit_id=visit_id,
+                        media_asset_id=media_id,
+                        captured_at=started_at + timedelta(seconds=index),
+                        frame_sequence=index,
+                        sort_order=index,
+                        is_primary=index == 0,
+                        created_at=started_at,
+                    )
+                )
+    return media_ids
+
+
+async def visit_detail(client: httpx.AsyncClient, visit_id: str) -> dict:
+    response = await client.get(f"/api/visits/{visit_id}/detail")
+    assert response.status_code == 200
+    return response.json()
+
+
+async def review_visit(client: httpx.AsyncClient, visit_id: str, label: str) -> None:
+    response = await client.post(
+        "/api/review-labels",
+        json={"target_type": "visit", "target_id": visit_id, "label": label},
+    )
+    assert response.status_code == 201
+
+
+async def test_evidence_curation_changes_primary_everywhere_and_unlinks_only(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    media_ids = add_visit(
+        isolated_repository,
+        visit_id="visit-evidence",
+        event_id="event-evidence",
+    )
+    before = await visit_detail(client, "visit-evidence")
+    payload = {
+        "retained_media_asset_ids": [media_ids[0], media_ids[2]],
+        "primary_media_asset_id": media_ids[2],
+        "expected_state_token": before["review_state_token"],
+        "idempotency_key": "evidence-primary-third",
+    }
+    updated = await client.post("/api/visits/visit-evidence/evidence-curation", json=payload)
+    assert updated.status_code == 200
+    assert [frame["media_asset_id"] for frame in updated.json()["evidence_frames"]] == [
+        media_ids[0],
+        media_ids[2],
+    ]
+    assert [frame["media_asset_id"] for frame in updated.json()["evidence_frames"] if frame["is_primary"]] == [
+        media_ids[2]
+    ]
+    repeated = await client.post("/api/visits/visit-evidence/evidence-curation", json=payload)
+    assert repeated.status_code == 200
+    assert repeated.json()["idempotent"] is True
+
+    with isolated_repository.session_factory() as session:
+        assert session.get(MediaAssetModel, media_ids[1]) is not None
+        links = session.scalars(
+            select(VisitEvidenceLinkModel).where(
+                VisitEvidenceLinkModel.visit_id == "visit-evidence"
+            )
+        ).all()
+        assert {link.media_asset_id for link in links} == {media_ids[0], media_ids[2]}
+
+    stream_visits = await client.get(f"/api/streams/{STREAM_ID}/visits")
+    assert stream_visits.status_code == 200
+    summary = next(item for item in stream_visits.json() if item["id"] == "visit-evidence")
+    assert summary["primary_evidence"]["media_asset_id"] == media_ids[2]
+    queue = await client.get("/api/review-queue")
+    queue_item = next(item for item in queue.json() if item.get("visit_id") == "visit-evidence")
+    assert queue_item["best_media_asset_id"] == media_ids[2]
+
+    stale = await client.post(
+        "/api/visits/visit-evidence/evidence-curation",
+        json={**payload, "idempotency_key": "evidence-stale"},
+    )
+    assert stale.status_code == 409
+
+
+async def test_split_supersedes_reviewed_truth_and_returns_two_active_review_visits(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    media_ids = add_visit(
+        isolated_repository,
+        visit_id="visit-split",
+        event_id="event-split",
+    )
+    await review_visit(client, "visit-split", "northern_cardinal")
+    before = await visit_detail(client, "visit-split")
+    preview = await client.post(
+        "/api/visits/visit-split/split/preview",
+        json={
+            "boundary_after_media_asset_id": media_ids[0],
+            "expected_state_token": before["review_state_token"],
+        },
+    )
+    assert preview.status_code == 200
+    assert preview.json()["first"]["evidence_count"] == 1
+    assert preview.json()["second"]["evidence_count"] == 2
+    split = await client.post(
+        "/api/visits/visit-split/split",
+        json={
+            "boundary_after_media_asset_id": media_ids[0],
+            "expected_state_token": preview.json()["state_token"],
+            "idempotency_key": "split-reviewed-visit",
+        },
+    )
+    assert split.status_code == 200
+    results = split.json()["resulting_visits"]
+    assert len(results) == 2
+    assert all(result["review_status"] == "needs_review" for result in results)
+    assert all(not result["reviewed_label"] for result in results)
+
+    original = await visit_detail(client, "visit-split")
+    assert original["visit"]["is_superseded"] is True
+    assert len(original["resulting_visits"]) == 2
+    visits = await client.get("/api/visits")
+    assert "visit-split" not in {visit["id"] for visit in visits.json()}
+    labels = await client.get("/api/review-labels")
+    assert all(label["target_id"] != "visit-split" for label in labels.json())
+    analytics = await client.get("/api/analytics/summary")
+    assert "northern_cardinal" not in analytics.json()["species_counts"]
+    queue = await client.get("/api/review-queue")
+    queued_ids = {item.get("visit_id") for item in queue.json()}
+    assert {result["id"] for result in results}.issubset(queued_ids)
+
+
+async def test_merge_rules_and_zone_reassignment_preserve_correction_history(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    start = datetime.now(UTC)
+    shared = ["media-shared", "media-left-only"]
+    add_visit(
+        isolated_repository,
+        visit_id="visit-merge-left",
+        event_id="event-merge-left",
+        captured_at=start,
+        shared_media_ids=shared,
+    )
+    add_visit(
+        isolated_repository,
+        visit_id="visit-merge-right",
+        event_id="event-merge-right",
+        captured_at=start + timedelta(seconds=10),
+        shared_media_ids=["media-shared", "media-right-only"],
+    )
+    await review_visit(client, "visit-merge-left", "northern_cardinal")
+    await review_visit(client, "visit-merge-right", "northern_cardinal")
+    left = await visit_detail(client, "visit-merge-left")
+    candidates = await client.get("/api/visits/visit-merge-left/merge-candidates")
+    assert candidates.status_code == 200
+    assert any(candidate["visit"]["id"] == "visit-merge-right" for candidate in candidates.json()["candidates"])
+    preview = await client.post(
+        "/api/visits/visit-merge-left/merge/preview",
+        json={
+            "candidate_visit_ids": ["visit-merge-right"],
+            "expected_state_token": left["review_state_token"],
+        },
+    )
+    assert preview.status_code == 200
+    assert preview.json()["combined"]["evidence_count"] == 3
+    merged = await client.post(
+        "/api/visits/visit-merge-left/merge",
+        json={
+            "candidate_visit_ids": ["visit-merge-right"],
+            "expected_state_token": preview.json()["state_token"],
+            "idempotency_key": "merge-matching-reviewed",
+        },
+    )
+    assert merged.status_code == 200
+    result = merged.json()["visit"]
+    assert result["review_status"] == "reviewed"
+    assert result["reviewed_label"] == "northern_cardinal"
+    assert (await visit_detail(client, "visit-merge-left"))["visit"]["is_superseded"] is True
+    assert (await visit_detail(client, "visit-merge-right"))["visit"]["is_superseded"] is True
+
+    merged_detail = await visit_detail(client, result["id"])
+    privacy_id = "zone-curation-privacy"
+    with isolated_repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                ZoneModel(
+                    id=privacy_id,
+                    stream_id=STREAM_ID,
+                    name="Private nesting area",
+                    zone_type="privacy",
+                    polygon_json="[]",
+                    is_active=True,
+                    monitoring_policy_json=None,
+                )
+            )
+    rejected = await client.post(
+        f"/api/visits/{result['id']}/zone",
+        json={
+            "zone_id": privacy_id,
+            "expected_state_token": merged_detail["review_state_token"],
+            "idempotency_key": "move-to-privacy",
+        },
+    )
+    assert rejected.status_code == 400
+    moved = await client.post(
+        f"/api/visits/{result['id']}/zone",
+        json={
+            "zone_id": GROUND_ZONE_ID,
+            "expected_state_token": merged_detail["review_state_token"],
+            "idempotency_key": "move-to-ground",
+        },
+    )
+    assert moved.status_code == 200
+    assert moved.json()["visit"]["zone_id"] == GROUND_ZONE_ID
+    with isolated_repository.session_factory() as session:
+        labels = session.scalars(
+            select(ReviewLabelModel).where(ReviewLabelModel.target_id == result["id"])
+        ).all()
+        assert len(labels) == 1

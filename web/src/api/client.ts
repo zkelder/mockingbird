@@ -78,11 +78,24 @@ import type {
   MotionEvaluateSequenceResponse,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
+  VisitEvidenceCurationRequest,
+  VisitEvidenceCurationResponse,
+  VisitMergeCandidatesResponse,
+  VisitMergePreview,
+  VisitMergePreviewRequest,
+  VisitMergeRequest,
+  VisitMergeResponse,
   VisitReviewHistory,
   VisitReviewReopenCreate,
   VisitReviewReopenResponse,
   VisitReviewRevisionCreate,
   VisitReviewRevisionResponse,
+  VisitSplitPreview,
+  VisitSplitPreviewRequest,
+  VisitSplitRequest,
+  VisitSplitResponse,
+  VisitZoneReassignmentRequest,
+  VisitZoneReassignmentResponse,
   FastReviewCorrectionCreate,
   FastReviewCorrectionResponse,
   FastReviewQueueNavigationRequest,
@@ -445,6 +458,40 @@ export const apiClient = {
   getEventVisits: (eventId: string) => request<Visit[]>(`/api/events/${eventId}/visits`),
   getEventDetail: (eventId: string) => request<EventDetail>(`/api/events/${eventId}/detail`),
   getVisitDetail: (visitId: string) => request<VisitDetail>(`/api/visits/${visitId}/detail`),
+  curateVisitEvidence: (visitId: string, payload: VisitEvidenceCurationRequest) =>
+    request<VisitEvidenceCurationResponse>(
+      `/api/visits/${encodeURIComponent(visitId)}/evidence-curation`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  previewVisitSplit: (visitId: string, payload: VisitSplitPreviewRequest) =>
+    request<VisitSplitPreview>(`/api/visits/${encodeURIComponent(visitId)}/split/preview`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  splitVisit: (visitId: string, payload: VisitSplitRequest) =>
+    request<VisitSplitResponse>(`/api/visits/${encodeURIComponent(visitId)}/split`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getVisitMergeCandidates: (visitId: string) =>
+    request<VisitMergeCandidatesResponse>(
+      `/api/visits/${encodeURIComponent(visitId)}/merge-candidates`,
+    ),
+  previewVisitMerge: (visitId: string, payload: VisitMergePreviewRequest) =>
+    request<VisitMergePreview>(`/api/visits/${encodeURIComponent(visitId)}/merge/preview`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  mergeVisits: (visitId: string, payload: VisitMergeRequest) =>
+    request<VisitMergeResponse>(`/api/visits/${encodeURIComponent(visitId)}/merge`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  reassignVisitZone: (visitId: string, payload: VisitZoneReassignmentRequest) =>
+    request<VisitZoneReassignmentResponse>(`/api/visits/${encodeURIComponent(visitId)}/zone`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   getMediaAssets: () => request<MediaAsset[]>("/api/media"),
   getMediaAsset: (mediaId: string) => request<MediaAsset>(`/api/media/${mediaId}`),
   getSavedMediaRetentionReport: () =>

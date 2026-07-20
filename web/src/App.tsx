@@ -572,6 +572,7 @@ export default function App() {
           visitId={selectedVisitId}
           onOpenStream={openStream}
           onOpenEvent={openEvent}
+          onOpenVisit={openVisit}
           onOpenExports={() => setPage("exports")}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenMotionEvidence={openMotionEvidence}

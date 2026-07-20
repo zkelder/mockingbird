@@ -6,6 +6,7 @@ import type {
   SpeciesSuggestion,
   TaxonomyLabel,
   VisitDetail,
+  VisitEvidenceFrame,
   VisitReviewHistoryEntry,
 } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
@@ -24,6 +25,7 @@ interface VisitDetailPageProps {
   visitId: string;
   onOpenStream: (streamId: string) => void;
   onOpenEvent: (eventId: string) => void;
+  onOpenVisit: (visitId: string) => void;
   onOpenExports: () => void;
   onOpenDetectionProposals: () => void;
   onOpenMotionEvidence: (motionEvidenceId: string) => void;
@@ -53,6 +55,7 @@ export function VisitDetailPage({
   visitId,
   onOpenStream,
   onOpenEvent,
+  onOpenVisit,
   onOpenExports,
   onOpenDetectionProposals,
   onOpenMotionEvidence,
@@ -700,6 +703,13 @@ export function VisitDetailPage({
         ) : null}
       </section>
 
+      <VisitCurationPanel
+        detail={detail}
+        onCurationChanged={onCorrectionSaved}
+        onOpenVisit={onOpenVisit}
+        onReload={() => loadDetail({ showLoading: false })}
+      />
+
       <section className="panel species-review-panel">
         <div className="section-heading">
           <div>
@@ -1286,6 +1296,447 @@ function CorrectionTruthPanel({
         </details>
       ) : null}
     </section>
+  );
+}
+
+function VisitCurationPanel({
+  detail,
+  onReload,
+  onCurationChanged,
+  onOpenVisit,
+}: {
+  detail: VisitDetail;
+  onReload: () => Promise<void>;
+  onCurationChanged: () => Promise<void>;
+  onOpenVisit: (visitId: string) => void;
+}) {
+  const [isEditingEvidence, setIsEditingEvidence] = useState(false);
+  const [retainedIds, setRetainedIds] = useState<string[]>([]);
+  const [primaryId, setPrimaryId] = useState<string | null>(null);
+  const [splitBoundaryId, setSplitBoundaryId] = useState<string>("");
+  const [splitPreview, setSplitPreview] = useState<{
+    first: VisitEvidenceFrame[];
+    second: VisitEvidenceFrame[];
+    stateToken: string;
+    implication: string;
+  } | null>(null);
+  const [mergeCandidates, setMergeCandidates] = useState<
+    { id: string; label: string; gapSeconds: number }[]
+  >([]);
+  const [selectedMergeIds, setSelectedMergeIds] = useState<string[]>([]);
+  const [mergePreview, setMergePreview] = useState<{
+    frames: VisitEvidenceFrame[];
+    stateToken: string;
+    implication: string;
+  } | null>(null);
+  const [zoneId, setZoneId] = useState("");
+  const [isLoadingCandidates, setIsLoadingCandidates] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [evidenceKey, setEvidenceKey] = useState<string | null>(null);
+  const [splitKey, setSplitKey] = useState<string | null>(null);
+  const [mergeKey, setMergeKey] = useState<string | null>(null);
+  const [zoneKey, setZoneKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    const primary = detail.evidence_frames.find((frame) => frame.is_primary)?.media_asset_id ??
+      detail.evidence_frames[0]?.media_asset_id ?? null;
+    setRetainedIds(detail.evidence_frames.map((frame) => frame.media_asset_id));
+    setPrimaryId(primary);
+    setSplitBoundaryId(detail.evidence_frames[0]?.media_asset_id ?? "");
+    setSplitPreview(null);
+    setMergeCandidates([]);
+    setSelectedMergeIds([]);
+    setMergePreview(null);
+    setZoneId(detail.visit.zone_id ?? detail.primary_zone?.id ?? "");
+    setEvidenceKey(null);
+    setSplitKey(null);
+    setMergeKey(null);
+    setZoneKey(null);
+  }, [detail.visit.id, detail.review_state_token]);
+
+  const previewFrames = detail.evidence_frames
+    .filter((frame) => retainedIds.includes(frame.media_asset_id))
+    .map((frame) => ({ ...frame, is_primary: frame.media_asset_id === primaryId }));
+  const canSplit = detail.evidence_frames.length >= 2;
+
+  function beginEvidenceEdit() {
+    setRetainedIds(detail.evidence_frames.map((frame) => frame.media_asset_id));
+    setPrimaryId(
+      detail.evidence_frames.find((frame) => frame.is_primary)?.media_asset_id ??
+        detail.evidence_frames[0]?.media_asset_id ?? null,
+    );
+    setEvidenceKey(null);
+    setMessage(null);
+    setError(null);
+    setIsEditingEvidence(true);
+  }
+
+  function toggleEvidence(mediaId: string) {
+    setRetainedIds((current) => {
+      if (current.includes(mediaId)) {
+        if (current.length <= 1) {
+          return current;
+        }
+        const next = current.filter((id) => id !== mediaId);
+        if (primaryId === mediaId) {
+          setPrimaryId(next[0] ?? null);
+        }
+        return next;
+      }
+      return detail.evidence_frames
+        .map((frame) => frame.media_asset_id)
+        .filter((id) => current.includes(id) || id === mediaId);
+    });
+  }
+
+  async function saveEvidence() {
+    if (!primaryId || previewFrames.length === 0) {
+      setError("Keep at least one evidence frame and choose its primary frame.");
+      return;
+    }
+    const idempotencyKey = evidenceKey ?? newReviewRequestKey("visit-evidence");
+    setEvidenceKey(idempotencyKey);
+    setIsSaving(true);
+    setError(null);
+    try {
+      const result = await apiClient.curateVisitEvidence(detail.visit.id, {
+        retained_media_asset_ids: previewFrames.map((frame) => frame.media_asset_id),
+        primary_media_asset_id: primaryId,
+        expected_state_token: detail.review_state_token,
+        idempotency_key: idempotencyKey,
+      });
+      setMessage(result.message);
+      setIsEditingEvidence(false);
+      setEvidenceKey(null);
+      await onReload();
+      await onCurationChanged();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not save Visit evidence.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function previewSplit() {
+    if (!splitBoundaryId) {
+      return;
+    }
+    setIsSaving(true);
+    setError(null);
+    try {
+      const result = await apiClient.previewVisitSplit(detail.visit.id, {
+        boundary_after_media_asset_id: splitBoundaryId,
+        expected_state_token: detail.review_state_token,
+      });
+      setSplitPreview({
+        first: result.first.evidence_frames,
+        second: result.second.evidence_frames,
+        stateToken: result.state_token,
+        implication: result.review_implication,
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not preview the split.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function saveSplit() {
+    if (!splitPreview || !splitBoundaryId) {
+      return;
+    }
+    const idempotencyKey = splitKey ?? newReviewRequestKey("visit-split");
+    setSplitKey(idempotencyKey);
+    setIsSaving(true);
+    setError(null);
+    try {
+      const result = await apiClient.splitVisit(detail.visit.id, {
+        boundary_after_media_asset_id: splitBoundaryId,
+        expected_state_token: splitPreview.stateToken,
+        idempotency_key: idempotencyKey,
+      });
+      setMessage(result.message);
+      setSplitKey(null);
+      await onCurationChanged();
+      onOpenVisit(result.resulting_visits[0].id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not split this Visit.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function loadMergeCandidates() {
+    setIsLoadingCandidates(true);
+    setError(null);
+    try {
+      const result = await apiClient.getVisitMergeCandidates(detail.visit.id);
+      setMergeCandidates(
+        result.candidates.map((candidate) => ({
+          id: candidate.visit.id,
+          label: `${formatDateTime(candidate.visit.captured_at)} · ${candidate.visit.zone_name ?? "Zone"}`,
+          gapSeconds: candidate.gap_seconds,
+        })),
+      );
+      setSelectedMergeIds([]);
+      setMergePreview(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not load nearby Visits.");
+    } finally {
+      setIsLoadingCandidates(false);
+    }
+  }
+
+  async function previewMerge() {
+    if (selectedMergeIds.length === 0) {
+      setError("Choose at least one nearby Visit to merge.");
+      return;
+    }
+    setIsSaving(true);
+    setError(null);
+    try {
+      const result = await apiClient.previewVisitMerge(detail.visit.id, {
+        candidate_visit_ids: selectedMergeIds,
+        expected_state_token: detail.review_state_token,
+      });
+      setMergePreview({
+        frames: result.combined.evidence_frames,
+        stateToken: result.state_token,
+        implication: result.review_implication,
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "These Visits cannot be merged.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function saveMerge() {
+    if (!mergePreview) {
+      return;
+    }
+    const idempotencyKey = mergeKey ?? newReviewRequestKey("visit-merge");
+    setMergeKey(idempotencyKey);
+    setIsSaving(true);
+    setError(null);
+    try {
+      const result = await apiClient.mergeVisits(detail.visit.id, {
+        candidate_visit_ids: selectedMergeIds,
+        expected_state_token: mergePreview.stateToken,
+        idempotency_key: idempotencyKey,
+      });
+      setMessage(result.message);
+      setMergeKey(null);
+      await onCurationChanged();
+      onOpenVisit(result.visit.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not merge these Visits.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function saveZone() {
+    if (!zoneId || zoneId === (detail.visit.zone_id ?? detail.primary_zone?.id)) {
+      return;
+    }
+    const idempotencyKey = zoneKey ?? newReviewRequestKey("visit-zone");
+    setZoneKey(idempotencyKey);
+    setIsSaving(true);
+    setError(null);
+    try {
+      const result = await apiClient.reassignVisitZone(detail.visit.id, {
+        zone_id: zoneId,
+        expected_state_token: detail.review_state_token,
+        idempotency_key: idempotencyKey,
+      });
+      setMessage(result.message);
+      setZoneKey(null);
+      await onReload();
+      await onCurationChanged();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not move this Visit to that Zone.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  if (detail.visit.is_superseded) {
+    return (
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <h2>Visit retained in history</h2>
+            <span className="meta-text">This original Visit no longer counts as an active observation.</span>
+          </div>
+          <EvidenceBadge label="Superseded" tone="quiet" />
+        </div>
+        {detail.resulting_visits.length > 0 ? (
+          <div className="detail-actions">
+            {detail.resulting_visits.map((visit) => (
+              <button className="secondary-action" key={visit.id} onClick={() => onOpenVisit(visit.id)} type="button">
+                Open resulting Visit
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <CurationHistory entries={detail.curation_history} />
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel">
+      <div className="section-heading">
+        <div>
+          <h2>Visit curation</h2>
+          <span className="meta-text">Structural edits organize evidence; they do not create species truth.</span>
+        </div>
+        <EvidenceBadge label="Review before truth" tone="evidence" />
+      </div>
+      {error ? <div className="error-panel compact-error">{error}</div> : null}
+      {message ? <div className="notice-panel compact-notice">{message}</div> : null}
+
+      {detail.evidence_frames.length > 0 ? (
+        <section className="species-suggestion-review-context">
+          <div className="section-heading">
+            <div>
+              <h3>Edit Visit evidence</h3>
+              <span className="meta-text">Removing a frame unlinks it from this Visit; it does not delete the saved media.</span>
+            </div>
+            {!isEditingEvidence ? (
+              <button className="secondary-action" onClick={beginEvidenceEdit} type="button">Edit evidence</button>
+            ) : null}
+          </div>
+          {isEditingEvidence ? (
+            <>
+              <div className="evidence-list">
+                {detail.evidence_frames.map((frame, index) => {
+                  const retained = retainedIds.includes(frame.media_asset_id);
+                  return (
+                    <label className="history-item" key={frame.media_asset_id}>
+                      <span>
+                        Frame {index + 1} · {formatDateTime(frame.captured_at)}
+                      </span>
+                      <span className="detail-actions">
+                        <input
+                          checked={retained}
+                          disabled={retained && retainedIds.length === 1}
+                          onChange={() => toggleEvidence(frame.media_asset_id)}
+                          type="checkbox"
+                        />
+                        Retain
+                        <input
+                          checked={retained && primaryId === frame.media_asset_id}
+                          disabled={!retained}
+                          name="visit-primary-evidence"
+                          onChange={() => setPrimaryId(frame.media_asset_id)}
+                          type="radio"
+                        />
+                        Primary
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              {previewFrames.length > 0 ? <VisitEvidenceSequence frames={previewFrames} /> : null}
+              <div className="detail-actions">
+                <button className="primary-action" disabled={isSaving} onClick={() => void saveEvidence()} type="button">
+                  {isSaving ? "Saving..." : "Save evidence"}
+                </button>
+                <button
+                  className="secondary-action"
+                  disabled={isSaving}
+                  onClick={() => { setIsEditingEvidence(false); setError(null); setMessage("Evidence edits canceled."); }}
+                  type="button"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
+      {canSplit ? (
+        <section className="species-suggestion-review-context">
+          <div className="section-heading"><h3>Split Visit</h3></div>
+          <label>
+            Split after evidence frame
+            <select onChange={(event) => { setSplitBoundaryId(event.target.value); setSplitPreview(null); }} value={splitBoundaryId}>
+              {detail.evidence_frames.slice(0, -1).map((frame, index) => (
+                <option key={frame.media_asset_id} value={frame.media_asset_id}>Frame {index + 1} · {formatDateTime(frame.captured_at)}</option>
+              ))}
+            </select>
+          </label>
+          <div className="detail-actions">
+            <button className="secondary-action" disabled={isSaving} onClick={() => void previewSplit()} type="button">Preview split</button>
+          </div>
+          {splitPreview ? (
+            <div className="split-grid">
+              <div><strong>First Visit · {splitPreview.first.length} frames</strong><VisitEvidenceSequence frames={splitPreview.first} /></div>
+              <div><strong>Second Visit · {splitPreview.second.length} frames</strong><VisitEvidenceSequence frames={splitPreview.second} /></div>
+              <p className="meta-text">{splitPreview.implication}</p>
+              <button className="primary-action" disabled={isSaving} onClick={() => void saveSplit()} type="button">Split Visit</button>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      <section className="species-suggestion-review-context">
+        <div className="section-heading">
+          <div><h3>Merge nearby Visits</h3><span className="meta-text">Only same-Stream, same-Zone Visits within the server time limit are offered.</span></div>
+          <button className="secondary-action" disabled={isLoadingCandidates} onClick={() => void loadMergeCandidates()} type="button">
+            {isLoadingCandidates ? "Checking..." : "Find nearby Visits"}
+          </button>
+        </div>
+        {mergeCandidates.map((candidate) => (
+          <label className="history-item" key={candidate.id}>
+            <input
+              checked={selectedMergeIds.includes(candidate.id)}
+              onChange={() => { setSelectedMergeIds((current) => current.includes(candidate.id) ? current.filter((id) => id !== candidate.id) : [...current, candidate.id]); setMergePreview(null); }}
+              type="checkbox"
+            />
+            {candidate.label} · {Math.round(candidate.gapSeconds / 60)} min apart
+          </label>
+        ))}
+        {mergeCandidates.length > 0 ? <button className="secondary-action" disabled={isSaving || selectedMergeIds.length === 0} onClick={() => void previewMerge()} type="button">Preview merge</button> : null}
+        {mergePreview ? (
+          <div>
+            <VisitEvidenceSequence frames={mergePreview.frames} />
+            <p className="meta-text">{mergePreview.implication}</p>
+            <button className="primary-action" disabled={isSaving} onClick={() => void saveMerge()} type="button">Merge Visits</button>
+          </div>
+        ) : null}
+      </section>
+
+      {detail.eligible_zones.length > 0 ? (
+        <section className="species-suggestion-review-context">
+          <div className="section-heading"><h3>Visit Zone</h3></div>
+          <label>
+            Activity Zone
+            <select onChange={(event) => setZoneId(event.target.value)} value={zoneId}>
+              {detail.eligible_zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name} ({formatLabel(zone.zone_type)})</option>)}
+            </select>
+          </label>
+          <button className="secondary-action" disabled={isSaving || zoneId === (detail.visit.zone_id ?? detail.primary_zone?.id)} onClick={() => void saveZone()} type="button">Save Zone</button>
+        </section>
+      ) : null}
+      <CurationHistory entries={detail.curation_history} />
+    </section>
+  );
+}
+
+function CurationHistory({ entries }: { entries: VisitDetail["curation_history"] }) {
+  if (entries.length === 0) {
+    return <span className="meta-text">No structural curation history yet.</span>;
+  }
+  return (
+    <div className="history-list">
+      {entries.map((entry) => <div className="history-item" key={`${entry.action}-${entry.created_at}`}><strong>{formatLabel(entry.action)}</strong><span>{entry.message} · {formatDateTime(entry.created_at)}</span></div>)}
+    </div>
   );
 }
 
