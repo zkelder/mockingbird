@@ -431,6 +431,7 @@ export interface StreamRuntimeStatus {
   actual_state: StreamRuntimeState;
   observed_policy_revision: number;
   checkpoint_present: boolean;
+  active_session_count: number;
   checkpoint_updated_at?: string | null;
   last_start_attempt_at?: string | null;
   last_healthy_frame_at?: string | null;
@@ -449,6 +450,32 @@ export interface StreamRuntimeStatus {
   creates_review_truth: boolean;
   message: string;
   warnings: string[];
+}
+
+export interface StreamMonitoringPolicyUpdate {
+  enabled: boolean;
+  idempotency_key: string;
+}
+
+export interface StreamMonitoringRetryRequest {
+  idempotency_key: string;
+}
+
+export interface StreamMonitoringMutationResponse {
+  policy: StreamMonitoringPolicy;
+  runtime: StreamRuntimeStatus;
+  idempotent: boolean;
+  message: string;
+  creates_review_candidates: boolean;
+  creates_review_truth: boolean;
+}
+
+export interface StreamMonitoringStatusListResponse {
+  items: StreamRuntimeStatus[];
+  limit: number;
+  message: string;
+  creates_review_candidates: boolean;
+  creates_review_truth: boolean;
 }
 
 export interface StreamPlaybackStatus {

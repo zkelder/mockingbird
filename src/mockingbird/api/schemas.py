@@ -628,7 +628,7 @@ class Stream(BaseModel):
 
 
 class StreamMonitoringPolicyResponse(BaseModel):
-    # Durable desired state is configuration only; Phase 24D exposes no mutation.
+    # Desired state is durable configuration; it is never proof of active capture.
     stream_id: str
     source_id: str
     mode: StreamMonitoringMode
@@ -642,9 +642,9 @@ class StreamMonitoringPolicyResponse(BaseModel):
     updated_at: datetime | None = None
     pause_reason: str | None = None
     persisted: bool
-    read_only: bool = True
-    continuity_available: bool = False
-    can_arm: bool = False
+    read_only: bool = False
+    continuity_available: bool = True
+    can_arm: bool = True
     creates_review_candidates: bool = False
     creates_review_truth: bool = False
     message: str
@@ -659,6 +659,7 @@ class StreamRuntimeStatusResponse(BaseModel):
     actual_state: StreamRuntimeState
     observed_policy_revision: int = Field(ge=1)
     checkpoint_present: bool
+    active_session_count: int = Field(default=0, ge=0)
     checkpoint_updated_at: datetime | None = None
     last_start_attempt_at: datetime | None = None
     last_healthy_frame_at: datetime | None = None
@@ -669,14 +670,44 @@ class StreamRuntimeStatusResponse(BaseModel):
     next_retry_at: datetime | None = None
     last_stop_reason: str | None = None
     safety_hold_active: bool = False
-    read_only: bool = True
-    continuity_available: bool = False
+    read_only: bool = False
+    continuity_available: bool = True
     camera_start_requested: bool = False
     monitor_start_requested: bool = False
     creates_review_candidates: bool = False
     creates_review_truth: bool = False
     message: str
     warnings: list[str] = Field(default_factory=list)
+
+
+class StreamMonitoringPolicyUpdate(BaseModel):
+    """An explicit, idempotent request to enable or disable one Stream."""
+
+    enabled: bool
+    idempotency_key: str = Field(min_length=8, max_length=120)
+
+
+class StreamMonitoringRetryRequest(BaseModel):
+    """An explicit, idempotent request to retry an enabled Stream now."""
+
+    idempotency_key: str = Field(min_length=8, max_length=120)
+
+
+class StreamMonitoringMutationResponse(BaseModel):
+    policy: StreamMonitoringPolicyResponse
+    runtime: StreamRuntimeStatusResponse
+    idempotent: bool = False
+    message: str
+    creates_review_candidates: bool = False
+    creates_review_truth: bool = False
+
+
+class StreamMonitoringStatusListResponse(BaseModel):
+    items: list[StreamRuntimeStatusResponse]
+    limit: int = Field(ge=1, le=50)
+    message: str
+    creates_review_candidates: bool = False
+    creates_review_truth: bool = False
 
 
 class CameraSourceCreateResponse(BaseModel):

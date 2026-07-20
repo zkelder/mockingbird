@@ -51,10 +51,12 @@ MockingBird currently provides:
 - default-off durable monitoring policy/runtime-checkpoint records and
   side-effect-free lifecycle status
 
-Current monitoring remains process-owned and user-started. No camera or monitor
-starts automatically after application startup or restart. The next durable
-supervisor foundation is intentionally disabled until the engineering and
-lifecycle gates in [the roadmap](docs/roadmap.md) pass.
+Monitoring remains local and explicitly Stream-scoped. Every Stream starts
+disabled; when a user enables supported backend-owned live monitoring, the one
+app-owned supervisor restores that saved intent after startup, waits for a
+healthy frame before evaluation, and uses bounded recovery. Enable/disable and
+retry remain explicit, status reads have no side effects, and monitoring never
+creates reviewed Bird Log truth.
 
 ## Active development checkout
 

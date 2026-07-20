@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 9
+CURRENT_DATABASE_SCHEMA_VERSION = 10
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -322,6 +322,15 @@ def _migrate_to_activity_library(connection: Connection) -> None:
     )
 
 
+def _migrate_to_durable_monitoring_operations(connection: Connection) -> None:
+    """Add durable idempotency records without changing any Stream's safe-off intent."""
+
+    Base.metadata.tables["stream_monitoring_operations"].create(
+        bind=connection,
+        checkfirst=True,
+    )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -331,6 +340,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     7: _migrate_to_review_label_revisions,
     8: _migrate_to_visit_curation,
     9: _migrate_to_activity_library,
+    10: _migrate_to_durable_monitoring_operations,
 }
 
 

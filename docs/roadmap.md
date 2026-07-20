@@ -254,9 +254,10 @@ remains truth. Benchmark media and reports are never committed.
 
 ### Gate E - resilience, privacy, security, and upgrades
 
-Before live-video continuity activation, validate camera/FFmpeg loss, hung
-processes, disk-full and database-locked behavior, restart during media writes,
-clock changes, and backup/restore while policy is armed.
+Before expanding live-video continuity beyond the current bounded local
+supervisor, validate camera/FFmpeg loss, hung processes, disk-full and
+database-locked behavior, restart during media writes, clock changes, and
+backup/restore while policy is armed.
 
 Decide and test:
 
@@ -282,11 +283,12 @@ and the evidence-versus-truth boundary remain prominent and canonical.
   integration do not wait for the durable supervisor.
 - Automatic post-activity inference requires focused failure, runtime-bound,
   storage, privacy, and stop-behavior tests for that inference path.
-- Phase 24E may begin after Gate A's automated baseline and the relevant Gate C
-  lifecycle seam are in place. Its supervisor remains disabled and fake-adapter
-  tested.
-- Explicit live-video continuity must not activate until Gate B and the relevant
-  Gate E failure/privacy/security/upgrade decisions pass.
+- Phase 24E's bounded, fake-adapter-tested supervisor is implemented. Gate A
+  and the relevant Gate C seam continue to govern future expansion.
+- Scoped explicit live-video continuity now uses only existing backend-owned
+  local session paths. Gate B and the relevant Gate E
+  failure/privacy/security/upgrade decisions are required before widening
+  supported adapters, automation, or field use.
 - Phase 25 field-loop acceptance requires Gate D, long-run/soak results, and
   declared performance/storage budgets.
 - New providers and unrelated model pathways do not take priority. The visual
@@ -294,19 +296,22 @@ and the evidence-versus-truth boundary remain prominent and canonical.
 
 ## Deferred supporting work: Phase 24E-24G durable live continuity
 
-### Phase 24E - disabled supervisor foundation
+### Phase 24E - supervisor foundation (implemented)
 
 Add a bounded `DurableStreamSupervisor` foundation with fake-adapter lifecycle,
 app-instance/checkpoint reconciliation, one-Stream leases, deterministic
 backoff, and stop ordering.
 
-The supervisor remains unavailable for runtime activation. Tests use fake time
-and fake camera/session boundaries. Status reads stay side-effect free.
+The supervisor is app-owned and starts after persistence initialization. Its
+fake-adapter lifecycle coverage exercises one-Stream leases, bounded recovery,
+capacity waiting, and clean shutdown. Status reads stay side-effect free.
 
-### Phase 24F - explicit live-video continuity
+### Phase 24F - explicit live-video continuity (implemented, scoped)
 
-After the engineering gates pass, add explicit Stream-scoped arming for
-supported backend-owned RTSP/local USB/Windows DirectShow live video.
+Explicit Stream-scoped enabling is available for supported backend-owned
+RTSP/local USB/Windows DirectShow live video. It reuses the existing local
+camera/session path, waits for a healthy frame before evaluation, and remains
+bounded to the local application process.
 
 Persisted desired policy and actual runtime state remain separate. Every Stream
 defaults off; backup, restore, migration, emergency stop, Source archive, Stop

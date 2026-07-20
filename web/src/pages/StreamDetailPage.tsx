@@ -658,6 +658,8 @@ export function StreamDetailPage({
     useState<string | null>(null);
   const [isLoadingMonitoringContinuity, setIsLoadingMonitoringContinuity] =
     useState(true);
+  const [isUpdatingMonitoringContinuity, setIsUpdatingMonitoringContinuity] =
+    useState(false);
   const [isStartingLiveSession, setIsStartingLiveSession] = useState(false);
   const [isStoppingLiveSession, setIsStoppingLiveSession] = useState(false);
   const [captureResult, setCaptureResult] = useState<LocalCameraFrameCaptureResponse | null>(null);
@@ -967,6 +969,47 @@ export function StreamDetailPage({
       isMounted = false;
     };
   }, [streamId]);
+
+  async function setDurableMonitoringEnabled(enabled: boolean) {
+    setIsUpdatingMonitoringContinuity(true);
+    setMonitoringContinuityError(null);
+    try {
+      const result = await apiClient.updateStreamMonitoringPolicy(streamId, {
+        enabled,
+        idempotency_key:
+          globalThis.crypto?.randomUUID?.() ??
+          `monitoring-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      });
+      setMonitoringPolicy(result.policy);
+      setRuntimeStatus(result.runtime);
+    } catch (caught) {
+      setMonitoringContinuityError(
+        caught instanceof Error ? caught.message : "Could not update monitoring.",
+      );
+    } finally {
+      setIsUpdatingMonitoringContinuity(false);
+    }
+  }
+
+  async function retryDurableMonitoring() {
+    setIsUpdatingMonitoringContinuity(true);
+    setMonitoringContinuityError(null);
+    try {
+      const result = await apiClient.retryStreamMonitoring(streamId, {
+        idempotency_key:
+          globalThis.crypto?.randomUUID?.() ??
+          `monitoring-retry-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      });
+      setMonitoringPolicy(result.policy);
+      setRuntimeStatus(result.runtime);
+    } catch (caught) {
+      setMonitoringContinuityError(
+        caught instanceof Error ? caught.message : "Could not retry monitoring.",
+      );
+    } finally {
+      setIsUpdatingMonitoringContinuity(false);
+    }
+  }
 
   useEffect(() => {
     if (detail?.stream.id !== streamId) {
@@ -2373,7 +2416,9 @@ export function StreamDetailPage({
     : isLoadingMonitoringContinuity
       ? "Loading"
       : monitoringPolicy
-        ? formatLabel(monitoringPolicy.mode)
+        ? monitoringPolicy.mode === "armed"
+          ? "Monitoring enabled"
+          : "Monitoring disabled"
         : "Unavailable";
 
   return (
@@ -3558,22 +3603,64 @@ export function StreamDetailPage({
           <>
             <div className="monitoring-continuity-facts">
               <span>
-                <strong>Saved intent</strong> {formatLabel(monitoringPolicy.mode)}
+                <strong>Desired state</strong>{" "}
+                {monitoringPolicy.mode === "armed"
+                  ? "Monitoring enabled"
+                  : "Monitoring disabled"}
               </span>
               <span>
-                <strong>Restart runtime</strong> {formatLabel(runtimeStatus.actual_state)}
+                <strong>Actual runtime</strong> {formatLabel(runtimeStatus.actual_state)}
               </span>
               <span>
-                <strong>Auto-create</strong>{" "}
-                {monitoringPolicy.auto_create_review_candidates ? "enabled" : "off"}
+                <strong>Active sessions</strong> {runtimeStatus.active_session_count}
+              </span>
+              <span>
+                <strong>Last start</strong>{" "}
+                {runtimeStatus.last_start_attempt_at
+                  ? formatDateTime(runtimeStatus.last_start_attempt_at)
+                  : "Not started yet"}
+              </span>
+              <span>
+                <strong>Next retry</strong>{" "}
+                {runtimeStatus.next_retry_at
+                  ? formatDateTime(runtimeStatus.next_retry_at)
+                  : "Not scheduled"}
               </span>
             </div>
             <div className="continuity-message">
-              <strong>{monitoringPolicy.message}</strong>
+              <strong>{runtimeStatus.message}</strong>
               <span>
-                This status is read-only. It starts no camera, creates no review candidate,
-                and changes no Bird Log truth.
+                {runtimeStatus.failure_code
+                  ? "The camera needs attention before the next local start."
+                  : "Enablement changes only saved local monitoring intent."}{" "}
+                Monitoring never creates reviewed Bird Log truth.
               </span>
+            </div>
+            <div className="panel-actions">
+              <button
+                type="button"
+                className={monitoringPolicy.mode === "armed" ? "secondary-button" : "primary-button"}
+                disabled={isUpdatingMonitoringContinuity}
+                onClick={() =>
+                  void setDurableMonitoringEnabled(monitoringPolicy.mode !== "armed")
+                }
+              >
+                {isUpdatingMonitoringContinuity
+                  ? "Updating monitoring…"
+                  : monitoringPolicy.mode === "armed"
+                    ? "Disable monitoring"
+                    : "Enable monitoring"}
+              </button>
+              {monitoringPolicy.mode === "armed" && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={isUpdatingMonitoringContinuity}
+                  onClick={() => void retryDurableMonitoring()}
+                >
+                  Retry now
+                </button>
+              )}
             </div>
           </>
         ) : null}

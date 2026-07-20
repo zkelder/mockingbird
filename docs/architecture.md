@@ -133,18 +133,20 @@ Three concerns remain separate:
   old process is still running
 - `LiveCameraSessionManager`: current-process camera and monitoring resources
 
-A future `DurableStreamSupervisor` may reconcile explicitly armed supported
-live-video Streams with current-process sessions. Phase 24E first adds a
-disabled, fake-adapter-tested foundation. It must respect one-Stream leases,
-deterministic backoff, stop ordering, app-instance reconciliation, and safety
-holds.
+`DurableMonitoringSupervisor` reconciles explicitly enabled supported
+live-video Streams with current-process sessions. It is app-owned, starts only
+after local persistence initialization, respects one-Stream leases and a small
+concurrency cap, waits for a healthy frame before motion evaluation, and uses
+deterministic bounded backoff. The persisted policy remains desired state;
+runtime checkpoints expose the last-known actual state and are invalidated when
+a prior app process ends.
 
 Backup, restore, migration, emergency stop, Source archive, Stop camera, and
-shutdown override arming. Restored armed policy requires explicit resume.
-Status reads remain side-effect free. External snapshot polling and general
-provider workers remain separate. Future audio requires its own consent,
-privacy, retention, dependency, and evidence design; video arming never enables
-a microphone.
+shutdown override active runtime. Stop camera also disables durable intent so
+it cannot immediately restart. Status reads remain side-effect free. External
+snapshot polling and general provider workers remain separate. Future audio
+requires its own consent, privacy, retention, dependency, and evidence design;
+video arming never enables a microphone.
 
 ## Worker boundary
 

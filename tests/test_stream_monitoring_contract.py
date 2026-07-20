@@ -7,7 +7,10 @@ from sqlalchemy import func, select
 
 from mockingbird.api import main as api_main
 from mockingbird.api.schemas import CameraSourceCreate
-from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.repository.product_repository import (
+    MonitoringOperationConflictError,
+    ProductRepository,
+)
 from mockingbird.storage.database import (
     CURRENT_DATABASE_SCHEMA_VERSION,
     create_database_engine,
@@ -27,19 +30,31 @@ STREAM_ID = "stream-backyard-feeder"
 
 
 class ASGITestClient:
-    def request(self, method: str, path: str) -> httpx.Response:
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, object] | None = None,
+    ) -> httpx.Response:
         async def send() -> httpx.Response:
             transport = httpx.ASGITransport(app=api_main.app)
             async with httpx.AsyncClient(
                 transport=transport,
                 base_url="http://testserver",
             ) as client:
-                return await client.request(method, path)
+                return await client.request(method, path, json=json)
 
         return asyncio.run(send())
 
     def get(self, path: str) -> httpx.Response:
         return self.request("GET", path)
+
+    def post(self, path: str, *, json: dict[str, object]) -> httpx.Response:
+        return self.request("POST", path, json=json)
+
+    def put(self, path: str, *, json: dict[str, object]) -> httpx.Response:
+        return self.request("PUT", path, json=json)
 
 
 @pytest.fixture
@@ -94,8 +109,8 @@ def test_existing_and_new_streams_receive_persisted_off_records(
     assert seeded_policy.mode == "off"
     assert seeded_policy.persisted is True
     assert seeded_policy.auto_create_review_candidates is False
-    assert seeded_policy.can_arm is False
-    assert seeded_policy.continuity_available is False
+    assert seeded_policy.can_arm is True
+    assert seeded_policy.continuity_available is True
     assert seeded_status is not None
     assert seeded_status.desired_mode == "off"
     assert seeded_status.actual_state == "stopped"
@@ -148,8 +163,8 @@ def test_monitoring_contract_gets_are_side_effect_free_and_start_no_runtime(
     policy = policy_response.json()
     status = status_response.json()
     assert policy["mode"] == "off"
-    assert policy["read_only"] is True
-    assert policy["can_arm"] is False
+    assert policy["read_only"] is False
+    assert policy["can_arm"] is True
     assert policy["creates_review_candidates"] is False
     assert policy["creates_review_truth"] is False
     assert status["desired_mode"] == "off"
@@ -201,7 +216,7 @@ def test_schema_one_migrates_all_existing_streams_to_safe_off(tmp_path: Path) ->
         migrated.close()
 
 
-def test_stale_running_checkpoint_is_reported_interrupted_without_mutation(
+def test_runtime_checkpoint_read_preserves_last_known_runtime_without_mutation(
     repository: ProductRepository,
 ) -> None:
     with repository.engine.begin() as connection:
@@ -214,8 +229,7 @@ def test_stale_running_checkpoint_is_reported_interrupted_without_mutation(
 
     status = repository.get_stream_runtime_status(STREAM_ID)
     assert status is not None
-    assert status.actual_state == "interrupted"
-    assert "stale" in " ".join(status.warnings).lower()
+    assert status.actual_state == "running"
 
     with repository.engine.connect() as connection:
         stored_state = connection.exec_driver_sql(
@@ -223,6 +237,86 @@ def test_stale_running_checkpoint_is_reported_interrupted_without_mutation(
             (STREAM_ID,),
         ).scalar_one()
     assert stored_state == "running"
+
+
+def test_monitoring_enable_disable_and_retry_are_durable_and_idempotent(
+    repository: ProductRepository,
+) -> None:
+    before = _persisted_contract_state(repository)
+
+    assert (
+        repository.set_stream_monitoring_enabled(
+            STREAM_ID,
+            enabled=True,
+            idempotency_key="enable-monitoring-001",
+        )
+        is False
+    )
+    enabled_policy = repository.get_stream_monitoring_policy(STREAM_ID)
+    enabled_status = repository.get_stream_runtime_status(STREAM_ID)
+    assert enabled_policy is not None and enabled_policy.mode == "armed"
+    assert enabled_status is not None and enabled_status.actual_state == "stopped"
+
+    assert (
+        repository.set_stream_monitoring_enabled(
+            STREAM_ID,
+            enabled=True,
+            idempotency_key="enable-monitoring-001",
+        )
+        is True
+    )
+    with pytest.raises(MonitoringOperationConflictError):
+        repository.set_stream_monitoring_enabled(
+            STREAM_ID,
+            enabled=False,
+            idempotency_key="enable-monitoring-001",
+        )
+
+    assert (
+        repository.retry_stream_monitoring(
+            STREAM_ID,
+            idempotency_key="retry-monitoring-001",
+        )
+        is False
+    )
+    retry_status = repository.get_stream_runtime_status(STREAM_ID)
+    assert retry_status is not None and retry_status.next_retry_at is not None
+
+    after = _persisted_contract_state(repository)
+    assert after["events"] == before["events"]
+    assert after["visits"] == before["visits"]
+    assert after["media_assets"] == before["media_assets"]
+    assert after["review_labels"] == before["review_labels"]
+
+
+def test_monitoring_api_exposes_idempotent_enable_and_bounded_status_read(
+    repository: ProductRepository,
+) -> None:
+    client = ASGITestClient()
+
+    enabled = client.put(
+        f"/api/streams/{STREAM_ID}/monitoring-policy",
+        json={"enabled": True, "idempotency_key": "api-enable-monitoring-001"},
+    )
+    replay = client.put(
+        f"/api/streams/{STREAM_ID}/monitoring-policy",
+        json={"enabled": True, "idempotency_key": "api-enable-monitoring-001"},
+    )
+    statuses = client.get("/api/streams/monitoring-status?limit=1")
+    retry = client.post(
+        f"/api/streams/{STREAM_ID}/runtime/retry",
+        json={"idempotency_key": "api-retry-monitoring-001"},
+    )
+
+    assert enabled.status_code == 200
+    assert enabled.json()["policy"]["mode"] == "armed"
+    assert enabled.json()["idempotent"] is False
+    assert replay.status_code == 200
+    assert replay.json()["idempotent"] is True
+    assert statuses.status_code == 200
+    assert statuses.json()["limit"] == 1
+    assert len(statuses.json()["items"]) == 1
+    assert retry.status_code == 200
 
 
 def test_backup_schema_compatibility_accepts_only_known_migration_paths() -> None:

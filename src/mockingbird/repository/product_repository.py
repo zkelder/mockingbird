@@ -298,6 +298,7 @@ from mockingbird.api.schemas import (
     ZoneUpdate,
 )
 from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
+from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
 from mockingbird.source_providers import folder_import_preview
 from mockingbird.source_providers.webhook_validation import classify_webhook_payload
 from mockingbird.storage.database import (
@@ -325,6 +326,7 @@ from mockingbird.storage.models import (
     ReviewLabelModel,
     StreamModel,
     StreamMonitoringPolicyModel,
+    StreamMonitoringOperationModel,
     StreamRuntimeCheckpointModel,
     TaxonomyLabelModel,
     VisitCurationHistoryModel,
@@ -364,6 +366,11 @@ class ReviewRevisionConflictError(ValueError):
 
 class VisitCurationConflictError(ValueError):
     """A Visit or merge snapshot changed before structural curation could be applied."""
+
+
+class MonitoringOperationConflictError(ValueError):
+    """An idempotency key was reused for a different monitoring operation."""
+
 
 _ZONE_MONITORING_POLICY_FIELDS = (
     "monitoring_enabled",
@@ -3012,8 +3019,8 @@ class ProductRepository:
                     policy_revision=1,
                     persisted=False,
                     message=(
-                        "Monitoring continuity is safely off. Camera and monitoring "
-                        "still use the explicit Stream Detail controls."
+                        "Monitoring is disabled. The missing saved record is shown as "
+                        "the safe default."
                     ),
                     warnings=[
                         "The persisted policy record is missing; the safe off default is shown."
@@ -3034,10 +3041,12 @@ class ProductRepository:
                 pause_reason=model.pause_reason,
                 persisted=True,
                 message=(
-                    "Monitoring continuity is off. Camera and monitoring still start "
-                    "only from Stream Detail."
+                    "Monitoring is disabled. Enable it explicitly from Stream Detail "
+                    "when this camera is ready."
                     if model.mode == StreamMonitoringMode.off.value
-                    else "Saved continuity intent is visible, but durable activation is not available yet."
+                    else "Monitoring is enabled and will be restored by the local supervisor."
+                    if model.mode == StreamMonitoringMode.armed.value
+                    else "Monitoring is paused and will not start until it is enabled again."
                 ),
             )
 
@@ -3067,19 +3076,32 @@ class ProductRepository:
             actual_state = StreamRuntimeState.stopped
             if checkpoint is not None:
                 try:
-                    checkpoint_state = StreamRuntimeState(checkpoint.actual_state)
+                    actual_state = StreamRuntimeState(checkpoint.actual_state)
                 except ValueError:
                     checkpoint_state = StreamRuntimeState.interrupted
                     warnings.append("The last runtime checkpoint has an unknown state.")
-                if checkpoint_state == StreamRuntimeState.stopped:
                     actual_state = checkpoint_state
-                else:
-                    # Phase 24D owns no supervisor/app-instance lease. Any nonterminal
-                    # checkpoint is necessarily stale and cannot prove a process is live.
-                    actual_state = StreamRuntimeState.interrupted
-                    warnings.append(
-                        "The last non-stopped checkpoint is stale; no durable runtime is enabled."
-                    )
+
+            if desired_mode == StreamMonitoringMode.off:
+                message = "Monitoring is disabled; no camera or monitor start is requested."
+            elif desired_mode == StreamMonitoringMode.paused:
+                message = "Monitoring is paused; no camera or monitor start is requested."
+            elif actual_state == StreamRuntimeState.running:
+                message = "Monitoring is running."
+            elif actual_state == StreamRuntimeState.starting:
+                message = "Monitoring is starting and waiting for a healthy live frame."
+            elif (
+                actual_state == StreamRuntimeState.blocked
+                and checkpoint is not None
+                and checkpoint.failure_code == "waiting_for_capacity"
+            ):
+                message = "Monitoring is enabled and waiting for available local capacity."
+            elif actual_state == StreamRuntimeState.backoff:
+                message = "Monitoring is enabled and will retry after a bounded backoff."
+            elif actual_state == StreamRuntimeState.blocked:
+                message = "Monitoring needs attention before it can restart."
+            else:
+                message = "Monitoring is enabled and awaiting local supervision."
 
             return StreamRuntimeStatusResponse(
                 stream_id=stream.id,
@@ -3094,6 +3116,13 @@ class ProductRepository:
                     else 1
                 ),
                 checkpoint_present=checkpoint is not None,
+                active_session_count=(
+                    1
+                    if desired_mode == StreamMonitoringMode.armed
+                    and actual_state
+                    in {StreamRuntimeState.starting, StreamRuntimeState.running}
+                    else 0
+                ),
                 checkpoint_updated_at=checkpoint.updated_at if checkpoint else None,
                 last_start_attempt_at=(
                     checkpoint.last_start_attempt_at if checkpoint else None
@@ -3110,13 +3139,428 @@ class ProductRepository:
                 next_retry_at=checkpoint.next_retry_at if checkpoint else None,
                 last_stop_reason=checkpoint.last_stop_reason if checkpoint else "policy_off",
                 safety_hold_active=(checkpoint.safety_hold_active if checkpoint else False),
-                message=(
-                    "Continuity is off; no camera or monitor start was requested."
-                    if desired_mode == StreamMonitoringMode.off
-                    else "Saved intent is visible, but durable camera recovery is not available yet."
+                camera_start_requested=(
+                    desired_mode == StreamMonitoringMode.armed
+                    and actual_state
+                    in {StreamRuntimeState.starting, StreamRuntimeState.running}
                 ),
+                monitor_start_requested=(actual_state == StreamRuntimeState.running),
+                message=message,
                 warnings=warnings,
             )
+
+    def list_stream_monitoring_statuses(
+        self,
+        *,
+        limit: int = 50,
+    ) -> list[StreamRuntimeStatusResponse]:
+        """Return a bounded, read-only status view for existing dashboard surfaces."""
+
+        stream_ids = [stream.id for stream in self.list_streams()[:limit]]
+        return [
+            status
+            for stream_id in stream_ids
+            if (status := self.get_stream_runtime_status(stream_id)) is not None
+        ]
+
+    def set_stream_monitoring_enabled(
+        self,
+        stream_id: str,
+        *,
+        enabled: bool,
+        idempotency_key: str,
+    ) -> bool | None:
+        """Persist explicit desired state once; callers wake the in-memory supervisor."""
+
+        operation = "enable" if enabled else "disable"
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                stream = session.get(StreamModel, stream_id)
+                if stream is None:
+                    return None
+                existing = session.get(StreamMonitoringOperationModel, idempotency_key)
+                if existing is not None:
+                    if (
+                        existing.stream_id != stream_id
+                        or existing.operation != operation
+                    ):
+                        raise MonitoringOperationConflictError(
+                            "monitoring_idempotency_key_conflict"
+                        )
+                    return True
+
+                policy = session.get(StreamMonitoringPolicyModel, stream_id)
+                checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
+                if policy is None or checkpoint is None:
+                    policy, checkpoint = _new_stream_monitoring_records(
+                        stream_id,
+                        created_at=now,
+                    )
+                    session.add_all((policy, checkpoint))
+                    session.flush()
+
+                requested_mode = (
+                    StreamMonitoringMode.armed.value
+                    if enabled
+                    else StreamMonitoringMode.off.value
+                )
+                if policy.mode != requested_mode:
+                    policy.mode = requested_mode
+                    policy.policy_revision += 1
+                    policy.updated_at = now
+                    policy.armed_at = now if enabled else None
+                    policy.paused_at = None
+                    policy.pause_reason = None
+                    checkpoint.observed_policy_revision = policy.policy_revision
+                    checkpoint.actual_state = StreamRuntimeState.stopped.value
+                    checkpoint.app_instance_id = None
+                    checkpoint.runtime_generation_id = None
+                    checkpoint.next_retry_at = None
+                    checkpoint.failure_code = None
+                    checkpoint.consecutive_failure_count = 0
+                    checkpoint.safety_hold_active = False
+                    checkpoint.last_stop_reason = (
+                        "enabled" if enabled else "policy_disabled"
+                    )
+                    if not enabled:
+                        checkpoint.last_clean_stop_at = now
+                    checkpoint.updated_at = now
+
+                session.add(
+                    StreamMonitoringOperationModel(
+                        idempotency_key=idempotency_key,
+                        stream_id=stream_id,
+                        operation=operation,
+                        policy_revision=policy.policy_revision,
+                        created_at=now,
+                    )
+                )
+                return False
+
+    def retry_stream_monitoring(
+        self,
+        stream_id: str,
+        *,
+        idempotency_key: str,
+    ) -> bool | None:
+        """Clear a bounded recovery hold only after an explicit retry request."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                stream = session.get(StreamModel, stream_id)
+                if stream is None:
+                    return None
+                existing = session.get(StreamMonitoringOperationModel, idempotency_key)
+                if existing is not None:
+                    if (
+                        existing.stream_id != stream_id
+                        or existing.operation != "retry"
+                    ):
+                        raise MonitoringOperationConflictError(
+                            "monitoring_idempotency_key_conflict"
+                        )
+                    return True
+
+                policy = session.get(StreamMonitoringPolicyModel, stream_id)
+                checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
+                if policy is None or policy.mode != StreamMonitoringMode.armed.value:
+                    raise ValueError("monitoring_disabled")
+                if checkpoint is None:
+                    _, checkpoint = _new_stream_monitoring_records(
+                        stream_id,
+                        created_at=now,
+                    )
+                    session.add(checkpoint)
+
+                if checkpoint.actual_state not in {
+                    StreamRuntimeState.starting.value,
+                    StreamRuntimeState.running.value,
+                }:
+                    checkpoint.actual_state = StreamRuntimeState.stopped.value
+                    checkpoint.app_instance_id = None
+                    checkpoint.runtime_generation_id = None
+                    checkpoint.next_retry_at = now
+                    checkpoint.failure_code = None
+                    checkpoint.consecutive_failure_count = 0
+                    checkpoint.safety_hold_active = False
+                    checkpoint.last_stop_reason = "retry_requested"
+                    checkpoint.updated_at = now
+
+                session.add(
+                    StreamMonitoringOperationModel(
+                        idempotency_key=idempotency_key,
+                        stream_id=stream_id,
+                        operation="retry",
+                        policy_revision=policy.policy_revision,
+                        created_at=now,
+                    )
+                )
+                return False
+
+    def disable_stream_monitoring_for_manual_stop(self, stream_id: str) -> None:
+        """Keep the legacy Stop camera control from being immediately restarted."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                policy = session.get(StreamMonitoringPolicyModel, stream_id)
+                checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
+                if policy is None or checkpoint is None:
+                    return
+                if policy.mode != StreamMonitoringMode.off.value:
+                    policy.mode = StreamMonitoringMode.off.value
+                    policy.policy_revision += 1
+                    policy.armed_at = None
+                    policy.paused_at = None
+                    policy.pause_reason = None
+                    policy.updated_at = now
+                checkpoint.observed_policy_revision = policy.policy_revision
+                checkpoint.actual_state = StreamRuntimeState.stopped.value
+                checkpoint.app_instance_id = None
+                checkpoint.runtime_generation_id = None
+                checkpoint.next_retry_at = None
+                checkpoint.failure_code = None
+                checkpoint.consecutive_failure_count = 0
+                checkpoint.safety_hold_active = False
+                checkpoint.last_clean_stop_at = now
+                checkpoint.last_stop_reason = "manual_camera_stop"
+                checkpoint.updated_at = now
+
+    def prepare_for_supervision(self, app_instance_id: str) -> None:
+        """Invalidate any process-owned checkpoint before a new app claims runtime."""
+
+        now = datetime.now(UTC)
+        nonterminal_states = {
+            StreamRuntimeState.starting.value,
+            StreamRuntimeState.running.value,
+            StreamRuntimeState.backoff.value,
+            StreamRuntimeState.stopping.value,
+        }
+        with self.session_factory() as session:
+            with session.begin():
+                checkpoints = session.scalars(
+                    select(StreamRuntimeCheckpointModel).where(
+                        StreamRuntimeCheckpointModel.actual_state.in_(nonterminal_states)
+                    )
+                ).all()
+                for checkpoint in checkpoints:
+                    checkpoint.actual_state = StreamRuntimeState.interrupted.value
+                    checkpoint.app_instance_id = None
+                    checkpoint.runtime_generation_id = None
+                    checkpoint.last_stop_reason = "previous_process_ended"
+                    checkpoint.updated_at = now
+
+    def list_enabled_monitoring_candidates(
+        self,
+        *,
+        limit: int,
+    ) -> list[DurableMonitoringCandidate]:
+        """Read only explicit enabled intent; provider validation stays at start time."""
+
+        bounded_limit = max(1, min(limit, 50))
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(StreamMonitoringPolicyModel, StreamRuntimeCheckpointModel)
+                .join(
+                    StreamRuntimeCheckpointModel,
+                    StreamRuntimeCheckpointModel.stream_id
+                    == StreamMonitoringPolicyModel.stream_id,
+                )
+                .where(
+                    StreamMonitoringPolicyModel.mode == StreamMonitoringMode.armed.value
+                )
+                .order_by(StreamMonitoringPolicyModel.stream_id)
+                .limit(bounded_limit)
+            ).all()
+            return [
+                DurableMonitoringCandidate(
+                    stream_id=policy.stream_id,
+                    policy_revision=policy.policy_revision,
+                    evaluation_interval_seconds=policy.evaluation_interval_seconds,
+                    quiet_period_seconds=policy.quiet_period_seconds,
+                    minimum_detection_count=policy.minimum_detection_count,
+                    auto_create_review_candidates=(
+                        policy.auto_create_review_candidates
+                    ),
+                    actual_state=checkpoint.actual_state,
+                    consecutive_failure_count=checkpoint.consecutive_failure_count,
+                    next_retry_at=checkpoint.next_retry_at,
+                    last_start_attempt_at=checkpoint.last_start_attempt_at,
+                    safety_hold_active=checkpoint.safety_hold_active,
+                )
+                for policy, checkpoint in rows
+            ]
+
+    def _checkpoint_for_enabled_candidate(
+        self,
+        session: Session,
+        candidate: DurableMonitoringCandidate,
+    ) -> StreamRuntimeCheckpointModel | None:
+        policy = session.get(StreamMonitoringPolicyModel, candidate.stream_id)
+        if (
+            policy is None
+            or policy.mode != StreamMonitoringMode.armed.value
+            or policy.policy_revision != candidate.policy_revision
+        ):
+            return None
+        return session.get(StreamRuntimeCheckpointModel, candidate.stream_id)
+
+    def mark_monitoring_starting(
+        self,
+        candidate: DurableMonitoringCandidate,
+        *,
+        app_instance_id: str,
+        now: datetime,
+    ) -> None:
+        with self.session_factory() as session:
+            with session.begin():
+                checkpoint = self._checkpoint_for_enabled_candidate(session, candidate)
+                if checkpoint is None:
+                    return
+                if checkpoint.actual_state != StreamRuntimeState.starting.value:
+                    checkpoint.start_count += 1
+                    checkpoint.last_start_attempt_at = now
+                    checkpoint.runtime_generation_id = uuid.uuid4().hex
+                checkpoint.actual_state = StreamRuntimeState.starting.value
+                checkpoint.observed_policy_revision = candidate.policy_revision
+                checkpoint.app_instance_id = app_instance_id
+                checkpoint.next_retry_at = None
+                checkpoint.failure_code = None
+                checkpoint.updated_at = now
+
+    def mark_monitoring_running(
+        self,
+        candidate: DurableMonitoringCandidate,
+        *,
+        app_instance_id: str,
+        healthy_at: datetime,
+        now: datetime,
+    ) -> None:
+        with self.session_factory() as session:
+            with session.begin():
+                checkpoint = self._checkpoint_for_enabled_candidate(session, candidate)
+                if checkpoint is None:
+                    return
+                checkpoint.actual_state = StreamRuntimeState.running.value
+                checkpoint.observed_policy_revision = candidate.policy_revision
+                checkpoint.app_instance_id = app_instance_id
+                checkpoint.last_healthy_frame_at = healthy_at
+                checkpoint.next_retry_at = None
+                checkpoint.failure_code = None
+                checkpoint.consecutive_failure_count = 0
+                checkpoint.safety_hold_active = False
+                checkpoint.updated_at = now
+
+    def mark_monitoring_waiting(
+        self,
+        candidate: DurableMonitoringCandidate,
+        *,
+        now: datetime,
+    ) -> None:
+        with self.session_factory() as session:
+            with session.begin():
+                checkpoint = self._checkpoint_for_enabled_candidate(session, candidate)
+                if checkpoint is None:
+                    return
+                if (
+                    checkpoint.actual_state == StreamRuntimeState.blocked.value
+                    and checkpoint.failure_code == "waiting_for_capacity"
+                ):
+                    return
+                checkpoint.actual_state = StreamRuntimeState.blocked.value
+                checkpoint.observed_policy_revision = candidate.policy_revision
+                checkpoint.failure_code = "waiting_for_capacity"
+                checkpoint.next_retry_at = None
+                checkpoint.last_stop_reason = "waiting_for_capacity"
+                checkpoint.updated_at = now
+
+    def mark_monitoring_backoff(
+        self,
+        candidate: DurableMonitoringCandidate,
+        *,
+        app_instance_id: str,
+        failure_count: int,
+        retry_at: datetime,
+        now: datetime,
+    ) -> None:
+        with self.session_factory() as session:
+            with session.begin():
+                checkpoint = self._checkpoint_for_enabled_candidate(session, candidate)
+                if checkpoint is None:
+                    return
+                if (
+                    checkpoint.actual_state == StreamRuntimeState.backoff.value
+                    and checkpoint.next_retry_at == retry_at
+                    and checkpoint.consecutive_failure_count == failure_count
+                ):
+                    return
+                checkpoint.actual_state = StreamRuntimeState.backoff.value
+                checkpoint.observed_policy_revision = candidate.policy_revision
+                checkpoint.app_instance_id = app_instance_id
+                checkpoint.last_failure_at = now
+                checkpoint.failure_code = "camera_unavailable"
+                checkpoint.consecutive_failure_count = failure_count
+                checkpoint.failure_count += 1
+                checkpoint.next_retry_at = retry_at
+                checkpoint.last_stop_reason = "runtime_unhealthy"
+                checkpoint.updated_at = now
+
+    def mark_monitoring_blocked(
+        self,
+        candidate: DurableMonitoringCandidate,
+        *,
+        app_instance_id: str,
+        failure_count: int,
+        failure_code: str,
+        now: datetime,
+    ) -> None:
+        with self.session_factory() as session:
+            with session.begin():
+                checkpoint = self._checkpoint_for_enabled_candidate(session, candidate)
+                if checkpoint is None:
+                    return
+                if (
+                    checkpoint.actual_state == StreamRuntimeState.blocked.value
+                    and checkpoint.failure_code == failure_code
+                    and checkpoint.consecutive_failure_count == failure_count
+                ):
+                    return
+                checkpoint.actual_state = StreamRuntimeState.blocked.value
+                checkpoint.observed_policy_revision = candidate.policy_revision
+                checkpoint.app_instance_id = app_instance_id
+                checkpoint.last_failure_at = now
+                checkpoint.failure_code = failure_code
+                checkpoint.consecutive_failure_count = failure_count
+                checkpoint.failure_count += 1
+                checkpoint.next_retry_at = None
+                checkpoint.last_stop_reason = failure_code
+                checkpoint.updated_at = now
+
+    def mark_monitoring_stopped(
+        self,
+        stream_id: str,
+        *,
+        reason: str,
+        now: datetime,
+    ) -> None:
+        with self.session_factory() as session:
+            with session.begin():
+                policy = session.get(StreamMonitoringPolicyModel, stream_id)
+                checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
+                if checkpoint is None:
+                    return
+                checkpoint.actual_state = StreamRuntimeState.stopped.value
+                checkpoint.observed_policy_revision = (
+                    policy.policy_revision if policy is not None else 1
+                )
+                checkpoint.app_instance_id = None
+                checkpoint.runtime_generation_id = None
+                checkpoint.last_clean_stop_at = now
+                checkpoint.next_retry_at = None
+                checkpoint.last_stop_reason = reason
+                checkpoint.updated_at = now
 
     def get_stream_playback_status(self, stream_id: str) -> StreamPlaybackStatus | None:
         with self.session_factory() as session:

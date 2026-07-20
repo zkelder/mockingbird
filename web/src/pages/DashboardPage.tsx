@@ -5,6 +5,7 @@ import type {
   DashboardSummary,
   DashboardVisitSummary,
   HealthStatus,
+  StreamRuntimeStatus,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { StatusPill } from "../components/StatusPill";
@@ -125,6 +126,10 @@ export function DashboardPage({
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [monitorActionId, setMonitorActionId] = useState<string | null>(null);
   const [monitorActionError, setMonitorActionError] = useState<string | null>(null);
+  const [durableStatusByStream, setDurableStatusByStream] = useState<
+    Record<string, StreamRuntimeStatus>
+  >({});
+  const [durableActionId, setDurableActionId] = useState<string | null>(null);
 
   const refreshDashboard = useCallback(async (initialLoad = false) => {
     if (initialLoad) {
@@ -133,8 +138,18 @@ export function DashboardPage({
       setIsRefreshing(true);
     }
     try {
-      const nextSummary = await apiClient.getDashboardSummary();
+      const [nextSummary, monitoringStatuses] = await Promise.all([
+        apiClient.getDashboardSummary(),
+        apiClient.getStreamMonitoringStatuses().catch(() => null),
+      ]);
       setSummary(nextSummary);
+      if (monitoringStatuses) {
+        setDurableStatusByStream(
+          Object.fromEntries(
+            monitoringStatuses.items.map((status) => [status.stream_id, status]),
+          ),
+        );
+      }
       setRefreshError(null);
     } catch {
       // Keep the last product snapshot visible during a transient local API failure.
@@ -176,6 +191,39 @@ export function DashboardPage({
       );
     } finally {
       setMonitorActionId(null);
+    }
+  }
+
+  async function handleDurableMonitoringAction(
+    streamId: string,
+    action: "enable" | "disable" | "retry",
+  ) {
+    setDurableActionId(`${action}-${streamId}`);
+    setMonitorActionError(null);
+    const idempotencyKey =
+      globalThis.crypto?.randomUUID?.() ??
+      `dashboard-monitoring-${action}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    try {
+      const result =
+        action === "retry"
+          ? await apiClient.retryStreamMonitoring(streamId, {
+              idempotency_key: idempotencyKey,
+            })
+          : await apiClient.updateStreamMonitoringPolicy(streamId, {
+              enabled: action === "enable",
+              idempotency_key: idempotencyKey,
+            });
+      setDurableStatusByStream((current) => ({
+        ...current,
+        [streamId]: result.runtime,
+      }));
+      await refreshDashboard();
+    } catch {
+      setMonitorActionError(
+        "Could not update persistent monitoring. Open Stream Detail to check this camera.",
+      );
+    } finally {
+      setDurableActionId(null);
     }
   }
 
@@ -270,7 +318,7 @@ export function DashboardPage({
         <div className="section-heading">
           <div>
             <h2>Camera and Stream status</h2>
-            <span className="meta-text">Availability is read-only; monitoring never starts automatically.</span>
+            <span className="meta-text">Availability is read-only. Persistent monitoring starts only after Enable.</span>
           </div>
           <StatusPill
             label={headline.monitored_stream_count ? "Monitoring active" : "No Stream monitored"}
@@ -282,6 +330,11 @@ export function DashboardPage({
           <div className="dashboard-stream-grid">
             {summary.streams.map((stream) => (
               <article className="dashboard-stream-card" key={stream.stream_id}>
+                {(() => {
+                  const durableStatus = durableStatusByStream[stream.stream_id];
+                  const monitoringEnabled = durableStatus?.desired_mode === "armed";
+                  return (
+                    <>
                 <div className="item-title-row">
                   <div>
                     <h3>{stream.stream_name}</h3>
@@ -296,6 +349,10 @@ export function DashboardPage({
                 <div className="dashboard-stream-facts">
                   <span>
                     Monitoring: <strong>{stream.monitoring_active ? "Active" : "Inactive"}</strong>
+                  </span>
+                  <span>
+                    Persistent: <strong>{monitoringEnabled ? "Enabled" : "Disabled"}</strong>
+                    {durableStatus ? ` · ${formatLabel(durableStatus.actual_state)}` : ""}
                   </span>
                   <span>
                     Open sessions: <strong>{stream.open_activity_session_count}</strong>
@@ -335,6 +392,37 @@ export function DashboardPage({
                           : "Start monitoring"}
                     </button>
                   ) : null}
+                  {durableStatus ? (
+                    <button
+                      className={monitoringEnabled ? "secondary-action" : "primary-action"}
+                      disabled={durableActionId !== null}
+                      onClick={() =>
+                        void handleDurableMonitoringAction(
+                          stream.stream_id,
+                          monitoringEnabled ? "disable" : "enable",
+                        )
+                      }
+                      type="button"
+                    >
+                      {durableActionId === `${monitoringEnabled ? "disable" : "enable"}-${stream.stream_id}`
+                        ? "Updating…"
+                        : monitoringEnabled
+                          ? "Disable monitoring"
+                          : "Enable monitoring"}
+                    </button>
+                  ) : null}
+                  {monitoringEnabled && durableStatus?.actual_state !== "running" ? (
+                    <button
+                      className="text-action"
+                      disabled={durableActionId !== null}
+                      onClick={() =>
+                        void handleDurableMonitoringAction(stream.stream_id, "retry")
+                      }
+                      type="button"
+                    >
+                      {durableActionId === `retry-${stream.stream_id}` ? "Retrying…" : "Retry monitoring"}
+                    </button>
+                  ) : null}
                   {stream.needs_review_visit_count ? (
                     <button
                       className="text-action"
@@ -351,6 +439,9 @@ export function DashboardPage({
                     </button>
                   ) : null}
                 </div>
+                    </>
+                  );
+                })()}
               </article>
             ))}
           </div>

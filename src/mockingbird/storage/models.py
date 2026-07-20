@@ -126,6 +126,27 @@ class StreamRuntimeCheckpointModel(Base):
     )
 
 
+class StreamMonitoringOperationModel(Base):
+    """Durable idempotency record for explicit monitoring controls only."""
+
+    __tablename__ = "stream_monitoring_operations"
+    __table_args__ = (
+        CheckConstraint(
+            "operation IN ('enable', 'disable', 'retry')",
+            name="ck_stream_monitoring_operation_kind",
+        ),
+        Index("ix_stream_monitoring_operations_stream_id", "stream_id"),
+    )
+
+    idempotency_key: Mapped[str] = mapped_column(String, primary_key=True)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
+    operation: Mapped[str] = mapped_column(String, nullable=False)
+    policy_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class ZoneModel(Base):
     __tablename__ = "zones"
 

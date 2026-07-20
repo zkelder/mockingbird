@@ -138,7 +138,11 @@ import type {
   SourceProviderDefinition,
   SourceSetupReviewResponse,
   Stream,
+  StreamMonitoringMutationResponse,
   StreamMonitoringPolicy,
+  StreamMonitoringPolicyUpdate,
+  StreamMonitoringRetryRequest,
+  StreamMonitoringStatusListResponse,
   StreamPlaybackStatus,
   StreamRuntimeStatus,
   StreamVisitSummary,
@@ -336,6 +340,10 @@ export const apiClient = {
     ),
   getDashboardSummary: () => request<DashboardSummary>("/api/dashboard/summary"),
   getStreams: () => request<Stream[]>("/api/streams"),
+  getStreamMonitoringStatuses: (limit = 50) =>
+    request<StreamMonitoringStatusListResponse>(
+      `/api/streams/monitoring-status?limit=${encodeURIComponent(String(limit))}`,
+    ),
   getZones: () => request<Zone[]>("/api/zones"),
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),
   getStreamPlaybackStatus: (streamId: string) =>
@@ -347,6 +355,28 @@ export const apiClient = {
   getStreamRuntimeStatus: (streamId: string) =>
     request<StreamRuntimeStatus>(
       `/api/streams/${encodeURIComponent(streamId)}/runtime-status`,
+    ),
+  updateStreamMonitoringPolicy: (
+    streamId: string,
+    payload: StreamMonitoringPolicyUpdate,
+  ) =>
+    request<StreamMonitoringMutationResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/monitoring-policy`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      },
+    ),
+  retryStreamMonitoring: (
+    streamId: string,
+    payload: StreamMonitoringRetryRequest,
+  ) =>
+    request<StreamMonitoringMutationResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/runtime/retry`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
     ),
   rtspMjpegBridgeUrl: (streamId: string) =>
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live/rtsp-mjpeg`,

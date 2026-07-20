@@ -179,7 +179,11 @@ from mockingbird.api.schemas import (
     SourceSetupReviewResponse,
     SourceStatus,
     Stream,
+    StreamMonitoringMutationResponse,
     StreamMonitoringPolicyResponse,
+    StreamMonitoringPolicyUpdate,
+    StreamMonitoringRetryRequest,
+    StreamMonitoringStatusListResponse,
     StreamPlaybackStatus,
     StreamPlaybackStatusResponse,
     StreamRuntimeStatusResponse,
@@ -225,6 +229,9 @@ from mockingbird.motion.activity_session import (
     recommend_activity_session,
 )
 from mockingbird.monitoring import (
+    DurableMonitoringCandidate,
+    DurableMonitoringSupervisor,
+    ManagedCameraStatus,
     MonitorMotionResult,
     MonitorSnapshotResult,
     SourceMonitorManager,
@@ -240,6 +247,7 @@ from mockingbird.playback import (
 )
 from mockingbird.repository.product_repository import (
     FastReviewConflictError,
+    MonitoringOperationConflictError,
     ProductRepository,
     ReviewRevisionConflictError,
     VisitCurationConflictError,
@@ -278,12 +286,15 @@ from mockingbird.web_app import frontend_response
 
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
-    """Validate local data before readiness and stop in-memory runtime activity cleanly."""
+    """Validate local data, restore explicit monitoring intent, and stop safely."""
 
     get_repository()
+    get_durable_monitoring_supervisor().start()
     try:
         yield
     finally:
+        if _durable_monitoring_supervisor is not None:
+            _durable_monitoring_supervisor.shutdown(reason="api_shutdown")
         if _source_monitor_manager is not None:
             _source_monitor_manager.cancel_all()
         if _live_camera_session_manager is not None:
@@ -400,6 +411,7 @@ _patch_testclient_for_pytest()
 _repository: ProductRepository | None = None
 _source_monitor_manager: SourceMonitorManager | None = None
 _live_camera_session_manager: live_camera_session.LiveCameraSessionManager | None = None
+_durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
 _backup_operation_lock = threading.Lock()
 _repository_access_lock = threading.RLock()
 
@@ -425,7 +437,10 @@ def configure_repository(repository: ProductRepository | None) -> None:
 
 
 def _stop_runtime_activity(*, reason: str) -> None:
-    global _source_monitor_manager, _live_camera_session_manager
+    global _durable_monitoring_supervisor, _source_monitor_manager, _live_camera_session_manager
+    if _durable_monitoring_supervisor is not None:
+        _durable_monitoring_supervisor.shutdown(reason=reason)
+        _durable_monitoring_supervisor = None
     if _source_monitor_manager is not None:
         _source_monitor_manager.cancel_all()
         _source_monitor_manager = None
@@ -575,6 +590,21 @@ def get_live_camera_session_manager() -> live_camera_session.LiveCameraSessionMa
     if _live_camera_session_manager is None:
         _live_camera_session_manager = live_camera_session.LiveCameraSessionManager()
     return _live_camera_session_manager
+
+
+def get_durable_monitoring_supervisor() -> DurableMonitoringSupervisor:
+    """Return the single app-owned orchestrator without constructing a camera session."""
+
+    global _durable_monitoring_supervisor
+    if _durable_monitoring_supervisor is None:
+        _durable_monitoring_supervisor = DurableMonitoringSupervisor(
+            store=get_repository(),
+            start_camera=_supervisor_start_camera,
+            start_monitor=_supervisor_start_monitor,
+            camera_status=_supervisor_camera_status,
+            stop_camera=_supervisor_stop_camera,
+        )
+    return _durable_monitoring_supervisor
 
 
 def _not_found(product_type: str, product_id: str) -> HTTPException:
@@ -2187,6 +2217,79 @@ def _validate_live_camera_session_config(
         status_code=400,
         detail="Backend camera sessions require RTSP, local_usb, or windows_dshow playback.",
     )
+
+
+def _managed_camera_status(
+    snapshot: live_camera_session.LiveCameraSessionSnapshot | None,
+) -> ManagedCameraStatus:
+    if snapshot is None:
+        return ManagedCameraStatus(state="stopped")
+    return ManagedCameraStatus(
+        state=snapshot.status,
+        healthy_at=snapshot.last_frame_at,
+        monitor_running=snapshot.monitor_running,
+    )
+
+
+def _supervisor_start_camera(
+    candidate: DurableMonitoringCandidate,
+) -> ManagedCameraStatus:
+    configuration = _stream_live_playback_config_or_404(
+        candidate.stream_id,
+        require_active_source=True,
+    )
+    _validate_live_camera_session_config(configuration)
+    snapshot = get_live_camera_session_manager().start(configuration)
+    return _managed_camera_status(snapshot)
+
+
+def _supervisor_start_monitor(
+    candidate: DurableMonitoringCandidate,
+) -> ManagedCameraStatus:
+    evaluate_request = LiveMotionEvaluateRequest(create_review_activity=False)
+
+    def monitor_evaluate() -> dict[str, Any]:
+        # Monitoring can create review candidates only through the persisted,
+        # explicitly enabled existing setting. It never creates reviewed truth.
+        if candidate.auto_create_review_candidates:
+            _maybe_auto_create_live_review_candidate(candidate.stream_id)
+        result = _evaluate_live_stream_motion(
+            candidate.stream_id,
+            evaluate_request,
+            evaluation_cadence_seconds=candidate.evaluation_interval_seconds,
+        )
+        if candidate.auto_create_review_candidates:
+            _maybe_auto_create_live_review_candidate(candidate.stream_id)
+        snapshot_after_evaluation = get_live_camera_session_manager().status(
+            candidate.stream_id
+        )
+        if (
+            snapshot_after_evaluation is not None
+            and snapshot_after_evaluation.last_motion_result is not None
+        ):
+            return dict(snapshot_after_evaluation.last_motion_result)
+        return result.model_dump(mode="json")
+
+    snapshot = get_live_camera_session_manager().start_monitor(
+        candidate.stream_id,
+        monitor_evaluate,
+        interval_seconds=candidate.evaluation_interval_seconds,
+        auto_create_review_candidates=candidate.auto_create_review_candidates,
+        auto_review_quiet_seconds=candidate.quiet_period_seconds,
+        auto_review_min_detections=candidate.minimum_detection_count,
+    )
+    return _managed_camera_status(snapshot)
+
+
+def _supervisor_camera_status(stream_id: str) -> ManagedCameraStatus | None:
+    if _live_camera_session_manager is None:
+        return None
+    return _managed_camera_status(_live_camera_session_manager.status(stream_id))
+
+
+def _supervisor_stop_camera(stream_id: str, reason: str) -> None:
+    if _live_camera_session_manager is not None:
+        _live_camera_session_manager.stop(stream_id, reason=reason)
 
 
 def _live_motion_session_status(
@@ -4553,10 +4656,13 @@ async def update_live_stream_motion_monitor_settings(
 async def stop_live_stream_motion_monitor(stream_id: str) -> LiveCameraSessionStatusResponse:
     configuration = _stream_live_playback_config_or_404(stream_id)
     snapshot = get_live_camera_session_manager().stop_monitor(stream_id)
+    get_repository().disable_stream_monitoring_for_manual_stop(stream_id)
+    if _durable_monitoring_supervisor is not None:
+        _durable_monitoring_supervisor.wake()
     return _live_camera_session_response(
         snapshot,
         configuration,
-        message="Live monitoring stopped.",
+        message="Live monitoring stopped and durable monitoring disabled.",
     )
 
 
@@ -5444,10 +5550,14 @@ async def update_camera_source(
         raise _not_found("Source", source_id)
 
     if payload.archived is True:
-        # Archiving pauses runtime activity but preserves every product record.
+        # Archiving preserves product records but explicitly cancels future restart.
         for stream in result.streams:
-            get_live_camera_session_manager().stop(stream.id, reason="source_archived")
+            repository.disable_stream_monitoring_for_manual_stop(stream.id)
+            if _live_camera_session_manager is not None:
+                _live_camera_session_manager.stop(stream.id, reason="source_archived")
             await get_source_monitor_manager().stop(stream.id)
+        if _durable_monitoring_supervisor is not None:
+            _durable_monitoring_supervisor.wake()
     return result
 
 
@@ -6225,6 +6335,22 @@ async def list_streams() -> list[Stream]:
     return get_repository().list_streams()
 
 
+@app.get(
+    "/api/streams/monitoring-status",
+    response_model=StreamMonitoringStatusListResponse,
+)
+async def list_stream_monitoring_statuses(
+    limit: int = Query(default=50, ge=1, le=50),
+) -> StreamMonitoringStatusListResponse:
+    """A bounded status read for Dashboard; it never starts or reconciles runtime."""
+
+    return StreamMonitoringStatusListResponse(
+        items=get_repository().list_stream_monitoring_statuses(limit=limit),
+        limit=limit,
+        message="Showing saved monitoring intent and last-known local runtime status.",
+    )
+
+
 async def _dashboard_runtime_by_stream(
     repository: ProductRepository,
 ) -> dict[str, DashboardStreamRuntimeStatus]:
@@ -6326,6 +6452,92 @@ async def get_stream_runtime_status(stream_id: str) -> StreamRuntimeStatusRespon
     return status
 
 
+@app.put(
+    "/api/streams/{stream_id}/monitoring-policy",
+    response_model=StreamMonitoringMutationResponse,
+)
+async def update_stream_monitoring_policy(
+    stream_id: str,
+    payload: StreamMonitoringPolicyUpdate,
+) -> StreamMonitoringMutationResponse:
+    """Persist Enable/Disable intent first, then ask the one app supervisor to reconcile."""
+
+    repository = get_repository()
+    try:
+        idempotent = repository.set_stream_monitoring_enabled(
+            stream_id,
+            enabled=payload.enabled,
+            idempotency_key=payload.idempotency_key,
+        )
+    except MonitoringOperationConflictError:
+        raise HTTPException(
+            status_code=409,
+            detail="That monitoring request key was already used for a different action.",
+        ) from None
+    if idempotent is None:
+        raise _not_found("Stream", stream_id)
+
+    get_durable_monitoring_supervisor().wake()
+    policy = repository.get_stream_monitoring_policy(stream_id)
+    runtime = repository.get_stream_runtime_status(stream_id)
+    if policy is None or runtime is None:
+        raise _not_found("Stream", stream_id)
+    return StreamMonitoringMutationResponse(
+        policy=policy,
+        runtime=runtime,
+        idempotent=idempotent,
+        message=(
+            "Monitoring is enabled. Local startup will wait for a healthy camera frame."
+            if payload.enabled
+            else "Monitoring is disabled and pending recovery has been cancelled."
+        ),
+    )
+
+
+@app.post(
+    "/api/streams/{stream_id}/runtime/retry",
+    response_model=StreamMonitoringMutationResponse,
+)
+async def retry_stream_monitoring_runtime(
+    stream_id: str,
+    payload: StreamMonitoringRetryRequest,
+) -> StreamMonitoringMutationResponse:
+    """Retry a blocked enabled Stream explicitly; retries never start a second session."""
+
+    repository = get_repository()
+    try:
+        idempotent = repository.retry_stream_monitoring(
+            stream_id,
+            idempotency_key=payload.idempotency_key,
+        )
+    except MonitoringOperationConflictError:
+        raise HTTPException(
+            status_code=409,
+            detail="That monitoring request key was already used for a different action.",
+        ) from None
+    except ValueError as error:
+        if str(error) == "monitoring_disabled":
+            raise HTTPException(
+                status_code=409,
+                detail="Enable monitoring before requesting a runtime retry.",
+            ) from None
+        raise
+    if idempotent is None:
+        raise _not_found("Stream", stream_id)
+
+    get_durable_monitoring_supervisor().wake()
+    policy = repository.get_stream_monitoring_policy(stream_id)
+    runtime = repository.get_stream_runtime_status(stream_id)
+    if policy is None or runtime is None:
+        raise _not_found("Stream", stream_id)
+    return StreamMonitoringMutationResponse(
+        policy=policy,
+        runtime=runtime,
+        idempotent=idempotent,
+        message="Monitoring retry requested. The local supervisor will reuse its bounded recovery path.",
+    )
+
+
 def _stream_live_playback_config_or_404(
     stream_id: str,
     *,
@@ -6374,10 +6586,13 @@ async def start_stream_live_camera_session(stream_id: str) -> LiveCameraSessionS
 async def stop_stream_live_camera_session(stream_id: str) -> LiveCameraSessionStatusResponse:
     configuration = _stream_live_playback_config_or_404(stream_id)
     snapshot = get_live_camera_session_manager().stop(stream_id)
+    get_repository().disable_stream_monitoring_for_manual_stop(stream_id)
+    if _durable_monitoring_supervisor is not None:
+        _durable_monitoring_supervisor.wake()
     return _live_camera_session_response(
         snapshot,
         configuration,
-        message="Camera session stopped.",
+        message="Camera session stopped and durable monitoring disabled.",
     )
 
 
