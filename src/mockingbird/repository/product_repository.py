@@ -5637,7 +5637,17 @@ class ProductRepository:
             selected = _json_list(export.selected_visit_ids_json)
             if selected and visit.id in selected:
                 return True
-            if not selected and export.reviewed_only:
+            event = session.get(EventModel, visit.event_id)
+            if (
+                not selected
+                and export.reviewed_only
+                and event is not None
+                and _as_utc(event.started_at) <= _as_utc(export.created_at)
+            ):
+                # An unscoped export preserves the reviewed context that existed
+                # when it was created. Later Visits are not retroactively part of
+                # that exported dataset, so their secondary evidence follows the
+                # explicit retention policy instead.
                 return True
         return False
 
@@ -10076,12 +10086,6 @@ class ProductRepository:
                     (visit := session.get(VisitModel, label.target_id)) is not None
                     and not visit.is_superseded
                 )
-                if label.target_type != "event"
-                or not session.scalar(
-                    select(func.count(VisitModel.id)).where(
-                        VisitModel.event_id == label.target_id
-                    )
-                )
             ]
 
     def review_labels_for_event(self, event_id: str) -> list[ReviewLabel]:
@@ -13296,10 +13300,15 @@ class ProductRepository:
             visit_model = session.get(VisitModel, payload.target_id)
             if visit_model is None:
                 raise ValueError("missing_visit")
-            if visit_model.is_superseded:
-                raise ValueError("visit_superseded")
 
             event_model = session.get(EventModel, visit_model.event_id)
+            if visit_model.is_superseded:
+                # Superseded Visits remain auditable history, not active review
+                # truth. Preserve an explicit historical correction without
+                # changing the resulting Visit or its Event's current state.
+                session.add(label_model)
+                session.flush()
+                return _review_label_from_model(label_model), _visit_from_model(visit_model), None
             if fast_review_session_id is not None:
                 label_model.prior_review_status = visit_model.review_status
                 label_model.prior_reviewed_label = visit_model.reviewed_label
@@ -15363,12 +15372,6 @@ class ProductRepository:
             or (
                 (visit := session.get(VisitModel, label.target_id)) is not None
                 and not visit.is_superseded
-            )
-            if label.target_type != "event"
-            or not session.scalar(
-                select(func.count(VisitModel.id)).where(
-                    VisitModel.event_id == label.target_id
-                )
             )
         ]
 

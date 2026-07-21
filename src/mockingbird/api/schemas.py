@@ -1860,6 +1860,7 @@ MotionScoringConfigValue = (
     | int
     | float
     | bool
+    | dict[str, MotionEvidenceFrameConfigValue]
     | list[str]
     | list[dict[str, MotionEvidenceFrameConfigValue]]
     | None
@@ -3516,6 +3517,11 @@ class VisitDetail(BaseModel):
     detection_proposals: list[DetectionProposal] = Field(default_factory=list)
     detection_runs: list[DetectionRun] = Field(default_factory=list)
     review_labels: list[ReviewLabel]
+    correction_history: list[VisitReviewHistoryEntry] = Field(default_factory=list)
+    curation_history: list[VisitCurationHistoryEntry] = Field(default_factory=list)
+    resulting_visits: list[Visit] = Field(default_factory=list)
+    eligible_zones: list[Zone] = Field(default_factory=list)
+    review_state_token: str
     dataset_ready: bool
     review_summary: str
 

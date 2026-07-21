@@ -3677,7 +3677,7 @@ async def test_unattended_monitoring_closes_each_quiet_zone_once(
         zone_type: str,
         seen_at: datetime,
         sequence: int,
-        frame: bytes,
+        frame: bytes | None,
     ):
         return manager.record_activity_detection(
             STREAM_ID,
@@ -3688,6 +3688,16 @@ async def test_unattended_monitoring_closes_each_quiet_zone_once(
                 "zone_id": zone_id,
                 "zone_name": zone_name,
                 "zone_type": zone_type,
+                "monitoring_policy": {
+                    "minimum_sustained_activity_seconds": (
+                        2 if zone_type == "feeder" else 5
+                    ),
+                    "quiet_period_seconds": 20 if zone_type == "feeder" else 45,
+                    "maximum_visit_duration_seconds": (
+                        180 if zone_type == "feeder" else 360
+                    ),
+                    "maximum_evidence_frames": 4 if zone_type == "feeder" else 3,
+                },
                 "activity_detected": True,
                 "last_seen_at": seen_at,
                 "frames_evaluated_count": 1,
@@ -3695,7 +3705,7 @@ async def test_unattended_monitoring_closes_each_quiet_zone_once(
                 "end_frame_sequence": sequence,
                 "best_frame_sequence": sequence,
                 "best_frame_captured_at": seen_at,
-                "best_score": 0.8,
+                "best_score": 0.8 if frame is not None else 0.7,
                 "changed_ratio": 0.04,
                 "changed_pixels": 40,
                 "total_scored_pixels": 1000,
@@ -3712,11 +3722,19 @@ async def test_unattended_monitoring_closes_each_quiet_zone_once(
             quiet_window_seconds=1,
         )
 
+    initial_feeder = record_zone_activity(
+        zone_id="zone-feeder",
+        zone_name="Feeder",
+        zone_type="feeder",
+        seen_at=now - timedelta(seconds=60),
+        sequence=9,
+        frame=None,
+    )
     feeder = record_zone_activity(
         zone_id="zone-feeder",
         zone_name="Feeder",
         zone_type="feeder",
-        seen_at=now - timedelta(seconds=2),
+        seen_at=now - timedelta(seconds=50),
         sequence=10,
         frame=b"\xff\xd8quiet-feeder\xff\xd9",
     )
@@ -3724,11 +3742,13 @@ async def test_unattended_monitoring_closes_each_quiet_zone_once(
         zone_id="zone-ground",
         zone_name="Ground below feeder",
         zone_type="ground",
-        seen_at=now,
+        seen_at=now - timedelta(seconds=10),
         sequence=11,
         frame=b"\xff\xd8active-ground\xff\xd9",
     )
+    assert initial_feeder is not None
     assert feeder is not None
+    assert feeder.activity_session_id == initial_feeder.activity_session_id
     assert ground is not None
 
     first_result = api_main._maybe_auto_create_live_review_candidate(STREAM_ID)
@@ -3756,12 +3776,23 @@ async def test_unattended_monitoring_closes_each_quiet_zone_once(
         zone_id="zone-ground",
         zone_name="Ground below feeder",
         zone_type="ground",
-        seen_at=now - timedelta(seconds=2),
+        seen_at=now - timedelta(seconds=1),
         sequence=12,
         frame=b"\xff\xd8quiet-ground\xff\xd9",
     )
     assert updated_ground is not None
     assert updated_ground.activity_session_id == ground.activity_session_id
+
+    class FutureDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            future = now + timedelta(seconds=50)
+            return future if tz is not None else future.replace(tzinfo=None)
+
+    monkeypatch.setattr(
+        "mockingbird.playback.live_camera_session.datetime",
+        FutureDatetime,
+    )
     second_result = api_main._maybe_auto_create_live_review_candidate(STREAM_ID)
     assert second_result is not None
     assert second_result.review_activity_created is True
@@ -6476,6 +6507,37 @@ async def test_playback_contract_creates_no_media_or_model_artifacts(
     ] == []
 
 
+def test_windows_dshow_controls_wsl_accepts_native_windows_ffmpeg_path() -> None:
+    windows_ffmpeg_path = "C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe"
+    wsl_ffmpeg_path = "/mnt/c/Program Files/FFmpeg/bin/ffmpeg.exe"
+    powershell_path = (
+        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    )
+    existing_paths = {wsl_ffmpeg_path, powershell_path}
+
+    command = windows_camera_bridge.build_windows_dshow_camera_controls_launcher_command(
+        "EMEET SmartCam S600",
+        ffmpeg_binary_path=windows_ffmpeg_path,
+        platform_name="linux",
+        environment={"WSL_INTEROP": "/run/WSL/1_interop"},
+        which=lambda name: powershell_path if name == "powershell.exe" else None,
+        path_is_file=lambda path: str(path) in existing_paths,
+    )
+
+    script = _decode_camera_controls_launcher_script(command)
+    payload = _camera_controls_launcher_payload(script)
+    assert windows_ffmpeg_path in payload.values()
+
+
+def test_windows_dshow_invocation_maps_native_windows_path_inside_wsl() -> None:
+    assert (
+        windows_camera_bridge.windows_ffmpeg_invocation_binary(
+            "C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe",
+            platform_name="linux",
+            environment={"WSL_DISTRO_NAME": "Ubuntu"},
+        )
+        == "/mnt/c/Program Files/FFmpeg/bin/ffmpeg.exe"
+    )
 def test_zone_monitoring_policy_defaults_persist_and_restore(
     isolated_repository: ProductRepository,
 ) -> None:
@@ -6764,36 +6826,3 @@ async def test_disabled_zone_does_not_qualify_live_activity(
     assert result["uses_auto_regions"] is False
     assert "Monitoring disabled for Zone: Feeder." in result["warnings"]
     assert result["creates_truth"] is False
-
-
-def test_windows_dshow_controls_wsl_accepts_native_windows_ffmpeg_path() -> None:
-    windows_ffmpeg_path = "C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe"
-    wsl_ffmpeg_path = "/mnt/c/Program Files/FFmpeg/bin/ffmpeg.exe"
-    powershell_path = (
-        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-    )
-    existing_paths = {wsl_ffmpeg_path, powershell_path}
-
-    command = windows_camera_bridge.build_windows_dshow_camera_controls_launcher_command(
-        "EMEET SmartCam S600",
-        ffmpeg_binary_path=windows_ffmpeg_path,
-        platform_name="linux",
-        environment={"WSL_INTEROP": "/run/WSL/1_interop"},
-        which=lambda name: powershell_path if name == "powershell.exe" else None,
-        path_is_file=lambda path: str(path) in existing_paths,
-    )
-
-    script = _decode_camera_controls_launcher_script(command)
-    payload = _camera_controls_launcher_payload(script)
-    assert windows_ffmpeg_path in payload.values()
-
-
-def test_windows_dshow_invocation_maps_native_windows_path_inside_wsl() -> None:
-    assert (
-        windows_camera_bridge.windows_ffmpeg_invocation_binary(
-            "C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe",
-            platform_name="linux",
-            environment={"WSL_DISTRO_NAME": "Ubuntu"},
-        )
-        == "/mnt/c/Program Files/FFmpeg/bin/ffmpeg.exe"
-    )

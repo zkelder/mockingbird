@@ -225,9 +225,14 @@ def _migrate_to_zone_monitoring_policy_overrides(connection: Connection) -> None
         raise DatabaseSchemaCompatibilityError(
             "Zone monitoring policy migration requires local SQLite storage."
         )
-    connection.exec_driver_sql(
-        "ALTER TABLE zones ADD COLUMN monitoring_policy_json TEXT"
-    )
+    columns = {
+        column["name"]
+        for column in inspect(connection).get_columns("zones")
+    }
+    if "monitoring_policy_json" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE zones ADD COLUMN monitoring_policy_json TEXT"
+        )
 
 
 def _migrate_to_fast_review_reversals(connection: Connection) -> None:
@@ -237,26 +242,23 @@ def _migrate_to_fast_review_reversals(connection: Connection) -> None:
         raise DatabaseSchemaCompatibilityError(
             "Fast Review reversal migration requires local SQLite storage."
         )
+    columns = {
+        column["name"] for column in inspect(connection).get_columns("review_labels")
+    }
+    for column, definition in (
+        ("reversal_of_review_label_id", "TEXT"),
+        ("prior_review_status", "TEXT"),
+        ("prior_reviewed_label", "TEXT"),
+        ("prior_event_review_status", "TEXT"),
+        ("fast_review_session_id", "TEXT"),
+        ("fast_review_idempotency_key", "TEXT"),
+    ):
+        if column not in columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE review_labels ADD COLUMN {column} {definition}"
+            )
     connection.exec_driver_sql(
-        "ALTER TABLE review_labels ADD COLUMN reversal_of_review_label_id TEXT"
-    )
-    connection.exec_driver_sql(
-        "ALTER TABLE review_labels ADD COLUMN prior_review_status TEXT"
-    )
-    connection.exec_driver_sql(
-        "ALTER TABLE review_labels ADD COLUMN prior_reviewed_label TEXT"
-    )
-    connection.exec_driver_sql(
-        "ALTER TABLE review_labels ADD COLUMN prior_event_review_status TEXT"
-    )
-    connection.exec_driver_sql(
-        "ALTER TABLE review_labels ADD COLUMN fast_review_session_id TEXT"
-    )
-    connection.exec_driver_sql(
-        "ALTER TABLE review_labels ADD COLUMN fast_review_idempotency_key TEXT"
-    )
-    connection.exec_driver_sql(
-        "CREATE UNIQUE INDEX review_labels_fast_review_idempotency_key "
+        "CREATE UNIQUE INDEX IF NOT EXISTS review_labels_fast_review_idempotency_key "
         "ON review_labels(fast_review_idempotency_key) "
         "WHERE fast_review_idempotency_key IS NOT NULL"
     )
@@ -269,17 +271,20 @@ def _migrate_to_review_label_revisions(connection: Connection) -> None:
         raise DatabaseSchemaCompatibilityError(
             "Review-label revision migration requires local SQLite storage."
         )
+    columns = {
+        column["name"] for column in inspect(connection).get_columns("review_labels")
+    }
+    for column in (
+        "supersedes_review_label_id",
+        "review_action",
+        "revision_idempotency_key",
+    ):
+        if column not in columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE review_labels ADD COLUMN {column} TEXT"
+            )
     connection.exec_driver_sql(
-        "ALTER TABLE review_labels ADD COLUMN supersedes_review_label_id TEXT"
-    )
-    connection.exec_driver_sql(
-        "ALTER TABLE review_labels ADD COLUMN review_action TEXT"
-    )
-    connection.exec_driver_sql(
-        "ALTER TABLE review_labels ADD COLUMN revision_idempotency_key TEXT"
-    )
-    connection.exec_driver_sql(
-        "CREATE UNIQUE INDEX review_labels_revision_idempotency_key "
+        "CREATE UNIQUE INDEX IF NOT EXISTS review_labels_revision_idempotency_key "
         "ON review_labels(revision_idempotency_key) "
         "WHERE revision_idempotency_key IS NOT NULL"
     )
@@ -292,10 +297,13 @@ def _migrate_to_visit_curation(connection: Connection) -> None:
         raise DatabaseSchemaCompatibilityError(
             "Visit curation migration requires local SQLite storage."
         )
-    connection.exec_driver_sql("ALTER TABLE visits ADD COLUMN zone_id VARCHAR")
-    connection.exec_driver_sql(
-        "ALTER TABLE visits ADD COLUMN is_superseded BOOLEAN NOT NULL DEFAULT 0"
-    )
+    columns = {column["name"] for column in inspect(connection).get_columns("visits")}
+    if "zone_id" not in columns:
+        connection.exec_driver_sql("ALTER TABLE visits ADD COLUMN zone_id VARCHAR")
+    if "is_superseded" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE visits ADD COLUMN is_superseded BOOLEAN NOT NULL DEFAULT 0"
+        )
     connection.exec_driver_sql(
         "UPDATE visits SET zone_id = ("
         "SELECT primary_zone_id FROM events WHERE events.id = visits.event_id"
@@ -313,9 +321,13 @@ def _migrate_to_activity_library(connection: Connection) -> None:
         raise DatabaseSchemaCompatibilityError(
             "Activity Library migration requires local SQLite storage."
         )
-    connection.exec_driver_sql(
-        "ALTER TABLE dataset_exports ADD COLUMN selected_visit_ids_json TEXT"
-    )
+    columns = {
+        column["name"] for column in inspect(connection).get_columns("dataset_exports")
+    }
+    if "selected_visit_ids_json" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE dataset_exports ADD COLUMN selected_visit_ids_json TEXT"
+        )
     Base.metadata.tables["activity_library_saved_views"].create(
         bind=connection,
         checkfirst=True,

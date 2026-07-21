@@ -224,7 +224,15 @@ async def test_activity_search_resolves_active_current_truth_and_evidence_only_s
     assert default_search.status_code == 200
     rows = default_search.json()["visits"]
     ids = [row["id"] for row in rows]
-    assert ids == ["visit-new", "visit-front-yard", "visit-old"]
+    # The default Library scope is all active product history, including the
+    # seeded local sample records. The fixture rows remain newest-first.
+    assert ids == [
+        "visit-new",
+        "visit-front-yard",
+        "visit-old",
+        "visit-squirrel-ground-001",
+        "visit-bird-feeder-001",
+    ]
     assert "visit-superseded" not in ids
     new_row = next(row for row in rows if row["id"] == "visit-new")
     assert new_row["has_suggestion"] is True

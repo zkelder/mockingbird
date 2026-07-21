@@ -125,6 +125,7 @@ from mockingbird.api.schemas import (
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
+    ReviewStatus,
     VisitEvidenceCurationRequest,
     VisitEvidenceCurationResponse,
     VisitMergeCandidatesResponse,
@@ -7528,8 +7529,9 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
     review_history = repository.visit_review_history(visit.id)
     if review_history is None:
         raise _not_found("Visit", visit_id)
+    media_asset = repository.media_asset_for_path(visit.representative_media_path)
     return VisitDetail(
-        visit=visit,
+        visit=visit.model_copy(update={"representative_media_path": None}),
         event=event,
         stream=stream,
         primary_zone=(
@@ -7539,7 +7541,11 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         ),
         detections=event.detections,
         motion_evidence=repository.motion_evidence_for_visit(visit.id),
-        media_asset=repository.media_asset_for_path(visit.representative_media_path),
+        media_asset=(
+            media_asset.model_copy(update={"local_path": ""})
+            if media_asset is not None
+            else None
+        ),
         evidence_frames=repository.visit_evidence_frames(visit.id),
         detection_proposals=detection_proposals,
         detection_runs=_detection_runs_for_proposals(repository, detection_proposals),
