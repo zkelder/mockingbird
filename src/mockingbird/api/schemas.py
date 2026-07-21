@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Any, Literal
 
@@ -1639,6 +1639,7 @@ class ActivityLibraryReviewFilter(str, Enum):
     all = "all"
     needs_review = "needs_review"
     reviewed_observation = "reviewed_observation"
+    confirmed_wildlife = "confirmed_wildlife"
     non_bird = "non_bird"
     blank_false = "blank_false"
     ambiguous_unknown = "ambiguous_unknown"
@@ -3195,6 +3196,132 @@ class AnalyticsSummary(BaseModel):
     label_categories: dict[str, LabelCategory] = Field(default_factory=dict)
     species_label_ids: list[str] = Field(default_factory=list)
     zone_activity_counts: dict[str, int]
+
+
+class WildlifeInsightsRangePreset(str, Enum):
+    today = "today"
+    last_7_days = "last_7_days"
+    last_30_days = "last_30_days"
+    custom = "custom"
+
+
+class WildlifeInsightsRequest(BaseModel):
+    """A bounded local-date range for reviewed Wildlife Insights."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    preset: WildlifeInsightsRangePreset = WildlifeInsightsRangePreset.last_7_days
+    start_date: date | None = None
+    end_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "WildlifeInsightsRequest":
+        if self.preset == WildlifeInsightsRangePreset.custom:
+            if self.start_date is None or self.end_date is None:
+                raise ValueError("custom_range_requires_start_and_end_dates")
+            if self.end_date < self.start_date:
+                raise ValueError("custom_range_end_precedes_start")
+            if (self.end_date - self.start_date).days > 365:
+                raise ValueError("custom_range_must_not_exceed_366_days")
+        return self
+
+
+class WildlifeInsightsPeriod(BaseModel):
+    preset: WildlifeInsightsRangePreset
+    start_date: date
+    end_date: date
+    previous_start_date: date
+    previous_end_date: date
+    timezone_name: str
+
+
+class WildlifeInsightsDrilldown(BaseModel):
+    """A URL-preservable Activity Library scope, expressed as local calendar dates."""
+
+    review_filter: ActivityLibraryReviewFilter
+    start_date: date
+    end_date: date
+    stream_id: str | None = None
+    zone_id: str | None = None
+    confirmed_label: str | None = None
+
+
+class WildlifeInsightsRepresentative(BaseModel):
+    visit_id: str
+    event_id: str
+    stream_id: str
+    stream_name: str
+    zone_id: str | None = None
+    zone_name: str | None = None
+    label: str
+    display_name: str
+    observed_at: datetime
+    primary_evidence: VisitEvidenceFrame | None = None
+
+
+class WildlifeInsightsBreakdown(BaseModel):
+    id: str
+    name: str
+    count: int = Field(ge=0)
+    previous_count: int = Field(ge=0)
+    change: int
+    first_observed_at: datetime | None = None
+    latest_observed_at: datetime | None = None
+    representative: WildlifeInsightsRepresentative | None = None
+    drilldown: WildlifeInsightsDrilldown
+
+
+class WildlifeInsightsDailyBucket(BaseModel):
+    local_date: date
+    count: int = Field(ge=0)
+
+
+class WildlifeInsightsHourBucket(BaseModel):
+    hour: int = Field(ge=0, le=23)
+    count: int = Field(ge=0)
+
+
+class WildlifeInsightsHeadline(BaseModel):
+    active_stream_count: int = Field(ge=0)
+    active_visit_count: int = Field(ge=0)
+    reviewed_wildlife_observation_count: int = Field(ge=0)
+    unique_confirmed_label_count: int = Field(ge=0)
+    unresolved_visit_count: int = Field(ge=0)
+    reviewed_non_bird_activity_count: int = Field(ge=0)
+    busiest_stream: WildlifeInsightsBreakdown | None = None
+    busiest_zone: WildlifeInsightsBreakdown | None = None
+    peak_activity_hour: int | None = Field(default=None, ge=0, le=23)
+    first_observation: WildlifeInsightsRepresentative | None = None
+    latest_observation: WildlifeInsightsRepresentative | None = None
+
+
+class WildlifeInsightsComparison(BaseModel):
+    previous_reviewed_wildlife_observation_count: int = Field(ge=0)
+    reviewed_wildlife_observation_change: int
+    new_labels: list[str] = Field(default_factory=list, max_length=12)
+    labels_not_seen: list[str] = Field(default_factory=list, max_length=12)
+
+
+class WildlifeInsightsReviewContext(BaseModel):
+    blank_or_false_count: int = Field(ge=0)
+    ambiguous_or_unknown_count: int = Field(ge=0)
+    rejected_count: int = Field(ge=0)
+    unclassified_reviewed_count: int = Field(ge=0)
+    pending_suggestion_evidence_count: int = Field(ge=0)
+
+
+class WildlifeInsightsSummary(BaseModel):
+    period: WildlifeInsightsPeriod
+    headline: WildlifeInsightsHeadline
+    comparison: WildlifeInsightsComparison
+    leading_labels: list[WildlifeInsightsBreakdown] = Field(default_factory=list, max_length=12)
+    daily_trend: list[WildlifeInsightsDailyBucket] = Field(default_factory=list, max_length=366)
+    activity_by_hour: list[WildlifeInsightsHourBucket] = Field(default_factory=list, max_length=24)
+    stream_breakdown: list[WildlifeInsightsBreakdown] = Field(default_factory=list, max_length=12)
+    zone_breakdown: list[WildlifeInsightsBreakdown] = Field(default_factory=list, max_length=12)
+    review_context: WildlifeInsightsReviewContext
+    confirmed_activity_drilldown: WildlifeInsightsDrilldown
+    unresolved_activity_drilldown: WildlifeInsightsDrilldown
 
 
 class DetectionProposalDecisionResult(BaseModel):

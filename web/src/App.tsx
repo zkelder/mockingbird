@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "./api/client";
 import type {
+  ActivityLibraryFilters,
   AnalyticsSummary,
   CameraSource,
   DatasetCoverageSummary,
@@ -14,7 +15,7 @@ import type {
   Stream,
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
-import { ActivityLibraryPage } from "./pages/ActivityLibraryPage";
+import { ActivityLibraryPage, activityLibraryPath } from "./pages/ActivityLibraryPage";
 import { BirdLogPage } from "./pages/BirdLogPage";
 import { CameraSetupPage } from "./pages/CameraSetupPage";
 import { ClassifierManifestPage } from "./pages/ClassifierManifestPage";
@@ -299,6 +300,14 @@ export default function App() {
   function openReviewQueue(context?: ReviewQueueInitialContext | null) {
     setReviewQueueInitialContext(context ?? null);
     setPage("review");
+  }
+
+  function openActivityLibrary(filters: ActivityLibraryFilters) {
+    const path = activityLibraryPath(filters);
+    if (`${window.location.pathname}${window.location.search}` !== path) {
+      window.history.pushState({}, "", path);
+    }
+    applyRoute({ page: "activity-library" });
   }
 
   function openFocusedFastReview(visitIds: string[]) {
@@ -668,7 +677,12 @@ export default function App() {
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
-          onOpenStream={selectedStream ? () => openStream(selectedStream.id) : undefined}
+          onOpenStream={(streamId) => {
+            const targetStreamId = streamId ?? selectedStream?.id;
+            if (targetStreamId) openStream(targetStreamId);
+          }}
+          onOpenActivityLibrary={openActivityLibrary}
+          onOpenBirdLog={() => setPage("bird-log")}
         />
       );
     }

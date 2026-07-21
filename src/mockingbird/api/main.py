@@ -217,6 +217,8 @@ from mockingbird.api.schemas import (
     WebhookPayloadValidationRequest,
     WebhookPayloadValidationResponse,
     WorkerStatusResponse,
+    WildlifeInsightsRequest,
+    WildlifeInsightsSummary,
     WindowsCameraControlsResponse,
     WindowsCameraDiscoveryResponse,
     Zone,
@@ -8779,6 +8781,15 @@ async def create_classifier_training_manifest_export(
 @app.get("/api/analytics/summary", response_model=AnalyticsSummary)
 async def get_analytics_summary() -> AnalyticsSummary:
     return get_repository().analytics_summary()
+
+
+@app.post("/api/analytics/wildlife-insights", response_model=WildlifeInsightsSummary)
+async def get_wildlife_insights(
+    payload: WildlifeInsightsRequest,
+) -> WildlifeInsightsSummary:
+    """Return bounded current reviewed-truth insights for the Analytics page."""
+
+    return get_repository().wildlife_insights(payload)
 
 
 @app.get("/api/settings/local-data", response_model=LocalDataStatus)

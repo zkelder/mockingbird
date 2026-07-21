@@ -24,6 +24,7 @@ const reviewFilterOptions: Array<{ value: ActivityLibraryReviewFilter; label: st
   { value: "all", label: "All activity" },
   { value: "needs_review", label: "Needs review" },
   { value: "reviewed_observation", label: "Reviewed observations" },
+  { value: "confirmed_wildlife", label: "Confirmed wildlife" },
   { value: "non_bird", label: "Non-bird activity" },
   { value: "blank_false", label: "Blank / false activity" },
   { value: "ambiguous_unknown", label: "Ambiguous / unknown" },
@@ -81,7 +82,7 @@ function filtersFromUrl(): { filters: ActivityLibraryFilters; offset: number } {
   };
 }
 
-function writeLibraryUrl(filters: ActivityLibraryFilters, offset: number, replace = false): void {
+export function activityLibraryPath(filters: ActivityLibraryFilters, offset = 0): string {
   const params = new URLSearchParams();
   if (filters.review_filter && filters.review_filter !== "all") {
     params.set("review", filters.review_filter);
@@ -96,7 +97,11 @@ function writeLibraryUrl(filters: ActivityLibraryFilters, offset: number, replac
   if (filters.start_at) params.set("from", dateInputValue(filters.start_at));
   if (filters.end_at) params.set("to", dateInputValue(filters.end_at));
   if (offset > 0) params.set("offset", String(offset));
-  const path = `/activity${params.size ? `?${params.toString()}` : ""}`;
+  return `/activity${params.size ? `?${params.toString()}` : ""}`;
+}
+
+function writeLibraryUrl(filters: ActivityLibraryFilters, offset: number, replace = false): void {
+  const path = activityLibraryPath(filters, offset);
   if (replace) {
     window.history.replaceState({}, "", path);
   } else if (`${window.location.pathname}${window.location.search}` !== path) {
@@ -105,10 +110,18 @@ function writeLibraryUrl(filters: ActivityLibraryFilters, offset: number, replac
 }
 
 function apiDateBounds(filters: ActivityLibraryFilters): ActivityLibraryFilters {
+  const localStart = (value: string) => {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(year, month - 1, day, 0, 0, 0, 0).toISOString();
+  };
+  const localEnd = (value: string) => {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(year, month - 1, day, 23, 59, 59, 999).toISOString();
+  };
   return {
     ...filters,
-    start_at: filters.start_at ? `${dateInputValue(filters.start_at)}T00:00:00Z` : null,
-    end_at: filters.end_at ? `${dateInputValue(filters.end_at)}T23:59:59.999Z` : null,
+    start_at: filters.start_at ? localStart(dateInputValue(filters.start_at)) : null,
+    end_at: filters.end_at ? localEnd(dateInputValue(filters.end_at)) : null,
   };
 }
 

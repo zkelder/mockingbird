@@ -1216,6 +1216,7 @@ export type ActivityLibraryReviewFilter =
   | "all"
   | "needs_review"
   | "reviewed_observation"
+  | "confirmed_wildlife"
   | "non_bird"
   | "blank_false"
   | "ambiguous_unknown";
@@ -2844,6 +2845,110 @@ export interface AnalyticsSummary {
   label_categories: Partial<Record<string, LabelCategory>>;
   species_label_ids: string[];
   zone_activity_counts: Record<string, number>;
+}
+
+export type WildlifeInsightsRangePreset = "today" | "last_7_days" | "last_30_days" | "custom";
+
+export interface WildlifeInsightsRequest {
+  preset: WildlifeInsightsRangePreset;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+export interface WildlifeInsightsPeriod {
+  preset: WildlifeInsightsRangePreset;
+  start_date: string;
+  end_date: string;
+  previous_start_date: string;
+  previous_end_date: string;
+  timezone_name: string;
+}
+
+export interface WildlifeInsightsDrilldown {
+  review_filter: ActivityLibraryReviewFilter;
+  start_date: string;
+  end_date: string;
+  stream_id?: string | null;
+  zone_id?: string | null;
+  confirmed_label?: string | null;
+}
+
+export interface WildlifeInsightsRepresentative {
+  visit_id: string;
+  event_id: string;
+  stream_id: string;
+  stream_name: string;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  label: string;
+  display_name: string;
+  observed_at: string;
+  primary_evidence?: VisitEvidenceFrame | null;
+}
+
+export interface WildlifeInsightsBreakdown {
+  id: string;
+  name: string;
+  count: number;
+  previous_count: number;
+  change: number;
+  first_observed_at?: string | null;
+  latest_observed_at?: string | null;
+  representative?: WildlifeInsightsRepresentative | null;
+  drilldown: WildlifeInsightsDrilldown;
+}
+
+export interface WildlifeInsightsDailyBucket {
+  local_date: string;
+  count: number;
+}
+
+export interface WildlifeInsightsHourBucket {
+  hour: number;
+  count: number;
+}
+
+export interface WildlifeInsightsHeadline {
+  active_stream_count: number;
+  active_visit_count: number;
+  reviewed_wildlife_observation_count: number;
+  unique_confirmed_label_count: number;
+  unresolved_visit_count: number;
+  reviewed_non_bird_activity_count: number;
+  busiest_stream?: WildlifeInsightsBreakdown | null;
+  busiest_zone?: WildlifeInsightsBreakdown | null;
+  peak_activity_hour?: number | null;
+  first_observation?: WildlifeInsightsRepresentative | null;
+  latest_observation?: WildlifeInsightsRepresentative | null;
+}
+
+export interface WildlifeInsightsComparison {
+  previous_reviewed_wildlife_observation_count: number;
+  reviewed_wildlife_observation_change: number;
+  new_labels: string[];
+  labels_not_seen: string[];
+}
+
+export interface WildlifeInsightsReviewContext {
+  blank_or_false_count: number;
+  ambiguous_or_unknown_count: number;
+  rejected_count: number;
+  unclassified_reviewed_count: number;
+  pending_suggestion_evidence_count: number;
+}
+
+export interface WildlifeInsightsSummary {
+  period: WildlifeInsightsPeriod;
+  headline: WildlifeInsightsHeadline;
+  comparison: WildlifeInsightsComparison;
+  leading_labels: WildlifeInsightsBreakdown[];
+  daily_trend: WildlifeInsightsDailyBucket[];
+  activity_by_hour: WildlifeInsightsHourBucket[];
+  stream_breakdown: WildlifeInsightsBreakdown[];
+  zone_breakdown: WildlifeInsightsBreakdown[];
+  review_context: WildlifeInsightsReviewContext;
+  confirmed_activity_drilldown: WildlifeInsightsDrilldown;
+  unresolved_activity_drilldown: WildlifeInsightsDrilldown;
 }
 
 export interface LocalDataStatus {

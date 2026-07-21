@@ -1,10 +1,16 @@
-import type { AnalyticsSummary, DatasetCoverageSummary, DatasetQualitySummary } from "../api/types";
+import type {
+  ActivityLibraryFilters,
+  AnalyticsSummary,
+  DatasetCoverageSummary,
+  DatasetQualitySummary,
+} from "../api/types";
 import { DatasetCoveragePanel } from "../components/DatasetCoveragePanel";
 import { DatasetQualityPanel } from "../components/DatasetQualityPanel";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
+import { WildlifeInsightsPanel } from "../components/WildlifeInsightsPanel";
 import { formatLabel, sortedEntries } from "../utils";
 
 interface AnalyticsPageProps {
@@ -16,7 +22,9 @@ interface AnalyticsPageProps {
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
   onOpenDetectionProposals: () => void;
-  onOpenStream?: () => void;
+  onOpenStream?: (streamId?: string) => void;
+  onOpenActivityLibrary: (filters: ActivityLibraryFilters) => void;
+  onOpenBirdLog: () => void;
 }
 
 export function AnalyticsPage({
@@ -29,6 +37,8 @@ export function AnalyticsPage({
   onOpenVisit,
   onOpenDetectionProposals,
   onOpenStream,
+  onOpenActivityLibrary,
+  onOpenBirdLog,
 }: AnalyticsPageProps) {
   if (!analytics) {
     return <div className="panel">Analytics are unavailable.</div>;
@@ -70,6 +80,14 @@ export function AnalyticsPage({
             </button>
           </>
         }
+      />
+      <WildlifeInsightsPanel
+        onOpenActivityLibrary={onOpenActivityLibrary}
+        onOpenBirdLog={onOpenBirdLog}
+        onOpenReview={onOpenReview}
+        onOpenStream={(streamId) => onOpenStream?.(streamId)}
+        onOpenStreams={() => onOpenStream?.()}
+        onOpenVisit={onOpenVisit}
       />
       <section className="metric-grid">
         <MetricCard label="Events" value={analytics.event_count} detail="outdoor activity" />
@@ -188,7 +206,7 @@ export function AnalyticsPage({
                 description="Draw zones on a stream, create reviewable activity, then correct Visits before zone activity becomes useful analytics."
                 action={
                   onOpenStream ? (
-                    <button className="secondary-action" onClick={onOpenStream}>
+                    <button className="secondary-action" onClick={() => onOpenStream()}>
                       Open Stream Detail
                     </button>
                   ) : null

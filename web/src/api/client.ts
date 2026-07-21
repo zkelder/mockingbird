@@ -164,6 +164,8 @@ import type {
   Visit,
   VisitDetail,
   WorkerStatusResponse,
+  WildlifeInsightsRequest,
+  WildlifeInsightsSummary,
   WindowsCameraControlsResponse,
   WindowsCameraDiscoveryResponse,
   Zone,
@@ -854,6 +856,11 @@ export const apiClient = {
   getDatasetQualitySummary: () =>
     request<DatasetQualitySummary>("/api/dataset-quality/summary"),
   getAnalyticsSummary: () => request<AnalyticsSummary>("/api/analytics/summary"),
+  getWildlifeInsights: (payload: WildlifeInsightsRequest) =>
+    request<WildlifeInsightsSummary>("/api/analytics/wildlife-insights", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   getLocalDataStatus: () => request<LocalDataStatus>("/api/settings/local-data"),
   getStorageRetentionSummary: () =>
     request<StorageSummary>("/api/settings/storage-retention/summary"),

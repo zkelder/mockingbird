@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 import csv
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import hashlib
 import json
 import math
@@ -311,6 +311,18 @@ from mockingbird.api.schemas import (
     WebhookPayloadValidationResponse,
     WorkerStatusResponse,
     WorkerStatusSummary,
+    WildlifeInsightsBreakdown,
+    WildlifeInsightsComparison,
+    WildlifeInsightsDailyBucket,
+    WildlifeInsightsDrilldown,
+    WildlifeInsightsHeadline,
+    WildlifeInsightsHourBucket,
+    WildlifeInsightsPeriod,
+    WildlifeInsightsRangePreset,
+    WildlifeInsightsRepresentative,
+    WildlifeInsightsRequest,
+    WildlifeInsightsReviewContext,
+    WildlifeInsightsSummary,
     Zone,
     ZoneActivitySensitivity,
     ZoneCreate,
@@ -4407,6 +4419,10 @@ class ProductRepository:
                         ),
                     )
                 )
+            elif payload.review_filter == ActivityLibraryReviewFilter.confirmed_wildlife:
+                query = query.where(VisitModel.review_status == ReviewStatus.reviewed.value).where(
+                    TaxonomyLabelModel.category == LabelCategory.bird.value
+                )
             elif payload.review_filter == ActivityLibraryReviewFilter.non_bird:
                 query = query.where(VisitModel.review_status == ReviewStatus.reviewed.value).where(
                     or_(
@@ -4529,6 +4545,8 @@ class ProductRepository:
                 VisitReviewOutcome.confirmed_bird,
                 VisitReviewOutcome.reviewed_other,
             }
+        if review_filter == ActivityLibraryReviewFilter.confirmed_wildlife:
+            return summary.review_outcome == VisitReviewOutcome.confirmed_bird
         if review_filter == ActivityLibraryReviewFilter.non_bird:
             return summary.review_outcome == VisitReviewOutcome.non_bird
         if review_filter == ActivityLibraryReviewFilter.blank_false:
@@ -12877,6 +12895,344 @@ class ProductRepository:
 
     def build_analytics_summary(self) -> AnalyticsSummary:
         return self.analytics_summary()
+
+    def wildlife_insights(
+        self,
+        payload: WildlifeInsightsRequest,
+        *,
+        now: datetime | None = None,
+    ) -> WildlifeInsightsSummary:
+        """Aggregate bounded, current reviewed wildlife truth for the Analytics surface."""
+
+        local_now = (now or datetime.now().astimezone()).astimezone()
+        local_timezone = local_now.tzinfo
+        if payload.preset == WildlifeInsightsRangePreset.today:
+            end_date = local_now.date()
+            start_date = end_date
+        elif payload.preset == WildlifeInsightsRangePreset.last_7_days:
+            end_date = local_now.date()
+            start_date = end_date - timedelta(days=6)
+        elif payload.preset == WildlifeInsightsRangePreset.last_30_days:
+            end_date = local_now.date()
+            start_date = end_date - timedelta(days=29)
+        else:
+            start_date = payload.start_date
+            end_date = payload.end_date
+            assert start_date is not None and end_date is not None
+
+        period_days = (end_date - start_date).days + 1
+        previous_end_date = start_date - timedelta(days=1)
+        previous_start_date = previous_end_date - timedelta(days=period_days - 1)
+        current_start_at = _as_utc(datetime.combine(start_date, datetime.min.time(), local_timezone))
+        current_end_at = _as_utc(
+            datetime.combine(end_date + timedelta(days=1), datetime.min.time(), local_timezone)
+        )
+        previous_start_at = _as_utc(
+            datetime.combine(previous_start_date, datetime.min.time(), local_timezone)
+        )
+        previous_end_at = _as_utc(
+            datetime.combine(previous_end_date + timedelta(days=1), datetime.min.time(), local_timezone)
+        )
+        timezone_name = local_now.tzname() or "local time"
+
+        with self.session_factory() as session:
+            current_records = self._wildlife_insight_records(
+                session,
+                start_at=current_start_at,
+                end_at=current_end_at,
+            )
+            previous_records = self._wildlife_insight_records(
+                session,
+                start_at=previous_start_at,
+                end_at=previous_end_at,
+            )
+            active_stream_count = (
+                session.scalar(
+                    select(func.count(StreamModel.id))
+                    .join(
+                        CameraSourceModel,
+                        StreamModel.source_id == CameraSourceModel.id,
+                    )
+                    .where(CameraSourceModel.status != SourceStatus.archived.value)
+                )
+                or 0
+            )
+
+            current_wildlife = [
+                record
+                for record in current_records
+                if record["summary"].review_outcome == VisitReviewOutcome.confirmed_bird
+            ]
+            previous_wildlife = [
+                record
+                for record in previous_records
+                if record["summary"].review_outcome == VisitReviewOutcome.confirmed_bird
+            ]
+            leading_labels = self._wildlife_insight_breakdowns(
+                current_wildlife,
+                previous_wildlife,
+                grouping="label",
+                start_date=start_date,
+                end_date=end_date,
+            )
+            stream_breakdown = self._wildlife_insight_breakdowns(
+                current_wildlife,
+                previous_wildlife,
+                grouping="stream",
+                start_date=start_date,
+                end_date=end_date,
+            )
+            zone_breakdown = self._wildlife_insight_breakdowns(
+                [record for record in current_wildlife if record["summary"].zone_id],
+                [record for record in previous_wildlife if record["summary"].zone_id],
+                grouping="zone",
+                start_date=start_date,
+                end_date=end_date,
+            )
+            daily_counts = Counter(
+                record["observed_at"].astimezone(local_timezone).date()
+                for record in current_wildlife
+            )
+            hour_counts = Counter(
+                record["observed_at"].astimezone(local_timezone).hour
+                for record in current_wildlife
+            )
+            sorted_wildlife = sorted(
+                current_wildlife,
+                key=lambda record: (record["observed_at"], record["summary"].id),
+            )
+            current_labels = {record["label"] for record in current_wildlife}
+            previous_labels = {record["label"] for record in previous_wildlife}
+            label_display_names = {
+                record["label"]: record["display_name"]
+                for record in [*current_wildlife, *previous_wildlife]
+                if record["label"] is not None
+            }
+
+            return WildlifeInsightsSummary(
+                period=WildlifeInsightsPeriod(
+                    preset=payload.preset,
+                    start_date=start_date,
+                    end_date=end_date,
+                    previous_start_date=previous_start_date,
+                    previous_end_date=previous_end_date,
+                    timezone_name=timezone_name,
+                ),
+                headline=WildlifeInsightsHeadline(
+                    active_stream_count=active_stream_count,
+                    active_visit_count=len(current_records),
+                    reviewed_wildlife_observation_count=len(current_wildlife),
+                    unique_confirmed_label_count=len(current_labels),
+                    unresolved_visit_count=sum(
+                        record["summary"].review_outcome == VisitReviewOutcome.needs_review
+                        for record in current_records
+                    ),
+                    reviewed_non_bird_activity_count=sum(
+                        record["summary"].review_outcome == VisitReviewOutcome.non_bird
+                        for record in current_records
+                    ),
+                    busiest_stream=stream_breakdown[0] if stream_breakdown else None,
+                    busiest_zone=zone_breakdown[0] if zone_breakdown else None,
+                    peak_activity_hour=(
+                        max(hour_counts, key=lambda hour: (hour_counts[hour], -hour))
+                        if hour_counts
+                        else None
+                    ),
+                    first_observation=(
+                        self._wildlife_insight_representative(sorted_wildlife[0])
+                        if sorted_wildlife
+                        else None
+                    ),
+                    latest_observation=(
+                        self._wildlife_insight_representative(sorted_wildlife[-1])
+                        if sorted_wildlife
+                        else None
+                    ),
+                ),
+                comparison=WildlifeInsightsComparison(
+                    previous_reviewed_wildlife_observation_count=len(previous_wildlife),
+                    reviewed_wildlife_observation_change=(
+                        len(current_wildlife) - len(previous_wildlife)
+                    ),
+                    new_labels=sorted(
+                        label_display_names[label]
+                        for label in current_labels - previous_labels
+                        if label is not None
+                    )[:12],
+                    labels_not_seen=sorted(
+                        label_display_names[label]
+                        for label in previous_labels - current_labels
+                        if label is not None
+                    )[:12],
+                ),
+                leading_labels=leading_labels[:12],
+                daily_trend=[
+                    WildlifeInsightsDailyBucket(
+                        local_date=start_date + timedelta(days=offset),
+                        count=daily_counts[start_date + timedelta(days=offset)],
+                    )
+                    for offset in range(period_days)
+                ],
+                activity_by_hour=[
+                    WildlifeInsightsHourBucket(hour=hour, count=hour_counts[hour])
+                    for hour in range(24)
+                ],
+                stream_breakdown=stream_breakdown[:12],
+                zone_breakdown=zone_breakdown[:12],
+                review_context=WildlifeInsightsReviewContext(
+                    blank_or_false_count=sum(
+                        record["summary"].review_outcome
+                        in {VisitReviewOutcome.blank, VisitReviewOutcome.false_positive}
+                        for record in current_records
+                    ),
+                    ambiguous_or_unknown_count=sum(
+                        record["summary"].review_outcome == VisitReviewOutcome.ambiguous
+                        for record in current_records
+                    ),
+                    rejected_count=sum(
+                        record["summary"].review_outcome == VisitReviewOutcome.rejected
+                        for record in current_records
+                    ),
+                    unclassified_reviewed_count=sum(
+                        record["summary"].review_outcome == VisitReviewOutcome.reviewed_other
+                        for record in current_records
+                    ),
+                    pending_suggestion_evidence_count=sum(
+                        record["summary"].has_suggestion
+                        and record["summary"].review_outcome == VisitReviewOutcome.needs_review
+                        for record in current_records
+                    ),
+                ),
+                confirmed_activity_drilldown=WildlifeInsightsDrilldown(
+                    review_filter=ActivityLibraryReviewFilter.confirmed_wildlife,
+                    start_date=start_date,
+                    end_date=end_date,
+                ),
+                unresolved_activity_drilldown=WildlifeInsightsDrilldown(
+                    review_filter=ActivityLibraryReviewFilter.needs_review,
+                    start_date=start_date,
+                    end_date=end_date,
+                ),
+            )
+
+    def _wildlife_insight_records(
+        self,
+        session: Session,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[dict[str, Any]]:
+        rows = session.execute(
+            select(VisitModel, EventModel, StreamModel, CameraSourceModel)
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .join(StreamModel, EventModel.stream_id == StreamModel.id)
+            .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+            .where(
+                VisitModel.is_superseded.is_(False),
+                CameraSourceModel.status != SourceStatus.archived.value,
+                EventModel.started_at >= start_at,
+                EventModel.started_at < end_at,
+            )
+            .order_by(EventModel.started_at, EventModel.id, VisitModel.id)
+        ).all()
+        records: list[dict[str, Any]] = []
+        for visit, event, stream, _source in rows:
+            summary = self._stream_visit_summary_from_models(session, visit, event)
+            label = (
+                self._normalize_label_from_session(session, summary.reviewed_label)
+                if summary.reviewed_label
+                else None
+            )
+            records.append(
+                {
+                    "summary": summary,
+                    "stream_name": stream.name,
+                    "observed_at": _as_utc(event.started_at),
+                    "label": label,
+                    "display_name": self._display_name_for_label(session, label)
+                    if label
+                    else None,
+                }
+            )
+        return records
+
+    def _wildlife_insight_breakdowns(
+        self,
+        current_records: list[dict[str, Any]],
+        previous_records: list[dict[str, Any]],
+        *,
+        grouping: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[WildlifeInsightsBreakdown]:
+        def key_and_name(record: dict[str, Any]) -> tuple[str, str]:
+            summary: StreamVisitSummary = record["summary"]
+            if grouping == "label":
+                return record["label"], record["display_name"]
+            if grouping == "stream":
+                return summary.stream_id, record["stream_name"]
+            assert summary.zone_id is not None
+            return summary.zone_id, summary.zone_name or "Current Zone unavailable"
+
+        grouped_current: dict[str, list[dict[str, Any]]] = {}
+        previous_counts: Counter[str] = Counter()
+        for record in current_records:
+            key, _name = key_and_name(record)
+            grouped_current.setdefault(key, []).append(record)
+        for record in previous_records:
+            key, _name = key_and_name(record)
+            previous_counts[key] += 1
+
+        breakdowns: list[WildlifeInsightsBreakdown] = []
+        for key, records in grouped_current.items():
+            ordered = sorted(
+                records,
+                key=lambda record: (record["observed_at"], record["summary"].id),
+            )
+            _ignored_key, name = key_and_name(ordered[0])
+            drilldown = WildlifeInsightsDrilldown(
+                review_filter=ActivityLibraryReviewFilter.confirmed_wildlife,
+                start_date=start_date,
+                end_date=end_date,
+                confirmed_label=key if grouping == "label" else None,
+                stream_id=key if grouping == "stream" else None,
+                zone_id=key if grouping == "zone" else None,
+            )
+            breakdowns.append(
+                WildlifeInsightsBreakdown(
+                    id=key,
+                    name=name,
+                    count=len(ordered),
+                    previous_count=previous_counts[key],
+                    change=len(ordered) - previous_counts[key],
+                    first_observed_at=ordered[0]["observed_at"],
+                    latest_observed_at=ordered[-1]["observed_at"],
+                    representative=self._wildlife_insight_representative(ordered[-1]),
+                    drilldown=drilldown,
+                )
+            )
+        return sorted(
+            breakdowns,
+            key=lambda item: (-item.count, item.name.lower(), item.id),
+        )
+
+    @staticmethod
+    def _wildlife_insight_representative(
+        record: dict[str, Any],
+    ) -> WildlifeInsightsRepresentative:
+        summary: StreamVisitSummary = record["summary"]
+        return WildlifeInsightsRepresentative(
+            visit_id=summary.id,
+            event_id=summary.event_id,
+            stream_id=summary.stream_id,
+            stream_name=record["stream_name"],
+            zone_id=summary.zone_id,
+            zone_name=summary.zone_name,
+            label=record["label"],
+            display_name=record["display_name"],
+            observed_at=record["observed_at"],
+            primary_evidence=summary.primary_evidence,
+        )
 
     def dataset_coverage_summary(self) -> DatasetCoverageSummary:
         with self.session_factory() as session:
