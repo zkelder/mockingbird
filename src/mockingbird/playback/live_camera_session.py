@@ -24,6 +24,16 @@ MJPEG_BOUNDARY = "frame"
 DEFAULT_MAX_RUNTIME_SECONDS = 30 * 60
 DEFAULT_AUTO_REVIEW_QUIET_SECONDS = 30
 DEFAULT_AUTO_REVIEW_MIN_DETECTIONS = 1
+AUTOMATIC_IDENTIFICATION_STATUSES = {
+    "off",
+    "pending",
+    "running",
+    "succeeded",
+    "no_result",
+    "timed_out",
+    "failed",
+    "skipped_existing",
+}
 DEFAULT_ACTIVITY_MAX_CANDIDATE_FRAMES = 30
 # A completed visit keeps a deliberately small sample rather than a recording.
 # The selector accepts a lower caller-configured limit, but never exceeds this cap.
@@ -103,6 +113,12 @@ class LiveCameraSessionSnapshot:
     clients_connected: int
     monitor_running: bool
     auto_create_review_candidates: bool
+    auto_identify_review_candidates: bool
+    automatic_identification_status: str
+    last_auto_identification_target_id: str | None
+    last_auto_identification_attempt_id: str | None
+    last_auto_identification_suggestion_id: str | None
+    last_auto_identification_message: str | None
     auto_review_quiet_seconds: int
     auto_review_min_detections: int
     auto_review_created_count: int
@@ -346,7 +362,9 @@ class LiveCameraSessionManager:
             session.start()
             return session.snapshot()
 
-    def stop(self, stream_id: str, *, reason: str = "user_stopped") -> LiveCameraSessionSnapshot | None:
+    def stop(
+        self, stream_id: str, *, reason: str = "user_stopped"
+    ) -> LiveCameraSessionSnapshot | None:
         with self._lock:
             session = self._sessions.get(stream_id)
         if session is None:
@@ -392,6 +410,7 @@ class LiveCameraSessionManager:
         *,
         interval_seconds: float,
         auto_create_review_candidates: bool = False,
+        auto_identify_review_candidates: bool = False,
         auto_review_quiet_seconds: int = DEFAULT_AUTO_REVIEW_QUIET_SECONDS,
         auto_review_min_detections: int = DEFAULT_AUTO_REVIEW_MIN_DETECTIONS,
     ) -> LiveCameraSessionSnapshot | None:
@@ -403,6 +422,7 @@ class LiveCameraSessionManager:
             evaluate,
             interval_seconds=interval_seconds,
             auto_create_review_candidates=auto_create_review_candidates,
+            auto_identify_review_candidates=auto_identify_review_candidates,
             auto_review_quiet_seconds=auto_review_quiet_seconds,
             auto_review_min_detections=auto_review_min_detections,
         )
@@ -421,6 +441,7 @@ class LiveCameraSessionManager:
         stream_id: str,
         *,
         auto_create_review_candidates: bool,
+        auto_identify_review_candidates: bool = False,
         auto_review_quiet_seconds: int = DEFAULT_AUTO_REVIEW_QUIET_SECONDS,
         auto_review_min_detections: int = DEFAULT_AUTO_REVIEW_MIN_DETECTIONS,
     ) -> LiveCameraSessionSnapshot | None:
@@ -430,6 +451,7 @@ class LiveCameraSessionManager:
             return None
         session.update_monitor_settings(
             auto_create_review_candidates=auto_create_review_candidates,
+            auto_identify_review_candidates=auto_identify_review_candidates,
             auto_review_quiet_seconds=auto_review_quiet_seconds,
             auto_review_min_detections=auto_review_min_detections,
         )
@@ -604,6 +626,18 @@ class LiveCameraSessionManager:
         session.record_auto_review_error(error)
         return session.snapshot()
 
+    def record_auto_identification_update(
+        self,
+        stream_id: str,
+        values: Mapping[str, Any],
+    ) -> LiveCameraSessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        session.record_auto_identification_update(values)
+        return session.snapshot()
+
     def update_last_activity(
         self,
         stream_id: str,
@@ -664,6 +698,12 @@ class _LiveCameraSession:
         self.clients_connected = 0
         self.monitor_running = False
         self.auto_create_review_candidates = False
+        self.auto_identify_review_candidates = False
+        self.automatic_identification_status = "off"
+        self.last_auto_identification_target_id: str | None = None
+        self.last_auto_identification_attempt_id: str | None = None
+        self.last_auto_identification_suggestion_id: str | None = None
+        self.last_auto_identification_message: str | None = None
         self.auto_review_quiet_seconds = DEFAULT_AUTO_REVIEW_QUIET_SECONDS
         self.auto_review_min_detections = DEFAULT_AUTO_REVIEW_MIN_DETECTIONS
         self.auto_review_created_count = 0
@@ -751,6 +791,7 @@ class _LiveCameraSession:
         *,
         interval_seconds: float,
         auto_create_review_candidates: bool = False,
+        auto_identify_review_candidates: bool = False,
         auto_review_quiet_seconds: int = DEFAULT_AUTO_REVIEW_QUIET_SECONDS,
         auto_review_min_detections: int = DEFAULT_AUTO_REVIEW_MIN_DETECTIONS,
     ) -> None:
@@ -758,6 +799,12 @@ class _LiveCameraSession:
             if self.status not in {"starting", "running"}:
                 raise ValueError("camera_session_not_running")
             self.auto_create_review_candidates = bool(auto_create_review_candidates)
+            self.auto_identify_review_candidates = bool(auto_identify_review_candidates)
+            if (
+                not self.auto_identify_review_candidates
+                and self.automatic_identification_status not in {"pending", "running"}
+            ):
+                self.automatic_identification_status = "off"
             self.auto_review_quiet_seconds = max(1, int(auto_review_quiet_seconds))
             self.auto_review_min_detections = max(1, int(auto_review_min_detections))
             self.auto_review_last_error = None
@@ -781,21 +828,30 @@ class _LiveCameraSession:
         self,
         *,
         auto_create_review_candidates: bool,
+        auto_identify_review_candidates: bool = False,
         auto_review_quiet_seconds: int = DEFAULT_AUTO_REVIEW_QUIET_SECONDS,
         auto_review_min_detections: int = DEFAULT_AUTO_REVIEW_MIN_DETECTIONS,
     ) -> None:
         with self._lock:
             previous_settings = (
                 self.auto_create_review_candidates,
+                self.auto_identify_review_candidates,
                 self.auto_review_quiet_seconds,
                 self.auto_review_min_detections,
             )
             self.auto_create_review_candidates = bool(auto_create_review_candidates)
+            self.auto_identify_review_candidates = bool(auto_identify_review_candidates)
+            if (
+                not self.auto_identify_review_candidates
+                and self.automatic_identification_status not in {"pending", "running"}
+            ):
+                self.automatic_identification_status = "off"
             self.auto_review_quiet_seconds = max(1, int(auto_review_quiet_seconds))
             self.auto_review_min_detections = max(1, int(auto_review_min_detections))
             self.auto_review_last_error = None
             current_settings = (
                 self.auto_create_review_candidates,
+                self.auto_identify_review_candidates,
                 self.auto_review_quiet_seconds,
                 self.auto_review_min_detections,
             )
@@ -834,7 +890,9 @@ class _LiveCameraSession:
             self.last_motion_result = dict(result)
             evaluated_at = result.get("evaluated_at")
             self.last_motion_evaluation_at = (
-                evaluated_at if isinstance(evaluated_at, datetime) else datetime.now(UTC)
+                evaluated_at
+                if isinstance(evaluated_at, datetime)
+                else datetime.now(UTC)
             )
             if last_activity is not None:
                 self.last_activity = dict(last_activity)
@@ -899,8 +957,12 @@ class _LiveCameraSession:
                 or (now - existing.last_seen_at).total_seconds()
                 > existing.quiet_period_seconds(quiet_window_seconds)
             )
-            previous_detection_count = existing.detection_count if existing is not None else 0
-            previous_near_miss_count = existing.near_miss_count if existing is not None else 0
+            previous_detection_count = (
+                existing.detection_count if existing is not None else 0
+            )
+            previous_near_miss_count = (
+                existing.near_miss_count if existing is not None else 0
+            )
             if starts_new_session:
                 existing = _LiveActivitySession.from_detection(
                     values,
@@ -1161,6 +1223,34 @@ class _LiveCameraSession:
                     reason="auto_review_failed",
                 )
 
+    def record_auto_identification_update(self, values: Mapping[str, Any]) -> None:
+        with self._lock:
+            status = _optional_str(values.get("status")) or "failed"
+            if status not in AUTOMATIC_IDENTIFICATION_STATUSES:
+                status = "failed"
+            self.automatic_identification_status = status
+            self.last_auto_identification_target_id = _optional_str(
+                values.get("target_id")
+            )
+            self.last_auto_identification_attempt_id = _optional_str(
+                values.get("attempt_id")
+            )
+            self.last_auto_identification_suggestion_id = _optional_str(
+                values.get("suggestion_id")
+            )
+            self.last_auto_identification_message = _optional_str(values.get("message"))
+            if self.last_motion_result is not None:
+                self.last_motion_result.update(
+                    {
+                        "auto_identify_review_candidates": self.auto_identify_review_candidates,
+                        "automatic_identification_status": status,
+                        "last_auto_identification_target_id": self.last_auto_identification_target_id,
+                        "last_auto_identification_attempt_id": self.last_auto_identification_attempt_id,
+                        "last_auto_identification_suggestion_id": self.last_auto_identification_suggestion_id,
+                        "last_auto_identification_message": self.last_auto_identification_message,
+                    }
+                )
+
     def _record_quality_warning_transition_locked(
         self,
         warnings: Any,
@@ -1194,10 +1284,14 @@ class _LiveCameraSession:
         normalized_reason = _safe_diagnostic_token(reason)
         normalized_warning_codes = tuple(
             code
-            for code in (_safe_diagnostic_token(value) for value in quality_warning_codes)
+            for code in (
+                _safe_diagnostic_token(value) for value in quality_warning_codes
+            )
             if code is not None
         )
-        activity_session_id = activity.activity_session_id if activity is not None else None
+        activity_session_id = (
+            activity.activity_session_id if activity is not None else None
+        )
         candidate_key = (
             event_type,
             normalized_status,
@@ -1308,6 +1402,14 @@ class _LiveCameraSession:
                 clients_connected=self.clients_connected,
                 monitor_running=self.monitor_running,
                 auto_create_review_candidates=self.auto_create_review_candidates,
+                auto_identify_review_candidates=self.auto_identify_review_candidates,
+                automatic_identification_status=self.automatic_identification_status,
+                last_auto_identification_target_id=self.last_auto_identification_target_id,
+                last_auto_identification_attempt_id=self.last_auto_identification_attempt_id,
+                last_auto_identification_suggestion_id=(
+                    self.last_auto_identification_suggestion_id
+                ),
+                last_auto_identification_message=self.last_auto_identification_message,
                 auto_review_quiet_seconds=self.auto_review_quiet_seconds,
                 auto_review_min_detections=self.auto_review_min_detections,
                 auto_review_created_count=self.auto_review_created_count,
@@ -1341,9 +1443,7 @@ class _LiveCameraSession:
                 stop_reason=self.stop_reason,
                 max_runtime_seconds=self.max_runtime_seconds,
                 camera_settings=dict(self.camera_settings),
-                diagnostic_events=[
-                    event.as_dict() for event in self.diagnostic_events
-                ],
+                diagnostic_events=[event.as_dict() for event in self.diagnostic_events],
                 diagnostic_events_truncated=(
                     self._diagnostic_sequence > len(self.diagnostic_events)
                 ),
@@ -1363,7 +1463,9 @@ class _LiveCameraSession:
                 if result.get("activity_detected") is True:
                     # Activity is evidence state; only explicit stop/session stop ends monitoring.
                     continue
-        except Exception as error:  # pragma: no cover - defensive around monitor callbacks.
+        except (
+            Exception
+        ) as error:  # pragma: no cover - defensive around monitor callbacks.
             with self._lock:
                 self.last_error = str(error)
                 self.monitor_running = False
@@ -1421,7 +1523,9 @@ class _LiveCameraSession:
                 self.status = "failed"
                 self.stop_reason = "process_ended"
                 if self.last_error is None:
-                    self.last_error = "Camera process ended before the session was stopped."
+                    self.last_error = (
+                        "Camera process ended before the session was stopped."
+                    )
                 self._record_diagnostic_event_locked(
                     "camera_failed",
                     status=self.status,
@@ -1603,7 +1707,9 @@ class _LiveActivitySession:
             self.notification_event = None
         else:
             self.notification_event = None
-        self.frames_evaluated_count += max(1, int(values.get("frames_evaluated_count") or 1))
+        self.frames_evaluated_count += max(
+            1, int(values.get("frames_evaluated_count") or 1)
+        )
         self.last_seen_at = now
         self.completed_at = None
         self.ready_for_review = False
@@ -1648,7 +1754,9 @@ class _LiveActivitySession:
             self.best_changed_ratio = self.current_changed_ratio
             self.best_changed_pixels = self.current_changed_pixels
             self.best_total_scored_pixels = self.current_total_scored_pixels
-            self.start_frame_sequence = _optional_int(values.get("start_frame_sequence"))
+            self.start_frame_sequence = _optional_int(
+                values.get("start_frame_sequence")
+            )
             self.end_frame_sequence = _optional_int(values.get("end_frame_sequence"))
             self.best_frame_sequence = _optional_int(values.get("best_frame_sequence"))
             self.best_frame_captured_at = _coerce_datetime(
@@ -1857,7 +1965,9 @@ class _LiveActivitySession:
         self.review_queue_item_id = _optional_str(values.get("review_queue_item_id"))
         self.suggested_label = _optional_str(values.get("suggested_label"))
         self.suggestion_id = _optional_str(values.get("suggestion_id"))
-        self.suggestion_confidence = _optional_float(values.get("suggestion_confidence"))
+        self.suggestion_confidence = _optional_float(
+            values.get("suggestion_confidence")
+        )
         self.creates_truth = False
         self.saved_candidate_count = min(
             DEFAULT_ACTIVITY_MAX_SAVED_CANDIDATES,
@@ -1911,7 +2021,9 @@ class _LiveActivitySession:
             best_frame_captured_at=self.best_frame_captured_at,
             best_frame_content_type=self.best_frame_content_type,
             best_frame_size_bytes=(
-                len(self.best_frame_bytes) if self.best_frame_bytes is not None else None
+                len(self.best_frame_bytes)
+                if self.best_frame_bytes is not None
+                else None
             ),
             best_frame_width=self.best_frame_width,
             best_frame_height=self.best_frame_height,
@@ -2045,9 +2157,7 @@ def _camera_settings_from_config(config: Any) -> dict[str, Any]:
         "zoom_mode",
     )
     return {
-        key: value
-        for key in keys
-        if (value := getattr(config, key, None)) is not None
+        key: value for key in keys if (value := getattr(config, key, None)) is not None
     }
 
 

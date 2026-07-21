@@ -143,10 +143,12 @@ not require a labeling or readiness page.
 
 ### Step C - bounded Review Queue shadow integration
 
-The evaluation-only shadow from Step B stays manually triggered and processes
-one media-backed Visit at a time. After a candidate clears the truth gate, this
-same bounded seam may become the selected visual classifier path. It still
-creates ranked `SpeciesSuggestion` evidence only. Review Queue shows the best
+The evaluation-only shadow from Step B processes one media-backed Visit at a
+time. Phase 26B now adds a default-off post-activity assist that schedules one
+bounded BioCLIP attempt for a newly completed needs-review Visit, never retries
+an existing attempt, and never blocks the monitor on model execution. Manual
+identification remains available. Both paths create ranked `SpeciesSuggestion`
+evidence only. Review Queue shows the best
 suggestion, alternatives, uncalibrated score, provenance, crop, and original
 frame through the existing correction flow. Accepting or changing a suggestion
 creates truth only when the user submits the correction.
@@ -347,15 +349,16 @@ performance/storage budgets from the engineering gate.
 
 ## Phase 26 - identification evidence
 
-- Phase 26A is now the active product milestone above: evaluate and integrate an
-  optional local visual identification adapter that creates ranked species
-  suggestion evidence only. Phase 26A2 durable manual-attempt instrumentation
-  is complete; representative field-truth collection is next.
-- Phase 26B: integrate optional local bird-audio evidence through a separately
+- Phase 26A is complete: the optional local BioCLIP adapter and durable manual
+  attempt instrumentation create suggestion evidence only.
+- Phase 26B is complete: a default-off automatic post-activity assist schedules
+  exactly one bounded BioCLIP attempt for each newly completed eligible Visit.
+  Existing attempts are never retried; explicit correction remains truth.
+- Phase 26C: integrate optional local bird-audio evidence through a separately
   designed consent, microphone, privacy, retention, and dependency boundary.
-- Phase 26C: combine visual, audio, time, Zone, and reviewed local history into
-  ranked suggestions. Explicit correction remains the only dataset-grade
-  species truth.
+- Phase 26D: combine visual, audio, time, Zone, and reviewed local history into
+  ranked suggestions. Representative field-truth collection remains required
+  before claiming identification accuracy.
 
 ## Phase 27 - release acceptance
 

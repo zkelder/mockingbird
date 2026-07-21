@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import json
 from math import ceil
 from pathlib import Path
 import subprocess
@@ -278,6 +279,9 @@ from mockingbird.sampler.saved_media_frames import (
     load_saved_image_frame_plane,
 )
 from mockingbird.source_providers import external_url_preview
+from mockingbird.species.automatic_identification import (
+    AutomaticReviewIdentificationAssist,
+)
 from mockingbird.storage.backup import (
     BackupSummaryData,
     BackupVerificationData,
@@ -314,6 +318,9 @@ async def _app_lifespan(_app: FastAPI):
             _source_monitor_manager.cancel_all()
         if _live_camera_session_manager is not None:
             _live_camera_session_manager.stop_all(reason="api_shutdown")
+        if _automatic_review_identification_assist is not None:
+            _automatic_review_identification_assist.shutdown()
+
 
 app = FastAPI(
     title="MockingBird API",
@@ -428,6 +435,9 @@ _source_monitor_manager: SourceMonitorManager | None = None
 _live_camera_session_manager: live_camera_session.LiveCameraSessionManager | None = None
 _durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
 _local_storage_retention_service: LocalStorageRetentionService | None = None
+_automatic_review_identification_assist: AutomaticReviewIdentificationAssist | None = (
+    None
+)
 _backup_operation_lock = threading.Lock()
 _repository_access_lock = threading.RLock()
 
@@ -443,7 +453,7 @@ def get_repository() -> ProductRepository:
 
 
 def configure_repository(repository: ProductRepository | None) -> None:
-    global _repository, _source_monitor_manager, _live_camera_session_manager
+    global _repository
     with _repository_access_lock:
         previous_repository = _repository
         _stop_runtime_activity(reason="repository_reconfigured")
@@ -453,7 +463,9 @@ def configure_repository(repository: ProductRepository | None) -> None:
 
 
 def _stop_runtime_activity(*, reason: str) -> None:
-    global _durable_monitoring_supervisor, _local_storage_retention_service, _source_monitor_manager, _live_camera_session_manager
+    global _automatic_review_identification_assist
+    global _durable_monitoring_supervisor, _local_storage_retention_service
+    global _source_monitor_manager, _live_camera_session_manager
     if _durable_monitoring_supervisor is not None:
         _durable_monitoring_supervisor.shutdown(reason=reason)
         _durable_monitoring_supervisor = None
@@ -466,9 +478,14 @@ def _stop_runtime_activity(*, reason: str) -> None:
     if _live_camera_session_manager is not None:
         _live_camera_session_manager.stop_all(reason=reason)
         _live_camera_session_manager = None
+    if _automatic_review_identification_assist is not None:
+        _automatic_review_identification_assist.shutdown()
+        _automatic_review_identification_assist = None
 
 
-def _local_backup_manager(repository: ProductRepository | None = None) -> LocalBackupManager:
+def _local_backup_manager(
+    repository: ProductRepository | None = None,
+) -> LocalBackupManager:
     active_repository = repository or get_repository()
     return LocalBackupManager(
         db_url=active_repository.db_url,
@@ -542,10 +559,13 @@ def _local_backup_restore_plan(
         restore_allowed=data.restore_allowed,
     )
 
+
 def _local_backup_http_error(error: LocalBackupError) -> HTTPException:
     code = str(error)
     if isinstance(error, LocalBackupNotFoundError):
-        return HTTPException(status_code=404, detail="That local backup could not be found.")
+        return HTTPException(
+            status_code=404, detail="That local backup could not be found."
+        )
     if isinstance(error, LocalBackupUnsupportedError):
         return HTTPException(
             status_code=409,
@@ -571,7 +591,9 @@ def _local_backup_http_error(error: LocalBackupError) -> HTTPException:
             status_code=500,
             detail="Restore could not finish safely. MockingBird attempted to preserve the previous local data.",
         )
-    return HTTPException(status_code=500, detail="The local backup operation could not be completed.")
+    return HTTPException(
+        status_code=500, detail="The local backup operation could not be completed."
+    )
 
 
 def _open_product_repository(
@@ -663,6 +685,13 @@ def _sync_local_storage_retention_service(*, enabled: bool) -> None:
         _local_storage_retention_service.shutdown()
 
 
+def get_automatic_review_identification_assist() -> AutomaticReviewIdentificationAssist:
+    global _automatic_review_identification_assist
+    if _automatic_review_identification_assist is None:
+        _automatic_review_identification_assist = AutomaticReviewIdentificationAssist()
+    return _automatic_review_identification_assist
+
+
 def _not_found(product_type: str, product_id: str) -> HTTPException:
     return HTTPException(
         status_code=404,
@@ -710,7 +739,9 @@ def _media_import_error(error: ValueError) -> HTTPException:
     return HTTPException(status_code=400, detail="Media import could not be created.")
 
 
-def _external_url_preview_warnings(configuration: SourceProviderConfiguration) -> list[str]:
+def _external_url_preview_warnings(
+    configuration: SourceProviderConfiguration,
+) -> list[str]:
     warnings: list[str] = []
     if any(
         configuration.safe_config_preview.get(field) == "configured"
@@ -767,15 +798,23 @@ def _folder_import_preview_error(error: ValueError) -> HTTPException:
             detail="Folder import preview requires a folder_import_future Source provider.",
         )
     if reason == "folder_required":
-        return HTTPException(status_code=400, detail="Folder path metadata is required.")
+        return HTTPException(
+            status_code=400, detail="Folder path metadata is required."
+        )
     if reason == "folder_missing":
         return HTTPException(status_code=404, detail="Configured folder was not found.")
     if reason == "folder_not_directory":
-        return HTTPException(status_code=400, detail="Configured folder must be a directory.")
+        return HTTPException(
+            status_code=400, detail="Configured folder must be a directory."
+        )
     if reason == "folder_symlink":
-        return HTTPException(status_code=400, detail="Configured folder must not be a symlink.")
+        return HTTPException(
+            status_code=400, detail="Configured folder must not be a symlink."
+        )
     if reason == "folder_unavailable":
-        return HTTPException(status_code=400, detail="Configured folder is unavailable.")
+        return HTTPException(
+            status_code=400, detail="Configured folder is unavailable."
+        )
     return _media_import_error(error)
 
 
@@ -787,17 +826,27 @@ def _source_folder_import_error(error: ValueError) -> HTTPException:
             detail="Folder import requires a folder_import_future Source provider.",
         )
     if reason == "folder_required":
-        return HTTPException(status_code=400, detail="Folder path metadata is required.")
+        return HTTPException(
+            status_code=400, detail="Folder path metadata is required."
+        )
     if reason == "folder_missing":
         return HTTPException(status_code=404, detail="Configured folder was not found.")
     if reason == "folder_not_directory":
-        return HTTPException(status_code=400, detail="Configured folder must be a directory.")
+        return HTTPException(
+            status_code=400, detail="Configured folder must be a directory."
+        )
     if reason == "folder_symlink":
-        return HTTPException(status_code=400, detail="Configured folder must not be a symlink.")
+        return HTTPException(
+            status_code=400, detail="Configured folder must not be a symlink."
+        )
     if reason == "folder_unavailable":
-        return HTTPException(status_code=400, detail="Configured folder is unavailable.")
+        return HTTPException(
+            status_code=400, detail="Configured folder is unavailable."
+        )
     if reason == "unsupported_copy_mode":
-        return HTTPException(status_code=400, detail="Only copy_to_media_root is supported.")
+        return HTTPException(
+            status_code=400, detail="Only copy_to_media_root is supported."
+        )
     if reason == "stream_required":
         return HTTPException(
             status_code=400,
@@ -835,10 +884,16 @@ def _detection_interface_error(error: ValueError) -> HTTPException:
             detail="Detection proposal stream must match the media asset stream.",
         )
     if reason == "proposal_already_decided":
-        return HTTPException(status_code=400, detail="Detection proposal was already decided.")
+        return HTTPException(
+            status_code=400, detail="Detection proposal was already decided."
+        )
     if reason == "unsupported_decision":
-        return HTTPException(status_code=400, detail="Unsupported detection proposal decision.")
-    return HTTPException(status_code=400, detail="Detection proposal could not be processed.")
+        return HTTPException(
+            status_code=400, detail="Unsupported detection proposal decision."
+        )
+    return HTTPException(
+        status_code=400, detail="Detection proposal could not be processed."
+    )
 
 
 def _model_adapter_error(error: ValueError) -> HTTPException:
@@ -846,7 +901,9 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
     if reason == "missing_adapter":
         return _not_found("Model adapter", "adapter")
     if reason == "adapter_mismatch":
-        return HTTPException(status_code=400, detail="Adapter id in path and payload must match.")
+        return HTTPException(
+            status_code=400, detail="Adapter id in path and payload must match."
+        )
     if reason == "adapter_unavailable":
         return HTTPException(status_code=400, detail="Model adapter is not available.")
     if reason == "local_detector_not_configured":
@@ -957,7 +1014,9 @@ def _model_adapter_error(error: ValueError) -> HTTPException:
 def _review_identification_error(error: ValueError) -> HTTPException:
     reason = str(error)
     if reason == "unsupported_target":
-        return HTTPException(status_code=400, detail="Unsupported review identification target.")
+        return HTTPException(
+            status_code=400, detail="Unsupported review identification target."
+        )
     if reason == "missing_review_candidate":
         return _not_found("Review Queue candidate", "identify target")
     return _model_adapter_error(error)
@@ -1093,7 +1152,9 @@ def _motion_evidence_error(error: ValueError) -> HTTPException:
             status_code=400,
             detail="Choose a reviewable zone before creating Motion Evidence from saved media.",
         )
-    return HTTPException(status_code=400, detail="Motion Evidence could not be processed.")
+    return HTTPException(
+        status_code=400, detail="Motion Evidence could not be processed."
+    )
 
 
 def _saved_preview_motion_evidence_error(
@@ -1184,7 +1245,9 @@ def _species_suggestion_error(error: ValueError) -> HTTPException:
             status_code=400,
             detail="Only pending SpeciesSuggestion evidence can change status.",
         )
-    return HTTPException(status_code=400, detail="SpeciesSuggestion could not be processed.")
+    return HTTPException(
+        status_code=400, detail="SpeciesSuggestion could not be processed."
+    )
 
 
 def _motion_zone_from_payload(zone: MotionZoneInput) -> MotionZone:
@@ -1218,7 +1281,9 @@ def _motion_score_response(score: MotionScore) -> MotionScoreResponse:
     )
 
 
-def _motion_frame_score_response(frame_score: MotionFrameScore) -> MotionFrameScoreResponse:
+def _motion_frame_score_response(
+    frame_score: MotionFrameScore,
+) -> MotionFrameScoreResponse:
     return MotionFrameScoreResponse(
         frame_index=frame_score.frame_index,
         scores=[_motion_score_response(score) for score in frame_score.scores],
@@ -1239,7 +1304,9 @@ def _motion_score_from_payload(score: MotionScoreResponse) -> MotionScore:
     )
 
 
-def _motion_frame_score_from_payload(frame_score: MotionFrameScoreResponse) -> MotionFrameScore:
+def _motion_frame_score_from_payload(
+    frame_score: MotionFrameScoreResponse,
+) -> MotionFrameScore:
     return MotionFrameScore(
         frame_index=frame_score.frame_index,
         scores=[_motion_score_from_payload(score) for score in frame_score.scores],
@@ -1369,7 +1436,9 @@ def _suppressed_zone_reason(zone: Zone) -> str:
     return "suppressed_zone"
 
 
-def _zone_motion_summary_label(summaries: list[MotionSuppressedZoneSummaryResponse]) -> str:
+def _zone_motion_summary_label(
+    summaries: list[MotionSuppressedZoneSummaryResponse],
+) -> str:
     if not summaries:
         return ""
     if len(summaries) == 1:
@@ -1597,7 +1666,10 @@ def _live_motion_sampler_result(
                 pixel_delta_threshold=scoring_policy.pixel_delta_threshold,
                 min_changed_ratio=scoring_policy.min_changed_ratio,
             )
-            if score.triggered and score.changed_pixels < scoring_policy.min_changed_pixels:
+            if (
+                score.triggered
+                and score.changed_pixels < scoring_policy.min_changed_pixels
+            ):
                 score = MotionScore(
                     zone_id=score.zone_id,
                     changed_pixels=score.changed_pixels,
@@ -1608,7 +1680,9 @@ def _live_motion_sampler_result(
                 )
             scores.append(score)
         triggered_zone_ids = [score.zone_id for score in scores if score.triggered]
-        strongest_score = max(scores, key=lambda score: score.changed_ratio, default=None)
+        strongest_score = max(
+            scores, key=lambda score: score.changed_ratio, default=None
+        )
         frame_scores.append(
             MotionFrameScore(
                 frame_index=config.frame_index_start + pair_index + 1,
@@ -1821,7 +1895,9 @@ def _live_motion_quality_warnings(
             "camera controls."
         )
     if contrast_range <= 14 or mean_delta <= 5:
-        warnings.append("Camera image appears low contrast; motion may be harder to detect.")
+        warnings.append(
+            "Camera image appears low contrast; motion may be harder to detect."
+        )
 
     for zone in zones:
         if zone.zone_type not in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}:
@@ -1891,7 +1967,8 @@ def _live_activity_session_status_fields(
         "activity_frames_evaluated_count": activity.get("frames_evaluated_count") or 0,
         "activity_candidate_frame_count": activity.get("candidate_frame_count") or 0,
         "activity_saved_candidate_count": activity.get("saved_candidate_count") or 0,
-        "activity_session_duration_seconds": activity.get("session_duration_seconds") or 0.0,
+        "activity_session_duration_seconds": activity.get("session_duration_seconds")
+        or 0.0,
         "activity_completed_at": activity.get("completed_at"),
         "activity_ready_for_review": _live_activity_ready_for_review(
             activity,
@@ -1944,7 +2021,8 @@ def _live_activity_evaluate_fields(
         "activity_frames_evaluated_count": activity.get("frames_evaluated_count") or 0,
         "activity_candidate_frame_count": activity.get("candidate_frame_count") or 0,
         "activity_saved_candidate_count": activity.get("saved_candidate_count") or 0,
-        "activity_session_duration_seconds": activity.get("session_duration_seconds") or 0.0,
+        "activity_session_duration_seconds": activity.get("session_duration_seconds")
+        or 0.0,
         "activity_completed_at": activity.get("completed_at"),
         "activity_ready_for_review": _live_activity_ready_for_review(
             activity,
@@ -2057,6 +2135,7 @@ def _live_camera_session_response(
             persistent=False,
             monitor_running=False,
             auto_create_review_candidates=False,
+            auto_identify_review_candidates=False,
             auto_review_quiet_seconds=live_camera_session.DEFAULT_AUTO_REVIEW_QUIET_SECONDS,
             auto_review_min_detections=(
                 live_camera_session.DEFAULT_AUTO_REVIEW_MIN_DETECTIONS
@@ -2079,6 +2158,12 @@ def _live_camera_session_response(
         clients_connected=snapshot.clients_connected,
         monitor_running=snapshot.monitor_running,
         auto_create_review_candidates=snapshot.auto_create_review_candidates,
+        auto_identify_review_candidates=snapshot.auto_identify_review_candidates,
+        automatic_identification_status=snapshot.automatic_identification_status,
+        last_auto_identification_target_id=snapshot.last_auto_identification_target_id,
+        last_auto_identification_attempt_id=snapshot.last_auto_identification_attempt_id,
+        last_auto_identification_suggestion_id=snapshot.last_auto_identification_suggestion_id,
+        last_auto_identification_message=snapshot.last_auto_identification_message,
         auto_review_quiet_seconds=snapshot.auto_review_quiet_seconds,
         auto_review_min_detections=snapshot.auto_review_min_detections,
         auto_review_created_count=snapshot.auto_review_created_count,
@@ -2154,7 +2239,9 @@ def _camera_session_response_fields(
     return {
         "camera_session_status": snapshot.status if snapshot else "stopped",
         "camera_session_frame_count": snapshot.frame_count if snapshot else 0,
-        "camera_session_clients_connected": snapshot.clients_connected if snapshot else 0,
+        "camera_session_clients_connected": snapshot.clients_connected
+        if snapshot
+        else 0,
         "camera_session_latest_frame_age_ms": (
             snapshot.latest_frame_age_ms if snapshot else None
         ),
@@ -2178,9 +2265,13 @@ def _validate_live_camera_session_config(
                 detail="RTSP bridge requires an external_url Source provider.",
             )
         if not configuration.live_stream_url:
-            raise HTTPException(status_code=400, detail="Live stream URL is not configured.")
+            raise HTTPException(
+                status_code=400, detail="Live stream URL is not configured."
+            )
         if live_type != "rtsp":
-            raise HTTPException(status_code=400, detail="RTSP bridge requires RTSP stream type.")
+            raise HTTPException(
+                status_code=400, detail="RTSP bridge requires RTSP stream type."
+            )
         if not rtsp_bridge.validate_rtsp_url(configuration.live_stream_url):
             raise HTTPException(
                 status_code=400,
@@ -2409,7 +2500,9 @@ def _auto_motion_cells(
                 right=right,
                 bottom=bottom,
             )
-            if any(_auto_cell_blocked(candidate, blocked) for blocked in blocked_bounds):
+            if any(
+                _auto_cell_blocked(candidate, blocked) for blocked in blocked_bounds
+            ):
                 suppressed_count += 1
                 continue
             cells.append(
@@ -2434,7 +2527,10 @@ def _auto_region_grid_size(*, width: int, height: int) -> tuple[int, int]:
 def _auto_cell_blocked(cell: MotionZoneInput, blocked: MotionZoneInput) -> bool:
     center_x = (cell.left + cell.right) / 2
     center_y = (cell.top + cell.bottom) / 2
-    if blocked.left <= center_x <= blocked.right and blocked.top <= center_y <= blocked.bottom:
+    if (
+        blocked.left <= center_x <= blocked.right
+        and blocked.top <= center_y <= blocked.bottom
+    ):
         return True
 
     overlap_left = max(cell.left, blocked.left)
@@ -2505,7 +2601,9 @@ def _auto_activity_clusters(
                 if neighbor_id in active_ids and neighbor_id not in visited:
                     stack.append(neighbor_id)
 
-        cluster = _auto_motion_cluster(cluster_ids, cell_by_id, triggered_by_cell, config)
+        cluster = _auto_motion_cluster(
+            cluster_ids, cell_by_id, triggered_by_cell, config
+        )
         if cluster is not None:
             clusters.append(cluster)
 
@@ -2552,10 +2650,13 @@ def _auto_activity_clusters(
                 top=cluster.top,
                 right=cluster.right,
                 bottom=cluster.bottom,
-                cell_ids=[cell.region_id for cell in sorted(
-                    cluster.cells,
-                    key=lambda cell: (cell.row, cell.column),
-                )],
+                cell_ids=[
+                    cell.region_id
+                    for cell in sorted(
+                        cluster.cells,
+                        key=lambda cell: (cell.row, cell.column),
+                    )
+                ],
             )
         )
     return candidates, areas
@@ -2585,7 +2686,9 @@ def _auto_motion_cluster(
     def group_peak(group: list[int]) -> float:
         group_frames = set(group)
         return max(
-            ratio for frame_index, ratio, _pixels in events if frame_index in group_frames
+            ratio
+            for frame_index, ratio, _pixels in events
+            if frame_index in group_frames
         )
 
     best_group = max(ready_groups, key=group_peak)
@@ -2594,9 +2697,8 @@ def _auto_motion_cluster(
         (event for event in events if event[0] in best_group_frames),
         key=lambda event: event[1],
     )
-    if (
-        len(cells) == 1
-        and peak_changed_ratio < _auto_isolated_cell_min_ratio(config.min_changed_ratio)
+    if len(cells) == 1 and peak_changed_ratio < _auto_isolated_cell_min_ratio(
+        config.min_changed_ratio
     ):
         return None
 
@@ -2650,8 +2752,12 @@ def _auto_activity_area_label(
 ) -> str:
     center_x = (left + right) / 2
     center_y = (top + bottom) / 2
-    vertical = "Upper" if center_y < 1 / 3 else "Lower" if center_y > 2 / 3 else "Center"
-    horizontal = "left" if center_x < 1 / 3 else "right" if center_x > 2 / 3 else "center"
+    vertical = (
+        "Upper" if center_y < 1 / 3 else "Lower" if center_y > 2 / 3 else "Center"
+    )
+    horizontal = (
+        "left" if center_x < 1 / 3 else "right" if center_x > 2 / 3 else "center"
+    )
     label = (
         "Center activity area"
         if vertical == "Center" and horizontal == "center"
@@ -2925,7 +3031,9 @@ def _frame_summary_for_media_asset(
 ) -> SavedMediaFrameSummary | None:
     if media_asset_id is None:
         return None
-    return next((frame for frame in frames if frame.media_asset_id == media_asset_id), None)
+    return next(
+        (frame for frame in frames if frame.media_asset_id == media_asset_id), None
+    )
 
 
 def _measured_activity_bounds(
@@ -3010,7 +3118,9 @@ def _strongest_motion_summary(
 
 
 def _best_motion_candidate(candidates: list[MotionCandidate]) -> MotionCandidate | None:
-    return max(candidates, key=lambda candidate: candidate.peak_changed_ratio, default=None)
+    return max(
+        candidates, key=lambda candidate: candidate.peak_changed_ratio, default=None
+    )
 
 
 def _detection_runs_for_proposals(
@@ -3070,7 +3180,9 @@ async def evaluate_motion_frame(
     return _motion_frame_score_response(frame_score)
 
 
-@app.post("/api/motion/extract-candidates", response_model=MotionExtractCandidatesResponse)
+@app.post(
+    "/api/motion/extract-candidates", response_model=MotionExtractCandidatesResponse
+)
 async def extract_motion_candidate_windows(
     payload: MotionExtractCandidatesRequest,
 ) -> MotionExtractCandidatesResponse:
@@ -3093,7 +3205,9 @@ async def extract_motion_candidate_windows(
     )
 
 
-@app.post("/api/motion/evaluate-sequence", response_model=MotionEvaluateSequenceResponse)
+@app.post(
+    "/api/motion/evaluate-sequence", response_model=MotionEvaluateSequenceResponse
+)
 async def evaluate_motion_sequence(
     payload: MotionEvaluateSequenceRequest,
 ) -> MotionEvaluateSequenceResponse:
@@ -3145,7 +3259,9 @@ async def evaluate_motion_sequence(
     )
 
 
-@app.post("/api/motion/evaluate-saved-media", response_model=MotionEvaluateSavedMediaResponse)
+@app.post(
+    "/api/motion/evaluate-saved-media", response_model=MotionEvaluateSavedMediaResponse
+)
 async def evaluate_saved_media_motion(
     payload: MotionEvaluateSavedMediaRequest,
 ) -> MotionEvaluateSavedMediaResponse:
@@ -3187,7 +3303,9 @@ async def evaluate_saved_media_motion(
         if media_path is None:
             raise _not_found("Media asset", asset.id)
         try:
-            frame = load_saved_image_frame_plane(media_path, content_type=asset.content_type)
+            frame = load_saved_image_frame_plane(
+                media_path, content_type=asset.content_type
+            )
         except SavedMediaFrameDecodeError as error:
             raise _saved_media_motion_error(error) from error
 
@@ -3204,13 +3322,21 @@ async def evaluate_saved_media_motion(
 
     all_zones = repository.zones_for_stream(stream.id)
     zones_by_id = {zone.id: zone for zone in all_zones}
-    requested_zone_ids = [zone_id for zone_id in payload.zone_ids or [] if zone_id.strip()]
+    requested_zone_ids = [
+        zone_id for zone_id in payload.zone_ids or [] if zone_id.strip()
+    ]
     candidate_zones = (
-        [zones_by_id[zone_id] for zone_id in requested_zone_ids if zone_id in zones_by_id]
+        [
+            zones_by_id[zone_id]
+            for zone_id in requested_zone_ids
+            if zone_id in zones_by_id
+        ]
         if requested_zone_ids
         else all_zones
     )
-    missing_zone_ids = [zone_id for zone_id in requested_zone_ids if zone_id not in zones_by_id]
+    missing_zone_ids = [
+        zone_id for zone_id in requested_zone_ids if zone_id not in zones_by_id
+    ]
     if missing_zone_ids:
         raise _not_found("Zone", missing_zone_ids[0])
 
@@ -3299,8 +3425,7 @@ async def evaluate_saved_media_motion(
         motion_zones = [_activity_area_zone_input(area) for area in activity_areas]
 
     candidate_responses = [
-        _motion_candidate_response(candidate)
-        for candidate in motion_candidates
+        _motion_candidate_response(candidate) for candidate in motion_candidates
     ]
 
     raw_strongest_zone_id, raw_strongest_changed_ratio = _strongest_motion_summary(
@@ -3330,9 +3455,8 @@ async def evaluate_saved_media_motion(
     session_activity_area = (
         activity_area_by_id.get(best_candidate.zone_id) if best_candidate else None
     )
-    strongest_activity_area = (
-        session_activity_area
-        or (activity_area_by_id.get(strongest_zone_id) if strongest_zone_id else None)
+    strongest_activity_area = session_activity_area or (
+        activity_area_by_id.get(strongest_zone_id) if strongest_zone_id else None
     )
     strongest_zone = zones_by_id.get(strongest_zone_id) if strongest_zone_id else None
     strongest_zone_name = strongest_zone.name if strongest_zone else None
@@ -3462,7 +3586,9 @@ async def evaluate_saved_media_motion(
                             **_activity_bounds_scoring_fields(measured_activity),
                         },
                         snapshot_media_asset_id=(
-                            best_media_asset_id if payload.attach_best_snapshot else None
+                            best_media_asset_id
+                            if payload.attach_best_snapshot
+                            else None
                         ),
                         notes=payload.notes
                         or "Saved snapshot motion check created pending review activity.",
@@ -3584,6 +3710,36 @@ def _evaluate_live_stream_motion(
             if session_snapshot is not None
             else False
         ),
+        "auto_identify_review_candidates": (
+            session_snapshot.auto_identify_review_candidates
+            if session_snapshot is not None
+            else False
+        ),
+        "automatic_identification_status": (
+            session_snapshot.automatic_identification_status
+            if session_snapshot is not None
+            else "off"
+        ),
+        "last_auto_identification_target_id": (
+            session_snapshot.last_auto_identification_target_id
+            if session_snapshot
+            else None
+        ),
+        "last_auto_identification_attempt_id": (
+            session_snapshot.last_auto_identification_attempt_id
+            if session_snapshot
+            else None
+        ),
+        "last_auto_identification_suggestion_id": (
+            session_snapshot.last_auto_identification_suggestion_id
+            if session_snapshot
+            else None
+        ),
+        "last_auto_identification_message": (
+            session_snapshot.last_auto_identification_message
+            if session_snapshot
+            else None
+        ),
         "auto_review_quiet_seconds": active_quiet_seconds,
         "auto_review_min_detections": active_min_detections,
         "auto_review_created_count": (
@@ -3596,7 +3752,9 @@ def _evaluate_live_stream_motion(
             session_snapshot.auto_review_last_error if session_snapshot else None
         ),
         "last_auto_review_motion_evidence_id": (
-            session_snapshot.last_auto_review_motion_evidence_id if session_snapshot else None
+            session_snapshot.last_auto_review_motion_evidence_id
+            if session_snapshot
+            else None
         ),
         "last_auto_review_event_id": (
             session_snapshot.last_auto_review_event_id if session_snapshot else None
@@ -3605,7 +3763,9 @@ def _evaluate_live_stream_motion(
             session_snapshot.last_auto_review_visit_id if session_snapshot else None
         ),
         "last_auto_review_queue_item_id": (
-            session_snapshot.last_auto_review_queue_item_id if session_snapshot else None
+            session_snapshot.last_auto_review_queue_item_id
+            if session_snapshot
+            else None
         ),
         "pixel_delta_threshold": request.pixel_delta_threshold,
         "min_changed_ratio": request.min_changed_ratio,
@@ -3752,7 +3912,9 @@ def _evaluate_live_stream_motion(
             focus_zone = candidate_focus_zone
             reviewable_zones = [candidate_focus_zone]
         else:
-            warnings.append("Monitoring focus Zone was unavailable; all Zones were checked.")
+            warnings.append(
+                "Monitoring focus Zone was unavailable; all Zones were checked."
+            )
     activity_areas: list[MotionActivityAreaResponse] = [
         _activity_area_from_zone(zone) for zone in reviewable_zones
     ]
@@ -3817,20 +3979,24 @@ def _evaluate_live_stream_motion(
         motion_zones = [_activity_area_zone_input(area) for area in activity_areas]
 
     best_candidate = _best_motion_candidate(motion_candidates)
-    strongest_suppressed_zone = suppressed_zone_summaries[0] if suppressed_zone_summaries else None
+    strongest_suppressed_zone = (
+        suppressed_zone_summaries[0] if suppressed_zone_summaries else None
+    )
     suppressed_strongest_motion = (
         strongest_suppressed_zone is not None
         and best_candidate is not None
-        and strongest_suppressed_zone.peak_changed_ratio >= best_candidate.peak_changed_ratio
+        and strongest_suppressed_zone.peak_changed_ratio
+        >= best_candidate.peak_changed_ratio
     )
     if suppressed_strongest_motion and strongest_suppressed_zone is not None:
         motion_candidates = []
         best_candidate = None
-        warnings.append(_live_motion_ignore_suppression_warning(strongest_suppressed_zone))
+        warnings.append(
+            _live_motion_ignore_suppression_warning(strongest_suppressed_zone)
+        )
 
     candidate_responses = [
-        _motion_candidate_response(candidate)
-        for candidate in motion_candidates
+        _motion_candidate_response(candidate) for candidate in motion_candidates
     ]
     raw_strongest_zone_id, raw_strongest_changed_ratio = _strongest_motion_summary(
         frame_score_responses,
@@ -3858,7 +4024,9 @@ def _evaluate_live_stream_motion(
     strongest_zone = zones_by_id.get(strongest_zone_id) if strongest_zone_id else None
     strongest_zone_name = strongest_zone.name if strongest_zone else None
     strongest_zone_type = strongest_zone.zone_type if strongest_zone else None
-    strongest_focus_applied = focus_zone is not None and strongest_zone_id == focus_zone.id
+    strongest_focus_applied = (
+        focus_zone is not None and strongest_zone_id == focus_zone.id
+    )
     strongest_scoring_policy = (
         _live_motion_zone_scoring_policy(
             zone_type=strongest_zone_type,
@@ -3989,9 +4157,11 @@ def _evaluate_live_stream_motion(
             ),
             None,
         )
-    strongest_frame_start_sequence, strongest_frame_end_sequence = _live_motion_pair_sequences(
-        cached_frames,
-        best_candidate.best_frame_index if best_candidate else None,
+    strongest_frame_start_sequence, strongest_frame_end_sequence = (
+        _live_motion_pair_sequences(
+            cached_frames,
+            best_candidate.best_frame_index if best_candidate else None,
+        )
     )
     session_region_kind = "auto_area" if uses_auto_regions else "zone"
     session_region_id = _activity_session_region_id(strongest_activity_area)
@@ -4070,7 +4240,9 @@ def _evaluate_live_stream_motion(
                     burst_live_frame_summary.width if burst_live_frame_summary else None
                 ),
                 "best_frame_height": (
-                    burst_live_frame_summary.height if burst_live_frame_summary else None
+                    burst_live_frame_summary.height
+                    if burst_live_frame_summary
+                    else None
                 ),
                 "best_score": _live_activity_best_frame_score(
                     changed_ratio=strongest_changed_ratio,
@@ -4155,10 +4327,12 @@ def _evaluate_live_stream_motion(
             raise _media_import_error(error) from error
         best_media_asset_id = media_asset.id
     if request.create_review_activity and live_activity_session is not None:
-        best_media_asset_id, live_activity_session = _ensure_live_activity_best_media_asset(
-            repository=repository,
-            stream=stream,
-            activity=live_activity_session,
+        best_media_asset_id, live_activity_session = (
+            _ensure_live_activity_best_media_asset(
+                repository=repository,
+                stream=stream,
+                activity=live_activity_session,
+            )
         )
     live_activity_review_created = bool(
         live_activity_session and live_activity_session.get("review_activity_created")
@@ -4175,7 +4349,8 @@ def _evaluate_live_stream_motion(
         )
     )
     review_activity_available = (
-        can_create_review_activity and session_recommendation.should_create_review_activity
+        can_create_review_activity
+        and session_recommendation.should_create_review_activity
     )
     if live_activity_session is not None and can_create_review_activity:
         review_activity_available = True
@@ -4239,7 +4414,10 @@ def _evaluate_live_stream_motion(
             if session_recommendation.existing_activity_reference
             else None
         )
-        if existing_evidence and existing_evidence.status == MotionEvidenceStatus.pending:
+        if (
+            existing_evidence
+            and existing_evidence.status == MotionEvidenceStatus.pending
+        ):
             try:
                 promoted = repository.promote_motion_evidence(
                     existing_evidence.id,
@@ -4365,10 +4543,18 @@ def _evaluate_live_stream_motion(
                         "image_quality_warnings": image_quality_warnings,
                         **(
                             {
-                                "activity_left": live_activity_session.get("activity_left"),
-                                "activity_top": live_activity_session.get("activity_top"),
-                                "activity_right": live_activity_session.get("activity_right"),
-                                "activity_bottom": live_activity_session.get("activity_bottom"),
+                                "activity_left": live_activity_session.get(
+                                    "activity_left"
+                                ),
+                                "activity_top": live_activity_session.get(
+                                    "activity_top"
+                                ),
+                                "activity_right": live_activity_session.get(
+                                    "activity_right"
+                                ),
+                                "activity_bottom": live_activity_session.get(
+                                    "activity_bottom"
+                                ),
                                 "activity_changed_pixel_count": live_activity_session.get(
                                     "activity_changed_pixel_count"
                                 ),
@@ -4441,28 +4627,32 @@ def _evaluate_live_stream_motion(
         and review_motion_evidence is not None
         and review_queue_item_id is not None
     ):
-        updated_activity = get_live_camera_session_manager().mark_activity_review_created(
-            stream.id,
-            str(live_activity_session["activity_session_id"]),
-            {
-                "motion_evidence_id": review_motion_evidence.id,
-                "event_id": review_event_id,
-                "visit_id": review_visit_id,
-                "review_queue_item_id": review_queue_item_id,
-                "suggested_label": (
-                    review_activity_suggestion.suggested_label
-                    if review_activity_suggestion
-                    else None
-                ),
-                "suggestion_id": (
-                    review_activity_suggestion.id if review_activity_suggestion else None
-                ),
-                "suggestion_confidence": (
-                    review_activity_suggestion.confidence
-                    if review_activity_suggestion
-                    else None
-                ),
-            },
+        updated_activity = (
+            get_live_camera_session_manager().mark_activity_review_created(
+                stream.id,
+                str(live_activity_session["activity_session_id"]),
+                {
+                    "motion_evidence_id": review_motion_evidence.id,
+                    "event_id": review_event_id,
+                    "visit_id": review_visit_id,
+                    "review_queue_item_id": review_queue_item_id,
+                    "suggested_label": (
+                        review_activity_suggestion.suggested_label
+                        if review_activity_suggestion
+                        else None
+                    ),
+                    "suggestion_id": (
+                        review_activity_suggestion.id
+                        if review_activity_suggestion
+                        else None
+                    ),
+                    "suggestion_confidence": (
+                        review_activity_suggestion.confidence
+                        if review_activity_suggestion
+                        else None
+                    ),
+                },
+            )
         )
         if updated_activity is not None:
             live_activity_session = updated_activity.as_dict()
@@ -4474,7 +4664,9 @@ def _evaluate_live_stream_motion(
     cooldown_remaining_seconds = _live_motion_cooldown_remaining_seconds(
         session_recommendation
     )
-    existing_review_activity_reference = session_recommendation.existing_activity_reference
+    existing_review_activity_reference = (
+        session_recommendation.existing_activity_reference
+    )
     if activity_detected and best_media_asset_id:
         message = f"{diagnostic_message or activity_summary} Best frame was saved for explicit review."
     elif activity_detected:
@@ -4582,7 +4774,9 @@ def _evaluate_live_stream_motion(
         session_status=live_session_status,
         cooldown_remaining_seconds=cooldown_remaining_seconds,
         last_evaluation_message=message,
-        motion_evidence_id=review_motion_evidence.id if review_motion_evidence else None,
+        motion_evidence_id=review_motion_evidence.id
+        if review_motion_evidence
+        else None,
         event_id=review_event_id,
         visit_id=review_visit_id,
         review_queue_item_id=review_queue_item_id,
@@ -4598,7 +4792,9 @@ def _evaluate_live_stream_motion(
             review_activity_suggestion.id if review_activity_suggestion else None
         ),
         suggestion_confidence=(
-            review_activity_suggestion.confidence if review_activity_suggestion else None
+            review_activity_suggestion.confidence
+            if review_activity_suggestion
+            else None
         ),
         suggestion_reason=(
             review_activity_suggestion.notes if review_activity_suggestion else None
@@ -4627,6 +4823,7 @@ async def start_live_stream_motion_monitor(
             exclude={
                 "interval_seconds",
                 "auto_create_review_candidates",
+                "auto_identify_review_candidates",
                 "auto_review_quiet_seconds",
                 "auto_review_min_detections",
                 "create_review_activity",
@@ -4648,7 +4845,10 @@ async def start_live_stream_motion_monitor(
         auto_created = _maybe_auto_create_live_review_candidate(stream_id)
         if auto_created is not None and auto_created.review_activity_created:
             snapshot_after_auto = get_live_camera_session_manager().status(stream_id)
-            if snapshot_after_auto is not None and snapshot_after_auto.last_motion_result:
+            if (
+                snapshot_after_auto is not None
+                and snapshot_after_auto.last_motion_result
+            ):
                 return dict(snapshot_after_auto.last_motion_result)
         result = _evaluate_live_stream_motion(
             stream_id,
@@ -4666,6 +4866,7 @@ async def start_live_stream_motion_monitor(
         monitor_evaluate,
         interval_seconds=request.interval_seconds,
         auto_create_review_candidates=request.auto_create_review_candidates,
+        auto_identify_review_candidates=request.auto_identify_review_candidates,
         auto_review_quiet_seconds=request.auto_review_quiet_seconds,
         auto_review_min_detections=request.auto_review_min_detections,
     )
@@ -4691,6 +4892,7 @@ async def update_live_stream_motion_monitor_settings(
     snapshot = get_live_camera_session_manager().update_monitor_settings(
         stream_id,
         auto_create_review_candidates=request.auto_create_review_candidates,
+        auto_identify_review_candidates=request.auto_identify_review_candidates,
         auto_review_quiet_seconds=request.auto_review_quiet_seconds,
         auto_review_min_detections=request.auto_review_min_detections,
     )
@@ -4709,7 +4911,9 @@ async def update_live_stream_motion_monitor_settings(
     "/api/streams/{stream_id}/live-motion/stop",
     response_model=LiveCameraSessionStatusResponse,
 )
-async def stop_live_stream_motion_monitor(stream_id: str) -> LiveCameraSessionStatusResponse:
+async def stop_live_stream_motion_monitor(
+    stream_id: str,
+) -> LiveCameraSessionStatusResponse:
     configuration = _stream_live_playback_config_or_404(stream_id)
     snapshot = get_live_camera_session_manager().stop_monitor(stream_id)
     get_repository().disable_stream_monitoring_for_manual_stop(stream_id)
@@ -4807,7 +5011,11 @@ def _live_motion_review_activity_response(
     warnings: list[str] | None = None,
 ) -> LiveMotionReviewActivityResponse:
     review_queue_item_id = (
-        f"review-queue-{visit_id}" if visit_id else f"review-queue-{event_id}" if event_id else None
+        f"review-queue-{visit_id}"
+        if visit_id
+        else f"review-queue-{event_id}"
+        if event_id
+        else None
     )
     return LiveMotionReviewActivityResponse(
         stream_id=stream_id,
@@ -4904,7 +5112,9 @@ def _create_live_stream_motion_review_activity(
             activity_started_at=_live_activity_datetime(activity.get("started_at")),
             activity_last_seen_at=_live_activity_datetime(activity.get("last_seen_at")),
             media_asset_id=activity.get("best_media_asset_id"),
-            warnings=["Near-miss-only activity remains status evidence, not review activity."],
+            warnings=[
+                "Near-miss-only activity remains status evidence, not review activity."
+            ],
         )
 
     policy_snapshot = activity.get("monitoring_policy")
@@ -4921,7 +5131,7 @@ def _create_live_stream_motion_review_activity(
         if started_at is not None and last_seen_at is not None
         else 0.0
     )
-    if (
+    if auto_created and (
         activity.get("finalized_reason") == "brief_activity"
         or session_seconds < minimum_sustained_seconds
     ):
@@ -5000,10 +5210,17 @@ def _create_live_stream_motion_review_activity(
                     "activity_session_id": activity.get("activity_session_id"),
                     "activity_region_kind": activity.get("region_kind"),
                     "activity_region_id": activity.get("region_id"),
-                    "monitoring_policy": policy_snapshot,
+                    # MotionEvidence metadata permits only shallow values; retain the
+                    # full per-Zone policy as immutable evidence provenance.
+                    "monitoring_policy": (
+                        json.dumps(policy_snapshot, sort_keys=True)
+                        if isinstance(policy_snapshot, dict)
+                        else None
+                    ),
                     "detection_count": activity.get("detection_count") or 1,
                     "near_miss_count": activity.get("near_miss_count") or 0,
-                    "frames_evaluated_count": activity.get("frames_evaluated_count") or 0,
+                    "frames_evaluated_count": activity.get("frames_evaluated_count")
+                    or 0,
                     "candidate_frame_count": activity.get("candidate_frame_count") or 0,
                     "saved_candidate_count": activity.get("saved_candidate_count") or 0,
                     "visit_evidence_frame_limit": len(evidence_frames),
@@ -5076,7 +5293,9 @@ def _create_live_stream_motion_review_activity(
         raise _motion_evidence_error(error) from error
 
     if promoted is None:
-        raise HTTPException(status_code=409, detail="Live review activity could not be created.")
+        raise HTTPException(
+            status_code=409, detail="Live review activity could not be created."
+        )
 
     suggestion: SpeciesSuggestionResponse | None = None
     if (
@@ -5227,7 +5446,9 @@ def _create_live_stream_motion_review_activity(
 async def create_live_stream_motion_review_activity(
     stream_id: str,
 ) -> LiveMotionReviewActivityResponse:
-    return _create_live_stream_motion_review_activity(stream_id)
+    result = _create_live_stream_motion_review_activity(stream_id)
+    _maybe_schedule_automatic_review_identification(stream_id, result)
+    return result
 
 
 def _refresh_live_activity_review_state(
@@ -5312,6 +5533,7 @@ def _maybe_auto_create_live_review_candidate(
                     "review_queue_item_id": result.review_queue_item_id,
                 },
             )
+            _maybe_schedule_automatic_review_identification(stream_id, result)
             latest_result = result
         elif result.status not in {"already_exists", "created"}:
             manager.record_auto_review_error(stream_id, result.message)
@@ -5319,17 +5541,46 @@ def _maybe_auto_create_live_review_candidate(
             latest_result = result
     return latest_result
 
+def _maybe_schedule_automatic_review_identification(
+    stream_id: str,
+    result: LiveMotionReviewActivityResponse,
+) -> bool:
+    manager = get_live_camera_session_manager()
+    snapshot = manager.status(stream_id)
+    if (
+        snapshot is None
+        or not snapshot.monitor_running
+        or not snapshot.auto_identify_review_candidates
+        or not result.review_activity_created
+        or not result.visit_id
+        or not result.media_asset_id
+    ):
+        return False
+    return get_automatic_review_identification_assist().schedule(
+        get_repository(),
+        visit_id=result.visit_id,
+        on_update=lambda update: manager.record_auto_identification_update(
+            stream_id, update.as_dict()
+        ),
+    )
+
+
 def _live_frame_timestamp(
     frames: list[live_frame_cache.LiveFrame],
     frame_sequence: int | None,
 ) -> str | None:
     if frame_sequence is None:
         return None
-    frame = next((candidate for candidate in frames if candidate.sequence == frame_sequence), None)
+    frame = next(
+        (candidate for candidate in frames if candidate.sequence == frame_sequence),
+        None,
+    )
     return frame.captured_at.isoformat() if frame else None
 
 
-@app.post("/api/motion/evidence", response_model=MotionEvidenceResponse, status_code=201)
+@app.post(
+    "/api/motion/evidence", response_model=MotionEvidenceResponse, status_code=201
+)
 async def create_motion_evidence(
     payload: MotionEvidenceCreateRequest,
 ) -> MotionEvidenceResponse:
@@ -5412,7 +5663,9 @@ async def promote_motion_evidence(
     return promoted
 
 
-@app.post("/api/motion/evidence/{evidence_id}/ignore", response_model=MotionEvidenceResponse)
+@app.post(
+    "/api/motion/evidence/{evidence_id}/ignore", response_model=MotionEvidenceResponse
+)
 async def ignore_motion_evidence(evidence_id: str) -> MotionEvidenceResponse:
     try:
         evidence = get_repository().ignore_motion_evidence(evidence_id)
@@ -5423,7 +5676,11 @@ async def ignore_motion_evidence(evidence_id: str) -> MotionEvidenceResponse:
     return evidence
 
 
-@app.post("/api/species-suggestions", response_model=SpeciesSuggestionResponse, status_code=201)
+@app.post(
+    "/api/species-suggestions",
+    response_model=SpeciesSuggestionResponse,
+    status_code=201,
+)
 async def create_species_suggestion(
     payload: SpeciesSuggestionCreateRequest,
 ) -> SpeciesSuggestionResponse:
@@ -5508,7 +5765,9 @@ async def list_species_suggestions(
     )
 
 
-@app.get("/api/species-suggestions/{suggestion_id}", response_model=SpeciesSuggestionResponse)
+@app.get(
+    "/api/species-suggestions/{suggestion_id}", response_model=SpeciesSuggestionResponse
+)
 async def get_species_suggestion(suggestion_id: str) -> SpeciesSuggestionResponse:
     suggestion = get_repository().get_species_suggestion(suggestion_id)
     if suggestion is None:
@@ -5567,7 +5826,9 @@ async def list_sources() -> list[CameraSource]:
     response_model=CameraSourceCreateResponse,
     status_code=201,
 )
-async def create_camera_source(payload: CameraSourceCreate) -> CameraSourceCreateResponse:
+async def create_camera_source(
+    payload: CameraSourceCreate,
+) -> CameraSourceCreateResponse:
     try:
         return get_repository().create_camera_source(payload)
     except ValueError as error:
@@ -5617,7 +5878,9 @@ async def update_camera_source(
     return result
 
 
-@app.get("/api/source-provider-definitions", response_model=list[SourceProviderDefinition])
+@app.get(
+    "/api/source-provider-definitions", response_model=list[SourceProviderDefinition]
+)
 async def list_source_provider_definitions() -> list[SourceProviderDefinition]:
     return get_repository().list_source_provider_definitions()
 
@@ -5635,7 +5898,9 @@ async def get_source(source_id: str) -> CameraSource:
     "/api/sources/{source_id}/provider-configuration",
     response_model=SourceProviderConfiguration,
 )
-async def get_source_provider_configuration(source_id: str) -> SourceProviderConfiguration:
+async def get_source_provider_configuration(
+    source_id: str,
+) -> SourceProviderConfiguration:
     configuration = get_repository().get_source_provider_configuration(source_id)
     if configuration is None:
         raise _not_found("Source", source_id)
@@ -5651,10 +5916,14 @@ async def update_source_provider_configuration(
     payload: SourceProviderConfigurationUpdate,
 ) -> SourceProviderConfiguration:
     try:
-        configuration = get_repository().update_source_provider_configuration(source_id, payload)
+        configuration = get_repository().update_source_provider_configuration(
+            source_id, payload
+        )
     except ValueError as error:
         if str(error) == "unknown_provider_key":
-            raise HTTPException(status_code=400, detail="Unknown source provider key.") from error
+            raise HTTPException(
+                status_code=400, detail="Unknown source provider key."
+            ) from error
         raise
     if configuration is None:
         raise _not_found("Source", source_id)
@@ -5830,13 +6099,19 @@ async def save_external_url_preview(
             warnings=warnings,
         )
 
-    stream_id = _resolve_external_url_save_stream_id(repository, source_id, request.stream_id)
+    stream_id = _resolve_external_url_save_stream_id(
+        repository, source_id, request.stream_id
+    )
     result = external_url_preview.fetch_external_url_preview(
         url,
         timeout_seconds=request.timeout_seconds,
         max_bytes=request.max_bytes,
     )
-    if result.status != "available" or result.fetched_bytes is None or result.fetched_at is None:
+    if (
+        result.status != "available"
+        or result.fetched_bytes is None
+        or result.fetched_at is None
+    ):
         save_status = result.status if result.status != "available" else "error"
         return ExternalUrlPreviewSaveResponse(
             source_id=source_id,
@@ -5903,7 +6178,9 @@ async def _monitor_capture_snapshot(
         )
     return MonitorSnapshotResult(
         media_asset_id=result.media_asset_id,
-        status=result.status.value if hasattr(result.status, "value") else str(result.status),
+        status=result.status.value
+        if hasattr(result.status, "value")
+        else str(result.status),
         message=result.message,
     )
 
@@ -6018,7 +6295,9 @@ async def _monitor_evaluate_saved_media(
     )
 
 
-def _monitor_review_unavailable_reason(result: MotionEvaluateSavedMediaResponse) -> str | None:
+def _monitor_review_unavailable_reason(
+    result: MotionEvaluateSavedMediaResponse,
+) -> str | None:
     if not result.activity_detected:
         return "no_activity_detected"
     if not result.can_create_review_activity:
@@ -6106,7 +6385,9 @@ def _monitor_status_message(state: SourceMonitorState) -> str:
                 else "Monitoring is active. Activity detected on the latest motion check."
             )
         if state.last_activity_detected is False:
-            return "Monitoring is active. No activity detected on the latest motion check."
+            return (
+                "Monitoring is active. No activity detected on the latest motion check."
+            )
         return "Monitoring is active."
     if state.status == "starting":
         return "Monitoring is starting."
@@ -6361,7 +6642,9 @@ async def get_stream_monitor_status(stream_id: str) -> SourceMonitorStatusRespon
     )
 
 
-@app.get("/api/sources/{source_id}/connection", response_model=SourceConnectionStatusResponse)
+@app.get(
+    "/api/sources/{source_id}/connection", response_model=SourceConnectionStatusResponse
+)
 async def get_source_connection_status(source_id: str) -> SourceConnectionStatus:
     status = get_repository().get_source_connection_status(source_id)
     if status is None:
@@ -6369,7 +6652,9 @@ async def get_source_connection_status(source_id: str) -> SourceConnectionStatus
     return status
 
 
-@app.get("/api/sources/{source_id}/setup-review", response_model=SourceSetupReviewResponse)
+@app.get(
+    "/api/sources/{source_id}/setup-review", response_model=SourceSetupReviewResponse
+)
 async def get_source_setup_review(source_id: str) -> SourceSetupReviewResponse:
     review = get_repository().get_source_setup_review(source_id)
     if review is None:
@@ -6476,7 +6761,9 @@ async def get_stream(stream_id: str) -> Stream:
     return stream
 
 
-@app.get("/api/streams/{stream_id}/playback", response_model=StreamPlaybackStatusResponse)
+@app.get(
+    "/api/streams/{stream_id}/playback", response_model=StreamPlaybackStatusResponse
+)
 async def get_stream_playback_status(stream_id: str) -> StreamPlaybackStatus:
     status = get_repository().get_stream_playback_status(stream_id)
     if status is None:
@@ -6619,7 +6906,9 @@ def _stream_live_playback_config_or_404(
     "/api/streams/{stream_id}/live-session/start",
     response_model=LiveCameraSessionStatusResponse,
 )
-async def start_stream_live_camera_session(stream_id: str) -> LiveCameraSessionStatusResponse:
+async def start_stream_live_camera_session(
+    stream_id: str,
+) -> LiveCameraSessionStatusResponse:
     configuration = _stream_live_playback_config_or_404(
         stream_id,
         require_active_source=True,
@@ -6639,7 +6928,9 @@ async def start_stream_live_camera_session(stream_id: str) -> LiveCameraSessionS
     "/api/streams/{stream_id}/live-session/stop",
     response_model=LiveCameraSessionStatusResponse,
 )
-async def stop_stream_live_camera_session(stream_id: str) -> LiveCameraSessionStatusResponse:
+async def stop_stream_live_camera_session(
+    stream_id: str,
+) -> LiveCameraSessionStatusResponse:
     configuration = _stream_live_playback_config_or_404(stream_id)
     snapshot = get_live_camera_session_manager().stop(stream_id)
     get_repository().disable_stream_monitoring_for_manual_stop(stream_id)
@@ -6777,7 +7068,10 @@ async def open_stream_windows_camera_controls(
         "stream_id": stream_id,
         "source_id": configuration.source_id,
     }
-    if configuration.live_stream_type != windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+    if (
+        configuration.live_stream_type
+        != windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE
+    ):
         return WindowsCameraControlsResponse(
             **common,
             status="unsupported_platform",
@@ -6888,7 +7182,9 @@ async def get_stream_rtsp_mjpeg_bridge(stream_id: str) -> StreamingResponse:
     try:
         get_live_camera_session_manager().start(configuration)
     except (OSError, ValueError):
-        raise HTTPException(status_code=502, detail="RTSP live view failed to start.") from None
+        raise HTTPException(
+            status_code=502, detail="RTSP live view failed to start."
+        ) from None
 
     return StreamingResponse(
         get_live_camera_session_manager().iter_mjpeg(stream_id),
@@ -6952,7 +7248,9 @@ async def get_stream_windows_dshow_mjpeg_bridge(stream_id: str) -> StreamingResp
     "/api/streams/{stream_id}/local-camera/capture-frame",
     response_model=LocalCameraFrameCaptureResponse,
 )
-async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameCaptureResponse:
+async def capture_stream_local_camera_frame(
+    stream_id: str,
+) -> LocalCameraFrameCaptureResponse:
     repository = get_repository()
     configuration = _stream_live_playback_config_or_404(
         stream_id,
@@ -6976,9 +7274,10 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
         )
 
     session_snapshot = get_live_camera_session_manager().status(configuration.stream_id)
-    session_running = (
-        session_snapshot is not None and session_snapshot.status in {"starting", "running"}
-    )
+    session_running = session_snapshot is not None and session_snapshot.status in {
+        "starting",
+        "running",
+    }
     if session_running and configuration.live_stream_type in {
         local_camera_bridge.LOCAL_USB_STREAM_TYPE,
         windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE,
@@ -7043,7 +7342,10 @@ async def capture_stream_local_camera_frame(stream_id: str) -> LocalCameraFrameC
             ],
         )
 
-    if configuration.live_stream_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+    if (
+        configuration.live_stream_type
+        == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE
+    ):
         bridge_status = windows_camera_bridge.windows_camera_status(
             camera_name=configuration.windows_camera_name,
             ffmpeg_binary_path=configuration.windows_ffmpeg_binary_path,
@@ -7777,14 +8079,18 @@ async def import_media(
 
 
 @app.post("/api/media/folder-preview", response_model=FolderImportPreview)
-async def preview_folder_import(payload: FolderImportPreviewRequest) -> FolderImportPreview:
+async def preview_folder_import(
+    payload: FolderImportPreviewRequest,
+) -> FolderImportPreview:
     try:
         return get_repository().preview_folder_import(payload.folder_path)
     except ValueError as error:
         raise _folder_import_error(error) from error
 
 
-@app.post("/api/media/folder-import", response_model=FolderImportResult, status_code=201)
+@app.post(
+    "/api/media/folder-import", response_model=FolderImportResult, status_code=201
+)
 async def import_folder_media(payload: FolderImportCreate) -> FolderImportResult:
     try:
         return get_repository().import_folder_media(payload)
@@ -7792,7 +8098,10 @@ async def import_folder_media(payload: FolderImportCreate) -> FolderImportResult
         raise _folder_import_error(error) from error
 
 
-@app.get("/api/media/saved-preview-retention", response_model=SavedMediaRetentionReportResponse)
+@app.get(
+    "/api/media/saved-preview-retention",
+    response_model=SavedMediaRetentionReportResponse,
+)
 async def saved_preview_retention_report() -> SavedMediaRetentionReportResponse:
     return get_repository().saved_preview_retention_report()
 
@@ -7852,7 +8161,9 @@ async def create_folder_import_evidence_batch(
         raise _folder_import_evidence_batch_create_error(error) from error
 
 
-@app.post("/api/media/{media_id}/cleanup-preview", response_model=SavedMediaCleanupResponse)
+@app.post(
+    "/api/media/{media_id}/cleanup-preview", response_model=SavedMediaCleanupResponse
+)
 async def cleanup_saved_preview_media(
     media_id: str,
     payload: SavedMediaCleanupRequest | None = None,
@@ -7938,7 +8249,9 @@ async def get_media_file(media_id: str):
         return Response(
             path.read_bytes(),
             media_type=asset.content_type,
-            headers={"content-disposition": f'attachment; filename="{asset.original_filename}"'},
+            headers={
+                "content-disposition": f'attachment; filename="{asset.original_filename}"'
+            },
         )
     return FileResponse(
         path,
@@ -8003,8 +8316,12 @@ async def create_detection_run(payload: DetectionRunCreate) -> DetectionRun:
         raise _detection_interface_error(error) from error
 
 
-@app.post("/api/detection-runs/demo", response_model=DemoDetectionRunResult, status_code=201)
-async def create_demo_detection_run(payload: DemoDetectionRunCreate) -> DemoDetectionRunResult:
+@app.post(
+    "/api/detection-runs/demo", response_model=DemoDetectionRunResult, status_code=201
+)
+async def create_demo_detection_run(
+    payload: DemoDetectionRunCreate,
+) -> DemoDetectionRunResult:
     try:
         return get_repository().create_demo_detection_run(payload)
     except ValueError as error:
@@ -8019,7 +8336,9 @@ async def get_detection_run(run_id: str) -> DetectionRun:
     return run
 
 
-@app.get("/api/detection-runs/{run_id}/proposals", response_model=list[DetectionProposal])
+@app.get(
+    "/api/detection-runs/{run_id}/proposals", response_model=list[DetectionProposal]
+)
 async def list_detection_run_proposals(run_id: str) -> list[DetectionProposal]:
     proposals = get_repository().detection_proposals_for_run(run_id)
     if proposals is None:
@@ -8033,7 +8352,9 @@ async def list_detection_proposals() -> list[DetectionProposal]:
 
 
 @app.post("/api/detection-proposals", response_model=DetectionProposal, status_code=201)
-async def create_detection_proposal(payload: DetectionProposalCreate) -> DetectionProposal:
+async def create_detection_proposal(
+    payload: DetectionProposalCreate,
+) -> DetectionProposal:
     try:
         return get_repository().create_detection_proposal(payload)
     except ValueError as error:
@@ -8154,8 +8475,12 @@ async def bulk_correct_review_queue_items(
         return get_repository().bulk_correct_review_queue_items(payload)
     except ValueError as error:
         if str(error) == "missing_review_label":
-            raise HTTPException(status_code=400, detail="A correction label is required.") from error
-        raise HTTPException(status_code=400, detail="Review Queue bulk correction failed.") from error
+            raise HTTPException(
+                status_code=400, detail="A correction label is required."
+            ) from error
+        raise HTTPException(
+            status_code=400, detail="Review Queue bulk correction failed."
+        ) from error
 
 
 @app.get("/api/review-labels", response_model=list[ReviewLabel])
@@ -8164,7 +8489,9 @@ async def list_review_labels() -> list[ReviewLabel]:
 
 
 @app.post("/api/review-labels", response_model=ReviewCorrectionResult, status_code=201)
-async def create_review_label(payload: ReviewCorrectionCreate) -> ReviewCorrectionResult:
+async def create_review_label(
+    payload: ReviewCorrectionCreate,
+) -> ReviewCorrectionResult:
     repository = get_repository()
 
     if payload.target_type == "visit":
@@ -8212,7 +8539,9 @@ async def get_dataset_export(export_id: str) -> DatasetExportDetail:
     return DatasetExportDetail(export=dataset_export, manifest=manifest)
 
 
-@app.get("/api/dataset-exports/{export_id}/manifest", response_model=DatasetExportManifest)
+@app.get(
+    "/api/dataset-exports/{export_id}/manifest", response_model=DatasetExportManifest
+)
 async def get_dataset_export_manifest(export_id: str) -> DatasetExportManifest:
     manifest = get_repository().build_dataset_manifest(export_id)
     if manifest is None:
@@ -8235,7 +8564,10 @@ async def get_classifier_readiness() -> ClassifierReadinessReport:
     return get_repository().classifier_readiness_report()
 
 
-@app.get("/api/classifier-training-manifest", response_model=ClassifierTrainingManifestResponse)
+@app.get(
+    "/api/classifier-training-manifest",
+    response_model=ClassifierTrainingManifestResponse,
+)
 async def get_classifier_training_manifest() -> ClassifierTrainingManifestResponse:
     return get_repository().build_classifier_training_manifest()
 
@@ -8422,7 +8754,9 @@ def list_local_backups() -> LocalBackupLibraryResponse:
 )
 def create_local_backup() -> LocalBackupVerificationResponse:
     if not _backup_operation_lock.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="Another backup or restore is already running.")
+        raise HTTPException(
+            status_code=409, detail="Another backup or restore is already running."
+        )
     try:
         verification = _local_backup_manager().create_backup()
         return _local_backup_verification_response(
@@ -8440,9 +8774,13 @@ def create_local_backup() -> LocalBackupVerificationResponse:
     response_model=LocalBackupVerificationResponse,
     status_code=201,
 )
-def import_local_backup(file: UploadFile = File(...)) -> LocalBackupVerificationResponse:
+def import_local_backup(
+    file: UploadFile = File(...),
+) -> LocalBackupVerificationResponse:
     if not _backup_operation_lock.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="Another backup or restore is already running.")
+        raise HTTPException(
+            status_code=409, detail="Another backup or restore is already running."
+        )
     try:
         file.file.seek(0)
         verification = _local_backup_manager().import_backup(file.file)
@@ -8512,6 +8850,7 @@ def plan_local_backup_restore(
     finally:
         _backup_operation_lock.release()
 
+
 @app.post(
     "/api/settings/backups/{backup_id}/restore",
     response_model=LocalBackupRestoreResponse,
@@ -8521,9 +8860,13 @@ def restore_local_backup(
     payload: LocalBackupRestoreRequest,
 ) -> LocalBackupRestoreResponse:
     if not payload.confirm:
-        raise HTTPException(status_code=400, detail="Confirm restore before replacing local data.")
+        raise HTTPException(
+            status_code=400, detail="Confirm restore before replacing local data."
+        )
     if not _backup_operation_lock.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="Another backup or restore is already running.")
+        raise HTTPException(
+            status_code=409, detail="Another backup or restore is already running."
+        )
 
     transaction = None
     restored_repository: ProductRepository | None = None
@@ -8626,7 +8969,9 @@ def restore_local_backup(
                 raise _local_backup_http_error(
                     LocalBackupRestoreError("restore_and_recovery_failed")
                 ) from recovery_error
-        raise _local_backup_http_error(LocalBackupRestoreError("restore_failed")) from error
+        raise _local_backup_http_error(
+            LocalBackupRestoreError("restore_failed")
+        ) from error
     finally:
         if repository_access_acquired:
             _repository_access_lock.release()

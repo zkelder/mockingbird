@@ -605,6 +605,8 @@ export interface WindowsCameraControlsResponse {
   warnings: string[];
 }
 
+export type AutomaticIdentificationStatus = string;
+
 export interface LiveCameraSessionStatus {
   stream_id: string;
   source_id?: string | null;
@@ -618,6 +620,12 @@ export interface LiveCameraSessionStatus {
   clients_connected: number;
   monitor_running: boolean;
   auto_create_review_candidates: boolean;
+  auto_identify_review_candidates: boolean;
+  automatic_identification_status: AutomaticIdentificationStatus;
+  last_auto_identification_target_id?: string | null;
+  last_auto_identification_attempt_id?: string | null;
+  last_auto_identification_suggestion_id?: string | null;
+  last_auto_identification_message?: string | null;
   auto_review_quiet_seconds: number;
   auto_review_min_detections: number;
   auto_review_created_count: number;
@@ -1746,12 +1754,14 @@ export interface LiveMotionEvaluateRequest {
 export interface LiveMotionMonitorStartRequest extends LiveMotionEvaluateRequest {
   interval_seconds?: number;
   auto_create_review_candidates?: boolean;
+  auto_identify_review_candidates?: boolean;
   auto_review_quiet_seconds?: number;
   auto_review_min_detections?: number;
 }
 
 export interface LiveMotionMonitorSettingsRequest {
   auto_create_review_candidates?: boolean;
+  auto_identify_review_candidates?: boolean;
   auto_review_quiet_seconds?: number;
   auto_review_min_detections?: number;
 }
@@ -1889,6 +1899,12 @@ export interface LiveMotionEvaluateResponse {
   session_status: string;
   cooldown_remaining_seconds?: number | null;
   auto_create_review_candidates: boolean;
+  auto_identify_review_candidates: boolean;
+  automatic_identification_status: AutomaticIdentificationStatus;
+  last_auto_identification_target_id?: string | null;
+  last_auto_identification_attempt_id?: string | null;
+  last_auto_identification_suggestion_id?: string | null;
+  last_auto_identification_message?: string | null;
   auto_review_quiet_seconds: number;
   auto_review_min_detections: number;
   auto_review_created_count: number;

@@ -44,8 +44,8 @@ MockingBird currently provides:
 - explicit manual media, external still-image, folder/trail-cam, and
   metadata-only webhook evidence workflows under the same review model
 - optional local analyzer evidence, including a user-supplied MDv5 path and a
-  one-item-at-a-time BioCLIP 2 evaluation shadow; no model weights are bundled
-  or downloaded automatically
+  one-item-at-a-time BioCLIP 2 evaluation shadow with a default-off automatic
+  post-activity assist; no model weights are bundled or downloaded automatically
 - verified local database-and-managed-media backup, import, download, and
   rollback-safe restore
 - Storage & Retention controls that default off, preview policy-selected media,
@@ -133,13 +133,14 @@ Configure these paths in the environment that launches MockingBird:
 
 The optional extra stays on the tested OpenCLIP 3.3 runtime line. The app never
 downloads artifacts or generates embeddings during a review request. A manual
-run creates ranked, explicitly uncalibrated `SpeciesSuggestion` evidence only;
+run, or the default-off assist for a newly completed review Visit, creates ranked,
+explicitly uncalibrated `SpeciesSuggestion` evidence only;
 submitting a correction remains the sole species-truth action. Runtime package
 versions and artifact digests are retained with the evidence for reproducible
 evaluation. Each future user-triggered manual run also retains one durable
 attempt record with its outcome, duration, exact crop, complete ordered
-candidate bank and scores when returned, and sanitized failure context. This
-does not backfill history or enable automatic identification.
+candidate bank and scores when returned, and sanitized failure context. The
+assist never backfills history, retries an existing attempt, or creates truth.
 
 Evaluate already-stored BioCLIP suggestions against final ReviewLabel
 corrections without running a model or writing product state:

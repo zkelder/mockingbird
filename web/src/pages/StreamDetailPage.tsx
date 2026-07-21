@@ -687,6 +687,11 @@ export function StreamDetailPage({
     setBackendAutoCreateReviewCandidates,
   ] = useState<boolean | null>(null);
   const [isUpdatingAutoCreate, setIsUpdatingAutoCreate] = useState(false);
+  const [pendingAutoIdentifyReviewCandidates, setPendingAutoIdentifyReviewCandidates] =
+    useState(false);
+  const [backendAutoIdentifyReviewCandidates, setBackendAutoIdentifyReviewCandidates] =
+    useState<boolean | null>(null);
+  const [isUpdatingAutoIdentify, setIsUpdatingAutoIdentify] = useState(false);
   const [autoReviewQuietSeconds, setAutoReviewQuietSeconds] = useState(30);
   const [autoReviewMinDetections, setAutoReviewMinDetections] = useState(1);
   const [liveMonitorSensitivity, setLiveMonitorSensitivity] =
@@ -706,6 +711,7 @@ export function StreamDetailPage({
   const [liveStatusNotice, setLiveStatusNotice] = useState<string | null>(null);
   const liveMotionInFlightRef = useRef(false);
   const lastAutoReviewQueueItemRef = useRef<string | null>(null);
+  const lastAutoIdentificationSuggestionRef = useRef<string | null>(null);
   const lastActivityNoticeRef = useRef<string | null>(null);
   const lastReviewNoticeRef = useRef<string | null>(null);
 
@@ -732,6 +738,10 @@ export function StreamDetailPage({
       setLiveSession(status);
       setIsLiveMonitoring(status.monitor_running);
       setBackendAutoCreateReviewCandidates(status.auto_create_review_candidates);
+      setBackendAutoIdentifyReviewCandidates(status.auto_identify_review_candidates);
+      if (status.monitor_running) {
+        setPendingAutoIdentifyReviewCandidates(status.auto_identify_review_candidates);
+      }
       if (
         status.monitor_running ||
         (readPendingAutoCreateReviewCandidates(status.stream_id) == null &&
@@ -762,6 +772,15 @@ export function StreamDetailPage({
         status.last_auto_review_queue_item_id !== lastAutoReviewQueueItemRef.current
       ) {
         lastAutoReviewQueueItemRef.current = status.last_auto_review_queue_item_id;
+        await onReviewActivityCreated();
+      }
+      if (
+        status.last_auto_identification_suggestion_id &&
+        status.last_auto_identification_suggestion_id !==
+          lastAutoIdentificationSuggestionRef.current
+      ) {
+        lastAutoIdentificationSuggestionRef.current =
+          status.last_auto_identification_suggestion_id;
         await onReviewActivityCreated();
       }
       setLiveSessionError(null);
@@ -837,6 +856,7 @@ export function StreamDetailPage({
     try {
       const status = await apiClient.updateLiveMotionMonitorSettings(detail.stream.id, {
         auto_create_review_candidates: enabled,
+        auto_identify_review_candidates: pendingAutoIdentifyReviewCandidates,
         auto_review_quiet_seconds: autoReviewQuietSeconds,
         auto_review_min_detections: autoReviewMinDetections,
       });
@@ -863,6 +883,34 @@ export function StreamDetailPage({
       setIsUpdatingAutoCreate(false);
     }
   }
+
+  async function handleAutoIdentifyReviewCandidatesChange(enabled: boolean) {
+    setPendingAutoIdentifyReviewCandidates(enabled);
+    const monitorRunning = Boolean(liveSession?.monitor_running || isLiveMonitoring);
+    if (!detail || !supportsBackendLiveSession(detail.playback) || !monitorRunning) {
+      return;
+    }
+    setIsUpdatingAutoIdentify(true);
+    setLiveMotionError(null);
+    try {
+      const status = await apiClient.updateLiveMotionMonitorSettings(detail.stream.id, {
+        auto_create_review_candidates: pendingAutoCreateReviewCandidates,
+        auto_identify_review_candidates: enabled,
+        auto_review_quiet_seconds: autoReviewQuietSeconds,
+        auto_review_min_detections: autoReviewMinDetections,
+      });
+      setLiveSession(status);
+      setBackendAutoIdentifyReviewCandidates(status.auto_identify_review_candidates);
+      if (status.monitor_running) {
+        setPendingAutoIdentifyReviewCandidates(status.auto_identify_review_candidates);
+      }
+    } catch (caught) {
+      setLiveMotionError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsUpdatingAutoIdentify(false);
+    }
+  }
+
 
   useEffect(() => {
     let isMounted = true;
@@ -913,6 +961,9 @@ export function StreamDetailPage({
       setPendingAutoCreateReviewCandidates(
         readPendingAutoCreateReviewCandidates(streamId) ?? false,
       );
+      setPendingAutoIdentifyReviewCandidates(false);
+      setBackendAutoIdentifyReviewCandidates(null);
+      lastAutoIdentificationSuggestionRef.current = null;
       setBackendAutoCreateReviewCandidates(null);
       setIsUpdatingAutoCreate(false);
       setBirdSizedFeederMotion(true);
@@ -1463,6 +1514,7 @@ export function StreamDetailPage({
         focus_zone_id: liveMotionFocusZoneId || null,
         interval_seconds: sensitivitySettings.interval_ms / 1000,
         auto_create_review_candidates: pendingAutoCreateReviewCandidates,
+        auto_identify_review_candidates: pendingAutoIdentifyReviewCandidates,
         auto_review_quiet_seconds: autoReviewQuietSeconds,
         auto_review_min_detections: autoReviewMinDetections,
         notes: null,
@@ -1582,6 +1634,8 @@ export function StreamDetailPage({
         const status = await apiClient.stopLiveMotionMonitor(detail.stream.id);
         setLiveSession(status);
         setBackendAutoCreateReviewCandidates(status.auto_create_review_candidates);
+        setBackendAutoIdentifyReviewCandidates(status.auto_identify_review_candidates);
+        setPendingAutoIdentifyReviewCandidates(status.auto_identify_review_candidates);
         setPendingAutoCreateReviewCandidates(status.auto_create_review_candidates);
         writePendingAutoCreateReviewCandidates(
           status.stream_id,
@@ -2268,6 +2322,13 @@ export function StreamDetailPage({
   const liveAutoReviewEnabled = liveMonitorRunning
     ? liveAutoReviewBackendValue ?? pendingAutoCreateReviewCandidates
     : pendingAutoCreateReviewCandidates;
+  const liveAutoIdentifyBackendValue =
+    backendAutoIdentifyReviewCandidates ??
+    liveSession?.auto_identify_review_candidates ??
+    liveMotionResult?.auto_identify_review_candidates;
+  const liveAutoIdentifyEnabled = liveMonitorRunning
+    ? liveAutoIdentifyBackendValue ?? pendingAutoIdentifyReviewCandidates
+    : pendingAutoIdentifyReviewCandidates;
   const liveAutoReviewStatusText = isUpdatingAutoCreate
     ? "Updating auto-create..."
     : liveMonitorRunning
@@ -2617,6 +2678,35 @@ export function StreamDetailPage({
                     update Bird Log.
                   </span>
                   <span>{liveAutoReviewStatusText}</span>
+                </span>
+              </label>
+              <label className="stream-live-primary-toggle stream-live-auto-review-toggle">
+                <input
+                  checked={liveAutoIdentifyEnabled}
+                  disabled={isUpdatingAutoIdentify}
+                  onChange={(event) =>
+                    void handleAutoIdentifyReviewCandidatesChange(event.target.checked)
+                  }
+                  type="checkbox"
+                />
+                <span>
+                  <strong>Automatically run species identification on new review items</strong>
+                  <span>
+                    Runs one bounded local BioCLIP attempt after completed activity.
+                    Suggestions remain evidence until you correct the review item.
+                  </span>
+                  <span>
+                    {isUpdatingAutoIdentify
+                      ? <>Updating identification setting...</>
+                      : liveSession?.automatic_identification_status
+                        ? formatLabel(liveSession.automatic_identification_status)
+                        : liveAutoIdentifyEnabled
+                          ? <>Enabled for new review items.</>
+                          : <>Off.</>}
+                  </span>
+                  {liveSession?.last_auto_identification_message ? (
+                    <span>{liveSession.last_auto_identification_message}</span>
+                  ) : null}
                 </span>
               </label>
               {streamReviewCount > 0 ? (

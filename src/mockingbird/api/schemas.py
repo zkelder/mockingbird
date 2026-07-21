@@ -27,6 +27,17 @@ class SourceStatus(str, Enum):
     archived = "archived"
 
 
+class AutomaticIdentificationStatus(str, Enum):
+    off = "off"
+    pending = "pending"
+    running = "running"
+    succeeded = "succeeded"
+    no_result = "no_result"
+    timed_out = "timed_out"
+    failed = "failed"
+    skipped_existing = "skipped_existing"
+
+
 class SourceConnectionStatusValue(str, Enum):
     demo = "demo"
     not_configured = "not_configured"
@@ -885,6 +896,14 @@ class LiveCameraSessionStatusResponse(BaseModel):
     clients_connected: int = Field(default=0, ge=0)
     monitor_running: bool = False
     auto_create_review_candidates: bool = False
+    auto_identify_review_candidates: bool = False
+    automatic_identification_status: AutomaticIdentificationStatus = (
+        AutomaticIdentificationStatus.off
+    )
+    last_auto_identification_target_id: str | None = None
+    last_auto_identification_attempt_id: str | None = None
+    last_auto_identification_suggestion_id: str | None = None
+    last_auto_identification_message: str | None = None
     auto_review_quiet_seconds: int = Field(default=30, ge=1)
     auto_review_min_detections: int = Field(default=1, ge=1)
     auto_review_created_count: int = Field(default=0, ge=0)
@@ -1890,7 +1909,9 @@ class MotionEvidenceCreateRequest(BaseModel):
             and self.end_frame_index is not None
             and self.end_frame_index < self.start_frame_index
         ):
-            raise ValueError("end_frame_index must be greater than or equal to start_frame_index")
+            raise ValueError(
+                "end_frame_index must be greater than or equal to start_frame_index"
+            )
 
         if (
             self.best_frame_index is not None
@@ -2038,7 +2059,9 @@ class MotionEvaluateSavedMediaResponse(BaseModel):
     quiet_period_seconds: int = Field(default=30, ge=1)
     cooldown_seconds: int = Field(default=30, ge=0)
     max_snapshots_per_session: int = Field(default=3, ge=1)
-    session_debug: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    session_debug: dict[str, str | int | float | bool | None] = Field(
+        default_factory=dict
+    )
     debug_cell_zones: list[MotionZoneInput] = Field(default_factory=list)
     frames: list[SavedMediaFrameSummary]
     frame_scores: list[MotionFrameScoreResponse]
@@ -2069,12 +2092,14 @@ class LiveMotionEvaluateRequest(BaseModel):
 class LiveMotionMonitorStartRequest(LiveMotionEvaluateRequest):
     interval_seconds: float = Field(default=1.5, ge=0.25, le=10)
     auto_create_review_candidates: bool = False
+    auto_identify_review_candidates: bool = False
     auto_review_quiet_seconds: int = Field(default=30, ge=1, le=300)
     auto_review_min_detections: int = Field(default=1, ge=1, le=100)
 
 
 class LiveMotionMonitorSettingsRequest(BaseModel):
     auto_create_review_candidates: bool = False
+    auto_identify_review_candidates: bool = False
     auto_review_quiet_seconds: int = Field(default=30, ge=1, le=300)
     auto_review_min_detections: int = Field(default=1, ge=1, le=100)
 
@@ -2215,6 +2240,14 @@ class LiveMotionEvaluateResponse(BaseModel):
     session_status: str = "watching"
     cooldown_remaining_seconds: int | None = None
     auto_create_review_candidates: bool = False
+    auto_identify_review_candidates: bool = False
+    automatic_identification_status: AutomaticIdentificationStatus = (
+        AutomaticIdentificationStatus.off
+    )
+    last_auto_identification_target_id: str | None = None
+    last_auto_identification_attempt_id: str | None = None
+    last_auto_identification_suggestion_id: str | None = None
+    last_auto_identification_message: str | None = None
     auto_review_quiet_seconds: int = Field(default=30, ge=1)
     auto_review_min_detections: int = Field(default=1, ge=1)
     auto_review_created_count: int = Field(default=0, ge=0)
@@ -2935,10 +2968,7 @@ class ClassifierManifestFileExportRequest(BaseModel):
 
         name = value.strip()
         safe_chars = set(
-            "abcdefghijklmnopqrstuvwxyz"
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            "0123456789"
-            "._-"
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
         )
         if (
             not name
@@ -2988,8 +3018,12 @@ class ClassifierManifestFileExportResponse(BaseModel):
     created_at: str
     dry_run: bool
     media_policy: str = "reference_only"
-    planned_media_files: list[ClassifierManifestPlannedMediaFile] = Field(default_factory=list)
-    skipped_media: list[ClassifierManifestSkippedMediaRecord] = Field(default_factory=list)
+    planned_media_files: list[ClassifierManifestPlannedMediaFile] = Field(
+        default_factory=list
+    )
+    skipped_media: list[ClassifierManifestSkippedMediaRecord] = Field(
+        default_factory=list
+    )
     total_planned_media_bytes: int | None = Field(default=None, ge=0)
 
 
