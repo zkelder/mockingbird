@@ -22,6 +22,7 @@ interface DashboardPageProps {
   health: HealthStatus | null;
   onOpenStream: (streamId: string) => void;
   onOpenStreams: () => void;
+  onAddCamera: () => void;
   onOpenReview: (context?: ReviewQueueFocus) => void;
   onOpenBirdLog: () => void;
   onOpenVisit: (visitId: string) => void;
@@ -117,6 +118,7 @@ export function DashboardPage({
   health,
   onOpenStream,
   onOpenStreams,
+  onAddCamera,
   onOpenReview,
   onOpenBirdLog,
   onOpenVisit,
@@ -266,6 +268,9 @@ export function DashboardPage({
           </p>
         </div>
         <div className="hero-actions">
+          <button className="primary-action" onClick={onAddCamera} type="button">
+            Add Camera
+          </button>
           <button className="primary-action" onClick={onOpenStreams} type="button">
             Open Cameras / Streams
           </button>

@@ -263,6 +263,68 @@ export interface SourceProviderConfigurationUpdate {
   config: Record<string, string | null>;
 }
 
+export interface CameraSetupOption {
+  provider_key: string;
+  display_name: string;
+  description: string;
+  availability: string;
+  supports_live_playback: boolean;
+  fields: SourceProviderField[];
+  message: string;
+}
+
+export interface CameraSetupOptionsResponse {
+  options: CameraSetupOption[];
+  message: string;
+}
+
+export interface CameraSetupValidationRequest {
+  provider_key: string;
+  config: Record<string, string | null>;
+}
+
+export interface CameraSetupValidationResponse {
+  provider_key: string;
+  status: string;
+  message: string;
+  safe_config_preview: Record<string, string>;
+  supports_live_playback: boolean;
+  can_continue: boolean;
+  preview_available: boolean;
+  creates_events: boolean;
+  creates_visits: boolean;
+  creates_media: boolean;
+  creates_truth: boolean;
+}
+
+export interface CameraSetupZoneDraft {
+  name: string;
+  zone_type: ZoneType;
+  polygon: Point[];
+  is_active: boolean;
+  monitoring_policy?: ZoneMonitoringPolicyUpdate | null;
+}
+
+export interface CameraSetupCompleteRequest {
+  camera_name: string;
+  stream_name: string;
+  provider_key: string;
+  config: Record<string, string | null>;
+  zones: CameraSetupZoneDraft[];
+  enable_monitoring: boolean;
+  idempotency_key: string;
+}
+
+export interface CameraSetupCompletionResponse {
+  source: CameraSource;
+  stream: Stream;
+  zones: Zone[];
+  monitoring_policy: StreamMonitoringPolicy;
+  validation: CameraSetupValidationResponse;
+  idempotent: boolean;
+  message: string;
+}
+
 export type SourceSetupReviewStepStatus =
   | "complete"
   | "missing"

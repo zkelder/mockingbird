@@ -147,6 +147,19 @@ class StreamMonitoringOperationModel(Base):
     )
 
 
+class CameraSetupOperationModel(Base):
+    """Idempotency record for one completed guided camera setup."""
+
+    __tablename__ = "camera_setup_operations"
+
+    idempotency_key: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("camera_sources.id"), nullable=False)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class ZoneModel(Base):
     __tablename__ = "zones"
 

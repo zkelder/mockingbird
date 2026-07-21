@@ -16,6 +16,7 @@ import type {
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { ActivityLibraryPage } from "./pages/ActivityLibraryPage";
 import { BirdLogPage } from "./pages/BirdLogPage";
+import { CameraSetupPage } from "./pages/CameraSetupPage";
 import { ClassifierManifestPage } from "./pages/ClassifierManifestPage";
 import { ClassifierReadinessPage } from "./pages/ClassifierReadinessPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -393,6 +394,7 @@ export default function App() {
           health={data.health}
           onOpenStream={openStream}
           onOpenStreams={() => setPage("streams")}
+          onAddCamera={() => setPage("camera-setup")}
           onOpenReview={openReviewQueue}
           onOpenBirdLog={() => setPage("bird-log")}
           onOpenVisit={openVisit}
@@ -416,6 +418,17 @@ export default function App() {
           onOpenReview={() => openReviewQueue()}
           onOpenBirdLog={() => setPage("bird-log")}
           onOpenExports={() => setPage("exports")}
+          onAddCamera={() => setPage("camera-setup")}
+          onSourcesChanged={() => loadAppData({ showLoading: false })}
+        />
+      );
+    }
+
+    if (page === "camera-setup") {
+      return (
+        <CameraSetupPage
+          onCancel={() => setPage("streams")}
+          onComplete={(streamId) => openStream(streamId)}
           onSourcesChanged={() => loadAppData({ showLoading: false })}
         />
       );

@@ -105,6 +105,12 @@ from mockingbird.api.schemas import (
     CameraSourceCreateResponse,
     CameraSourceMutationResult,
     CameraSourceUpdate,
+    CameraSetupCompleteRequest,
+    CameraSetupCompletionResponse,
+    CameraSetupOption,
+    CameraSetupOptionsResponse,
+    CameraSetupValidationRequest,
+    CameraSetupValidationResponse,
     ClassifierManifestExample,
     ClassifierManifestExportFile,
     ClassifierManifestFileExportRequest,
@@ -326,6 +332,7 @@ from mockingbird.storage.models import (
     ActivityLibrarySavedViewModel,
     Base,
     BioClipIdentificationAttemptModel,
+    CameraSetupOperationModel,
     CameraSourceModel,
     DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS,
     DEFAULT_STREAM_MONITORING_MINIMUM_DETECTIONS,
@@ -1355,6 +1362,58 @@ def _new_stream_monitoring_records(
     )
 
 
+def _stream_monitoring_policy_from_model(
+    stream: StreamModel,
+    model: StreamMonitoringPolicyModel,
+) -> StreamMonitoringPolicyResponse:
+    return StreamMonitoringPolicyResponse(
+        stream_id=stream.id,
+        source_id=stream.source_id,
+        mode=StreamMonitoringMode(model.mode),
+        auto_create_review_candidates=model.auto_create_review_candidates,
+        evaluation_interval_seconds=model.evaluation_interval_seconds,
+        quiet_period_seconds=model.quiet_period_seconds,
+        minimum_detection_count=model.minimum_detection_count,
+        policy_revision=model.policy_revision,
+        armed_at=model.armed_at,
+        paused_at=model.paused_at,
+        updated_at=model.updated_at,
+        pause_reason=model.pause_reason,
+        persisted=True,
+        message=(
+            "Monitoring is disabled. Enable it explicitly from Stream Detail when this camera is ready."
+            if model.mode == StreamMonitoringMode.off.value
+            else "Monitoring is enabled and will be restored by the local supervisor."
+            if model.mode == StreamMonitoringMode.armed.value
+            else "Monitoring is paused and will not start until it is enabled again."
+        ),
+    )
+
+
+def _camera_setup_source_kind(provider_key: str) -> SourceKind:
+    return {
+        "manual_media": SourceKind.manual_upload,
+        "external_url": SourceKind.rtsp,
+        "local_usb": SourceKind.local_camera,
+        "folder_import_future": SourceKind.local_folder,
+        "webhook_future": SourceKind.webhook,
+    }.get(provider_key, SourceKind.integration)
+
+
+def _validate_camera_setup_urls(provider_key: str, config: dict[str, str]) -> None:
+    """Reject malformed setup URLs before they reach persisted provider metadata."""
+
+    keys = ("url", "live_stream_url") if provider_key == "external_url" else ()
+    for key in keys:
+        value = (config.get(key) or "").strip()
+        if not value:
+            continue
+        parsed = urlsplit(value)
+        allowed_schemes = {"http", "https", "rtsp"} if key == "live_stream_url" else {"http", "https"}
+        if parsed.scheme.lower() not in allowed_schemes or not parsed.hostname:
+            raise ValueError("camera_setup_invalid_url")
+
+
 class ProductRepository:
     """Persist product-level stream, zone, event, review, and export state.
 
@@ -2125,6 +2184,227 @@ class ProductRepository:
 
     def list_source_provider_definitions(self) -> list[SourceProviderDefinition]:
         return list(SOURCE_PROVIDER_DEFINITIONS)
+
+    def camera_setup_options(self) -> CameraSetupOptionsResponse:
+        """Expose only product-approved camera choices, never adapter class names."""
+
+        options: list[CameraSetupOption] = []
+        for definition in SOURCE_PROVIDER_DEFINITIONS:
+            if definition.provider_key == "demo":
+                continue
+            available_now = definition.provider_key in {
+                "external_url",
+                "local_usb",
+                "manual_media",
+            }
+            options.append(
+                CameraSetupOption(
+                    provider_key=definition.provider_key,
+                    display_name=(
+                        "IP / RTSP camera"
+                        if definition.provider_key == "external_url"
+                        else definition.display_name
+                    ),
+                    description=definition.description,
+                    availability=(
+                        "available_now"
+                        if available_now
+                        else "requires_future_adapter"
+                    ),
+                    supports_live_playback=definition.supports_live_playback,
+                    fields=definition.fields,
+                    message=(
+                        "This computer supports configuring this provider; validation does not contact a camera."
+                        if available_now
+                        else "Local setup required before this provider can be configured here."
+                    ),
+                )
+            )
+        return CameraSetupOptionsResponse(
+            options=options,
+            message="Choose a provider MockingBird can configure locally on this computer.",
+        )
+
+    def validate_camera_setup(
+        self,
+        payload: CameraSetupValidationRequest,
+    ) -> CameraSetupValidationResponse:
+        """Validate bounded configuration/readiness without starting or monitoring a camera."""
+
+        definition = _source_provider_definition(payload.provider_key)
+        if definition is None or definition.provider_key == "demo":
+            raise ValueError("camera_setup_provider_unsupported")
+        allowed_fields = {field.key for field in definition.fields}
+        unsupported = sorted(set(payload.config) - allowed_fields)
+        if unsupported:
+            raise ValueError("camera_setup_unsupported_fields")
+        if definition.provider_key not in {"external_url", "local_usb", "manual_media"}:
+            return CameraSetupValidationResponse(
+                provider_key=definition.provider_key,
+                status="unsupported_on_this_computer",
+                message="Unsupported on this computer. This provider needs a future local adapter.",
+                supports_live_playback=False,
+                can_continue=False,
+                preview_available=False,
+            )
+
+        sanitized = _sanitize_source_provider_config(definition, payload.config)
+        _validate_camera_setup_urls(definition.provider_key, sanitized)
+        draft_source = CameraSourceModel(
+            id="camera-setup-draft",
+            name="Camera setup draft",
+            kind=_camera_setup_source_kind(definition.provider_key).value,
+            status=SourceStatus.needs_setup.value,
+            description="Temporary camera setup validation context.",
+        )
+        configuration = _source_provider_configuration_from_config(
+            source_id=draft_source.id,
+            definition=definition,
+            config=sanitized,
+            supports_zone_editing=True,
+        )
+        if configuration.missing_fields:
+            status = "configuration_incomplete"
+            message = configuration.message
+            can_continue = False
+        elif definition.provider_key == "local_usb" and not configuration.supports_live_playback:
+            status = "local_setup_required"
+            message = f"Local setup required. {configuration.message}"
+            can_continue = True
+        elif definition.provider_key == "external_url":
+            status = "configuration_valid"
+            message = "Configuration valid. Use Stream Detail later for any explicit preview."
+            can_continue = True
+        else:
+            status = "configuration_valid"
+            message = "Configuration valid. Complete setup to use the explicit local-media workflow."
+            can_continue = True
+        return CameraSetupValidationResponse(
+            provider_key=definition.provider_key,
+            status=status,
+            message=message,
+            safe_config_preview=configuration.safe_config_preview,
+            supports_live_playback=configuration.supports_live_playback,
+            can_continue=can_continue,
+            preview_available=False,
+        )
+
+    def complete_camera_setup(
+        self,
+        payload: CameraSetupCompleteRequest,
+    ) -> CameraSetupCompletionResponse:
+        """Atomically create the product graph from a transient browser-local draft."""
+
+        validation = self.validate_camera_setup(
+            CameraSetupValidationRequest(
+                provider_key=payload.provider_key,
+                config=payload.config,
+            )
+        )
+        if not validation.can_continue:
+            raise ValueError("camera_setup_validation_required")
+        definition = _source_provider_definition(payload.provider_key)
+        assert definition is not None
+        sanitized = _sanitize_source_provider_config(definition, payload.config)
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                existing_operation = session.get(CameraSetupOperationModel, payload.idempotency_key)
+                if existing_operation is not None:
+                    source = session.get(CameraSourceModel, existing_operation.source_id)
+                    stream = session.get(StreamModel, existing_operation.stream_id)
+                    if source is None or stream is None:
+                        raise ValueError("camera_setup_idempotency_conflict")
+                    zones = self._zones_for_stream(session, stream.id)
+                    policy = session.get(StreamMonitoringPolicyModel, stream.id)
+                    assert policy is not None
+                    return CameraSetupCompletionResponse(
+                        source=_source_from_model(source),
+                        stream=_stream_from_model(stream),
+                        zones=zones,
+                        monitoring_policy=_stream_monitoring_policy_from_model(stream, policy),
+                        validation=validation,
+                        idempotent=True,
+                        message="Camera setup was already completed safely.",
+                    )
+                existing_names = session.scalars(select(CameraSourceModel.name)).all()
+                if any(name.strip().casefold() == payload.camera_name.casefold() for name in existing_names):
+                    raise ValueError("source_name_exists")
+                identifier = uuid.uuid4().hex[:12]
+                source = CameraSourceModel(
+                    id=f"source-{identifier}",
+                    name=payload.camera_name,
+                    kind=_camera_setup_source_kind(definition.provider_key).value,
+                    status=SourceStatus.connected.value,
+                    description="Configured through guided Camera Setup.",
+                )
+                stream = StreamModel(
+                    id=f"stream-{identifier}",
+                    source_id=source.id,
+                    name=payload.stream_name,
+                    description=f"Camera view for {payload.camera_name}.",
+                    is_live=definition.supports_live_playback,
+                )
+                policy, checkpoint = _new_stream_monitoring_records(stream.id, created_at=now)
+                if payload.enable_monitoring:
+                    policy.mode = StreamMonitoringMode.armed.value
+                    policy.policy_revision = 2
+                    policy.armed_at = now
+                    policy.updated_at = now
+                    checkpoint.observed_policy_revision = policy.policy_revision
+                    checkpoint.last_stop_reason = None
+                configuration = SourceProviderConfigurationModel(
+                    source_id=source.id,
+                    provider_key=definition.provider_key,
+                    config_json=json.dumps(sanitized, sort_keys=True),
+                    updated_at=now,
+                )
+                session.add_all((source, stream, policy, checkpoint, configuration))
+                created_zones: list[Zone] = []
+                for zone_draft in payload.zones:
+                    zone = ZoneModel(
+                        id=self._next_id(session, ZoneModel, "zone"),
+                        stream_id=stream.id,
+                        name=zone_draft.name,
+                        zone_type=zone_draft.zone_type.value,
+                        polygon_json=_points_to_json(zone_draft.polygon),
+                        is_active=zone_draft.is_active,
+                        monitoring_policy_json=(
+                            json.dumps(
+                                zone_draft.monitoring_policy.model_dump(
+                                    exclude_none=True,
+                                    mode="json",
+                                ),
+                                sort_keys=True,
+                            )
+                            if zone_draft.monitoring_policy is not None
+                            and zone_draft.zone_type not in {ZoneType.privacy, ZoneType.ignore}
+                            else None
+                        ),
+                    )
+                    session.add(zone)
+                    created_zones.append(_zone_from_model(zone))
+                session.add(
+                    CameraSetupOperationModel(
+                        idempotency_key=payload.idempotency_key,
+                        source_id=source.id,
+                        stream_id=stream.id,
+                        created_at=now,
+                    )
+                )
+                session.flush()
+                return CameraSetupCompletionResponse(
+                    source=_source_from_model(source),
+                    stream=_stream_from_model(stream),
+                    zones=created_zones,
+                    monitoring_policy=_stream_monitoring_policy_from_model(stream, policy),
+                    validation=validation,
+                    message=(
+                        "Camera setup is complete. Monitoring is enabled as saved intent."
+                        if payload.enable_monitoring
+                        else "Camera setup is complete. Monitoring remains off until you enable it."
+                    ),
+                )
 
     def get_source_provider_configuration(
         self,

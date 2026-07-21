@@ -1309,6 +1309,86 @@ class ZoneMutationResult(BaseModel):
     zones: list[Zone]
 
 
+class CameraSetupOption(BaseModel):
+    """One backend-authoritative setup choice; adapter keys are never client-defined."""
+
+    provider_key: str
+    display_name: str
+    description: str
+    availability: str
+    supports_live_playback: bool
+    fields: list[SourceProviderField] = Field(default_factory=list)
+    message: str
+
+
+class CameraSetupOptionsResponse(BaseModel):
+    options: list[CameraSetupOption]
+    message: str
+
+
+class CameraSetupValidationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider_key: str
+    config: dict[str, str | None] = Field(default_factory=dict)
+
+
+class CameraSetupValidationResponse(BaseModel):
+    provider_key: str
+    status: str
+    message: str
+    safe_config_preview: dict[str, str] = Field(default_factory=dict)
+    supports_live_playback: bool
+    can_continue: bool
+    preview_available: bool
+    creates_events: bool = False
+    creates_visits: bool = False
+    creates_media: bool = False
+    creates_truth: bool = False
+
+
+class CameraSetupZoneDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    zone_type: ZoneType
+    polygon: list[Point] = Field(min_length=3, max_length=32)
+    is_active: bool = True
+    monitoring_policy: ZoneMonitoringPolicyUpdate | None = None
+
+
+class CameraSetupCompleteRequest(BaseModel):
+    """One intentional, bounded completion request for a browser-local setup draft."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    camera_name: str = Field(min_length=1, max_length=120)
+    stream_name: str = Field(min_length=1, max_length=120)
+    provider_key: str
+    config: dict[str, str | None] = Field(default_factory=dict)
+    zones: list[CameraSetupZoneDraft] = Field(min_length=1, max_length=12)
+    enable_monitoring: bool = False
+    idempotency_key: str = Field(min_length=8, max_length=120)
+
+    @field_validator("camera_name", "stream_name")
+    @classmethod
+    def normalize_setup_names(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("A camera and view name are required.")
+        return normalized
+
+
+class CameraSetupCompletionResponse(BaseModel):
+    source: CameraSource
+    stream: Stream
+    zones: list[Zone]
+    monitoring_policy: StreamMonitoringPolicyResponse
+    validation: CameraSetupValidationResponse
+    idempotent: bool = False
+    message: str
+
+
 class Detection(BaseModel):
     # Detection is model or rule evidence. It is not user-confirmed truth.
     id: str

@@ -13,6 +13,11 @@ import type {
   CameraSourceCreateResponse,
   CameraSourceMutationResult,
   CameraSourceUpdateRequest,
+  CameraSetupCompleteRequest,
+  CameraSetupCompletionResponse,
+  CameraSetupOptionsResponse,
+  CameraSetupValidationRequest,
+  CameraSetupValidationResponse,
   ClassifierManifestFileExportRequest,
   ClassifierManifestFileExportResponse,
   ClassifierReadinessReport,
@@ -279,6 +284,17 @@ export const apiClient = {
     return request<TaxonomyLabel[]>(`/api/taxonomy/suggestions${query ? `?${query}` : ""}`);
   },
   getSources: () => request<CameraSource[]>("/api/sources"),
+  getCameraSetupOptions: () => request<CameraSetupOptionsResponse>("/api/camera-setup/options"),
+  validateCameraSetup: (payload: CameraSetupValidationRequest) =>
+    request<CameraSetupValidationResponse>("/api/camera-setup/validate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  completeCameraSetup: (payload: CameraSetupCompleteRequest) =>
+    request<CameraSetupCompletionResponse>("/api/camera-setup/complete", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   createCameraSource: (payload: CameraSourceCreateRequest) =>
     request<CameraSourceCreateResponse>("/api/sources", {
       method: "POST",

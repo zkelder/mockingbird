@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 13
+CURRENT_DATABASE_SCHEMA_VERSION = 14
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -390,6 +390,12 @@ def _migrate_to_storage_cleanup_action_idempotency(connection: Connection) -> No
             )
 
 
+def _migrate_to_camera_setup_operations(connection: Connection) -> None:
+    """Add completion idempotency only; existing Sources and Streams stay unchanged."""
+
+    Base.metadata.tables["camera_setup_operations"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -403,6 +409,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     11: _migrate_to_storage_retention,
     12: _migrate_to_storage_retention_settings_idempotency,
     13: _migrate_to_storage_cleanup_action_idempotency,
+    14: _migrate_to_camera_setup_operations,
 }
 
 

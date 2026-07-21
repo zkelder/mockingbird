@@ -53,6 +53,8 @@ MockingBird currently provides:
   local quarantine before any later expiry purge
 - default-off durable monitoring policy/runtime-checkpoint records and
   side-effect-free lifecycle status
+- a guided Add Camera path that keeps credentials local and masked, checks
+  readiness without enabling monitoring, and finishes on the Stream view
 
 Monitoring remains local and explicitly Stream-scoped. Every Stream starts
 disabled; when a user enables supported backend-owned live monitoring, the one

@@ -63,6 +63,7 @@ interface StreamsPageProps {
   onOpenReview: () => void;
   onOpenBirdLog: () => void;
   onOpenExports: () => void;
+  onAddCamera: () => void;
   onSourcesChanged: () => Promise<void>;
 }
 
@@ -1670,6 +1671,7 @@ export function StreamsPage({
   onOpenReview,
   onOpenBirdLog,
   onOpenExports,
+  onAddCamera,
   onSourcesChanged,
 }: StreamsPageProps) {
   const [connectionStatuses, setConnectionStatuses] = useState<
@@ -4206,13 +4208,10 @@ export function StreamsPage({
               </label>
               <button
                 className="secondary-action"
-                onClick={() => {
-                  setIsAddCameraOpen((current) => !current);
-                  setCreateCameraError(null);
-                }}
+                onClick={onAddCamera}
                 type="button"
               >
-                {isAddCameraOpen ? "Cancel" : "Add camera"}
+                Add Camera
               </button>
             </div>
             <div className="source-summary-line">

@@ -169,6 +169,11 @@ from mockingbird.api.schemas import (
     SpeciesSuggestionStatusUpdateRequest,
     SourceConnectionStatus,
     SourceConnectionStatusResponse,
+    CameraSetupCompleteRequest,
+    CameraSetupCompletionResponse,
+    CameraSetupOptionsResponse,
+    CameraSetupValidationRequest,
+    CameraSetupValidationResponse,
     SourceFolderImportRequest,
     SourceFolderImportResponse,
     SourceMonitorStartRequest,
@@ -5819,6 +5824,50 @@ async def get_taxonomy_label(label: str) -> TaxonomyLabel:
 @app.get("/api/sources", response_model=list[CameraSource])
 async def list_sources() -> list[CameraSource]:
     return get_repository().list_sources()
+
+
+@app.get("/api/camera-setup/options", response_model=CameraSetupOptionsResponse)
+async def get_camera_setup_options() -> CameraSetupOptionsResponse:
+    return get_repository().camera_setup_options()
+
+
+@app.post("/api/camera-setup/validate", response_model=CameraSetupValidationResponse)
+async def validate_camera_setup(
+    payload: CameraSetupValidationRequest,
+) -> CameraSetupValidationResponse:
+    try:
+        return get_repository().validate_camera_setup(payload)
+    except ValueError as error:
+        messages = {
+            "camera_setup_provider_unsupported": "Choose a supported camera provider.",
+            "camera_setup_unsupported_fields": "This provider configuration included unsupported settings.",
+            "camera_setup_invalid_url": "Enter a valid URL for the selected provider.",
+        }
+        raise HTTPException(status_code=400, detail=messages.get(str(error), "Camera setup could not be validated.")) from None
+
+
+@app.post("/api/camera-setup/complete", response_model=CameraSetupCompletionResponse)
+async def complete_camera_setup(
+    payload: CameraSetupCompleteRequest,
+) -> CameraSetupCompletionResponse:
+    repository = get_repository()
+    try:
+        result = repository.complete_camera_setup(payload)
+    except ValueError as error:
+        messages = {
+            "source_name_exists": "A camera with that name already exists.",
+            "camera_setup_validation_required": "Finish the required provider configuration before continuing.",
+            "camera_setup_provider_unsupported": "Choose a supported camera provider.",
+            "camera_setup_unsupported_fields": "This provider configuration included unsupported settings.",
+            "camera_setup_invalid_url": "Enter a valid URL for the selected provider.",
+            "camera_setup_idempotency_conflict": "That setup request cannot be safely repeated.",
+        }
+        status = 409 if str(error) in {"source_name_exists", "camera_setup_idempotency_conflict"} else 400
+        raise HTTPException(status_code=status, detail=messages.get(str(error), "Camera setup could not be completed.")) from None
+    if payload.enable_monitoring:
+        # Completion saves desired state only; the established supervisor owns any runtime start.
+        get_durable_monitoring_supervisor().wake()
+    return result
 
 
 @app.post(
