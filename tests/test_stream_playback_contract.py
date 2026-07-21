@@ -23,6 +23,7 @@ from mockingbird.api.main import (
 )
 from mockingbird.api.schemas import (
     DashboardStreamRuntimeStatus,
+    LivePreviewLeaseRequest,
     ReviewStatus,
     SourceKind,
     SourceStatus,
@@ -41,6 +42,7 @@ from mockingbird.playback.live_camera_session import (
     _LiveCameraSession,
     _LiveActivitySession,
 )
+from mockingbird.playback.live_preview_leases import LivePreviewLeaseManager
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.sampler.saved_media_frames import SavedMediaFrame
 from mockingbird.storage.models import (
@@ -554,6 +556,130 @@ async def test_dashboard_summary_uses_reviewed_truth_and_bounded_safe_visits(
     payload = response.json()
     assert payload["headline"]["needs_review_visit_count"] == expected_needs_review
     assert payload["needs_review_visits"][0]["id"] == "visit-dashboard-other-needs"
+
+
+async def test_dashboard_overview_exposes_only_safe_explicit_browser_preview_metadata(
+    client: httpx.AsyncClient,
+) -> None:
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="https://viewer:secret@camera.local/live.mjpg",
+        live_stream_type="mjpeg",
+    )
+
+    credentialed = await client.get("/api/dashboard/summary")
+    assert credentialed.status_code == 200
+    credentialed_stream = next(
+        stream for stream in credentialed.json()["streams"] if stream["stream_id"] == STREAM_ID
+    )
+    assert credentialed_stream["live_preview"]["available"] is False
+    assert "secret" not in credentialed.text
+    assert "viewer" not in credentialed.text
+
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="https://camera.local/live.mjpg",
+        live_stream_type="mjpeg",
+    )
+    safe = await client.get("/api/dashboard/summary")
+    assert safe.status_code == 200
+    stream = next(stream for stream in safe.json()["streams"] if stream["stream_id"] == STREAM_ID)
+    assert stream["live_preview"] == {
+        "kind": "browser_direct",
+        "available": True,
+        "media_kind": "image",
+        "preview_url": "https://camera.local/live.mjpg",
+        "message": "Select Show live view to load this configured browser preview.",
+    }
+    assert stream["zone_overlays"]
+    assert all(zone["stream_id"] == STREAM_ID for zone in stream["zone_overlays"])
+
+
+async def test_overview_preview_lease_starts_only_an_explicit_view_and_preserves_monitoring(
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeCameraSessionManager:
+        def __init__(self) -> None:
+            self.snapshots: dict[str, SimpleNamespace] = {}
+            self.started: list[object] = []
+            self.stopped: list[tuple[str, str | None]] = []
+
+        def status(self, stream_id: str) -> SimpleNamespace | None:
+            return self.snapshots.get(stream_id)
+
+        def start(self, configuration: object) -> SimpleNamespace:
+            self.started.append(configuration)
+            snapshot = SimpleNamespace(status="running", monitor_running=False)
+            self.snapshots[STREAM_ID] = snapshot
+            return snapshot
+
+        def stop(self, stream_id: str, *, reason: str | None = None) -> SimpleNamespace | None:
+            self.stopped.append((stream_id, reason))
+            return self.snapshots.pop(stream_id, None)
+
+        def stop_all(self, *, reason: str | None = None) -> None:
+            self.snapshots.clear()
+
+    fake_camera_manager = FakeCameraSessionManager()
+    preview_manager = LivePreviewLeaseManager(lease_seconds=60)
+    monkeypatch.setattr(api_main, "_live_camera_session_manager", fake_camera_manager)
+    monkeypatch.setattr(api_main, "_live_preview_lease_manager", preview_manager)
+    monkeypatch.setattr(
+        api_main,
+        "_overview_preview_configuration_or_409",
+        lambda stream_id: SimpleNamespace(stream_id=stream_id),
+    )
+    before_policy = isolated_repository.get_stream_monitoring_policy(STREAM_ID)
+    before_counts = (
+        len(isolated_repository.list_events()),
+        len(isolated_repository.list_visits()),
+        len(isolated_repository.list_media_assets()),
+    )
+    owner = LivePreviewLeaseRequest(owner_id="overview-browser-owner")
+
+    try:
+        opened = await api_main.open_stream_live_preview(STREAM_ID, owner)
+        repeated = await api_main.open_stream_live_preview(STREAM_ID, owner)
+        closed = await api_main.close_stream_live_preview(STREAM_ID, owner)
+    finally:
+        preview_manager.shutdown()
+
+    after_preview_policy = isolated_repository.get_stream_monitoring_policy(STREAM_ID)
+    after_counts = (
+        len(isolated_repository.list_events()),
+        len(isolated_repository.list_visits()),
+        len(isolated_repository.list_media_assets()),
+    )
+    assert opened.status == "live"
+    assert opened.preview_url == f"/api/streams/{STREAM_ID}/live-session/mjpeg"
+    assert repeated.status == "live"
+    assert closed.released is True
+    assert len(fake_camera_manager.started) == 1
+    assert fake_camera_manager.stopped == [
+        (STREAM_ID, "overview_preview_released")
+    ]
+    assert before_policy is not None and before_policy.mode == "off"
+    assert after_preview_policy is not None and after_preview_policy.mode == "off"
+    assert before_counts == after_counts
+
+    # An armed Stream remains its durable monitor's responsibility even when
+    # the overview no longer has a lease for the local camera session.
+    isolated_repository.set_stream_monitoring_enabled(
+        STREAM_ID,
+        enabled=True,
+        idempotency_key="overview-preview-preserve-armed-monitor",
+    )
+    fake_camera_manager.snapshots[STREAM_ID] = SimpleNamespace(
+        status="running",
+        monitor_running=False,
+    )
+    api_main._release_overview_started_session(STREAM_ID)
+    armed_policy = isolated_repository.get_stream_monitoring_policy(STREAM_ID)
+    assert armed_policy is not None and armed_policy.mode == "armed"
+    assert fake_camera_manager.stopped == [
+        (STREAM_ID, "overview_preview_released")
+    ]
 
 
 def test_dashboard_summary_serializes_an_empty_stream_installation(

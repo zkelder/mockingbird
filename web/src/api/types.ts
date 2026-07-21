@@ -744,6 +744,40 @@ export interface LiveCameraSessionStatus {
   warnings: string[];
 }
 
+export interface LivePreviewLeaseRequest {
+  owner_id: string;
+}
+
+export interface LivePreviewLeaseResponse {
+  stream_id: string;
+  owner_id: string;
+  status: "live" | "limit_reached" | "unavailable";
+  preview_url?: string | null;
+  expires_at?: string | null;
+  max_active_previews: number;
+  effective_limit: number;
+  monitoring_changed: boolean;
+  creates_media: boolean;
+  creates_evidence: boolean;
+  creates_event: boolean;
+  creates_visit: boolean;
+  creates_truth: boolean;
+  message: string;
+}
+
+export interface LivePreviewReleaseResponse {
+  stream_id: string;
+  owner_id: string;
+  released: boolean;
+  monitoring_changed: boolean;
+  creates_media: boolean;
+  creates_evidence: boolean;
+  creates_event: boolean;
+  creates_visit: boolean;
+  creates_truth: boolean;
+  message: string;
+}
+
 export interface SourceMonitorStartRequest {
   interval_seconds?: number;
   max_runtime_minutes?: number;
@@ -1161,6 +1195,23 @@ export interface DashboardVisitSummary extends StreamVisitSummary {
   source_name: string;
 }
 
+export interface DashboardZoneOverlay {
+  id: string;
+  stream_id: string;
+  name: string;
+  zone_type: ZoneType;
+  polygon: Point[];
+  is_active: boolean;
+}
+
+export interface DashboardLivePreview {
+  kind: "unavailable" | "browser_direct" | "backend_session";
+  available: boolean;
+  media_kind: "image" | "video";
+  preview_url?: string | null;
+  message: string;
+}
+
 export type ActivityLibraryReviewFilter =
   | "all"
   | "needs_review"
@@ -1220,8 +1271,12 @@ export interface DashboardStreamSummary {
   stream_name: string;
   source_id: string;
   source_name: string;
+  source_status: SourceStatus;
+  setup_incomplete: boolean;
   availability_status: StreamPlaybackStatusValue;
   availability_message: string;
+  live_preview: DashboardLivePreview;
+  zone_overlays: DashboardZoneOverlay[];
   monitoring_active: boolean;
   monitor_control: "none" | "live_motion" | "source_monitor";
   can_start_monitor: boolean;

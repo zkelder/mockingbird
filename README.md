@@ -55,6 +55,10 @@ MockingBird currently provides:
   side-effect-free lifecycle status
 - a guided Add Camera path that keeps credentials local and masked, checks
   readiness without enabling monitoring, and finishes on the Stream view
+- a shared Dashboard and Cameras/Streams Live Camera Overview that defaults to
+  the latest safe Visit evidence, opens at most four user-selected live tiles
+  per browser session, and shows view-only Stream Zones without changing
+  monitoring or creating evidence
 
 Monitoring remains local and explicitly Stream-scoped. Every Stream starts
 disabled; when a user enables supported backend-owned live monitoring, the one

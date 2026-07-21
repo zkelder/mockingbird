@@ -3,6 +3,8 @@ import { apiClient } from "../api/client";
 import type {
   CameraSource,
   DatasetExport,
+  DashboardStreamSummary,
+  DashboardSummary,
   FolderImportEvidenceBatchCreateResponse,
   FolderImportEvidenceBatchDryRunResponse,
   FolderImportEvidenceBatchDryRunRequest,
@@ -39,12 +41,14 @@ import type {
   SourceProviderField,
   SourceSetupReviewResponse,
   Stream,
+  StreamRuntimeStatus,
   StreamPlaybackStatus,
   WindowsCameraDiscoveryResponse,
   Zone,
   ZoneType,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
+import { LiveCameraOverview } from "../components/LiveCameraOverview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
@@ -61,6 +65,7 @@ interface StreamsPageProps {
   onOpenVisit: (visitId: string) => void;
   onOpenDetectionProposals: () => void;
   onOpenReview: () => void;
+  onOpenReviewForStream?: (streamId: string) => void;
   onOpenBirdLog: () => void;
   onOpenExports: () => void;
   onAddCamera: () => void;
@@ -1669,6 +1674,7 @@ export function StreamsPage({
   onOpenVisit,
   onOpenDetectionProposals,
   onOpenReview,
+  onOpenReviewForStream,
   onOpenBirdLog,
   onOpenExports,
   onAddCamera,
@@ -1677,6 +1683,11 @@ export function StreamsPage({
   const [connectionStatuses, setConnectionStatuses] = useState<
     Record<string, SourceConnectionStatus>
   >({});
+  const [liveOverview, setLiveOverview] = useState<DashboardSummary | null>(null);
+  const [liveOverviewRuntimeByStream, setLiveOverviewRuntimeByStream] = useState<
+    Record<string, StreamRuntimeStatus>
+  >({});
+  const [liveOverviewError, setLiveOverviewError] = useState<string | null>(null);
   const [providerDefinitions, setProviderDefinitions] = useState<SourceProviderDefinition[]>([]);
   const [providerConfigurations, setProviderConfigurations] = useState<
     Record<string, SourceProviderConfiguration>
@@ -1839,6 +1850,36 @@ export function StreamsPage({
   }
 
   useEffect(() => clearSnapshotWatchTimer, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadLiveOverview() {
+      try {
+        const [summary, monitoringStatuses] = await Promise.all([
+          apiClient.getDashboardSummary(),
+          apiClient.getStreamMonitoringStatuses().catch(() => null),
+        ]);
+        if (!isMounted) return;
+        setLiveOverview(summary);
+        if (monitoringStatuses) {
+          setLiveOverviewRuntimeByStream(
+            Object.fromEntries(
+              monitoringStatuses.items.map((status) => [status.stream_id, status]),
+            ),
+          );
+        }
+        setLiveOverviewError(null);
+      } catch {
+        if (isMounted) setLiveOverviewError("Could not load the current camera overview.");
+      }
+    }
+
+    void loadLiveOverview();
+    return () => {
+      isMounted = false;
+    };
+  }, [streams]);
 
   useEffect(() => {
     let isMounted = true;
@@ -4156,6 +4197,29 @@ export function StreamsPage({
     return <label key={field.key}>{fieldBody}</label>;
   }
 
+  async function handleLiveOverviewMonitoring(
+    stream: DashboardStreamSummary,
+    runtime: StreamRuntimeStatus,
+  ) {
+    const enabled = runtime.desired_mode !== "armed";
+    try {
+      const result = await apiClient.updateStreamMonitoringPolicy(stream.stream_id, {
+        enabled,
+        idempotency_key:
+          globalThis.crypto?.randomUUID?.() ??
+          `streams-overview-monitor-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      });
+      setLiveOverviewRuntimeByStream((current) => ({
+        ...current,
+        [stream.stream_id]: result.runtime,
+      }));
+      await onSourcesChanged();
+      setLiveOverviewError(null);
+    } catch {
+      setLiveOverviewError("Could not update monitoring. Open Stream Detail to check this camera.");
+    }
+  }
+
   return (
     <div className="page-stack">
       <PageHeader
@@ -4164,6 +4228,20 @@ export function StreamsPage({
         description="Add a camera, connect it, open the live Stream, and draw the Zones that matter."
       />
       {connectionError ? <div className="error-panel">{connectionError}</div> : null}
+      {liveOverviewError ? <div className="error-panel">{liveOverviewError}</div> : null}
+      {liveOverview ? (
+        <LiveCameraOverview
+          onOpenReview={(streamId) => onOpenReviewForStream?.(streamId) ?? onOpenReview()}
+          onOpenStream={onOpenStream}
+          onToggleMonitoring={(stream, runtime) =>
+            void handleLiveOverviewMonitoring(stream, runtime)
+          }
+          runtimeByStream={liveOverviewRuntimeByStream}
+          streams={liveOverview.streams}
+        />
+      ) : (
+        <section className="panel"><span className="meta-text">Loading Live Camera Overview…</span></section>
+      )}
       {selectedSource ? (
         <section className="panel source-setup-panel source-workflow-panel">
           <div className="section-heading">

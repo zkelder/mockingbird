@@ -416,6 +416,9 @@ export default function App() {
           onOpenVisit={openVisit}
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenReview={() => openReviewQueue()}
+          onOpenReviewForStream={(streamId) =>
+            openReviewQueue({ source: "live-motion", search: streamId, status: "unreviewed" })
+          }
           onOpenBirdLog={() => setPage("bird-log")}
           onOpenExports={() => setPage("exports")}
           onAddCamera={() => setPage("camera-setup")}

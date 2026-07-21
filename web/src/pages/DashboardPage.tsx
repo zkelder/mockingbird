@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "../api/client";
 import type {
-  DashboardStreamSummary,
   DashboardSummary,
   DashboardVisitSummary,
   HealthStatus,
@@ -9,6 +8,7 @@ import type {
   StreamRuntimeStatus,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
+import { LiveCameraOverview } from "../components/LiveCameraOverview";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
 
@@ -29,24 +29,6 @@ interface DashboardPageProps {
 }
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 30_000;
-
-function availabilityTone(
-  status: DashboardStreamSummary["availability_status"],
-): "good" | "review" | "quiet" {
-  if (status === "demo" || status === "live_ready") {
-    return "good";
-  }
-  if (
-    status === "not_configured" ||
-    status === "unavailable" ||
-    status === "offline" ||
-    status === "playback_error" ||
-    status.startsWith("unsupported")
-  ) {
-    return "review";
-  }
-  return "quiet";
-}
 
 function outcomeLabel(visit: DashboardVisitSummary): string {
   if (visit.review_outcome === "needs_review") {
@@ -127,12 +109,10 @@ export function DashboardPage({
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [monitorActionId, setMonitorActionId] = useState<string | null>(null);
   const [monitorActionError, setMonitorActionError] = useState<string | null>(null);
   const [durableStatusByStream, setDurableStatusByStream] = useState<
     Record<string, StreamRuntimeStatus>
   >({});
-  const [durableActionId, setDurableActionId] = useState<string | null>(null);
   const [storageSummary, setStorageSummary] = useState<StorageSummary | null>(null);
 
   const refreshDashboard = useCallback(async (initialLoad = false) => {
@@ -175,36 +155,10 @@ export function DashboardPage({
     return () => window.clearInterval(refreshTimer);
   }, [refreshDashboard]);
 
-  async function handleMonitorAction(stream: DashboardStreamSummary) {
-    setMonitorActionId(stream.stream_id);
-    setMonitorActionError(null);
-    try {
-      if (stream.can_stop_monitor) {
-        if (stream.monitor_control === "source_monitor") {
-          await apiClient.stopStreamMonitor(stream.stream_id);
-        } else {
-          await apiClient.stopLiveMotionMonitor(stream.stream_id);
-        }
-      } else if (stream.monitor_control === "source_monitor") {
-        await apiClient.startStreamMonitor(stream.stream_id);
-      } else if (stream.monitor_control === "live_motion") {
-        await apiClient.startLiveMotionMonitor(stream.stream_id);
-      }
-      await refreshDashboard();
-    } catch {
-      setMonitorActionError(
-        "Could not update monitoring from Dashboard. Open Stream Detail to check its current status.",
-      );
-    } finally {
-      setMonitorActionId(null);
-    }
-  }
-
   async function handleDurableMonitoringAction(
     streamId: string,
     action: "enable" | "disable" | "retry",
   ) {
-    setDurableActionId(`${action}-${streamId}`);
     setMonitorActionError(null);
     const idempotencyKey =
       globalThis.crypto?.randomUUID?.() ??
@@ -228,8 +182,6 @@ export function DashboardPage({
       setMonitorActionError(
         "Could not update persistent monitoring. Open Stream Detail to check this camera.",
       );
-    } finally {
-      setDurableActionId(null);
     }
   }
 
@@ -328,145 +280,21 @@ export function DashboardPage({
         </button>
       </section>
 
-      <section className="panel dashboard-stream-overview">
-        <div className="section-heading">
-          <div>
-            <h2>Camera and Stream status</h2>
-            <span className="meta-text">Availability is read-only. Persistent monitoring starts only after Enable.</span>
-          </div>
-          <StatusPill
-            label={headline.monitored_stream_count ? "Monitoring active" : "No Stream monitored"}
-            tone={headline.monitored_stream_count ? "good" : "quiet"}
-          />
-        </div>
-        {monitorActionError ? <div className="dashboard-action-error" role="alert">{monitorActionError}</div> : null}
-        {summary.streams.length > 0 ? (
-          <div className="dashboard-stream-grid">
-            {summary.streams.map((stream) => (
-              <article className="dashboard-stream-card" key={stream.stream_id}>
-                {(() => {
-                  const durableStatus = durableStatusByStream[stream.stream_id];
-                  const monitoringEnabled = durableStatus?.desired_mode === "armed";
-                  return (
-                    <>
-                <div className="item-title-row">
-                  <div>
-                    <h3>{stream.stream_name}</h3>
-                    <span className="meta-text">{stream.source_name}</span>
-                  </div>
-                  <StatusPill
-                    label={formatLabel(stream.availability_status)}
-                    tone={availabilityTone(stream.availability_status)}
-                  />
-                </div>
-                <span className="dashboard-stream-message">{stream.availability_message}</span>
-                <div className="dashboard-stream-facts">
-                  <span>
-                    Monitoring: <strong>{stream.monitoring_active ? "Active" : "Inactive"}</strong>
-                  </span>
-                  <span>
-                    Persistent: <strong>{monitoringEnabled ? "Enabled" : "Disabled"}</strong>
-                    {durableStatus ? ` · ${formatLabel(durableStatus.actual_state)}` : ""}
-                  </span>
-                  <span>
-                    Open sessions: <strong>{stream.open_activity_session_count}</strong>
-                    {stream.ready_activity_session_count ? ` (${stream.ready_activity_session_count} ready)` : ""}
-                  </span>
-                  <span>
-                    Needs review: <strong>{stream.needs_review_visit_count}</strong>
-                  </span>
-                </div>
-                {stream.latest_visit ? (
-                  <div className="dashboard-stream-latest">
-                    <VisitPreview visit={stream.latest_visit} />
-                    <div>
-                      <strong>Latest Visit</strong>
-                      <span>{formatDateTime(stream.latest_visit.captured_at)}</span>
-                      <VisitContext visit={stream.latest_visit} />
-                    </div>
-                  </div>
-                ) : (
-                  <span className="meta-text">No Visits captured for this Stream yet.</span>
-                )}
-                <div className="detail-actions">
-                  <button className="secondary-action" onClick={() => onOpenStream(stream.stream_id)} type="button">
-                    Open Stream Detail
-                  </button>
-                  {stream.can_start_monitor || stream.can_stop_monitor ? (
-                    <button
-                      className={stream.can_stop_monitor ? "secondary-action" : "primary-action"}
-                      disabled={monitorActionId === stream.stream_id}
-                      onClick={() => void handleMonitorAction(stream)}
-                      type="button"
-                    >
-                      {monitorActionId === stream.stream_id
-                        ? "Updating…"
-                        : stream.can_stop_monitor
-                          ? "Stop monitoring"
-                          : "Start monitoring"}
-                    </button>
-                  ) : null}
-                  {durableStatus ? (
-                    <button
-                      className={monitoringEnabled ? "secondary-action" : "primary-action"}
-                      disabled={durableActionId !== null}
-                      onClick={() =>
-                        void handleDurableMonitoringAction(
-                          stream.stream_id,
-                          monitoringEnabled ? "disable" : "enable",
-                        )
-                      }
-                      type="button"
-                    >
-                      {durableActionId === `${monitoringEnabled ? "disable" : "enable"}-${stream.stream_id}`
-                        ? "Updating…"
-                        : monitoringEnabled
-                          ? "Disable monitoring"
-                          : "Enable monitoring"}
-                    </button>
-                  ) : null}
-                  {monitoringEnabled && durableStatus?.actual_state !== "running" ? (
-                    <button
-                      className="text-action"
-                      disabled={durableActionId !== null}
-                      onClick={() =>
-                        void handleDurableMonitoringAction(stream.stream_id, "retry")
-                      }
-                      type="button"
-                    >
-                      {durableActionId === `retry-${stream.stream_id}` ? "Retrying…" : "Retry monitoring"}
-                    </button>
-                  ) : null}
-                  {stream.needs_review_visit_count ? (
-                    <button
-                      className="text-action"
-                      onClick={() =>
-                        onOpenReview({
-                          source: "live-motion",
-                          search: stream.stream_id,
-                          status: "unreviewed",
-                        })
-                      }
-                      type="button"
-                    >
-                      Review this Stream
-                    </button>
-                  ) : null}
-                </div>
-                    </>
-                  );
-                })()}
-              </article>
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            title="No Sources or Streams configured"
-            description="Add a camera or media Source to create the first Stream for daily operations."
-            action={<button className="secondary-action" onClick={onOpenStreams} type="button">Open Cameras / Streams</button>}
-          />
-        )}
-      </section>
+      {monitorActionError ? <div className="dashboard-action-error" role="alert">{monitorActionError}</div> : null}
+      <LiveCameraOverview
+        onOpenReview={(streamId) =>
+          onOpenReview({ source: "live-motion", search: streamId, status: "unreviewed" })
+        }
+        onOpenStream={onOpenStream}
+        onToggleMonitoring={(stream, runtime) =>
+          void handleDurableMonitoringAction(
+            stream.stream_id,
+            runtime.desired_mode === "armed" ? "disable" : "enable",
+          )
+        }
+        runtimeByStream={durableStatusByStream}
+        streams={summary.streams}
+      />
 
       <section className="panel dashboard-needs-review">
         <div className="section-heading">

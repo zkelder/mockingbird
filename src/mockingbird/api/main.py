@@ -67,6 +67,10 @@ from mockingbird.api.schemas import (
     LocalCameraFrameCaptureResponse,
     LiveCameraSessionDiagnosticsResponse,
     LiveCameraSessionStatusResponse,
+    LivePreviewLeaseRequest,
+    LivePreviewLeaseResponse,
+    LivePreviewLeaseStatus,
+    LivePreviewReleaseResponse,
     Event,
     EventDetail,
     FolderImportCreate,
@@ -196,6 +200,7 @@ from mockingbird.api.schemas import (
     StorageRetentionSettingsUpdate,
     StorageSummary,
     StreamMonitoringMutationResponse,
+    StreamMonitoringMode,
     StreamMonitoringPolicyResponse,
     StreamMonitoringPolicyUpdate,
     StreamMonitoringRetryRequest,
@@ -257,6 +262,7 @@ from mockingbird.monitoring import (
 from mockingbird.playback import (
     live_camera_session,
     live_frame_cache,
+    live_preview_leases,
     local_camera_bridge,
     rtsp_bridge,
     windows_camera_bridge,
@@ -321,6 +327,8 @@ async def _app_lifespan(_app: FastAPI):
             _durable_monitoring_supervisor.shutdown(reason="api_shutdown")
         if _source_monitor_manager is not None:
             _source_monitor_manager.cancel_all()
+        if _live_preview_lease_manager is not None:
+            _live_preview_lease_manager.shutdown()
         if _live_camera_session_manager is not None:
             _live_camera_session_manager.stop_all(reason="api_shutdown")
         if _automatic_review_identification_assist is not None:
@@ -438,6 +446,7 @@ _patch_testclient_for_pytest()
 _repository: ProductRepository | None = None
 _source_monitor_manager: SourceMonitorManager | None = None
 _live_camera_session_manager: live_camera_session.LiveCameraSessionManager | None = None
+_live_preview_lease_manager: live_preview_leases.LivePreviewLeaseManager | None = None
 _durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
 _local_storage_retention_service: LocalStorageRetentionService | None = None
 _automatic_review_identification_assist: AutomaticReviewIdentificationAssist | None = (
@@ -470,7 +479,7 @@ def configure_repository(repository: ProductRepository | None) -> None:
 def _stop_runtime_activity(*, reason: str) -> None:
     global _automatic_review_identification_assist
     global _durable_monitoring_supervisor, _local_storage_retention_service
-    global _source_monitor_manager, _live_camera_session_manager
+    global _source_monitor_manager, _live_camera_session_manager, _live_preview_lease_manager
     if _durable_monitoring_supervisor is not None:
         _durable_monitoring_supervisor.shutdown(reason=reason)
         _durable_monitoring_supervisor = None
@@ -480,6 +489,9 @@ def _stop_runtime_activity(*, reason: str) -> None:
     if _source_monitor_manager is not None:
         _source_monitor_manager.cancel_all()
         _source_monitor_manager = None
+    if _live_preview_lease_manager is not None:
+        _live_preview_lease_manager.shutdown()
+        _live_preview_lease_manager = None
     if _live_camera_session_manager is not None:
         _live_camera_session_manager.stop_all(reason=reason)
         _live_camera_session_manager = None
@@ -636,6 +648,29 @@ def get_live_camera_session_manager() -> live_camera_session.LiveCameraSessionMa
     if _live_camera_session_manager is None:
         _live_camera_session_manager = live_camera_session.LiveCameraSessionManager()
     return _live_camera_session_manager
+
+
+def _release_overview_started_session(stream_id: str) -> None:
+    """Release only a session the overview started; monitoring policy remains untouched."""
+
+    if _live_camera_session_manager is None:
+        return
+    snapshot = _live_camera_session_manager.status(stream_id)
+    if snapshot is None or snapshot.monitor_running:
+        return
+    runtime = get_repository().get_stream_runtime_status(stream_id)
+    if runtime is not None and runtime.desired_mode == StreamMonitoringMode.armed:
+        return
+    _live_camera_session_manager.stop(stream_id, reason="overview_preview_released")
+
+
+def get_live_preview_lease_manager() -> live_preview_leases.LivePreviewLeaseManager:
+    global _live_preview_lease_manager
+    if _live_preview_lease_manager is None:
+        _live_preview_lease_manager = live_preview_leases.LivePreviewLeaseManager(
+            on_expired_stream=_release_overview_started_session,
+        )
+    return _live_preview_lease_manager
 
 
 def get_durable_monitoring_supervisor() -> DurableMonitoringSupervisor:
@@ -7006,6 +7041,112 @@ async def get_stream_live_camera_session_status(
         else None
     )
     return _live_camera_session_response(snapshot, configuration)
+
+
+def _overview_preview_configuration_or_409(stream_id: str) -> StreamLivePlaybackConfig:
+    configuration = _stream_live_playback_config_or_404(
+        stream_id,
+        require_active_source=True,
+    )
+    if configuration.live_stream_type not in live_camera_session.SUPPORTED_SESSION_TYPES:
+        raise HTTPException(
+            status_code=409,
+            detail="Preview unavailable for this camera. Open Stream Detail for setup guidance.",
+        )
+    try:
+        _validate_live_camera_session_config(configuration)
+    except HTTPException as error:
+        if error.status_code == 404:
+            raise
+        raise HTTPException(
+            status_code=409,
+            detail="Preview unavailable for this camera. Open Stream Detail for setup guidance.",
+        ) from None
+    return configuration
+
+
+@app.post(
+    "/api/streams/{stream_id}/live-preview/open",
+    response_model=LivePreviewLeaseResponse,
+)
+async def open_stream_live_preview(
+    stream_id: str,
+    payload: LivePreviewLeaseRequest,
+) -> LivePreviewLeaseResponse:
+    """Open one bounded overview-owned view without changing monitoring intent."""
+
+    configuration = _overview_preview_configuration_or_409(stream_id)
+    camera_manager = get_live_camera_session_manager()
+    existing_snapshot = camera_manager.status(stream_id)
+    session_is_active = bool(
+        existing_snapshot and existing_snapshot.status in {"starting", "running"}
+    )
+    preview_manager = get_live_preview_lease_manager()
+    decision = preview_manager.acquire(
+        owner_id=payload.owner_id,
+        stream_id=stream_id,
+        backend_session_active=session_is_active,
+    )
+    if decision.status == "limit_reached":
+        return LivePreviewLeaseResponse(
+            stream_id=stream_id,
+            owner_id=payload.owner_id,
+            status=LivePreviewLeaseStatus.limit_reached,
+            max_active_previews=preview_manager.max_previews_per_owner,
+            effective_limit=decision.effective_limit,
+            message=decision.message,
+        )
+
+    if decision.should_start_session:
+        try:
+            camera_manager.start(configuration)
+        except (OSError, ValueError):
+            preview_manager.abandon(owner_id=payload.owner_id, stream_id=stream_id)
+            raise HTTPException(
+                status_code=502,
+                detail="Camera unavailable. The latest activity remains available for review.",
+            ) from None
+
+    return LivePreviewLeaseResponse(
+        stream_id=stream_id,
+        owner_id=payload.owner_id,
+        status=LivePreviewLeaseStatus.live,
+        preview_url=f"/api/streams/{stream_id}/live-session/mjpeg",
+        expires_at=decision.lease.expires_at if decision.lease is not None else None,
+        max_active_previews=preview_manager.max_previews_per_owner,
+        effective_limit=decision.effective_limit,
+        message="Live preview is active. Viewing does not enable monitoring or save media.",
+    )
+
+
+@app.post(
+    "/api/streams/{stream_id}/live-preview/close",
+    response_model=LivePreviewReleaseResponse,
+)
+async def close_stream_live_preview(
+    stream_id: str,
+    payload: LivePreviewLeaseRequest,
+) -> LivePreviewReleaseResponse:
+    """Release one overview tile while preserving any existing monitor ownership."""
+
+    # Resolve the Stream first so an arbitrary id never reaches runtime ownership.
+    _stream_live_playback_config_or_404(stream_id)
+    release = get_live_preview_lease_manager().release(
+        owner_id=payload.owner_id,
+        stream_id=stream_id,
+    )
+    if release.should_stop_session:
+        _release_overview_started_session(stream_id)
+    return LivePreviewReleaseResponse(
+        stream_id=stream_id,
+        owner_id=payload.owner_id,
+        released=release.released,
+        message=(
+            "Live preview stopped. Monitoring settings are unchanged."
+            if release.released
+            else "Live preview was already released. Monitoring settings are unchanged."
+        ),
+    )
 
 
 @app.get(

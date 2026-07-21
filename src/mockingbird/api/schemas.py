@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -88,6 +88,18 @@ class StreamPlaybackKind(str, Enum):
     local_usb = "local_usb"
     windows_dshow = "windows_dshow"
     unknown = "unknown"
+
+
+class DashboardLivePreviewKind(str, Enum):
+    unavailable = "unavailable"
+    browser_direct = "browser_direct"
+    backend_session = "backend_session"
+
+
+class LivePreviewLeaseStatus(str, Enum):
+    live = "live"
+    limit_reached = "limit_reached"
+    unavailable = "unavailable"
 
 
 class StreamMonitoringMode(str, Enum):
@@ -960,6 +972,48 @@ class LiveCameraSessionStatusResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class LivePreviewLeaseRequest(BaseModel):
+    """A browser-local owner for one explicitly opened overview preview."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner_id: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+
+
+class LivePreviewLeaseResponse(BaseModel):
+    stream_id: str
+    owner_id: str
+    status: LivePreviewLeaseStatus
+    preview_url: str | None = None
+    expires_at: datetime | None = None
+    max_active_previews: int = Field(ge=1, le=4)
+    effective_limit: int = Field(ge=1, le=4)
+    monitoring_changed: bool = False
+    creates_media: bool = False
+    creates_evidence: bool = False
+    creates_event: bool = False
+    creates_visit: bool = False
+    creates_truth: bool = False
+    message: str
+
+
+class LivePreviewReleaseResponse(BaseModel):
+    stream_id: str
+    owner_id: str
+    released: bool
+    monitoring_changed: bool = False
+    creates_media: bool = False
+    creates_evidence: bool = False
+    creates_event: bool = False
+    creates_visit: bool = False
+    creates_truth: bool = False
+    message: str
+
+
 class SourceMonitorStartRequest(BaseModel):
     interval_seconds: int = Field(default=15, ge=5)
     max_runtime_minutes: int = Field(default=30, ge=1, le=120)
@@ -1664,13 +1718,38 @@ class DashboardVisitSummary(StreamVisitSummary):
     source_name: str
 
 
+class DashboardZoneOverlay(BaseModel):
+    """Read-only normalized geometry for one Stream's overview tile."""
+
+    id: str
+    stream_id: str
+    name: str
+    zone_type: ZoneType
+    polygon: list[Point] = Field(default_factory=list, max_length=32)
+    is_active: bool
+
+
+class DashboardLivePreview(BaseModel):
+    """Safe capability metadata; it never includes source configuration or secrets."""
+
+    kind: DashboardLivePreviewKind = DashboardLivePreviewKind.unavailable
+    available: bool = False
+    media_kind: Literal["image", "video"] = "image"
+    preview_url: str | None = None
+    message: str
+
+
 class DashboardStreamSummary(BaseModel):
     stream_id: str
     stream_name: str
     source_id: str
     source_name: str
+    source_status: SourceStatus
+    setup_incomplete: bool = False
     availability_status: StreamPlaybackStatusValue
     availability_message: str
+    live_preview: DashboardLivePreview
+    zone_overlays: list[DashboardZoneOverlay] = Field(default_factory=list, max_length=32)
     monitoring_active: bool = False
     monitor_control: str = "none"
     can_start_monitor: bool = False

@@ -59,6 +59,9 @@ import type {
   HealthStatus,
   LocalCameraFrameCaptureResponse,
   LiveCameraSessionStatus,
+  LivePreviewLeaseRequest,
+  LivePreviewLeaseResponse,
+  LivePreviewReleaseResponse,
   LocalBackupLibraryResponse,
   LocalBackupRestoreResponse,
   LocalBackupVerificationResponse,
@@ -435,6 +438,22 @@ export const apiClient = {
     ),
   liveCameraSessionMjpegUrl: (streamId: string) =>
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live-session/mjpeg`,
+  openLiveOverviewPreview: (streamId: string, payload: LivePreviewLeaseRequest) =>
+    request<LivePreviewLeaseResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/live-preview/open`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+  closeLiveOverviewPreview: (streamId: string, payload: LivePreviewLeaseRequest) =>
+    request<LivePreviewReleaseResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/live-preview/close`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
   captureLocalCameraFrame: (streamId: string) =>
     request<LocalCameraFrameCaptureResponse>(
       `/api/streams/${encodeURIComponent(streamId)}/local-camera/capture-frame`,

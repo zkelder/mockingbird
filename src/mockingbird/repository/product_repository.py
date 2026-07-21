@@ -135,11 +135,14 @@ from mockingbird.api.schemas import (
     DatasetQualityIssue,
     DatasetQualitySummary,
     DashboardHeadline,
+    DashboardLivePreview,
+    DashboardLivePreviewKind,
     DashboardReviewedObservation,
     DashboardStreamRuntimeStatus,
     DashboardStreamSummary,
     DashboardSummary,
     DashboardVisitSummary,
+    DashboardZoneOverlay,
     DemoDetectionRunCreate,
     DemoDetectionRunResult,
     Detection,
@@ -4879,9 +4882,20 @@ class ProductRepository:
         day_end = _as_utc(next_local_day_start)
 
         with self.session_factory() as session:
-            configured_stream_count = session.scalar(select(func.count(StreamModel.id))) or 0
+            configured_stream_count = (
+                session.scalar(
+                    select(func.count(StreamModel.id))
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    .where(CameraSourceModel.status != SourceStatus.archived.value)
+                )
+                or 0
+            )
             stream_models = session.scalars(
-                select(StreamModel).order_by(StreamModel.id).limit(50)
+                select(StreamModel)
+                .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                .where(CameraSourceModel.status != SourceStatus.archived.value)
+                .order_by(StreamModel.id)
+                .limit(50)
             ).all()
             sources_by_id = {
                 source.id: source
@@ -4891,6 +4905,26 @@ class ProductRepository:
                     )
                 ).all()
             }
+            zone_overlays_by_stream: dict[str, list[DashboardZoneOverlay]] = {
+                stream.id: [] for stream in stream_models
+            }
+            stream_ids = set(zone_overlays_by_stream)
+            if stream_ids:
+                for zone in session.scalars(
+                    select(ZoneModel)
+                    .where(ZoneModel.stream_id.in_(stream_ids))
+                    .order_by(ZoneModel.stream_id, ZoneModel.id)
+                ).all():
+                    zone_overlays_by_stream.setdefault(zone.stream_id, []).append(
+                        DashboardZoneOverlay(
+                            id=zone.id,
+                            stream_id=zone.stream_id,
+                            name=zone.name,
+                            zone_type=ZoneType(zone.zone_type),
+                            polygon=[Point(**point) for point in json.loads(zone.polygon_json)],
+                            is_active=zone.is_active,
+                        )
+                    )
             needs_review_visit_count = (
                 session.scalar(
                     select(func.count(VisitModel.id))
@@ -4919,6 +4953,11 @@ class ProductRepository:
             for stream in stream_models:
                 source = sources_by_id.get(stream.source_id)
                 source_name = source.name if source is not None else "Unavailable Source"
+                source_status = (
+                    SourceStatus(source.status)
+                    if source is not None
+                    else SourceStatus.needs_setup
+                )
                 try:
                     playback = self.get_stream_playback_status(stream.id)
                 except Exception:
@@ -4951,6 +4990,16 @@ class ProductRepository:
                         stream_name=stream.name,
                         source_id=stream.source_id,
                         source_name=source_name,
+                        source_status=source_status,
+                        setup_incomplete=(
+                            source_status == SourceStatus.needs_setup
+                            or playback is None
+                            or playback.status
+                            in {
+                                StreamPlaybackStatusValue.not_configured,
+                                StreamPlaybackStatusValue.needs_stream_url,
+                            }
+                        ),
                         availability_status=(
                             playback.status
                             if playback is not None
@@ -4961,6 +5010,8 @@ class ProductRepository:
                             if playback is not None
                             else "Readiness is temporarily unavailable."
                         ),
+                        live_preview=self._dashboard_live_preview(playback),
+                        zone_overlays=zone_overlays_by_stream.get(stream.id, []),
                         monitoring_active=runtime.monitoring_active,
                         monitor_control=runtime.monitor_control,
                         can_start_monitor=runtime.can_start_monitor,
@@ -5058,6 +5109,70 @@ class ProductRepository:
                 recent_activity=recent_activity,
                 warnings=warnings[:12],
             )
+
+    @staticmethod
+    def _dashboard_live_preview(
+        playback: StreamPlaybackStatus | None,
+    ) -> DashboardLivePreview:
+        """Return only safe playback capability metadata for an explicit tile action."""
+
+        if playback is None:
+            return DashboardLivePreview(
+                message="Preview unavailable while this Stream's readiness is loading."
+            )
+        if not playback.supports_live_playback:
+            return DashboardLivePreview(message="Preview unavailable. " + playback.message)
+        if playback.playback_kind in {
+            StreamPlaybackKind.rtsp,
+            StreamPlaybackKind.local_usb,
+            StreamPlaybackKind.windows_dshow,
+        }:
+            return DashboardLivePreview(
+                kind=DashboardLivePreviewKind.backend_session,
+                available=True,
+                media_kind="image",
+                message="Select Show live view to open this local preview.",
+            )
+        if playback.playback_kind in {
+            StreamPlaybackKind.mjpeg,
+            StreamPlaybackKind.browser_video,
+            StreamPlaybackKind.hls,
+        }:
+            safe_preview_url = ProductRepository._safe_browser_preview_url(
+                playback.preview_url
+            )
+            if safe_preview_url is not None:
+                return DashboardLivePreview(
+                    kind=DashboardLivePreviewKind.browser_direct,
+                    available=True,
+                    media_kind=(
+                        "image"
+                        if playback.playback_kind == StreamPlaybackKind.mjpeg
+                        else "video"
+                    ),
+                    preview_url=safe_preview_url,
+                    message="Select Show live view to load this configured browser preview.",
+                )
+        return DashboardLivePreview(message="Preview unavailable. " + playback.message)
+
+    @staticmethod
+    def _safe_browser_preview_url(value: str | None) -> str | None:
+        """Never surface a credential-bearing configured URL in an overview response."""
+
+        if not value:
+            return None
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            return None
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            return None
+        return value
 
     def _dashboard_visit_summary_from_models(
         self,
