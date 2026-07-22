@@ -2951,6 +2951,144 @@ export interface WildlifeInsightsSummary {
   unresolved_activity_drilldown: WildlifeInsightsDrilldown;
 }
 
+export type WildlifeJournalOrder =
+  | "most_recent"
+  | "most_observed"
+  | "alphabetical"
+  | "first_observed";
+export type WildlifeJournalGalleryOrder = "newest" | "oldest";
+export type WildlifeJournalRangePreset =
+  | "all_time"
+  | "today"
+  | "last_7_days"
+  | "last_30_days"
+  | "this_year"
+  | "custom";
+
+export interface WildlifeJournalHistoryRequest {
+  preset?: WildlifeJournalRangePreset;
+  start_date?: string | null;
+  end_date?: string | null;
+  stream_id?: string | null;
+  zone_id?: string | null;
+  gallery_order?: WildlifeJournalGalleryOrder;
+  page_size?: number;
+  offset?: number;
+}
+
+export interface WildlifeJournalScope {
+  preset: WildlifeJournalRangePreset;
+  start_date?: string | null;
+  end_date?: string | null;
+  stream_id?: string | null;
+  zone_id?: string | null;
+  timezone_name: string;
+}
+
+export interface WildlifeJournalDrilldown {
+  review_filter: ActivityLibraryReviewFilter;
+  confirmed_label: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  stream_id?: string | null;
+  zone_id?: string | null;
+}
+
+export interface WildlifeJournalRepresentative {
+  visit_id: string;
+  event_id: string;
+  stream_id: string;
+  stream_name: string;
+  source_name: string;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  label: string;
+  display_name: string;
+  observed_at: string;
+  primary_evidence?: VisitEvidenceFrame | null;
+}
+
+export interface WildlifeJournalRecentDay {
+  local_date: string;
+  count: number;
+}
+
+export interface WildlifeJournalLabelSummary {
+  label: string;
+  display_name: string;
+  observation_count: number;
+  first_observed_at: string;
+  latest_observed_at: string;
+  stream_count: number;
+  zone_count: number;
+  recent_activity: WildlifeJournalRecentDay[];
+  representative?: WildlifeJournalRepresentative | null;
+}
+
+export interface WildlifeJournalOverviewResponse {
+  order: WildlifeJournalOrder;
+  labels: WildlifeJournalLabelSummary[];
+}
+
+export interface WildlifeJournalBreakdown {
+  id: string;
+  name: string;
+  count: number;
+}
+
+export interface WildlifeJournalHourBucket {
+  hour: number;
+  count: number;
+}
+
+export interface WildlifeJournalObservation {
+  visit_id: string;
+  event_id: string;
+  stream_id: string;
+  stream_name: string;
+  source_name: string;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  observed_at: string;
+  activity_started_at: string;
+  activity_ended_at?: string | null;
+  duration_seconds: number;
+  evidence_frame_count: number;
+  reviewed_label: string;
+  display_name: string;
+  primary_evidence?: VisitEvidenceFrame | null;
+  has_curation_history: boolean;
+  has_review_revision: boolean;
+  is_first_on_stream: boolean;
+  is_first_in_zone: boolean;
+}
+
+export interface WildlifeJournalGallery {
+  order: WildlifeJournalGalleryOrder;
+  observations: WildlifeJournalObservation[];
+  has_more: boolean;
+  next_offset?: number | null;
+}
+
+export interface WildlifeJournalHistoryResponse {
+  label: string;
+  display_name: string;
+  scope: WildlifeJournalScope;
+  observation_count: number;
+  first_observation?: WildlifeJournalRepresentative | null;
+  latest_observation?: WildlifeJournalRepresentative | null;
+  representative?: WildlifeJournalRepresentative | null;
+  busiest_stream?: WildlifeJournalBreakdown | null;
+  busiest_zone?: WildlifeJournalBreakdown | null;
+  peak_activity_hour?: number | null;
+  stream_breakdown: WildlifeJournalBreakdown[];
+  zone_breakdown: WildlifeJournalBreakdown[];
+  activity_by_hour: WildlifeJournalHourBucket[];
+  is_new_label_in_range: boolean;
+  activity_library_drilldown: WildlifeJournalDrilldown;
+  gallery: WildlifeJournalGallery;
+}
+
 export interface LocalDataStatus {
   database_url: string;
   database_path?: string | null;

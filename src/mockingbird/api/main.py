@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 import json
 from math import ceil
 from pathlib import Path
@@ -219,6 +219,13 @@ from mockingbird.api.schemas import (
     WorkerStatusResponse,
     WildlifeInsightsRequest,
     WildlifeInsightsSummary,
+    WildlifeJournalHistoryRequest,
+    WildlifeJournalHistoryResponse,
+    WildlifeJournalGalleryOrder,
+    WildlifeJournalOrder,
+    WildlifeJournalOverviewRequest,
+    WildlifeJournalOverviewResponse,
+    WildlifeJournalRangePreset,
     WindowsCameraControlsResponse,
     WindowsCameraDiscoveryResponse,
     Zone,
@@ -8790,6 +8797,57 @@ async def get_wildlife_insights(
     """Return bounded current reviewed-truth insights for the Analytics page."""
 
     return get_repository().wildlife_insights(payload)
+
+
+@app.get("/api/bird-log/journal", response_model=WildlifeJournalOverviewResponse)
+async def get_wildlife_journal(
+    order: WildlifeJournalOrder = WildlifeJournalOrder.most_recent,
+) -> WildlifeJournalOverviewResponse:
+    """Read bounded current reviewed-wildlife label summaries for Bird Log."""
+
+    return get_repository().wildlife_journal_overview(WildlifeJournalOverviewRequest(order=order))
+
+
+@app.get(
+    "/api/bird-log/journal/{label}",
+    response_model=WildlifeJournalHistoryResponse,
+)
+async def get_wildlife_journal_history(
+    label: str,
+    preset: WildlifeJournalRangePreset = WildlifeJournalRangePreset.all_time,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    stream_id: str | None = None,
+    zone_id: str | None = None,
+    gallery_order: WildlifeJournalGalleryOrder = WildlifeJournalGalleryOrder.newest,
+    page_size: int = Query(default=24, ge=1, le=50),
+    offset: int = Query(default=0, ge=0, le=10_000),
+) -> WildlifeJournalHistoryResponse:
+    if len(label) > 256:
+        raise _not_found("Wildlife Journal label", label)
+    if preset == WildlifeJournalRangePreset.custom and (
+        start_date is None
+        or end_date is None
+        or end_date < start_date
+        or (end_date - start_date).days > 365
+    ):
+        raise HTTPException(status_code=422, detail="Choose a valid custom date range up to 366 days.")
+    response = get_repository().wildlife_journal_history(
+        label,
+        WildlifeJournalHistoryRequest(
+            preset=preset,
+            start_date=start_date,
+            end_date=end_date,
+            stream_id=stream_id,
+            zone_id=zone_id,
+            gallery_order=gallery_order,
+            page_size=page_size,
+            offset=offset,
+        ),
+    )
+    if response is None:
+        raise _not_found("Wildlife Journal label", label)
+    return response
 
 
 @app.get("/api/settings/local-data", response_model=LocalDataStatus)

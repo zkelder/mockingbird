@@ -3324,6 +3324,178 @@ class WildlifeInsightsSummary(BaseModel):
     unresolved_activity_drilldown: WildlifeInsightsDrilldown
 
 
+class WildlifeJournalOrder(str, Enum):
+    most_recent = "most_recent"
+    most_observed = "most_observed"
+    alphabetical = "alphabetical"
+    first_observed = "first_observed"
+
+
+class WildlifeJournalGalleryOrder(str, Enum):
+    newest = "newest"
+    oldest = "oldest"
+
+
+class WildlifeJournalRangePreset(str, Enum):
+    all_time = "all_time"
+    today = "today"
+    last_7_days = "last_7_days"
+    last_30_days = "last_30_days"
+    this_year = "this_year"
+    custom = "custom"
+
+
+class WildlifeJournalOverviewRequest(BaseModel):
+    """Bounded ordering for one current reviewed-wildlife label summary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order: WildlifeJournalOrder = WildlifeJournalOrder.most_recent
+
+
+class WildlifeJournalHistoryRequest(BaseModel):
+    """Strict local-date scope and one bounded page of a reviewed label history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    preset: WildlifeJournalRangePreset = WildlifeJournalRangePreset.all_time
+    start_date: date | None = None
+    end_date: date | None = None
+    stream_id: str | None = Field(default=None, min_length=1, max_length=256)
+    zone_id: str | None = Field(default=None, min_length=1, max_length=256)
+    gallery_order: WildlifeJournalGalleryOrder = WildlifeJournalGalleryOrder.newest
+    page_size: int = Field(default=24, ge=1, le=50)
+    offset: int = Field(default=0, ge=0, le=10_000)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "WildlifeJournalHistoryRequest":
+        if self.preset == WildlifeJournalRangePreset.custom:
+            if self.start_date is None or self.end_date is None:
+                raise ValueError("custom_range_requires_start_and_end_date")
+            if self.end_date < self.start_date:
+                raise ValueError("custom_range_end_must_not_precede_start")
+            if (self.end_date - self.start_date).days > 365:
+                raise ValueError("custom_range_must_not_exceed_366_days")
+        return self
+
+
+class WildlifeJournalScope(BaseModel):
+    preset: WildlifeJournalRangePreset
+    start_date: date | None = None
+    end_date: date | None = None
+    stream_id: str | None = None
+    zone_id: str | None = None
+    timezone_name: str
+
+
+class WildlifeJournalDrilldown(BaseModel):
+    """A URL-preservable Activity Library scope without a second search contract."""
+
+    review_filter: ActivityLibraryReviewFilter = ActivityLibraryReviewFilter.confirmed_wildlife
+    confirmed_label: str
+    start_date: date | None = None
+    end_date: date | None = None
+    stream_id: str | None = None
+    zone_id: str | None = None
+
+
+class WildlifeJournalRepresentative(BaseModel):
+    visit_id: str
+    event_id: str
+    stream_id: str
+    stream_name: str
+    source_name: str
+    zone_id: str | None = None
+    zone_name: str | None = None
+    label: str
+    display_name: str
+    observed_at: datetime
+    primary_evidence: VisitEvidenceFrame | None = None
+
+
+class WildlifeJournalRecentDay(BaseModel):
+    local_date: date
+    count: int = Field(ge=0)
+
+
+class WildlifeJournalLabelSummary(BaseModel):
+    label: str
+    display_name: str
+    observation_count: int = Field(ge=1)
+    first_observed_at: datetime
+    latest_observed_at: datetime
+    stream_count: int = Field(ge=0)
+    zone_count: int = Field(ge=0)
+    recent_activity: list[WildlifeJournalRecentDay] = Field(default_factory=list, max_length=14)
+    representative: WildlifeJournalRepresentative | None = None
+
+
+class WildlifeJournalOverviewResponse(BaseModel):
+    order: WildlifeJournalOrder
+    labels: list[WildlifeJournalLabelSummary] = Field(default_factory=list, max_length=100)
+
+
+class WildlifeJournalBreakdown(BaseModel):
+    id: str
+    name: str
+    count: int = Field(ge=1)
+
+
+class WildlifeJournalHourBucket(BaseModel):
+    hour: int = Field(ge=0, le=23)
+    count: int = Field(ge=0)
+
+
+class WildlifeJournalObservation(BaseModel):
+    """One gallery row: compact reviewed context, never full evidence or correction history."""
+
+    visit_id: str
+    event_id: str
+    stream_id: str
+    stream_name: str
+    source_name: str
+    zone_id: str | None = None
+    zone_name: str | None = None
+    observed_at: datetime
+    activity_started_at: datetime
+    activity_ended_at: datetime | None = None
+    duration_seconds: float = Field(ge=0)
+    evidence_frame_count: int = Field(ge=0)
+    reviewed_label: str
+    display_name: str
+    primary_evidence: VisitEvidenceFrame | None = None
+    has_curation_history: bool = False
+    has_review_revision: bool = False
+    is_first_on_stream: bool = False
+    is_first_in_zone: bool = False
+
+
+class WildlifeJournalGallery(BaseModel):
+    order: WildlifeJournalGalleryOrder
+    observations: list[WildlifeJournalObservation] = Field(default_factory=list, max_length=50)
+    has_more: bool
+    next_offset: int | None = Field(default=None, ge=0)
+
+
+class WildlifeJournalHistoryResponse(BaseModel):
+    label: str
+    display_name: str
+    scope: WildlifeJournalScope
+    observation_count: int = Field(ge=0)
+    first_observation: WildlifeJournalRepresentative | None = None
+    latest_observation: WildlifeJournalRepresentative | None = None
+    representative: WildlifeJournalRepresentative | None = None
+    busiest_stream: WildlifeJournalBreakdown | None = None
+    busiest_zone: WildlifeJournalBreakdown | None = None
+    peak_activity_hour: int | None = Field(default=None, ge=0, le=23)
+    stream_breakdown: list[WildlifeJournalBreakdown] = Field(default_factory=list, max_length=50)
+    zone_breakdown: list[WildlifeJournalBreakdown] = Field(default_factory=list, max_length=50)
+    activity_by_hour: list[WildlifeJournalHourBucket] = Field(default_factory=list, max_length=24)
+    is_new_label_in_range: bool = False
+    activity_library_drilldown: WildlifeJournalDrilldown
+    gallery: WildlifeJournalGallery
+
+
 class DetectionProposalDecisionResult(BaseModel):
     proposal: DetectionProposal
     event: Event | None = None

@@ -2,20 +2,24 @@ import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
-  EventDetail,
-  MediaAsset,
-  ReviewLabel,
   Stream,
-  VisitDetail,
+  WildlifeJournalGalleryOrder,
+  WildlifeJournalHistoryRequest,
+  WildlifeJournalHistoryResponse,
+  WildlifeJournalLabelSummary,
+  WildlifeJournalObservation,
+  WildlifeJournalOrder,
+  WildlifeJournalRangePreset,
+  WildlifeJournalRepresentative,
+  WildlifeJournalOverviewResponse,
+  Zone,
 } from "../api/types";
+import { activityLibraryPath } from "./ActivityLibraryPage";
 import { EmptyState } from "../components/EmptyState";
+import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
-
-type BirdLogStatusFilter = "all" | "reviewed";
-type BirdLogEntryStatus = "reviewed";
-type BirdLogTargetType = "event" | "visit";
+import { formatDateTime } from "../utils";
 
 interface BirdLogPageProps {
   sources: CameraSource[];
@@ -28,533 +32,520 @@ interface BirdLogPageProps {
   onOpenExports: () => void;
 }
 
-interface BirdLogEntry {
-  id: string;
-  status: BirdLogEntryStatus;
+interface JournalLocation {
+  order: WildlifeJournalOrder;
+  preset: WildlifeJournalRangePreset;
+  startDate: string;
+  endDate: string;
+  streamId: string;
+  zoneId: string;
+  galleryOrder: WildlifeJournalGalleryOrder;
+  offset: number;
+}
+
+const overviewOrders: Array<{ value: WildlifeJournalOrder; label: string }> = [
+  { value: "most_recent", label: "Most recently observed" },
+  { value: "most_observed", label: "Most observed" },
+  { value: "alphabetical", label: "Alphabetical" },
+  { value: "first_observed", label: "First observed" },
+];
+
+const rangeOptions: Array<{ value: WildlifeJournalRangePreset; label: string }> = [
+  { value: "all_time", label: "All time" },
+  { value: "today", label: "Today" },
+  { value: "last_7_days", label: "Last 7 days" },
+  { value: "last_30_days", label: "Last 30 days" },
+  { value: "this_year", label: "This year" },
+  { value: "custom", label: "Custom range" },
+];
+
+function localDateInputValue(value = new Date()): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function validOption<T extends string>(value: string | null, options: readonly T[], fallback: T): T {
+  return value && options.includes(value as T) ? (value as T) : fallback;
+}
+
+function readJournalLocation(): JournalLocation {
+  const params = new URLSearchParams(window.location.search);
+  const parsedOffset = Number.parseInt(params.get("offset") ?? "0", 10);
+  return {
+    order: validOption(
+      params.get("order"),
+      overviewOrders.map((option) => option.value),
+      "most_recent",
+    ),
+    preset: validOption(
+      params.get("range"),
+      rangeOptions.map((option) => option.value),
+      "all_time",
+    ),
+    startDate: params.get("from") ?? "",
+    endDate: params.get("to") ?? "",
+    streamId: params.get("stream") ?? "",
+    zoneId: params.get("zone") ?? "",
+    galleryOrder: validOption(params.get("gallery"), ["newest", "oldest"], "newest"),
+    offset: Number.isFinite(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0,
+  };
+}
+
+function readJournalLabel(pathname = window.location.pathname): string | null {
+  const normalizedPath = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  const segments = normalizedPath.split("/").filter(Boolean);
+  if (segments.length !== 2 || segments[0] !== "bird-log") return null;
+  try {
+    return decodeURIComponent(segments[1]).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function journalPath(label: string | null, location: JournalLocation): string {
+  const params = new URLSearchParams();
+  if (!label) {
+    if (location.order !== "most_recent") params.set("order", location.order);
+    return `/bird-log${params.size ? `?${params.toString()}` : ""}`;
+  }
+  if (location.preset !== "all_time") params.set("range", location.preset);
+  if (location.startDate) params.set("from", location.startDate);
+  if (location.endDate) params.set("to", location.endDate);
+  if (location.streamId) params.set("stream", location.streamId);
+  if (location.zoneId) params.set("zone", location.zoneId);
+  if (location.galleryOrder !== "newest") params.set("gallery", location.galleryOrder);
+  if (location.offset > 0) params.set("offset", String(location.offset));
+  const path = `/bird-log/${encodeURIComponent(label)}`;
+  return `${path}${params.size ? `?${params.toString()}` : ""}`;
+}
+
+function writeJournalUrl(label: string | null, location: JournalLocation, replace = false): void {
+  const path = journalPath(label, location);
+  if (replace) {
+    window.history.replaceState({}, "", path);
+  } else if (`${window.location.pathname}${window.location.search}` !== path) {
+    window.history.pushState({}, "", path);
+  }
+}
+
+function navigatePath(path: string): void {
+  if (`${window.location.pathname}${window.location.search}` !== path) {
+    window.history.pushState({}, "", path);
+  }
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+function historyRequest(location: JournalLocation): WildlifeJournalHistoryRequest {
+  return {
+    preset: location.preset,
+    start_date: location.startDate || null,
+    end_date: location.endDate || null,
+    stream_id: location.streamId || null,
+    zone_id: location.zoneId || null,
+    gallery_order: location.galleryOrder,
+    page_size: 24,
+    offset: location.offset,
+  };
+}
+
+function durationLabel(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)} sec`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} min ${Math.round(seconds % 60)} sec`;
+}
+
+function hourLabel(hour: number): string {
+  const suffix = hour < 12 ? "AM" : "PM";
+  return `${hour % 12 || 12} ${suffix}`;
+}
+
+function thumbnailAlt(label: string, observedAt: string): string {
+  return `${label}, reviewed observation ${formatDateTime(observedAt)}`;
+}
+
+function JournalThumbnail({
+  label,
+  observedAt,
+  representative,
+}: {
   label: string;
-  suggestedLabel?: string | null;
-  title: string;
-  timestamp?: string | null;
-  sourceName: string;
-  streamName: string;
-  zoneName?: string | null;
-  zoneType?: string | null;
-  mediaAsset?: MediaAsset | null;
-  targetType: BirdLogTargetType;
-  targetId: string;
-}
-
-function targetKey(targetType: string, targetId: string): string {
-  return `${targetType}:${targetId}`;
-}
-
-function latestLabelsByTarget(labels: ReviewLabel[]): ReviewLabel[] {
-  const byTarget = new Map<string, ReviewLabel>();
-  for (const label of [...labels].sort((left, right) => compareDates(right.created_at, left.created_at))) {
-    const key = targetKey(label.target_type, label.target_id);
-    if (!byTarget.has(key)) {
-      byTarget.set(key, label);
-    }
+  observedAt: string;
+  representative?: WildlifeJournalRepresentative | WildlifeJournalObservation | null;
+}) {
+  const [failed, setFailed] = useState(false);
+  const evidence = representative?.primary_evidence;
+  useEffect(() => setFailed(false), [evidence?.media_asset_id]);
+  if (!evidence || failed) {
+    return <div className="journal-thumbnail-fallback">No saved thumbnail</div>;
   }
-  return [...byTarget.values()];
-}
-
-function compareDates(left?: string | null, right?: string | null): number {
-  const leftTime = left ? new Date(left).getTime() : 0;
-  const rightTime = right ? new Date(right).getTime() : 0;
-  return leftTime - rightTime;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-
-  const kib = bytes / 1024;
-  if (kib < 1024) {
-    return `${kib.toFixed(1)} KiB`;
-  }
-
-  return `${(kib / 1024).toFixed(1)} MiB`;
-}
-
-function seenTimestamp(
-  eventStartedAt?: string | null,
-  asset?: MediaAsset | null,
-  fallback?: string | null,
-): string | null {
-  return asset?.created_at ?? eventStartedAt ?? fallback ?? null;
-}
-
-function streamSourceName(
-  streamId: string,
-  streams: Stream[],
-  sources: CameraSource[],
-  asset?: MediaAsset | null,
-): string {
-  const mediaSource = asset?.source_id
-    ? sources.find((source) => source.id === asset.source_id)
-    : null;
-  if (mediaSource) {
-    return mediaSource.name;
-  }
-  const stream = streams.find((item) => item.id === streamId);
-  return sources.find((source) => source.id === stream?.source_id)?.name ?? "Unknown camera";
-}
-
-function reviewedEntryFromVisit(
-  label: ReviewLabel,
-  detail: VisitDetail,
-  sources: CameraSource[],
-): BirdLogEntry {
-  return {
-    id: `reviewed-${label.id}`,
-    status: "reviewed",
-    label: label.label,
-    suggestedLabel: detail.visit.species_guess ?? detail.visit.subject_label,
-    title: detail.event.title,
-    timestamp: seenTimestamp(detail.event.started_at, detail.media_asset, label.created_at),
-    sourceName: streamSourceName(detail.stream.id, [detail.stream], sources, detail.media_asset),
-    streamName: detail.stream.name,
-    zoneName: detail.primary_zone?.name ?? null,
-    zoneType: detail.primary_zone?.zone_type ?? null,
-    mediaAsset: detail.media_asset,
-    targetType: "visit",
-    targetId: detail.visit.id,
-  };
-}
-
-function reviewedEntryFromEvent(
-  label: ReviewLabel,
-  detail: EventDetail,
-  sources: CameraSource[],
-): BirdLogEntry {
-  return {
-    id: `reviewed-${label.id}`,
-    status: "reviewed",
-    label: label.label,
-    suggestedLabel: detail.event.detections[0]?.label ?? null,
-    title: detail.event.title,
-    timestamp: seenTimestamp(detail.event.started_at, detail.media_asset, label.created_at),
-    sourceName: streamSourceName(detail.stream.id, [detail.stream], sources, detail.media_asset),
-    streamName: detail.stream.name,
-    zoneName: detail.primary_zone?.name ?? null,
-    zoneType: detail.primary_zone?.zone_type ?? null,
-    mediaAsset: detail.media_asset,
-    targetType: "event",
-    targetId: detail.event.id,
-  };
-}
-
-function fallbackReviewedEntry(
-  label: ReviewLabel,
-  streams: Stream[],
-  sources: CameraSource[],
-): BirdLogEntry {
-  return {
-    id: `reviewed-${label.id}`,
-    status: "reviewed",
-    label: label.label,
-    title: "Reviewed outdoor activity",
-    timestamp: seenTimestamp(null, null, label.created_at),
-    sourceName: sources[0]?.name ?? "Unknown camera",
-    streamName: streams[0]?.name ?? "Unknown stream",
-    targetType: label.target_type === "visit" ? "visit" : "event",
-    targetId: label.target_id,
-  };
-}
-
-function dateBucket(timestamp?: string | null): string {
-  if (!timestamp) {
-    return "Unknown date";
-  }
-
-  const date = new Date(timestamp);
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-
-  if (date.toDateString() === today.toDateString()) {
-    return "Today";
-  }
-  if (date.toDateString() === yesterday.toDateString()) {
-    return "Yesterday";
-  }
-
-  return date.toLocaleDateString(undefined, {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function entrySearchText(entry: BirdLogEntry): string {
-  return [
-    entry.label,
-    entry.suggestedLabel ?? "",
-    entry.title,
-    entry.sourceName,
-    entry.streamName,
-    entry.zoneName ?? "",
-    entry.zoneType ?? "",
-    entry.mediaAsset?.original_filename ?? "",
-  ]
-    .join(" ")
-    .toLowerCase();
-}
-
-function BirdLogMediaBlock({ asset }: { asset: MediaAsset }) {
-  const [previewFailed, setPreviewFailed] = useState(false);
-  const fileUrl = apiClient.mediaFileUrl(asset.id);
-  const canPreviewImage =
-    !previewFailed && (asset.media_type === "image" || asset.content_type.startsWith("image/"));
-
-  useEffect(() => {
-    setPreviewFailed(false);
-  }, [asset.id]);
-
   return (
-    <div className="bird-log-media">
-      <div className="bird-log-thumb">
-        {canPreviewImage ? (
-          <img alt={asset.original_filename} onError={() => setPreviewFailed(true)} src={fileUrl} />
-        ) : (
-          <div className="bird-log-thumb-fallback">
-            <strong>{formatLabel(asset.media_type)}</strong>
-            <span>{asset.content_type}</span>
-          </div>
-        )}
-      </div>
-      <div className="bird-log-media-facts">
-        <span className="bird-log-media-filename" title={asset.original_filename}>
-          {asset.original_filename}
-        </span>
-        <span>{asset.content_type}</span>
-        <span>{formatBytes(asset.file_size_bytes)}</span>
-      </div>
+    <img
+      alt={thumbnailAlt(label, observedAt)}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      src={`${apiClient.baseUrl}${evidence.preview_url}`}
+    />
+  );
+}
+
+function Sparkline({ activity }: { activity: WildlifeJournalLabelSummary["recent_activity"] }) {
+  const maximum = Math.max(...activity.map((day) => day.count), 1);
+  return (
+    <div aria-label="Recent reviewed observations" className="journal-sparkline">
+      {activity.map((day) => (
+        <span
+          key={day.local_date}
+          style={{ height: `${Math.max(4, Math.round((day.count / maximum) * 30))}px` }}
+          title={`${day.local_date}: ${day.count} reviewed observations`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function BreakdownList({
+  items,
+  title,
+}: {
+  items: WildlifeJournalHistoryResponse["stream_breakdown"];
+  title: string;
+}) {
+  if (items.length === 0) return <span className="meta-text">No current {title.toLowerCase()} in this scope.</span>;
+  return (
+    <div className="journal-breakdown" aria-label={title}>
+      {items.map((item) => (
+        <div key={item.id}>
+          <span>{item.name}</span>
+          <strong>{item.count}</strong>
+        </div>
+      ))}
     </div>
   );
 }
 
 export function BirdLogPage({
-  sources,
   streams,
-  onOpenEvent,
   onOpenVisit,
   onOpenStreams,
-  onOpenImport,
   onOpenReview,
-  onOpenExports,
 }: BirdLogPageProps) {
-  const [reviewedEntries, setReviewedEntries] = useState<BirdLogEntry[]>([]);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<BirdLogStatusFilter>("all");
-  const [sourceFilter, setSourceFilter] = useState("all");
+  const [journalLabel, setJournalLabel] = useState<string | null>(readJournalLabel);
+  const [location, setLocation] = useState<JournalLocation>(readJournalLocation);
+  const [customStartDate, setCustomStartDate] = useState(location.startDate || localDateInputValue());
+  const [customEndDate, setCustomEndDate] = useState(location.endDate || localDateInputValue());
+  const [zones, setZones] = useState<Zone[]>([]);
+  const [overview, setOverview] = useState<WildlifeJournalOverviewResponse | null>(null);
+  const [history, setHistory] = useState<WildlifeJournalHistoryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let isMounted = true;
+    let active = true;
+    void apiClient
+      .getZones()
+      .then((next) => {
+        if (active) setZones(next);
+      })
+      .catch(() => {
+        if (active) setZones([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
-    async function loadReviewedEntries() {
-      setIsLoading(true);
+  useEffect(() => {
+    function handlePopState() {
+      const next = readJournalLocation();
+      const nextLabel = readJournalLabel();
+      setJournalLabel(nextLabel);
+      setLocation(next);
+      setCustomStartDate(next.startDate || localDateInputValue());
+      setCustomEndDate(next.endDate || localDateInputValue());
       setError(null);
-      try {
-        const labels = await apiClient.getReviewLabels();
-        const latestLabels = latestLabelsByTarget(labels).filter(
-          (label) => label.target_type === "visit" || label.target_type === "event",
-        );
-        const entries = await Promise.all(
-          latestLabels.map(async (label) => {
-            try {
-              if (label.target_type === "visit") {
-                return reviewedEntryFromVisit(
-                  label,
-                  await apiClient.getVisitDetail(label.target_id),
-                  sources,
-                );
-              }
-              return reviewedEntryFromEvent(
-                label,
-                await apiClient.getEventDetail(label.target_id),
-                sources,
-              );
-            } catch {
-              return fallbackReviewedEntry(label, streams, sources);
-            }
-          }),
-        );
-
-        if (isMounted) {
-          setReviewedEntries(entries);
-        }
-      } catch (caught) {
-        if (isMounted) {
-          setError(caught instanceof Error ? caught.message : "Could not load Bird Log.");
-          setReviewedEntries([]);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+      if (nextLabel) {
+        setHistory(null);
+      } else {
+        setOverview(null);
       }
     }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
-    void loadReviewedEntries();
-
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    setError(null);
+    if (!journalLabel) {
+      void apiClient
+        .getWildlifeJournal(location.order)
+        .then((next) => {
+          if (active) setOverview(next);
+        })
+        .catch(() => {
+          if (active) setError("Could not load Wildlife Journal. Your reviewed activity remains in the Activity Library.");
+        })
+        .finally(() => {
+          if (active) setIsLoading(false);
+        });
+    } else {
+      void apiClient
+        .getWildlifeJournalHistory(journalLabel, historyRequest(location))
+        .then((next) => {
+          if (active) setHistory(next);
+        })
+        .catch((caught) => {
+          if (active) setError(caught instanceof Error ? caught.message : "Could not load this Journal history.");
+        })
+        .finally(() => {
+          if (active) setIsLoading(false);
+        });
+    }
     return () => {
-      isMounted = false;
+      active = false;
     };
-  }, [sources, streams]);
+  }, [journalLabel, location]);
 
-  const entries = useMemo(() => {
-    return [...reviewedEntries].sort((left, right) =>
-      compareDates(right.timestamp, left.timestamp),
-    );
-  }, [reviewedEntries]);
-
-  const sourceOptions = useMemo(
-    () =>
-      [...new Set(entries.map((entry) => entry.sourceName))]
-        .filter(Boolean)
-        .sort((left, right) => left.localeCompare(right)),
-    [entries],
+  const visibleZones = useMemo(
+    () => zones.filter((zone) => !location.streamId || zone.stream_id === location.streamId),
+    [location.streamId, zones],
   );
 
-  const filteredEntries = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return entries.filter((entry) => {
-      const matchesStatus = statusFilter === "all" || entry.status === statusFilter;
-      const matchesSource = sourceFilter === "all" || entry.sourceName === sourceFilter;
-      const matchesSearch = !query || entrySearchText(entry).includes(query);
-      return matchesStatus && matchesSource && matchesSearch;
-    });
-  }, [entries, search, sourceFilter, statusFilter]);
+  const commitLocation = (next: JournalLocation) => {
+    setLocation(next);
+    writeJournalUrl(journalLabel, next);
+  };
 
-  const groupedEntries = useMemo(() => {
-    const groups = new Map<string, BirdLogEntry[]>();
-    for (const entry of filteredEntries) {
-      const bucket = dateBucket(entry.timestamp);
-      groups.set(bucket, [...(groups.get(bucket) ?? []), entry]);
+  const navigateJournalLabel = (nextLabel: string | null) => {
+    writeJournalUrl(nextLabel, location);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
+  const openActivityLibrary = () => {
+    if (!history) return;
+    const drilldown = history.activity_library_drilldown;
+    navigatePath(activityLibraryPath({
+      review_filter: drilldown.review_filter,
+      confirmed_label: drilldown.confirmed_label,
+      start_at: drilldown.start_date ?? null,
+      end_at: drilldown.end_date ?? null,
+      stream_id: drilldown.stream_id ?? null,
+      zone_id: drilldown.zone_id ?? null,
+    }));
+  };
+
+  const loadMore = async () => {
+    if (!journalLabel || !history?.gallery.next_offset || isLoadingMore) return;
+    setIsLoadingMore(true);
+    try {
+      const next = await apiClient.getWildlifeJournalHistory(journalLabel, {
+        ...historyRequest(location),
+        offset: history.gallery.next_offset,
+      });
+      setHistory((current) => {
+        if (!current) return next;
+        const existing = new Set(current.gallery.observations.map((item) => item.visit_id));
+        return {
+          ...next,
+          gallery: {
+            ...next.gallery,
+            observations: [
+              ...current.gallery.observations,
+              ...next.gallery.observations.filter((item) => !existing.has(item.visit_id)),
+            ],
+          },
+        };
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not load more reviewed observations.");
+    } finally {
+      setIsLoadingMore(false);
     }
-    return [...groups.entries()];
-  }, [filteredEntries]);
+  };
 
-  const reviewedCount = entries.filter((entry) => entry.status === "reviewed").length;
-  const uniqueLabels = new Set(entries.map((entry) => entry.label.trim()).filter(Boolean));
-  const latestReviewed = entries.find((entry) => entry.status === "reviewed") ?? null;
-
-  return (
-    <div className="page-stack">
-      <PageHeader
-        eyebrow="Reviewed activity history"
-        title="Bird Log"
-        description="A local history of reviewed corrections. Candidates and suggestions appear here only after correction."
-        actions={
-          <>
-            <button className="secondary-action" onClick={onOpenReview}>
-              Review Queue
-            </button>
-            <button className="secondary-action" onClick={onOpenExports}>
-              Export reviewed data
-            </button>
-          </>
-        }
-      />
-
-      {error ? <div className="error-panel">{error}</div> : null}
-
-      <section className="bird-log-summary-grid">
-        <div className="bird-log-summary-card">
-          <span>Reviewed corrections</span>
-          <strong>{reviewedCount}</strong>
-        </div>
-        <div className="bird-log-summary-card">
-          <span>Unique labels</span>
-          <strong>{uniqueLabels.size}</strong>
-        </div>
-        <div className="bird-log-summary-card">
-          <span>Latest reviewed</span>
-          <strong>{latestReviewed ? formatLabel(latestReviewed.label) : "None yet"}</strong>
-          {latestReviewed?.timestamp ? <small>{formatDateTime(latestReviewed.timestamp)}</small> : null}
-        </div>
-      </section>
-
-      <section className="panel bird-log-filter-panel">
-        <label>
-          Search
-          <input
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="species, activity, camera, zone"
-            value={search}
-          />
-        </label>
-        <label>
-          Status
-          <select
-            onChange={(event) => setStatusFilter(event.target.value as BirdLogStatusFilter)}
-            value={statusFilter}
-          >
-            <option value="all">All</option>
-            <option value="reviewed">Reviewed</option>
-          </select>
-        </label>
-        <label>
-          Camera / Source
-          <select onChange={(event) => setSourceFilter(event.target.value)} value={sourceFilter}>
-            <option value="all">All cameras</option>
-            {sourceOptions.map((sourceName) => (
-              <option key={sourceName} value={sourceName}>
-                {sourceName}
-              </option>
-            ))}
-          </select>
-        </label>
-      </section>
-
-      {isLoading ? <div className="panel">Loading Bird Log...</div> : null}
-
-      {!isLoading && entries.length === 0 ? (
-        <EmptyState
-          title="No reviewed activity logged yet"
-          description="Live candidates, captures, and suggestions stay out of Bird Log until you correct a Review Queue item."
-          action={
+  if (!journalLabel) {
+    return (
+      <div className="page-stack">
+        <PageHeader
+          eyebrow="Reviewed wildlife history"
+          title="Wildlife Journal"
+          description="Confirmed wildlife from current reviewed corrections. Suggestions and unresolved activity stay in review context."
+          actions={
             <>
-              <button className="primary-action" onClick={onOpenStreams}>
-                Cameras / Streams
-              </button>
-              <button className="secondary-action" onClick={onOpenImport}>
-                Import image
-              </button>
+              <button className="secondary-action" onClick={() => navigatePath("/analytics")} type="button">Wildlife Insights</button>
+              <button className="secondary-action" onClick={onOpenReview} type="button">Review Queue</button>
             </>
           }
         />
-      ) : null}
+        <section className="panel journal-controls">
+          <label>
+            Order labels by
+            <select
+              onChange={(event) => commitLocation({ ...location, order: event.target.value as WildlifeJournalOrder })}
+              value={location.order}
+            >
+              {overviewOrders.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+        </section>
+        {error ? <div className="error-panel">{error}</div> : null}
+        {isLoading && !overview ? <div className="panel">Loading Wildlife Journal…</div> : null}
+        {overview?.labels.length === 0 && !isLoading ? (
+          <EmptyState
+            title={streams.length === 0 ? "No cameras to journal yet" : "No confirmed wildlife observations yet"}
+            description={streams.length === 0 ? "Add a camera or local media Source, then review outdoor activity." : "Review a Visit to create a confirmed local wildlife observation. Suggestions are not Journal entries."}
+            action={<button className="secondary-action" onClick={streams.length === 0 ? onOpenStreams : onOpenReview} type="button">{streams.length === 0 ? "Add Camera" : "Open Review Queue"}</button>}
+          />
+        ) : null}
+        {overview?.labels.length ? (
+          <section className="journal-label-grid" aria-label="Confirmed wildlife labels">
+            {overview.labels.map((item) => (
+              <article className="journal-label-card" key={item.label}>
+                <button className="journal-label-image" onClick={() => navigateJournalLabel(item.label)} type="button">
+                  <JournalThumbnail label={item.display_name} observedAt={item.latest_observed_at} representative={item.representative} />
+                </button>
+                <div className="journal-label-card-body">
+                  <div className="section-heading">
+                    <div><h2>{item.display_name}</h2><span className="meta-text">{item.observation_count} reviewed observation{item.observation_count === 1 ? "" : "s"}</span></div>
+                    <Sparkline activity={item.recent_activity} />
+                  </div>
+                  <div className="journal-label-facts">
+                    <span>First: <strong>{formatDateTime(item.first_observed_at)}</strong></span>
+                    <span>Latest: <strong>{formatDateTime(item.latest_observed_at)}</strong></span>
+                    <span>{item.stream_count} Stream{item.stream_count === 1 ? "" : "s"} · {item.zone_count} Zone{item.zone_count === 1 ? "" : "s"}</span>
+                  </div>
+                  <button className="secondary-action" onClick={() => navigateJournalLabel(item.label)} type="button">Open history</button>
+                </div>
+              </article>
+            ))}
+          </section>
+        ) : null}
+      </div>
+    );
+  }
 
-      {!isLoading && entries.length > 0 && filteredEntries.length === 0 ? (
-        <EmptyState
-          title="No matching activity"
-          description="Try a different label, status, or camera filter."
-        />
-      ) : null}
-
-      {!isLoading && filteredEntries.length > 0 ? (
-        <div className="bird-log-group-list">
-          {groupedEntries.map(([group, groupEntries]) => (
-            <section className="bird-log-group" key={group}>
-              <div className="section-heading">
-                <h2>{group}</h2>
-                <StatusPill label={`${groupEntries.length} seen`} tone="quiet" />
-              </div>
-              <div className="bird-log-entry-list">
-                {groupEntries.map((entry) => {
-                  const isFalsePositive = entry.label === "false_positive";
-
-                  return (
-                    <article
-                      className={`bird-log-entry${isFalsePositive ? " is-false-positive" : ""}`}
-                      key={entry.id}
-                    >
-                      {entry.mediaAsset ? (
-                        <BirdLogMediaBlock asset={entry.mediaAsset} />
-                      ) : (
-                        <div className="bird-log-image-placeholder">
-                          <strong>Best frame</strong>
-                          <span>No best frame attached</span>
-                        </div>
-                      )}
-                      <div className="bird-log-entry-body">
-                        <div className="bird-log-entry-top">
-                          <div>
-                            <span className="meta-text">
-                              {isFalsePositive ? "Reviewed false positive" : "Reviewed result"}
-                            </span>
-                            <h3>{formatLabel(entry.label)}</h3>
-                            <p>{entry.title}</p>
-                          </div>
-                          <StatusPill label="Reviewed" tone="good" />
-                        </div>
-                        <div className="bird-log-result-row">
-                          <div>
-                            <span>Corrected label</span>
-                            <strong>{formatLabel(entry.label)}</strong>
-                          </div>
-                          {entry.suggestedLabel ? (
-                            <div>
-                              <span>Suggested</span>
-                              <strong>{formatLabel(entry.suggestedLabel)}</strong>
-                            </div>
-                          ) : null}
-                        </div>
-                        <div className="bird-log-meta-grid">
-                          <div>
-                            <span>Seen</span>
-                            <strong>
-                              {entry.timestamp ? formatDateTime(entry.timestamp) : "Unknown time"}
-                            </strong>
-                          </div>
-                          <div>
-                            <span>Source</span>
-                            <strong>{entry.sourceName}</strong>
-                          </div>
-                          <div>
-                            <span>Stream</span>
-                            <strong>{entry.streamName}</strong>
-                          </div>
-                          <div>
-                            <span>Zone</span>
-                            <strong>
-                              {entry.zoneName
-                                ? `${entry.zoneName}${
-                                    entry.zoneType ? ` (${formatLabel(entry.zoneType)})` : ""
-                                  }`
-                                : "No zone"}
-                            </strong>
-                          </div>
-                        </div>
-                        <div className="bird-log-actions">
-                          <button
-                            className="secondary-action"
-                            onClick={() =>
-                              entry.targetType === "visit"
-                                ? onOpenVisit(entry.targetId)
-                                : onOpenEvent(entry.targetId)
-                            }
-                            type="button"
-                          >
-                            {entry.targetType === "visit" ? "Edit identification" : "View reviewed result"}
-                          </button>
-                          {entry.mediaAsset ? (
-                            <a
-                              className="inline-link"
-                              href={apiClient.mediaFileUrl(entry.mediaAsset.id)}
-                              rel="noreferrer"
-                              target="_blank"
-                            >
-                              Open best frame
-                            </a>
-                          ) : null}
-                          <button className="secondary-action" onClick={onOpenExports} type="button">
-                            Export reviewed data
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
-      ) : null}
-
-      <section className="notice-panel compact-notice">
-        <strong>Truth boundary</strong>
-        <span>
-          Bird Log shows reviewed corrections only. Live monitor candidates remain review work until
-          a correction creates ReviewLabel truth.
-        </span>
+  const activeHistory = history;
+  return (
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="Reviewed wildlife history"
+        title={activeHistory ? activeHistory.display_name : "Wildlife Journal"}
+        description="One bounded history of current reviewed observations. Open a Visit for full evidence and correction audit context."
+        actions={
+          <>
+            <button className="secondary-action" onClick={() => navigateJournalLabel(null)} type="button">All Journal labels</button>
+            <button className="secondary-action" onClick={openActivityLibrary} type="button">Open Activity Library</button>
+          </>
+        }
+      />
+      <section className="panel journal-filter-panel">
+        <label>
+          Date range
+          <select
+            onChange={(event) => {
+              const preset = event.target.value as WildlifeJournalRangePreset;
+              commitLocation({
+                ...location,
+                preset,
+                startDate: preset === "custom" ? customStartDate : "",
+                endDate: preset === "custom" ? customEndDate : "",
+                offset: 0,
+              });
+            }}
+            value={location.preset}
+          >
+            {rangeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        {location.preset === "custom" ? (
+          <>
+            <label>From <input max={customEndDate} onChange={(event) => setCustomStartDate(event.target.value)} type="date" value={customStartDate} /></label>
+            <label>To <input min={customStartDate} onChange={(event) => setCustomEndDate(event.target.value)} type="date" value={customEndDate} /></label>
+            <button
+              className="primary-action"
+              disabled={!customStartDate || !customEndDate || customEndDate < customStartDate}
+              onClick={() => commitLocation({ ...location, startDate: customStartDate, endDate: customEndDate, offset: 0 })}
+              type="button"
+            >Apply</button>
+          </>
+        ) : null}
+        <label>
+          Stream
+          <select onChange={(event) => commitLocation({ ...location, streamId: event.target.value, zoneId: "", offset: 0 })} value={location.streamId}>
+            <option value="">All Streams</option>
+            {streams.map((stream) => <option key={stream.id} value={stream.id}>{stream.name}</option>)}
+          </select>
+        </label>
+        <label>
+          Zone
+          <select onChange={(event) => commitLocation({ ...location, zoneId: event.target.value, offset: 0 })} value={location.zoneId}>
+            <option value="">All Zones</option>
+            {visibleZones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}
+          </select>
+        </label>
+        <label>
+          Gallery order
+          <select onChange={(event) => commitLocation({ ...location, galleryOrder: event.target.value as WildlifeJournalGalleryOrder, offset: 0 })} value={location.galleryOrder}>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+        </label>
       </section>
+      {error ? <div className="error-panel">{error}</div> : null}
+      {isLoading && !activeHistory ? <div className="panel">Loading reviewed Journal history…</div> : null}
+      {activeHistory ? (
+        <>
+          <div className="journal-scope-note">{activeHistory.scope.start_date ?? "All recorded dates"}{activeHistory.scope.end_date ? ` to ${activeHistory.scope.end_date}` : ""} · local time ({activeHistory.scope.timezone_name})</div>
+          {activeHistory.observation_count === 0 ? (
+            <EmptyState
+              title="No active confirmed observations in this scope"
+              description="This label may have been revised, reopened, superseded, or filtered out. Review history remains available on individual Visits."
+              action={<button className="secondary-action" onClick={() => commitLocation({ ...location, preset: "all_time", startDate: "", endDate: "", streamId: "", zoneId: "", offset: 0 })} type="button">Clear Journal filters</button>}
+            />
+          ) : (
+            <>
+              <section className="metric-grid journal-metrics">
+                <MetricCard label="Observations" value={activeHistory.observation_count} detail="current reviewed truth" />
+                <MetricCard label="Busiest Stream" value={activeHistory.busiest_stream?.name ?? "—"} detail={activeHistory.busiest_stream ? `${activeHistory.busiest_stream.count} observations` : "No activity"} />
+                <MetricCard label="Busiest Zone" value={activeHistory.busiest_zone?.name ?? "—"} detail={activeHistory.busiest_zone ? `${activeHistory.busiest_zone.count} observations` : "No Zone context"} />
+                <MetricCard label="Peak hour" value={activeHistory.peak_activity_hour == null ? "—" : hourLabel(activeHistory.peak_activity_hour)} detail="local time" />
+              </section>
+              {activeHistory.is_new_label_in_range ? <div className="notice-panel"><strong>New Journal label in this range</strong><span>This is a local MockingBird record milestone, not an ecological claim.</span></div> : null}
+              <section className="journal-history-grid">
+                <div className="panel"><h2>First recorded</h2>{activeHistory.first_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.first_observation!.visit_id)} type="button">{formatDateTime(activeHistory.first_observation.observed_at)} · {activeHistory.first_observation.stream_name}</button> : null}</div>
+                <div className="panel"><h2>Most recent</h2>{activeHistory.latest_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.latest_observation!.visit_id)} type="button">{formatDateTime(activeHistory.latest_observation.observed_at)} · {activeHistory.latest_observation.stream_name}</button> : null}</div>
+              </section>
+              <section className="journal-history-grid">
+                <div className="panel"><h2>Stream activity</h2><BreakdownList items={activeHistory.stream_breakdown} title="Streams" /></div>
+                <div className="panel"><h2>Zone activity</h2><BreakdownList items={activeHistory.zone_breakdown} title="Zones" /></div>
+              </section>
+              <section className="panel">
+                <div className="section-heading"><div><h2>Activity by hour</h2><span className="meta-text">Confirmed wildlife only, local time.</span></div></div>
+                <div className="journal-hour-grid" aria-label="Confirmed observations by local hour">{activeHistory.activity_by_hour.map((bucket) => <span key={bucket.hour}>{hourLabel(bucket.hour)} <strong>{bucket.count}</strong></span>)}</div>
+              </section>
+              <section className="journal-gallery" aria-label="Reviewed observation gallery">
+                <div className="section-heading"><div><h2>Reviewed observation gallery</h2><span className="meta-text">{activeHistory.gallery.order === "newest" ? "Newest first" : "Oldest first"} · one safe primary preview per Visit.</span></div></div>
+                {activeHistory.gallery.observations.map((observation) => (
+                  <article className="journal-gallery-card" key={observation.visit_id}>
+                    <button className="journal-gallery-image" onClick={() => onOpenVisit(observation.visit_id)} type="button"><JournalThumbnail label={observation.display_name} observedAt={observation.observed_at} representative={observation} /></button>
+                    <div className="journal-gallery-body">
+                      <div className="section-heading"><div><h3>{formatDateTime(observation.observed_at)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><StatusPill label="Reviewed" tone="good" /></div>
+                      <div className="journal-gallery-facts"><span>Duration <strong>{durationLabel(observation.duration_seconds)}</strong></span><span>Evidence frames <strong>{observation.evidence_frame_count}</strong></span><span>Correction <strong>{observation.display_name}</strong></span></div>
+                      <div className="journal-gallery-milestones">{observation.has_curation_history ? <StatusPill label="Curated" tone="quiet" /> : null}{observation.has_review_revision ? <StatusPill label="Revised" tone="quiet" /> : null}{observation.is_first_on_stream ? <StatusPill label="First on Stream" tone="quiet" /> : null}{observation.is_first_in_zone ? <StatusPill label="First in Zone" tone="quiet" /> : null}</div>
+                      <button className="secondary-action" onClick={() => onOpenVisit(observation.visit_id)} type="button">Open Visit Detail</button>
+                    </div>
+                  </article>
+                ))}
+                {activeHistory.gallery.has_more ? <button className="secondary-action" disabled={isLoadingMore} onClick={() => void loadMore()} type="button">{isLoadingMore ? "Loading…" : "Load more observations"}</button> : null}
+              </section>
+            </>
+          )}
+        </>
+      ) : null}
     </div>
   );
 }

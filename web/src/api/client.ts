@@ -164,8 +164,12 @@ import type {
   Visit,
   VisitDetail,
   WorkerStatusResponse,
-  WildlifeInsightsRequest,
-  WildlifeInsightsSummary,
+    WildlifeInsightsRequest,
+    WildlifeInsightsSummary,
+    WildlifeJournalHistoryRequest,
+    WildlifeJournalHistoryResponse,
+    WildlifeJournalOrder,
+    WildlifeJournalOverviewResponse,
   WindowsCameraControlsResponse,
   WindowsCameraDiscoveryResponse,
   Zone,
@@ -861,6 +865,25 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  getWildlifeJournal: (order: WildlifeJournalOrder = "most_recent") =>
+    request<WildlifeJournalOverviewResponse>(
+      `/api/bird-log/journal?${new URLSearchParams({ order }).toString()}`,
+    ),
+  getWildlifeJournalHistory: (label: string, params: WildlifeJournalHistoryRequest = {}) => {
+    const searchParams = new URLSearchParams();
+    if (params.preset) searchParams.set("preset", params.preset);
+    if (params.start_date) searchParams.set("start_date", params.start_date);
+    if (params.end_date) searchParams.set("end_date", params.end_date);
+    if (params.stream_id) searchParams.set("stream_id", params.stream_id);
+    if (params.zone_id) searchParams.set("zone_id", params.zone_id);
+    if (params.gallery_order) searchParams.set("gallery_order", params.gallery_order);
+    if (params.page_size) searchParams.set("page_size", String(params.page_size));
+    if (params.offset) searchParams.set("offset", String(params.offset));
+    const query = searchParams.toString();
+    return request<WildlifeJournalHistoryResponse>(
+      `/api/bird-log/journal/${encodeURIComponent(label)}${query ? `?${query}` : ""}`,
+    );
+  },
   getLocalDataStatus: () => request<LocalDataStatus>("/api/settings/local-data"),
   getStorageRetentionSummary: () =>
     request<StorageSummary>("/api/settings/storage-retention/summary"),

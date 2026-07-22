@@ -46,6 +46,14 @@ function filtersForDrilldown(drilldown: WildlifeInsightsDrilldown): ActivityLibr
   };
 }
 
+function openJournalHistory(label: string): void {
+  const path = `/bird-log/${encodeURIComponent(label)}`;
+  if (`${window.location.pathname}${window.location.search}` !== path) {
+    window.history.pushState({}, "", path);
+  }
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 function comparisonCopy(summary: WildlifeInsightsSummary): string {
   const change = summary.comparison.reviewed_wildlife_observation_change;
   const period = summary.period.start_date === summary.period.end_date ? "day" : "period";
@@ -126,6 +134,9 @@ function BreakdownList({
           <div className="wildlife-insights-row-actions">
             {onOpenStream && item.drilldown.stream_id ? (
               <button className="text-action" onClick={() => onOpenStream(item.drilldown.stream_id!)} type="button">Stream</button>
+            ) : null}
+            {item.drilldown.confirmed_label ? (
+              <button className="text-action" onClick={() => openJournalHistory(item.drilldown.confirmed_label!)} type="button">Journal</button>
             ) : null}
             {item.representative ? (
               <button className="text-action" onClick={() => onOpenVisit(item.representative!.visit_id)} type="button">Visit</button>

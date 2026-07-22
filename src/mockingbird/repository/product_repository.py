@@ -323,6 +323,22 @@ from mockingbird.api.schemas import (
     WildlifeInsightsRequest,
     WildlifeInsightsReviewContext,
     WildlifeInsightsSummary,
+    WildlifeJournalBreakdown,
+    WildlifeJournalDrilldown,
+    WildlifeJournalGallery,
+    WildlifeJournalGalleryOrder,
+    WildlifeJournalHistoryRequest,
+    WildlifeJournalHistoryResponse,
+    WildlifeJournalHourBucket,
+    WildlifeJournalLabelSummary,
+    WildlifeJournalObservation,
+    WildlifeJournalOrder,
+    WildlifeJournalOverviewRequest,
+    WildlifeJournalOverviewResponse,
+    WildlifeJournalRangePreset,
+    WildlifeJournalRecentDay,
+    WildlifeJournalRepresentative,
+    WildlifeJournalScope,
     Zone,
     ZoneActivitySensitivity,
     ZoneCreate,
@@ -13119,10 +13135,10 @@ class ProductRepository:
         self,
         session: Session,
         *,
-        start_at: datetime,
-        end_at: datetime,
+        start_at: datetime | None,
+        end_at: datetime | None,
     ) -> list[dict[str, Any]]:
-        rows = session.execute(
+        query = (
             select(VisitModel, EventModel, StreamModel, CameraSourceModel)
             .join(EventModel, VisitModel.event_id == EventModel.id)
             .join(StreamModel, EventModel.stream_id == StreamModel.id)
@@ -13130,13 +13146,17 @@ class ProductRepository:
             .where(
                 VisitModel.is_superseded.is_(False),
                 CameraSourceModel.status != SourceStatus.archived.value,
-                EventModel.started_at >= start_at,
-                EventModel.started_at < end_at,
             )
-            .order_by(EventModel.started_at, EventModel.id, VisitModel.id)
+        )
+        if start_at is not None:
+            query = query.where(EventModel.started_at >= start_at)
+        if end_at is not None:
+            query = query.where(EventModel.started_at < end_at)
+        rows = session.execute(
+            query.order_by(EventModel.started_at, EventModel.id, VisitModel.id)
         ).all()
         records: list[dict[str, Any]] = []
-        for visit, event, stream, _source in rows:
+        for visit, event, stream, source in rows:
             summary = self._stream_visit_summary_from_models(session, visit, event)
             label = (
                 self._normalize_label_from_session(session, summary.reviewed_label)
@@ -13147,6 +13167,7 @@ class ProductRepository:
                 {
                     "summary": summary,
                     "stream_name": stream.name,
+                    "source_name": source.name,
                     "observed_at": _as_utc(event.started_at),
                     "label": label,
                     "display_name": self._display_name_for_label(session, label)
@@ -13232,6 +13253,377 @@ class ProductRepository:
             display_name=record["display_name"],
             observed_at=record["observed_at"],
             primary_evidence=summary.primary_evidence,
+        )
+
+    def wildlife_journal_overview(
+        self,
+        payload: WildlifeJournalOverviewRequest,
+        *,
+        now: datetime | None = None,
+    ) -> WildlifeJournalOverviewResponse:
+        """Return bounded label summaries from the same active reviewed truth as Insights."""
+
+        local_now = (now or datetime.now().astimezone()).astimezone()
+        local_timezone = local_now.tzinfo
+        recent_end = local_now.date()
+        recent_start = recent_end - timedelta(days=13)
+
+        with self.session_factory() as session:
+            records = self._wildlife_journal_confirmed_records(session)
+            grouped: dict[str, list[dict[str, Any]]] = {}
+            for record in records:
+                grouped.setdefault(record["label"], []).append(record)
+
+            summaries: list[WildlifeJournalLabelSummary] = []
+            for label, label_records in grouped.items():
+                ordered = self._wildlife_journal_ordered_records(label_records)
+                daily_counts = Counter(
+                    record["observed_at"].astimezone(local_timezone).date()
+                    for record in ordered
+                    if recent_start
+                    <= record["observed_at"].astimezone(local_timezone).date()
+                    <= recent_end
+                )
+                summaries.append(
+                    WildlifeJournalLabelSummary(
+                        label=label,
+                        display_name=ordered[0]["display_name"],
+                        observation_count=len(ordered),
+                        first_observed_at=ordered[0]["observed_at"],
+                        latest_observed_at=ordered[-1]["observed_at"],
+                        stream_count=len({record["summary"].stream_id for record in ordered}),
+                        zone_count=len(
+                            {
+                                record["summary"].zone_id
+                                for record in ordered
+                                if record["summary"].zone_id is not None
+                            }
+                        ),
+                        recent_activity=[
+                            WildlifeJournalRecentDay(
+                                local_date=recent_start + timedelta(days=offset),
+                                count=daily_counts[recent_start + timedelta(days=offset)],
+                            )
+                            for offset in range(14)
+                        ],
+                        representative=self._wildlife_journal_representative(ordered),
+                    )
+                )
+
+            if payload.order == WildlifeJournalOrder.most_observed:
+                summaries.sort(
+                    key=lambda item: (
+                        -item.observation_count,
+                        -item.latest_observed_at.timestamp(),
+                        item.display_name.lower(),
+                        item.label,
+                    )
+                )
+            elif payload.order == WildlifeJournalOrder.alphabetical:
+                summaries.sort(key=lambda item: (item.display_name.lower(), item.label))
+            elif payload.order == WildlifeJournalOrder.first_observed:
+                summaries.sort(
+                    key=lambda item: (
+                        item.first_observed_at,
+                        item.display_name.lower(),
+                        item.label,
+                    )
+                )
+            else:
+                summaries.sort(
+                    key=lambda item: (
+                        item.latest_observed_at,
+                        item.label,
+                    ),
+                    reverse=True,
+                )
+            return WildlifeJournalOverviewResponse(order=payload.order, labels=summaries[:100])
+
+    def wildlife_journal_history(
+        self,
+        label: str,
+        payload: WildlifeJournalHistoryRequest,
+        *,
+        now: datetime | None = None,
+    ) -> WildlifeJournalHistoryResponse | None:
+        """Read one validated wildlife label and a bounded page of its current history."""
+
+        local_now = (now or datetime.now().astimezone()).astimezone()
+        local_timezone = local_now.tzinfo
+        start_date, end_date = self._wildlife_journal_date_range(payload, local_now)
+        start_at = (
+            _as_utc(datetime.combine(start_date, datetime.min.time(), local_timezone))
+            if start_date is not None
+            else None
+        )
+        end_at = (
+            _as_utc(
+                datetime.combine(
+                    end_date + timedelta(days=1),
+                    datetime.min.time(),
+                    local_timezone,
+                )
+            )
+            if end_date is not None
+            else None
+        )
+
+        with self.session_factory() as session:
+            taxonomy = self._taxonomy_label_model_for_input(session, label)
+            if taxonomy is None or taxonomy.category != LabelCategory.bird.value:
+                return None
+            canonical_label = taxonomy.label
+            all_label_records = [
+                record
+                for record in self._wildlife_journal_confirmed_records(session)
+                if record["label"] == canonical_label
+            ]
+            records = [
+                record
+                for record in self._wildlife_journal_confirmed_records(
+                    session,
+                    start_at=start_at,
+                    end_at=end_at,
+                )
+                if record["label"] == canonical_label
+                and (payload.stream_id is None or record["summary"].stream_id == payload.stream_id)
+                and (payload.zone_id is None or record["summary"].zone_id == payload.zone_id)
+            ]
+            ordered = self._wildlife_journal_ordered_records(records)
+            stream_breakdown = self._wildlife_journal_breakdown(ordered, grouping="stream")[:50]
+            zone_breakdown = self._wildlife_journal_breakdown(ordered, grouping="zone")[:50]
+            hour_counts = Counter(
+                record["observed_at"].astimezone(local_timezone).hour for record in ordered
+            )
+            gallery_records = list(reversed(ordered))
+            if payload.gallery_order == WildlifeJournalGalleryOrder.oldest:
+                gallery_records = ordered
+            page_records = gallery_records[payload.offset : payload.offset + payload.page_size + 1]
+            has_more = len(page_records) > payload.page_size
+            page_records = page_records[: payload.page_size]
+            curation_visit_ids = set(
+                session.scalars(
+                    select(VisitCurationHistoryModel.visit_id).where(
+                        VisitCurationHistoryModel.visit_id.in_(
+                            {record["summary"].id for record in page_records}
+                        )
+                    )
+                ).all()
+            ) if page_records else set()
+            revision_counts = Counter(
+                session.execute(
+                    select(ReviewLabelModel.target_id).where(
+                        ReviewLabelModel.target_type == "visit",
+                        ReviewLabelModel.target_id.in_(
+                            {record["summary"].id for record in page_records}
+                        ),
+                    )
+                ).scalars().all()
+            ) if page_records else Counter()
+            all_ordered = self._wildlife_journal_ordered_records(all_label_records)
+            first_on_stream: dict[str, str] = {}
+            first_in_zone: dict[str, str] = {}
+            for record in all_ordered:
+                summary = record["summary"]
+                first_on_stream.setdefault(summary.stream_id, summary.id)
+                if summary.zone_id is not None:
+                    first_in_zone.setdefault(summary.zone_id, summary.id)
+            gallery = WildlifeJournalGallery(
+                order=payload.gallery_order,
+                observations=[
+                    WildlifeJournalObservation(
+                        visit_id=record["summary"].id,
+                        event_id=record["summary"].event_id,
+                        stream_id=record["summary"].stream_id,
+                        stream_name=record["stream_name"],
+                        source_name=record["source_name"],
+                        zone_id=record["summary"].zone_id,
+                        zone_name=record["summary"].zone_name,
+                        observed_at=record["observed_at"],
+                        activity_started_at=record["summary"].activity_started_at,
+                        activity_ended_at=record["summary"].activity_ended_at,
+                        duration_seconds=record["summary"].duration_seconds,
+                        evidence_frame_count=record["summary"].evidence_frame_count,
+                        reviewed_label=canonical_label,
+                        display_name=record["display_name"],
+                        primary_evidence=record["summary"].primary_evidence,
+                        has_curation_history=record["summary"].id in curation_visit_ids,
+                        has_review_revision=revision_counts[record["summary"].id] > 1,
+                        is_first_on_stream=(
+                            first_on_stream.get(record["summary"].stream_id)
+                            == record["summary"].id
+                        ),
+                        is_first_in_zone=(
+                            record["summary"].zone_id is not None
+                            and first_in_zone.get(record["summary"].zone_id)
+                            == record["summary"].id
+                        ),
+                    )
+                    for record in page_records
+                ],
+                has_more=has_more,
+                next_offset=(payload.offset + payload.page_size) if has_more else None,
+            )
+            display_name = _taxonomy_label_from_model(taxonomy).display_name
+            first_record = ordered[0] if ordered else None
+            latest_record = ordered[-1] if ordered else None
+            first_all_record = all_ordered[0] if all_ordered else None
+            is_new_label_in_range = bool(
+                first_all_record is not None
+                and start_date is not None
+                and end_date is not None
+                and start_date
+                <= first_all_record["observed_at"].astimezone(local_timezone).date()
+                <= end_date
+            )
+            return WildlifeJournalHistoryResponse(
+                label=canonical_label,
+                display_name=display_name,
+                scope=WildlifeJournalScope(
+                    preset=payload.preset,
+                    start_date=start_date,
+                    end_date=end_date,
+                    stream_id=payload.stream_id,
+                    zone_id=payload.zone_id,
+                    timezone_name=local_now.tzname() or "local time",
+                ),
+                observation_count=len(ordered),
+                first_observation=(
+                    self._wildlife_journal_representative([first_record])
+                    if first_record is not None
+                    else None
+                ),
+                latest_observation=(
+                    self._wildlife_journal_representative([latest_record])
+                    if latest_record is not None
+                    else None
+                ),
+                representative=self._wildlife_journal_representative(ordered),
+                busiest_stream=stream_breakdown[0] if stream_breakdown else None,
+                busiest_zone=zone_breakdown[0] if zone_breakdown else None,
+                peak_activity_hour=(
+                    max(hour_counts, key=lambda hour: (hour_counts[hour], -hour))
+                    if hour_counts
+                    else None
+                ),
+                stream_breakdown=stream_breakdown,
+                zone_breakdown=zone_breakdown,
+                activity_by_hour=[
+                    WildlifeJournalHourBucket(hour=hour, count=hour_counts[hour])
+                    for hour in range(24)
+                ],
+                is_new_label_in_range=is_new_label_in_range,
+                activity_library_drilldown=WildlifeJournalDrilldown(
+                    confirmed_label=canonical_label,
+                    start_date=start_date,
+                    end_date=end_date,
+                    stream_id=payload.stream_id,
+                    zone_id=payload.zone_id,
+                ),
+                gallery=gallery,
+            )
+
+    @staticmethod
+    def _wildlife_journal_date_range(
+        payload: WildlifeJournalHistoryRequest,
+        local_now: datetime,
+    ) -> tuple[date | None, date | None]:
+        if payload.preset == WildlifeJournalRangePreset.all_time:
+            return None, None
+        if payload.preset == WildlifeJournalRangePreset.today:
+            return local_now.date(), local_now.date()
+        if payload.preset == WildlifeJournalRangePreset.last_7_days:
+            return local_now.date() - timedelta(days=6), local_now.date()
+        if payload.preset == WildlifeJournalRangePreset.last_30_days:
+            return local_now.date() - timedelta(days=29), local_now.date()
+        if payload.preset == WildlifeJournalRangePreset.this_year:
+            return date(local_now.year, 1, 1), local_now.date()
+        assert payload.start_date is not None and payload.end_date is not None
+        return payload.start_date, payload.end_date
+
+    def _wildlife_journal_confirmed_records(
+        self,
+        session: Session,
+        *,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        # This single resolver keeps Journal, Insights, and Activity Library on the
+        # existing latest-review, active-Visit truth boundary.
+        return [
+            record
+            for record in self._wildlife_insight_records(
+                session,
+                start_at=start_at,
+                end_at=end_at,
+            )
+            if record["summary"].review_outcome == VisitReviewOutcome.confirmed_bird
+        ]
+
+    @staticmethod
+    def _wildlife_journal_ordered_records(
+        records: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return sorted(
+            records,
+            key=lambda record: (record["observed_at"], record["summary"].id),
+        )
+
+    def _wildlife_journal_representative(
+        self,
+        records: list[dict[str, Any]],
+    ) -> WildlifeJournalRepresentative | None:
+        if not records:
+            return None
+        ordered = self._wildlife_journal_ordered_records(records)
+        # Prefer the latest safe primary evidence, then keep the latest current
+        # reviewed observation visible even when that Visit no longer has media.
+        selected = next(
+            (
+                record
+                for record in reversed(ordered)
+                if record["summary"].primary_evidence is not None
+            ),
+            ordered[-1],
+        )
+        summary: StreamVisitSummary = selected["summary"]
+        return WildlifeJournalRepresentative(
+            visit_id=summary.id,
+            event_id=summary.event_id,
+            stream_id=summary.stream_id,
+            stream_name=selected["stream_name"],
+            source_name=selected["source_name"],
+            zone_id=summary.zone_id,
+            zone_name=summary.zone_name,
+            label=selected["label"],
+            display_name=selected["display_name"],
+            observed_at=selected["observed_at"],
+            primary_evidence=summary.primary_evidence,
+        )
+
+    @staticmethod
+    def _wildlife_journal_breakdown(
+        records: list[dict[str, Any]],
+        *,
+        grouping: str,
+    ) -> list[WildlifeJournalBreakdown]:
+        grouped: dict[str, tuple[str, int]] = {}
+        for record in records:
+            summary: StreamVisitSummary = record["summary"]
+            if grouping == "stream":
+                key, name = summary.stream_id, record["stream_name"]
+            else:
+                if summary.zone_id is None:
+                    continue
+                key, name = summary.zone_id, summary.zone_name or "Current Zone unavailable"
+            existing = grouped.get(key)
+            grouped[key] = (name, (existing[1] if existing is not None else 0) + 1)
+        return sorted(
+            [
+                WildlifeJournalBreakdown(id=key, name=name, count=count)
+                for key, (name, count) in grouped.items()
+            ],
+            key=lambda item: (-item.count, item.name.lower(), item.id),
         )
 
     def dataset_coverage_summary(self) -> DatasetCoverageSummary:

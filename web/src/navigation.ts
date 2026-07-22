@@ -91,6 +91,9 @@ export function readAppRoute(pathname = window.location.pathname): AppRoute {
     if (segments[0] === "evidence") {
       return { page: "motion-evidence-detail", motionEvidenceId: identifier };
     }
+    if (segments[0] === "bird-log") {
+      return { page: "bird-log" };
+    }
   }
 
   return { page: "dashboard", recoveredFromUnknownPath: normalizedPath !== "/" };
