@@ -15,6 +15,8 @@ export type Page =
   | "event-detail"
   | "visit-detail"
   | "activity-library"
+  | "collections"
+  | "collection-detail"
   | "review"
   | "bird-log"
   | "alerts-inbox"
@@ -30,6 +32,7 @@ export interface AppRoute {
   eventId?: string | null;
   visitId?: string | null;
   motionEvidenceId?: string | null;
+  collectionId?: string | null;
   recoveredFromUnknownPath?: boolean;
 }
 
@@ -46,6 +49,7 @@ const pagePaths: Partial<Record<Page, string>> = {
   "classifier-readiness": "/classifier-readiness",
   "classifier-manifest": "/classifier-manifest",
   "activity-library": "/activity",
+  collections: "/collections",
   review: "/review",
   "bird-log": "/bird-log",
   "alerts-inbox": "/alerts",
@@ -96,6 +100,9 @@ export function readAppRoute(pathname = window.location.pathname): AppRoute {
     if (segments[0] === "bird-log") {
       return { page: "bird-log" };
     }
+    if (segments[0] === "collections") {
+      return { page: "collection-detail", collectionId: identifier };
+    }
   }
 
   return { page: "dashboard", recoveredFromUnknownPath: normalizedPath !== "/" };
@@ -113,6 +120,9 @@ export function pathForAppRoute(route: AppRoute): string {
   }
   if (route.page === "motion-evidence-detail" && route.motionEvidenceId) {
     return `/evidence/${encodeURIComponent(route.motionEvidenceId)}`;
+  }
+  if (route.page === "collection-detail" && route.collectionId) {
+    return `/collections/${encodeURIComponent(route.collectionId)}`;
   }
   return pagePaths[route.page] ?? "/";
 }

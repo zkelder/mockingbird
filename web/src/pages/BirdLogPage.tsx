@@ -12,6 +12,7 @@ import type {
   WildlifeJournalRangePreset,
   WildlifeJournalRepresentative,
   WildlifeJournalOverviewResponse,
+  VisitCollectionSummary,
   Zone,
 } from "../api/types";
 import { activityLibraryPath } from "./ActivityLibraryPage";
@@ -30,6 +31,7 @@ interface BirdLogPageProps {
   onOpenImport: () => void;
   onOpenReview: () => void;
   onOpenExports: () => void;
+  onOpenCollections: () => void;
 }
 
 interface JournalLocation {
@@ -234,6 +236,7 @@ export function BirdLogPage({
   onOpenVisit,
   onOpenStreams,
   onOpenReview,
+  onOpenCollections,
 }: BirdLogPageProps) {
   const [journalLabel, setJournalLabel] = useState<string | null>(readJournalLabel);
   const [location, setLocation] = useState<JournalLocation>(readJournalLocation);
@@ -245,6 +248,9 @@ export function BirdLogPage({
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [collections, setCollections] = useState<VisitCollectionSummary[]>([]);
+  const [selectedCollectionId, setSelectedCollectionId] = useState("");
+  const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -260,6 +266,21 @@ export function BirdLogPage({
       active = false;
     };
   }, []);
+
+  useEffect(() => { void apiClient.getVisitCollections().then(setCollections).catch(() => setCollections([])); }, []);
+
+  async function addObservationToCollection(visitId: string) {
+    const collection = collections.find((item) => item.id === selectedCollectionId);
+    if (!collection) { setCollectionMessage("Choose a Collection before adding this Visit."); return; }
+    try {
+      const response = await apiClient.addVisitToCollection(collection.id, visitId, {
+        expected_state_token: collection.state_token,
+        idempotency_key: `journal-collection-${crypto.randomUUID()}`,
+      });
+      setCollectionMessage(response.result.status === "updated" ? `Added Visit to ${collection.name}.` : `This Visit is already in ${collection.name}.`);
+      setCollections((current) => current.map((item) => item.id === response.collection.id ? response.collection : item));
+    } catch (caught) { setCollectionMessage(caught instanceof Error ? caught.message : "Could not add this Visit to the Collection."); }
+  }
 
   useEffect(() => {
     function handlePopState() {
@@ -383,6 +404,7 @@ export function BirdLogPage({
             <>
               <button className="secondary-action" onClick={() => navigatePath("/analytics")} type="button">Wildlife Insights</button>
               <button className="secondary-action" onClick={onOpenReview} type="button">Review Queue</button>
+              <button className="secondary-action" onClick={onOpenCollections} type="button">Collections</button>
             </>
           }
         />
@@ -444,6 +466,7 @@ export function BirdLogPage({
           <>
             <button className="secondary-action" onClick={() => navigateJournalLabel(null)} type="button">All Journal labels</button>
             <button className="secondary-action" onClick={openActivityLibrary} type="button">Open Activity Library</button>
+            <button className="secondary-action" onClick={onOpenCollections} type="button">Collections</button>
           </>
         }
       />
@@ -506,8 +529,16 @@ export function BirdLogPage({
             <option value="yes">Favorites only</option>
           </select>
         </label>
+        <label>
+          Add to Collection
+          <select value={selectedCollectionId} onChange={(event) => setSelectedCollectionId(event.target.value)}>
+            <option value="">Choose Collection</option>
+            {collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}
+          </select>
+        </label>
       </section>
       {error ? <div className="error-panel">{error}</div> : null}
+      {collectionMessage ? <div className="notice-panel" role="status">{collectionMessage}</div> : null}
       {isLoading && !activeHistory ? <div className="panel">Loading reviewed Journal history…</div> : null}
       {activeHistory ? (
         <>
@@ -547,8 +578,9 @@ export function BirdLogPage({
                     <div className="journal-gallery-body">
                       <div className="section-heading"><div><h3>{formatDateTime(observation.observed_at)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><StatusPill label="Reviewed" tone="good" /></div>
                       <div className="journal-gallery-facts"><span>Duration <strong>{durationLabel(observation.duration_seconds)}</strong></span><span>Evidence frames <strong>{observation.evidence_frame_count}</strong></span><span>Correction <strong>{observation.display_name}</strong></span></div>
-                      <div className="journal-gallery-milestones">{observation.is_favorite ? <StatusPill label="Favorite" tone="good" /> : null}{observation.has_note ? <StatusPill label="Note" tone="quiet" /> : null}{observation.has_curation_history ? <StatusPill label="Curated" tone="quiet" /> : null}{observation.has_review_revision ? <StatusPill label="Revised" tone="quiet" /> : null}{observation.is_first_on_stream ? <StatusPill label="First on Stream" tone="quiet" /> : null}{observation.is_first_in_zone ? <StatusPill label="First in Zone" tone="quiet" /> : null}</div>
+                      <div className="journal-gallery-milestones">{observation.is_favorite ? <StatusPill label="Favorite" tone="good" /> : null}{observation.has_note ? <StatusPill label="Note" tone="quiet" /> : null}{observation.collection_count > 0 ? <StatusPill label={`${observation.collection_count} Collection${observation.collection_count === 1 ? "" : "s"}`} tone="quiet" /> : null}{observation.has_curation_history ? <StatusPill label="Curated" tone="quiet" /> : null}{observation.has_review_revision ? <StatusPill label="Revised" tone="quiet" /> : null}{observation.is_first_on_stream ? <StatusPill label="First on Stream" tone="quiet" /> : null}{observation.is_first_in_zone ? <StatusPill label="First in Zone" tone="quiet" /> : null}</div>
                       <button className="secondary-action" onClick={() => onOpenVisit(observation.visit_id)} type="button">Open Visit Detail</button>
+                      <button className="text-action" disabled={!selectedCollectionId} onClick={() => void addObservationToCollection(observation.visit_id)} type="button">Add to Collection</button>
                     </div>
                   </article>
                 ))}

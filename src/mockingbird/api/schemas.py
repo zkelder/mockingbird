@@ -1658,6 +1658,8 @@ class ActivityLibraryFilters(BaseModel):
     has_suggestion: bool | None = None
     favorites_only: bool = False
     has_note: bool | None = None
+    collection_id: str | None = Field(default=None, min_length=1, max_length=256)
+    oldest_first: bool = False
     search: str | None = Field(default=None, max_length=256)
     start_at: datetime | None = None
     end_at: datetime | None = None
@@ -1807,6 +1809,7 @@ class ActivityLibraryVisitSummary(DashboardVisitSummary):
     curation_actions: list[str] = Field(default_factory=list, max_length=8)
     is_favorite: bool = False
     has_note: bool = False
+    collection_count: int = Field(default=0, ge=0)
 
 
 class ActivityLibrarySearchResponse(BaseModel):
@@ -3508,6 +3511,7 @@ class WildlifeJournalObservation(BaseModel):
     is_first_in_zone: bool = False
     is_favorite: bool = False
     has_note: bool = False
+    collection_count: int = Field(default=0, ge=0)
 
 
 class WildlifeJournalGallery(BaseModel):
@@ -4167,6 +4171,101 @@ class VisitOrganizationBulkResult(BaseModel):
 
 class VisitOrganizationBulkResponse(BaseModel):
     results: list[VisitOrganizationBulkResult]
+
+
+class VisitCollectionSummary(BaseModel):
+    """Safe local Collection metadata; it never exposes a filesystem location."""
+
+    id: str
+    name: str
+    description: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+    state_token: str
+    active_visit_count: int = Field(default=0, ge=0)
+    latest_active_visit_at: datetime | None = None
+    representative_evidence: VisitEvidenceFrame | None = None
+
+
+class VisitCollectionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=1000)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitCollectionUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=1000)
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "VisitCollectionUpdate":
+        if not ({"name", "description"} & self.model_fields_set):
+            raise ValueError("Provide a Collection name or description")
+        return self
+
+
+class VisitCollectionArchiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitCollectionMembershipRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitCollectionMembershipStatus(str, Enum):
+    updated = "updated"
+    already_present = "already_present"
+    already_absent = "already_absent"
+    skipped_unavailable = "skipped_unavailable"
+    skipped_superseded = "skipped_superseded"
+
+
+class VisitCollectionMembershipResult(BaseModel):
+    visit_id: str
+    status: VisitCollectionMembershipStatus
+
+
+class VisitCollectionMembershipResponse(BaseModel):
+    collection: VisitCollectionSummary
+    result: VisitCollectionMembershipResult
+
+
+class VisitCollectionBulkAction(str, Enum):
+    add = "add"
+    remove = "remove"
+
+
+class VisitCollectionBulkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    collection_id: str = Field(min_length=1, max_length=256)
+    visit_ids: list[str] = Field(min_length=1, max_length=50)
+    action: VisitCollectionBulkAction
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitCollectionBulkResponse(BaseModel):
+    collection: VisitCollectionSummary
+    results: list[VisitCollectionMembershipResult]
+
+
+class VisitCollectionsForVisitResponse(BaseModel):
+    visit_id: str
+    collections: list[VisitCollectionSummary] = Field(default_factory=list, max_length=20)
 
 
 def _ensure_json_compatible(value: Any, field_name: str) -> None:

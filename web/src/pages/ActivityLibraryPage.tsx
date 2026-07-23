@@ -7,6 +7,7 @@ import type {
   ActivityLibraryVisitSummary,
   CameraSource,
   Stream,
+  VisitCollectionSummary,
   Zone,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
@@ -36,6 +37,7 @@ interface ActivityLibraryPageProps {
   onOpenVisit: (visitId: string) => void;
   onOpenFocusedFastReview: (visitIds: string[]) => void;
   onOpenExports: () => void;
+  onOpenCollections: () => void;
 }
 
 function dateInputValue(value?: string | null): string {
@@ -52,6 +54,7 @@ function normalizedFilters(filters: ActivityLibraryFilters): ActivityLibraryFilt
     confirmed_label: filters.confirmed_label?.trim() || null,
     favorites_only: Boolean(filters.favorites_only),
     has_note: filters.has_note ?? null,
+    collection_id: filters.collection_id || null,
     search: filters.search?.trim() || null,
     start_at: dateInputValue(filters.start_at),
     end_at: dateInputValue(filters.end_at),
@@ -79,6 +82,7 @@ function filtersFromUrl(): { filters: ActivityLibraryFilters; offset: number } {
       favorites_only: params.get("favorites") === "1",
       has_note:
         params.get("note") === "1" ? true : params.get("note") === "0" ? false : null,
+      collection_id: params.get("collection"),
       search: params.get("q"),
       start_at: params.get("from"),
       end_at: params.get("to"),
@@ -101,6 +105,7 @@ export function activityLibraryPath(filters: ActivityLibraryFilters, offset = 0)
   if (filters.favorites_only) params.set("favorites", "1");
   if (filters.has_note === true) params.set("note", "1");
   if (filters.has_note === false) params.set("note", "0");
+  if (filters.collection_id) params.set("collection", filters.collection_id);
   if (filters.search) params.set("q", filters.search);
   if (filters.start_at) params.set("from", dateInputValue(filters.start_at));
   if (filters.end_at) params.set("to", dateInputValue(filters.end_at));
@@ -151,6 +156,7 @@ export function ActivityLibraryPage({
   onOpenVisit,
   onOpenFocusedFastReview,
   onOpenExports,
+  onOpenCollections,
 }: ActivityLibraryPageProps) {
   const initial = useMemo(filtersFromUrl, []);
   const [filters, setFilters] = useState<ActivityLibraryFilters>(initial.filters);
@@ -167,6 +173,8 @@ export function ActivityLibraryPage({
   const [message, setMessage] = useState<string | null>(null);
   const [isUpdatingOrganization, setIsUpdatingOrganization] = useState(false);
   const [thumbnailFailures, setThumbnailFailures] = useState<Set<string>>(new Set());
+  const [collections, setCollections] = useState<VisitCollectionSummary[]>([]);
+  const [bulkCollectionId, setBulkCollectionId] = useState("");
 
   const selectedVisits = useMemo(
     () => visits.filter((visit) => selectedIds.includes(visit.id)),
@@ -190,6 +198,7 @@ export function ActivityLibraryPage({
 
   useEffect(() => {
     void refreshSavedViews();
+    void apiClient.getVisitCollections().then(setCollections).catch(() => setCollections([]));
     let active = true;
     void apiClient
       .getZones()
@@ -348,6 +357,27 @@ export function ActivityLibraryPage({
     }
   }
 
+  async function bulkUpdateCollection(action: "add" | "remove") {
+    const collection = collections.find((item) => item.id === bulkCollectionId);
+    if (!collection || selectedIds.length === 0) return;
+    try {
+      const result = await apiClient.bulkUpdateVisitCollectionMemberships({
+        collection_id: collection.id,
+        visit_ids: selectedIds,
+        action,
+        expected_state_token: collection.state_token,
+        idempotency_key: `activity-collection-${crypto.randomUUID()}`,
+      });
+      const changed = result.results.filter((item) => item.status === "updated").length;
+      const skipped = result.results.filter((item) => item.status.startsWith("skipped_")).length;
+      const unchanged = result.results.length - changed - skipped;
+      setMessage(`${action === "add" ? "Added" : "Removed"} ${changed} Visit${changed === 1 ? "" : "s"}${unchanged ? `; ${unchanged} already ${action === "add" ? "present" : "absent"}` : ""}${skipped ? `; ${skipped} unavailable or superseded Visit${skipped === 1 ? " was" : "s were"} skipped` : ""}.`);
+      setCollections((current) => current.map((item) => item.id === result.collection.id ? result.collection : item));
+      setSelectedIds([]);
+      setRefreshVersion((value) => value + 1);
+    } catch (caught) { setMessage(caught instanceof Error ? caught.message : "Could not update Collection membership."); }
+  }
+
   const selectedStreamMissing = Boolean(
     filters.stream_id && !streams.some((stream) => stream.id === filters.stream_id),
   );
@@ -366,6 +396,7 @@ export function ActivityLibraryPage({
     filters.has_suggestion === null &&
     !filters.favorites_only &&
     filters.has_note === null &&
+    !filters.collection_id &&
     !filters.search &&
     !filters.start_at &&
     !filters.end_at;
@@ -376,6 +407,7 @@ export function ActivityLibraryPage({
         eyebrow="Activity Library"
         title="Find captured activity"
         description="Search active Visits across Streams, then inspect evidence, review unresolved activity, or export only existing reviewed truth."
+        actions={<button className="secondary-action" onClick={onOpenCollections} type="button">Collections</button>}
       />
 
       <section className="panel activity-library-filters">
@@ -460,6 +492,13 @@ export function ActivityLibraryPage({
             </select>
           </label>
           <label>
+            Collection
+            <select value={filters.collection_id ?? ""} onChange={(event) => commitFilters({ ...filters, collection_id: event.target.value || null })}>
+              <option value="">All Collections</option>
+              {collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}
+            </select>
+          </label>
+          <label>
             From
             <input type="date" value={dateInputValue(filters.start_at)} onChange={(event) => commitFilters({ ...filters, start_at: event.target.value || null })} />
           </label>
@@ -538,6 +577,9 @@ export function ActivityLibraryPage({
             <button className="secondary-action" onClick={() => void exportSelected()} type="button">Export selected reviewed</button>
             <button className="secondary-action" disabled={isUpdatingOrganization} onClick={() => void bulkSetFavorite("favorite")} type="button">Favorite selected</button>
             <button className="secondary-action" disabled={isUpdatingOrganization} onClick={() => void bulkSetFavorite("unfavorite")} type="button">Unfavorite selected</button>
+            <label>Collection <select value={bulkCollectionId} onChange={(event) => setBulkCollectionId(event.target.value)}><option value="">Choose Collection</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
+            <button className="secondary-action" disabled={!bulkCollectionId} onClick={() => void bulkUpdateCollection("add")} type="button">Add selected to Collection</button>
+            <button className="secondary-action" disabled={!bulkCollectionId} onClick={() => void bulkUpdateCollection("remove")} type="button">Remove selected from Collection</button>
             <button className="text-action" onClick={() => setSelectedIds([])} type="button">Clear selection</button>
             {message?.startsWith("Created reviewed export") ? <button className="text-action" onClick={onOpenExports} type="button">Open Exports</button> : null}
           </div>
@@ -591,6 +633,7 @@ export function ActivityLibraryPage({
                     {visit.has_suggestion ? <span>Suggestion evidence: {formatLabel(visit.suggested_label ?? "available")}</span> : null}
                     {visit.is_favorite ? <StatusPill label="Favorite" tone="good" /> : null}
                     {visit.has_note ? <StatusPill label="Note" tone="quiet" /> : null}
+                    {visit.collection_count > 0 ? <StatusPill label={`${visit.collection_count} Collection${visit.collection_count === 1 ? "" : "s"}`} tone="quiet" /> : null}
                     {visit.evidence_frame_count > 1 ? <span>{visit.evidence_frame_count} evidence frames</span> : null}
                     {visit.curation_actions.length > 0 ? <span>Curated: {visit.curation_actions.map(formatLabel).join(", ")}</span> : null}
                   </div>

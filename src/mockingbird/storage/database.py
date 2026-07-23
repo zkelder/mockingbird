@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 17
+CURRENT_DATABASE_SCHEMA_VERSION = 18
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -230,6 +230,16 @@ def _migrate_to_review_identification_assistant_runs(connection: Connection) -> 
 def _migrate_to_visit_organization(connection: Connection) -> None:
     """Add empty user organization state without changing historical truth or Visits."""
     Base.metadata.tables["visit_organization"].create(bind=connection, checkfirst=True)
+
+
+def _migrate_to_visit_collections(connection: Connection) -> None:
+    """Add empty private Collection records without changing Visits, media, or truth."""
+
+    Base.metadata.tables["visit_collections"].create(bind=connection, checkfirst=True)
+    Base.metadata.tables["visit_collection_memberships"].create(
+        bind=connection,
+        checkfirst=True,
+    )
 
 
 def _migrate_to_zone_monitoring_policy_overrides(connection: Connection) -> None:
@@ -433,6 +443,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     15: _migrate_to_product_alerts,
     16: _migrate_to_review_identification_assistant_runs,
     17: _migrate_to_visit_organization,
+    18: _migrate_to_visit_collections,
 }
 
 

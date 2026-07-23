@@ -10,6 +10,7 @@ import type {
   VisitIdentificationAssistantResponse,
   VisitIdentificationEvidenceMode,
   VisitOrganizationState,
+  VisitCollectionSummary,
   VisitReviewHistoryEntry,
 } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
@@ -34,6 +35,7 @@ interface VisitDetailPageProps {
   onOpenDetectionProposals: () => void;
   onOpenMotionEvidence: (motionEvidenceId: string) => void;
   onCorrectionSaved: () => Promise<void>;
+  onOpenCollections: () => void;
   correctionPrefill?: VisitCorrectionPrefill | null;
 }
 
@@ -65,6 +67,7 @@ export function VisitDetailPage({
   onOpenMotionEvidence,
   onCorrectionSaved,
   correctionPrefill,
+  onOpenCollections,
 }: VisitDetailPageProps) {
   const [detail, setDetail] = useState<VisitDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +84,11 @@ export function VisitDetailPage({
   const [organization, setOrganization] = useState<VisitOrganizationState | null>(null);
   const [organizationMessage, setOrganizationMessage] = useState<string | null>(null);
   const [isSavingOrganization, setIsSavingOrganization] = useState(false);
+  const [collections, setCollections] = useState<VisitCollectionSummary[]>([]);
+  const [visitCollections, setVisitCollections] = useState<VisitCollectionSummary[]>([]);
+  const [selectedCollectionId, setSelectedCollectionId] = useState("");
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
   const [correctionSuggestionId, setCorrectionSuggestionId] = useState<string | null>(null);
   const [dismissedPrefillId, setDismissedPrefillId] = useState<string | null>(null);
   const [mockSuggestedLabel, setMockSuggestedLabel] = useState("");
@@ -184,6 +192,55 @@ export function VisitDetailPage({
   useEffect(() => {
     void apiClient.getVisitOrganization(visitId).then(setOrganization).catch(() => setOrganizationMessage("Observation notes are unavailable right now."));
   }, [visitId]);
+
+  async function refreshCollections() {
+    try {
+      const [available, current] = await Promise.all([
+        apiClient.getVisitCollections(),
+        apiClient.getCollectionsForVisit(visitId),
+      ]);
+      setCollections(available);
+      setVisitCollections(current.collections);
+    } catch {
+      setCollectionMessage("Collections are unavailable right now. Your Visit is unchanged.");
+    }
+  }
+
+  useEffect(() => { void refreshCollections(); }, [visitId]);
+
+  async function addToCollection(collection: VisitCollectionSummary) {
+    setCollectionMessage(null);
+    try {
+      const response = await apiClient.addVisitToCollection(collection.id, visitId, {
+        expected_state_token: collection.state_token,
+        idempotency_key: newReviewRequestKey("visit-collection-add"),
+      });
+      setCollectionMessage(response.result.status === "updated" ? `Added to ${collection.name}.` : `This Visit is already in ${collection.name}.`);
+      await refreshCollections();
+    } catch (caught) { setCollectionMessage(caught instanceof Error ? caught.message : "Could not add this Visit to the Collection."); }
+  }
+
+  async function removeFromCollection(collection: VisitCollectionSummary) {
+    setCollectionMessage(null);
+    try {
+      await apiClient.removeVisitFromCollection(collection.id, visitId, {
+        expected_state_token: collection.state_token,
+        idempotency_key: newReviewRequestKey("visit-collection-remove"),
+      });
+      setCollectionMessage(`Removed from ${collection.name}.`);
+      await refreshCollections();
+    } catch (caught) { setCollectionMessage(caught instanceof Error ? caught.message : "Could not remove this Visit from the Collection."); }
+  }
+
+  async function createAndAddCollection() {
+    const name = newCollectionName.trim();
+    if (!name) { setCollectionMessage("Name the new Collection first."); return; }
+    try {
+      const created = await apiClient.createVisitCollection({ name, idempotency_key: newReviewRequestKey("visit-collection-create") });
+      setNewCollectionName("");
+      await addToCollection(created);
+    } catch (caught) { setCollectionMessage(caught instanceof Error ? caught.message : "Could not create this Collection."); }
+  }
 
   async function saveOrganization(update: { is_favorite?: boolean; note?: string }) {
     if (!organization) return;
@@ -962,6 +1019,15 @@ export function VisitDetailPage({
           {organization.updated_at ? <span className="meta-text">Updated {formatDateTime(organization.updated_at)}</span> : null}
         </> : <span className="meta-text">Loading observation notes...</span>}
         {organizationMessage ? <span className="meta-text">{organizationMessage}</span> : null}
+      </section>
+
+      <section className="panel">
+        <div className="section-heading"><div><h2>Collections</h2><span className="meta-text">Private local galleries. Membership does not duplicate media or change review truth.</span></div><button className="text-action" onClick={onOpenCollections} type="button">Manage Collections</button></div>
+        {visitCollections.length > 0 ? <div className="label-helper-chips">{visitCollections.map((collection) => <span key={collection.id}><StatusPill label={collection.name} tone="quiet" /><button className="text-action" onClick={() => void removeFromCollection(collection)} type="button" aria-label={`Remove this Visit from ${collection.name}`}>Remove</button></span>)}</div> : <span className="meta-text">This Visit is not in a Collection yet.</span>}
+        <label>Add to Collection <select value={selectedCollectionId} onChange={(event) => setSelectedCollectionId(event.target.value)}><option value="">Choose a Collection</option>{collections.filter((collection) => !visitCollections.some((current) => current.id === collection.id)).map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
+        <button className="secondary-action" disabled={!selectedCollectionId} onClick={() => { const collection = collections.find((item) => item.id === selectedCollectionId); if (collection) void addToCollection(collection); }} type="button">Add Visit</button>
+        <label>Create and add to new Collection <input maxLength={80} value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} /></label><span className="field-helper">{newCollectionName.length}/80 characters</span><button className="secondary-action" onClick={() => void createAndAddCollection()} type="button">Create and add</button>
+        {collectionMessage ? <span className="meta-text">{collectionMessage}</span> : null}
       </section>
 
       <section className="panel">

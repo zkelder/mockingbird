@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -232,6 +233,44 @@ class VisitOrganizationModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+
+
+class VisitCollectionModel(Base):
+    """A local user-curated Visit gallery; it never changes reviewed truth or media."""
+
+    __tablename__ = "visit_collections"
+    __table_args__ = (
+        Index("ix_visit_collections_active_name", "archived_at", "normalized_name"),
+        Index(
+            "uq_visit_collections_active_normalized_name",
+            "normalized_name",
+            unique=True,
+            sqlite_where=text("archived_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+
+
+class VisitCollectionMembershipModel(Base):
+    """A normalized user-owned relationship; memberships never duplicate media."""
+
+    __tablename__ = "visit_collection_memberships"
+    __table_args__ = (Index("ix_visit_collection_memberships_visit_id", "visit_id"),)
+
+    collection_id: Mapped[str] = mapped_column(
+        ForeignKey("visit_collections.id"), primary_key=True
+    )
+    visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class VisitEvidenceLinkModel(Base):

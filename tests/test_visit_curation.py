@@ -215,6 +215,19 @@ async def test_split_supersedes_reviewed_truth_and_returns_two_active_review_vis
         },
     )
     assert saved_organization.status_code == 200
+    split_collection = await client.post(
+        "/api/collections",
+        json={"name": "Split curation", "idempotency_key": "split-collection-create"},
+    )
+    assert split_collection.status_code == 201
+    added_to_collection = await client.post(
+        f"/api/collections/{split_collection.json()['id']}/visits/visit-split",
+        json={
+            "expected_state_token": split_collection.json()["state_token"],
+            "idempotency_key": "split-collection-add",
+        },
+    )
+    assert added_to_collection.status_code == 200
     preview = await client.post(
         "/api/visits/visit-split/split/preview",
         json={
@@ -244,6 +257,10 @@ async def test_split_supersedes_reviewed_truth_and_returns_two_active_review_vis
         assert inherited.json()["is_favorite"] is True
         assert inherited.json()["note"] == "Split context"
         assert inherited.json()["inherited_from_visit_id"] == "visit-split"
+        inherited_collections = await client.get(f"/api/visits/{result['id']}/collections")
+        assert [item["name"] for item in inherited_collections.json()["collections"]] == ["Split curation"]
+    active_collection = await client.get(f"/api/collections/{split_collection.json()['id']}")
+    assert active_collection.json()["active_visit_count"] == 2
 
     original = await visit_detail(client, "visit-split")
     assert original["visit"]["is_superseded"] is True
@@ -297,6 +314,22 @@ async def test_merge_rules_and_zone_reassignment_preserve_correction_history(
             },
         )
         assert updated.status_code == 200
+    merge_collections = []
+    for name, visit_id in [("Merge left", "visit-merge-left"), ("Merge right", "visit-merge-right")]:
+        collection = await client.post(
+            "/api/collections",
+            json={"name": name, "idempotency_key": f"create-{name}"},
+        )
+        assert collection.status_code == 201
+        membership = await client.post(
+            f"/api/collections/{collection.json()['id']}/visits/{visit_id}",
+            json={
+                "expected_state_token": collection.json()["state_token"],
+                "idempotency_key": f"add-{name}",
+            },
+        )
+        assert membership.status_code == 200
+        merge_collections.append(name)
     left = await visit_detail(client, "visit-merge-left")
     candidates = await client.get("/api/visits/visit-merge-left/merge-candidates")
     assert candidates.status_code == 200
@@ -326,6 +359,11 @@ async def test_merge_rules_and_zone_reassignment_preserve_correction_history(
     assert merged_organization.status_code == 200
     assert merged_organization.json()["is_favorite"] is True
     assert merged_organization.json()["note"] == "Left context\n\nRight context"
+    merged_collections = await client.get(f"/api/visits/{result['id']}/collections")
+    assert [item["name"] for item in merged_collections.json()["collections"]] == merge_collections
+    for name in merge_collections:
+        collection = next(item for item in (await client.get("/api/collections")).json() if item["name"] == name)
+        assert collection["active_visit_count"] == 1
     assert (await visit_detail(client, "visit-merge-left"))["visit"]["is_superseded"] is True
     assert (await visit_detail(client, "visit-merge-right"))["visit"]["is_superseded"] is True
 

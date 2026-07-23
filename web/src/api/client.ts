@@ -172,6 +172,15 @@ import type {
   VisitOrganizationUpdate,
   VisitOrganizationBulkRequest,
   VisitOrganizationBulkResponse,
+  VisitCollectionArchiveRequest,
+  VisitCollectionBulkRequest,
+  VisitCollectionBulkResponse,
+  VisitCollectionCreate,
+  VisitCollectionMembershipRequest,
+  VisitCollectionMembershipResponse,
+  VisitCollectionSummary,
+  VisitCollectionUpdate,
+  VisitCollectionsForVisitResponse,
   WorkerStatusResponse,
     WildlifeInsightsRequest,
     WildlifeInsightsSummary,
@@ -564,6 +573,25 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  getVisitCollections: () => request<VisitCollectionSummary[]>("/api/collections"),
+  createVisitCollection: (payload: VisitCollectionCreate) =>
+    request<VisitCollectionSummary>("/api/collections", { method: "POST", body: JSON.stringify(payload) }),
+  getVisitCollection: (collectionId: string) =>
+    request<VisitCollectionSummary>(`/api/collections/${encodeURIComponent(collectionId)}`),
+  updateVisitCollection: (collectionId: string, payload: VisitCollectionUpdate) =>
+    request<VisitCollectionSummary>(`/api/collections/${encodeURIComponent(collectionId)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  archiveVisitCollection: (collectionId: string, payload: VisitCollectionArchiveRequest) =>
+    request<VisitCollectionSummary>(`/api/collections/${encodeURIComponent(collectionId)}/archive`, { method: "POST", body: JSON.stringify(payload) }),
+  searchVisitCollection: (collectionId: string, payload: ActivityLibrarySearchRequest) =>
+    request<ActivityLibrarySearchResponse>(`/api/collections/${encodeURIComponent(collectionId)}/visits/search`, { method: "POST", body: JSON.stringify(payload) }),
+  getCollectionsForVisit: (visitId: string) =>
+    request<VisitCollectionsForVisitResponse>(`/api/visits/${encodeURIComponent(visitId)}/collections`),
+  addVisitToCollection: (collectionId: string, visitId: string, payload: VisitCollectionMembershipRequest) =>
+    request<VisitCollectionMembershipResponse>(`/api/collections/${encodeURIComponent(collectionId)}/visits/${encodeURIComponent(visitId)}`, { method: "POST", body: JSON.stringify(payload) }),
+  removeVisitFromCollection: (collectionId: string, visitId: string, payload: VisitCollectionMembershipRequest) =>
+    request<VisitCollectionMembershipResponse>(`/api/collections/${encodeURIComponent(collectionId)}/visits/${encodeURIComponent(visitId)}`, { method: "DELETE", body: JSON.stringify(payload) }),
+  bulkUpdateVisitCollectionMemberships: (payload: VisitCollectionBulkRequest) =>
+    request<VisitCollectionBulkResponse>("/api/collections/memberships/bulk", { method: "POST", body: JSON.stringify(payload) }),
   getVisitIdentificationAssistant: (visitId: string) =>
     request<VisitIdentificationAssistantResponse>(
       `/api/visits/${encodeURIComponent(visitId)}/identification-assistant`,

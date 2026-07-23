@@ -222,6 +222,15 @@ from mockingbird.api.schemas import (
     VisitOrganizationUpdate,
     VisitOrganizationBulkRequest,
     VisitOrganizationBulkResponse,
+    VisitCollectionArchiveRequest,
+    VisitCollectionBulkRequest,
+    VisitCollectionBulkResponse,
+    VisitCollectionCreate,
+    VisitCollectionMembershipRequest,
+    VisitCollectionMembershipResponse,
+    VisitCollectionSummary,
+    VisitCollectionUpdate,
+    VisitCollectionsForVisitResponse,
     WebhookMotionEvidenceRequest,
     WebhookMotionEvidenceResponse,
     WebhookPayloadValidationRequest,
@@ -8002,6 +8011,135 @@ async def create_activity_library_export_selection(
         return get_repository().create_activity_library_export_selection(payload)
     except ValueError as error:
         raise HTTPException(status_code=400, detail="Selected Visit export could not be created.") from error
+
+
+def _collection_http_error(error: ValueError, *, collection_id: str | None = None) -> HTTPException:
+    code = str(error)
+    if code == "missing_collection":
+        return _not_found("Collection", collection_id or "")
+    if code == "collection_archived":
+        return HTTPException(status_code=410, detail="This Collection is archived and its active gallery is unavailable.")
+    if code == "collection_stale":
+        return HTTPException(status_code=409, detail="This Collection changed elsewhere. Refresh before saving.")
+    if code == "collection_name_conflict":
+        return HTTPException(status_code=409, detail="An active Collection already uses that name.")
+    if code == "collection_limit":
+        return HTTPException(status_code=409, detail="You can keep up to 100 active Collections.")
+    if code == "collection_name_required":
+        return HTTPException(status_code=400, detail="Collection names cannot be empty.")
+    return HTTPException(status_code=400, detail="That Collection request could not be completed.")
+
+
+@app.get("/api/collections", response_model=list[VisitCollectionSummary])
+async def list_visit_collections() -> list[VisitCollectionSummary]:
+    return get_repository().list_visit_collections()
+
+
+@app.post("/api/collections", response_model=VisitCollectionSummary, status_code=201)
+async def create_visit_collection(payload: VisitCollectionCreate) -> VisitCollectionSummary:
+    try:
+        return get_repository().create_visit_collection(payload)
+    except ValueError as error:
+        raise _collection_http_error(error) from error
+
+
+@app.get("/api/collections/{collection_id}", response_model=VisitCollectionSummary)
+async def get_visit_collection(collection_id: str) -> VisitCollectionSummary:
+    collection = get_repository().get_visit_collection(collection_id)
+    if collection is None:
+        raise _not_found("Collection", collection_id)
+    return collection
+
+
+@app.patch("/api/collections/{collection_id}", response_model=VisitCollectionSummary)
+async def update_visit_collection(
+    collection_id: str,
+    payload: VisitCollectionUpdate,
+) -> VisitCollectionSummary:
+    try:
+        return get_repository().update_visit_collection(collection_id, payload)
+    except ValueError as error:
+        raise _collection_http_error(error, collection_id=collection_id) from error
+
+
+@app.post("/api/collections/{collection_id}/archive", response_model=VisitCollectionSummary)
+async def archive_visit_collection(
+    collection_id: str,
+    payload: VisitCollectionArchiveRequest,
+) -> VisitCollectionSummary:
+    try:
+        return get_repository().archive_visit_collection(collection_id, payload)
+    except ValueError as error:
+        raise _collection_http_error(error, collection_id=collection_id) from error
+
+
+@app.post(
+    "/api/collections/{collection_id}/visits/search",
+    response_model=ActivityLibrarySearchResponse,
+)
+async def search_visit_collection(
+    collection_id: str,
+    payload: ActivityLibrarySearchRequest,
+) -> ActivityLibrarySearchResponse:
+    try:
+        return get_repository().search_visit_collection(collection_id, payload)
+    except ValueError as error:
+        raise _collection_http_error(error, collection_id=collection_id) from error
+
+
+@app.get(
+    "/api/visits/{visit_id}/collections",
+    response_model=VisitCollectionsForVisitResponse,
+)
+async def visit_collections_for_visit(visit_id: str) -> VisitCollectionsForVisitResponse:
+    try:
+        return get_repository().visit_collections_for_visit(visit_id)
+    except ValueError as error:
+        raise _not_found("Visit", visit_id) from error
+
+
+@app.post(
+    "/api/collections/{collection_id}/visits/{visit_id}",
+    response_model=VisitCollectionMembershipResponse,
+)
+async def add_visit_collection_membership(
+    collection_id: str,
+    visit_id: str,
+    payload: VisitCollectionMembershipRequest,
+) -> VisitCollectionMembershipResponse:
+    try:
+        return get_repository().update_visit_collection_membership(
+            collection_id, visit_id, action="add", payload=payload
+        )
+    except ValueError as error:
+        raise _collection_http_error(error, collection_id=collection_id) from error
+
+
+@app.delete(
+    "/api/collections/{collection_id}/visits/{visit_id}",
+    response_model=VisitCollectionMembershipResponse,
+)
+async def remove_visit_collection_membership(
+    collection_id: str,
+    visit_id: str,
+    payload: VisitCollectionMembershipRequest,
+) -> VisitCollectionMembershipResponse:
+    try:
+        return get_repository().update_visit_collection_membership(
+            collection_id, visit_id, action="remove", payload=payload
+        )
+    except ValueError as error:
+        raise _collection_http_error(error, collection_id=collection_id) from error
+
+
+@app.post("/api/collections/memberships/bulk", response_model=VisitCollectionBulkResponse)
+async def bulk_update_visit_collection_memberships(
+    payload: VisitCollectionBulkRequest,
+) -> VisitCollectionBulkResponse:
+    try:
+        return get_repository().bulk_update_visit_collection_memberships(payload)
+    except ValueError as error:
+        raise _collection_http_error(error, collection_id=payload.collection_id) from error
 
 
 @app.get("/api/visits/{visit_id}/correction-history", response_model=VisitReviewHistory)

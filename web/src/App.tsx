@@ -22,6 +22,7 @@ import { BirdLogPage } from "./pages/BirdLogPage";
 import { CameraSetupPage } from "./pages/CameraSetupPage";
 import { ClassifierManifestPage } from "./pages/ClassifierManifestPage";
 import { ClassifierReadinessPage } from "./pages/ClassifierReadinessPage";
+import { CollectionsPage } from "./pages/CollectionsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DetectionProposalsPage } from "./pages/DetectionProposalsPage";
 import { EventDetailPage } from "./pages/EventDetailPage";
@@ -124,6 +125,9 @@ export default function App() {
   const [selectedMotionEvidenceId, setSelectedMotionEvidenceId] = useState<string | null>(
     initialRoute.motionEvidenceId ?? null,
   );
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(
+    initialRoute.collectionId ?? null,
+  );
   const [reviewQueueInitialContext, setReviewQueueInitialContext] =
     useState<ReviewQueueInitialContext | null>(null);
   const [visitCorrectionPrefill, setVisitCorrectionPrefill] =
@@ -147,6 +151,9 @@ export default function App() {
     }
     if (route.motionEvidenceId !== undefined) {
       setSelectedMotionEvidenceId(route.motionEvidenceId);
+    }
+    if (route.collectionId !== undefined) {
+      setSelectedCollectionId(route.collectionId);
     }
   }
 
@@ -310,6 +317,10 @@ export default function App() {
       window.history.pushState({}, "", path);
     }
     applyRoute({ page: "activity-library" });
+  }
+
+  function openCollections(collectionId?: string) {
+    navigate(collectionId ? { page: "collection-detail", collectionId } : { page: "collections" });
   }
 
   function openAlertAction(action: ProductAlertAction) {
@@ -640,6 +651,7 @@ export default function App() {
           onOpenMotionEvidence={openMotionEvidence}
           onCorrectionSaved={refreshAfterVisitCorrection}
           correctionPrefill={visitCorrectionPrefill}
+          onOpenCollections={() => openCollections()}
         />
       );
     }
@@ -652,6 +664,7 @@ export default function App() {
           onOpenVisit={openVisit}
           onOpenFocusedFastReview={openFocusedFastReview}
           onOpenExports={() => setPage("exports")}
+          onOpenCollections={() => openCollections()}
         />
       );
     }
@@ -684,6 +697,21 @@ export default function App() {
           onOpenImport={() => setPage("import")}
           onOpenReview={() => openReviewQueue()}
           onOpenExports={() => setPage("exports")}
+          onOpenCollections={() => openCollections()}
+        />
+      );
+    }
+
+    if (page === "collections" || (page === "collection-detail" && selectedCollectionId)) {
+      return (
+        <CollectionsPage
+          collectionId={page === "collection-detail" ? selectedCollectionId : null}
+          sources={data.sources}
+          streams={data.streams}
+          onOpenActivityLibrary={() => setPage("activity-library")}
+          onOpenCollection={openCollections}
+          onOpenVisit={openVisit}
+          onOpenFocusedFastReview={openFocusedFastReview}
         />
       );
     }

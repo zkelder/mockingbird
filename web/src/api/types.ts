@@ -1230,6 +1230,8 @@ export interface ActivityLibraryFilters {
   has_suggestion?: boolean | null;
   favorites_only?: boolean;
   has_note?: boolean | null;
+  collection_id?: string | null;
+  oldest_first?: boolean;
   search?: string | null;
   start_at?: string | null;
   end_at?: string | null;
@@ -1245,6 +1247,7 @@ export interface ActivityLibraryVisitSummary extends DashboardVisitSummary {
   curation_actions: string[];
   is_favorite: boolean;
   has_note: boolean;
+  collection_count: number;
 }
 
 export interface ActivityLibrarySearchResponse {
@@ -2812,6 +2815,77 @@ export interface VisitOrganizationBulkResponse {
   results: VisitOrganizationBulkResult[];
 }
 
+export interface VisitCollectionSummary {
+  id: string;
+  name: string;
+  description?: string | null;
+  created_at: string;
+  updated_at: string;
+  archived_at?: string | null;
+  state_token: string;
+  active_visit_count: number;
+  latest_active_visit_at?: string | null;
+  representative_evidence?: VisitEvidenceFrame | null;
+}
+
+export interface VisitCollectionCreate {
+  name: string;
+  description?: string | null;
+  idempotency_key: string;
+}
+
+export interface VisitCollectionUpdate {
+  name?: string | null;
+  description?: string | null;
+  expected_state_token: string;
+  idempotency_key: string;
+}
+
+export interface VisitCollectionArchiveRequest {
+  expected_state_token: string;
+  idempotency_key: string;
+}
+
+export interface VisitCollectionMembershipRequest {
+  expected_state_token: string;
+  idempotency_key: string;
+}
+
+export type VisitCollectionMembershipStatus =
+  | "updated"
+  | "already_present"
+  | "already_absent"
+  | "skipped_unavailable"
+  | "skipped_superseded";
+
+export interface VisitCollectionMembershipResult {
+  visit_id: string;
+  status: VisitCollectionMembershipStatus;
+}
+
+export interface VisitCollectionMembershipResponse {
+  collection: VisitCollectionSummary;
+  result: VisitCollectionMembershipResult;
+}
+
+export interface VisitCollectionBulkRequest {
+  collection_id: string;
+  visit_ids: string[];
+  action: "add" | "remove";
+  expected_state_token: string;
+  idempotency_key: string;
+}
+
+export interface VisitCollectionBulkResponse {
+  collection: VisitCollectionSummary;
+  results: VisitCollectionMembershipResult[];
+}
+
+export interface VisitCollectionsForVisitResponse {
+  visit_id: string;
+  collections: VisitCollectionSummary[];
+}
+
 export interface DatasetExport {
   id: string;
   name: string;
@@ -3183,6 +3257,7 @@ export interface WildlifeJournalObservation {
   is_first_in_zone: boolean;
   is_favorite: boolean;
   has_note: boolean;
+  collection_count: number;
 }
 
 export interface WildlifeJournalGallery {

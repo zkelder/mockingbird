@@ -225,6 +225,17 @@ from mockingbird.api.schemas import (
     VisitOrganizationBulkRequest,
     VisitOrganizationBulkResponse,
     VisitOrganizationBulkResult,
+    VisitCollectionArchiveRequest,
+    VisitCollectionBulkRequest,
+    VisitCollectionBulkResponse,
+    VisitCollectionCreate,
+    VisitCollectionMembershipRequest,
+    VisitCollectionMembershipResponse,
+    VisitCollectionMembershipResult,
+    VisitCollectionMembershipStatus,
+    VisitCollectionSummary,
+    VisitCollectionUpdate,
+    VisitCollectionsForVisitResponse,
     VisitIdentificationAssistantRequest,
     VisitIdentificationAssistantResponse,
     VisitIdentificationEvidenceMode,
@@ -405,6 +416,8 @@ from mockingbird.storage.models import (
     VisitRelationshipModel,
     VisitModel,
     VisitOrganizationModel,
+    VisitCollectionMembershipModel,
+    VisitCollectionModel,
     ZoneModel,
 )
 from mockingbird.workers.registry import (
@@ -426,6 +439,9 @@ MAX_LIVE_VISIT_EVIDENCE_FRAMES = 4
 MAX_VISIT_MERGE_CANDIDATES = 10
 MAX_VISIT_MERGE_GAP = timedelta(minutes=30)
 MAX_ACTIVITY_LIBRARY_SAVED_VIEWS = 15
+MAX_ACTIVE_VISIT_COLLECTIONS = 100
+MAX_COLLECTIONS_PER_VISIT = 20
+MAX_COLLECTION_LIST_ITEMS = 100
 MAX_STORAGE_CLEANUP_PREVIEW_ITEMS = 200
 MAX_STORAGE_CLEANUP_HISTORY_ITEMS = 30
 STORAGE_CLEANUP_PREVIEW_TTL = timedelta(minutes=15)
@@ -4437,6 +4453,374 @@ class ProductRepository:
             return VisitOrganizationState(visit_id=visit_id, state_token=f"organization:{visit_id}:0")
         return VisitOrganizationState(visit_id=visit_id, is_favorite=model.is_favorite, note=model.note or "", inherited_from_visit_id=model.inherited_from_visit_id, created_at=_as_utc(model.created_at), updated_at=_as_utc(model.updated_at), state_token=f"organization:{visit_id}:{model.version}")
 
+    @staticmethod
+    def _normalized_collection_name(name: str) -> tuple[str, str]:
+        display_name = name.strip()
+        if not display_name:
+            raise ValueError("collection_name_required")
+        return display_name, display_name.casefold()
+
+    @staticmethod
+    def _collection_state_token(model: VisitCollectionModel) -> str:
+        return f"collection:{model.id}:{model.version}"
+
+    def _active_collection_name_conflict(
+        self,
+        session: Session,
+        normalized_name: str,
+        *,
+        exclude_id: str | None = None,
+    ) -> bool:
+        query = select(VisitCollectionModel.id).where(
+            VisitCollectionModel.normalized_name == normalized_name,
+            VisitCollectionModel.archived_at.is_(None),
+        )
+        if exclude_id is not None:
+            query = query.where(VisitCollectionModel.id != exclude_id)
+        return session.scalar(query.limit(1)) is not None
+
+    def _collection_summary(
+        self,
+        session: Session,
+        model: VisitCollectionModel,
+    ) -> VisitCollectionSummary:
+        active_visit_count = session.scalar(
+            select(func.count(VisitCollectionMembershipModel.visit_id))
+            .join(VisitModel, VisitModel.id == VisitCollectionMembershipModel.visit_id)
+            .where(
+                VisitCollectionMembershipModel.collection_id == model.id,
+                VisitModel.is_superseded.is_(False),
+            )
+        ) or 0
+        latest_active_visit_at = session.scalar(
+            select(EventModel.started_at)
+            .select_from(VisitModel)
+            .join(
+                VisitCollectionMembershipModel,
+                VisitCollectionMembershipModel.visit_id == VisitModel.id,
+            )
+            .join(EventModel, EventModel.id == VisitModel.event_id)
+            .where(
+                VisitCollectionMembershipModel.collection_id == model.id,
+                VisitModel.is_superseded.is_(False),
+            )
+            .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+            .limit(1)
+        )
+        representative_row = session.execute(
+            select(VisitModel, EventModel)
+            .join(
+                VisitCollectionMembershipModel,
+                VisitCollectionMembershipModel.visit_id == VisitModel.id,
+            )
+            .join(EventModel, EventModel.id == VisitModel.event_id)
+            .join(
+                VisitEvidenceLinkModel,
+                VisitEvidenceLinkModel.visit_id == VisitModel.id,
+            )
+            .join(MediaAssetModel, MediaAssetModel.id == VisitEvidenceLinkModel.media_asset_id)
+            .where(
+                VisitCollectionMembershipModel.collection_id == model.id,
+                VisitModel.is_superseded.is_(False),
+                VisitEvidenceLinkModel.is_primary.is_(True),
+            )
+            .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+            .limit(1)
+        ).first()
+        representative_evidence = None
+        if representative_row is not None:
+            visit, event = representative_row
+            frames = self._visit_evidence_frames_from_visit(session, visit, event)
+            representative_evidence = next((frame for frame in frames if frame.is_primary), None)
+        return VisitCollectionSummary(
+            id=model.id,
+            name=model.name,
+            description=model.description,
+            created_at=_as_utc(model.created_at),
+            updated_at=_as_utc(model.updated_at),
+            archived_at=_as_utc(model.archived_at) if model.archived_at is not None else None,
+            state_token=self._collection_state_token(model),
+            active_visit_count=active_visit_count,
+            latest_active_visit_at=(
+                _as_utc(latest_active_visit_at)
+                if latest_active_visit_at is not None
+                else None
+            ),
+            representative_evidence=representative_evidence,
+        )
+
+    def _require_active_collection(
+        self,
+        session: Session,
+        collection_id: str,
+    ) -> VisitCollectionModel:
+        model = session.get(VisitCollectionModel, collection_id)
+        if model is None:
+            raise ValueError("missing_collection")
+        if model.archived_at is not None:
+            raise ValueError("collection_archived")
+        return model
+
+    def list_visit_collections(self) -> list[VisitCollectionSummary]:
+        with self.session_factory() as session:
+            models = session.scalars(
+                select(VisitCollectionModel)
+                .where(VisitCollectionModel.archived_at.is_(None))
+                .order_by(VisitCollectionModel.updated_at.desc(), VisitCollectionModel.id.desc())
+                .limit(MAX_COLLECTION_LIST_ITEMS)
+            ).all()
+            return [self._collection_summary(session, model) for model in models]
+
+    def get_visit_collection(self, collection_id: str) -> VisitCollectionSummary | None:
+        with self.session_factory() as session:
+            model = session.get(VisitCollectionModel, collection_id)
+            return self._collection_summary(session, model) if model is not None else None
+
+    def search_visit_collection(
+        self,
+        collection_id: str,
+        payload: ActivityLibrarySearchRequest,
+    ) -> ActivityLibrarySearchResponse:
+        with self.session_factory() as session:
+            self._require_active_collection(session, collection_id)
+        return self.search_activity_library(
+            payload.model_copy(update={"collection_id": collection_id, "include_superseded": False})
+        )
+
+    def create_visit_collection(self, payload: VisitCollectionCreate) -> VisitCollectionSummary:
+        name, normalized_name = self._normalized_collection_name(payload.name)
+        description = payload.description.strip() if payload.description is not None else None
+        description = description or None
+        with self.session_factory() as session:
+            with session.begin():
+                idempotent = session.scalar(
+                    select(VisitCollectionModel).where(
+                        VisitCollectionModel.last_idempotency_key == payload.idempotency_key
+                    )
+                )
+                if idempotent is not None:
+                    return self._collection_summary(session, idempotent)
+                if self._active_collection_name_conflict(session, normalized_name):
+                    raise ValueError("collection_name_conflict")
+                count = session.scalar(
+                    select(func.count(VisitCollectionModel.id)).where(
+                        VisitCollectionModel.archived_at.is_(None)
+                    )
+                ) or 0
+                if count >= MAX_ACTIVE_VISIT_COLLECTIONS:
+                    raise ValueError("collection_limit")
+                now = datetime.now(UTC)
+                model = VisitCollectionModel(
+                    id=self._next_id(session, VisitCollectionModel, "collection"),
+                    name=name,
+                    normalized_name=normalized_name,
+                    description=description,
+                    archived_at=None,
+                    version=1,
+                    created_at=now,
+                    updated_at=now,
+                    last_idempotency_key=payload.idempotency_key,
+                )
+                session.add(model)
+                session.flush()
+                return self._collection_summary(session, model)
+
+    def update_visit_collection(
+        self,
+        collection_id: str,
+        payload: VisitCollectionUpdate,
+    ) -> VisitCollectionSummary:
+        with self.session_factory() as session:
+            with session.begin():
+                model = self._require_active_collection(session, collection_id)
+                if model.last_idempotency_key == payload.idempotency_key:
+                    return self._collection_summary(session, model)
+                if self._collection_state_token(model) != payload.expected_state_token:
+                    raise ValueError("collection_stale")
+                if "name" in payload.model_fields_set:
+                    name, normalized_name = self._normalized_collection_name(payload.name or "")
+                    if self._active_collection_name_conflict(
+                        session, normalized_name, exclude_id=model.id
+                    ):
+                        raise ValueError("collection_name_conflict")
+                    model.name = name
+                    model.normalized_name = normalized_name
+                if "description" in payload.model_fields_set:
+                    model.description = (payload.description or "").strip() or None
+                model.version += 1
+                model.updated_at = datetime.now(UTC)
+                model.last_idempotency_key = payload.idempotency_key
+                session.flush()
+                return self._collection_summary(session, model)
+
+    def archive_visit_collection(
+        self,
+        collection_id: str,
+        payload: VisitCollectionArchiveRequest,
+    ) -> VisitCollectionSummary:
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(VisitCollectionModel, collection_id)
+                if model is None:
+                    raise ValueError("missing_collection")
+                if model.last_idempotency_key == payload.idempotency_key:
+                    return self._collection_summary(session, model)
+                if self._collection_state_token(model) != payload.expected_state_token:
+                    raise ValueError("collection_stale")
+                if model.archived_at is None:
+                    now = datetime.now(UTC)
+                    model.archived_at = now
+                    model.updated_at = now
+                    model.version += 1
+                    model.last_idempotency_key = payload.idempotency_key
+                session.flush()
+                return self._collection_summary(session, model)
+
+    def visit_collections_for_visit(self, visit_id: str) -> VisitCollectionsForVisitResponse:
+        with self.session_factory() as session:
+            if session.get(VisitModel, visit_id) is None:
+                raise ValueError("missing_visit")
+            models = session.scalars(
+                select(VisitCollectionModel)
+                .join(
+                    VisitCollectionMembershipModel,
+                    VisitCollectionMembershipModel.collection_id == VisitCollectionModel.id,
+                )
+                .where(
+                    VisitCollectionMembershipModel.visit_id == visit_id,
+                    VisitCollectionModel.archived_at.is_(None),
+                )
+                .order_by(VisitCollectionModel.name.collate("NOCASE"), VisitCollectionModel.id)
+                .limit(MAX_COLLECTIONS_PER_VISIT)
+            ).all()
+            return VisitCollectionsForVisitResponse(
+                visit_id=visit_id,
+                collections=[self._collection_summary(session, model) for model in models],
+            )
+
+    def _collection_membership_result(
+        self,
+        session: Session,
+        *,
+        model: VisitCollectionModel,
+        visit_id: str,
+        action: str,
+    ) -> VisitCollectionMembershipResult:
+        visit = session.get(VisitModel, visit_id)
+        if visit is None:
+            return VisitCollectionMembershipResult(
+                visit_id=visit_id,
+                status=VisitCollectionMembershipStatus.skipped_unavailable,
+            )
+        if visit.is_superseded:
+            return VisitCollectionMembershipResult(
+                visit_id=visit_id,
+                status=VisitCollectionMembershipStatus.skipped_superseded,
+            )
+        membership = session.get(
+            VisitCollectionMembershipModel,
+            {"collection_id": model.id, "visit_id": visit_id},
+        )
+        if action == "add":
+            if membership is not None:
+                return VisitCollectionMembershipResult(
+                    visit_id=visit_id,
+                    status=VisitCollectionMembershipStatus.already_present,
+                )
+            count = session.scalar(
+                select(func.count(VisitCollectionMembershipModel.collection_id))
+                .join(
+                    VisitCollectionModel,
+                    VisitCollectionModel.id == VisitCollectionMembershipModel.collection_id,
+                )
+                .where(
+                    VisitCollectionMembershipModel.visit_id == visit_id,
+                    VisitCollectionModel.archived_at.is_(None),
+                )
+            ) or 0
+            if count >= MAX_COLLECTIONS_PER_VISIT:
+                return VisitCollectionMembershipResult(
+                    visit_id=visit_id,
+                    status=VisitCollectionMembershipStatus.skipped_unavailable,
+                )
+            session.add(
+                VisitCollectionMembershipModel(
+                    collection_id=model.id,
+                    visit_id=visit_id,
+                    created_at=datetime.now(UTC),
+                )
+            )
+            return VisitCollectionMembershipResult(
+                visit_id=visit_id,
+                status=VisitCollectionMembershipStatus.updated,
+            )
+        if membership is None:
+            return VisitCollectionMembershipResult(
+                visit_id=visit_id,
+                status=VisitCollectionMembershipStatus.already_absent,
+            )
+        session.delete(membership)
+        return VisitCollectionMembershipResult(
+            visit_id=visit_id,
+            status=VisitCollectionMembershipStatus.updated,
+        )
+
+    def update_visit_collection_membership(
+        self,
+        collection_id: str,
+        visit_id: str,
+        *,
+        action: str,
+        payload: VisitCollectionMembershipRequest,
+    ) -> VisitCollectionMembershipResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                model = self._require_active_collection(session, collection_id)
+                if model.last_idempotency_key != payload.idempotency_key and (
+                    self._collection_state_token(model) != payload.expected_state_token
+                ):
+                    raise ValueError("collection_stale")
+                result = self._collection_membership_result(
+                    session, model=model, visit_id=visit_id, action=action
+                )
+                if result.status == VisitCollectionMembershipStatus.updated:
+                    model.version += 1
+                    model.updated_at = datetime.now(UTC)
+                    model.last_idempotency_key = payload.idempotency_key
+                session.flush()
+                return VisitCollectionMembershipResponse(
+                    collection=self._collection_summary(session, model), result=result
+                )
+
+    def bulk_update_visit_collection_memberships(
+        self,
+        payload: VisitCollectionBulkRequest,
+    ) -> VisitCollectionBulkResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                model = self._require_active_collection(session, payload.collection_id)
+                if model.last_idempotency_key != payload.idempotency_key and (
+                    self._collection_state_token(model) != payload.expected_state_token
+                ):
+                    raise ValueError("collection_stale")
+                results = [
+                    self._collection_membership_result(
+                        session,
+                        model=model,
+                        visit_id=visit_id,
+                        action=payload.action.value,
+                    )
+                    for visit_id in dict.fromkeys(payload.visit_ids)
+                ]
+                if any(result.status == VisitCollectionMembershipStatus.updated for result in results):
+                    model.version += 1
+                    model.updated_at = datetime.now(UTC)
+                    model.last_idempotency_key = payload.idempotency_key
+                session.flush()
+                return VisitCollectionBulkResponse(
+                    collection=self._collection_summary(session, model), results=results
+                )
+
     def search_activity_library(
         self,
         payload: ActivityLibrarySearchRequest,
@@ -4532,7 +4916,21 @@ class ProductRepository:
                         func.length(func.trim(VisitOrganizationModel.note)) == 0,
                     )
                 )
-
+            if payload.collection_id is not None:
+                query = (
+                    query.join(
+                        VisitCollectionMembershipModel,
+                        VisitCollectionMembershipModel.visit_id == VisitModel.id,
+                    )
+                    .join(
+                        VisitCollectionModel,
+                        VisitCollectionModel.id == VisitCollectionMembershipModel.collection_id,
+                    )
+                    .where(
+                        VisitCollectionModel.id == payload.collection_id,
+                        VisitCollectionModel.archived_at.is_(None),
+                    )
+                )
             blank_keys = {"blank", "empty", "no_activity", "no_animal"}
             ambiguous_keys = {"ambiguous", "unknown_bird", "unknown_animal", "unknown"}
             non_bird_keys = {"non_bird", "non_bird_activity"}
@@ -4604,12 +5002,13 @@ class ProductRepository:
                 )
 
             # Event timestamp plus immutable IDs makes offset pages deterministic when times tie.
+            ordering = (
+                (EventModel.started_at.asc(), EventModel.id.asc(), VisitModel.id.asc())
+                if payload.oldest_first
+                else (EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+            )
             rows = session.execute(
-                query.order_by(
-                    EventModel.started_at.desc(),
-                    EventModel.id.desc(),
-                    VisitModel.id.desc(),
-                )
+                query.order_by(*ordering)
                 .offset(payload.offset)
                 .limit(payload.page_size + 1)
             ).all()
@@ -4656,6 +5055,17 @@ class ProductRepository:
             .limit(8)
         ).all()
         organization = session.get(VisitOrganizationModel, visit.id)
+        collection_count = session.scalar(
+            select(func.count(VisitCollectionMembershipModel.collection_id))
+            .join(
+                VisitCollectionModel,
+                VisitCollectionModel.id == VisitCollectionMembershipModel.collection_id,
+            )
+            .where(
+                VisitCollectionMembershipModel.visit_id == visit.id,
+                VisitCollectionModel.archived_at.is_(None),
+            )
+        ) or 0
         return ActivityLibraryVisitSummary(
             **self._stream_visit_summary_from_models(session, visit, event).model_dump(),
             stream_name=stream.name,
@@ -4664,6 +5074,7 @@ class ProductRepository:
             curation_actions=[entry.action for entry in history],
             is_favorite=bool(organization and organization.is_favorite),
             has_note=bool(organization and organization.note and organization.note.strip()),
+            collection_count=collection_count,
         )
 
     def _activity_library_review_filter_matches(
@@ -9024,6 +9435,12 @@ class ProductRepository:
                         result_visit_id=result.id,
                         created_at=created_at,
                     )
+                    self._copy_visit_collection_memberships(
+                        session,
+                        source_visit_id=source.id,
+                        result_visit_id=result.id,
+                        created_at=created_at,
+                    )
                     results.append(result)
                 source.is_superseded = True
                 event.review_status = ReviewStatus.needs_review.value
@@ -9130,6 +9547,56 @@ class ProductRepository:
                 idempotency_key=None,
             )
         )
+
+    @staticmethod
+    def _copy_visit_collection_memberships(
+        session: Session,
+        *,
+        source_visit_id: str,
+        result_visit_id: str,
+        created_at: datetime,
+    ) -> None:
+        """Copy local gallery membership only; the source remains historical context."""
+
+        collection_ids = session.scalars(
+            select(VisitCollectionMembershipModel.collection_id).where(
+                VisitCollectionMembershipModel.visit_id == source_visit_id
+            )
+        ).all()
+        for collection_id in collection_ids:
+            session.add(
+                VisitCollectionMembershipModel(
+                    collection_id=collection_id,
+                    visit_id=result_visit_id,
+                    created_at=created_at,
+                )
+            )
+
+    @staticmethod
+    def _merge_visit_collection_memberships(
+        session: Session,
+        *,
+        source_visit_ids: list[str],
+        result_visit_id: str,
+        created_at: datetime,
+    ) -> None:
+        """Union structural membership without changing Collection or review state."""
+
+        collection_ids = set(
+            session.scalars(
+                select(VisitCollectionMembershipModel.collection_id).where(
+                    VisitCollectionMembershipModel.visit_id.in_(source_visit_ids)
+                )
+            ).all()
+        )
+        for collection_id in collection_ids:
+            session.add(
+                VisitCollectionMembershipModel(
+                    collection_id=collection_id,
+                    visit_id=result_visit_id,
+                    created_at=created_at,
+                )
+            )
 
     def _visit_merge_gap_seconds(
         self,
@@ -9397,6 +9864,12 @@ class ProductRepository:
                 session.flush()
                 source_ids = [visit.id for visit, _event in models]
                 self._merged_visit_organization(
+                    session,
+                    source_visit_ids=source_ids,
+                    result_visit_id=merged_visit.id,
+                    created_at=created_at,
+                )
+                self._merge_visit_collection_memberships(
                     session,
                     source_visit_ids=source_ids,
                     result_visit_id=merged_visit.id,
@@ -14438,6 +14911,25 @@ class ProductRepository:
                     )
                 ).all()
             } if page_records else {}
+            collection_counts = dict(
+                session.execute(
+                    select(
+                        VisitCollectionMembershipModel.visit_id,
+                        func.count(VisitCollectionMembershipModel.collection_id),
+                    )
+                    .join(
+                        VisitCollectionModel,
+                        VisitCollectionModel.id == VisitCollectionMembershipModel.collection_id,
+                    )
+                    .where(
+                        VisitCollectionMembershipModel.visit_id.in_(
+                            {record["summary"].id for record in page_records}
+                        ),
+                        VisitCollectionModel.archived_at.is_(None),
+                    )
+                    .group_by(VisitCollectionMembershipModel.visit_id)
+                ).all()
+            ) if page_records else {}
             all_ordered = self._wildlife_journal_ordered_records(all_label_records)
             first_on_stream: dict[str, str] = {}
             first_in_zone: dict[str, str] = {}
@@ -14485,6 +14977,7 @@ class ProductRepository:
                             and organization_by_visit_id[record["summary"].id].note
                             and organization_by_visit_id[record["summary"].id].note.strip()
                         ),
+                        collection_count=collection_counts.get(record["summary"].id, 0),
                     )
                     for record in page_records
                 ],
