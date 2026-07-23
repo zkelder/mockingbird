@@ -9,12 +9,14 @@ import type {
   DatasetQualitySummary,
   HealthStatus,
   ModelReadinessSummary,
+  ProductAlertAction,
   ReviewCorrectionResult,
   ReviewQueueItem,
   SpeciesSuggestion,
   Stream,
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { AlertsControl, AlertsInboxPage } from "./components/AlertsInbox";
 import { ActivityLibraryPage, activityLibraryPath } from "./pages/ActivityLibraryPage";
 import { BirdLogPage } from "./pages/BirdLogPage";
 import { CameraSetupPage } from "./pages/CameraSetupPage";
@@ -308,6 +310,26 @@ export default function App() {
       window.history.pushState({}, "", path);
     }
     applyRoute({ page: "activity-library" });
+  }
+
+  function openAlertAction(action: ProductAlertAction) {
+    if (action.action_type === "review_visit" && action.visit_id) {
+      openVisit(action.visit_id);
+      return;
+    }
+    if (action.action_type === "open_stream" && action.stream_id) {
+      openStream(action.stream_id);
+      return;
+    }
+    if (action.action_type === "open_storage_retention") {
+      setPage("saved-media-retention");
+      return;
+    }
+    if (action.action_type === "open_wildlife_journal") {
+      const path = action.label ? `/bird-log/${encodeURIComponent(action.label)}` : "/bird-log";
+      window.history.pushState({}, "", path);
+      applyRoute({ page: "bird-log" });
+    }
   }
 
   function openFocusedFastReview(visitIds: string[]) {
@@ -706,6 +728,10 @@ export default function App() {
       return <SavedMediaRetentionPage />;
     }
 
+    if (page === "alerts-inbox") {
+      return <AlertsInboxPage onAction={openAlertAction} />;
+    }
+
     if (page === "worker-status") {
       return <WorkerStatusPage />;
     }
@@ -733,6 +759,7 @@ export default function App() {
             <span>Outdoor video intelligence</span>
           </div>
         </div>
+        <AlertsControl onAction={openAlertAction} onOpenInbox={() => setPage("alerts-inbox")} />
         <nav className="nav-list" aria-label="Product navigation">
           <span className="nav-section-label">Product loop</span>
           {productNavItems.map((item) => (

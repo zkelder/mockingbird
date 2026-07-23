@@ -2611,6 +2611,48 @@ export interface FastReviewUndoResponse {
   message: string;
 }
 
+export type AlertCategory = "review" | "monitoring" | "storage" | "journal";
+export type AlertSeverity = "info" | "warning" | "high";
+export type AlertActionType = "review_visit" | "open_stream" | "open_storage_retention" | "open_wildlife_journal";
+
+export interface ProductAlertAction {
+  action_type: AlertActionType;
+  visit_id?: string | null;
+  stream_id?: string | null;
+  label?: string | null;
+}
+
+export interface ProductAlert {
+  id: string;
+  category: AlertCategory;
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  created_at: string;
+  updated_at: string;
+  read_at?: string | null;
+  dismissed_at?: string | null;
+  resolved_at?: string | null;
+  status: "unread" | "read" | "dismissed" | "resolved";
+  stream_id?: string | null;
+  stream_name?: string | null;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  visit_id?: string | null;
+  source_id?: string | null;
+  action: ProductAlertAction;
+}
+
+export interface ProductAlertListResponse {
+  items: ProductAlert[];
+  next_offset?: number | null;
+}
+
+export interface ProductAlertUnreadResponse {
+  unread_count: number;
+  recent: ProductAlert[];
+}
+
 export type ReviewQueueBulkCorrectionTargetType = "event" | "visit";
 export type ReviewQueueBulkCorrectionResultStatus = "succeeded" | "skipped" | "failed";
 

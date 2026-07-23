@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 14
+CURRENT_DATABASE_SCHEMA_VERSION = 15
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -396,6 +396,12 @@ def _migrate_to_camera_setup_operations(connection: Connection) -> None:
     Base.metadata.tables["camera_setup_operations"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_product_alerts(connection: Connection) -> None:
+    """Add an empty local inbox; existing product state never produces alerts on migration."""
+
+    Base.metadata.tables["product_alerts"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -410,6 +416,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     12: _migrate_to_storage_retention_settings_idempotency,
     13: _migrate_to_storage_cleanup_action_idempotency,
     14: _migrate_to_camera_setup_operations,
+    15: _migrate_to_product_alerts,
 }
 
 

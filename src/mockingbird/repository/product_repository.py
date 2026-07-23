@@ -99,6 +99,9 @@ from mockingbird.api.schemas import (
     ActivityLibrarySearchRequest,
     ActivityLibrarySearchResponse,
     ActivityLibraryVisitSummary,
+    AlertActionType,
+    AlertCategory,
+    AlertSeverity,
     BoundingBox,
     CameraSource,
     CameraSourceCreate,
@@ -205,6 +208,10 @@ from mockingbird.api.schemas import (
     MotionEvidenceStatus,
     PixelBoundingBox,
     Point,
+    ProductAlert,
+    ProductAlertAction,
+    ProductAlertListResponse,
+    ProductAlertUnreadResponse,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
     VisitReviewHistory,
@@ -374,6 +381,7 @@ from mockingbird.storage.models import (
     DetectionRunModel,
     EventModel,
     MediaAssetModel,
+    ProductAlertModel,
     ReviewLabelModel,
     StreamModel,
     StreamMonitoringPolicyModel,
@@ -415,6 +423,8 @@ STORAGE_CLEANUP_RECOVERY_WINDOW = timedelta(days=14)
 DEFAULT_STORAGE_REVIEWED_NON_BIRD_AGE_DAYS = 180
 DEFAULT_STORAGE_SUPERSEDED_AGE_DAYS = 90
 DEFAULT_STORAGE_ORPHANED_AGE_DAYS = 30
+MAX_ALERT_PAGE_SIZE = 50
+MAX_RECENT_ALERTS = 12
 
 
 @dataclass(frozen=True)
@@ -3591,6 +3601,7 @@ class ProductRepository:
                         created_at=now,
                     )
                 )
+                self._sync_monitoring_alert(session, stream_id, now)
                 return False
 
     def retry_stream_monitoring(
@@ -3682,6 +3693,7 @@ class ProductRepository:
                 checkpoint.last_clean_stop_at = now
                 checkpoint.last_stop_reason = "manual_camera_stop"
                 checkpoint.updated_at = now
+                self._sync_monitoring_alert(session, stream_id, now)
 
     def prepare_for_supervision(self, app_instance_id: str) -> None:
         """Invalidate any process-owned checkpoint before a new app claims runtime."""
@@ -3784,6 +3796,7 @@ class ProductRepository:
                 checkpoint.next_retry_at = None
                 checkpoint.failure_code = None
                 checkpoint.updated_at = now
+                self._sync_monitoring_alert(session, candidate.stream_id, now)
 
     def mark_monitoring_running(
         self,
@@ -3807,6 +3820,7 @@ class ProductRepository:
                 checkpoint.consecutive_failure_count = 0
                 checkpoint.safety_hold_active = False
                 checkpoint.updated_at = now
+                self._sync_monitoring_alert(session, candidate.stream_id, now)
 
     def mark_monitoring_waiting(
         self,
@@ -3830,6 +3844,7 @@ class ProductRepository:
                 checkpoint.next_retry_at = None
                 checkpoint.last_stop_reason = "waiting_for_capacity"
                 checkpoint.updated_at = now
+                self._sync_monitoring_alert(session, candidate.stream_id, now)
 
     def mark_monitoring_backoff(
         self,
@@ -3861,6 +3876,7 @@ class ProductRepository:
                 checkpoint.next_retry_at = retry_at
                 checkpoint.last_stop_reason = "runtime_unhealthy"
                 checkpoint.updated_at = now
+                self._sync_monitoring_alert(session, candidate.stream_id, now)
 
     def mark_monitoring_blocked(
         self,
@@ -3892,6 +3908,7 @@ class ProductRepository:
                 checkpoint.next_retry_at = None
                 checkpoint.last_stop_reason = failure_code
                 checkpoint.updated_at = now
+                self._sync_monitoring_alert(session, candidate.stream_id, now)
 
     def mark_monitoring_stopped(
         self,
@@ -3916,6 +3933,7 @@ class ProductRepository:
                 checkpoint.next_retry_at = None
                 checkpoint.last_stop_reason = reason
                 checkpoint.updated_at = now
+                self._sync_monitoring_alert(session, stream_id, now)
 
     def get_stream_playback_status(self, stream_id: str) -> StreamPlaybackStatus | None:
         with self.session_factory() as session:
@@ -5304,6 +5322,293 @@ class ProductRepository:
             return None
         return Path(asset.local_path)
 
+    def list_product_alerts(
+        self,
+        *,
+        category: AlertCategory | None = None,
+        offset: int = 0,
+        page_size: int = 30,
+    ) -> ProductAlertListResponse:
+        """Read bounded inbox history. Reading never reconciles product conditions."""
+
+        bounded_size = max(1, min(page_size, MAX_ALERT_PAGE_SIZE))
+        bounded_offset = max(0, min(offset, 10_000))
+        with self.session_factory() as session:
+            query = select(ProductAlertModel)
+            if category is not None:
+                query = query.where(ProductAlertModel.category == category.value)
+            rows = session.scalars(
+                query.order_by(ProductAlertModel.created_at.desc(), ProductAlertModel.id.desc())
+                .offset(bounded_offset)
+                .limit(bounded_size + 1)
+            ).all()
+            return ProductAlertListResponse(
+                items=[self._product_alert_from_model(session, row) for row in rows[:bounded_size]],
+                next_offset=(bounded_offset + bounded_size if len(rows) > bounded_size else None),
+            )
+
+    def product_alert_unread(self) -> ProductAlertUnreadResponse:
+        with self.session_factory() as session:
+            unread_count = session.scalar(
+                select(func.count(ProductAlertModel.id)).where(
+                    ProductAlertModel.read_at.is_(None),
+                    ProductAlertModel.dismissed_at.is_(None),
+                    ProductAlertModel.resolved_at.is_(None),
+                )
+            ) or 0
+            recent = session.scalars(
+                select(ProductAlertModel)
+                .where(ProductAlertModel.dismissed_at.is_(None))
+                .order_by(ProductAlertModel.created_at.desc(), ProductAlertModel.id.desc())
+                .limit(MAX_RECENT_ALERTS)
+            ).all()
+            return ProductAlertUnreadResponse(
+                unread_count=unread_count,
+                recent=[self._product_alert_from_model(session, row) for row in recent],
+            )
+
+    def mark_product_alert_read(self, alert_id: str) -> bool:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                alert = session.get(ProductAlertModel, alert_id)
+                if alert is None:
+                    return False
+                if alert.read_at is None:
+                    alert.read_at = now
+                    alert.updated_at = now
+                return True
+
+    def mark_product_alerts_read(self, alert_ids: list[str]) -> int:
+        now = datetime.now(UTC)
+        seen = {alert_id.strip() for alert_id in alert_ids if alert_id.strip()}
+        with self.session_factory() as session:
+            with session.begin():
+                rows = session.scalars(
+                    select(ProductAlertModel).where(ProductAlertModel.id.in_(list(seen)[:50]))
+                ).all()
+                for alert in rows:
+                    if alert.read_at is None:
+                        alert.read_at = now
+                        alert.updated_at = now
+                return len(rows)
+
+    def dismiss_product_alert(self, alert_id: str) -> bool:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                alert = session.get(ProductAlertModel, alert_id)
+                if alert is None:
+                    return False
+                if alert.dismissed_at is None:
+                    alert.dismissed_at = now
+                    alert.updated_at = now
+                return True
+
+    def _product_alert_from_model(self, session: Session, alert: ProductAlertModel) -> ProductAlert:
+        stream = session.get(StreamModel, alert.stream_id) if alert.stream_id else None
+        zone = session.get(ZoneModel, alert.zone_id) if alert.zone_id else None
+        try:
+            action_data = json.loads(alert.action_parameters_json)
+        except (TypeError, ValueError):
+            action_data = {}
+        action_type = AlertActionType(alert.action_type)
+        # Action parameters were server-authored. Reconfirm targets so old history
+        # never sends the browser to an arbitrary or now-invalid route.
+        if action_type == AlertActionType.review_visit:
+            visit = session.get(VisitModel, alert.visit_id) if alert.visit_id else None
+            if visit is None or visit.is_superseded:
+                action_type = AlertActionType.open_stream if stream is not None else AlertActionType.open_storage_retention
+        elif action_type == AlertActionType.open_stream and stream is None:
+            action_type = AlertActionType.open_storage_retention
+        action = ProductAlertAction(
+            action_type=action_type,
+            visit_id=alert.visit_id if action_type == AlertActionType.review_visit else None,
+            stream_id=alert.stream_id if action_type == AlertActionType.open_stream else None,
+            label=(str(action_data.get("label")) if action_type == AlertActionType.open_wildlife_journal and action_data.get("label") else None),
+        )
+        status = (
+            "dismissed" if alert.dismissed_at is not None else
+            "resolved" if alert.resolved_at is not None else
+            "read" if alert.read_at is not None else "unread"
+        )
+        return ProductAlert(
+            id=alert.id,
+            category=AlertCategory(alert.category),
+            severity=AlertSeverity(alert.severity),
+            title=alert.title,
+            message=alert.message,
+            created_at=_as_utc(alert.created_at),
+            updated_at=_as_utc(alert.updated_at),
+            read_at=_as_utc(alert.read_at) if alert.read_at else None,
+            dismissed_at=_as_utc(alert.dismissed_at) if alert.dismissed_at else None,
+            resolved_at=_as_utc(alert.resolved_at) if alert.resolved_at else None,
+            status=status,
+            stream_id=alert.stream_id,
+            stream_name=stream.name if stream is not None else None,
+            zone_id=alert.zone_id,
+            zone_name=zone.name if zone is not None else None,
+            visit_id=alert.visit_id,
+            source_id=alert.source_id,
+            action=action,
+        )
+
+    def _refresh_product_alert(
+        self,
+        session: Session,
+        *,
+        category: AlertCategory,
+        severity: AlertSeverity,
+        title: str,
+        message: str,
+        deduplication_key: str,
+        condition_fingerprint: str,
+        action_type: AlertActionType,
+        action_parameters: dict[str, str],
+        now: datetime,
+        stream_id: str | None = None,
+        zone_id: str | None = None,
+        visit_id: str | None = None,
+        source_id: str | None = None,
+        cleanup_context: str | None = None,
+    ) -> ProductAlertModel:
+        """Update one condition in place; a changed fingerprint starts a new version."""
+
+        active = session.scalars(
+            select(ProductAlertModel)
+            .where(
+                ProductAlertModel.deduplication_key == deduplication_key,
+                ProductAlertModel.resolved_at.is_(None),
+            )
+            .order_by(ProductAlertModel.condition_version.desc())
+        ).first()
+        if active is not None and active.condition_fingerprint == condition_fingerprint:
+            active.severity = severity.value
+            active.title = title
+            active.message = message
+            active.updated_at = now
+            active.stream_id, active.zone_id, active.visit_id = stream_id, zone_id, visit_id
+            active.source_id, active.cleanup_context = source_id, cleanup_context
+            active.action_type = action_type.value
+            active.action_parameters_json = json.dumps(action_parameters, sort_keys=True)
+            return active
+        if active is not None:
+            active.resolved_at = now
+            active.updated_at = now
+        version = (session.scalar(
+            select(func.max(ProductAlertModel.condition_version)).where(
+                ProductAlertModel.deduplication_key == deduplication_key
+            )
+        ) or 0) + 1
+        created = ProductAlertModel(
+            id=f"alert-{uuid.uuid4().hex}", category=category.value, severity=severity.value,
+            title=title, message=message, created_at=now, updated_at=now,
+            read_at=None, dismissed_at=None, resolved_at=None,
+            stream_id=stream_id, zone_id=zone_id, visit_id=visit_id, source_id=source_id,
+            cleanup_context=cleanup_context, deduplication_key=deduplication_key,
+            condition_fingerprint=condition_fingerprint, condition_version=version,
+            action_type=action_type.value, action_parameters_json=json.dumps(action_parameters, sort_keys=True),
+        )
+        session.add(created)
+        return created
+
+    def _resolve_product_alerts(self, session: Session, deduplication_key: str, now: datetime) -> None:
+        for alert in session.scalars(
+            select(ProductAlertModel).where(
+                ProductAlertModel.deduplication_key == deduplication_key,
+                ProductAlertModel.resolved_at.is_(None),
+            )
+        ).all():
+            alert.resolved_at = now
+            alert.updated_at = now
+
+    def _sync_review_alert(self, session: Session, visit: VisitModel, now: datetime) -> None:
+        key = f"review:{visit.id}"
+        event = session.get(EventModel, visit.event_id)
+        stream = session.get(StreamModel, event.stream_id) if event is not None else None
+        if visit.is_superseded or visit.review_status != ReviewStatus.needs_review.value or stream is None:
+            self._resolve_product_alerts(session, key, now)
+            return
+        zone_id = visit.zone_id or event.primary_zone_id
+        self._refresh_product_alert(
+            session, category=AlertCategory.review, severity=AlertSeverity.warning,
+            title="Visit ready for review", message="Outdoor activity is ready for your explicit review and correction.",
+            deduplication_key=key, condition_fingerprint="needs_review",
+            action_type=AlertActionType.review_visit, action_parameters={}, now=now,
+            stream_id=stream.id, zone_id=zone_id, visit_id=visit.id, source_id=stream.source_id,
+        )
+
+    def _sync_journal_milestone_alert(self, session: Session, visit: VisitModel, now: datetime) -> None:
+        if visit.is_superseded or visit.review_status != ReviewStatus.reviewed.value or not visit.reviewed_label:
+            return
+        event = session.get(EventModel, visit.event_id)
+        if event is None or self._visit_review_outcome(session, review_status=ReviewStatus.reviewed, reviewed_label=visit.reviewed_label) != VisitReviewOutcome.confirmed_bird:
+            return
+        label = self._normalize_label_from_session(session, visit.reviewed_label)
+        earlier = session.scalar(select(func.count(VisitModel.id)).where(
+            VisitModel.id != visit.id, VisitModel.is_superseded.is_(False),
+            VisitModel.review_status == ReviewStatus.reviewed.value, VisitModel.reviewed_label == label,
+        )) or 0
+        if earlier:
+            return
+        stream = session.get(StreamModel, event.stream_id)
+        self._refresh_product_alert(
+            session, category=AlertCategory.journal, severity=AlertSeverity.info,
+            title="First confirmed local observation", message="This is the first current local reviewed observation of this wildlife label in MockingBird.",
+            deduplication_key=f"journal:first-label:{label}", condition_fingerprint="first_confirmed_local_observation",
+            action_type=AlertActionType.open_wildlife_journal, action_parameters={"label": label}, now=now,
+            stream_id=stream.id if stream else None, zone_id=visit.zone_id or event.primary_zone_id,
+            visit_id=visit.id, source_id=stream.source_id if stream else None,
+        )
+
+    def _sync_monitoring_alert(self, session: Session, stream_id: str, now: datetime) -> None:
+        policy = session.get(StreamMonitoringPolicyModel, stream_id)
+        checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
+        stream = session.get(StreamModel, stream_id)
+        prefix = f"monitoring:{stream_id}:"
+        if policy is None or checkpoint is None or stream is None or policy.mode != StreamMonitoringMode.armed.value:
+            for alert in session.scalars(select(ProductAlertModel).where(ProductAlertModel.deduplication_key.like(f"{prefix}%"), ProductAlertModel.resolved_at.is_(None))).all():
+                alert.resolved_at, alert.updated_at = now, now
+            return
+        failure_code = checkpoint.failure_code or "camera_unavailable"
+        meaningful = (
+            checkpoint.actual_state == StreamRuntimeState.blocked.value and failure_code != "waiting_for_capacity"
+        ) or (
+            checkpoint.actual_state == StreamRuntimeState.backoff.value and checkpoint.consecutive_failure_count >= 2
+        )
+        if not meaningful:
+            for alert in session.scalars(select(ProductAlertModel).where(ProductAlertModel.deduplication_key.like(f"{prefix}%"), ProductAlertModel.resolved_at.is_(None))).all():
+                alert.resolved_at, alert.updated_at = now, now
+            return
+        self._refresh_product_alert(
+            session, category=AlertCategory.monitoring,
+            severity=AlertSeverity.high if checkpoint.actual_state == StreamRuntimeState.blocked.value else AlertSeverity.warning,
+            title="Monitoring needs attention", message="This enabled camera is unavailable or recovery is not succeeding. Open the Stream to review its safe status.",
+            deduplication_key=f"{prefix}{failure_code}", condition_fingerprint=failure_code,
+            action_type=AlertActionType.open_stream, action_parameters={}, now=now,
+            stream_id=stream.id, source_id=stream.source_id,
+        )
+
+    def _sync_storage_alert(self, session: Session, now: datetime) -> None:
+        settings = session.get(StorageRetentionSettingsModel, 1)
+        target = settings.maximum_managed_media_bytes if settings is not None else None
+        key = "storage:managed_target"
+        total = self._storage_total_managed_bytes(session)
+        if target is None or total <= target:
+            self._resolve_product_alerts(session, key, now)
+            return
+        evaluation = self._storage_retention_evaluation(session, self._storage_retention_settings_response(settings), now)
+        protected = sum(evaluation.protected_bytes.values()) > 0
+        self._refresh_product_alert(
+            session, category=AlertCategory.storage, severity=AlertSeverity.high if protected else AlertSeverity.warning,
+            title="Managed storage is above its target", message=(
+                "Protected evidence is keeping managed storage above its target. Cleanup remains an explicit local action."
+                if protected else "Managed storage is above its configured target. Review Storage & Retention before choosing any cleanup."
+            ), deduplication_key=key, condition_fingerprint=("protected_target" if protected else "managed_target"),
+            action_type=AlertActionType.open_storage_retention, action_parameters={}, now=now,
+            cleanup_context="protected_target" if protected else "managed_target",
+        )
+
     def storage_retention_settings(self) -> StorageRetentionSettings:
         """Read retention intent without creating settings or starting cleanup."""
 
@@ -5364,6 +5669,7 @@ class ProductRepository:
                     model.updated_at = now
                     model.last_settings_idempotency_key = payload.idempotency_key
                 session.flush()
+                self._sync_storage_alert(session, now)
                 return self._storage_retention_settings_response(model), False
 
     def storage_summary(self) -> StorageSummary:
@@ -5688,6 +5994,7 @@ class ProductRepository:
                         else None
                     )
                     session.flush()
+                    self._sync_storage_alert(session, now)
                     return self._storage_cleanup_result_from_batch(persisted_batch)
         finally:
             self._storage_retention_lock.release()
@@ -5811,6 +6118,7 @@ class ProductRepository:
                     summary["restored_count"] = restored_count
                     summary["failed_count"] = int(summary.get("failed_count", 0)) + conflicts
                     batch.summary_json = json.dumps(summary, sort_keys=True)
+                    self._sync_storage_alert(session, now)
                     return self._storage_cleanup_result_from_batch(batch, idempotent=False)
         finally:
             self._storage_retention_lock.release()
@@ -5876,6 +6184,7 @@ class ProductRepository:
                     ) + purged_count
                     batch.summary_json = json.dumps(summary, sort_keys=True)
                     batch.last_purge_idempotency_key = payload.idempotency_key
+                    self._sync_storage_alert(session, now)
                     return self._storage_cleanup_result_from_batch(batch)
         finally:
             self._storage_retention_lock.release()
@@ -8626,6 +8935,9 @@ class ProductRepository:
                         created_at=created_at,
                         details={"source_visit_id": source.id},
                     )
+                self._sync_review_alert(session, source, created_at)
+                for result in results:
+                    self._sync_review_alert(session, result, created_at)
                 session.flush()
                 return VisitSplitResponse(
                     source_visit=_visit_from_model(source),
@@ -8965,6 +9277,9 @@ class ProductRepository:
                     created_at=created_at,
                     details={"source_visit_ids": source_ids},
                 )
+                for old_visit, _old_event in models:
+                    self._sync_review_alert(session, old_visit, created_at)
+                self._sync_review_alert(session, merged_visit, created_at)
                 session.flush()
                 return VisitMergeResponse(
                     visit=_visit_from_model(merged_visit),
@@ -9288,6 +9603,10 @@ class ProductRepository:
         evidence_model.promoted_event_id = event_id
         evidence_model.promoted_visit_id = visit_id
         session.flush()
+        if visit_id is not None:
+            visit_for_alert = session.get(VisitModel, visit_id)
+            if visit_for_alert is not None:
+                self._sync_review_alert(session, visit_for_alert, created_at)
 
         return MotionEvidencePromoteResponse(
             evidence=_motion_evidence_from_model(evidence_model),
@@ -10673,6 +10992,7 @@ class ProductRepository:
                 visit.reviewed_label = None
                 visit.review_status = ReviewStatus.needs_review.value
                 event.review_status = ReviewStatus.needs_review.value
+                self._sync_review_alert(session, visit, datetime.now(UTC))
                 session.flush()
                 return self._visit_review_reopen_response(session, visit.id)
 
@@ -11018,6 +11338,7 @@ class ProductRepository:
                     fast_review_idempotency_key=payload.idempotency_key,
                 )
                 session.add(reversal)
+                self._sync_review_alert(session, visit, datetime.now(UTC))
                 session.flush()
                 return self._fast_review_undo_response(session, reversal)
 
@@ -14069,6 +14390,7 @@ class ProductRepository:
         )
         session.add_all([event_model, visit_model, detection_model])
         session.flush()
+        self._sync_review_alert(session, visit_model, created_at)
         return self._event_from_model(session, event_model), _visit_from_model(visit_model)
 
     def _create_media_product_records(
@@ -14134,6 +14456,8 @@ class ProductRepository:
         )
         session.add_all([asset_model, event_model, visit_model])
         session.flush()
+        self._sync_review_alert(session, visit_model, created_at)
+        self._sync_storage_alert(session, created_at)
 
         return (
             _media_asset_from_model(asset_model),
@@ -14486,6 +14810,12 @@ class ProductRepository:
             raise ValueError("unsupported_target")
 
         session.flush()
+        if payload.target_type == "visit":
+            current_visit = session.get(VisitModel, payload.target_id)
+            if current_visit is not None:
+                now = created_at or datetime.now(UTC)
+                self._sync_review_alert(session, current_visit, now)
+                self._sync_journal_milestone_alert(session, current_visit, now)
         return _review_label_from_model(label_model), visit, event
 
     def _review_queue_bulk_correction_skip_reason(

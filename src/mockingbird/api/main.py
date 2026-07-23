@@ -20,6 +20,7 @@ from starlette.responses import FileResponse, Response, StreamingResponse
 
 from mockingbird.api.schemas import (
     AnalyticsSummary,
+    AlertCategory,
     ActivityLibraryExportSelectionRequest,
     ActivityLibraryExportSelectionResponse,
     ActivityLibrarySavedView,
@@ -127,6 +128,9 @@ from mockingbird.api.schemas import (
     MotionScoreResponse,
     MotionSuppressedZoneSummaryResponse,
     MotionZoneInput,
+    ProductAlertListResponse,
+    ProductAlertMarkVisibleReadRequest,
+    ProductAlertUnreadResponse,
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -8797,6 +8801,44 @@ async def get_wildlife_insights(
     """Return bounded current reviewed-truth insights for the Analytics page."""
 
     return get_repository().wildlife_insights(payload)
+
+
+@app.get("/api/alerts/unread", response_model=ProductAlertUnreadResponse)
+async def get_alert_unread() -> ProductAlertUnreadResponse:
+    return get_repository().product_alert_unread()
+
+
+@app.get("/api/alerts", response_model=ProductAlertListResponse)
+async def list_alerts(
+    category: AlertCategory | None = None,
+    page_size: int = Query(default=30, ge=1, le=50),
+    offset: int = Query(default=0, ge=0, le=10_000),
+) -> ProductAlertListResponse:
+    return get_repository().list_product_alerts(
+        category=category, page_size=page_size, offset=offset,
+    )
+
+
+@app.post("/api/alerts/{alert_id}/read", response_model=ProductAlertUnreadResponse)
+async def mark_alert_read(alert_id: str) -> ProductAlertUnreadResponse:
+    if not get_repository().mark_product_alert_read(alert_id):
+        raise _not_found("Alert", alert_id)
+    return get_repository().product_alert_unread()
+
+
+@app.post("/api/alerts/read-visible", response_model=ProductAlertUnreadResponse)
+async def mark_visible_alerts_read(
+    payload: ProductAlertMarkVisibleReadRequest,
+) -> ProductAlertUnreadResponse:
+    get_repository().mark_product_alerts_read(payload.alert_ids)
+    return get_repository().product_alert_unread()
+
+
+@app.post("/api/alerts/{alert_id}/dismiss", response_model=ProductAlertUnreadResponse)
+async def dismiss_alert(alert_id: str) -> ProductAlertUnreadResponse:
+    if not get_repository().dismiss_product_alert(alert_id):
+        raise _not_found("Alert", alert_id)
+    return get_repository().product_alert_unread()
 
 
 @app.get("/api/bird-log/journal", response_model=WildlifeJournalOverviewResponse)

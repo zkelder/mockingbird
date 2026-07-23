@@ -3496,6 +3496,72 @@ class WildlifeJournalHistoryResponse(BaseModel):
     gallery: WildlifeJournalGallery
 
 
+class AlertCategory(str, Enum):
+    review = "review"
+    monitoring = "monitoring"
+    storage = "storage"
+    journal = "journal"
+
+
+class AlertSeverity(str, Enum):
+    info = "info"
+    warning = "warning"
+    high = "high"
+
+
+class AlertActionType(str, Enum):
+    review_visit = "review_visit"
+    open_stream = "open_stream"
+    open_storage_retention = "open_storage_retention"
+    open_wildlife_journal = "open_wildlife_journal"
+
+
+class ProductAlertAction(BaseModel):
+    """A bounded product intent. The server, not the browser, chooses its route data."""
+
+    action_type: AlertActionType
+    visit_id: str | None = None
+    stream_id: str | None = None
+    label: str | None = None
+
+
+class ProductAlert(BaseModel):
+    id: str
+    category: AlertCategory
+    severity: AlertSeverity
+    title: str
+    message: str
+    created_at: datetime
+    updated_at: datetime
+    read_at: datetime | None = None
+    dismissed_at: datetime | None = None
+    resolved_at: datetime | None = None
+    status: str
+    stream_id: str | None = None
+    stream_name: str | None = None
+    zone_id: str | None = None
+    zone_name: str | None = None
+    visit_id: str | None = None
+    source_id: str | None = None
+    action: ProductAlertAction
+
+
+class ProductAlertListResponse(BaseModel):
+    items: list[ProductAlert] = Field(default_factory=list, max_length=100)
+    next_offset: int | None = Field(default=None, ge=0)
+
+
+class ProductAlertUnreadResponse(BaseModel):
+    unread_count: int = Field(ge=0)
+    recent: list[ProductAlert] = Field(default_factory=list, max_length=12)
+
+
+class ProductAlertMarkVisibleReadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alert_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
 class DetectionProposalDecisionResult(BaseModel):
     proposal: DetectionProposal
     event: Event | None = None

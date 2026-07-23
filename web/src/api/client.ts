@@ -126,6 +126,9 @@ import type {
   ReviewIdentificationRequest,
   ReviewIdentificationResponse,
   ReviewLabel,
+  ProductAlertListResponse,
+  ProductAlertUnreadResponse,
+  AlertCategory,
   ReviewQueueBulkCorrectionRequest,
   ReviewQueueBulkCorrectionResponse,
   ReviewQueueItem,
@@ -1016,4 +1019,18 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  getAlertUnread: () => request<ProductAlertUnreadResponse>("/api/alerts/unread"),
+  getAlerts: (category?: AlertCategory, offset = 0) => {
+    const params = new URLSearchParams({ page_size: "30", offset: String(offset) });
+    if (category) params.set("category", category);
+    return request<ProductAlertListResponse>(`/api/alerts?${params.toString()}`);
+  },
+  markAlertRead: (alertId: string) =>
+    request<ProductAlertUnreadResponse>(`/api/alerts/${encodeURIComponent(alertId)}/read`, { method: "POST" }),
+  markVisibleAlertsRead: (alertIds: string[]) =>
+    request<ProductAlertUnreadResponse>("/api/alerts/read-visible", {
+      method: "POST", body: JSON.stringify({ alert_ids: alertIds.slice(0, 50) }),
+    }),
+  dismissAlert: (alertId: string) =>
+    request<ProductAlertUnreadResponse>(`/api/alerts/${encodeURIComponent(alertId)}/dismiss`, { method: "POST" }),
 };

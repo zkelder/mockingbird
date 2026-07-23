@@ -382,6 +382,38 @@ class StorageCleanupItemModel(Base):
     purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ProductAlertModel(Base):
+    """Durable local attention item with a product action, never a runtime command."""
+
+    __tablename__ = "product_alerts"
+    __table_args__ = (
+        UniqueConstraint("deduplication_key", "condition_version", name="uq_product_alert_condition"),
+        Index("ix_product_alerts_created_at", "created_at"),
+        Index("ix_product_alerts_category_created", "category", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    severity: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stream_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    zone_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    visit_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    cleanup_context: Mapped[str | None] = mapped_column(String, nullable=True)
+    deduplication_key: Mapped[str] = mapped_column(String, nullable=False)
+    condition_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
+    condition_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    action_type: Mapped[str] = mapped_column(String, nullable=False)
+    action_parameters_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class DetectionRunModel(Base):
     __tablename__ = "detection_runs"
 

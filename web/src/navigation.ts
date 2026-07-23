@@ -17,6 +17,7 @@ export type Page =
   | "activity-library"
   | "review"
   | "bird-log"
+  | "alerts-inbox"
   | "analytics"
   | "exports"
   | "saved-media-retention"
@@ -47,6 +48,7 @@ const pagePaths: Partial<Record<Page, string>> = {
   "activity-library": "/activity",
   review: "/review",
   "bird-log": "/bird-log",
+  "alerts-inbox": "/alerts",
   analytics: "/analytics",
   exports: "/exports",
   "saved-media-retention": "/retention",
