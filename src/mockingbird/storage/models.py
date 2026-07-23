@@ -218,6 +218,22 @@ class VisitModel(Base):
     is_superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class VisitOrganizationModel(Base):
+    """User-owned organization state; it is deliberately separate from ReviewLabel truth."""
+
+    __tablename__ = "visit_organization"
+    visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), primary_key=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    inherited_from_visit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("visits.id"), nullable=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+
+
 class VisitEvidenceLinkModel(Base):
     """A bounded Visit-to-media association; deleting a link never deletes media."""
 

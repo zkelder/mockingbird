@@ -1228,6 +1228,8 @@ export interface ActivityLibraryFilters {
   zone_id?: string | null;
   confirmed_label?: string | null;
   has_suggestion?: boolean | null;
+  favorites_only?: boolean;
+  has_note?: boolean | null;
   search?: string | null;
   start_at?: string | null;
   end_at?: string | null;
@@ -1241,6 +1243,8 @@ export interface ActivityLibrarySearchRequest extends ActivityLibraryFilters {
 
 export interface ActivityLibraryVisitSummary extends DashboardVisitSummary {
   curation_actions: string[];
+  is_favorite: boolean;
+  has_note: boolean;
 }
 
 export interface ActivityLibrarySearchResponse {
@@ -2774,6 +2778,40 @@ export interface VisitDetail {
   review_summary: string;
 }
 
+export interface VisitOrganizationState {
+  visit_id: string;
+  is_favorite: boolean;
+  note: string;
+  inherited_from_visit_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  state_token: string;
+}
+
+export interface VisitOrganizationUpdate {
+  is_favorite?: boolean | null;
+  note?: string | null;
+  expected_state_token: string;
+  idempotency_key: string;
+}
+
+export type VisitOrganizationBulkAction = "favorite" | "unfavorite";
+
+export interface VisitOrganizationBulkRequest {
+  visit_ids: string[];
+  action: VisitOrganizationBulkAction;
+  idempotency_key: string;
+}
+
+export interface VisitOrganizationBulkResult {
+  visit_id: string;
+  status: "updated" | "skipped";
+}
+
+export interface VisitOrganizationBulkResponse {
+  results: VisitOrganizationBulkResult[];
+}
+
 export interface DatasetExport {
   id: string;
   name: string;
@@ -3051,6 +3089,7 @@ export interface WildlifeJournalHistoryRequest {
   end_date?: string | null;
   stream_id?: string | null;
   zone_id?: string | null;
+  favorites_only?: boolean;
   gallery_order?: WildlifeJournalGalleryOrder;
   page_size?: number;
   offset?: number;
@@ -3062,6 +3101,7 @@ export interface WildlifeJournalScope {
   end_date?: string | null;
   stream_id?: string | null;
   zone_id?: string | null;
+  favorites_only: boolean;
   timezone_name: string;
 }
 
@@ -3141,6 +3181,8 @@ export interface WildlifeJournalObservation {
   has_review_revision: boolean;
   is_first_on_stream: boolean;
   is_first_in_zone: boolean;
+  is_favorite: boolean;
+  has_note: boolean;
 }
 
 export interface WildlifeJournalGallery {

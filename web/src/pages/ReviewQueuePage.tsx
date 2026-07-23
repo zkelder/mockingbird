@@ -3001,6 +3001,8 @@ function FastReviewPanel({
   const [message, setMessage] = useState<string | null>(null);
   const [processedCount, setProcessedCount] = useState(0);
   const [undoState, setUndoState] = useState<FastReviewUndoState | null>(null);
+  const [isFavoritingLastCorrection, setIsFavoritingLastCorrection] = useState(false);
+  const [lastCorrectionFavorited, setLastCorrectionFavorited] = useState(false);
   const [identificationAssistant, setIdentificationAssistant] = useState<VisitIdentificationAssistantResponse | null>(null);
   const [identificationAssistantError, setIdentificationAssistantError] = useState<string | null>(null);
   const [isLoadingIdentificationAssistant, setIsLoadingIdentificationAssistant] = useState(false);
@@ -3157,6 +3159,7 @@ function FastReviewPanel({
         stateToken: response.undo_state_token,
         targetId: response.result.review_label.target_id,
       });
+      setLastCorrectionFavorited(false);
       setProcessedCount((count) => count + (response.idempotent ? 0 : 1));
       await refreshProductState();
       await navigate("next", activeItem);
@@ -3204,6 +3207,24 @@ function FastReviewPanel({
       );
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function favoriteLastCorrectedVisit() {
+    if (!undoState || isFavoritingLastCorrection || lastCorrectionFavorited) return;
+    setIsFavoritingLastCorrection(true);
+    try {
+      const organization = await apiClient.getVisitOrganization(undoState.targetId);
+      await apiClient.updateVisitOrganization(undoState.targetId, {
+        is_favorite: true,
+        expected_state_token: organization.state_token,
+        idempotency_key: createFastReviewKey("fast-review-favorite"),
+      });
+      setLastCorrectionFavorited(true);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not favorite that Visit.");
+    } finally {
+      setIsFavoritingLastCorrection(false);
     }
   }
 
@@ -3398,6 +3419,19 @@ function FastReviewPanel({
         </div>
       </div>
       {message ? <div className="notice-panel fast-review-message">{message}</div> : null}
+      {undoState ? (
+        <div className="fast-review-post-correction">
+          <span>Correction saved independently of your Visit organization.</span>
+          <button
+            className="secondary-action"
+            disabled={isFavoritingLastCorrection || lastCorrectionFavorited}
+            onClick={() => void favoriteLastCorrectedVisit()}
+            type="button"
+          >
+            {lastCorrectionFavorited ? "Favorited" : isFavoritingLastCorrection ? "Saving…" : "Favorite this Visit"}
+          </button>
+        </div>
+      ) : null}
       <div className="fast-review-context">
         <div className="data-row">
           <span>Stream</span>

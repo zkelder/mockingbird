@@ -218,6 +218,10 @@ from mockingbird.api.schemas import (
     TaxonomyLabel,
     Visit,
     VisitDetail,
+    VisitOrganizationState,
+    VisitOrganizationUpdate,
+    VisitOrganizationBulkRequest,
+    VisitOrganizationBulkResponse,
     WebhookMotionEvidenceRequest,
     WebhookMotionEvidenceResponse,
     WebhookPayloadValidationRequest,
@@ -8008,6 +8012,31 @@ async def get_visit_correction_history(visit_id: str) -> VisitReviewHistory:
     return history
 
 
+@app.get("/api/visits/{visit_id}/organization", response_model=VisitOrganizationState)
+async def get_visit_organization(visit_id: str) -> VisitOrganizationState:
+    try:
+        return get_repository().visit_organization(visit_id)
+    except ValueError as error:
+        raise _not_found("Visit", visit_id) from error
+
+
+@app.put("/api/visits/{visit_id}/organization", response_model=VisitOrganizationState)
+async def update_visit_organization(visit_id: str, payload: VisitOrganizationUpdate) -> VisitOrganizationState:
+    try:
+        return get_repository().update_visit_organization(visit_id, payload)
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        if str(error) == "organization_stale":
+            raise HTTPException(status_code=409, detail="This note changed elsewhere. Refresh it before saving.") from error
+        raise HTTPException(status_code=400, detail="Note text contains unsupported control characters.") from error
+
+
+@app.post("/api/visit-organization/bulk", response_model=VisitOrganizationBulkResponse)
+async def bulk_update_visit_organization(payload: VisitOrganizationBulkRequest) -> VisitOrganizationBulkResponse:
+    return get_repository().bulk_update_visit_organization(payload)
+
+
 @app.get(
     "/api/visits/{visit_id}/identification-assistant",
     response_model=VisitIdentificationAssistantResponse,
@@ -8901,6 +8930,7 @@ async def get_wildlife_journal_history(
     end_date: date | None = None,
     stream_id: str | None = None,
     zone_id: str | None = None,
+    favorites_only: bool = False,
     gallery_order: WildlifeJournalGalleryOrder = WildlifeJournalGalleryOrder.newest,
     page_size: int = Query(default=24, ge=1, le=50),
     offset: int = Query(default=0, ge=0, le=10_000),
@@ -8922,6 +8952,7 @@ async def get_wildlife_journal_history(
             end_date=end_date,
             stream_id=stream_id,
             zone_id=zone_id,
+            favorites_only=favorites_only,
             gallery_order=gallery_order,
             page_size=page_size,
             offset=offset,

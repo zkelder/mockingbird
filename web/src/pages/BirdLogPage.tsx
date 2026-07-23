@@ -39,6 +39,7 @@ interface JournalLocation {
   endDate: string;
   streamId: string;
   zoneId: string;
+  favoritesOnly: boolean;
   galleryOrder: WildlifeJournalGalleryOrder;
   offset: number;
 }
@@ -88,6 +89,7 @@ function readJournalLocation(): JournalLocation {
     endDate: params.get("to") ?? "",
     streamId: params.get("stream") ?? "",
     zoneId: params.get("zone") ?? "",
+    favoritesOnly: params.get("favorites") === "1",
     galleryOrder: validOption(params.get("gallery"), ["newest", "oldest"], "newest"),
     offset: Number.isFinite(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0,
   };
@@ -115,6 +117,7 @@ function journalPath(label: string | null, location: JournalLocation): string {
   if (location.endDate) params.set("to", location.endDate);
   if (location.streamId) params.set("stream", location.streamId);
   if (location.zoneId) params.set("zone", location.zoneId);
+  if (location.favoritesOnly) params.set("favorites", "1");
   if (location.galleryOrder !== "newest") params.set("gallery", location.galleryOrder);
   if (location.offset > 0) params.set("offset", String(location.offset));
   const path = `/bird-log/${encodeURIComponent(label)}`;
@@ -144,6 +147,7 @@ function historyRequest(location: JournalLocation): WildlifeJournalHistoryReques
     end_date: location.endDate || null,
     stream_id: location.streamId || null,
     zone_id: location.zoneId || null,
+    favorites_only: location.favoritesOnly,
     gallery_order: location.galleryOrder,
     page_size: 24,
     offset: location.offset,
@@ -335,6 +339,7 @@ export function BirdLogPage({
       end_at: drilldown.end_date ?? null,
       stream_id: drilldown.stream_id ?? null,
       zone_id: drilldown.zone_id ?? null,
+      favorites_only: location.favoritesOnly,
     }));
   };
 
@@ -494,17 +499,24 @@ export function BirdLogPage({
             <option value="oldest">Oldest first</option>
           </select>
         </label>
+        <label>
+          Favorites
+          <select onChange={(event) => commitLocation({ ...location, favoritesOnly: event.target.value === "yes", offset: 0 })} value={location.favoritesOnly ? "yes" : "all"}>
+            <option value="all">All reviewed Visits</option>
+            <option value="yes">Favorites only</option>
+          </select>
+        </label>
       </section>
       {error ? <div className="error-panel">{error}</div> : null}
       {isLoading && !activeHistory ? <div className="panel">Loading reviewed Journal history…</div> : null}
       {activeHistory ? (
         <>
-          <div className="journal-scope-note">{activeHistory.scope.start_date ?? "All recorded dates"}{activeHistory.scope.end_date ? ` to ${activeHistory.scope.end_date}` : ""} · local time ({activeHistory.scope.timezone_name})</div>
+          <div className="journal-scope-note">{activeHistory.scope.start_date ?? "All recorded dates"}{activeHistory.scope.end_date ? ` to ${activeHistory.scope.end_date}` : ""}{activeHistory.scope.favorites_only ? " · favorites only" : ""} · local time ({activeHistory.scope.timezone_name})</div>
           {activeHistory.observation_count === 0 ? (
             <EmptyState
               title="No active confirmed observations in this scope"
               description="This label may have been revised, reopened, superseded, or filtered out. Review history remains available on individual Visits."
-              action={<button className="secondary-action" onClick={() => commitLocation({ ...location, preset: "all_time", startDate: "", endDate: "", streamId: "", zoneId: "", offset: 0 })} type="button">Clear Journal filters</button>}
+              action={<button className="secondary-action" onClick={() => commitLocation({ ...location, preset: "all_time", startDate: "", endDate: "", streamId: "", zoneId: "", favoritesOnly: false, offset: 0 })} type="button">Clear Journal filters</button>}
             />
           ) : (
             <>
@@ -535,7 +547,7 @@ export function BirdLogPage({
                     <div className="journal-gallery-body">
                       <div className="section-heading"><div><h3>{formatDateTime(observation.observed_at)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><StatusPill label="Reviewed" tone="good" /></div>
                       <div className="journal-gallery-facts"><span>Duration <strong>{durationLabel(observation.duration_seconds)}</strong></span><span>Evidence frames <strong>{observation.evidence_frame_count}</strong></span><span>Correction <strong>{observation.display_name}</strong></span></div>
-                      <div className="journal-gallery-milestones">{observation.has_curation_history ? <StatusPill label="Curated" tone="quiet" /> : null}{observation.has_review_revision ? <StatusPill label="Revised" tone="quiet" /> : null}{observation.is_first_on_stream ? <StatusPill label="First on Stream" tone="quiet" /> : null}{observation.is_first_in_zone ? <StatusPill label="First in Zone" tone="quiet" /> : null}</div>
+                      <div className="journal-gallery-milestones">{observation.is_favorite ? <StatusPill label="Favorite" tone="good" /> : null}{observation.has_note ? <StatusPill label="Note" tone="quiet" /> : null}{observation.has_curation_history ? <StatusPill label="Curated" tone="quiet" /> : null}{observation.has_review_revision ? <StatusPill label="Revised" tone="quiet" /> : null}{observation.is_first_on_stream ? <StatusPill label="First on Stream" tone="quiet" /> : null}{observation.is_first_in_zone ? <StatusPill label="First in Zone" tone="quiet" /> : null}</div>
                       <button className="secondary-action" onClick={() => onOpenVisit(observation.visit_id)} type="button">Open Visit Detail</button>
                     </div>
                   </article>

@@ -168,6 +168,10 @@ import type {
   TaxonomyLabel,
   Visit,
   VisitDetail,
+  VisitOrganizationState,
+  VisitOrganizationUpdate,
+  VisitOrganizationBulkRequest,
+  VisitOrganizationBulkResponse,
   WorkerStatusResponse,
     WildlifeInsightsRequest,
     WildlifeInsightsSummary,
@@ -552,6 +556,14 @@ export const apiClient = {
   getEventVisits: (eventId: string) => request<Visit[]>(`/api/events/${eventId}/visits`),
   getEventDetail: (eventId: string) => request<EventDetail>(`/api/events/${eventId}/detail`),
   getVisitDetail: (visitId: string) => request<VisitDetail>(`/api/visits/${visitId}/detail`),
+  getVisitOrganization: (visitId: string) => request<VisitOrganizationState>(`/api/visits/${encodeURIComponent(visitId)}/organization`),
+  updateVisitOrganization: (visitId: string, payload: VisitOrganizationUpdate) =>
+    request<VisitOrganizationState>(`/api/visits/${encodeURIComponent(visitId)}/organization`, { method: "PUT", body: JSON.stringify(payload) }),
+  bulkUpdateVisitOrganization: (payload: VisitOrganizationBulkRequest) =>
+    request<VisitOrganizationBulkResponse>("/api/visit-organization/bulk", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   getVisitIdentificationAssistant: (visitId: string) =>
     request<VisitIdentificationAssistantResponse>(
       `/api/visits/${encodeURIComponent(visitId)}/identification-assistant`,
@@ -893,6 +905,7 @@ export const apiClient = {
     if (params.end_date) searchParams.set("end_date", params.end_date);
     if (params.stream_id) searchParams.set("stream_id", params.stream_id);
     if (params.zone_id) searchParams.set("zone_id", params.zone_id);
+    if (params.favorites_only) searchParams.set("favorites_only", "true");
     if (params.gallery_order) searchParams.set("gallery_order", params.gallery_order);
     if (params.page_size) searchParams.set("page_size", String(params.page_size));
     if (params.offset) searchParams.set("offset", String(params.offset));

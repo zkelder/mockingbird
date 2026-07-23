@@ -9,6 +9,7 @@ import type {
   VisitEvidenceFrame,
   VisitIdentificationAssistantResponse,
   VisitIdentificationEvidenceMode,
+  VisitOrganizationState,
   VisitReviewHistoryEntry,
 } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
@@ -77,6 +78,9 @@ export function VisitDetailPage({
   const [identificationAssistantError, setIdentificationAssistantError] = useState<string | null>(null);
   const [isLoadingIdentificationAssistant, setIsLoadingIdentificationAssistant] = useState(false);
   const [isRunningIdentificationAssistant, setIsRunningIdentificationAssistant] = useState(false);
+  const [organization, setOrganization] = useState<VisitOrganizationState | null>(null);
+  const [organizationMessage, setOrganizationMessage] = useState<string | null>(null);
+  const [isSavingOrganization, setIsSavingOrganization] = useState(false);
   const [correctionSuggestionId, setCorrectionSuggestionId] = useState<string | null>(null);
   const [dismissedPrefillId, setDismissedPrefillId] = useState<string | null>(null);
   const [mockSuggestedLabel, setMockSuggestedLabel] = useState("");
@@ -176,6 +180,23 @@ export function VisitDetailPage({
   useEffect(() => {
     void loadIdentificationAssistant();
   }, [visitId]);
+
+  useEffect(() => {
+    void apiClient.getVisitOrganization(visitId).then(setOrganization).catch(() => setOrganizationMessage("Observation notes are unavailable right now."));
+  }, [visitId]);
+
+  async function saveOrganization(update: { is_favorite?: boolean; note?: string }) {
+    if (!organization) return;
+    setIsSavingOrganization(true);
+    setOrganizationMessage(null);
+    try {
+      const idempotency_key = newReviewRequestKey("visit-organization");
+      setOrganization(await apiClient.updateVisitOrganization(visitId, { ...update, expected_state_token: organization.state_token, idempotency_key }));
+      setOrganizationMessage("Observation notes saved.");
+    } catch (caught) {
+      setOrganizationMessage(caught instanceof Error ? caught.message : "Could not save observation notes.");
+    } finally { setIsSavingOrganization(false); }
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -929,6 +950,18 @@ export function VisitDetailPage({
             ) : null}
           </div>
         </div>
+      </section>
+
+      <section className="panel observation-notes">
+        <div className="section-heading"><div><h2>Observation notes</h2><span className="meta-text">Private local context. Notes never change the reviewed label.</span></div><StatusPill label={detail.visit.review_status === "reviewed" ? "Reviewed" : "Needs review"} tone={detail.visit.review_status === "reviewed" ? "good" : "review"} /></div>
+        {organization ? <>
+          <button className="secondary-action" disabled={isSavingOrganization} onClick={() => void saveOrganization({ is_favorite: !organization.is_favorite })} type="button">{organization.is_favorite ? "Remove favorite" : "Favorite this Visit"}</button>
+          <label>Note <textarea maxLength={4000} value={organization.note} onChange={(event) => setOrganization({ ...organization, note: event.target.value })} /></label>
+          <span className="field-helper">{organization.note.length}/4000 characters</span>
+          <button className="primary-action" disabled={isSavingOrganization} onClick={() => void saveOrganization({ note: organization.note })} type="button">{isSavingOrganization ? "Saving..." : "Save note"}</button>
+          {organization.updated_at ? <span className="meta-text">Updated {formatDateTime(organization.updated_at)}</span> : null}
+        </> : <span className="meta-text">Loading observation notes...</span>}
+        {organizationMessage ? <span className="meta-text">{organizationMessage}</span> : null}
       </section>
 
       <section className="panel">

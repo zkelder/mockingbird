@@ -220,6 +220,11 @@ from mockingbird.api.schemas import (
     VisitReviewReopenResponse,
     VisitReviewRevisionCreate,
     VisitReviewRevisionResponse,
+    VisitOrganizationState,
+    VisitOrganizationUpdate,
+    VisitOrganizationBulkRequest,
+    VisitOrganizationBulkResponse,
+    VisitOrganizationBulkResult,
     VisitIdentificationAssistantRequest,
     VisitIdentificationAssistantResponse,
     VisitIdentificationEvidenceMode,
@@ -399,6 +404,7 @@ from mockingbird.storage.models import (
     VisitEvidenceLinkModel,
     VisitRelationshipModel,
     VisitModel,
+    VisitOrganizationModel,
     ZoneModel,
 )
 from mockingbird.workers.registry import (
@@ -4361,6 +4367,76 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._visits_for_event(session, event_id)
 
+    def visit_organization(self, visit_id: str) -> VisitOrganizationState:
+        with self.session_factory() as session:
+            if session.get(VisitModel, visit_id) is None:
+                raise ValueError("missing_visit")
+            return self._visit_organization_state(session, visit_id)
+
+    def update_visit_organization(
+        self, visit_id: str, payload: VisitOrganizationUpdate
+    ) -> VisitOrganizationState:
+        with self.session_factory() as session:
+            with session.begin():
+                if session.get(VisitModel, visit_id) is None:
+                    raise ValueError("missing_visit")
+                model = session.get(VisitOrganizationModel, visit_id)
+                current = self._visit_organization_state(session, visit_id, model)
+                if model is not None and model.idempotency_key == payload.idempotency_key:
+                    return current
+                if current.state_token != payload.expected_state_token:
+                    raise ValueError("organization_stale")
+                note = model.note if model is not None else None
+                if payload.note is not None:
+                    note = payload.note.strip() or None
+                    if any(ord(character) < 32 and character not in "\n\r\t" for character in note or ""):
+                        raise ValueError("organization_note_control_character")
+                favorite = payload.is_favorite if payload.is_favorite is not None else (model.is_favorite if model else False)
+                now = datetime.now(UTC)
+                if model is None:
+                    model = VisitOrganizationModel(
+                        visit_id=visit_id, is_favorite=favorite, note=note,
+                        inherited_from_visit_id=None, version=1, created_at=now,
+                        updated_at=now, idempotency_key=payload.idempotency_key,
+                    )
+                    session.add(model)
+                else:
+                    model.is_favorite = favorite
+                    model.note = note
+                    model.version += 1
+                    model.updated_at = now
+                    model.idempotency_key = payload.idempotency_key
+                session.flush()
+                return self._visit_organization_state(session, visit_id, model)
+
+    def bulk_update_visit_organization(self, payload: VisitOrganizationBulkRequest) -> VisitOrganizationBulkResponse:
+        results: list[VisitOrganizationBulkResult] = []
+        with self.session_factory() as session:
+            with session.begin():
+                for visit_id in dict.fromkeys(payload.visit_ids):
+                    visit = session.get(VisitModel, visit_id)
+                    if visit is None or visit.is_superseded:
+                        results.append(VisitOrganizationBulkResult(visit_id=visit_id, status="skipped"))
+                        continue
+                    model = session.get(VisitOrganizationModel, visit_id)
+                    now = datetime.now(UTC)
+                    favorite = payload.action.value == "favorite"
+                    if model is None:
+                        session.add(VisitOrganizationModel(visit_id=visit_id, is_favorite=favorite, note=None, inherited_from_visit_id=None, version=1, created_at=now, updated_at=now, idempotency_key=None))
+                    elif model.is_favorite != favorite:
+                        model.is_favorite = favorite
+                        model.version += 1
+                        model.updated_at = now
+                    results.append(VisitOrganizationBulkResult(visit_id=visit_id, status="updated"))
+        return VisitOrganizationBulkResponse(results=results)
+
+    @staticmethod
+    def _visit_organization_state(session: Session, visit_id: str, model: VisitOrganizationModel | None = None) -> VisitOrganizationState:
+        model = model if model is not None else session.get(VisitOrganizationModel, visit_id)
+        if model is None:
+            return VisitOrganizationState(visit_id=visit_id, state_token=f"organization:{visit_id}:0")
+        return VisitOrganizationState(visit_id=visit_id, is_favorite=model.is_favorite, note=model.note or "", inherited_from_visit_id=model.inherited_from_visit_id, created_at=_as_utc(model.created_at), updated_at=_as_utc(model.updated_at), state_token=f"organization:{visit_id}:{model.version}")
+
     def search_activity_library(
         self,
         payload: ActivityLibrarySearchRequest,
@@ -4412,6 +4488,7 @@ class ProductRepository:
                 .join(StreamModel, EventModel.stream_id == StreamModel.id)
                 .outerjoin(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
                 .outerjoin(ZoneModel, ZoneModel.id == effective_zone_id)
+                .outerjoin(VisitOrganizationModel, VisitOrganizationModel.visit_id == VisitModel.id)
                 .outerjoin(
                     TaxonomyLabelModel,
                     func.lower(TaxonomyLabelModel.label) == review_label_key,
@@ -4440,6 +4517,21 @@ class ProductRepository:
                 query = query.where(suggestion_exists)
             elif payload.has_suggestion is False:
                 query = query.where(~suggestion_exists)
+            if payload.favorites_only:
+                query = query.where(VisitOrganizationModel.is_favorite.is_(True))
+            if payload.has_note is True:
+                query = query.where(
+                    VisitOrganizationModel.note.is_not(None),
+                    func.length(func.trim(VisitOrganizationModel.note)) > 0,
+                )
+            elif payload.has_note is False:
+                query = query.where(
+                    or_(
+                        VisitOrganizationModel.visit_id.is_(None),
+                        VisitOrganizationModel.note.is_(None),
+                        func.length(func.trim(VisitOrganizationModel.note)) == 0,
+                    )
+                )
 
             blank_keys = {"blank", "empty", "no_activity", "no_animal"}
             ambiguous_keys = {"ambiguous", "unknown_bird", "unknown_animal", "unknown"}
@@ -4563,12 +4655,15 @@ class ProductRepository:
             )
             .limit(8)
         ).all()
+        organization = session.get(VisitOrganizationModel, visit.id)
         return ActivityLibraryVisitSummary(
             **self._stream_visit_summary_from_models(session, visit, event).model_dump(),
             stream_name=stream.name,
             source_id=stream.source_id,
             source_name=source.name if source is not None else "Unavailable Source",
             curation_actions=[entry.action for entry in history],
+            is_favorite=bool(organization and organization.is_favorite),
+            has_note=bool(organization and organization.note and organization.note.strip()),
         )
 
     def _activity_library_review_filter_matches(
@@ -8923,6 +9018,12 @@ class ProductRepository:
                             created_at=created_at,
                         )
                     )
+                    self._copy_visit_organization(
+                        session,
+                        source_visit_id=source.id,
+                        result_visit_id=result.id,
+                        created_at=created_at,
+                    )
                     results.append(result)
                 source.is_superseded = True
                 event.review_status = ReviewStatus.needs_review.value
@@ -8966,6 +9067,69 @@ class ProductRepository:
             frames,
         )
         return start, end or start
+
+    @staticmethod
+    def _copy_visit_organization(
+        session: Session,
+        *,
+        source_visit_id: str,
+        result_visit_id: str,
+        created_at: datetime,
+    ) -> None:
+        """Carry private curation context through a structural split, never review truth."""
+
+        source = session.get(VisitOrganizationModel, source_visit_id)
+        if source is None:
+            return
+        session.add(
+            VisitOrganizationModel(
+                visit_id=result_visit_id,
+                is_favorite=source.is_favorite,
+                note=source.note,
+                inherited_from_visit_id=source_visit_id,
+                version=1,
+                created_at=created_at,
+                updated_at=created_at,
+                idempotency_key=None,
+            )
+        )
+
+    @staticmethod
+    def _merged_visit_organization(
+        session: Session,
+        *,
+        source_visit_ids: list[str],
+        result_visit_id: str,
+        created_at: datetime,
+    ) -> None:
+        """Merge user-owned favorite and note context without silently dropping text."""
+
+        sources = [
+            session.get(VisitOrganizationModel, visit_id) for visit_id in source_visit_ids
+        ]
+        sources = [source for source in sources if source is not None]
+        if not sources:
+            return
+        notes: list[str] = []
+        for source in sources:
+            note = (source.note or "").strip()
+            if note and note not in notes:
+                notes.append(note)
+        merged_note = "\n\n".join(notes) or None
+        if merged_note is not None and len(merged_note) > 4000:
+            raise ValueError("merge_organization_note_limit")
+        session.add(
+            VisitOrganizationModel(
+                visit_id=result_visit_id,
+                is_favorite=any(source.is_favorite for source in sources),
+                note=merged_note,
+                inherited_from_visit_id=sources[0].visit_id,
+                version=1,
+                created_at=created_at,
+                updated_at=created_at,
+                idempotency_key=None,
+            )
+        )
 
     def _visit_merge_gap_seconds(
         self,
@@ -9231,6 +9395,13 @@ class ProductRepository:
                 )
                 session.add_all([new_event, merged_visit])
                 session.flush()
+                source_ids = [visit.id for visit, _event in models]
+                self._merged_visit_organization(
+                    session,
+                    source_visit_ids=source_ids,
+                    result_visit_id=merged_visit.id,
+                    created_at=created_at,
+                )
                 for order, frame in enumerate(merged_frames):
                     session.add(
                         VisitEvidenceLinkModel(
@@ -9256,7 +9427,6 @@ class ProductRepository:
                             review_action="merge_inherited",
                         )
                     )
-                source_ids = [visit.id for visit, _event in models]
                 for index, (old_visit, _old_event) in enumerate(models):
                     old_visit.is_superseded = True
                     session.add(
@@ -14213,6 +14383,20 @@ class ProductRepository:
                 and (payload.stream_id is None or record["summary"].stream_id == payload.stream_id)
                 and (payload.zone_id is None or record["summary"].zone_id == payload.zone_id)
             ]
+            if payload.favorites_only and records:
+                favorite_visit_ids = set(
+                    session.scalars(
+                        select(VisitOrganizationModel.visit_id).where(
+                            VisitOrganizationModel.visit_id.in_(
+                                {record["summary"].id for record in records}
+                            ),
+                            VisitOrganizationModel.is_favorite.is_(True),
+                        )
+                    ).all()
+                )
+                records = [
+                    record for record in records if record["summary"].id in favorite_visit_ids
+                ]
             ordered = self._wildlife_journal_ordered_records(records)
             stream_breakdown = self._wildlife_journal_breakdown(ordered, grouping="stream")[:50]
             zone_breakdown = self._wildlife_journal_breakdown(ordered, grouping="zone")[:50]
@@ -14244,6 +14428,16 @@ class ProductRepository:
                     )
                 ).scalars().all()
             ) if page_records else Counter()
+            organization_by_visit_id = {
+                model.visit_id: model
+                for model in session.scalars(
+                    select(VisitOrganizationModel).where(
+                        VisitOrganizationModel.visit_id.in_(
+                            {record["summary"].id for record in page_records}
+                        )
+                    )
+                ).all()
+            } if page_records else {}
             all_ordered = self._wildlife_journal_ordered_records(all_label_records)
             first_on_stream: dict[str, str] = {}
             first_in_zone: dict[str, str] = {}
@@ -14282,6 +14476,15 @@ class ProductRepository:
                             and first_in_zone.get(record["summary"].zone_id)
                             == record["summary"].id
                         ),
+                        is_favorite=bool(
+                            organization_by_visit_id.get(record["summary"].id)
+                            and organization_by_visit_id[record["summary"].id].is_favorite
+                        ),
+                        has_note=bool(
+                            organization_by_visit_id.get(record["summary"].id)
+                            and organization_by_visit_id[record["summary"].id].note
+                            and organization_by_visit_id[record["summary"].id].note.strip()
+                        ),
                     )
                     for record in page_records
                 ],
@@ -14309,6 +14512,7 @@ class ProductRepository:
                     end_date=end_date,
                     stream_id=payload.stream_id,
                     zone_id=payload.zone_id,
+                    favorites_only=payload.favorites_only,
                     timezone_name=local_now.tzname() or "local time",
                 ),
                 observation_count=len(ordered),

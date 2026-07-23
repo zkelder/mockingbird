@@ -203,6 +203,18 @@ async def test_split_supersedes_reviewed_truth_and_returns_two_active_review_vis
     )
     await review_visit(client, "visit-split", "northern_cardinal")
     before = await visit_detail(client, "visit-split")
+    organization = await client.get("/api/visits/visit-split/organization")
+    assert organization.status_code == 200
+    saved_organization = await client.put(
+        "/api/visits/visit-split/organization",
+        json={
+            "is_favorite": True,
+            "note": "Split context",
+            "expected_state_token": organization.json()["state_token"],
+            "idempotency_key": "split-organization",
+        },
+    )
+    assert saved_organization.status_code == 200
     preview = await client.post(
         "/api/visits/visit-split/split/preview",
         json={
@@ -226,6 +238,12 @@ async def test_split_supersedes_reviewed_truth_and_returns_two_active_review_vis
     assert len(results) == 2
     assert all(result["review_status"] == "needs_review" for result in results)
     assert all(not result["reviewed_label"] for result in results)
+    for result in results:
+        inherited = await client.get(f"/api/visits/{result['id']}/organization")
+        assert inherited.status_code == 200
+        assert inherited.json()["is_favorite"] is True
+        assert inherited.json()["note"] == "Split context"
+        assert inherited.json()["inherited_from_visit_id"] == "visit-split"
 
     original = await visit_detail(client, "visit-split")
     assert original["visit"]["is_superseded"] is True
@@ -263,6 +281,22 @@ async def test_merge_rules_and_zone_reassignment_preserve_correction_history(
     )
     await review_visit(client, "visit-merge-left", "northern_cardinal")
     await review_visit(client, "visit-merge-right", "northern_cardinal")
+    for visit_id, favorite, note in [
+        ("visit-merge-left", False, "Left context"),
+        ("visit-merge-right", True, "Right context"),
+    ]:
+        organization = await client.get(f"/api/visits/{visit_id}/organization")
+        assert organization.status_code == 200
+        updated = await client.put(
+            f"/api/visits/{visit_id}/organization",
+            json={
+                "is_favorite": favorite,
+                "note": note,
+                "expected_state_token": organization.json()["state_token"],
+                "idempotency_key": f"merge-organization-{visit_id}",
+            },
+        )
+        assert updated.status_code == 200
     left = await visit_detail(client, "visit-merge-left")
     candidates = await client.get("/api/visits/visit-merge-left/merge-candidates")
     assert candidates.status_code == 200
@@ -288,6 +322,10 @@ async def test_merge_rules_and_zone_reassignment_preserve_correction_history(
     result = merged.json()["visit"]
     assert result["review_status"] == "reviewed"
     assert result["reviewed_label"] == "northern_cardinal"
+    merged_organization = await client.get(f"/api/visits/{result['id']}/organization")
+    assert merged_organization.status_code == 200
+    assert merged_organization.json()["is_favorite"] is True
+    assert merged_organization.json()["note"] == "Left context\n\nRight context"
     assert (await visit_detail(client, "visit-merge-left"))["visit"]["is_superseded"] is True
     assert (await visit_detail(client, "visit-merge-right"))["visit"]["is_superseded"] is True
 

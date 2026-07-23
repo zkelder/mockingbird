@@ -1656,6 +1656,8 @@ class ActivityLibraryFilters(BaseModel):
     zone_id: str | None = Field(default=None, min_length=1, max_length=256)
     confirmed_label: str | None = Field(default=None, min_length=1, max_length=256)
     has_suggestion: bool | None = None
+    favorites_only: bool = False
+    has_note: bool | None = None
     search: str | None = Field(default=None, max_length=256)
     start_at: datetime | None = None
     end_at: datetime | None = None
@@ -1803,6 +1805,8 @@ class DashboardSummary(BaseModel):
 class ActivityLibraryVisitSummary(DashboardVisitSummary):
     # Structural curation is provenance context, never a second review truth.
     curation_actions: list[str] = Field(default_factory=list, max_length=8)
+    is_favorite: bool = False
+    has_note: bool = False
 
 
 class ActivityLibrarySearchResponse(BaseModel):
@@ -3395,6 +3399,7 @@ class WildlifeJournalHistoryRequest(BaseModel):
     end_date: date | None = None
     stream_id: str | None = Field(default=None, min_length=1, max_length=256)
     zone_id: str | None = Field(default=None, min_length=1, max_length=256)
+    favorites_only: bool = False
     gallery_order: WildlifeJournalGalleryOrder = WildlifeJournalGalleryOrder.newest
     page_size: int = Field(default=24, ge=1, le=50)
     offset: int = Field(default=0, ge=0, le=10_000)
@@ -3417,6 +3422,7 @@ class WildlifeJournalScope(BaseModel):
     end_date: date | None = None
     stream_id: str | None = None
     zone_id: str | None = None
+    favorites_only: bool = False
     timezone_name: str
 
 
@@ -3500,6 +3506,8 @@ class WildlifeJournalObservation(BaseModel):
     has_review_revision: bool = False
     is_first_on_stream: bool = False
     is_first_in_zone: bool = False
+    is_favorite: bool = False
+    has_note: bool = False
 
 
 class WildlifeJournalGallery(BaseModel):
@@ -4114,6 +4122,51 @@ class VisitDetail(BaseModel):
     review_state_token: str
     dataset_ready: bool
     review_summary: str
+
+
+class VisitOrganizationState(BaseModel):
+    visit_id: str
+    is_favorite: bool = False
+    note: str = ""
+    inherited_from_visit_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    state_token: str
+
+
+class VisitOrganizationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    is_favorite: bool | None = None
+    note: str | None = Field(default=None, max_length=4000)
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "VisitOrganizationUpdate":
+        if self.is_favorite is None and self.note is None:
+            raise ValueError("Provide a favorite state or note")
+        return self
+
+
+class VisitOrganizationBulkAction(str, Enum):
+    favorite = "favorite"
+    unfavorite = "unfavorite"
+
+
+class VisitOrganizationBulkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    visit_ids: list[str] = Field(min_length=1, max_length=50)
+    action: VisitOrganizationBulkAction
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitOrganizationBulkResult(BaseModel):
+    visit_id: str
+    status: str
+
+
+class VisitOrganizationBulkResponse(BaseModel):
+    results: list[VisitOrganizationBulkResult]
 
 
 def _ensure_json_compatible(value: Any, field_name: str) -> None:

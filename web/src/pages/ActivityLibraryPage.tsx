@@ -50,6 +50,8 @@ function normalizedFilters(filters: ActivityLibraryFilters): ActivityLibraryFilt
     source_id: filters.source_id || null,
     zone_id: filters.zone_id || null,
     confirmed_label: filters.confirmed_label?.trim() || null,
+    favorites_only: Boolean(filters.favorites_only),
+    has_note: filters.has_note ?? null,
     search: filters.search?.trim() || null,
     start_at: dateInputValue(filters.start_at),
     end_at: dateInputValue(filters.end_at),
@@ -74,6 +76,9 @@ function filtersFromUrl(): { filters: ActivityLibraryFilters; offset: number } {
           : params.get("suggestion") === "0"
             ? false
             : null,
+      favorites_only: params.get("favorites") === "1",
+      has_note:
+        params.get("note") === "1" ? true : params.get("note") === "0" ? false : null,
       search: params.get("q"),
       start_at: params.get("from"),
       end_at: params.get("to"),
@@ -93,6 +98,9 @@ export function activityLibraryPath(filters: ActivityLibraryFilters, offset = 0)
   if (filters.confirmed_label) params.set("label", filters.confirmed_label);
   if (filters.has_suggestion === true) params.set("suggestion", "1");
   if (filters.has_suggestion === false) params.set("suggestion", "0");
+  if (filters.favorites_only) params.set("favorites", "1");
+  if (filters.has_note === true) params.set("note", "1");
+  if (filters.has_note === false) params.set("note", "0");
   if (filters.search) params.set("q", filters.search);
   if (filters.start_at) params.set("from", dateInputValue(filters.start_at));
   if (filters.end_at) params.set("to", dateInputValue(filters.end_at));
@@ -157,6 +165,7 @@ export function ActivityLibraryPage({
   const [saveName, setSaveName] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const [isUpdatingOrganization, setIsUpdatingOrganization] = useState(false);
   const [thumbnailFailures, setThumbnailFailures] = useState<Set<string>>(new Set());
 
   const selectedVisits = useMemo(
@@ -316,6 +325,29 @@ export function ActivityLibraryPage({
     }
   }
 
+  async function bulkSetFavorite(action: "favorite" | "unfavorite") {
+    if (selectedIds.length === 0 || isUpdatingOrganization) return;
+    setIsUpdatingOrganization(true);
+    try {
+      const result = await apiClient.bulkUpdateVisitOrganization({
+        visit_ids: selectedIds,
+        action,
+        idempotency_key: `activity-organization-${crypto.randomUUID()}`,
+      });
+      const skipped = result.results.filter((item) => item.status === "skipped").length;
+      const updated = result.results.length - skipped;
+      setMessage(
+        `${action === "favorite" ? "Favorited" : "Unfavorited"} ${updated} Visit${updated === 1 ? "" : "s"}${skipped ? `; ${skipped} superseded or unavailable Visit${skipped === 1 ? " was" : "s were"} skipped` : ""}.`,
+      );
+      setSelectedIds([]);
+      setRefreshVersion((value) => value + 1);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not update the selected Visits.");
+    } finally {
+      setIsUpdatingOrganization(false);
+    }
+  }
+
   const selectedStreamMissing = Boolean(
     filters.stream_id && !streams.some((stream) => stream.id === filters.stream_id),
   );
@@ -332,6 +364,8 @@ export function ActivityLibraryPage({
     !filters.zone_id &&
     !filters.confirmed_label &&
     filters.has_suggestion === null &&
+    !filters.favorites_only &&
+    filters.has_note === null &&
     !filters.search &&
     !filters.start_at &&
     !filters.end_at;
@@ -402,6 +436,27 @@ export function ActivityLibraryPage({
               <option value="all">Any suggestion state</option>
               <option value="yes">Has suggestion evidence</option>
               <option value="no">No suggestion evidence</option>
+            </select>
+          </label>
+          <label>
+            Favorite
+            <select
+              value={filters.favorites_only ? "yes" : "all"}
+              onChange={(event) => commitFilters({ ...filters, favorites_only: event.target.value === "yes" })}
+            >
+              <option value="all">All Visits</option>
+              <option value="yes">Favorites only</option>
+            </select>
+          </label>
+          <label>
+            Private note
+            <select
+              value={filters.has_note === true ? "yes" : filters.has_note === false ? "no" : "all"}
+              onChange={(event) => commitFilters({ ...filters, has_note: event.target.value === "yes" ? true : event.target.value === "no" ? false : null })}
+            >
+              <option value="all">Any note state</option>
+              <option value="yes">Has note</option>
+              <option value="no">No note</option>
             </select>
           </label>
           <label>
@@ -481,6 +536,8 @@ export function ActivityLibraryPage({
               Open selected in Fast Review
             </button>
             <button className="secondary-action" onClick={() => void exportSelected()} type="button">Export selected reviewed</button>
+            <button className="secondary-action" disabled={isUpdatingOrganization} onClick={() => void bulkSetFavorite("favorite")} type="button">Favorite selected</button>
+            <button className="secondary-action" disabled={isUpdatingOrganization} onClick={() => void bulkSetFavorite("unfavorite")} type="button">Unfavorite selected</button>
             <button className="text-action" onClick={() => setSelectedIds([])} type="button">Clear selection</button>
             {message?.startsWith("Created reviewed export") ? <button className="text-action" onClick={onOpenExports} type="button">Open Exports</button> : null}
           </div>
@@ -532,6 +589,8 @@ export function ActivityLibraryPage({
                     <span>Zone: {visit.zone_name ?? "No Zone"}</span>
                     {visit.reviewed_label ? <span>Confirmed: {formatLabel(visit.reviewed_label)}</span> : null}
                     {visit.has_suggestion ? <span>Suggestion evidence: {formatLabel(visit.suggested_label ?? "available")}</span> : null}
+                    {visit.is_favorite ? <StatusPill label="Favorite" tone="good" /> : null}
+                    {visit.has_note ? <StatusPill label="Note" tone="quiet" /> : null}
                     {visit.evidence_frame_count > 1 ? <span>{visit.evidence_frame_count} evidence frames</span> : null}
                     {visit.curation_actions.length > 0 ? <span>Curated: {visit.curation_actions.map(formatLabel).join(", ")}</span> : null}
                   </div>
