@@ -1,6 +1,7 @@
 export type Page =
   | "dashboard"
   | "streams"
+  | "yard-map"
   | "camera-setup"
   | "import"
   | "folder-import"
@@ -39,6 +40,7 @@ export interface AppRoute {
 const pagePaths: Partial<Record<Page, string>> = {
   dashboard: "/",
   streams: "/cameras",
+  "yard-map": "/yard-map",
   "camera-setup": "/cameras/setup",
   import: "/import",
   "folder-import": "/folder-import",

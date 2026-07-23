@@ -164,12 +164,12 @@ async def test_journal_tag_filter_changes_only_the_bounded_gallery(
     assert filtered.json()["gallery"]["observations"][0]["tags"] == ["Training candidate"]
 
 
-def test_v19_migration_creates_only_empty_tag_records(tmp_path: Path) -> None:
+def test_current_schema_creates_only_empty_tag_records(tmp_path: Path) -> None:
     repository = ProductRepository(
         db_url=f"sqlite:///{tmp_path / 'migration.sqlite3'}",
         media_root=tmp_path / "media",
     )
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 19
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 20
     table_names = set(inspect(repository.engine).get_table_names())
     assert {"visit_tags", "visit_tag_memberships"}.issubset(table_names)
     with repository.session_factory() as session:

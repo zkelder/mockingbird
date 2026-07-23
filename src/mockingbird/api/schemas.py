@@ -4347,6 +4347,134 @@ class VisitTagsForVisitResponse(BaseModel):
     tags: list[VisitTagSummary] = Field(default_factory=list, max_length=20)
 
 
+class YardMapAreaPoint(BaseModel):
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+
+
+class YardMapBackground(BaseModel):
+    preview_url: str
+    content_type: Literal["image/jpeg", "image/png", "image/webp"]
+    width: int = Field(gt=0, le=8192)
+    height: int = Field(gt=0, le=8192)
+
+
+class YardMapSettings(BaseModel):
+    id: str
+    canvas_width: int = Field(ge=320, le=4096)
+    canvas_height: int = Field(ge=240, le=4096)
+    background: YardMapBackground | None = None
+    background_missing: bool = False
+    state_token: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class YardMapBlankCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    canvas_width: int = Field(default=1200, ge=320, le=4096)
+    canvas_height: int = Field(default=800, ge=240, le=4096)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class YardMapSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    canvas_width: int = Field(ge=320, le=4096)
+    canvas_height: int = Field(ge=240, le=4096)
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class YardMapStreamPlacementUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    heading_degrees: float = Field(ge=0, lt=360)
+    field_of_view_degrees: float = Field(ge=10, le=180)
+    display_scale: float | None = Field(default=None, ge=0.25, le=3)
+    expected_state_token: str | None = Field(default=None, min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class YardMapZonePlacementUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    area: list[YardMapAreaPoint] | None = Field(default=None, min_length=3, max_length=12)
+    expected_state_token: str | None = Field(default=None, min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class YardMapPlacementDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class YardMapBackgroundDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class YardMapStreamPlacement(BaseModel):
+    stream_id: str
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    heading_degrees: float = Field(ge=0, lt=360)
+    field_of_view_degrees: float = Field(ge=10, le=180)
+    display_scale: float | None = Field(default=None, ge=0.25, le=3)
+    state_token: str
+    updated_at: datetime
+
+
+class YardMapZonePlacement(BaseModel):
+    zone_id: str
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    area: list[YardMapAreaPoint] | None = None
+    state_token: str
+    updated_at: datetime
+
+
+class YardMapActivitySummary(BaseModel):
+    monitoring_desired_state: StreamMonitoringMode
+    monitoring_actual_state: StreamRuntimeState
+    open_activity_session: bool = False
+    needs_review_count: int = Field(ge=0)
+    needs_review_visit_ids: list[str] = Field(default_factory=list, max_length=50)
+    latest_visit_id: str | None = None
+    latest_visit_at: datetime | None = None
+    latest_confirmed_label: str | None = None
+    latest_preview_url: str | None = None
+
+
+class YardMapStreamItem(BaseModel):
+    id: str
+    name: str
+    source_name: str
+    is_live: bool
+    placement: YardMapStreamPlacement | None = None
+    activity: YardMapActivitySummary
+
+
+class YardMapZoneItem(BaseModel):
+    id: str
+    stream_id: str
+    name: str
+    zone_type: ZoneType
+    is_active: bool
+    placement: YardMapZonePlacement | None = None
+
+
+class YardMapResponse(BaseModel):
+    map: YardMapSettings | None = None
+    streams: list[YardMapStreamItem] = Field(default_factory=list, max_length=50)
+    zones: list[YardMapZoneItem] = Field(default_factory=list, max_length=200)
+    range: Literal["today", "last_24_hours", "last_7_days"] = "today"
+    warnings: list[str] = Field(default_factory=list, max_length=20)
+
+
 def _ensure_json_compatible(value: Any, field_name: str) -> None:
     try:
         json.dumps(value, allow_nan=False)

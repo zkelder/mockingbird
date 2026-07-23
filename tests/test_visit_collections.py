@@ -120,12 +120,12 @@ async def test_collections_are_normalized_bounded_and_organization_only(
         assert (session.scalar(select(func.count(ReviewLabelModel.id))) or 0) == review_count_before
 
 
-def test_v18_migration_creates_only_empty_collection_records(tmp_path: Path) -> None:
+def test_current_schema_creates_only_empty_collection_records(tmp_path: Path) -> None:
     repository = ProductRepository(
         db_url=f"sqlite:///{tmp_path / 'migration.sqlite3'}",
         media_root=tmp_path / "media",
     )
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 18
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 20
     table_names = set(inspect(repository.engine).get_table_names())
     assert {"visit_collections", "visit_collection_memberships"}.issubset(table_names)
     with repository.session_factory() as session:

@@ -2901,6 +2901,23 @@ export interface VisitTagBulkRequest { tag_id: string; visit_ids: string[]; acti
 export interface VisitTagBulkResponse { tag: VisitTagSummary; results: VisitTagMembershipResult[]; }
 export interface VisitTagsForVisitResponse { visit_id: string; tags: VisitTagSummary[]; }
 
+export type YardMapRange = "today" | "last_24_hours" | "last_7_days";
+export interface YardMapAreaPoint { x: number; y: number; }
+export interface YardMapBackground { preview_url: string; content_type: "image/jpeg" | "image/png" | "image/webp"; width: number; height: number; }
+export interface YardMapSettings { id: string; canvas_width: number; canvas_height: number; background?: YardMapBackground | null; background_missing: boolean; state_token: string; created_at: string; updated_at: string; }
+export interface YardMapBlankCreate { canvas_width?: number; canvas_height?: number; idempotency_key: string; }
+export interface YardMapSettingsUpdate { canvas_width: number; canvas_height: number; expected_state_token: string; idempotency_key: string; }
+export interface YardMapStreamPlacementUpdate { x: number; y: number; heading_degrees: number; field_of_view_degrees: number; display_scale?: number | null; expected_state_token?: string | null; idempotency_key: string; }
+export interface YardMapZonePlacementUpdate { x: number; y: number; area?: YardMapAreaPoint[] | null; expected_state_token?: string | null; idempotency_key: string; }
+export interface YardMapPlacementDelete { expected_state_token: string; idempotency_key: string; }
+export interface YardMapBackgroundDelete { expected_state_token: string; idempotency_key: string; }
+export interface YardMapStreamPlacement { stream_id: string; x: number; y: number; heading_degrees: number; field_of_view_degrees: number; display_scale?: number | null; state_token: string; updated_at: string; }
+export interface YardMapZonePlacement { zone_id: string; x: number; y: number; area?: YardMapAreaPoint[] | null; state_token: string; updated_at: string; }
+export interface YardMapActivitySummary { monitoring_desired_state: "off" | "armed" | "paused"; monitoring_actual_state: "stopped" | "starting" | "running" | "backoff" | "blocked" | "stopping" | "interrupted"; open_activity_session: boolean; needs_review_count: number; needs_review_visit_ids: string[]; latest_visit_id?: string | null; latest_visit_at?: string | null; latest_confirmed_label?: string | null; latest_preview_url?: string | null; }
+export interface YardMapStreamItem { id: string; name: string; source_name: string; is_live: boolean; placement?: YardMapStreamPlacement | null; activity: YardMapActivitySummary; }
+export interface YardMapZoneItem { id: string; stream_id: string; name: string; zone_type: ZoneType; is_active: boolean; placement?: YardMapZonePlacement | null; }
+export interface YardMapResponse { map?: YardMapSettings | null; streams: YardMapStreamItem[]; zones: YardMapZoneItem[]; range: YardMapRange; warnings: string[]; }
+
 export interface DatasetExport {
   id: string;
   name: string;

@@ -245,6 +245,13 @@ from mockingbird.api.schemas import (
     WebhookPayloadValidationRequest,
     WebhookPayloadValidationResponse,
     WorkerStatusResponse,
+    YardMapBackgroundDelete,
+    YardMapBlankCreate,
+    YardMapPlacementDelete,
+    YardMapResponse,
+    YardMapSettingsUpdate,
+    YardMapStreamPlacementUpdate,
+    YardMapZonePlacementUpdate,
     WildlifeInsightsRequest,
     WildlifeInsightsSummary,
     WildlifeJournalHistoryRequest,
@@ -8524,6 +8531,132 @@ async def reopen_visit_review(
         if str(error) == "missing_visit":
             raise _not_found("Visit", visit_id) from error
         raise HTTPException(status_code=400, detail="The reviewed Visit could not be reopened.") from error
+
+
+def _yard_map_http_error(error: ValueError, *, item: str = "Yard Map") -> HTTPException:
+    code = str(error)
+    if code == "missing_yard_map":
+        return _not_found("Yard Map", "")
+    if code in {"missing_yard_map_stream", "missing_yard_map_zone"}:
+        return _not_found(item)
+    if code == "missing_yard_map_placement":
+        return _not_found("Yard Map placement", "")
+    if code in {"yard_map_stale", "yard_map_placement_stale"}:
+        return HTTPException(status_code=409, detail="The Yard Map changed elsewhere. Refresh before saving.")
+    if code == "yard_map_exists":
+        return HTTPException(status_code=409, detail="A Yard Map is already configured. Refresh it before changing setup.")
+    if code == "yard_map_background_too_large":
+        return HTTPException(status_code=413, detail="Choose a yard image no larger than 10 MB.")
+    if code in {"yard_map_background_content_type", "yard_map_background_unsupported"}:
+        return HTTPException(status_code=400, detail="Use a JPEG, PNG, or WebP image with a matching content type.")
+    if code in {"yard_map_background_dimensions", "yard_map_background_empty"}:
+        return HTTPException(status_code=400, detail="Choose a valid image between 32 and 8192 pixels on each side.")
+    if code == "yard_map_media_root_unsafe":
+        return HTTPException(status_code=400, detail="The managed local yard-image storage is unavailable safely.")
+    return HTTPException(status_code=400, detail="That Yard Map change could not be completed.")
+
+
+@app.get("/api/yard-map", response_model=YardMapResponse)
+async def get_yard_map(
+    range: str = Query(default="today", pattern="^(today|last_24_hours|last_7_days)$"),
+) -> YardMapResponse:
+    return get_repository().yard_map(activity_range=range)
+
+
+@app.post("/api/yard-map/blank", response_model=YardMapResponse, status_code=201)
+async def create_blank_yard_map(payload: YardMapBlankCreate) -> YardMapResponse:
+    try:
+        return get_repository().create_blank_yard_map(payload)
+    except ValueError as error:
+        raise _yard_map_http_error(error) from error
+
+
+@app.patch("/api/yard-map", response_model=YardMapResponse)
+async def update_yard_map_settings(payload: YardMapSettingsUpdate) -> YardMapResponse:
+    try:
+        return get_repository().update_yard_map_settings(payload)
+    except ValueError as error:
+        raise _yard_map_http_error(error) from error
+
+
+@app.post("/api/yard-map/background", response_model=YardMapResponse)
+async def replace_yard_map_background(
+    file: UploadFile = File(...),
+    expected_state_token: str | None = Form(default=None),
+    idempotency_key: str = Form(...),
+) -> YardMapResponse:
+    try:
+        return get_repository().replace_yard_map_background(
+            content=await file.read(),
+            content_type=file.content_type or "",
+            expected_state_token=expected_state_token,
+            idempotency_key=idempotency_key,
+        )
+    except ValueError as error:
+        raise _yard_map_http_error(error) from error
+
+
+@app.get("/api/yard-map/background")
+async def get_yard_map_background():
+    background = get_repository().yard_map_background_file()
+    if background is None:
+        raise _not_found("Yard Map background", "")
+    path, content_type = background
+    if "pytest" in sys.modules:
+        return Response(path.read_bytes(), media_type=content_type)
+    return FileResponse(path, media_type=content_type)
+
+
+@app.delete("/api/yard-map/background", response_model=YardMapResponse)
+async def remove_yard_map_background(payload: YardMapBackgroundDelete) -> YardMapResponse:
+    try:
+        return get_repository().remove_yard_map_background(payload)
+    except ValueError as error:
+        raise _yard_map_http_error(error) from error
+
+
+@app.put("/api/yard-map/streams/{stream_id}", response_model=YardMapResponse)
+async def update_yard_map_stream_placement(
+    stream_id: str,
+    payload: YardMapStreamPlacementUpdate,
+) -> YardMapResponse:
+    try:
+        return get_repository().update_yard_map_stream_placement(stream_id, payload)
+    except ValueError as error:
+        raise _yard_map_http_error(error, item="Stream") from error
+
+
+@app.delete("/api/yard-map/streams/{stream_id}", response_model=YardMapResponse)
+async def remove_yard_map_stream_placement(
+    stream_id: str,
+    payload: YardMapPlacementDelete,
+) -> YardMapResponse:
+    try:
+        return get_repository().remove_yard_map_stream_placement(stream_id, payload)
+    except ValueError as error:
+        raise _yard_map_http_error(error, item="Stream") from error
+
+
+@app.put("/api/yard-map/zones/{zone_id}", response_model=YardMapResponse)
+async def update_yard_map_zone_placement(
+    zone_id: str,
+    payload: YardMapZonePlacementUpdate,
+) -> YardMapResponse:
+    try:
+        return get_repository().update_yard_map_zone_placement(zone_id, payload)
+    except ValueError as error:
+        raise _yard_map_http_error(error, item="Zone") from error
+
+
+@app.delete("/api/yard-map/zones/{zone_id}", response_model=YardMapResponse)
+async def remove_yard_map_zone_placement(
+    zone_id: str,
+    payload: YardMapPlacementDelete,
+) -> YardMapResponse:
+    try:
+        return get_repository().remove_yard_map_zone_placement(zone_id, payload)
+    except ValueError as error:
+        raise _yard_map_http_error(error, item="Zone") from error
 
 
 @app.get("/api/media", response_model=list[MediaAsset])

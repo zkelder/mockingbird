@@ -305,6 +305,54 @@ class VisitTagMembershipModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class YardMapModel(Base):
+    """One optional local spatial context; it never calibrates a camera or writes truth."""
+
+    __tablename__ = "yard_maps"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    background_relative_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    background_content_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    background_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    background_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    canvas_width: Mapped[int] = mapped_column(Integer, nullable=False)
+    canvas_height: Mapped[int] = mapped_column(Integer, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+
+
+class YardMapStreamPlacementModel(Base):
+    __tablename__ = "yard_map_stream_placements"
+    __table_args__ = (Index("ix_yard_map_stream_placements_stream_id", "stream_id"),)
+
+    map_id: Mapped[str] = mapped_column(ForeignKey("yard_maps.id"), primary_key=True)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), primary_key=True)
+    x: Mapped[float] = mapped_column(Float, nullable=False)
+    y: Mapped[float] = mapped_column(Float, nullable=False)
+    heading_degrees: Mapped[float] = mapped_column(Float, nullable=False)
+    field_of_view_degrees: Mapped[float] = mapped_column(Float, nullable=False)
+    display_scale: Mapped[float | None] = mapped_column(Float, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+
+
+class YardMapZonePlacementModel(Base):
+    __tablename__ = "yard_map_zone_placements"
+    __table_args__ = (Index("ix_yard_map_zone_placements_zone_id", "zone_id"),)
+
+    map_id: Mapped[str] = mapped_column(ForeignKey("yard_maps.id"), primary_key=True)
+    zone_id: Mapped[str] = mapped_column(ForeignKey("zones.id"), primary_key=True)
+    x: Mapped[float] = mapped_column(Float, nullable=False)
+    y: Mapped[float] = mapped_column(Float, nullable=False)
+    area_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+
+
 class VisitEvidenceLinkModel(Base):
     """A bounded Visit-to-media association; deleting a link never deletes media."""
 

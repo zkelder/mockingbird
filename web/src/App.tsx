@@ -41,6 +41,7 @@ import { SavedMediaRetentionPage } from "./pages/SavedMediaRetentionPage";
 import { SpeciesSuggestionsPage } from "./pages/SpeciesSuggestionsPage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
+import { YardMapPage } from "./pages/YardMapPage";
 import { VisitDetailPage } from "./pages/VisitDetailPage";
 import { WorkerStatusPage } from "./pages/WorkerStatusPage";
 import {
@@ -85,6 +86,7 @@ const initialData: AppData = {
 const productNavItems: Array<{ page: Page; label: string }> = [
   { page: "dashboard", label: "Overview" },
   { page: "streams", label: "Cameras / Streams" },
+  { page: "yard-map", label: "Yard & Camera Map" },
   { page: "activity-library", label: "Activity Library" },
   { page: "review", label: "Review Queue" },
   { page: "bird-log", label: "Bird Log" },
@@ -465,6 +467,24 @@ export default function App() {
           onOpenExports={() => setPage("exports")}
           onAddCamera={() => setPage("camera-setup")}
           onSourcesChanged={() => loadAppData({ showLoading: false })}
+        />
+      );
+    }
+
+    if (page === "yard-map") {
+      return (
+        <YardMapPage
+          onOpenStream={openStream}
+          onOpenVisit={openVisit}
+          onOpenFastReview={openFocusedFastReview}
+          onOpenActivityLibrary={openActivityLibrary}
+          onOpenBirdLog={(label) => {
+            const path = `/bird-log/${encodeURIComponent(label)}`;
+            if (`${window.location.pathname}${window.location.search}` !== path) {
+              window.history.pushState({}, "", path);
+            }
+            applyRoute({ page: "bird-log" });
+          }}
         />
       );
     }

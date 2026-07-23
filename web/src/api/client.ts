@@ -182,6 +182,7 @@ import type {
   VisitCollectionUpdate,
   VisitCollectionsForVisitResponse,
   VisitTagArchiveRequest, VisitTagBulkRequest, VisitTagBulkResponse, VisitTagCreate, VisitTagMembershipRequest, VisitTagMembershipResponse, VisitTagSummary, VisitTagUpdate, VisitTagsForVisitResponse,
+  YardMapBackgroundDelete, YardMapBlankCreate, YardMapPlacementDelete, YardMapRange, YardMapResponse, YardMapSettingsUpdate, YardMapStreamPlacementUpdate, YardMapZonePlacementUpdate,
   WorkerStatusResponse,
     WildlifeInsightsRequest,
     WildlifeInsightsSummary,
@@ -389,6 +390,18 @@ export const apiClient = {
       `/api/streams/${encodeURIComponent(streamId)}/monitor/status`,
     ),
   getDashboardSummary: () => request<DashboardSummary>("/api/dashboard/summary"),
+  getYardMap: (range: YardMapRange = "today") => request<YardMapResponse>(`/api/yard-map?range=${encodeURIComponent(range)}`),
+  createBlankYardMap: (payload: YardMapBlankCreate) => request<YardMapResponse>("/api/yard-map/blank", { method: "POST", body: JSON.stringify(payload) }),
+  updateYardMapSettings: (payload: YardMapSettingsUpdate) => request<YardMapResponse>("/api/yard-map", { method: "PATCH", body: JSON.stringify(payload) }),
+  uploadYardMapBackground: (file: File, expectedStateToken: string | null, idempotencyKey: string) => {
+    const form = new FormData(); form.append("file", file); if (expectedStateToken) form.append("expected_state_token", expectedStateToken); form.append("idempotency_key", idempotencyKey);
+    return request<YardMapResponse>("/api/yard-map/background", { method: "POST", body: form });
+  },
+  removeYardMapBackground: (payload: YardMapBackgroundDelete) => request<YardMapResponse>("/api/yard-map/background", { method: "DELETE", body: JSON.stringify(payload) }),
+  updateYardMapStreamPlacement: (streamId: string, payload: YardMapStreamPlacementUpdate) => request<YardMapResponse>(`/api/yard-map/streams/${encodeURIComponent(streamId)}`, { method: "PUT", body: JSON.stringify(payload) }),
+  removeYardMapStreamPlacement: (streamId: string, payload: YardMapPlacementDelete) => request<YardMapResponse>(`/api/yard-map/streams/${encodeURIComponent(streamId)}`, { method: "DELETE", body: JSON.stringify(payload) }),
+  updateYardMapZonePlacement: (zoneId: string, payload: YardMapZonePlacementUpdate) => request<YardMapResponse>(`/api/yard-map/zones/${encodeURIComponent(zoneId)}`, { method: "PUT", body: JSON.stringify(payload) }),
+  removeYardMapZonePlacement: (zoneId: string, payload: YardMapPlacementDelete) => request<YardMapResponse>(`/api/yard-map/zones/${encodeURIComponent(zoneId)}`, { method: "DELETE", body: JSON.stringify(payload) }),
   getStreams: () => request<Stream[]>("/api/streams"),
   getStreamMonitoringStatuses: (limit = 50) =>
     request<StreamMonitoringStatusListResponse>(

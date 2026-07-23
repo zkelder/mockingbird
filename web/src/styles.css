@@ -900,6 +900,275 @@ a.secondary-action {
   color: #254d39;
 }
 
+.yard-map-setup-actions,
+.yard-map-toolbar,
+.yard-map-toolbar label,
+.yard-map-list-item,
+.yard-map-edit-panel label,
+.yard-map-draw-panel,
+.yard-map-draw-panel .action-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.yard-map-toolbar {
+  align-items: end;
+}
+
+.yard-map-toolbar label,
+.yard-map-edit-panel label {
+  color: #405044;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.yard-map-toolbar select {
+  min-width: 126px;
+  margin-left: 5px;
+}
+
+.yard-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(260px, 0.75fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.yard-map-stage-panel,
+.yard-map-side-panel,
+.yard-map-side-panel .panel,
+.yard-map-edit-panel,
+.yard-map-draw-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.yard-map-side-panel {
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+.yard-map-stage {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #cbd8ca;
+  border-radius: 10px;
+  background: #dfe9dc;
+  touch-action: none;
+}
+
+.yard-map-stage.is-drawing {
+  cursor: crosshair;
+}
+
+.yard-map-background,
+.yard-map-blank,
+.yard-map-zone-areas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.yard-map-background {
+  object-fit: cover;
+}
+
+.yard-map-blank {
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.36) 25%, transparent 25%) 0 0 / 28px 28px,
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.36) 25%, transparent 25%) 0 0 / 28px 28px,
+    #d7e7d2;
+}
+
+.yard-map-zone-areas {
+  z-index: 1;
+  pointer-events: none;
+}
+
+.yard-map-zone-area {
+  fill: rgba(61, 126, 83, 0.17);
+  stroke: #2f7549;
+  stroke-width: 0.55;
+  vector-effect: non-scaling-stroke;
+}
+
+.yard-map-zone-area.zone-privacy {
+  fill: rgba(167, 83, 68, 0.19);
+  stroke: #994535;
+}
+
+.yard-map-zone-area.zone-ignore {
+  fill: rgba(73, 86, 81, 0.18);
+  stroke: #4b5d55;
+}
+
+.yard-map-zone-area-draft {
+  fill: none;
+  stroke: #245f9b;
+  stroke-dasharray: 1.3 1.3;
+  stroke-width: 0.8;
+  vector-effect: non-scaling-stroke;
+}
+
+.yard-map-camera,
+.yard-map-zone {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+}
+
+.yard-map-wedge {
+  position: absolute;
+  z-index: -1;
+  width: 112px;
+  height: 112px;
+  overflow: visible;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.yard-map-wedge path {
+  fill: rgba(39, 105, 77, 0.22);
+  stroke: #236545;
+  stroke-width: 1.2;
+}
+
+.yard-map-marker {
+  min-width: 58px;
+  border: 2px solid #183c2a;
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #fff;
+  background: #245f3f;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.yard-map-marker:focus-visible,
+.yard-map-zone:focus-visible {
+  outline: 3px solid #1b67a0;
+  outline-offset: 3px;
+}
+
+.yard-map-visit-preview {
+  display: block;
+  width: 54px;
+  height: 40px;
+  margin: 5px auto 0;
+  border: 2px solid #fff;
+  border-radius: 5px;
+  object-fit: cover;
+  box-shadow: 0 1px 4px rgba(22, 42, 30, 0.4);
+  cursor: pointer;
+}
+
+.yard-map-zone {
+  display: grid;
+  gap: 1px;
+  max-width: 122px;
+  border: 2px solid #2f7549;
+  border-radius: 7px;
+  padding: 4px 7px;
+  color: #173421;
+  background: #eff8eb;
+  font-size: 0.7rem;
+  text-align: left;
+}
+
+.yard-map-zone span {
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.yard-map-zone.zone-privacy {
+  border-color: #994535;
+  color: #65251e;
+  background: #fff1ed;
+}
+
+.yard-map-zone.zone-ignore {
+  border-color: #4b5d55;
+  color: #263631;
+  background: #edf1ef;
+}
+
+.yard-map-stage-message {
+  position: absolute;
+  inset: auto 16px 16px;
+  z-index: 3;
+  padding: 9px 11px;
+  border: 1px solid #68836e;
+  border-radius: 7px;
+  color: #183c2a;
+  background: rgba(250, 254, 248, 0.93);
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.yard-map-list-item {
+  align-items: baseline;
+  padding: 10px 0;
+  border-bottom: 1px solid #dce5dc;
+}
+
+.yard-map-list-item:last-child {
+  border-bottom: 0;
+}
+
+.yard-map-list-item > span:not(.status-pill) {
+  color: #5c6a60;
+  font-size: 0.82rem;
+}
+
+.yard-map-edit-panel input[type="range"] {
+  width: min(100%, 260px);
+  vertical-align: middle;
+}
+
+.yard-map-draw-panel span {
+  color: #344c3b;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+@media (max-width: 980px) {
+  .yard-map-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .yard-map-side-panel {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 640px) {
+  .yard-map-toolbar,
+  .yard-map-toolbar label {
+    align-items: start;
+  }
+
+  .yard-map-toolbar select {
+    margin-left: 0;
+  }
+
+  .yard-map-zone {
+    max-width: 94px;
+    padding: 3px 5px;
+  }
+
+  .yard-map-wedge {
+    width: 84px;
+    height: 84px;
+  }
+}
+
 @media (max-width: 640px) {
   .wildlife-insights-breakdown-row {
     grid-template-columns: 1fr auto;

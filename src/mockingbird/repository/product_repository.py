@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import threading
 import time
 from typing import Any, Iterable
@@ -247,6 +248,20 @@ from mockingbird.api.schemas import (
     VisitTagSummary,
     VisitTagUpdate,
     VisitTagsForVisitResponse,
+    YardMapActivitySummary,
+    YardMapBackground,
+    YardMapBackgroundDelete,
+    YardMapBlankCreate,
+    YardMapPlacementDelete,
+    YardMapResponse,
+    YardMapSettings,
+    YardMapSettingsUpdate,
+    YardMapStreamItem,
+    YardMapStreamPlacement,
+    YardMapStreamPlacementUpdate,
+    YardMapZoneItem,
+    YardMapZonePlacement,
+    YardMapZonePlacementUpdate,
     VisitIdentificationAssistantRequest,
     VisitIdentificationAssistantResponse,
     VisitIdentificationEvidenceMode,
@@ -431,6 +446,9 @@ from mockingbird.storage.models import (
     VisitCollectionModel,
     VisitTagMembershipModel,
     VisitTagModel,
+    YardMapModel,
+    YardMapStreamPlacementModel,
+    YardMapZonePlacementModel,
     ZoneModel,
 )
 from mockingbird.workers.registry import (
@@ -458,6 +476,9 @@ MAX_COLLECTION_LIST_ITEMS = 100
 MAX_ACTIVE_VISIT_TAGS = 200
 MAX_TAGS_PER_VISIT = 20
 MAX_TAG_LIST_ITEMS = 50
+YARD_MAP_ID = "yard-map"
+MAX_YARD_MAP_BACKGROUND_BYTES = 10 * 1024 * 1024
+MAX_YARD_MAP_IMAGE_DIMENSION = 8192
 MAX_STORAGE_CLEANUP_PREVIEW_ITEMS = 200
 MAX_STORAGE_CLEANUP_HISTORY_ITEMS = 30
 STORAGE_CLEANUP_PREVIEW_TTL = timedelta(minutes=15)
@@ -4969,6 +4990,523 @@ class ProductRepository:
                 results = [self._tag_membership(session, model, visit_id, payload.action) for visit_id in dict.fromkeys(payload.visit_ids)]
                 if any(item.status == VisitTagMembershipStatus.updated for item in results): model.version += 1; model.updated_at = datetime.now(UTC); model.last_idempotency_key = payload.idempotency_key
                 session.flush(); return VisitTagBulkResponse(tag=self._tag_summary(session, model), results=results)
+
+    @staticmethod
+    def _yard_map_token(model: YardMapModel) -> str:
+        return f"yard-map:{model.id}:{model.version}"
+
+    @staticmethod
+    def _yard_map_stream_placement_token(model: YardMapStreamPlacementModel) -> str:
+        return f"yard-map-stream:{model.map_id}:{model.stream_id}:{model.version}"
+
+    @staticmethod
+    def _yard_map_zone_placement_token(model: YardMapZonePlacementModel) -> str:
+        return f"yard-map-zone:{model.map_id}:{model.zone_id}:{model.version}"
+
+    def _yard_map_background_path(self, relative_path: str | None) -> Path | None:
+        if not relative_path:
+            return None
+        try:
+            relative = Path(relative_path)
+            root = self.media_root.resolve()
+            if relative.is_absolute() or not relative.parts or relative.parts[0] != "property-map":
+                return None
+            candidate = (self.media_root / relative).resolve(strict=False)
+            if not candidate.is_relative_to(root) or candidate.is_symlink():
+                return None
+            return candidate
+        except OSError:
+            return None
+
+    def _yard_map_settings(self, model: YardMapModel) -> YardMapSettings:
+        background_path = self._yard_map_background_path(model.background_relative_path)
+        background_missing = bool(
+            model.background_relative_path
+            and (background_path is None or not background_path.exists() or not background_path.is_file())
+        )
+        background = None
+        if not background_missing and model.background_relative_path and model.background_content_type:
+            background = YardMapBackground(
+                preview_url="/api/yard-map/background",
+                content_type=model.background_content_type,
+                width=model.background_width or 1,
+                height=model.background_height or 1,
+            )
+        return YardMapSettings(
+            id=model.id,
+            canvas_width=model.canvas_width,
+            canvas_height=model.canvas_height,
+            background=background,
+            background_missing=background_missing,
+            state_token=self._yard_map_token(model),
+            created_at=_as_utc(model.created_at),
+            updated_at=_as_utc(model.updated_at),
+        )
+
+    def _yard_map_stream_placement(
+        self,
+        model: YardMapStreamPlacementModel,
+    ) -> YardMapStreamPlacement:
+        return YardMapStreamPlacement(
+            stream_id=model.stream_id,
+            x=model.x,
+            y=model.y,
+            heading_degrees=model.heading_degrees,
+            field_of_view_degrees=model.field_of_view_degrees,
+            display_scale=model.display_scale,
+            state_token=self._yard_map_stream_placement_token(model),
+            updated_at=_as_utc(model.updated_at),
+        )
+
+    def _yard_map_zone_placement(
+        self,
+        model: YardMapZonePlacementModel,
+    ) -> YardMapZonePlacement:
+        area = _json_list(model.area_json) if model.area_json else None
+        return YardMapZonePlacement(
+            zone_id=model.zone_id,
+            x=model.x,
+            y=model.y,
+            area=area or None,
+            state_token=self._yard_map_zone_placement_token(model),
+            updated_at=_as_utc(model.updated_at),
+        )
+
+    def _yard_map_range_start(
+        self,
+        activity_range: str,
+        now: datetime,
+    ) -> datetime:
+        if activity_range == "last_24_hours":
+            return now - timedelta(hours=24)
+        if activity_range == "last_7_days":
+            return now - timedelta(days=7)
+        local_now = now.astimezone()
+        return _as_utc(local_now.replace(hour=0, minute=0, second=0, microsecond=0))
+
+    def _yard_map_activity_summary(
+        self,
+        session: Session,
+        stream: StreamModel,
+        *,
+        start_at: datetime,
+    ) -> YardMapActivitySummary:
+        policy = session.get(StreamMonitoringPolicyModel, stream.id)
+        checkpoint = session.get(StreamRuntimeCheckpointModel, stream.id)
+        try:
+            desired_state = StreamMonitoringMode(policy.mode) if policy else StreamMonitoringMode.off
+        except ValueError:
+            desired_state = StreamMonitoringMode.off
+        try:
+            actual_state = StreamRuntimeState(checkpoint.actual_state) if checkpoint else StreamRuntimeState.stopped
+        except ValueError:
+            actual_state = StreamRuntimeState.stopped
+        visit_rows = session.execute(
+            select(VisitModel, EventModel)
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .where(
+                EventModel.stream_id == stream.id,
+                EventModel.started_at >= start_at,
+                VisitModel.is_superseded.is_(False),
+            )
+            .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+            .limit(50)
+        ).all()
+        summaries = [
+            self._stream_visit_summary_from_models(session, visit, event)
+            for visit, event in visit_rows
+        ]
+        latest = summaries[0] if summaries else None
+        confirmed = next(
+            (
+                summary.reviewed_label
+                for summary in summaries
+                if summary.review_outcome == VisitReviewOutcome.confirmed_bird
+                and summary.reviewed_label
+            ),
+            None,
+        )
+        needs_review_count = session.scalar(
+            select(func.count(VisitModel.id))
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .where(
+                EventModel.stream_id == stream.id,
+                EventModel.started_at >= start_at,
+                VisitModel.is_superseded.is_(False),
+                VisitModel.review_status == ReviewStatus.needs_review.value,
+            )
+        ) or 0
+        needs_review_visit_ids = session.scalars(
+            select(VisitModel.id)
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .where(
+                EventModel.stream_id == stream.id,
+                EventModel.started_at >= start_at,
+                VisitModel.is_superseded.is_(False),
+                VisitModel.review_status == ReviewStatus.needs_review.value,
+            )
+            .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+            .limit(50)
+        ).all()
+        open_activity = session.scalar(
+            select(EventModel.id)
+            .where(EventModel.stream_id == stream.id, EventModel.ended_at.is_(None))
+            .limit(1)
+        ) is not None
+        return YardMapActivitySummary(
+            monitoring_desired_state=desired_state,
+            monitoring_actual_state=actual_state,
+            open_activity_session=open_activity,
+            needs_review_count=needs_review_count,
+            needs_review_visit_ids=needs_review_visit_ids,
+            latest_visit_id=latest.id if latest else None,
+            latest_visit_at=latest.activity_started_at if latest else None,
+            latest_confirmed_label=confirmed,
+            latest_preview_url=(latest.primary_evidence.preview_url if latest and latest.primary_evidence else None),
+        )
+
+    def yard_map(
+        self,
+        *,
+        activity_range: str = "today",
+        now: datetime | None = None,
+    ) -> YardMapResponse:
+        current_time = _as_utc(now or datetime.now(UTC))
+        start_at = self._yard_map_range_start(activity_range, current_time)
+        with self.session_factory() as session:
+            map_model = session.get(YardMapModel, YARD_MAP_ID)
+            stream_placements = {
+                item.stream_id: item
+                for item in session.scalars(
+                    select(YardMapStreamPlacementModel).where(
+                        YardMapStreamPlacementModel.map_id == YARD_MAP_ID
+                    )
+                ).all()
+            }
+            zone_placements = {
+                item.zone_id: item
+                for item in session.scalars(
+                    select(YardMapZonePlacementModel).where(
+                        YardMapZonePlacementModel.map_id == YARD_MAP_ID
+                    )
+                ).all()
+            }
+            stream_rows = session.execute(
+                select(StreamModel, CameraSourceModel)
+                .join(CameraSourceModel, CameraSourceModel.id == StreamModel.source_id)
+                .where(CameraSourceModel.status != SourceStatus.archived.value)
+                .order_by(CameraSourceModel.name.collate("NOCASE"), StreamModel.name.collate("NOCASE"), StreamModel.id)
+                .limit(50)
+            ).all()
+            streams = [
+                YardMapStreamItem(
+                    id=stream.id,
+                    name=stream.name,
+                    source_name=source.name,
+                    is_live=stream.is_live,
+                    placement=(
+                        self._yard_map_stream_placement(stream_placements[stream.id])
+                        if stream.id in stream_placements
+                        else None
+                    ),
+                    activity=self._yard_map_activity_summary(session, stream, start_at=start_at),
+                )
+                for stream, source in stream_rows
+            ]
+            active_stream_ids = {stream.id for stream, _source in stream_rows}
+            zones = [
+                YardMapZoneItem(
+                    id=zone.id,
+                    stream_id=zone.stream_id,
+                    name=zone.name,
+                    zone_type=ZoneType(zone.zone_type),
+                    is_active=zone.is_active,
+                    placement=(
+                        self._yard_map_zone_placement(zone_placements[zone.id])
+                        if zone.id in zone_placements
+                        else None
+                    ),
+                )
+                for zone in session.scalars(
+                    select(ZoneModel)
+                    .where(ZoneModel.stream_id.in_(active_stream_ids))
+                    .order_by(ZoneModel.stream_id, ZoneModel.name.collate("NOCASE"), ZoneModel.id)
+                    .limit(200)
+                ).all()
+            ] if active_stream_ids else []
+            warnings: list[str] = []
+            if map_model is None:
+                warnings.append("No Yard Map is configured yet. Choose a blank canvas or a local yard image.")
+            elif self._yard_map_settings(map_model).background_missing:
+                warnings.append("The configured yard background is unavailable. Placements remain on the blank canvas.")
+            return YardMapResponse(
+                map=self._yard_map_settings(map_model) if map_model else None,
+                streams=streams,
+                zones=zones,
+                range=activity_range,
+                warnings=warnings,
+            )
+
+    def create_blank_yard_map(self, payload: YardMapBlankCreate) -> YardMapResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(YardMapModel, YARD_MAP_ID)
+                if model is not None:
+                    if model.last_idempotency_key == payload.idempotency_key:
+                        return self.yard_map()
+                    raise ValueError("yard_map_exists")
+                now = datetime.now(UTC)
+                session.add(
+                    YardMapModel(
+                        id=YARD_MAP_ID,
+                        background_relative_path=None,
+                        background_content_type=None,
+                        background_width=None,
+                        background_height=None,
+                        canvas_width=payload.canvas_width,
+                        canvas_height=payload.canvas_height,
+                        version=1,
+                        created_at=now,
+                        updated_at=now,
+                        last_idempotency_key=payload.idempotency_key,
+                    )
+                )
+        return self.yard_map()
+
+    def update_yard_map_settings(self, payload: YardMapSettingsUpdate) -> YardMapResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(YardMapModel, YARD_MAP_ID)
+                if model is None:
+                    raise ValueError("missing_yard_map")
+                if model.last_idempotency_key == payload.idempotency_key:
+                    return self.yard_map()
+                if self._yard_map_token(model) != payload.expected_state_token:
+                    raise ValueError("yard_map_stale")
+                model.canvas_width = payload.canvas_width
+                model.canvas_height = payload.canvas_height
+                model.version += 1
+                model.updated_at = datetime.now(UTC)
+                model.last_idempotency_key = payload.idempotency_key
+        return self.yard_map()
+
+    def replace_yard_map_background(
+        self,
+        *,
+        content: bytes,
+        content_type: str,
+        expected_state_token: str | None,
+        idempotency_key: str,
+    ) -> YardMapResponse:
+        normalized_type, width, height, extension = _yard_map_image_metadata(content, content_type)
+        if len(content) > MAX_YARD_MAP_BACKGROUND_BYTES:
+            raise ValueError("yard_map_background_too_large")
+        relative_path, stored_path = self._write_yard_map_background(content, extension)
+        old_relative_path: str | None = None
+        try:
+            with self.session_factory() as session:
+                with session.begin():
+                    model = session.get(YardMapModel, YARD_MAP_ID)
+                    if model is None:
+                        now = datetime.now(UTC)
+                        model = YardMapModel(
+                            id=YARD_MAP_ID,
+                            background_relative_path=relative_path,
+                            background_content_type=normalized_type,
+                            background_width=width,
+                            background_height=height,
+                            canvas_width=1200,
+                            canvas_height=800,
+                            version=1,
+                            created_at=now,
+                            updated_at=now,
+                            last_idempotency_key=idempotency_key,
+                        )
+                        session.add(model)
+                    else:
+                        if model.last_idempotency_key == idempotency_key:
+                            self._delete_yard_map_background(stored_path)
+                            return self.yard_map()
+                        if expected_state_token is None or self._yard_map_token(model) != expected_state_token:
+                            raise ValueError("yard_map_stale")
+                        old_relative_path = model.background_relative_path
+                        model.background_relative_path = relative_path
+                        model.background_content_type = normalized_type
+                        model.background_width = width
+                        model.background_height = height
+                        model.version += 1
+                        model.updated_at = datetime.now(UTC)
+                        model.last_idempotency_key = idempotency_key
+        except Exception:
+            self._delete_yard_map_background(stored_path)
+            raise
+        self._delete_yard_map_background(self._yard_map_background_path(old_relative_path))
+        return self.yard_map()
+
+    def remove_yard_map_background(self, payload: YardMapBackgroundDelete) -> YardMapResponse:
+        old_relative_path: str | None = None
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(YardMapModel, YARD_MAP_ID)
+                if model is None:
+                    raise ValueError("missing_yard_map")
+                if model.last_idempotency_key == payload.idempotency_key:
+                    return self.yard_map()
+                if self._yard_map_token(model) != payload.expected_state_token:
+                    raise ValueError("yard_map_stale")
+                old_relative_path = model.background_relative_path
+                model.background_relative_path = None
+                model.background_content_type = None
+                model.background_width = None
+                model.background_height = None
+                model.version += 1
+                model.updated_at = datetime.now(UTC)
+                model.last_idempotency_key = payload.idempotency_key
+        self._delete_yard_map_background(self._yard_map_background_path(old_relative_path))
+        return self.yard_map()
+
+    def _write_yard_map_background(self, content: bytes, extension: str) -> tuple[str, Path]:
+        root = self.media_root / "property-map"
+        if root.exists() and root.is_symlink():
+            raise ValueError("yard_map_media_root_unsafe")
+        root.mkdir(parents=True, exist_ok=True)
+        if root.is_symlink() or not root.resolve().is_relative_to(self.media_root.resolve()):
+            raise ValueError("yard_map_media_root_unsafe")
+        relative_path = f"property-map/background-{uuid.uuid4().hex}{extension}"
+        path = self.media_root / relative_path
+        temporary = path.with_suffix(f"{path.suffix}.tmp")
+        temporary.write_bytes(content)
+        temporary.replace(path)
+        return relative_path, path
+
+    @staticmethod
+    def _delete_yard_map_background(path: Path | None) -> None:
+        try:
+            if path is not None and path.exists() and path.is_file() and not path.is_symlink():
+                path.unlink()
+        except OSError:
+            pass
+
+    def yard_map_background_file(self) -> tuple[Path, str] | None:
+        with self.session_factory() as session:
+            model = session.get(YardMapModel, YARD_MAP_ID)
+            if model is None or not model.background_content_type:
+                return None
+            path = self._yard_map_background_path(model.background_relative_path)
+            if path is None or not path.exists() or not path.is_file() or path.is_symlink():
+                return None
+            return path, model.background_content_type
+
+    def update_yard_map_stream_placement(
+        self,
+        stream_id: str,
+        payload: YardMapStreamPlacementUpdate,
+    ) -> YardMapResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                if session.get(YardMapModel, YARD_MAP_ID) is None:
+                    raise ValueError("missing_yard_map")
+                stream = session.get(StreamModel, stream_id)
+                source = session.get(CameraSourceModel, stream.source_id) if stream else None
+                if stream is None or source is None or source.status == SourceStatus.archived.value:
+                    raise ValueError("missing_yard_map_stream")
+                model = session.get(YardMapStreamPlacementModel, {"map_id": YARD_MAP_ID, "stream_id": stream_id})
+                if model is not None and model.last_idempotency_key == payload.idempotency_key:
+                    return self.yard_map()
+                now = datetime.now(UTC)
+                if model is None:
+                    model = YardMapStreamPlacementModel(
+                        map_id=YARD_MAP_ID,
+                        stream_id=stream_id,
+                        x=payload.x,
+                        y=payload.y,
+                        heading_degrees=payload.heading_degrees,
+                        field_of_view_degrees=payload.field_of_view_degrees,
+                        display_scale=payload.display_scale,
+                        version=1,
+                        updated_at=now,
+                        last_idempotency_key=payload.idempotency_key,
+                    )
+                    session.add(model)
+                else:
+                    if payload.expected_state_token is None or self._yard_map_stream_placement_token(model) != payload.expected_state_token:
+                        raise ValueError("yard_map_placement_stale")
+                    model.x, model.y = payload.x, payload.y
+                    model.heading_degrees = payload.heading_degrees
+                    model.field_of_view_degrees = payload.field_of_view_degrees
+                    model.display_scale = payload.display_scale
+                    model.version += 1
+                    model.updated_at = now
+                    model.last_idempotency_key = payload.idempotency_key
+        return self.yard_map()
+
+    def remove_yard_map_stream_placement(
+        self,
+        stream_id: str,
+        payload: YardMapPlacementDelete,
+    ) -> YardMapResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(YardMapStreamPlacementModel, {"map_id": YARD_MAP_ID, "stream_id": stream_id})
+                if model is None:
+                    if session.get(YardMapModel, YARD_MAP_ID) is None:
+                        raise ValueError("missing_yard_map")
+                elif self._yard_map_stream_placement_token(model) != payload.expected_state_token:
+                    raise ValueError("yard_map_placement_stale")
+                else:
+                    session.delete(model)
+        return self.yard_map()
+
+    def update_yard_map_zone_placement(
+        self,
+        zone_id: str,
+        payload: YardMapZonePlacementUpdate,
+    ) -> YardMapResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                if session.get(YardMapModel, YARD_MAP_ID) is None:
+                    raise ValueError("missing_yard_map")
+                zone = session.get(ZoneModel, zone_id)
+                stream = session.get(StreamModel, zone.stream_id) if zone else None
+                source = session.get(CameraSourceModel, stream.source_id) if stream else None
+                if zone is None or stream is None or source is None or source.status == SourceStatus.archived.value:
+                    raise ValueError("missing_yard_map_zone")
+                model = session.get(YardMapZonePlacementModel, {"map_id": YARD_MAP_ID, "zone_id": zone_id})
+                if model is not None and model.last_idempotency_key == payload.idempotency_key:
+                    return self.yard_map()
+                now = datetime.now(UTC)
+                area_json = json.dumps([item.model_dump() for item in payload.area]) if payload.area else None
+                if model is None:
+                    session.add(YardMapZonePlacementModel(
+                        map_id=YARD_MAP_ID, zone_id=zone_id, x=payload.x, y=payload.y,
+                        area_json=area_json, version=1, updated_at=now,
+                        last_idempotency_key=payload.idempotency_key,
+                    ))
+                else:
+                    if payload.expected_state_token is None or self._yard_map_zone_placement_token(model) != payload.expected_state_token:
+                        raise ValueError("yard_map_placement_stale")
+                    model.x, model.y, model.area_json = payload.x, payload.y, area_json
+                    model.version += 1
+                    model.updated_at = now
+                    model.last_idempotency_key = payload.idempotency_key
+        return self.yard_map()
+
+    def remove_yard_map_zone_placement(
+        self,
+        zone_id: str,
+        payload: YardMapPlacementDelete,
+    ) -> YardMapResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(YardMapZonePlacementModel, {"map_id": YARD_MAP_ID, "zone_id": zone_id})
+                if model is None:
+                    if session.get(YardMapModel, YARD_MAP_ID) is None:
+                        raise ValueError("missing_yard_map")
+                elif self._yard_map_zone_placement_token(model) != payload.expected_state_token:
+                    raise ValueError("yard_map_placement_stale")
+                else:
+                    session.delete(model)
+        return self.yard_map()
 
     def search_activity_library(
         self,
@@ -21602,6 +22140,69 @@ def _safe_provenance_value(value: str | None) -> str | None:
     if cleaned is None:
         return None
     return cleaned.replace("\n", " ").replace("\r", " ")[:160]
+
+
+def _yard_map_image_metadata(content: bytes, declared_content_type: str) -> tuple[str, int, int, str]:
+    """Accept only bounded local image formats without decoding or trusting file names."""
+
+    if not content:
+        raise ValueError("yard_map_background_empty")
+    if len(content) > MAX_YARD_MAP_BACKGROUND_BYTES:
+        raise ValueError("yard_map_background_too_large")
+    content_type = declared_content_type.lower().split(";", 1)[0].strip()
+    if content.startswith(b"\x89PNG\r\n\x1a\n") and len(content) >= 24:
+        actual_type, width, height, extension = "image/png", *struct.unpack(">II", content[16:24]), ".png"
+    elif content.startswith(b"\xff\xd8"):
+        actual_type, width, height, extension = _jpeg_dimensions(content)
+    elif content.startswith(b"RIFF") and len(content) >= 30 and content[8:12] == b"WEBP":
+        actual_type, width, height, extension = _webp_dimensions(content)
+    else:
+        raise ValueError("yard_map_background_unsupported")
+    if content_type not in {"image/jpeg", "image/png", "image/webp"} or content_type != actual_type:
+        raise ValueError("yard_map_background_content_type")
+    if width < 32 or height < 32 or width > MAX_YARD_MAP_IMAGE_DIMENSION or height > MAX_YARD_MAP_IMAGE_DIMENSION:
+        raise ValueError("yard_map_background_dimensions")
+    return actual_type, width, height, extension
+
+
+def _jpeg_dimensions(content: bytes) -> tuple[str, int, int, str]:
+    index = 2
+    while index + 9 < len(content):
+        if content[index] != 0xFF:
+            index += 1
+            continue
+        while index < len(content) and content[index] == 0xFF:
+            index += 1
+        if index >= len(content):
+            break
+        marker = content[index]
+        index += 1
+        if marker in {0xD8, 0xD9} or 0xD0 <= marker <= 0xD7:
+            continue
+        if index + 2 > len(content):
+            break
+        segment_length = int.from_bytes(content[index:index + 2], "big")
+        if segment_length < 2 or index + segment_length > len(content):
+            break
+        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF} and segment_length >= 7:
+            height = int.from_bytes(content[index + 3:index + 5], "big")
+            width = int.from_bytes(content[index + 5:index + 7], "big")
+            return "image/jpeg", width, height, ".jpg"
+        index += segment_length
+    raise ValueError("yard_map_background_dimensions")
+
+
+def _webp_dimensions(content: bytes) -> tuple[str, int, int, str]:
+    chunk = content[12:16]
+    if chunk == b"VP8X" and len(content) >= 30:
+        width = 1 + int.from_bytes(content[24:27], "little")
+        height = 1 + int.from_bytes(content[27:30], "little")
+        return "image/webp", width, height, ".webp"
+    if chunk == b"VP8 " and len(content) >= 30 and content[23:26] == b"\x9d\x01\x2a":
+        width = int.from_bytes(content[26:28], "little") & 0x3FFF
+        height = int.from_bytes(content[28:30], "little") & 0x3FFF
+        return "image/webp", width, height, ".webp"
+    raise ValueError("yard_map_background_dimensions")
 
 
 def _merge_notes(existing_notes: str | None, new_notes: str) -> str:
