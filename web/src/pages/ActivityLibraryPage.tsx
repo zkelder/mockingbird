@@ -8,6 +8,7 @@ import type {
   CameraSource,
   Stream,
   VisitCollectionSummary,
+  VisitTagSummary,
   Zone,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
@@ -55,6 +56,7 @@ function normalizedFilters(filters: ActivityLibraryFilters): ActivityLibraryFilt
     favorites_only: Boolean(filters.favorites_only),
     has_note: filters.has_note ?? null,
     collection_id: filters.collection_id || null,
+    tag_id: filters.tag_id || null,
     search: filters.search?.trim() || null,
     start_at: dateInputValue(filters.start_at),
     end_at: dateInputValue(filters.end_at),
@@ -83,6 +85,7 @@ function filtersFromUrl(): { filters: ActivityLibraryFilters; offset: number } {
       has_note:
         params.get("note") === "1" ? true : params.get("note") === "0" ? false : null,
       collection_id: params.get("collection"),
+      tag_id: params.get("tag"),
       search: params.get("q"),
       start_at: params.get("from"),
       end_at: params.get("to"),
@@ -106,6 +109,7 @@ export function activityLibraryPath(filters: ActivityLibraryFilters, offset = 0)
   if (filters.has_note === true) params.set("note", "1");
   if (filters.has_note === false) params.set("note", "0");
   if (filters.collection_id) params.set("collection", filters.collection_id);
+  if (filters.tag_id) params.set("tag", filters.tag_id);
   if (filters.search) params.set("q", filters.search);
   if (filters.start_at) params.set("from", dateInputValue(filters.start_at));
   if (filters.end_at) params.set("to", dateInputValue(filters.end_at));
@@ -175,6 +179,11 @@ export function ActivityLibraryPage({
   const [thumbnailFailures, setThumbnailFailures] = useState<Set<string>>(new Set());
   const [collections, setCollections] = useState<VisitCollectionSummary[]>([]);
   const [bulkCollectionId, setBulkCollectionId] = useState("");
+  const [tags, setTags] = useState<VisitTagSummary[]>([]);
+  const [manageableTags, setManageableTags] = useState<VisitTagSummary[]>([]);
+  const [bulkTagId, setBulkTagId] = useState("");
+  const [newTagName, setNewTagName] = useState("");
+  const [tagManagementMessage, setTagManagementMessage] = useState<string | null>(null);
 
   const selectedVisits = useMemo(
     () => visits.filter((visit) => selectedIds.includes(visit.id)),
@@ -196,9 +205,24 @@ export function ActivityLibraryPage({
     }
   }
 
+  async function refreshTags() {
+    try {
+      const [suggestions, manageable] = await Promise.all([
+        apiClient.getVisitTags(),
+        apiClient.getManageableVisitTags(),
+      ]);
+      setTags(suggestions);
+      setManageableTags(manageable);
+    } catch {
+      setTags([]);
+      setManageableTags([]);
+    }
+  }
+
   useEffect(() => {
     void refreshSavedViews();
     void apiClient.getVisitCollections().then(setCollections).catch(() => setCollections([]));
+    void refreshTags();
     let active = true;
     void apiClient
       .getZones()
@@ -378,6 +402,82 @@ export function ActivityLibraryPage({
     } catch (caught) { setMessage(caught instanceof Error ? caught.message : "Could not update Collection membership."); }
   }
 
+  async function bulkUpdateTag(action: "add" | "remove") {
+    const tag = tags.find((item) => item.id === bulkTagId);
+    if (!tag || selectedIds.length === 0) return;
+    try {
+      const result = await apiClient.bulkUpdateVisitTags({
+        tag_id: tag.id,
+        visit_ids: selectedIds,
+        action,
+        expected_state_token: tag.state_token,
+        idempotency_key: `activity-tag-${crypto.randomUUID()}`,
+      });
+      const counts = result.results.reduce<Record<string, number>>((current, item) => {
+        current[item.status] = (current[item.status] ?? 0) + 1;
+        return current;
+      }, {});
+      const unchanged = action === "add" ? counts.already_present : counts.already_absent;
+      const unavailable = (counts.skipped_unavailable ?? 0) + (counts.skipped_superseded ?? 0);
+      const limit = counts.skipped_limit ?? 0;
+      setMessage(
+        `${action === "add" ? "Added" : "Removed"} ${counts.updated ?? 0} tag membership${counts.updated === 1 ? "" : "s"}`
+        + `${unchanged ? `; ${unchanged} already ${action === "add" ? "present" : "absent"}` : ""}`
+        + `${unavailable ? `; ${unavailable} unavailable or superseded` : ""}`
+        + `${limit ? `; ${limit} skipped at the 20-tag Visit limit` : ""}.`,
+      );
+      setTags((current) => current.map((item) => item.id === result.tag.id ? result.tag : item));
+      setManageableTags((current) => current.map((item) => item.id === result.tag.id ? result.tag : item));
+      setSelectedIds([]);
+      setRefreshVersion((value) => value + 1);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not update tags.");
+    }
+  }
+
+  async function createTag() {
+    if (!newTagName.trim()) { setTagManagementMessage("Name the new tag first."); return; }
+    try {
+      const created = await apiClient.createVisitTag({
+        name: newTagName,
+        idempotency_key: `activity-tag-create-${crypto.randomUUID()}`,
+      });
+      await refreshTags();
+      setNewTagName("");
+      setTagManagementMessage(`Created ${created.name}.`);
+    } catch (caught) { setTagManagementMessage(caught instanceof Error ? caught.message : "Could not create this tag."); }
+  }
+
+  async function renameTag(tag: VisitTagSummary) {
+    const name = window.prompt("Rename tag", tag.name)?.trim();
+    if (!name || name === tag.name) return;
+    try {
+      const updated = await apiClient.updateVisitTag(tag.id, {
+        name,
+        expected_state_token: tag.state_token,
+        idempotency_key: `activity-tag-rename-${crypto.randomUUID()}`,
+      });
+      await refreshTags();
+      setTagManagementMessage(`Renamed tag to ${updated.name}.`);
+      setRefreshVersion((value) => value + 1);
+    } catch (caught) { setTagManagementMessage(caught instanceof Error ? caught.message : "Could not rename this tag."); }
+  }
+
+  async function archiveTag(tag: VisitTagSummary) {
+    if (!window.confirm(`Archive tag “${tag.name}”? Existing Visit memberships remain historical.`)) return;
+    try {
+      await apiClient.archiveVisitTag(tag.id, {
+        expected_state_token: tag.state_token,
+        idempotency_key: `activity-tag-archive-${crypto.randomUUID()}`,
+      });
+      await refreshTags();
+      setBulkTagId((current) => current === tag.id ? "" : current);
+      if (filters.tag_id === tag.id) commitFilters({ ...filters, tag_id: null });
+      setTagManagementMessage(`Archived ${tag.name}. Existing Visits, media, notes, favorites, and Collections are unchanged.`);
+      setRefreshVersion((value) => value + 1);
+    } catch (caught) { setTagManagementMessage(caught instanceof Error ? caught.message : "Could not archive this tag."); }
+  }
+
   const selectedStreamMissing = Boolean(
     filters.stream_id && !streams.some((stream) => stream.id === filters.stream_id),
   );
@@ -397,6 +497,7 @@ export function ActivityLibraryPage({
     !filters.favorites_only &&
     filters.has_note === null &&
     !filters.collection_id &&
+    !filters.tag_id &&
     !filters.search &&
     !filters.start_at &&
     !filters.end_at;
@@ -498,6 +599,7 @@ export function ActivityLibraryPage({
               {collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}
             </select>
           </label>
+          <label>Tag <select value={filters.tag_id ?? ""} onChange={(event) => commitFilters({ ...filters, tag_id: event.target.value || null })}><option value="">All tags</option>{tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label>
           <label>
             From
             <input type="date" value={dateInputValue(filters.start_at)} onChange={(event) => commitFilters({ ...filters, start_at: event.target.value || null })} />
@@ -559,6 +661,17 @@ export function ActivityLibraryPage({
         </section>
       ) : null}
 
+      <section className="panel activity-saved-views">
+        <div className="section-heading"><div><h2>Tag management</h2><p>Private Visit organization only. Tags never change reviewed labels, evidence, or Collections.</p></div></div>
+        <div className="activity-library-filter-actions">
+          <label className="activity-save-view"><span>New tag</span><input maxLength={50} onChange={(event) => setNewTagName(event.target.value)} value={newTagName} /></label>
+          <span className="meta-text">{newTagName.length}/50 characters</span>
+          <button className="secondary-action" disabled={!newTagName.trim()} onClick={() => void createTag()} type="button">Create tag</button>
+        </div>
+        {manageableTags.length ? <div className="activity-saved-view-list">{manageableTags.map((tag) => <div className="activity-saved-view" key={tag.id}><strong>{tag.name}</strong><span>{tag.active_visit_count} active Visit{tag.active_visit_count === 1 ? "" : "s"}</span><button className="text-action" onClick={() => void renameTag(tag)} type="button">Rename</button><button className="text-action destructive-action" onClick={() => void archiveTag(tag)} type="button">Archive</button></div>)}</div> : <p className="meta-text">No active tags yet.</p>}
+        {tagManagementMessage ? <p className="meta-text">{tagManagementMessage}</p> : null}
+      </section>
+
       {selectedIds.length > 0 ? (
         <section className="notice-panel activity-library-selection" role="status">
           <strong>{selectedIds.length} selected</strong>
@@ -580,6 +693,7 @@ export function ActivityLibraryPage({
             <label>Collection <select value={bulkCollectionId} onChange={(event) => setBulkCollectionId(event.target.value)}><option value="">Choose Collection</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
             <button className="secondary-action" disabled={!bulkCollectionId} onClick={() => void bulkUpdateCollection("add")} type="button">Add selected to Collection</button>
             <button className="secondary-action" disabled={!bulkCollectionId} onClick={() => void bulkUpdateCollection("remove")} type="button">Remove selected from Collection</button>
+            <label>Tag <select value={bulkTagId} onChange={(event) => setBulkTagId(event.target.value)}><option value="">Choose tag</option>{tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label><button className="secondary-action" disabled={!bulkTagId} onClick={() => void bulkUpdateTag("add")} type="button">Add tag</button><button className="secondary-action" disabled={!bulkTagId} onClick={() => void bulkUpdateTag("remove")} type="button">Remove tag</button>
             <button className="text-action" onClick={() => setSelectedIds([])} type="button">Clear selection</button>
             {message?.startsWith("Created reviewed export") ? <button className="text-action" onClick={onOpenExports} type="button">Open Exports</button> : null}
           </div>
@@ -634,6 +748,7 @@ export function ActivityLibraryPage({
                     {visit.is_favorite ? <StatusPill label="Favorite" tone="good" /> : null}
                     {visit.has_note ? <StatusPill label="Note" tone="quiet" /> : null}
                     {visit.collection_count > 0 ? <StatusPill label={`${visit.collection_count} Collection${visit.collection_count === 1 ? "" : "s"}`} tone="quiet" /> : null}
+                    {visit.tags.map((tag) => <StatusPill key={tag} label={tag} tone="quiet" />)}
                     {visit.evidence_frame_count > 1 ? <span>{visit.evidence_frame_count} evidence frames</span> : null}
                     {visit.curation_actions.length > 0 ? <span>Curated: {visit.curation_actions.map(formatLabel).join(", ")}</span> : null}
                   </div>

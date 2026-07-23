@@ -652,6 +652,7 @@ export default function App() {
           onCorrectionSaved={refreshAfterVisitCorrection}
           correctionPrefill={visitCorrectionPrefill}
           onOpenCollections={() => openCollections()}
+          onOpenActivityLibrary={openActivityLibrary}
         />
       );
     }

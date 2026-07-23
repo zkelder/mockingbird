@@ -13,6 +13,7 @@ import type {
   WildlifeJournalRepresentative,
   WildlifeJournalOverviewResponse,
   VisitCollectionSummary,
+  VisitTagSummary,
   Zone,
 } from "../api/types";
 import { activityLibraryPath } from "./ActivityLibraryPage";
@@ -42,6 +43,7 @@ interface JournalLocation {
   streamId: string;
   zoneId: string;
   favoritesOnly: boolean;
+  tagId: string;
   galleryOrder: WildlifeJournalGalleryOrder;
   offset: number;
 }
@@ -92,6 +94,7 @@ function readJournalLocation(): JournalLocation {
     streamId: params.get("stream") ?? "",
     zoneId: params.get("zone") ?? "",
     favoritesOnly: params.get("favorites") === "1",
+    tagId: params.get("tag") ?? "",
     galleryOrder: validOption(params.get("gallery"), ["newest", "oldest"], "newest"),
     offset: Number.isFinite(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0,
   };
@@ -120,6 +123,7 @@ function journalPath(label: string | null, location: JournalLocation): string {
   if (location.streamId) params.set("stream", location.streamId);
   if (location.zoneId) params.set("zone", location.zoneId);
   if (location.favoritesOnly) params.set("favorites", "1");
+  if (location.tagId) params.set("tag", location.tagId);
   if (location.galleryOrder !== "newest") params.set("gallery", location.galleryOrder);
   if (location.offset > 0) params.set("offset", String(location.offset));
   const path = `/bird-log/${encodeURIComponent(label)}`;
@@ -150,6 +154,7 @@ function historyRequest(location: JournalLocation): WildlifeJournalHistoryReques
     stream_id: location.streamId || null,
     zone_id: location.zoneId || null,
     favorites_only: location.favoritesOnly,
+    tag_id: location.tagId || null,
     gallery_order: location.galleryOrder,
     page_size: 24,
     offset: location.offset,
@@ -251,6 +256,9 @@ export function BirdLogPage({
   const [collections, setCollections] = useState<VisitCollectionSummary[]>([]);
   const [selectedCollectionId, setSelectedCollectionId] = useState("");
   const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
+  const [tags, setTags] = useState<VisitTagSummary[]>([]);
+  const [selectedTagId, setSelectedTagId] = useState("");
+  const [tagMessage, setTagMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -268,6 +276,7 @@ export function BirdLogPage({
   }, []);
 
   useEffect(() => { void apiClient.getVisitCollections().then(setCollections).catch(() => setCollections([])); }, []);
+  useEffect(() => { void apiClient.getVisitTags().then(setTags).catch(() => setTags([])); }, []);
 
   async function addObservationToCollection(visitId: string) {
     const collection = collections.find((item) => item.id === selectedCollectionId);
@@ -280,6 +289,28 @@ export function BirdLogPage({
       setCollectionMessage(response.result.status === "updated" ? `Added Visit to ${collection.name}.` : `This Visit is already in ${collection.name}.`);
       setCollections((current) => current.map((item) => item.id === response.collection.id ? response.collection : item));
     } catch (caught) { setCollectionMessage(caught instanceof Error ? caught.message : "Could not add this Visit to the Collection."); }
+  }
+
+  async function addObservationTag(visitId: string) {
+    const tag = tags.find((item) => item.id === selectedTagId);
+    if (!tag) { setTagMessage("Choose a tag before adding it to this Visit."); return; }
+    try {
+      const response = await apiClient.addVisitTag(tag.id, visitId, {
+        expected_state_token: tag.state_token,
+        idempotency_key: `journal-tag-${crypto.randomUUID()}`,
+      });
+      setTagMessage(response.result.status === "updated" ? `Added ${tag.name}.` : `This Visit already has ${tag.name}.`);
+      setTags((current) => current.map((item) => item.id === response.tag.id ? response.tag : item));
+      setHistory((current) => current ? {
+        ...current,
+        gallery: {
+          ...current.gallery,
+          observations: current.gallery.observations.map((item) => item.visit_id === visitId && response.result.status === "updated"
+            ? { ...item, tags: [...item.tags, response.tag.name].sort((left, right) => left.localeCompare(right)) }
+            : item),
+        },
+      } : current);
+    } catch (caught) { setTagMessage(caught instanceof Error ? caught.message : "Could not add this tag to the Visit."); }
   }
 
   useEffect(() => {
@@ -530,6 +561,13 @@ export function BirdLogPage({
           </select>
         </label>
         <label>
+          Gallery tag
+          <select onChange={(event) => commitLocation({ ...location, tagId: event.target.value, offset: 0 })} value={location.tagId}>
+            <option value="">All tags</option>
+            {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+          </select>
+        </label>
+        <label>
           Add to Collection
           <select value={selectedCollectionId} onChange={(event) => setSelectedCollectionId(event.target.value)}>
             <option value="">Choose Collection</option>
@@ -539,15 +577,16 @@ export function BirdLogPage({
       </section>
       {error ? <div className="error-panel">{error}</div> : null}
       {collectionMessage ? <div className="notice-panel" role="status">{collectionMessage}</div> : null}
+      {tagMessage ? <div className="notice-panel" role="status">{tagMessage}</div> : null}
       {isLoading && !activeHistory ? <div className="panel">Loading reviewed Journal history…</div> : null}
       {activeHistory ? (
         <>
-          <div className="journal-scope-note">{activeHistory.scope.start_date ?? "All recorded dates"}{activeHistory.scope.end_date ? ` to ${activeHistory.scope.end_date}` : ""}{activeHistory.scope.favorites_only ? " · favorites only" : ""} · local time ({activeHistory.scope.timezone_name})</div>
+          <div className="journal-scope-note">{activeHistory.scope.start_date ?? "All recorded dates"}{activeHistory.scope.end_date ? ` to ${activeHistory.scope.end_date}` : ""}{activeHistory.scope.favorites_only ? " · favorites only" : ""}{activeHistory.scope.tag_id ? " · gallery tag filter" : ""} · local time ({activeHistory.scope.timezone_name})</div>
           {activeHistory.observation_count === 0 ? (
             <EmptyState
               title="No active confirmed observations in this scope"
               description="This label may have been revised, reopened, superseded, or filtered out. Review history remains available on individual Visits."
-              action={<button className="secondary-action" onClick={() => commitLocation({ ...location, preset: "all_time", startDate: "", endDate: "", streamId: "", zoneId: "", favoritesOnly: false, offset: 0 })} type="button">Clear Journal filters</button>}
+              action={<button className="secondary-action" onClick={() => commitLocation({ ...location, preset: "all_time", startDate: "", endDate: "", streamId: "", zoneId: "", favoritesOnly: false, tagId: "", offset: 0 })} type="button">Clear Journal filters</button>}
             />
           ) : (
             <>
@@ -572,15 +611,17 @@ export function BirdLogPage({
               </section>
               <section className="journal-gallery" aria-label="Reviewed observation gallery">
                 <div className="section-heading"><div><h2>Reviewed observation gallery</h2><span className="meta-text">{activeHistory.gallery.order === "newest" ? "Newest first" : "Oldest first"} · one safe primary preview per Visit.</span></div></div>
+                {activeHistory.gallery.observations.length === 0 ? <EmptyState title="No observations match this tag" description="The reviewed-label counts and milestones above remain unchanged by tag filtering." /> : null}
                 {activeHistory.gallery.observations.map((observation) => (
                   <article className="journal-gallery-card" key={observation.visit_id}>
                     <button className="journal-gallery-image" onClick={() => onOpenVisit(observation.visit_id)} type="button"><JournalThumbnail label={observation.display_name} observedAt={observation.observed_at} representative={observation} /></button>
                     <div className="journal-gallery-body">
                       <div className="section-heading"><div><h3>{formatDateTime(observation.observed_at)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><StatusPill label="Reviewed" tone="good" /></div>
                       <div className="journal-gallery-facts"><span>Duration <strong>{durationLabel(observation.duration_seconds)}</strong></span><span>Evidence frames <strong>{observation.evidence_frame_count}</strong></span><span>Correction <strong>{observation.display_name}</strong></span></div>
-                      <div className="journal-gallery-milestones">{observation.is_favorite ? <StatusPill label="Favorite" tone="good" /> : null}{observation.has_note ? <StatusPill label="Note" tone="quiet" /> : null}{observation.collection_count > 0 ? <StatusPill label={`${observation.collection_count} Collection${observation.collection_count === 1 ? "" : "s"}`} tone="quiet" /> : null}{observation.has_curation_history ? <StatusPill label="Curated" tone="quiet" /> : null}{observation.has_review_revision ? <StatusPill label="Revised" tone="quiet" /> : null}{observation.is_first_on_stream ? <StatusPill label="First on Stream" tone="quiet" /> : null}{observation.is_first_in_zone ? <StatusPill label="First in Zone" tone="quiet" /> : null}</div>
+                      <div className="journal-gallery-milestones">{observation.is_favorite ? <StatusPill label="Favorite" tone="good" /> : null}{observation.has_note ? <StatusPill label="Note" tone="quiet" /> : null}{observation.collection_count > 0 ? <StatusPill label={`${observation.collection_count} Collection${observation.collection_count === 1 ? "" : "s"}`} tone="quiet" /> : null}{observation.tags.map((tag) => <StatusPill key={tag} label={tag} tone="quiet" />)}{observation.has_curation_history ? <StatusPill label="Curated" tone="quiet" /> : null}{observation.has_review_revision ? <StatusPill label="Revised" tone="quiet" /> : null}{observation.is_first_on_stream ? <StatusPill label="First on Stream" tone="quiet" /> : null}{observation.is_first_in_zone ? <StatusPill label="First in Zone" tone="quiet" /> : null}</div>
                       <button className="secondary-action" onClick={() => onOpenVisit(observation.visit_id)} type="button">Open Visit Detail</button>
                       <button className="text-action" disabled={!selectedCollectionId} onClick={() => void addObservationToCollection(observation.visit_id)} type="button">Add to Collection</button>
+                      <button className="text-action" disabled={!selectedTagId} onClick={() => void addObservationTag(observation.visit_id)} type="button">Add tag</button>
                     </div>
                   </article>
                 ))}

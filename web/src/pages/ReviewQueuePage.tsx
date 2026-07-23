@@ -14,6 +14,7 @@ import type {
   TaxonomyLabel,
   VisitIdentificationAssistantResponse,
   VisitIdentificationEvidenceMode,
+  VisitTagSummary,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
@@ -3003,12 +3004,17 @@ function FastReviewPanel({
   const [undoState, setUndoState] = useState<FastReviewUndoState | null>(null);
   const [isFavoritingLastCorrection, setIsFavoritingLastCorrection] = useState(false);
   const [lastCorrectionFavorited, setLastCorrectionFavorited] = useState(false);
+  const [availableTags, setAvailableTags] = useState<VisitTagSummary[]>([]);
+  const [postCorrectionTagId, setPostCorrectionTagId] = useState("");
+  const [newPostCorrectionTag, setNewPostCorrectionTag] = useState("");
   const [identificationAssistant, setIdentificationAssistant] = useState<VisitIdentificationAssistantResponse | null>(null);
   const [identificationAssistantError, setIdentificationAssistantError] = useState<string | null>(null);
   const [isLoadingIdentificationAssistant, setIsLoadingIdentificationAssistant] = useState(false);
   const [isRunningIdentificationAssistant, setIsRunningIdentificationAssistant] = useState(false);
   const [assistantPrefillSuggestionId, setAssistantPrefillSuggestionId] = useState<string | null>(null);
   const [reviewSessionId] = useState(() => createFastReviewKey("fast-review-session"));
+
+  useEffect(() => { void apiClient.getVisitTags().then(setAvailableTags).catch(() => setAvailableTags([])); }, []);
 
   // Navigation accepts a bounded snapshot rather than the full queue. Its order is
   // exactly the active Review Queue order, so filters and Stream scoping are retained.
@@ -3228,6 +3234,19 @@ function FastReviewPanel({
     }
   }
 
+  async function tagLastCorrectedVisit() {
+    const tag = availableTags.find((item) => item.id === postCorrectionTagId);
+    if (!undoState || !tag) return;
+    try { await apiClient.addVisitTag(tag.id, undoState.targetId, { expected_state_token: tag.state_token, idempotency_key: createFastReviewKey("fast-review-tag") }); setMessage(`Correction saved; added tag “${tag.name}” independently.`); setPostCorrectionTagId(""); const refreshed = await apiClient.getVisitTags(); setAvailableTags(refreshed); }
+    catch (caught) { setMessage(caught instanceof Error ? caught.message : "Correction was saved, but the tag could not be added."); }
+  }
+
+  async function createAndTagLastCorrectedVisit() {
+    if (!undoState || !newPostCorrectionTag.trim()) return;
+    try { const tag = await apiClient.createVisitTag({ name: newPostCorrectionTag, idempotency_key: createFastReviewKey("fast-review-tag-create") }); setNewPostCorrectionTag(""); setAvailableTags((current) => [...current, tag]); await apiClient.addVisitTag(tag.id, undoState.targetId, { expected_state_token: tag.state_token, idempotency_key: createFastReviewKey("fast-review-tag-add") }); setMessage(`Correction saved; created and added tag “${tag.name}” independently.`); }
+    catch (caught) { setMessage(caught instanceof Error ? caught.message : "Correction was saved, but the new tag could not be added."); }
+  }
+
   useEffect(() => {
     let isMounted = true;
     if (!activeItem) {
@@ -3430,6 +3449,8 @@ function FastReviewPanel({
           >
             {lastCorrectionFavorited ? "Favorited" : isFavoritingLastCorrection ? "Saving…" : "Favorite this Visit"}
           </button>
+          <label>Add tag <select value={postCorrectionTagId} onChange={(event) => setPostCorrectionTagId(event.target.value)}><option value="">Choose tag</option>{availableTags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label><button className="secondary-action" disabled={!postCorrectionTagId} onClick={() => void tagLastCorrectedVisit()} type="button">Add tag</button>
+          <label>New tag <input maxLength={50} value={newPostCorrectionTag} onChange={(event) => setNewPostCorrectionTag(event.target.value)} /></label><button className="text-action" disabled={!newPostCorrectionTag.trim()} onClick={() => void createAndTagLastCorrectedVisit()} type="button">Create and add</button>
         </div>
       ) : null}
       <div className="fast-review-context">

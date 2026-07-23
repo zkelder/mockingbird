@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 18
+CURRENT_DATABASE_SCHEMA_VERSION = 19
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -240,6 +240,13 @@ def _migrate_to_visit_collections(connection: Connection) -> None:
         bind=connection,
         checkfirst=True,
     )
+
+
+def _migrate_to_visit_tags(connection: Connection) -> None:
+    """Add empty local tag records without creating memberships or reviewed truth."""
+
+    Base.metadata.tables["visit_tags"].create(bind=connection, checkfirst=True)
+    Base.metadata.tables["visit_tag_memberships"].create(bind=connection, checkfirst=True)
 
 
 def _migrate_to_zone_monitoring_policy_overrides(connection: Connection) -> None:
@@ -444,6 +451,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     16: _migrate_to_review_identification_assistant_runs,
     17: _migrate_to_visit_organization,
     18: _migrate_to_visit_collections,
+    19: _migrate_to_visit_tags,
 }
 
 

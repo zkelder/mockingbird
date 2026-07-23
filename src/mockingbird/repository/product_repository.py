@@ -236,6 +236,17 @@ from mockingbird.api.schemas import (
     VisitCollectionSummary,
     VisitCollectionUpdate,
     VisitCollectionsForVisitResponse,
+    VisitTagArchiveRequest,
+    VisitTagBulkRequest,
+    VisitTagBulkResponse,
+    VisitTagCreate,
+    VisitTagMembershipRequest,
+    VisitTagMembershipResponse,
+    VisitTagMembershipResult,
+    VisitTagMembershipStatus,
+    VisitTagSummary,
+    VisitTagUpdate,
+    VisitTagsForVisitResponse,
     VisitIdentificationAssistantRequest,
     VisitIdentificationAssistantResponse,
     VisitIdentificationEvidenceMode,
@@ -418,6 +429,8 @@ from mockingbird.storage.models import (
     VisitOrganizationModel,
     VisitCollectionMembershipModel,
     VisitCollectionModel,
+    VisitTagMembershipModel,
+    VisitTagModel,
     ZoneModel,
 )
 from mockingbird.workers.registry import (
@@ -442,6 +455,9 @@ MAX_ACTIVITY_LIBRARY_SAVED_VIEWS = 15
 MAX_ACTIVE_VISIT_COLLECTIONS = 100
 MAX_COLLECTIONS_PER_VISIT = 20
 MAX_COLLECTION_LIST_ITEMS = 100
+MAX_ACTIVE_VISIT_TAGS = 200
+MAX_TAGS_PER_VISIT = 20
+MAX_TAG_LIST_ITEMS = 50
 MAX_STORAGE_CLEANUP_PREVIEW_ITEMS = 200
 MAX_STORAGE_CLEANUP_HISTORY_ITEMS = 30
 STORAGE_CLEANUP_PREVIEW_TTL = timedelta(minutes=15)
@@ -4821,6 +4837,139 @@ class ProductRepository:
                     collection=self._collection_summary(session, model), results=results
                 )
 
+    @staticmethod
+    def _normalized_tag_name(name: str) -> tuple[str, str]:
+        if any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in name):
+            raise ValueError("tag_name_unsafe")
+        display = " ".join(name.strip().split())
+        if not display:
+            raise ValueError("tag_name_required")
+        return display, display.casefold()
+
+    @staticmethod
+    def _tag_token(model: VisitTagModel) -> str:
+        return f"tag:{model.id}:{model.version}"
+
+    def _tag_summary(self, session: Session, model: VisitTagModel) -> VisitTagSummary:
+        count = session.scalar(
+            select(func.count(VisitTagMembershipModel.visit_id))
+            .join(VisitModel, VisitModel.id == VisitTagMembershipModel.visit_id)
+            .where(VisitTagMembershipModel.tag_id == model.id, VisitModel.is_superseded.is_(False))
+        ) or 0
+        return VisitTagSummary(
+            id=model.id, name=model.name, created_at=_as_utc(model.created_at),
+            updated_at=_as_utc(model.updated_at),
+            archived_at=_as_utc(model.archived_at) if model.archived_at else None,
+            state_token=self._tag_token(model), active_visit_count=count,
+        )
+
+    def _require_active_tag(self, session: Session, tag_id: str) -> VisitTagModel:
+        model = session.get(VisitTagModel, tag_id)
+        if model is None:
+            raise ValueError("missing_tag")
+        if model.archived_at is not None:
+            raise ValueError("tag_archived")
+        return model
+
+    def list_visit_tags(self) -> list[VisitTagSummary]:
+        with self.session_factory() as session:
+            models = session.scalars(
+                select(VisitTagModel)
+                .where(VisitTagModel.archived_at.is_(None))
+                .order_by(VisitTagModel.name.collate("NOCASE"), VisitTagModel.id)
+                .limit(MAX_TAG_LIST_ITEMS)
+            ).all()
+            return [self._tag_summary(session, model) for model in models]
+
+    def list_manageable_visit_tags(self) -> list[VisitTagSummary]:
+        """Return the bounded complete active-tag set for the organization surface."""
+
+        with self.session_factory() as session:
+            models = session.scalars(
+                select(VisitTagModel)
+                .where(VisitTagModel.archived_at.is_(None))
+                .order_by(VisitTagModel.name.collate("NOCASE"), VisitTagModel.id)
+                .limit(MAX_ACTIVE_VISIT_TAGS)
+            ).all()
+            return [self._tag_summary(session, model) for model in models]
+
+    def create_visit_tag(self, payload: VisitTagCreate) -> VisitTagSummary:
+        name, normalized = self._normalized_tag_name(payload.name)
+        with self.session_factory() as session:
+            with session.begin():
+                repeated = session.scalar(select(VisitTagModel).where(VisitTagModel.last_idempotency_key == payload.idempotency_key))
+                if repeated is not None: return self._tag_summary(session, repeated)
+                if session.scalar(select(VisitTagModel.id).where(VisitTagModel.normalized_name == normalized, VisitTagModel.archived_at.is_(None)).limit(1)) is not None:
+                    raise ValueError("tag_name_conflict")
+                count = session.scalar(select(func.count(VisitTagModel.id)).where(VisitTagModel.archived_at.is_(None))) or 0
+                if count >= MAX_ACTIVE_VISIT_TAGS: raise ValueError("tag_limit")
+                now = datetime.now(UTC)
+                model = VisitTagModel(id=self._next_id(session, VisitTagModel, "tag"), name=name, normalized_name=normalized, archived_at=None, version=1, created_at=now, updated_at=now, last_idempotency_key=payload.idempotency_key)
+                session.add(model); session.flush()
+                return self._tag_summary(session, model)
+
+    def update_visit_tag(self, tag_id: str, payload: VisitTagUpdate) -> VisitTagSummary:
+        name, normalized = self._normalized_tag_name(payload.name)
+        with self.session_factory() as session:
+            with session.begin():
+                model = self._require_active_tag(session, tag_id)
+                if model.last_idempotency_key == payload.idempotency_key: return self._tag_summary(session, model)
+                if self._tag_token(model) != payload.expected_state_token: raise ValueError("tag_stale")
+                if session.scalar(select(VisitTagModel.id).where(VisitTagModel.normalized_name == normalized, VisitTagModel.archived_at.is_(None), VisitTagModel.id != model.id).limit(1)) is not None:
+                    raise ValueError("tag_name_conflict")
+                model.name, model.normalized_name, model.version, model.updated_at, model.last_idempotency_key = name, normalized, model.version + 1, datetime.now(UTC), payload.idempotency_key
+                session.flush(); return self._tag_summary(session, model)
+
+    def archive_visit_tag(self, tag_id: str, payload: VisitTagArchiveRequest) -> VisitTagSummary:
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(VisitTagModel, tag_id)
+                if model is None: raise ValueError("missing_tag")
+                if model.last_idempotency_key == payload.idempotency_key: return self._tag_summary(session, model)
+                if self._tag_token(model) != payload.expected_state_token: raise ValueError("tag_stale")
+                if model.archived_at is None:
+                    now = datetime.now(UTC); model.archived_at = now; model.updated_at = now; model.version += 1; model.last_idempotency_key = payload.idempotency_key
+                session.flush(); return self._tag_summary(session, model)
+
+    def tags_for_visit(self, visit_id: str) -> VisitTagsForVisitResponse:
+        with self.session_factory() as session:
+            if session.get(VisitModel, visit_id) is None: raise ValueError("missing_visit")
+            models = session.scalars(select(VisitTagModel).join(VisitTagMembershipModel, VisitTagMembershipModel.tag_id == VisitTagModel.id).where(VisitTagMembershipModel.visit_id == visit_id, VisitTagModel.archived_at.is_(None)).order_by(VisitTagModel.name.collate("NOCASE"), VisitTagModel.id).limit(MAX_TAGS_PER_VISIT)).all()
+            return VisitTagsForVisitResponse(visit_id=visit_id, tags=[self._tag_summary(session, model) for model in models])
+
+    def _tag_membership(self, session: Session, model: VisitTagModel, visit_id: str, action: str) -> VisitTagMembershipResult:
+        visit = session.get(VisitModel, visit_id)
+        if visit is None: return VisitTagMembershipResult(visit_id=visit_id, status=VisitTagMembershipStatus.skipped_unavailable)
+        if visit.is_superseded: return VisitTagMembershipResult(visit_id=visit_id, status=VisitTagMembershipStatus.skipped_superseded)
+        membership = session.get(VisitTagMembershipModel, {"tag_id": model.id, "visit_id": visit_id})
+        if action == "add":
+            if membership is not None: return VisitTagMembershipResult(visit_id=visit_id, status=VisitTagMembershipStatus.already_present)
+            count = session.scalar(select(func.count(VisitTagMembershipModel.tag_id)).join(VisitTagModel, VisitTagModel.id == VisitTagMembershipModel.tag_id).where(VisitTagMembershipModel.visit_id == visit_id, VisitTagModel.archived_at.is_(None))) or 0
+            if count >= MAX_TAGS_PER_VISIT: return VisitTagMembershipResult(visit_id=visit_id, status=VisitTagMembershipStatus.skipped_limit)
+            session.add(VisitTagMembershipModel(tag_id=model.id, visit_id=visit_id, created_at=datetime.now(UTC)))
+        else:
+            if membership is None: return VisitTagMembershipResult(visit_id=visit_id, status=VisitTagMembershipStatus.already_absent)
+            session.delete(membership)
+        return VisitTagMembershipResult(visit_id=visit_id, status=VisitTagMembershipStatus.updated)
+
+    def update_visit_tag_membership(self, tag_id: str, visit_id: str, *, action: str, payload: VisitTagMembershipRequest) -> VisitTagMembershipResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                model = self._require_active_tag(session, tag_id)
+                if model.last_idempotency_key != payload.idempotency_key and self._tag_token(model) != payload.expected_state_token: raise ValueError("tag_stale")
+                result = self._tag_membership(session, model, visit_id, action)
+                if result.status == VisitTagMembershipStatus.updated: model.version += 1; model.updated_at = datetime.now(UTC); model.last_idempotency_key = payload.idempotency_key
+                session.flush(); return VisitTagMembershipResponse(tag=self._tag_summary(session, model), result=result)
+
+    def bulk_update_visit_tag_memberships(self, payload: VisitTagBulkRequest) -> VisitTagBulkResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                model = self._require_active_tag(session, payload.tag_id)
+                if model.last_idempotency_key != payload.idempotency_key and self._tag_token(model) != payload.expected_state_token: raise ValueError("tag_stale")
+                results = [self._tag_membership(session, model, visit_id, payload.action) for visit_id in dict.fromkeys(payload.visit_ids)]
+                if any(item.status == VisitTagMembershipStatus.updated for item in results): model.version += 1; model.updated_at = datetime.now(UTC); model.last_idempotency_key = payload.idempotency_key
+                session.flush(); return VisitTagBulkResponse(tag=self._tag_summary(session, model), results=results)
+
     def search_activity_library(
         self,
         payload: ActivityLibrarySearchRequest,
@@ -4931,6 +5080,8 @@ class ProductRepository:
                         VisitCollectionModel.archived_at.is_(None),
                     )
                 )
+            if payload.tag_id is not None:
+                query = query.join(VisitTagMembershipModel, VisitTagMembershipModel.visit_id == VisitModel.id).join(VisitTagModel, VisitTagModel.id == VisitTagMembershipModel.tag_id).where(VisitTagModel.id == payload.tag_id, VisitTagModel.archived_at.is_(None))
             blank_keys = {"blank", "empty", "no_activity", "no_animal"}
             ambiguous_keys = {"ambiguous", "unknown_bird", "unknown_animal", "unknown"}
             non_bird_keys = {"non_bird", "non_bird_activity"}
@@ -5066,6 +5217,7 @@ class ProductRepository:
                 VisitCollectionModel.archived_at.is_(None),
             )
         ) or 0
+        tag_models = session.scalars(select(VisitTagModel).join(VisitTagMembershipModel, VisitTagMembershipModel.tag_id == VisitTagModel.id).where(VisitTagMembershipModel.visit_id == visit.id, VisitTagModel.archived_at.is_(None)).order_by(VisitTagModel.name.collate("NOCASE"), VisitTagModel.id).limit(MAX_TAGS_PER_VISIT)).all()
         return ActivityLibraryVisitSummary(
             **self._stream_visit_summary_from_models(session, visit, event).model_dump(),
             stream_name=stream.name,
@@ -5075,6 +5227,8 @@ class ProductRepository:
             is_favorite=bool(organization and organization.is_favorite),
             has_note=bool(organization and organization.note and organization.note.strip()),
             collection_count=collection_count,
+            tags=[model.name for model in tag_models],
+            tag_count=len(tag_models),
         )
 
     def _activity_library_review_filter_matches(
@@ -9441,6 +9595,7 @@ class ProductRepository:
                         result_visit_id=result.id,
                         created_at=created_at,
                     )
+                    self._copy_visit_tag_memberships(session, source.id, result.id, created_at)
                     results.append(result)
                 source.is_superseded = True
                 event.review_status = ReviewStatus.needs_review.value
@@ -9597,6 +9752,19 @@ class ProductRepository:
                     created_at=created_at,
                 )
             )
+
+    @staticmethod
+    def _copy_visit_tag_memberships(session: Session, source_visit_id: str, result_visit_id: str, created_at: datetime) -> None:
+        for tag_id in session.scalars(select(VisitTagMembershipModel.tag_id).where(VisitTagMembershipModel.visit_id == source_visit_id)).all():
+            session.add(VisitTagMembershipModel(tag_id=tag_id, visit_id=result_visit_id, created_at=created_at))
+
+    @staticmethod
+    def _merge_visit_tag_memberships(session: Session, source_visit_ids: list[str], result_visit_id: str, created_at: datetime) -> None:
+        tag_ids = set(session.scalars(select(VisitTagMembershipModel.tag_id).where(VisitTagMembershipModel.visit_id.in_(source_visit_ids))).all())
+        if len(tag_ids) > MAX_TAGS_PER_VISIT:
+            raise ValueError("merge_tag_limit")
+        for tag_id in tag_ids:
+            session.add(VisitTagMembershipModel(tag_id=tag_id, visit_id=result_visit_id, created_at=created_at))
 
     def _visit_merge_gap_seconds(
         self,
@@ -9875,6 +10043,7 @@ class ProductRepository:
                     result_visit_id=merged_visit.id,
                     created_at=created_at,
                 )
+                self._merge_visit_tag_memberships(session, source_ids, merged_visit.id, created_at)
                 for order, frame in enumerate(merged_frames):
                     session.add(
                         VisitEvidenceLinkModel(
@@ -14876,9 +15045,29 @@ class ProductRepository:
             hour_counts = Counter(
                 record["observed_at"].astimezone(local_timezone).hour for record in ordered
             )
-            gallery_records = list(reversed(ordered))
+            tagged_visit_ids = set()
+            if payload.tag_id is not None and records:
+                tagged_visit_ids = set(
+                    session.scalars(
+                        select(VisitTagMembershipModel.visit_id)
+                        .join(VisitTagModel, VisitTagModel.id == VisitTagMembershipModel.tag_id)
+                        .where(
+                            VisitTagMembershipModel.tag_id == payload.tag_id,
+                            VisitTagModel.archived_at.is_(None),
+                            VisitTagMembershipModel.visit_id.in_(
+                                {record["summary"].id for record in records}
+                            ),
+                        )
+                    ).all()
+                )
+            gallery_ordered = (
+                [record for record in ordered if record["summary"].id in tagged_visit_ids]
+                if payload.tag_id is not None
+                else ordered
+            )
+            gallery_records = list(reversed(gallery_ordered))
             if payload.gallery_order == WildlifeJournalGalleryOrder.oldest:
-                gallery_records = ordered
+                gallery_records = gallery_ordered
             page_records = gallery_records[payload.offset : payload.offset + payload.page_size + 1]
             has_more = len(page_records) > payload.page_size
             page_records = page_records[: payload.page_size]
@@ -14930,6 +15119,21 @@ class ProductRepository:
                     .group_by(VisitCollectionMembershipModel.visit_id)
                 ).all()
             ) if page_records else {}
+            tags_by_visit_id: dict[str, list[str]] = {}
+            if page_records:
+                tag_rows = session.execute(
+                    select(VisitTagMembershipModel.visit_id, VisitTagModel.name)
+                    .join(VisitTagModel, VisitTagModel.id == VisitTagMembershipModel.tag_id)
+                    .where(
+                        VisitTagMembershipModel.visit_id.in_(
+                            {record["summary"].id for record in page_records}
+                        ),
+                        VisitTagModel.archived_at.is_(None),
+                    )
+                    .order_by(VisitTagModel.name.collate("NOCASE"), VisitTagModel.id)
+                ).all()
+                for visit_id, tag_name in tag_rows:
+                    tags_by_visit_id.setdefault(visit_id, []).append(tag_name)
             all_ordered = self._wildlife_journal_ordered_records(all_label_records)
             first_on_stream: dict[str, str] = {}
             first_in_zone: dict[str, str] = {}
@@ -14978,6 +15182,7 @@ class ProductRepository:
                             and organization_by_visit_id[record["summary"].id].note.strip()
                         ),
                         collection_count=collection_counts.get(record["summary"].id, 0),
+                        tags=tags_by_visit_id.get(record["summary"].id, [])[:MAX_TAGS_PER_VISIT],
                     )
                     for record in page_records
                 ],
@@ -15006,6 +15211,7 @@ class ProductRepository:
                     stream_id=payload.stream_id,
                     zone_id=payload.zone_id,
                     favorites_only=payload.favorites_only,
+                    tag_id=payload.tag_id,
                     timezone_name=local_now.tzname() or "local time",
                 ),
                 observation_count=len(ordered),

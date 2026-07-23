@@ -1660,6 +1660,7 @@ class ActivityLibraryFilters(BaseModel):
     has_note: bool | None = None
     collection_id: str | None = Field(default=None, min_length=1, max_length=256)
     oldest_first: bool = False
+    tag_id: str | None = Field(default=None, min_length=1, max_length=256)
     search: str | None = Field(default=None, max_length=256)
     start_at: datetime | None = None
     end_at: datetime | None = None
@@ -1810,6 +1811,8 @@ class ActivityLibraryVisitSummary(DashboardVisitSummary):
     is_favorite: bool = False
     has_note: bool = False
     collection_count: int = Field(default=0, ge=0)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    tag_count: int = Field(default=0, ge=0)
 
 
 class ActivityLibrarySearchResponse(BaseModel):
@@ -3403,6 +3406,7 @@ class WildlifeJournalHistoryRequest(BaseModel):
     stream_id: str | None = Field(default=None, min_length=1, max_length=256)
     zone_id: str | None = Field(default=None, min_length=1, max_length=256)
     favorites_only: bool = False
+    tag_id: str | None = Field(default=None, min_length=1, max_length=256)
     gallery_order: WildlifeJournalGalleryOrder = WildlifeJournalGalleryOrder.newest
     page_size: int = Field(default=24, ge=1, le=50)
     offset: int = Field(default=0, ge=0, le=10_000)
@@ -3426,6 +3430,7 @@ class WildlifeJournalScope(BaseModel):
     stream_id: str | None = None
     zone_id: str | None = None
     favorites_only: bool = False
+    tag_id: str | None = None
     timezone_name: str
 
 
@@ -3512,6 +3517,7 @@ class WildlifeJournalObservation(BaseModel):
     is_favorite: bool = False
     has_note: bool = False
     collection_count: int = Field(default=0, ge=0)
+    tags: list[str] = Field(default_factory=list, max_length=20)
 
 
 class WildlifeJournalGallery(BaseModel):
@@ -4266,6 +4272,79 @@ class VisitCollectionBulkResponse(BaseModel):
 class VisitCollectionsForVisitResponse(BaseModel):
     visit_id: str
     collections: list[VisitCollectionSummary] = Field(default_factory=list, max_length=20)
+
+
+class VisitTagSummary(BaseModel):
+    id: str
+    name: str
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+    state_token: str
+    active_visit_count: int = Field(default=0, ge=0)
+
+
+class VisitTagCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=50)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitTagUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=50)
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitTagArchiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitTagMembershipRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitTagMembershipStatus(str, Enum):
+    updated = "updated"
+    already_present = "already_present"
+    already_absent = "already_absent"
+    skipped_unavailable = "skipped_unavailable"
+    skipped_superseded = "skipped_superseded"
+    skipped_limit = "skipped_limit"
+
+
+class VisitTagMembershipResult(BaseModel):
+    visit_id: str
+    status: VisitTagMembershipStatus
+
+
+class VisitTagMembershipResponse(BaseModel):
+    tag: VisitTagSummary
+    result: VisitTagMembershipResult
+
+
+class VisitTagBulkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_id: str = Field(min_length=1, max_length=256)
+    visit_ids: list[str] = Field(min_length=1, max_length=50)
+    action: Literal["add", "remove"]
+    expected_state_token: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitTagBulkResponse(BaseModel):
+    tag: VisitTagSummary
+    results: list[VisitTagMembershipResult]
+
+
+class VisitTagsForVisitResponse(BaseModel):
+    visit_id: str
+    tags: list[VisitTagSummary] = Field(default_factory=list, max_length=20)
 
 
 def _ensure_json_compatible(value: Any, field_name: str) -> None:

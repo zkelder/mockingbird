@@ -181,6 +181,7 @@ import type {
   VisitCollectionSummary,
   VisitCollectionUpdate,
   VisitCollectionsForVisitResponse,
+  VisitTagArchiveRequest, VisitTagBulkRequest, VisitTagBulkResponse, VisitTagCreate, VisitTagMembershipRequest, VisitTagMembershipResponse, VisitTagSummary, VisitTagUpdate, VisitTagsForVisitResponse,
   WorkerStatusResponse,
     WildlifeInsightsRequest,
     WildlifeInsightsSummary,
@@ -592,6 +593,15 @@ export const apiClient = {
     request<VisitCollectionMembershipResponse>(`/api/collections/${encodeURIComponent(collectionId)}/visits/${encodeURIComponent(visitId)}`, { method: "DELETE", body: JSON.stringify(payload) }),
   bulkUpdateVisitCollectionMemberships: (payload: VisitCollectionBulkRequest) =>
     request<VisitCollectionBulkResponse>("/api/collections/memberships/bulk", { method: "POST", body: JSON.stringify(payload) }),
+  getVisitTags: () => request<VisitTagSummary[]>("/api/tags"),
+  getManageableVisitTags: () => request<VisitTagSummary[]>("/api/tags/manage"),
+  createVisitTag: (payload: VisitTagCreate) => request<VisitTagSummary>("/api/tags", { method: "POST", body: JSON.stringify(payload) }),
+  updateVisitTag: (tagId: string, payload: VisitTagUpdate) => request<VisitTagSummary>(`/api/tags/${encodeURIComponent(tagId)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  archiveVisitTag: (tagId: string, payload: VisitTagArchiveRequest) => request<VisitTagSummary>(`/api/tags/${encodeURIComponent(tagId)}/archive`, { method: "POST", body: JSON.stringify(payload) }),
+  getTagsForVisit: (visitId: string) => request<VisitTagsForVisitResponse>(`/api/visits/${encodeURIComponent(visitId)}/tags`),
+  addVisitTag: (tagId: string, visitId: string, payload: VisitTagMembershipRequest) => request<VisitTagMembershipResponse>(`/api/tags/${encodeURIComponent(tagId)}/visits/${encodeURIComponent(visitId)}`, { method: "POST", body: JSON.stringify(payload) }),
+  removeVisitTag: (tagId: string, visitId: string, payload: VisitTagMembershipRequest) => request<VisitTagMembershipResponse>(`/api/tags/${encodeURIComponent(tagId)}/visits/${encodeURIComponent(visitId)}`, { method: "DELETE", body: JSON.stringify(payload) }),
+  bulkUpdateVisitTags: (payload: VisitTagBulkRequest) => request<VisitTagBulkResponse>("/api/tags/memberships/bulk", { method: "POST", body: JSON.stringify(payload) }),
   getVisitIdentificationAssistant: (visitId: string) =>
     request<VisitIdentificationAssistantResponse>(
       `/api/visits/${encodeURIComponent(visitId)}/identification-assistant`,
@@ -934,6 +944,7 @@ export const apiClient = {
     if (params.stream_id) searchParams.set("stream_id", params.stream_id);
     if (params.zone_id) searchParams.set("zone_id", params.zone_id);
     if (params.favorites_only) searchParams.set("favorites_only", "true");
+    if (params.tag_id) searchParams.set("tag_id", params.tag_id);
     if (params.gallery_order) searchParams.set("gallery_order", params.gallery_order);
     if (params.page_size) searchParams.set("page_size", String(params.page_size));
     if (params.offset) searchParams.set("offset", String(params.offset));

@@ -273,6 +273,38 @@ class VisitCollectionMembershipModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class VisitTagModel(Base):
+    """A lightweight local label for organizing Visits; never reviewed truth."""
+
+    __tablename__ = "visit_tags"
+    __table_args__ = (
+        Index(
+            "uq_visit_tags_active_normalized_name",
+            "normalized_name",
+            unique=True,
+            sqlite_where=text("archived_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String, nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+
+
+class VisitTagMembershipModel(Base):
+    __tablename__ = "visit_tag_memberships"
+    __table_args__ = (Index("ix_visit_tag_memberships_visit_id", "visit_id"),)
+
+    tag_id: Mapped[str] = mapped_column(ForeignKey("visit_tags.id"), primary_key=True)
+    visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class VisitEvidenceLinkModel(Base):
     """A bounded Visit-to-media association; deleting a link never deletes media."""
 

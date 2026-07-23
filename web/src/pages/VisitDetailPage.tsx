@@ -11,6 +11,8 @@ import type {
   VisitIdentificationEvidenceMode,
   VisitOrganizationState,
   VisitCollectionSummary,
+  VisitTagSummary,
+  ActivityLibraryFilters,
   VisitReviewHistoryEntry,
 } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
@@ -36,6 +38,7 @@ interface VisitDetailPageProps {
   onOpenMotionEvidence: (motionEvidenceId: string) => void;
   onCorrectionSaved: () => Promise<void>;
   onOpenCollections: () => void;
+  onOpenActivityLibrary: (filters: ActivityLibraryFilters) => void;
   correctionPrefill?: VisitCorrectionPrefill | null;
 }
 
@@ -68,6 +71,7 @@ export function VisitDetailPage({
   onCorrectionSaved,
   correctionPrefill,
   onOpenCollections,
+  onOpenActivityLibrary,
 }: VisitDetailPageProps) {
   const [detail, setDetail] = useState<VisitDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +93,11 @@ export function VisitDetailPage({
   const [selectedCollectionId, setSelectedCollectionId] = useState("");
   const [newCollectionName, setNewCollectionName] = useState("");
   const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
+  const [tags, setTags] = useState<VisitTagSummary[]>([]);
+  const [visitTags, setVisitTags] = useState<VisitTagSummary[]>([]);
+  const [selectedTagId, setSelectedTagId] = useState("");
+  const [newTagName, setNewTagName] = useState("");
+  const [tagMessage, setTagMessage] = useState<string | null>(null);
   const [correctionSuggestionId, setCorrectionSuggestionId] = useState<string | null>(null);
   const [dismissedPrefillId, setDismissedPrefillId] = useState<string | null>(null);
   const [mockSuggestedLabel, setMockSuggestedLabel] = useState("");
@@ -207,6 +216,26 @@ export function VisitDetailPage({
   }
 
   useEffect(() => { void refreshCollections(); }, [visitId]);
+
+  async function refreshTags() {
+    try { const [available, current] = await Promise.all([apiClient.getVisitTags(), apiClient.getTagsForVisit(visitId)]); setTags(available); setVisitTags(current.tags); }
+    catch { setTagMessage("Tags are unavailable right now. Your Visit is unchanged."); }
+  }
+  useEffect(() => { void refreshTags(); }, [visitId]);
+
+  async function addTag(tag: VisitTagSummary) {
+    try { await apiClient.addVisitTag(tag.id, visitId, { expected_state_token: tag.state_token, idempotency_key: newReviewRequestKey("visit-tag-add") }); setTagMessage(`Added ${tag.name}.`); await refreshTags(); }
+    catch (caught) { setTagMessage(caught instanceof Error ? caught.message : "Could not add this tag."); }
+  }
+  async function removeTag(tag: VisitTagSummary) {
+    try { await apiClient.removeVisitTag(tag.id, visitId, { expected_state_token: tag.state_token, idempotency_key: newReviewRequestKey("visit-tag-remove") }); setTagMessage(`Removed ${tag.name}.`); await refreshTags(); }
+    catch (caught) { setTagMessage(caught instanceof Error ? caught.message : "Could not remove this tag."); }
+  }
+  async function createAndAddTag() {
+    if (!newTagName.trim()) { setTagMessage("Name the new tag first."); return; }
+    try { const tag = await apiClient.createVisitTag({ name: newTagName, idempotency_key: newReviewRequestKey("visit-tag-create") }); setNewTagName(""); await addTag(tag); }
+    catch (caught) { setTagMessage(caught instanceof Error ? caught.message : "Could not create this tag."); }
+  }
 
   async function addToCollection(collection: VisitCollectionSummary) {
     setCollectionMessage(null);
@@ -1028,6 +1057,14 @@ export function VisitDetailPage({
         <button className="secondary-action" disabled={!selectedCollectionId} onClick={() => { const collection = collections.find((item) => item.id === selectedCollectionId); if (collection) void addToCollection(collection); }} type="button">Add Visit</button>
         <label>Create and add to new Collection <input maxLength={80} value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} /></label><span className="field-helper">{newCollectionName.length}/80 characters</span><button className="secondary-action" onClick={() => void createAndAddCollection()} type="button">Create and add</button>
         {collectionMessage ? <span className="meta-text">{collectionMessage}</span> : null}
+      </section>
+
+      <section className="panel">
+        <div className="section-heading"><div><h2>Tags</h2><span className="meta-text">Private organization only. Tags never change the reviewed label.</span></div></div>
+        {visitTags.length ? <div className="label-helper-chips">{visitTags.map((tag) => <span key={tag.id}><button className="text-action" onClick={() => onOpenActivityLibrary({ tag_id: tag.id })} type="button">{tag.name}</button><button className="text-action" onClick={() => void removeTag(tag)} aria-label={`Remove ${tag.name}`} type="button">Remove</button></span>)}</div> : <span className="meta-text">No tags on this Visit.</span>}
+        <label>Add existing tag <select value={selectedTagId} onChange={(event) => setSelectedTagId(event.target.value)}><option value="">Choose tag</option>{tags.filter((tag) => !visitTags.some((current) => current.id === tag.id)).map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label><button className="secondary-action" disabled={!selectedTagId} onClick={() => { const tag = tags.find((item) => item.id === selectedTagId); if (tag) void addTag(tag); }} type="button">Add tag</button>
+        <label>Create and add tag <input maxLength={50} value={newTagName} onChange={(event) => setNewTagName(event.target.value)} /></label><span className="field-helper">{newTagName.length}/50 characters</span><button className="secondary-action" onClick={() => void createAndAddTag()} type="button">Create and add</button>
+        {tagMessage ? <span className="meta-text">{tagMessage}</span> : null}
       </section>
 
       <section className="panel">

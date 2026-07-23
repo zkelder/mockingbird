@@ -1231,6 +1231,7 @@ export interface ActivityLibraryFilters {
   favorites_only?: boolean;
   has_note?: boolean | null;
   collection_id?: string | null;
+  tag_id?: string | null;
   oldest_first?: boolean;
   search?: string | null;
   start_at?: string | null;
@@ -1248,6 +1249,8 @@ export interface ActivityLibraryVisitSummary extends DashboardVisitSummary {
   is_favorite: boolean;
   has_note: boolean;
   collection_count: number;
+  tags: string[];
+  tag_count: number;
 }
 
 export interface ActivityLibrarySearchResponse {
@@ -2886,6 +2889,18 @@ export interface VisitCollectionsForVisitResponse {
   collections: VisitCollectionSummary[];
 }
 
+export interface VisitTagSummary { id: string; name: string; created_at: string; updated_at: string; archived_at?: string | null; state_token: string; active_visit_count: number; }
+export interface VisitTagCreate { name: string; idempotency_key: string; }
+export interface VisitTagUpdate { name: string; expected_state_token: string; idempotency_key: string; }
+export interface VisitTagArchiveRequest { expected_state_token: string; idempotency_key: string; }
+export interface VisitTagMembershipRequest { expected_state_token: string; idempotency_key: string; }
+export type VisitTagMembershipStatus = "updated" | "already_present" | "already_absent" | "skipped_unavailable" | "skipped_superseded" | "skipped_limit";
+export interface VisitTagMembershipResult { visit_id: string; status: VisitTagMembershipStatus; }
+export interface VisitTagMembershipResponse { tag: VisitTagSummary; result: VisitTagMembershipResult; }
+export interface VisitTagBulkRequest { tag_id: string; visit_ids: string[]; action: "add" | "remove"; expected_state_token: string; idempotency_key: string; }
+export interface VisitTagBulkResponse { tag: VisitTagSummary; results: VisitTagMembershipResult[]; }
+export interface VisitTagsForVisitResponse { visit_id: string; tags: VisitTagSummary[]; }
+
 export interface DatasetExport {
   id: string;
   name: string;
@@ -3164,6 +3179,7 @@ export interface WildlifeJournalHistoryRequest {
   stream_id?: string | null;
   zone_id?: string | null;
   favorites_only?: boolean;
+  tag_id?: string | null;
   gallery_order?: WildlifeJournalGalleryOrder;
   page_size?: number;
   offset?: number;
@@ -3176,6 +3192,7 @@ export interface WildlifeJournalScope {
   stream_id?: string | null;
   zone_id?: string | null;
   favorites_only: boolean;
+  tag_id?: string | null;
   timezone_name: string;
 }
 
@@ -3258,6 +3275,7 @@ export interface WildlifeJournalObservation {
   is_favorite: boolean;
   has_note: boolean;
   collection_count: number;
+  tags: string[];
 }
 
 export interface WildlifeJournalGallery {

@@ -231,6 +231,15 @@ from mockingbird.api.schemas import (
     VisitCollectionSummary,
     VisitCollectionUpdate,
     VisitCollectionsForVisitResponse,
+    VisitTagArchiveRequest,
+    VisitTagBulkRequest,
+    VisitTagBulkResponse,
+    VisitTagCreate,
+    VisitTagMembershipRequest,
+    VisitTagMembershipResponse,
+    VisitTagSummary,
+    VisitTagUpdate,
+    VisitTagsForVisitResponse,
     WebhookMotionEvidenceRequest,
     WebhookMotionEvidenceResponse,
     WebhookPayloadValidationRequest,
@@ -8142,6 +8151,62 @@ async def bulk_update_visit_collection_memberships(
         raise _collection_http_error(error, collection_id=payload.collection_id) from error
 
 
+def _tag_http_error(error: ValueError, *, tag_id: str | None = None) -> HTTPException:
+    code = str(error)
+    if code == "missing_tag": return _not_found("Tag", tag_id or "")
+    if code == "tag_archived": return HTTPException(status_code=410, detail="This tag is archived.")
+    if code == "tag_stale": return HTTPException(status_code=409, detail="This tag changed elsewhere. Refresh before saving.")
+    if code == "tag_name_conflict": return HTTPException(status_code=409, detail="An active tag already uses that name.")
+    if code == "tag_limit": return HTTPException(status_code=409, detail="You can keep up to 200 active tags.")
+    if code in {"tag_name_required", "tag_name_unsafe"}: return HTTPException(status_code=400, detail="Use a non-empty tag name without control characters.")
+    return HTTPException(status_code=400, detail="That tag request could not be completed.")
+
+
+@app.get("/api/tags", response_model=list[VisitTagSummary])
+async def list_visit_tags() -> list[VisitTagSummary]: return get_repository().list_visit_tags()
+
+
+@app.get("/api/tags/manage", response_model=list[VisitTagSummary])
+async def list_manageable_visit_tags() -> list[VisitTagSummary]:
+    return get_repository().list_manageable_visit_tags()
+
+
+@app.post("/api/tags", response_model=VisitTagSummary, status_code=201)
+async def create_visit_tag(payload: VisitTagCreate) -> VisitTagSummary:
+    try: return get_repository().create_visit_tag(payload)
+    except ValueError as error: raise _tag_http_error(error) from error
+
+@app.patch("/api/tags/{tag_id}", response_model=VisitTagSummary)
+async def update_visit_tag(tag_id: str, payload: VisitTagUpdate) -> VisitTagSummary:
+    try: return get_repository().update_visit_tag(tag_id, payload)
+    except ValueError as error: raise _tag_http_error(error, tag_id=tag_id) from error
+
+@app.post("/api/tags/{tag_id}/archive", response_model=VisitTagSummary)
+async def archive_visit_tag(tag_id: str, payload: VisitTagArchiveRequest) -> VisitTagSummary:
+    try: return get_repository().archive_visit_tag(tag_id, payload)
+    except ValueError as error: raise _tag_http_error(error, tag_id=tag_id) from error
+
+@app.get("/api/visits/{visit_id}/tags", response_model=VisitTagsForVisitResponse)
+async def tags_for_visit(visit_id: str) -> VisitTagsForVisitResponse:
+    try: return get_repository().tags_for_visit(visit_id)
+    except ValueError as error: raise _not_found("Visit", visit_id) from error
+
+@app.post("/api/tags/{tag_id}/visits/{visit_id}", response_model=VisitTagMembershipResponse)
+async def add_visit_tag(tag_id: str, visit_id: str, payload: VisitTagMembershipRequest) -> VisitTagMembershipResponse:
+    try: return get_repository().update_visit_tag_membership(tag_id, visit_id, action="add", payload=payload)
+    except ValueError as error: raise _tag_http_error(error, tag_id=tag_id) from error
+
+@app.delete("/api/tags/{tag_id}/visits/{visit_id}", response_model=VisitTagMembershipResponse)
+async def remove_visit_tag(tag_id: str, visit_id: str, payload: VisitTagMembershipRequest) -> VisitTagMembershipResponse:
+    try: return get_repository().update_visit_tag_membership(tag_id, visit_id, action="remove", payload=payload)
+    except ValueError as error: raise _tag_http_error(error, tag_id=tag_id) from error
+
+@app.post("/api/tags/memberships/bulk", response_model=VisitTagBulkResponse)
+async def bulk_update_visit_tags(payload: VisitTagBulkRequest) -> VisitTagBulkResponse:
+    try: return get_repository().bulk_update_visit_tag_memberships(payload)
+    except ValueError as error: raise _tag_http_error(error, tag_id=payload.tag_id) from error
+
+
 @app.get("/api/visits/{visit_id}/correction-history", response_model=VisitReviewHistory)
 async def get_visit_correction_history(visit_id: str) -> VisitReviewHistory:
     history = get_repository().visit_review_history(visit_id)
@@ -8390,6 +8455,11 @@ async def merge_visits(visit_id: str, payload: VisitMergeRequest) -> VisitMergeR
     except ValueError as error:
         if str(error) == "missing_visit":
             raise _not_found("Visit", visit_id) from error
+        if str(error) == "merge_tag_limit":
+            raise HTTPException(
+                status_code=409,
+                detail="These Visits have more than 20 combined tags. Remove or archive tags before merging.",
+            ) from error
         raise HTTPException(status_code=400, detail="These Visits cannot be merged.") from error
 
 
@@ -9069,6 +9139,7 @@ async def get_wildlife_journal_history(
     stream_id: str | None = None,
     zone_id: str | None = None,
     favorites_only: bool = False,
+    tag_id: str | None = None,
     gallery_order: WildlifeJournalGalleryOrder = WildlifeJournalGalleryOrder.newest,
     page_size: int = Query(default=24, ge=1, le=50),
     offset: int = Query(default=0, ge=0, le=10_000),
@@ -9091,6 +9162,7 @@ async def get_wildlife_journal_history(
             stream_id=stream_id,
             zone_id=zone_id,
             favorites_only=favorites_only,
+            tag_id=tag_id,
             gallery_order=gallery_order,
             page_size=page_size,
             offset=offset,

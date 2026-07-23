@@ -228,6 +228,19 @@ async def test_split_supersedes_reviewed_truth_and_returns_two_active_review_vis
         },
     )
     assert added_to_collection.status_code == 200
+    split_tag = await client.post(
+        "/api/tags",
+        json={"name": "Split context", "idempotency_key": "split-tag-create"},
+    )
+    assert split_tag.status_code == 201
+    added_tag = await client.post(
+        f"/api/tags/{split_tag.json()['id']}/visits/visit-split",
+        json={
+            "expected_state_token": split_tag.json()["state_token"],
+            "idempotency_key": "split-tag-add",
+        },
+    )
+    assert added_tag.status_code == 200
     preview = await client.post(
         "/api/visits/visit-split/split/preview",
         json={
@@ -259,6 +272,8 @@ async def test_split_supersedes_reviewed_truth_and_returns_two_active_review_vis
         assert inherited.json()["inherited_from_visit_id"] == "visit-split"
         inherited_collections = await client.get(f"/api/visits/{result['id']}/collections")
         assert [item["name"] for item in inherited_collections.json()["collections"]] == ["Split curation"]
+        inherited_tags = await client.get(f"/api/visits/{result['id']}/tags")
+        assert [item["name"] for item in inherited_tags.json()["tags"]] == ["Split context"]
     active_collection = await client.get(f"/api/collections/{split_collection.json()['id']}")
     assert active_collection.json()["active_visit_count"] == 2
 
@@ -330,6 +345,22 @@ async def test_merge_rules_and_zone_reassignment_preserve_correction_history(
         )
         assert membership.status_code == 200
         merge_collections.append(name)
+    merge_tag_names = []
+    for name, visit_id in [("Merge tag left", "visit-merge-left"), ("Merge tag right", "visit-merge-right")]:
+        tag = await client.post(
+            "/api/tags",
+            json={"name": name, "idempotency_key": f"create-{name}"},
+        )
+        assert tag.status_code == 201
+        membership = await client.post(
+            f"/api/tags/{tag.json()['id']}/visits/{visit_id}",
+            json={
+                "expected_state_token": tag.json()["state_token"],
+                "idempotency_key": f"add-{name}",
+            },
+        )
+        assert membership.status_code == 200
+        merge_tag_names.append(name)
     left = await visit_detail(client, "visit-merge-left")
     candidates = await client.get("/api/visits/visit-merge-left/merge-candidates")
     assert candidates.status_code == 200
@@ -361,6 +392,8 @@ async def test_merge_rules_and_zone_reassignment_preserve_correction_history(
     assert merged_organization.json()["note"] == "Left context\n\nRight context"
     merged_collections = await client.get(f"/api/visits/{result['id']}/collections")
     assert [item["name"] for item in merged_collections.json()["collections"]] == merge_collections
+    merged_tags = await client.get(f"/api/visits/{result['id']}/tags")
+    assert [item["name"] for item in merged_tags.json()["tags"]] == merge_tag_names
     for name in merge_collections:
         collection = next(item for item in (await client.get("/api/collections")).json() if item["name"] == name)
         assert collection["active_visit_count"] == 1
@@ -406,3 +439,60 @@ async def test_merge_rules_and_zone_reassignment_preserve_correction_history(
             select(ReviewLabelModel).where(ReviewLabelModel.target_id == result["id"])
         ).all()
         assert len(labels) == 1
+
+
+async def test_merge_rejects_a_tag_union_over_the_visit_limit(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    started_at = datetime.now(UTC)
+    add_visit(
+        isolated_repository,
+        visit_id="visit-tag-limit-left",
+        event_id="event-tag-limit-left",
+        captured_at=started_at,
+        shared_media_ids=["media-tag-limit-shared", "media-tag-limit-left"],
+    )
+    add_visit(
+        isolated_repository,
+        visit_id="visit-tag-limit-right",
+        event_id="event-tag-limit-right",
+        captured_at=started_at + timedelta(seconds=10),
+        shared_media_ids=["media-tag-limit-shared", "media-tag-limit-right"],
+    )
+    await review_visit(client, "visit-tag-limit-left", "northern_cardinal")
+    await review_visit(client, "visit-tag-limit-right", "northern_cardinal")
+    for index in range(21):
+        tag = await client.post(
+            "/api/tags",
+            json={"name": f"Merge limit {index}", "idempotency_key": f"merge-limit-create-{index}"},
+        )
+        assert tag.status_code == 201
+        visit_id = "visit-tag-limit-left" if index < 11 else "visit-tag-limit-right"
+        membership = await client.post(
+            f"/api/tags/{tag.json()['id']}/visits/{visit_id}",
+            json={
+                "expected_state_token": tag.json()["state_token"],
+                "idempotency_key": f"merge-limit-add-{index}",
+            },
+        )
+        assert membership.status_code == 200
+    left = await visit_detail(client, "visit-tag-limit-left")
+    preview = await client.post(
+        "/api/visits/visit-tag-limit-left/merge/preview",
+        json={
+            "candidate_visit_ids": ["visit-tag-limit-right"],
+            "expected_state_token": left["review_state_token"],
+        },
+    )
+    assert preview.status_code == 200
+    rejected = await client.post(
+        "/api/visits/visit-tag-limit-left/merge",
+        json={
+            "candidate_visit_ids": ["visit-tag-limit-right"],
+            "expected_state_token": preview.json()["state_token"],
+            "idempotency_key": "merge-tag-limit",
+        },
+    )
+    assert rejected.status_code == 409
+    assert "more than 20 combined tags" in rejected.json()["detail"]
