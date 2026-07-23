@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 15
+CURRENT_DATABASE_SCHEMA_VERSION = 16
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -216,6 +216,15 @@ def _migrate_to_bioclip_identification_attempt_evidence(connection: Connection) 
 
     attempts = Base.metadata.tables["bioclip_identification_attempts"]
     attempts.create(bind=connection, checkfirst=True)
+
+
+def _migrate_to_review_identification_assistant_runs(connection: Connection) -> None:
+    """Add empty reviewer-request provenance without modifying prior evidence or truth."""
+
+    Base.metadata.tables["review_identification_assistant_runs"].create(
+        bind=connection,
+        checkfirst=True,
+    )
 
 
 def _migrate_to_zone_monitoring_policy_overrides(connection: Connection) -> None:
@@ -417,6 +426,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     13: _migrate_to_storage_cleanup_action_idempotency,
     14: _migrate_to_camera_setup_operations,
     15: _migrate_to_product_alerts,
+    16: _migrate_to_review_identification_assistant_runs,
 }
 
 

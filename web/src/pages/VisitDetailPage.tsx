@@ -7,11 +7,14 @@ import type {
   TaxonomyLabel,
   VisitDetail,
   VisitEvidenceFrame,
+  VisitIdentificationAssistantResponse,
+  VisitIdentificationEvidenceMode,
   VisitReviewHistoryEntry,
 } from "../api/types";
 import { DetectionEvidenceCard } from "../components/DetectionEvidenceCard";
 import { DetectionProposalEvidenceCard } from "../components/DetectionProposalEvidenceCard";
 import { EvidenceBadge } from "../components/EvidenceBadge";
+import { IdentificationAssistant } from "../components/IdentificationAssistant";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
 import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
@@ -70,6 +73,10 @@ export function VisitDetailPage({
   const [speciesSuggestions, setSpeciesSuggestions] = useState<SpeciesSuggestion[]>([]);
   const [isLoadingSpeciesSuggestions, setIsLoadingSpeciesSuggestions] = useState(true);
   const [speciesSuggestionError, setSpeciesSuggestionError] = useState<string | null>(null);
+  const [identificationAssistant, setIdentificationAssistant] = useState<VisitIdentificationAssistantResponse | null>(null);
+  const [identificationAssistantError, setIdentificationAssistantError] = useState<string | null>(null);
+  const [isLoadingIdentificationAssistant, setIsLoadingIdentificationAssistant] = useState(false);
+  const [isRunningIdentificationAssistant, setIsRunningIdentificationAssistant] = useState(false);
   const [correctionSuggestionId, setCorrectionSuggestionId] = useState<string | null>(null);
   const [dismissedPrefillId, setDismissedPrefillId] = useState<string | null>(null);
   const [mockSuggestedLabel, setMockSuggestedLabel] = useState("");
@@ -133,6 +140,20 @@ export function VisitDetailPage({
     }
   }
 
+  async function loadIdentificationAssistant() {
+    setIsLoadingIdentificationAssistant(true);
+    setIdentificationAssistantError(null);
+    try {
+      setIdentificationAssistant(await apiClient.getVisitIdentificationAssistant(visitId));
+    } catch (caught) {
+      setIdentificationAssistantError(
+        caught instanceof Error ? caught.message : "Could not check Identification Assistant availability.",
+      );
+    } finally {
+      setIsLoadingIdentificationAssistant(false);
+    }
+  }
+
   useEffect(() => {
     setDismissedPrefillId(null);
     if (incomingCorrectionPrefill?.speciesSuggestionId) {
@@ -150,6 +171,10 @@ export function VisitDetailPage({
 
   useEffect(() => {
     setMessage(null);
+  }, [visitId]);
+
+  useEffect(() => {
+    void loadIdentificationAssistant();
   }, [visitId]);
 
   useEffect(() => {
@@ -212,6 +237,34 @@ export function VisitDetailPage({
     setMessage(
       "SpeciesSuggestion prefilled the correction field. Review or edit it, then submit the correction to create truth.",
     );
+  }
+
+  function useIdentificationAssistantSuggestion(labelToUse: string, suggestionId: string) {
+    setLabel(labelToUse);
+    setCorrectionSuggestionId(suggestionId);
+    setMessage(
+      "Identification Assistant prefilled the correction field. Review or edit it, then explicitly save the correction to create truth.",
+    );
+  }
+
+  async function runIdentificationAssistant(evidenceMode: VisitIdentificationEvidenceMode) {
+    setIsRunningIdentificationAssistant(true);
+    setIdentificationAssistantError(null);
+    try {
+      const result = await apiClient.startVisitIdentificationAssistant(visitId, {
+        evidence_mode: evidenceMode,
+        idempotency_key: newReviewRequestKey("identification-assistant"),
+      });
+      setIdentificationAssistant(result);
+      setMessage(result.message);
+      await loadSpeciesSuggestions({ showLoading: false });
+    } catch (caught) {
+      setIdentificationAssistantError(
+        caught instanceof Error ? caught.message : "Identification Assistant could not analyze saved evidence.",
+      );
+    } finally {
+      setIsRunningIdentificationAssistant(false);
+    }
   }
 
   function clearCorrectionPrefill() {
@@ -472,7 +525,7 @@ export function VisitDetailPage({
   const activeSuggestionLabel = correctionSuggestionId
     ? displayTaxonomyLabel(
         speciesSuggestions.find((suggestion) => suggestion.id === correctionSuggestionId)
-          ?.suggested_label ?? activeCorrectionPrefill?.label ?? "",
+          ?.suggested_label ?? activeCorrectionPrefill?.label ?? label,
         taxonomyLabels,
       )
     : "";
@@ -876,6 +929,19 @@ export function VisitDetailPage({
             ) : null}
           </div>
         </div>
+      </section>
+
+      <section className="panel">
+        <IdentificationAssistant
+          assistant={identificationAssistant}
+          error={identificationAssistantError}
+          isLoading={isLoadingIdentificationAssistant}
+          isRunning={isRunningIdentificationAssistant}
+          onAnalyze={(mode) => void runIdentificationAssistant(mode)}
+          onClearPrefill={clearCorrectionPrefill}
+          onUseSuggestion={useIdentificationAssistantSuggestion}
+          prefilledSuggestionId={correctionSuggestionId}
+        />
       </section>
 
       {detail.visit.review_status === "needs_review" ? (

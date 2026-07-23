@@ -153,6 +153,8 @@ from mockingbird.api.schemas import (
     VisitSplitResponse,
     VisitZoneReassignmentRequest,
     VisitZoneReassignmentResponse,
+    VisitIdentificationAssistantRequest,
+    VisitIdentificationAssistantResponse,
     ReviewIdentificationRequest,
     ReviewIdentificationResponse,
     ReviewQueueBulkCorrectionRequest,
@@ -8004,6 +8006,44 @@ async def get_visit_correction_history(visit_id: str) -> VisitReviewHistory:
     if history is None:
         raise _not_found("Visit", visit_id)
     return history
+
+
+@app.get(
+    "/api/visits/{visit_id}/identification-assistant",
+    response_model=VisitIdentificationAssistantResponse,
+)
+async def get_visit_identification_assistant(
+    visit_id: str,
+) -> VisitIdentificationAssistantResponse:
+    try:
+        return get_repository().get_visit_identification_assistant(visit_id)
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        raise HTTPException(status_code=400, detail="Identification Assistant is unavailable.") from error
+
+
+@app.post(
+    "/api/visits/{visit_id}/identification-assistant",
+    response_model=VisitIdentificationAssistantResponse,
+)
+def start_visit_identification_assistant(
+    visit_id: str,
+    payload: VisitIdentificationAssistantRequest,
+) -> VisitIdentificationAssistantResponse:
+    # Optional local model work remains explicitly user-triggered and bounded to
+    # saved Visit evidence; it cannot create a correction or reviewed truth.
+    try:
+        return get_repository().start_visit_identification_assistant(visit_id, payload)
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        if str(error) == "identification_idempotency_conflict":
+            raise HTTPException(
+                status_code=409,
+                detail="This identification request key belongs to a different Visit or evidence mode.",
+            ) from error
+        raise HTTPException(status_code=400, detail="Identification Assistant could not start.") from error
 
 
 @app.get("/api/visits/{visit_id}", response_model=Visit)

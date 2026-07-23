@@ -117,6 +117,8 @@ import type {
   VisitSplitResponse,
   VisitZoneReassignmentRequest,
   VisitZoneReassignmentResponse,
+  VisitIdentificationAssistantRequest,
+  VisitIdentificationAssistantResponse,
   FastReviewCorrectionCreate,
   FastReviewCorrectionResponse,
   FastReviewQueueNavigationRequest,
@@ -550,6 +552,18 @@ export const apiClient = {
   getEventVisits: (eventId: string) => request<Visit[]>(`/api/events/${eventId}/visits`),
   getEventDetail: (eventId: string) => request<EventDetail>(`/api/events/${eventId}/detail`),
   getVisitDetail: (visitId: string) => request<VisitDetail>(`/api/visits/${visitId}/detail`),
+  getVisitIdentificationAssistant: (visitId: string) =>
+    request<VisitIdentificationAssistantResponse>(
+      `/api/visits/${encodeURIComponent(visitId)}/identification-assistant`,
+    ),
+  startVisitIdentificationAssistant: (
+    visitId: string,
+    payload: VisitIdentificationAssistantRequest,
+  ) =>
+    request<VisitIdentificationAssistantResponse>(
+      `/api/visits/${encodeURIComponent(visitId)}/identification-assistant`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
   curateVisitEvidence: (visitId: string, payload: VisitEvidenceCurationRequest) =>
     request<VisitEvidenceCurationResponse>(
       `/api/visits/${encodeURIComponent(visitId)}/evidence-curation`,

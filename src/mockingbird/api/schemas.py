@@ -2667,6 +2667,38 @@ class ReviewIdentificationRequest(BaseModel):
     notes: str | None = None
 
 
+class VisitIdentificationEvidenceMode(str, Enum):
+    """A reviewer may use the primary frame or the already-retained sequence only."""
+
+    primary_only = "primary_only"
+    all_retained_evidence = "all_retained_evidence"
+
+
+class VisitIdentificationAssistantRequest(BaseModel):
+    """An explicit, one-Visit request for optional local suggestion evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_mode: VisitIdentificationEvidenceMode = (
+        VisitIdentificationEvidenceMode.all_retained_evidence
+    )
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class VisitIdentificationAssistantResponse(BaseModel):
+    # All outputs remain evidence. The established correction endpoints create truth.
+    visit_id: str
+    availability: ReviewIdentificationSummary
+    evidence_mode: VisitIdentificationEvidenceMode
+    selected_evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
+    run: dict[str, Any] | None = None
+    attempts: list[dict[str, Any]] = Field(default_factory=list)
+    suggestions: list[dict[str, Any]] = Field(default_factory=list)
+    message: str
+    creates_truth: bool = False
+    creates_export: bool = False
+
+
 class DemoDetectionRunResult(BaseModel):
     detection_run: DetectionRun
     proposals: list[DetectionProposal]

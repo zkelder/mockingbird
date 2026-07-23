@@ -3060,6 +3060,24 @@ a.secondary-action {
   gap: 8px;
 }
 
+.identification-assistant-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+}
+
+.identification-assistant-controls label {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.identification-assistant-results {
+  margin-top: 0.9rem;
+}
+
 .review-identification-setup-details {
   display: grid;
   gap: 10px;

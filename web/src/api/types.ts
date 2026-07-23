@@ -2663,6 +2663,44 @@ export interface ReviewIdentificationRequest {
   notes?: string | null;
 }
 
+export type VisitIdentificationEvidenceMode = "primary_only" | "all_retained_evidence";
+
+export interface VisitIdentificationAssistantRequest {
+  evidence_mode?: VisitIdentificationEvidenceMode;
+  idempotency_key: string;
+}
+
+export interface VisitIdentificationAssistantSuggestion {
+  suggestion_id: string;
+  attempt_id?: string | null;
+  label: string;
+  rank: number;
+  score?: number | null;
+  score_label: string;
+  provider: string;
+  provider_id: string;
+  media_asset_id?: string | null;
+  frame_role: string;
+  model_runtime_version?: string | null;
+  analyzed_at: string;
+  status: SpeciesSuggestionStatus;
+  origin: "user_triggered_review_assistance" | "previously_generated";
+  support_count: number;
+}
+
+export interface VisitIdentificationAssistantResponse {
+  visit_id: string;
+  availability: ReviewIdentificationSummary;
+  evidence_mode: VisitIdentificationEvidenceMode;
+  selected_evidence_frames: VisitEvidenceFrame[];
+  run?: Record<string, unknown> | null;
+  attempts: Array<Record<string, unknown>>;
+  suggestions: VisitIdentificationAssistantSuggestion[];
+  message: string;
+  creates_truth: boolean;
+  creates_export: boolean;
+}
+
 export interface ReviewIdentificationResponse {
   target_type: ReviewQueueBulkCorrectionTargetType;
   target_id: string;

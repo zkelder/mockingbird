@@ -12,9 +12,12 @@ import type {
   ReviewQueueBulkCorrectionTargetType,
   ReviewQueueItem,
   TaxonomyLabel,
+  VisitIdentificationAssistantResponse,
+  VisitIdentificationEvidenceMode,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
+import { IdentificationAssistant } from "../components/IdentificationAssistant";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { ReviewFilterTabs, type ReviewFilterOption } from "../components/ReviewFilterTabs";
@@ -2947,7 +2950,8 @@ function isFastReviewTypingTarget(target: EventTarget | null): boolean {
     target.isContentEditable ||
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement
+    target instanceof HTMLSelectElement ||
+    Boolean(target.closest(".identification-assistant"))
   );
 }
 
@@ -2997,6 +3001,11 @@ function FastReviewPanel({
   const [message, setMessage] = useState<string | null>(null);
   const [processedCount, setProcessedCount] = useState(0);
   const [undoState, setUndoState] = useState<FastReviewUndoState | null>(null);
+  const [identificationAssistant, setIdentificationAssistant] = useState<VisitIdentificationAssistantResponse | null>(null);
+  const [identificationAssistantError, setIdentificationAssistantError] = useState<string | null>(null);
+  const [isLoadingIdentificationAssistant, setIsLoadingIdentificationAssistant] = useState(false);
+  const [isRunningIdentificationAssistant, setIsRunningIdentificationAssistant] = useState(false);
+  const [assistantPrefillSuggestionId, setAssistantPrefillSuggestionId] = useState<string | null>(null);
   const [reviewSessionId] = useState(() => createFastReviewKey("fast-review-session"));
 
   // Navigation accepts a bounded snapshot rather than the full queue. Its order is
@@ -3057,6 +3066,7 @@ function FastReviewPanel({
     setActiveItem(item);
     setDraftLabel(item.suggested_label ?? "");
     setDraftNotes("");
+    setAssistantPrefillSuggestionId(null);
     setMessage(null);
     setIsOpen(true);
   }
@@ -3103,6 +3113,7 @@ function FastReviewPanel({
       setActiveItem(response.item);
       setDraftLabel(response.item.suggested_label ?? "");
       setDraftNotes("");
+      setAssistantPrefillSuggestionId(null);
       setMessage(
         String(response.position ?? 1) +
           " of " +
@@ -3194,6 +3205,86 @@ function FastReviewPanel({
     } finally {
       setIsSaving(false);
     }
+  }
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!activeItem) {
+      setIdentificationAssistant(null);
+      return () => {
+        isMounted = false;
+      };
+    }
+    setAssistantPrefillSuggestionId(null);
+    setIsLoadingIdentificationAssistant(true);
+    setIdentificationAssistantError(null);
+    void apiClient
+      .getVisitIdentificationAssistant(reviewQueueTargetId(activeItem))
+      .then((response) => {
+        if (isMounted) {
+          setIdentificationAssistant(response);
+        }
+      })
+      .catch((caught: unknown) => {
+        if (isMounted) {
+          setIdentificationAssistantError(
+            caught instanceof Error ? caught.message : "Could not check Identification Assistant availability.",
+          );
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoadingIdentificationAssistant(false);
+        }
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [activeItem?.target_id]);
+
+  async function runIdentificationAssistant(evidenceMode: VisitIdentificationEvidenceMode) {
+    if (!activeItem || isRunningIdentificationAssistant) {
+      return;
+    }
+    setIsRunningIdentificationAssistant(true);
+    setIdentificationAssistantError(null);
+    try {
+      const result = await apiClient.startVisitIdentificationAssistant(
+        reviewQueueTargetId(activeItem),
+        {
+          evidence_mode: evidenceMode,
+          idempotency_key: createFastReviewKey("identification-assistant"),
+        },
+      );
+      setIdentificationAssistant(result);
+      setMessage(result.message);
+      const refreshed = await apiClient.getReviewQueue();
+      onQueueItemsChange(refreshed);
+      const refreshedActive = refreshed.find(
+        (item) => reviewQueueTargetId(item) === reviewQueueTargetId(activeItem),
+      );
+      if (refreshedActive) {
+        setActiveItem(refreshedActive);
+      }
+    } catch (caught) {
+      setIdentificationAssistantError(
+        caught instanceof Error ? caught.message : "Identification Assistant could not analyze saved evidence.",
+      );
+    } finally {
+      setIsRunningIdentificationAssistant(false);
+    }
+  }
+
+  function useIdentificationAssistantSuggestion(label: string, suggestionId: string) {
+    setDraftLabel(label);
+    setAssistantPrefillSuggestionId(suggestionId);
+    setMessage("Suggestion prefilled the label. Save & Next remains the explicit truth action.");
+  }
+
+  function clearIdentificationAssistantPrefill() {
+    setAssistantPrefillSuggestionId(null);
+    setDraftLabel("");
+    setMessage("Suggestion prefill cleared. Choose a correction before saving.");
   }
 
   useEffect(() => {
@@ -3349,6 +3440,16 @@ function FastReviewPanel({
           )}
         </div>
         <div className="fast-review-form">
+          <IdentificationAssistant
+            assistant={identificationAssistant}
+            error={identificationAssistantError}
+            isLoading={isLoadingIdentificationAssistant}
+            isRunning={isRunningIdentificationAssistant}
+            onAnalyze={(mode) => void runIdentificationAssistant(mode)}
+            onClearPrefill={clearIdentificationAssistantPrefill}
+            onUseSuggestion={useIdentificationAssistantSuggestion}
+            prefilledSuggestionId={assistantPrefillSuggestionId}
+          />
           <div className="fast-review-suggestions">
             <strong>Evidence-only suggestions</strong>
             {suggestedLabels.length > 0 ? (

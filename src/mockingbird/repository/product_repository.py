@@ -220,6 +220,9 @@ from mockingbird.api.schemas import (
     VisitReviewReopenResponse,
     VisitReviewRevisionCreate,
     VisitReviewRevisionResponse,
+    VisitIdentificationAssistantRequest,
+    VisitIdentificationAssistantResponse,
+    VisitIdentificationEvidenceMode,
     ReviewIdentificationRequest,
     ReviewIdentificationResponse,
     ReviewIdentificationStatus,
@@ -382,6 +385,7 @@ from mockingbird.storage.models import (
     EventModel,
     MediaAssetModel,
     ProductAlertModel,
+    ReviewIdentificationAssistantRunModel,
     ReviewLabelModel,
     StreamModel,
     StreamMonitoringPolicyModel,
@@ -1478,6 +1482,9 @@ class ProductRepository:
         self.schema_status = initialize_database(self.engine)
         self.session_factory = create_session_factory(self.engine)
         self._storage_retention_lock = threading.Lock()
+        # A local model runner is bounded and request-bound. Keep a second request
+        # for the same Visit from producing duplicate evidence while it is active.
+        self._review_identification_assistant_lock = threading.Lock()
         self.seed_if_empty()
 
     def close(self) -> None:
@@ -11136,6 +11143,498 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._review_queue_items(session)
 
+    def get_visit_identification_assistant(
+        self,
+        visit_id: str,
+    ) -> VisitIdentificationAssistantResponse:
+        """Read bounded, saved Visit evidence without starting an analyzer."""
+
+        with self.session_factory() as session:
+            item = self._review_identification_item_for_visit(session, visit_id)
+            frames = item.evidence_frames[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]
+            summary = self._review_identification_summary_for_item(session, item)
+            latest_run = session.scalars(
+                select(ReviewIdentificationAssistantRunModel)
+                .where(ReviewIdentificationAssistantRunModel.visit_id == visit_id)
+                .order_by(
+                    ReviewIdentificationAssistantRunModel.started_at.desc(),
+                    ReviewIdentificationAssistantRunModel.id.desc(),
+                )
+            ).first()
+            return self._visit_identification_assistant_response(
+                session,
+                item=item,
+                summary=summary,
+                evidence_mode=(
+                    VisitIdentificationEvidenceMode(latest_run.evidence_mode)
+                    if latest_run is not None
+                    else VisitIdentificationEvidenceMode.all_retained_evidence
+                ),
+                selected_frames=frames,
+                run=latest_run,
+                message=(
+                    "Review saved evidence or request a new local analysis. Suggestions "
+                    "remain evidence until an explicit correction is saved."
+                ),
+            )
+
+    def start_visit_identification_assistant(
+        self,
+        visit_id: str,
+        payload: VisitIdentificationAssistantRequest,
+    ) -> VisitIdentificationAssistantResponse:
+        """Run configured local identification over retained frames only, on request."""
+
+        # This lock covers durable request creation through completion. It prevents
+        # duplicate clicks from starting competing per-Visit runs; the underlying
+        # BioCLIP runner has its own shorter-lived process boundary.
+        with self._review_identification_assistant_lock:
+            with self.session_factory() as session:
+                item = self._review_identification_item_for_visit(session, visit_id)
+                frames = self._review_identification_assistant_frames(
+                    item.evidence_frames,
+                    payload.evidence_mode,
+                )
+                summary = self._review_identification_summary_for_item(
+                    session,
+                    item,
+                    media_asset_id=(frames[0].media_asset_id if frames else None),
+                )
+                existing = session.scalar(
+                    select(ReviewIdentificationAssistantRunModel).where(
+                        ReviewIdentificationAssistantRunModel.idempotency_key
+                        == payload.idempotency_key
+                    )
+                )
+                if existing is not None:
+                    if (
+                        existing.visit_id != visit_id
+                        or existing.evidence_mode != payload.evidence_mode.value
+                    ):
+                        raise ValueError("identification_idempotency_conflict")
+                    return self._visit_identification_assistant_response(
+                        session,
+                        item=item,
+                        summary=summary,
+                        evidence_mode=payload.evidence_mode,
+                        selected_frames=frames,
+                        run=existing,
+                        message="This identification request was already recorded.",
+                    )
+
+                active = session.scalar(
+                    select(ReviewIdentificationAssistantRunModel).where(
+                        ReviewIdentificationAssistantRunModel.visit_id == visit_id,
+                        ReviewIdentificationAssistantRunModel.status == "running",
+                    )
+                )
+                if active is not None:
+                    return self._visit_identification_assistant_response(
+                        session,
+                        item=item,
+                        summary=summary,
+                        evidence_mode=payload.evidence_mode,
+                        selected_frames=frames,
+                        run=active,
+                        message="Identification is already running for this Visit.",
+                    )
+
+                selected_ids = [frame.media_asset_id for frame in frames]
+                input_hash = hashlib.sha256(
+                    json.dumps(
+                        {
+                            "visit_id": visit_id,
+                            "evidence_mode": payload.evidence_mode.value,
+                            "media_asset_ids": selected_ids,
+                            "adapter_id": summary.adapter_id,
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                run = ReviewIdentificationAssistantRunModel(
+                    id=f"review-identification-assistant-{uuid.uuid4().hex}",
+                    visit_id=visit_id,
+                    idempotency_key=payload.idempotency_key,
+                    evidence_mode=payload.evidence_mode.value,
+                    selected_media_asset_ids_json=json.dumps(selected_ids),
+                    input_configuration_sha256=input_hash,
+                    request_origin="user_triggered_review_assistance",
+                    status="running",
+                    started_at=datetime.now(UTC),
+                    completed_at=None,
+                    attempt_ids_json="[]",
+                    error_code=None,
+                )
+                session.add(run)
+                session.commit()
+                run_id = run.id
+
+            attempt_ids: list[str] = []
+            last_summary = summary
+            terminal_error: str | None = None
+            if not frames:
+                terminal_status = "unavailable"
+                terminal_error = "missing_retained_evidence"
+            else:
+                for frame in frames:
+                    existing_attempt_ids = {
+                        str(attempt["id"])
+                        for attempt in self.list_bioclip_identification_attempts(
+                            target_type="visit",
+                            target_id=visit_id,
+                        )
+                    }
+                    try:
+                        response = self.identify_review_queue_item(
+                            "visit",
+                            visit_id,
+                            ReviewIdentificationRequest(
+                                adapter_id=summary.adapter_id,
+                                media_asset_id=frame.media_asset_id,
+                                notes=(
+                                    "User-triggered Identification Assistant request; "
+                                    f"assistant_run={run_id}; frame_role="
+                                    f"{'primary' if frame.is_primary else 'supporting'}."
+                                ),
+                            ),
+                        )
+                    except ValueError as error:
+                        terminal_error = str(error)
+                        break
+                    except Exception:
+                        terminal_error = "assistant_execution_failed"
+                        break
+                    last_summary = response.identification
+                    for attempt in self.list_bioclip_identification_attempts(
+                        target_type="visit",
+                        target_id=visit_id,
+                    ):
+                        if (
+                            attempt.get("media_asset_id") == frame.media_asset_id
+                            and str(attempt["id"]) not in existing_attempt_ids
+                        ):
+                            attempt_ids.append(str(attempt["id"]))
+
+                if terminal_error is not None:
+                    terminal_status = "failed"
+                elif last_summary.status in {
+                    ReviewIdentificationStatus.suggestion_created,
+                    ReviewIdentificationStatus.suggestion_present,
+                }:
+                    terminal_status = "succeeded"
+                elif last_summary.status in {
+                    ReviewIdentificationStatus.no_proposal,
+                    ReviewIdentificationStatus.proposal_created,
+                }:
+                    terminal_status = "no_result"
+                elif last_summary.status in {
+                    ReviewIdentificationStatus.setup_required,
+                    ReviewIdentificationStatus.unavailable,
+                    ReviewIdentificationStatus.unavailable_no_adapter,
+                    ReviewIdentificationStatus.unsupported_media,
+                    ReviewIdentificationStatus.no_best_frame,
+                }:
+                    terminal_status = "unavailable"
+                    terminal_error = last_summary.unavailable_reason
+                else:
+                    terminal_status = "failed"
+                    terminal_error = last_summary.unavailable_reason
+
+            with self.session_factory() as session:
+                with session.begin():
+                    run = session.get(ReviewIdentificationAssistantRunModel, run_id)
+                    if run is None:
+                        raise RuntimeError("Identification Assistant request evidence is missing.")
+                    run.status = terminal_status
+                    run.completed_at = datetime.now(UTC)
+                    run.attempt_ids_json = json.dumps(sorted(set(attempt_ids)))
+                    run.error_code = terminal_error
+                item = self._review_identification_item_for_visit(session, visit_id)
+                refreshed_summary = self._review_identification_summary_for_item(
+                    session,
+                    item,
+                    media_asset_id=(frames[0].media_asset_id if frames else None),
+                )
+                return self._visit_identification_assistant_response(
+                    session,
+                    item=item,
+                    summary=refreshed_summary,
+                    evidence_mode=payload.evidence_mode,
+                    selected_frames=frames,
+                    run=run,
+                    message=(
+                        "Identification analysis completed as evidence only. Use a suggestion "
+                        "to prefill the correction, then save explicitly to create truth."
+                        if terminal_status == "succeeded"
+                        else refreshed_summary.message
+                    ),
+                )
+
+    def _review_identification_assistant_frames(
+        self,
+        frames: list[VisitEvidenceFrame],
+        evidence_mode: VisitIdentificationEvidenceMode,
+    ) -> list[VisitEvidenceFrame]:
+        """Keep manual runs inside the existing four-frame retained-evidence cap."""
+
+        bounded = frames[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]
+        if evidence_mode == VisitIdentificationEvidenceMode.primary_only:
+            primary = next((frame for frame in bounded if frame.is_primary), None)
+            return [primary] if primary is not None else bounded[:1]
+        return bounded
+
+    def _review_identification_item_for_visit(
+        self,
+        session: Session,
+        visit_id: str,
+    ) -> ReviewQueueItem:
+        """Build review evidence context for either an unresolved or reviewed Visit."""
+
+        visit = session.get(VisitModel, visit_id)
+        if visit is None or visit.is_superseded:
+            raise ValueError("missing_visit")
+        event = session.get(EventModel, visit.event_id)
+        if event is None:
+            raise ValueError("missing_review_candidate")
+        zone_id, zone_name, zone_type = self._zone_context(
+            session,
+            visit.zone_id or event.primary_zone_id,
+        )
+        stream_name, source_id, source_name = self._review_queue_stream_context(
+            session,
+            event.stream_id,
+        )
+        evidence_frames = self._visit_evidence_frames_from_visit(session, visit, event)
+        primary_frame = next(
+            (frame for frame in evidence_frames if frame.is_primary),
+            evidence_frames[0] if evidence_frames else None,
+        )
+        media_asset = (
+            session.get(MediaAssetModel, primary_frame.media_asset_id)
+            if primary_frame is not None
+            else self._media_asset_for_path_from_session(
+                session,
+                visit.representative_media_path,
+            )
+        )
+        evidence = self._motion_evidence_for_review_queue_item(
+            session,
+            event_id=event.id,
+            visit_id=visit.id,
+            media_asset_id=media_asset.id if media_asset is not None else None,
+        )
+        best_media_asset_id = (
+            media_asset.id
+            if media_asset is not None
+            else evidence.snapshot_media_asset_id
+            if evidence is not None
+            else None
+        )
+        suggestion_model = session.scalars(
+            select(SpeciesSuggestionModel)
+            .where(
+                SpeciesSuggestionModel.visit_id == visit.id,
+                SpeciesSuggestionModel.status == SpeciesSuggestionStatus.pending.value,
+            )
+            .order_by(
+                SpeciesSuggestionModel.created_at.desc(),
+                SpeciesSuggestionModel.rank,
+                SpeciesSuggestionModel.id.desc(),
+            )
+        ).first()
+        suggestion = (
+            _species_suggestion_from_model(suggestion_model)
+            if suggestion_model is not None
+            else None
+        )
+        focus_crop_context = self._review_focus_crop_context(
+            session,
+            zone_id=zone_id,
+            media_asset_id=best_media_asset_id,
+            evidence=evidence,
+        )
+        return ReviewQueueItem(
+            id=f"review-queue-{visit.id}",
+            item_type="visit",
+            target_type="visit",
+            target_id=visit.id,
+            title=f"Review {visit.subject_label} visit",
+            stream_id=event.stream_id,
+            stream_name=stream_name,
+            source_id=source_id,
+            source_name=source_name,
+            event_id=event.id,
+            visit_id=visit.id,
+            primary_zone_id=zone_id,
+            primary_zone_name=zone_name,
+            primary_zone_type=zone_type,
+            zone_id=zone_id,
+            zone_name=zone_name,
+            zone_type=zone_type,
+            best_media_asset_id=best_media_asset_id,
+            **self._review_queue_activity_context(evidence),
+            suggested_label=(
+                suggestion.suggested_label
+                if suggestion is not None
+                else visit.species_guess or visit.subject_label
+            ),
+            suggestion_id=suggestion.id if suggestion is not None else None,
+            suggestion_confidence=suggestion.confidence if suggestion is not None else None,
+            suggestion_reason=suggestion.notes if suggestion is not None else None,
+            suggestion_creates_truth=False,
+            **_review_focus_crop_fields(focus_crop_context),
+            media_asset=_media_asset_from_model(media_asset) if media_asset is not None else None,
+            evidence_frames=evidence_frames,
+            review_status=ReviewStatus(visit.review_status),
+            review_state_token=self._review_state_token(session, "visit", visit.id),
+            reason="Review saved Visit evidence and explicitly correct the final label.",
+        )
+
+    def _visit_identification_assistant_response(
+        self,
+        session: Session,
+        *,
+        item: ReviewQueueItem,
+        summary: ReviewIdentificationSummary,
+        evidence_mode: VisitIdentificationEvidenceMode,
+        selected_frames: list[VisitEvidenceFrame],
+        run: ReviewIdentificationAssistantRunModel | None,
+        message: str,
+    ) -> VisitIdentificationAssistantResponse:
+        attempts = list(
+            session.scalars(
+                select(BioClipIdentificationAttemptModel)
+                .where(
+                    BioClipIdentificationAttemptModel.target_type == "visit",
+                    BioClipIdentificationAttemptModel.target_id == item.target_id,
+                )
+                .order_by(
+                    BioClipIdentificationAttemptModel.started_at.desc(),
+                    BioClipIdentificationAttemptModel.id.desc(),
+                )
+                .limit(20)
+            ).all()
+        )
+        attempt_records = [_bioclip_attempt_record(attempt) for attempt in attempts]
+        run_attempt_ids = set()
+        if run is not None:
+            try:
+                run_attempt_ids = set(json.loads(run.attempt_ids_json))
+            except (TypeError, json.JSONDecodeError):
+                run_attempt_ids = set()
+        for attempt in attempt_records:
+            attempt["origin"] = (
+                "user_triggered_review_assistance"
+                if attempt["id"] in run_attempt_ids
+                else "previously_generated"
+            )
+
+        suggestion_models = list(
+            session.scalars(
+                select(SpeciesSuggestionModel)
+                .where(SpeciesSuggestionModel.visit_id == item.target_id)
+                .order_by(
+                    SpeciesSuggestionModel.created_at.desc(),
+                    SpeciesSuggestionModel.rank,
+                    SpeciesSuggestionModel.id.desc(),
+                )
+                .limit(40)
+            ).all()
+        )
+        attempt_for_suggestion = {
+            attempt.resulting_species_suggestion_id: attempt
+            for attempt in attempts
+            if attempt.resulting_species_suggestion_id is not None
+        }
+        selected_roles = {
+            frame.media_asset_id: ("primary" if frame.is_primary else "supporting")
+            for frame in selected_frames
+        }
+        suggestion_rows: list[dict[str, Any]] = []
+        seen: set[tuple[str, str | None, str | None, str]] = set()
+        for suggestion in suggestion_models:
+            attempt = attempt_for_suggestion.get(suggestion.id)
+            candidates = [
+                {
+                    "label": suggestion.suggested_label,
+                    "rank": suggestion.rank,
+                    "score": suggestion.confidence,
+                },
+                *[
+                    {
+                        "label": candidate.get("suggested_label") or candidate.get("label"),
+                        "rank": candidate.get("rank"),
+                        "score": candidate.get("score"),
+                    }
+                    for candidate in _assistant_suggestion_alternatives(suggestion)
+                    if isinstance(candidate, dict)
+                ],
+            ]
+            for candidate in candidates:
+                label = _clean_optional_text(candidate.get("label"))
+                if label is None:
+                    continue
+                key = (suggestion.adapter_id, attempt.id if attempt else suggestion.id, suggestion.media_asset_id, label)
+                if key in seen:
+                    continue
+                seen.add(key)
+                suggestion_rows.append(
+                    {
+                        "suggestion_id": suggestion.id,
+                        "attempt_id": attempt.id if attempt is not None else None,
+                        "label": label,
+                        "rank": _optional_int(candidate.get("rank")) or suggestion.rank,
+                        "score": candidate.get("score"),
+                        "score_label": "uncalibrated score"
+                        if suggestion.adapter_id == BIOCLIP_ADAPTER_ID
+                        else "score",
+                        "provider": suggestion.adapter_name,
+                        "provider_id": suggestion.adapter_id,
+                        "media_asset_id": suggestion.media_asset_id,
+                        "frame_role": selected_roles.get(suggestion.media_asset_id, "previously_saved"),
+                        "model_runtime_version": _assistant_model_runtime_version(attempt),
+                        "analyzed_at": suggestion.created_at,
+                        "status": suggestion.status,
+                        "origin": (
+                            "user_triggered_review_assistance"
+                            if attempt is not None and attempt.id in run_attempt_ids
+                            else "previously_generated"
+                        ),
+                    }
+                )
+        support_keys: dict[tuple[str, str], set[str | None]] = {}
+        for row in suggestion_rows:
+            support_keys.setdefault(
+                (str(row["provider_id"]), str(row["label"])), set()
+            ).add(row["media_asset_id"] if isinstance(row["media_asset_id"], str) else None)
+        for row in suggestion_rows:
+            row["support_count"] = len(
+                support_keys[(str(row["provider_id"]), str(row["label"]))]
+            )
+        suggestion_rows.sort(
+            key=lambda row: (
+                -int(row["support_count"]),
+                int(row["rank"]),
+                str(row["label"]),
+                str(row["provider_id"]),
+                str(row["suggestion_id"]),
+            )
+        )
+        run_record = _review_identification_assistant_run_record(run) if run else None
+        return VisitIdentificationAssistantResponse(
+            visit_id=item.target_id,
+            availability=summary,
+            evidence_mode=evidence_mode,
+            selected_evidence_frames=selected_frames,
+            run=run_record,
+            attempts=attempt_records,
+            suggestions=suggestion_rows[:20],
+            message=message,
+            creates_truth=False,
+            creates_export=False,
+        )
+
     def navigate_fast_review_queue(
         self,
         payload: FastReviewQueueNavigationRequest,
@@ -11357,10 +11856,14 @@ class ProductRepository:
             raise ValueError("missing_review_candidate")
 
         with self.session_factory() as session:
-            queue_item = self._review_queue_item_by_target(
-                session,
-                normalized_target_type,
-                normalized_target_id,
+            queue_item = (
+                self._review_identification_item_for_visit(session, normalized_target_id)
+                if normalized_target_type == "visit"
+                else self._review_queue_item_by_target(
+                    session,
+                    normalized_target_type,
+                    normalized_target_id,
+                )
             )
             if queue_item is None:
                 raise ValueError("missing_review_candidate")
@@ -19320,6 +19823,60 @@ def _bioclip_attempt_record(
         "error_detail": attempt.error_detail,
         "provenance_schema_version": attempt.provenance_schema_version,
     }
+
+
+def _review_identification_assistant_run_record(
+    run: ReviewIdentificationAssistantRunModel,
+) -> dict[str, Any]:
+    """Serialize durable request provenance without local paths or configuration secrets."""
+
+    try:
+        selected_media_asset_ids = list(json.loads(run.selected_media_asset_ids_json))
+    except (TypeError, json.JSONDecodeError):
+        selected_media_asset_ids = []
+    try:
+        attempt_ids = list(json.loads(run.attempt_ids_json))
+    except (TypeError, json.JSONDecodeError):
+        attempt_ids = []
+    return {
+        "id": run.id,
+        "visit_id": run.visit_id,
+        "evidence_mode": run.evidence_mode,
+        "selected_media_asset_ids": selected_media_asset_ids,
+        "input_configuration_sha256": run.input_configuration_sha256,
+        "request_origin": run.request_origin,
+        "status": run.status,
+        "started_at": _as_utc(run.started_at),
+        "completed_at": _as_utc(run.completed_at) if run.completed_at else None,
+        "attempt_ids": attempt_ids,
+        "error_code": run.error_code,
+    }
+
+
+def _assistant_suggestion_alternatives(
+    suggestion: SpeciesSuggestionModel,
+) -> list[dict[str, Any]]:
+    try:
+        alternatives = json.loads(suggestion.alternatives_json)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return [candidate for candidate in alternatives if isinstance(candidate, dict)]
+
+
+def _assistant_model_runtime_version(
+    attempt: BioClipIdentificationAttemptModel | None,
+) -> str | None:
+    if attempt is None or not attempt.model_provenance_json:
+        return None
+    try:
+        provenance = json.loads(attempt.model_provenance_json)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    for key in ("runtime_version", "model_version", "version"):
+        value = provenance.get(key) if isinstance(provenance, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _load_bioclip_input_image(

@@ -653,6 +653,48 @@ class BioClipIdentificationAttemptModel(Base):
     )
 
 
+class ReviewIdentificationAssistantRunModel(Base):
+    """One explicit reviewer request that may inspect a bounded saved Visit sequence."""
+
+    __tablename__ = "review_identification_assistant_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "evidence_mode IN ('primary_only', 'all_retained_evidence')",
+            name="ck_review_identification_assistant_evidence_mode",
+        ),
+        CheckConstraint(
+            "status IN ('running', 'succeeded', 'no_result', 'unavailable', 'failed')",
+            name="ck_review_identification_assistant_status",
+        ),
+        CheckConstraint(
+            "request_origin = 'user_triggered_review_assistance'",
+            name="ck_review_identification_assistant_origin",
+        ),
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_review_identification_assistant_idempotency",
+        ),
+        Index(
+            "ix_review_identification_assistant_visit_started",
+            "visit_id",
+            "started_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String, nullable=False)
+    evidence_mode: Mapped[str] = mapped_column(String, nullable=False)
+    selected_media_asset_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    input_configuration_sha256: Mapped[str] = mapped_column(String, nullable=False)
+    request_origin: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempt_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    error_code: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class TaxonomyLabelModel(Base):
     __tablename__ = "taxonomy_labels"
 
