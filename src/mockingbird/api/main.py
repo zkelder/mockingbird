@@ -554,6 +554,7 @@ def _camera_node_prepared_config(
     provider_key: str,
     config: dict[str, str | None],
     pairing_token: str | None,
+    verify_camera: bool = False,
 ) -> dict[str, str | None]:
     """Materialize a server-held pairing only for the bounded persistence call.
 
@@ -569,6 +570,18 @@ def _camera_node_prepared_config(
     pairing = get_camera_node_pairing_store().consume(pairing_token, camera_id=camera_id)
     if pairing is None:
         raise ValueError("camera_node_pairing_expired")
+    if verify_camera:
+        advertised = get_camera_node_client().cameras(
+            base_address=pairing.base_address,
+            credential=pairing.credential,
+        )
+        if not any(
+            camera.camera_id == camera_id
+            and camera.status == "available"
+            and camera.snapshot_supported
+            for camera in advertised
+        ):
+            raise ValueError("camera_node_camera_unavailable")
     return {
         "node_base_address": pairing.base_address,
         "node_credential": pairing.credential,
@@ -6176,6 +6189,7 @@ async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResp
                 status=camera.status,
                 snapshot_supported=camera.snapshot_supported,
                 setup_hint=camera.setup_hint,
+                provider_type=camera.provider_type,
             )
             for camera in pairing.cameras
         ],
@@ -6266,6 +6280,9 @@ async def validate_camera_setup(
             "camera_setup_invalid_node_address": "Enter a valid local LAN Camera Node address.",
             "camera_node_pairing_required": "Pair a Camera Node and select one advertised camera before validation.",
             "camera_node_pairing_expired": "Camera Node pairing expired. Pair the Node again before continuing.",
+            "camera_node_camera_unavailable": "The selected Camera Node camera is no longer available. Pair or select another advertised camera.",
+            "authentication_rejected": "Camera Node pairing is no longer accepted. Pair the Node again before completing setup.",
+            "node_unavailable": "Camera Node is unavailable. Check the local Node before completing setup.",
         }
         raise HTTPException(status_code=400, detail=messages.get(str(error), "Camera setup could not be validated.")) from None
 
@@ -6280,6 +6297,7 @@ async def complete_camera_setup(
             provider_key=payload.provider_key,
             config=payload.config,
             pairing_token=payload.node_pairing_token,
+            verify_camera=True,
         )
         result = repository.complete_camera_setup(payload.model_copy(update={"config": prepared_config}))
     except ValueError as error:
@@ -6292,6 +6310,9 @@ async def complete_camera_setup(
             "camera_setup_invalid_node_address": "Enter a valid local LAN Camera Node address.",
             "camera_node_pairing_required": "Pair a Camera Node and select one advertised camera before completing setup.",
             "camera_node_pairing_expired": "Camera Node pairing expired. Pair the Node again before continuing.",
+            "camera_node_camera_unavailable": "The selected Camera Node camera is no longer available. Pair or select another advertised camera.",
+            "authentication_rejected": "Camera Node pairing is no longer accepted. Pair the Node again before completing setup.",
+            "node_unavailable": "Camera Node is unavailable. Check the local Node before completing setup.",
             "camera_setup_idempotency_conflict": "That setup request cannot be safely repeated.",
         }
         status = 409 if str(error) in {"source_name_exists", "camera_setup_idempotency_conflict"} else 400

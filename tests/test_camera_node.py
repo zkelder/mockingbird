@@ -19,7 +19,14 @@ from mockingbird.storage.models import (
 )
 from mockingbird_node.app import create_node_app
 from mockingbird_node.config import CameraNodeConfig
-from mockingbird_node.providers import SyntheticCameraProvider
+from mockingbird_node.providers import (
+    CompositeCameraProvider,
+    NodeCamera,
+    PiCamera2Provider,
+    SyntheticCameraProvider,
+    V4L2CameraProvider,
+    create_camera_provider,
+)
 
 
 @pytest.fixture
@@ -46,6 +53,8 @@ class _FakeNodeRequester:
             }).encode()
         if url.endswith("/pair/revoke"):
             return 204, {}, b""
+        if url.endswith("/cameras"):
+            return 200, {"Content-Type": "application/json"}, json.dumps({"items": [{"camera_id": "opaque-camera-1", "display_name": "Feeder view", "status": "available", "snapshot_supported": True, "provider_type": "v4l2"}]}).encode()
         if "/snapshot" in url:
             return 200, {"Content-Type": "image/jpeg"}, b"\xff\xd8fake\xff\xd9"
         return 404, {"Content-Type": "application/json"}, b"{}"
@@ -79,6 +88,92 @@ def test_camera_node_address_and_client_are_pinned_to_one_local_base_address() -
     assert "never-echo-node-credential" not in str(pairing.cameras)
     assert all(url.startswith("http://127.0.0.1:8787/node/v1/") for _, url, _ in requester.requests)
     assert all("never-echo-node-credential" not in str(headers) for _, _, headers in requester.requests)
+
+
+def _node_config(*, provider_key: str = "v4l2", enabled_providers: tuple[str, ...] = ()) -> CameraNodeConfig:
+    return CameraNodeConfig("Test Node", "127.0.0.1", 8787, provider_key, None, 1_500_000, 1920, 1080, 60, 2, testing=True, enabled_providers=enabled_providers)
+
+
+def test_production_defaults_exclude_synthetic_and_unknown_provider_is_rejected(monkeypatch) -> None:
+    monkeypatch.delenv("MOCKINGBIRD_NODE_PROVIDER", raising=False)
+    monkeypatch.delenv("MOCKINGBIRD_NODE_PROVIDERS", raising=False)
+    config = CameraNodeConfig.from_environment()
+    assert config.enabled_providers == ("v4l2", "picamera2")
+    assert "synthetic" not in config.enabled_providers
+    monkeypatch.setenv("MOCKINGBIRD_NODE_PROVIDERS", "v4l2,not_a_provider")
+    with pytest.raises(ValueError, match="provider_invalid"):
+        CameraNodeConfig.from_environment()
+
+
+def test_v4l2_enumeration_is_bounded_opaque_and_capture_releases_resources() -> None:
+    class Capture:
+        released = False
+        def isOpened(self): return True
+        def set(self, *_args): return True
+        def read(self): return True, object()
+        def release(self): self.released = True
+
+    class Cv2:
+        CAP_PROP_FRAME_WIDTH = 1
+        CAP_PROP_FRAME_HEIGHT = 2
+        def __init__(self): self.capture = Capture(); self.paths = []
+        def VideoCapture(self, path): self.paths.append(path); return self.capture
+        def imencode(self, _suffix, _frame): return True, bytearray(b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9")
+
+    cv2 = Cv2()
+    provider = V4L2CameraProvider(_node_config(), device_enumerator=lambda: [(index, f"/dev/video{index}") for index in range(10, -1, -1)], cv2_module=cv2)
+    cameras = provider.cameras()
+    assert [camera.camera_id for camera in cameras] == [f"v4l2-camera-{index}" for index in range(8)]
+    assert "/dev/" not in str(cameras)
+    assert provider.snapshot("v4l2-camera-0").startswith(b"\xff\xd8")
+    assert cv2.capture.released is True
+    assert cv2.paths == ["/dev/video0"]
+
+
+def test_v4l2_busy_and_picamera2_missing_are_safe_setup_states() -> None:
+    provider = V4L2CameraProvider(_node_config(), device_enumerator=lambda: [(0, "/dev/video0")], cv2_module=object())
+    provider._lock.acquire()
+    try:
+        with pytest.raises(ValueError, match="camera_busy"):
+            provider.snapshot("v4l2-camera-0")
+    finally:
+        provider._lock.release()
+    pi = PiCamera2Provider(_node_config(provider_key="picamera2"), module=False, cv2_module=object())
+    assert pi.cameras()[0].status == "setup_required"
+
+
+def test_picamera2_fake_runtime_keeps_opaque_identity_and_releases_camera() -> None:
+    class Camera:
+        stopped = closed = False
+        def create_still_configuration(self, **_kwargs): return object()
+        def configure(self, _configuration): return None
+        def start(self): return None
+        def capture_array(self): return object()
+        def stop(self): self.stopped = True
+        def close(self): self.closed = True
+    class Picamera2:
+        camera = Camera()
+        @staticmethod
+        def global_camera_info(): return [{"ignored": "not exposed"}]
+        def __new__(cls, _index): return cls.camera
+    module = type("Module", (), {"Picamera2": Picamera2})
+    class Encoder:
+        def imencode(self, _suffix, _frame): return True, bytearray(b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9")
+
+    provider = PiCamera2Provider(_node_config(provider_key="picamera2"), module=module, cv2_module=Encoder())
+    assert provider.cameras()[0].camera_id == "picamera2-camera-0"
+    assert provider.snapshot("picamera2-camera-0").startswith(b"\xff\xd8")
+    assert Picamera2.camera.stopped and Picamera2.camera.closed
+
+
+def test_composite_provider_keeps_other_camera_available_when_one_fails() -> None:
+    class Failing:
+        def cameras(self): return [NodeCamera("v4l2-camera-0", "Linux camera 1", "unavailable", provider_type="v4l2")]
+        def snapshot(self, _camera_id): raise ValueError("camera_unavailable")
+        def close(self): return None
+    provider = CompositeCameraProvider([Failing(), SyntheticCameraProvider()])
+    assert provider.snapshot("synthetic-camera-1").startswith(b"\xff\xd8")
+    assert provider.cameras()[1].provider_type == "synthetic"
 
 
 def test_node_snapshot_failure_stops_for_durable_bounded_recovery() -> None:
@@ -197,6 +292,35 @@ async def test_pairing_guided_setup_keeps_credential_masked_and_creates_no_truth
                 config = json.loads(stored.config_json)
                 assert config["node_credential"] == "never-echo-node-credential"
                 assert config["node_pairing_state"] == "paired"
+    finally:
+        configure_repository(None)
+        api_main._camera_node_client = None
+
+
+@pytest.mark.anyio
+async def test_disappeared_camera_cannot_complete_node_setup(tmp_path) -> None:
+    class DisappearedRequester(_FakeNodeRequester):
+        def request(self, **kwargs):
+            if kwargs["url"].endswith("/cameras"):
+                return 200, {"Content-Type": "application/json"}, b'{"items": []}'
+            return super().request(**kwargs)
+
+    repository = _repository(tmp_path)
+    api_main._camera_node_client = CameraNodeClient(requester=DisappearedRequester())
+    configure_repository(repository)
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            paired = await client.post("/api/camera-nodes/pair", json={"base_address": "http://127.0.0.1:8787", "pairing_code": "correct-one-time-code"})
+            before = _counts(repository)
+            completed = await client.post("/api/camera-setup/complete", json={
+                "camera_name": "Missing Node camera", "stream_name": "Missing Node view", "provider_key": "camera_node",
+                "config": {"node_camera_id": "opaque-camera-1"}, "node_pairing_token": paired.json()["pairing_token"],
+                "zones": [{"name": "Yard", "zone_type": "yard", "polygon": [{"x": 0.2, "y": 0.2}, {"x": 0.8, "y": 0.2}, {"x": 0.8, "y": 0.8}, {"x": 0.2, "y": 0.8}]}],
+                "enable_monitoring": False, "idempotency_key": "camera-node-disappeared-camera",
+            })
+            assert completed.status_code == 400
+            assert _counts(repository) == before
     finally:
         configure_repository(None)
         api_main._camera_node_client = None

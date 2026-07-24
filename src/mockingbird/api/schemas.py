@@ -1663,6 +1663,7 @@ class CameraNodeAdvertisedCamera(BaseModel):
     status: str
     snapshot_supported: bool
     setup_hint: str | None = None
+    provider_type: str | None = None
 
 
 class CameraNodePairResponse(BaseModel):

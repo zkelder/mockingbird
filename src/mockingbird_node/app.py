@@ -76,7 +76,7 @@ class _PairingState:
 
 
 def _camera_payload(camera: NodeCamera) -> dict[str, object]:
-    return {"camera_id": camera.camera_id, "display_name": camera.display_name, "status": camera.status, "setup_hint": camera.setup_hint, "snapshot_supported": camera.snapshot_supported}
+    return {"camera_id": camera.camera_id, "display_name": camera.display_name, "status": camera.status, "setup_hint": camera.setup_hint, "snapshot_supported": camera.snapshot_supported, "provider_type": camera.provider_type}
 
 
 def _jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
@@ -147,8 +147,13 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
             raise HTTPException(status_code=409, detail="Camera setup is required.")
         try:
             image = provider.snapshot(camera_id)
-        except ValueError:
-            raise HTTPException(status_code=409, detail="Camera is unavailable.") from None
+        except ValueError as error:
+            status, detail = {
+                "camera_busy": (409, "Camera is busy."),
+                "camera_permission_denied": (403, "Camera permission is required on this Node."),
+                "camera_setup_required": (409, "Camera setup is required."),
+            }.get(str(error), (409, "Camera is unavailable."))
+            raise HTTPException(status_code=status, detail=detail) from None
         dimensions = _jpeg_dimensions(image)
         if not dimensions or len(image) > config.max_image_bytes or dimensions[0] > config.max_image_width or dimensions[1] > config.max_image_height:
             raise HTTPException(status_code=503, detail="Camera frame is outside Node bounds.")

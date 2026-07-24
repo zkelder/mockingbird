@@ -37,6 +37,7 @@ class CameraNodeCamera:
     status: str
     snapshot_supported: bool
     setup_hint: str | None = None
+    provider_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -125,8 +126,8 @@ def _camera_items(value: object) -> list[CameraNodeCamera]:
         camera_id, display_name, status = item.get("camera_id"), item.get("display_name"), item.get("status")
         if not all(isinstance(candidate, str) and candidate for candidate in (camera_id, display_name, status)) or len(camera_id) > 120 or len(display_name) > 120 or status not in {"available", "setup_required", "unavailable"}:
             raise CameraNodeClientError("node_response_invalid")
-        hint = item.get("setup_hint")
-        cameras.append(CameraNodeCamera(camera_id, display_name, status, bool(item.get("snapshot_supported")), hint if isinstance(hint, str) and len(hint) <= 240 else None))
+        hint, provider_type = item.get("setup_hint"), item.get("provider_type")
+        cameras.append(CameraNodeCamera(camera_id, display_name, status, bool(item.get("snapshot_supported")), hint if isinstance(hint, str) and len(hint) <= 240 else None, provider_type if provider_type in {"v4l2", "picamera2", "synthetic", "local"} else None))
     return cameras
 
 

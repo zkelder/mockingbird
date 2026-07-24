@@ -27,6 +27,7 @@ class CameraNodeConfig:
     pairing_ttl_seconds: int
     max_preview_viewers: int
     testing: bool = False
+    enabled_providers: tuple[str, ...] = ()
 
     @classmethod
     def from_environment(cls) -> "CameraNodeConfig":
@@ -46,17 +47,28 @@ class CameraNodeConfig:
         bind_host = os.getenv("MOCKINGBIRD_NODE_BIND", "127.0.0.1").strip()
         if bind_host not in {"127.0.0.1", "0.0.0.0", "::1", "::"}:
             raise ValueError("mockingbird_node_bind_invalid")
-        provider_key = os.getenv("MOCKINGBIRD_NODE_PROVIDER", "v4l2").strip().lower()
-        if provider_key not in {"v4l2", "picamera2", "synthetic"}:
+        requested = os.getenv(
+            "MOCKINGBIRD_NODE_PROVIDERS",
+            os.getenv("MOCKINGBIRD_NODE_PROVIDER", "auto"),
+        ).strip().lower()
+        enabled_providers = tuple(item.strip() for item in requested.split(",") if item.strip())
+        if not enabled_providers or len(enabled_providers) > 2 or any(
+            item not in {"auto", "v4l2", "picamera2", "synthetic"}
+            for item in enabled_providers
+        ):
             raise ValueError("mockingbird_node_provider_invalid")
         testing = os.getenv("MOCKINGBIRD_NODE_TESTING", "").strip().lower() in {"1", "true", "yes"}
-        if provider_key == "synthetic" and not testing:
+        if "auto" in enabled_providers:
+            if len(enabled_providers) != 1:
+                raise ValueError("mockingbird_node_provider_invalid")
+            enabled_providers = ("v4l2", "picamera2")
+        if "synthetic" in enabled_providers and (not testing or len(enabled_providers) != 1):
             raise ValueError("mockingbird_node_synthetic_testing_only")
         return cls(
             display_name=display_name,
             bind_host=bind_host,
             port=integer("MOCKINGBIRD_NODE_PORT", DEFAULT_PORT, minimum=1, maximum=65535),
-            provider_key=provider_key,
+            provider_key=enabled_providers[0],
             camera_identifier=os.getenv("MOCKINGBIRD_NODE_CAMERA", "").strip() or None,
             max_image_bytes=integer("MOCKINGBIRD_NODE_MAX_IMAGE_BYTES", DEFAULT_MAX_IMAGE_BYTES, minimum=32_768, maximum=8_000_000),
             max_image_width=integer("MOCKINGBIRD_NODE_MAX_IMAGE_WIDTH", DEFAULT_MAX_IMAGE_WIDTH, minimum=160, maximum=3840),
@@ -64,4 +76,5 @@ class CameraNodeConfig:
             pairing_ttl_seconds=integer("MOCKINGBIRD_NODE_PAIRING_TTL_SECONDS", DEFAULT_PAIRING_TTL_SECONDS, minimum=60, maximum=3600),
             max_preview_viewers=integer("MOCKINGBIRD_NODE_MAX_PREVIEW_VIEWERS", DEFAULT_MAX_PREVIEW_VIEWERS, minimum=0, maximum=4),
             testing=testing,
+            enabled_providers=enabled_providers,
         )

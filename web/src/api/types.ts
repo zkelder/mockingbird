@@ -447,6 +447,7 @@ export interface CameraNodeAdvertisedCamera {
   status: string;
   snapshot_supported: boolean;
   setup_hint?: string | null;
+  provider_type?: string | null;
 }
 
 export interface CameraNodePairResponse {

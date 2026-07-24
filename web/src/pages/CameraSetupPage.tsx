@@ -240,7 +240,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
             {nodePairing ? <><span><strong>Node found:</strong> {nodePairing.display_name} ({nodePairing.api_version})</span>
               <label>Camera view<select onChange={(event) => { setSelectedNodeCameraId(event.target.value); setConfig({ node_camera_id: event.target.value }); setValidation(null); if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl); setNodePreviewUrl(null); }} value={selectedNodeCameraId}>
                 <option value="">Choose an advertised camera</option>
-                {nodePairing.cameras.map((camera) => <option disabled={camera.status !== "available" || !camera.snapshot_supported} key={camera.camera_id} value={camera.camera_id}>{camera.display_name} — {camera.status.replace(/_/g, " ")}</option>)}
+                {nodePairing.cameras.map((camera) => <option disabled={camera.status !== "available" || !camera.snapshot_supported} key={camera.camera_id} value={camera.camera_id}>{camera.display_name}{camera.provider_type ? ` (${camera.provider_type})` : ""} — {camera.status.replace(/_/g, " ")}</option>)}
               </select></label>
               <button className="secondary-action" disabled={!selectedNodeCameraId || isLoadingNodePreview} onClick={() => void previewNodeCamera()} type="button">{isLoadingNodePreview ? "Loading preview…" : "Inspect preview"}</button>
               {nodePreviewUrl ? <img alt="Transient Camera Node preview" className="camera-node-preview" src={nodePreviewUrl} /> : null}

@@ -240,7 +240,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
               {nodePairing ? <><span><strong>Node found:</strong> {nodePairing.display_name} ({nodePairing.api_version})</span>
                 <label>Camera view<select onChange={(event) => { setSelectedNodeCameraId(event.target.value); setPreview(null); }} value={selectedNodeCameraId}>
                   <option value="">Choose an advertised camera</option>
-                  {nodePairing.cameras.map((camera) => <option disabled={camera.status !== "available" || !camera.snapshot_supported} key={camera.camera_id} value={camera.camera_id}>{camera.display_name} — {camera.status.replace(/_/g, " ")}</option>)}
+                  {nodePairing.cameras.map((camera) => <option disabled={camera.status !== "available" || !camera.snapshot_supported} key={camera.camera_id} value={camera.camera_id}>{camera.display_name}{camera.provider_type ? ` (${camera.provider_type})` : ""} — {camera.status.replace(/_/g, " ")}</option>)}
                 </select></label>
               </> : <span className="meta-text">You can still rename this Camera or Stream without re-pairing.</span>}
             </div> : configuration.editable_fields.map((field) => (

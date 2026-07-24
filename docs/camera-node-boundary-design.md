@@ -18,8 +18,10 @@ python -m mockingbird_node
 The launcher prints a short-lived one-time pairing code only to that local
 console. The default bind address is loopback. Set `MOCKINGBIRD_NODE_BIND=0.0.0.0`
 only when the Node must be reachable from the local LAN. The compact environment
-contract also supports a display name, port, declared provider, image bounds,
-pairing-code lifetime, and preview-viewer cap. It never accepts a command,
+contract also supports a display name, port, explicit provider allowlist
+(`v4l2`, `picamera2`, or both), image bounds, pairing-code lifetime, and
+preview-viewer cap. The default tries only locally supported production
+providers; synthetic is test-only. It never accepts a command,
 filesystem path, cloud account, or remote-management setting.
 
 ## Pairing and network boundary
@@ -39,11 +41,15 @@ Source, Stream, Zones, activity, evidence, Visits, reviews, and corrections.
 
 ## Provider and frame boundary
 
-The Node advertises opaque camera IDs and sanitized display metadata. Its
-synthetic provider exists only for automated tests. V4L2 and Raspberry Pi camera
-providers report **Setup required** when their optional local runtime is absent;
-the Node never installs a dependency, driver, FFmpeg, or model and never runs a
-user-provided command.
+The Node advertises provider-scoped opaque camera IDs and sanitized display
+metadata. Its synthetic provider exists only for automated tests. V4L2 uses an
+already-installed local capture runtime for one bounded USB/Linux still;
+optional PiCamera2 does the same only when its installed Pi camera stack is
+available. Either reports **Setup required** or unavailable when its local
+dependency, device, permission, or usable frame is absent. The Node never
+installs a dependency or driver, runs FFmpeg, accepts a device path over HTTP,
+or runs a user-provided command. Camera handles are owned for one bounded
+capture and released afterward.
 
 Authenticated snapshots are bounded JPEG responses. Add Camera may request one
 explicit transient JPEG after pairing and before a Zone is drawn; it is returned
