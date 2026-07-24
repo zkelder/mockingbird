@@ -34,6 +34,12 @@ from mockingbird.api.schemas import (
     CameraSourceCreateResponse,
     CameraSourceMutationResult,
     CameraSourceUpdate,
+    CameraConfigurationApplyRequest,
+    CameraConfigurationApplyResponse,
+    CameraConfigurationEditResponse,
+    CameraConfigurationHistoryResponse,
+    CameraConfigurationImpactPreview,
+    CameraConfigurationImpactPreviewRequest,
     CameraHealthDetailResponse,
     CameraHealthIncidentListResponse,
     CameraHealthListResponse,
@@ -315,6 +321,7 @@ from mockingbird.playback import (
     windows_camera_bridge,
 )
 from mockingbird.repository.product_repository import (
+    CameraConfigurationConflictError,
     FastReviewConflictError,
     MonitoringOperationConflictError,
     ProductRepository,
@@ -2555,6 +2562,87 @@ def _supervisor_camera_status(stream_id: str) -> ManagedCameraStatus | None:
 def _supervisor_stop_camera(stream_id: str, reason: str) -> None:
     if _live_camera_session_manager is not None:
         _live_camera_session_manager.stop(stream_id, reason=reason)
+
+
+class CameraConfigurationApplicationService:
+    """Apply one previewed camera edit while keeping runtime ownership out of routes."""
+
+    def __init__(self, repository: ProductRepository) -> None:
+        self.repository = repository
+
+    async def apply(
+        self,
+        stream_id: str,
+        payload: CameraConfigurationApplyRequest,
+    ) -> CameraConfigurationApplyResponse | None:
+        existing = self.repository.camera_configuration_idempotent_revision(stream_id, payload)
+        if existing is not None:
+            configuration = self.repository.get_camera_configuration_edit(stream_id)
+            preview = self.repository.camera_configuration_preview_from_revision(stream_id, existing)
+            if configuration is None or preview is None:
+                return None
+            return CameraConfigurationApplyResponse(
+                configuration=configuration,
+                preview=preview,
+                revision=existing,
+                idempotent=True,
+                message="This camera configuration change was already applied safely.",
+            )
+
+        preview = self.repository.preview_camera_configuration(stream_id, payload)
+        if preview is None:
+            return None
+        if preview.preview_token != payload.preview_token:
+            raise CameraConfigurationConflictError("camera_configuration_preview_expired")
+        if not preview.validation.can_apply:
+            raise ValueError("camera_configuration_validation_required")
+
+        runtime_stopped = False
+        if preview.restart_required:
+            try:
+                # Existing managers own their own stop/finalization behavior. This
+                # service never converts activity into product truth during a config edit.
+                get_durable_monitoring_supervisor().stop_stream_for_configuration(stream_id)
+                if _source_monitor_manager is not None:
+                    await _source_monitor_manager.stop(stream_id)
+                runtime_stopped = True
+            except Exception as error:
+                if preview.monitoring_desired == StreamMonitoringMode.armed:
+                    get_durable_monitoring_supervisor().wake()
+                raise RuntimeError("camera_configuration_runtime_stop_failed") from error
+
+        try:
+            result = self.repository.apply_camera_configuration(stream_id, payload)
+        except Exception:
+            # The database transaction rolls back; an explicitly requested restart
+            # can resume the old local configuration through the established supervisor.
+            if (
+                runtime_stopped
+                and preview.monitoring_desired == StreamMonitoringMode.armed
+                and payload.restart_monitoring
+            ):
+                get_durable_monitoring_supervisor().wake()
+            raise
+        if result is None:
+            return None
+
+        configuration = self.repository.get_camera_configuration_edit(stream_id)
+        if configuration is None:
+            return None
+        if result.revision.restart_requested:
+            # Only an already-armed Stream with explicit confirmation may restart.
+            get_durable_monitoring_supervisor().wake()
+        return CameraConfigurationApplyResponse(
+            configuration=configuration,
+            preview=result.preview,
+            revision=result.revision,
+            idempotent=result.idempotent,
+            message=(
+                "Camera configuration saved. Monitoring restart was requested through the local supervisor."
+                if result.revision.restart_requested
+                else "Camera configuration saved. Monitoring remains at its existing saved intent."
+            ),
+        )
 
 
 def _live_motion_session_status(
@@ -6934,6 +7022,109 @@ async def get_stream(stream_id: str) -> Stream:
     if stream is None:
         raise _not_found("Stream", stream_id)
     return stream
+
+
+def _camera_configuration_http_error(error: Exception) -> HTTPException:
+    code = str(error)
+    conflict_messages = {
+        "camera_configuration_state_changed": "This camera changed after the edit screen opened. Refresh the configuration before saving.",
+        "camera_configuration_preview_expired": "This impact preview is no longer current. Review the updated impact before saving.",
+        "camera_configuration_idempotency_conflict": "That save request key was already used for a different camera change.",
+        "source_name_exists": "A camera with that name already exists.",
+        "camera_configuration_runtime_stop_failed": "MockingBird could not safely stop the current camera session. The saved configuration was not changed.",
+    }
+    validation_messages = {
+        "camera_configuration_not_editable": "This camera provider cannot be edited in guided setup.",
+        "camera_configuration_provider_fixed": "Camera type is fixed for an existing camera. Add a new camera for a different provider.",
+        "camera_configuration_unsupported_fields": "This camera configuration included unsupported settings.",
+        "camera_configuration_restricted_field": "This setting is not editable from guided camera setup.",
+        "camera_configuration_secret_action_invalid": "Secret actions apply only to saved credential fields.",
+        "camera_configuration_secret_action_required": "Choose Keep, Replace, or Remove before changing a saved credential.",
+        "camera_configuration_secret_remove_value": "Remove a saved credential without entering a replacement value.",
+        "camera_configuration_secret_replace_value": "Enter a replacement value before choosing Replace.",
+        "camera_configuration_validation_required": "Finish the required camera configuration before saving.",
+        "camera_configuration_no_changes": "Make a camera configuration change before saving.",
+        "camera_configuration_monitoring_state_missing": "This camera is missing required local monitoring state and cannot be edited safely.",
+        "camera_configuration_provider_unsupported": "This camera provider is not supported by guided editing.",
+        "camera_setup_invalid_url": "Enter a valid URL for the selected camera field.",
+    }
+    if code in conflict_messages:
+        return HTTPException(status_code=409, detail=conflict_messages[code])
+    return HTTPException(
+        status_code=400,
+        detail=validation_messages.get(code, "Camera configuration could not be updated safely."),
+    )
+
+
+@app.get(
+    "/api/streams/{stream_id}/camera-configuration",
+    response_model=CameraConfigurationEditResponse,
+)
+async def get_camera_configuration_edit(
+    stream_id: str,
+) -> CameraConfigurationEditResponse:
+    try:
+        configuration = get_repository().get_camera_configuration_edit(stream_id)
+    except ValueError as error:
+        raise _camera_configuration_http_error(error) from None
+    if configuration is None:
+        raise _not_found("Stream", stream_id)
+    return configuration
+
+
+@app.post(
+    "/api/streams/{stream_id}/camera-configuration/preview",
+    response_model=CameraConfigurationImpactPreview,
+)
+async def preview_camera_configuration(
+    stream_id: str,
+    payload: CameraConfigurationImpactPreviewRequest,
+) -> CameraConfigurationImpactPreview:
+    try:
+        preview = get_repository().preview_camera_configuration(stream_id, payload)
+    except (CameraConfigurationConflictError, ValueError) as error:
+        raise _camera_configuration_http_error(error) from None
+    if preview is None:
+        raise _not_found("Stream", stream_id)
+    return preview
+
+
+@app.post(
+    "/api/streams/{stream_id}/camera-configuration/apply",
+    response_model=CameraConfigurationApplyResponse,
+)
+async def apply_camera_configuration(
+    stream_id: str,
+    payload: CameraConfigurationApplyRequest,
+) -> CameraConfigurationApplyResponse:
+    try:
+        result = await CameraConfigurationApplicationService(get_repository()).apply(
+            stream_id,
+            payload,
+        )
+    except (CameraConfigurationConflictError, ValueError, RuntimeError) as error:
+        raise _camera_configuration_http_error(error) from None
+    if result is None:
+        raise _not_found("Stream", stream_id)
+    return result
+
+
+@app.get(
+    "/api/streams/{stream_id}/camera-configuration/history",
+    response_model=CameraConfigurationHistoryResponse,
+)
+async def list_camera_configuration_history(
+    stream_id: str,
+    limit: int = Query(default=20, ge=1, le=20),
+) -> CameraConfigurationHistoryResponse:
+    revisions = get_repository().list_camera_configuration_history(stream_id, limit=limit)
+    if revisions is None:
+        raise _not_found("Stream", stream_id)
+    return CameraConfigurationHistoryResponse(
+        items=revisions,
+        limit=limit,
+        message="Showing bounded redacted camera configuration history.",
+    )
 
 
 @app.get(

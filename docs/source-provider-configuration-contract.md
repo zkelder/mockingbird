@@ -110,9 +110,13 @@ details.
 
 ## Secret/Redaction Policy
 
-Secret fields are never returned raw. When a secret field is supplied, API/UI
-responses return only a configured/not-configured marker. This phase does not
-store real credentials or validate them.
+Secret fields are never returned raw. API/UI responses return only a
+configured/not-configured marker. Guided Camera Editing accepts a replacement
+only after an explicit `Replace` choice and keeps that value in local provider
+configuration; it is never echoed in read, validation, impact-preview,
+configuration-history, alert, or error responses. A blank secret field means
+`Keep`; only an explicit `Remove` action clears it. This does not validate a
+credential or contact a provider.
 
 For `folder_import_future`, `folder_path` is sensitive local data. It may be
 used internally by the explicit preview/import routes, but API responses, status
@@ -153,6 +157,9 @@ placeholder playback until a real provider exists.
 - Adds provider definition and configuration API contracts.
 - Stores safe Source provider metadata locally.
 - Redacts secret fields to configured/not-configured markers.
+- Supports a compatible existing Camera/Stream edit flow with fixed provider
+  type, opaque state/preview tokens, redacted bounded revision history, and no
+  raw configuration values in its edit APIs.
 - Shows a compact Source setup surface on Streams.
 - Updates Source connection readiness from provider configuration metadata.
 
@@ -219,6 +226,10 @@ reviewable activity.
 - Manual media setup points to explicit import/review, not live playback.
 - Provider configuration does not create evidence, review truth, exports, media
   files, model artifacts, or runtime calls.
+- Guided configuration validation and impact preview do not contact a camera,
+  start a worker, save media, or create product records. Applying a
+  runtime-affecting edit uses the durable monitoring owner to stop and, only
+  when explicitly confirmed for an already-armed Stream, request a restart.
 - Webhook provider configuration can feed explicit dry-run validation and the
   confirmed metadata motion-to-MotionEvidence route only. It does not
   authenticate, fetch media, create Events/Visits, labels, or write truth.

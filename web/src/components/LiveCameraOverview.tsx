@@ -23,6 +23,7 @@ interface LiveCameraOverviewProps {
   streams: DashboardStreamSummary[];
   runtimeByStream: Record<string, StreamRuntimeStatus>;
   onOpenStream: (streamId: string) => void;
+  onOpenCameraConfiguration?: (streamId: string) => void;
   onOpenReview: (streamId: string) => void;
   onToggleMonitoring?: (stream: DashboardStreamSummary, runtime: StreamRuntimeStatus) => void;
 }
@@ -133,6 +134,7 @@ export function LiveCameraOverview({
   streams,
   runtimeByStream,
   onOpenStream,
+  onOpenCameraConfiguration,
   onOpenReview,
   onToggleMonitoring,
 }: LiveCameraOverviewProps) {
@@ -389,6 +391,7 @@ export function LiveCameraOverview({
                 <button className="secondary-action" onClick={() => onOpenStream(stream.stream_id)} type="button">
                   Open Stream
                 </button>
+                {onOpenCameraConfiguration ? <button className="text-action" onClick={() => onOpenCameraConfiguration(stream.stream_id)} type="button">Edit camera setup</button> : null}
                 {isActivePreview(preview) ? (
                   <button className="secondary-action" onClick={() => stopPreview(stream.stream_id)} type="button">
                     Stop live view

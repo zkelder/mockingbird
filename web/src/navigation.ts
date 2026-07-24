@@ -3,6 +3,7 @@ export type Page =
   | "streams"
   | "yard-map"
   | "camera-setup"
+  | "camera-configuration"
   | "import"
   | "folder-import"
   | "model-adapters"
@@ -107,6 +108,13 @@ export function readAppRoute(pathname = window.location.pathname): AppRoute {
     }
   }
 
+  if (segments.length === 3 && segments[0] === "cameras" && segments[2] === "edit") {
+    const streamId = decodeIdentifier(segments[1]);
+    if (streamId) {
+      return { page: "camera-configuration", streamId };
+    }
+  }
+
   return { page: "dashboard", recoveredFromUnknownPath: normalizedPath !== "/" };
 }
 
@@ -125,6 +133,9 @@ export function pathForAppRoute(route: AppRoute): string {
   }
   if (route.page === "collection-detail" && route.collectionId) {
     return `/collections/${encodeURIComponent(route.collectionId)}`;
+  }
+  if (route.page === "camera-configuration" && route.streamId) {
+    return `/cameras/${encodeURIComponent(route.streamId)}/edit`;
   }
   return pagePaths[route.page] ?? "/";
 }

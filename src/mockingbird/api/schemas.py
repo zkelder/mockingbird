@@ -476,6 +476,123 @@ class SourceProviderConfigurationUpdate(BaseModel):
     config: dict[str, str | None] = Field(default_factory=dict)
 
 
+class CameraConfigurationSecretAction(str, Enum):
+    keep = "keep"
+    replace = "replace"
+    remove = "remove"
+
+
+class CameraConfigurationValidationSummary(BaseModel):
+    """Readiness-only validation for a saved camera edit; never a connection check."""
+
+    status: str
+    message: str
+    missing_fields: list[str] = Field(default_factory=list)
+    can_apply: bool
+
+
+class CameraConfigurationEditResponse(BaseModel):
+    """A secret-safe edit contract that intentionally omits saved provider values."""
+
+    stream_id: str
+    source_id: str
+    source_name: str
+    stream_name: str
+    provider_key: str
+    provider_display_name: str
+    editable: bool
+    editable_fields: list[SourceProviderField] = Field(default_factory=list)
+    configured_fields: list[str] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    field_states: dict[str, str] = Field(default_factory=dict)
+    state_token: str
+    monitoring_policy: StreamMonitoringPolicyResponse
+    runtime: StreamRuntimeStatusResponse
+    health: CameraHealthSummary
+    message: str
+
+
+class CameraConfigurationChangeRequest(BaseModel):
+    """A partial in-place edit. Secret values require an explicit action."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_key: str
+    config: dict[str, str | None] = Field(default_factory=dict)
+    secret_actions: dict[str, CameraConfigurationSecretAction] = Field(default_factory=dict)
+    source_name: str | None = Field(default=None, max_length=120)
+    stream_name: str | None = Field(default=None, max_length=120)
+    expected_state_token: str = Field(min_length=16, max_length=160)
+
+    @field_validator("source_name", "stream_name")
+    @classmethod
+    def normalize_optional_names(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Camera and Stream names cannot be blank when changed.")
+        return normalized
+
+
+class CameraConfigurationImpactPreviewRequest(CameraConfigurationChangeRequest):
+    pass
+
+
+class CameraConfigurationImpactPreview(BaseModel):
+    stream_id: str
+    source_id: str
+    provider_key: str
+    state_token: str
+    preview_token: str
+    changed_fields: list[str] = Field(default_factory=list)
+    restart_required: bool
+    requires_explicit_restart_choice: bool
+    monitoring_desired: StreamMonitoringMode
+    monitoring_actual: StreamRuntimeState
+    open_activity_session_count: int = Field(ge=0)
+    preview_may_be_briefly_unavailable: bool
+    preservation_summary: list[str] = Field(default_factory=list)
+    validation: CameraConfigurationValidationSummary
+    message: str
+
+
+class CameraConfigurationApplyRequest(CameraConfigurationChangeRequest):
+    preview_token: str = Field(min_length=16, max_length=160)
+    idempotency_key: str = Field(min_length=8, max_length=120)
+    restart_monitoring: bool = False
+
+
+class CameraConfigurationRevision(BaseModel):
+    id: str
+    stream_id: str
+    source_id: str
+    provider_key: str
+    changed_fields: list[str] = Field(default_factory=list)
+    change_fingerprint: str
+    restart_required: bool
+    restart_requested: bool
+    desired_mode: StreamMonitoringMode
+    actual_state_before: StreamRuntimeState
+    actual_state_after: StreamRuntimeState
+    outcome: str
+    created_at: datetime
+
+
+class CameraConfigurationHistoryResponse(BaseModel):
+    items: list[CameraConfigurationRevision] = Field(default_factory=list, max_length=20)
+    limit: int = Field(ge=1, le=20)
+    message: str
+
+
+class CameraConfigurationApplyResponse(BaseModel):
+    configuration: CameraConfigurationEditResponse
+    preview: CameraConfigurationImpactPreview
+    revision: CameraConfigurationRevision
+    idempotent: bool = False
+    message: str
+
+
 class SourceSetupReviewStep(BaseModel):
     key: str
     label: str

@@ -179,6 +179,23 @@ class DurableMonitoringSupervisor:
 
         self._wake_event.set()
 
+    def stop_stream_for_configuration(self, stream_id: str) -> None:
+        """Release one active slot before an explicit in-place camera configuration change.
+
+        Desired policy remains untouched. The application service decides whether
+        the already-armed Stream may be woken again after its transaction commits.
+        """
+
+        now = self._clock()
+        with self._reconcile_lock:
+            self._active_stream_ids.discard(stream_id)
+        self._safe_stop(stream_id, "camera_configuration_changed")
+        self._store.mark_monitoring_stopped(
+            stream_id,
+            reason="camera_configuration_changed",
+            now=now,
+        )
+
     def shutdown(self, *, reason: str) -> None:
         """Stop active runtime without changing the user's durable enabled intent."""
 

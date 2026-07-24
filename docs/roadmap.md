@@ -58,6 +58,9 @@ setup rather than a product blocker.
 - Phases 24A-24D added the single local runtime, verified database-and-media
   backup/restore, durable lifecycle design, and inert default-off monitoring
   policy/runtime state.
+- Camera Health and Guided Camera Editing now expose saved operational state,
+  safe in-place compatible camera configuration, redacted change previews, and
+  bounded revision history without changing the evidence/review truth boundary.
 
 See [roadmap-history.md](roadmap-history.md) for the concise phase record.
 

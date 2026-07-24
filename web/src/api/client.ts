@@ -16,6 +16,12 @@ import type {
   CameraHealthDetailResponse,
   CameraHealthIncidentListResponse,
   CameraHealthListResponse,
+  CameraConfigurationApplyRequest,
+  CameraConfigurationApplyResponse,
+  CameraConfigurationEditResponse,
+  CameraConfigurationHistoryResponse,
+  CameraConfigurationImpactPreview,
+  CameraConfigurationImpactPreviewRequest,
   CameraSetupCompleteRequest,
   CameraSetupCompletionResponse,
   CameraSetupOptionsResponse,
@@ -327,6 +333,30 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  getCameraConfiguration: (streamId: string) =>
+    request<CameraConfigurationEditResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/camera-configuration`,
+    ),
+  previewCameraConfiguration: (
+    streamId: string,
+    payload: CameraConfigurationImpactPreviewRequest,
+  ) =>
+    request<CameraConfigurationImpactPreview>(
+      `/api/streams/${encodeURIComponent(streamId)}/camera-configuration/preview`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  applyCameraConfiguration: (
+    streamId: string,
+    payload: CameraConfigurationApplyRequest,
+  ) =>
+    request<CameraConfigurationApplyResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/camera-configuration/apply`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  getCameraConfigurationHistory: (streamId: string, limit = 20) =>
+    request<CameraConfigurationHistoryResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/camera-configuration/history?limit=${limit}`,
+    ),
   createCameraSource: (payload: CameraSourceCreateRequest) =>
     request<CameraSourceCreateResponse>("/api/sources", {
       method: "POST",

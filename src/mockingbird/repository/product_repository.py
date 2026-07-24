@@ -109,6 +109,13 @@ from mockingbird.api.schemas import (
     CameraSourceCreateResponse,
     CameraSourceMutationResult,
     CameraSourceUpdate,
+    CameraConfigurationApplyRequest,
+    CameraConfigurationEditResponse,
+    CameraConfigurationImpactPreview,
+    CameraConfigurationImpactPreviewRequest,
+    CameraConfigurationRevision,
+    CameraConfigurationSecretAction,
+    CameraConfigurationValidationSummary,
     CameraSetupCompleteRequest,
     CameraSetupCompletionResponse,
     CameraSetupOption,
@@ -422,6 +429,7 @@ from mockingbird.storage.models import (
     Base,
     BioClipIdentificationAttemptModel,
     CameraSetupOperationModel,
+    CameraConfigurationRevisionModel,
     CameraHealthIncidentModel,
     CameraSourceModel,
     DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS,
@@ -487,6 +495,7 @@ CAMERA_HEALTH_PROLONGED_CAPACITY_WAIT = timedelta(minutes=5)
 CAMERA_HEALTH_CHECKPOINT_INTERVAL = timedelta(seconds=30)
 CAMERA_HEALTH_HISTORY_LIMIT = 20
 CAMERA_HEALTH_MAX_OCCURRENCES = 100
+CAMERA_CONFIGURATION_HISTORY_LIMIT = 20
 MAX_ACTIVE_VISIT_TAGS = 200
 MAX_TAGS_PER_VISIT = 20
 MAX_TAG_LIST_ITEMS = 50
@@ -538,6 +547,10 @@ class VisitCurationConflictError(ValueError):
 
 class MonitoringOperationConflictError(ValueError):
     """An idempotency key was reused for a different monitoring operation."""
+
+
+class CameraConfigurationConflictError(ValueError):
+    """A camera edit preview no longer matches the saved configuration state."""
 
 
 _ZONE_MONITORING_POLICY_FIELDS = (
@@ -869,7 +882,7 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 label="Auth username",
                 required=False,
                 secret=True,
-                description="Stored only as a configured/not-configured marker.",
+                description="Stored locally and shown only as configured or not configured.",
                 placeholder="Not used for preview fetch yet",
             ),
             SourceProviderField(
@@ -877,7 +890,7 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 label="Auth password",
                 required=False,
                 secret=True,
-                description="Stored only as a configured/not-configured marker.",
+                description="Stored locally and shown only as configured or not configured.",
                 placeholder="Not used for preview fetch yet",
             ),
             SourceProviderField(
@@ -1067,7 +1080,7 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 label="Access secret",
                 required=False,
                 secret=True,
-                description="Stored only as a configured/not-configured marker.",
+                description="Stored locally and shown only as configured or not configured.",
                 placeholder="Not stored raw",
             ),
         ],
@@ -1093,7 +1106,7 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 label="Access token",
                 required=False,
                 secret=True,
-                description="Stored only as a configured/not-configured marker.",
+                description="Stored locally and shown only as configured or not configured.",
                 placeholder="Not stored raw",
             ),
         ],
@@ -1433,6 +1446,13 @@ class SourceProviderConfigurationModel(Base):
     provider_key: Mapped[str] = mapped_column(String, nullable=False)
     config_json: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+@dataclass(frozen=True)
+class CameraConfigurationApplyResult:
+    revision: CameraConfigurationRevision
+    preview: CameraConfigurationImpactPreview
+    idempotent: bool
 
 
 def _new_stream_monitoring_records(
@@ -2575,6 +2595,454 @@ class ProductRepository:
                 session.flush()
                 stream_ids = self._stream_ids_for_source(session, source_id)
                 return _source_provider_configuration_from_model(source, model, stream_ids)
+
+    def get_camera_configuration_edit(
+        self,
+        stream_id: str,
+    ) -> CameraConfigurationEditResponse | None:
+        """Read one existing Stream's editable setup without returning saved settings."""
+
+        with self.session_factory() as session:
+            stream = session.get(StreamModel, stream_id)
+            if stream is None:
+                return None
+            source = session.get(CameraSourceModel, stream.source_id)
+            if source is None:
+                return None
+            model = session.get(SourceProviderConfigurationModel, source.id)
+            provider_key = model.provider_key if model is not None else _default_source_provider_key(source)
+            definition = _source_provider_definition(provider_key)
+            if definition is None:
+                raise ValueError("camera_configuration_provider_unsupported")
+            config = (
+                json.loads(model.config_json)
+                if model is not None
+                else _default_source_provider_config(provider_key)
+            )
+            policy = session.get(StreamMonitoringPolicyModel, stream.id)
+            checkpoint = session.get(StreamRuntimeCheckpointModel, stream.id)
+            state_token = _camera_configuration_state_token(
+                source=source,
+                stream=stream,
+                provider_key=provider_key,
+                config=config,
+                policy=policy,
+                checkpoint=checkpoint,
+            )
+            summary = _source_provider_configuration_from_config(
+                source_id=source.id,
+                definition=definition,
+                config=config,
+                supports_zone_editing=definition.supports_zone_editing,
+            )
+            editable = _camera_configuration_is_editable(source, model, definition)
+            editable_fields = [
+                field.model_copy(update={"placeholder": None})
+                for field in definition.fields
+                if field.key in _camera_configuration_editable_field_keys(definition)
+            ]
+            field_states = {
+                field.key: "configured"
+                if (config.get(field.key) or "").strip()
+                else "not_configured"
+                for field in editable_fields
+            }
+
+        monitoring_policy = self.get_stream_monitoring_policy(stream_id)
+        runtime = self.get_stream_runtime_status(stream_id)
+        health = self.get_stream_camera_health(stream_id)
+        if monitoring_policy is None or runtime is None or health is None:
+            return None
+        return CameraConfigurationEditResponse(
+            stream_id=stream.id,
+            source_id=source.id,
+            source_name=source.name,
+            stream_name=stream.name,
+            provider_key=provider_key,
+            provider_display_name=definition.display_name,
+            editable=editable,
+            editable_fields=editable_fields,
+            configured_fields=[
+                field.key for field in editable_fields if field_states[field.key] == "configured"
+            ],
+            missing_fields=[
+                field_key
+                for field_key in summary.missing_fields
+                if field_key in field_states
+            ],
+            field_states=field_states,
+            state_token=state_token,
+            monitoring_policy=monitoring_policy,
+            runtime=runtime,
+            health=health.health,
+            message=(
+                "Edit this camera in place. Saved provider values remain masked."
+                if editable
+                else "This camera's provider configuration is not editable in guided setup."
+            ),
+        )
+
+    def preview_camera_configuration(
+        self,
+        stream_id: str,
+        payload: CameraConfigurationImpactPreviewRequest,
+    ) -> CameraConfigurationImpactPreview | None:
+        """Validate a proposed in-place edit and describe impact without touching runtime."""
+
+        with self.session_factory() as session:
+            state = _camera_configuration_state_for_stream(session, stream_id)
+            if state is None:
+                return None
+            source, stream, model, definition, config, policy, checkpoint = state
+            _validate_camera_configuration_request(
+                source=source,
+                model=model,
+                definition=definition,
+                payload=payload,
+            )
+            state_token = _camera_configuration_state_token(
+                source=source,
+                stream=stream,
+                provider_key=model.provider_key,
+                config=config,
+                policy=policy,
+                checkpoint=checkpoint,
+            )
+            if payload.expected_state_token != state_token:
+                raise CameraConfigurationConflictError("camera_configuration_state_changed")
+            proposed_config = _camera_configuration_proposed_config(
+                definition=definition,
+                existing_config=config,
+                payload=payload,
+            )
+            validation = _camera_configuration_validation_summary(
+                source_id=source.id,
+                definition=definition,
+                config=proposed_config,
+            )
+            changed_fields, changed_config_keys = _camera_configuration_changed_fields(
+                source=source,
+                stream=stream,
+                definition=definition,
+                previous_config=config,
+                proposed_config=proposed_config,
+                source_name=payload.source_name,
+                stream_name=payload.stream_name,
+            )
+            restart_required = any(
+                key not in _CAMERA_CONFIGURATION_NON_RUNTIME_FIELDS
+                for key in changed_config_keys
+            )
+            change_fingerprint = _camera_configuration_change_fingerprint(
+                source=source,
+                stream=stream,
+                proposed_config=proposed_config,
+                source_name=payload.source_name,
+                stream_name=payload.stream_name,
+            )
+
+        runtime = self.get_stream_runtime_status(stream_id)
+        health = self.get_stream_camera_health(stream_id)
+        if runtime is None or health is None:
+            return None
+        preview_token = _camera_configuration_preview_token(
+            state_token=state_token,
+            change_fingerprint=change_fingerprint,
+        )
+        return CameraConfigurationImpactPreview(
+            stream_id=stream_id,
+            source_id=source.id,
+            provider_key=model.provider_key,
+            state_token=state_token,
+            preview_token=preview_token,
+            changed_fields=changed_fields,
+            restart_required=restart_required,
+            requires_explicit_restart_choice=(
+                restart_required and runtime.desired_mode == StreamMonitoringMode.armed
+            ),
+            monitoring_desired=runtime.desired_mode,
+            monitoring_actual=runtime.actual_state,
+            open_activity_session_count=health.health.open_activity_session_count,
+            preview_may_be_briefly_unavailable=restart_required,
+            preservation_summary=_camera_configuration_preservation_summary(),
+            validation=validation,
+            message=(
+                "No saved settings would change."
+                if not changed_fields
+                else "This is a local configuration/readiness preview only; MockingBird does not contact the camera."
+            ),
+        )
+
+    def camera_configuration_idempotent_revision(
+        self,
+        stream_id: str,
+        payload: CameraConfigurationApplyRequest,
+    ) -> CameraConfigurationRevision | None:
+        """Return a matching completed apply once, without inspecting provider settings."""
+
+        request_fingerprint = _camera_configuration_request_fingerprint(payload)
+        with self.session_factory() as session:
+            revision = session.scalar(
+                select(CameraConfigurationRevisionModel).where(
+                    CameraConfigurationRevisionModel.stream_id == stream_id,
+                    CameraConfigurationRevisionModel.idempotency_key == payload.idempotency_key,
+                )
+            )
+            if revision is None:
+                return None
+            if revision.request_fingerprint != request_fingerprint:
+                raise CameraConfigurationConflictError("camera_configuration_idempotency_conflict")
+            return _camera_configuration_revision_from_model(revision)
+
+    def camera_configuration_preview_from_revision(
+        self,
+        stream_id: str,
+        revision: CameraConfigurationRevision,
+    ) -> CameraConfigurationImpactPreview | None:
+        """Render an idempotent response from redacted local history only."""
+
+        configuration = self.get_camera_configuration_edit(stream_id)
+        if configuration is None:
+            return None
+        return CameraConfigurationImpactPreview(
+            stream_id=stream_id,
+            source_id=configuration.source_id,
+            provider_key=revision.provider_key,
+            state_token=configuration.state_token,
+            preview_token=_camera_configuration_replay_preview_token(revision),
+            changed_fields=revision.changed_fields,
+            restart_required=revision.restart_required,
+            requires_explicit_restart_choice=False,
+            monitoring_desired=configuration.monitoring_policy.mode,
+            monitoring_actual=configuration.runtime.actual_state,
+            open_activity_session_count=configuration.health.open_activity_session_count,
+            preview_may_be_briefly_unavailable=revision.restart_required,
+            preservation_summary=_camera_configuration_preservation_summary(),
+            validation=CameraConfigurationValidationSummary(
+                status="already_applied",
+                message="This configuration change was already applied safely.",
+                missing_fields=configuration.missing_fields,
+                can_apply=True,
+            ),
+            message="This configuration change was already applied safely.",
+        )
+
+    def apply_camera_configuration(
+        self,
+        stream_id: str,
+        payload: CameraConfigurationApplyRequest,
+    ) -> CameraConfigurationApplyResult | None:
+        """Persist a previewed in-place edit atomically; callers own the runtime stop/wake."""
+
+        existing = self.camera_configuration_idempotent_revision(stream_id, payload)
+        if existing is not None:
+            preview = self.camera_configuration_preview_from_revision(stream_id, existing)
+            if preview is None:
+                return None
+            return CameraConfigurationApplyResult(
+                revision=existing,
+                preview=preview,
+                idempotent=True,
+            )
+
+        preview = self.preview_camera_configuration(stream_id, payload)
+        if preview is None:
+            return None
+        if preview.preview_token != payload.preview_token:
+            raise CameraConfigurationConflictError("camera_configuration_preview_expired")
+        if not preview.validation.can_apply:
+            raise ValueError("camera_configuration_validation_required")
+        if not preview.changed_fields:
+            raise ValueError("camera_configuration_no_changes")
+
+        request_fingerprint = _camera_configuration_request_fingerprint(payload)
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                existing_model = session.scalar(
+                    select(CameraConfigurationRevisionModel).where(
+                        CameraConfigurationRevisionModel.stream_id == stream_id,
+                        CameraConfigurationRevisionModel.idempotency_key == payload.idempotency_key,
+                    )
+                )
+                if existing_model is not None:
+                    if existing_model.request_fingerprint != request_fingerprint:
+                        raise CameraConfigurationConflictError(
+                            "camera_configuration_idempotency_conflict"
+                        )
+                    return CameraConfigurationApplyResult(
+                        revision=_camera_configuration_revision_from_model(existing_model),
+                        preview=self.camera_configuration_preview_from_revision(
+                            stream_id,
+                            _camera_configuration_revision_from_model(existing_model),
+                        ) or preview,
+                        idempotent=True,
+                    )
+
+                state = _camera_configuration_state_for_stream(session, stream_id)
+                if state is None:
+                    return None
+                source, stream, model, definition, config, policy, checkpoint = state
+                _validate_camera_configuration_request(
+                    source=source,
+                    model=model,
+                    definition=definition,
+                    payload=payload,
+                )
+                current_state_token = _camera_configuration_state_token(
+                    source=source,
+                    stream=stream,
+                    provider_key=model.provider_key,
+                    config=config,
+                    policy=policy,
+                    checkpoint=checkpoint,
+                )
+                if payload.expected_state_token != current_state_token:
+                    raise CameraConfigurationConflictError("camera_configuration_state_changed")
+                proposed_config = _camera_configuration_proposed_config(
+                    definition=definition,
+                    existing_config=config,
+                    payload=payload,
+                )
+                validation = _camera_configuration_validation_summary(
+                    source_id=source.id,
+                    definition=definition,
+                    config=proposed_config,
+                )
+                if not validation.can_apply:
+                    raise ValueError("camera_configuration_validation_required")
+                changed_fields, changed_config_keys = _camera_configuration_changed_fields(
+                    source=source,
+                    stream=stream,
+                    definition=definition,
+                    previous_config=config,
+                    proposed_config=proposed_config,
+                    source_name=payload.source_name,
+                    stream_name=payload.stream_name,
+                )
+                if not changed_fields:
+                    raise ValueError("camera_configuration_no_changes")
+                restart_required = any(
+                    key not in _CAMERA_CONFIGURATION_NON_RUNTIME_FIELDS
+                    for key in changed_config_keys
+                )
+                change_fingerprint = _camera_configuration_change_fingerprint(
+                    source=source,
+                    stream=stream,
+                    proposed_config=proposed_config,
+                    source_name=payload.source_name,
+                    stream_name=payload.stream_name,
+                )
+                if _camera_configuration_preview_token(
+                    state_token=current_state_token,
+                    change_fingerprint=change_fingerprint,
+                ) != payload.preview_token:
+                    raise CameraConfigurationConflictError("camera_configuration_preview_expired")
+
+                if payload.source_name is not None and payload.source_name != source.name:
+                    existing_names = session.scalars(
+                        select(CameraSourceModel.name).where(CameraSourceModel.id != source.id)
+                    ).all()
+                    if any(
+                        name.strip().casefold() == payload.source_name.casefold()
+                        for name in existing_names
+                    ):
+                        raise ValueError("source_name_exists")
+                    source.name = payload.source_name
+                if payload.stream_name is not None:
+                    stream.name = payload.stream_name
+                model.config_json = json.dumps(proposed_config, sort_keys=True)
+                model.updated_at = now
+
+                actual_before = _stream_runtime_state_from_checkpoint(checkpoint)
+                restart_requested = bool(
+                    restart_required
+                    and policy.mode == StreamMonitoringMode.armed.value
+                    and payload.restart_monitoring
+                )
+                actual_after = actual_before
+                if restart_required:
+                    checkpoint.actual_state = StreamRuntimeState.stopped.value
+                    checkpoint.observed_policy_revision = policy.policy_revision
+                    checkpoint.app_instance_id = None
+                    checkpoint.runtime_generation_id = None
+                    checkpoint.next_retry_at = None
+                    checkpoint.failure_code = None
+                    checkpoint.consecutive_failure_count = 0
+                    checkpoint.safety_hold_active = (
+                        policy.mode == StreamMonitoringMode.armed.value and not restart_requested
+                    )
+                    checkpoint.last_clean_stop_at = now
+                    checkpoint.last_stop_reason = (
+                        "configuration_restart_requested"
+                        if restart_requested
+                        else "configuration_restart_deferred"
+                    )
+                    checkpoint.updated_at = now
+                    actual_after = StreamRuntimeState.stopped
+
+                revision_model = CameraConfigurationRevisionModel(
+                    id=f"camera-config-{uuid.uuid4().hex[:16]}",
+                    stream_id=stream.id,
+                    source_id=source.id,
+                    provider_key=model.provider_key,
+                    changed_fields_json=json.dumps(changed_fields),
+                    change_fingerprint=change_fingerprint,
+                    request_fingerprint=request_fingerprint,
+                    preview_token=payload.preview_token,
+                    restart_required=restart_required,
+                    restart_requested=restart_requested,
+                    desired_mode=policy.mode,
+                    actual_state_before=actual_before.value,
+                    actual_state_after=actual_after.value,
+                    outcome="applied",
+                    idempotency_key=payload.idempotency_key,
+                    created_at=now,
+                )
+                session.add(revision_model)
+                session.flush()
+                historical = session.scalars(
+                    select(CameraConfigurationRevisionModel)
+                    .where(CameraConfigurationRevisionModel.stream_id == stream.id)
+                    .order_by(
+                        CameraConfigurationRevisionModel.created_at.desc(),
+                        CameraConfigurationRevisionModel.id.desc(),
+                    )
+                    .offset(CAMERA_CONFIGURATION_HISTORY_LIMIT)
+                ).all()
+                for historical_revision in historical:
+                    session.delete(historical_revision)
+                revision = _camera_configuration_revision_from_model(revision_model)
+
+        return CameraConfigurationApplyResult(
+            revision=revision,
+            preview=preview,
+            idempotent=False,
+        )
+
+    def list_camera_configuration_history(
+        self,
+        stream_id: str,
+        *,
+        limit: int = CAMERA_CONFIGURATION_HISTORY_LIMIT,
+    ) -> list[CameraConfigurationRevision] | None:
+        """Return bounded redacted configuration history; no provider configuration is read out."""
+
+        bounded_limit = max(1, min(limit, CAMERA_CONFIGURATION_HISTORY_LIMIT))
+        with self.session_factory() as session:
+            stream = session.get(StreamModel, stream_id)
+            if stream is None:
+                return None
+            revisions = session.scalars(
+                select(CameraConfigurationRevisionModel)
+                .where(CameraConfigurationRevisionModel.stream_id == stream_id)
+                .order_by(
+                    CameraConfigurationRevisionModel.created_at.desc(),
+                    CameraConfigurationRevisionModel.id.desc(),
+                )
+                .limit(bounded_limit)
+            ).all()
+            return [_camera_configuration_revision_from_model(revision) for revision in revisions]
 
     def preview_source_folder_import(
         self,
@@ -20046,6 +20514,317 @@ def _external_url_stream_playback_status(
         live_stream_url_display=live_url_display,
         rtsp_bridge_status="not_rtsp",
     )
+
+
+_CAMERA_CONFIGURATION_EDITABLE_PROVIDER_KEYS = {
+    "external_url",
+    "local_usb",
+    "manual_media",
+}
+_CAMERA_CONFIGURATION_RESTRICTED_FIELD_KEYS = {"ffmpeg_binary_path"}
+_CAMERA_CONFIGURATION_NON_RUNTIME_FIELDS = {
+    "display_name",
+    "notes",
+    "source_label",
+    "demo_seed",
+}
+
+
+def _camera_configuration_editable_field_keys(
+    definition: SourceProviderDefinition,
+) -> set[str]:
+    return {
+        field.key
+        for field in definition.fields
+        if field.key not in _CAMERA_CONFIGURATION_RESTRICTED_FIELD_KEYS
+    }
+
+
+def _camera_configuration_is_editable(
+    source: CameraSourceModel,
+    model: SourceProviderConfigurationModel | None,
+    definition: SourceProviderDefinition,
+) -> bool:
+    return (
+        model is not None
+        and source.status != SourceStatus.archived.value
+        and definition.provider_key in _CAMERA_CONFIGURATION_EDITABLE_PROVIDER_KEYS
+    )
+
+
+def _camera_configuration_state_for_stream(
+    session: Session,
+    stream_id: str,
+) -> tuple[
+    CameraSourceModel,
+    StreamModel,
+    SourceProviderConfigurationModel,
+    SourceProviderDefinition,
+    dict[str, str],
+    StreamMonitoringPolicyModel,
+    StreamRuntimeCheckpointModel,
+] | None:
+    stream = session.get(StreamModel, stream_id)
+    if stream is None:
+        return None
+    source = session.get(CameraSourceModel, stream.source_id)
+    model = session.get(SourceProviderConfigurationModel, stream.source_id)
+    if source is None or model is None:
+        return None
+    definition = _source_provider_definition(model.provider_key)
+    if definition is None:
+        raise ValueError("camera_configuration_provider_unsupported")
+    policy = session.get(StreamMonitoringPolicyModel, stream.id)
+    checkpoint = session.get(StreamRuntimeCheckpointModel, stream.id)
+    if policy is None or checkpoint is None:
+        raise ValueError("camera_configuration_monitoring_state_missing")
+    return source, stream, model, definition, json.loads(model.config_json), policy, checkpoint
+
+
+def _camera_configuration_state_token(
+    *,
+    source: CameraSourceModel,
+    stream: StreamModel,
+    provider_key: str,
+    config: dict[str, str],
+    policy: StreamMonitoringPolicyModel | None,
+    checkpoint: StreamRuntimeCheckpointModel | None,
+) -> str:
+    """Return an opaque concurrency token; its hash never discloses configuration values."""
+
+    payload = {
+        "source_id": source.id,
+        "source_name": source.name,
+        "stream_id": stream.id,
+        "stream_name": stream.name,
+        "provider_key": provider_key,
+        "config": config,
+        "policy_revision": policy.policy_revision if policy is not None else None,
+        "policy_updated_at": policy.updated_at.isoformat() if policy and policy.updated_at else None,
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return f"camera-config-{digest[:40]}"
+
+
+def _camera_configuration_request_fingerprint(
+    payload: CameraConfigurationApplyRequest,
+) -> str:
+    values = {
+        "provider_key": payload.provider_key,
+        "config": payload.config,
+        "secret_actions": {
+            key: value.value for key, value in sorted(payload.secret_actions.items())
+        },
+        "source_name": payload.source_name,
+        "stream_name": payload.stream_name,
+        "expected_state_token": payload.expected_state_token,
+        "preview_token": payload.preview_token,
+        "restart_monitoring": payload.restart_monitoring,
+    }
+    return hashlib.sha256(
+        json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _camera_configuration_change_fingerprint(
+    *,
+    source: CameraSourceModel,
+    stream: StreamModel,
+    proposed_config: dict[str, str],
+    source_name: str | None,
+    stream_name: str | None,
+) -> str:
+    values = {
+        "source_id": source.id,
+        "stream_id": stream.id,
+        "source_name": source_name if source_name is not None else source.name,
+        "stream_name": stream_name if stream_name is not None else stream.name,
+        "config": proposed_config,
+    }
+    return hashlib.sha256(
+        json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _camera_configuration_preview_token(
+    *,
+    state_token: str,
+    change_fingerprint: str,
+) -> str:
+    digest = hashlib.sha256(
+        f"{state_token}:{change_fingerprint}".encode("utf-8")
+    ).hexdigest()
+    return f"camera-preview-{digest[:40]}"
+
+
+def _camera_configuration_replay_preview_token(
+    revision: CameraConfigurationRevision,
+) -> str:
+    digest = hashlib.sha256(
+        f"{revision.id}:{revision.change_fingerprint}".encode("utf-8")
+    ).hexdigest()
+    return f"camera-applied-{digest[:40]}"
+
+
+def _validate_camera_configuration_request(
+    *,
+    source: CameraSourceModel,
+    model: SourceProviderConfigurationModel,
+    definition: SourceProviderDefinition,
+    payload: CameraConfigurationImpactPreviewRequest | CameraConfigurationApplyRequest,
+) -> None:
+    if not _camera_configuration_is_editable(source, model, definition):
+        raise ValueError("camera_configuration_not_editable")
+    if payload.provider_key != model.provider_key:
+        raise ValueError("camera_configuration_provider_fixed")
+    allowed_fields = {field.key for field in definition.fields}
+    editable_fields = _camera_configuration_editable_field_keys(definition)
+    submitted = set(payload.config) | set(payload.secret_actions)
+    if submitted - allowed_fields:
+        raise ValueError("camera_configuration_unsupported_fields")
+    if submitted - editable_fields:
+        raise ValueError("camera_configuration_restricted_field")
+
+
+def _camera_configuration_proposed_config(
+    *,
+    definition: SourceProviderDefinition,
+    existing_config: dict[str, str],
+    payload: CameraConfigurationImpactPreviewRequest | CameraConfigurationApplyRequest,
+) -> dict[str, str]:
+    """Merge only explicit fields, retaining masked secrets unless their action says otherwise."""
+
+    fields = {field.key: field for field in definition.fields}
+    proposed = dict(existing_config)
+    for key, action in payload.secret_actions.items():
+        field = fields.get(key)
+        if field is None or not field.secret:
+            raise ValueError("camera_configuration_secret_action_invalid")
+        if key not in _camera_configuration_editable_field_keys(definition):
+            raise ValueError("camera_configuration_restricted_field")
+        value = payload.config.get(key)
+        normalized = value.strip() if isinstance(value, str) else ""
+        if action == CameraConfigurationSecretAction.keep:
+            if normalized:
+                raise ValueError("camera_configuration_secret_action_required")
+        elif action == CameraConfigurationSecretAction.remove:
+            if normalized:
+                raise ValueError("camera_configuration_secret_remove_value")
+            proposed.pop(key, None)
+        elif action == CameraConfigurationSecretAction.replace:
+            if not normalized:
+                raise ValueError("camera_configuration_secret_replace_value")
+            proposed[key] = normalized
+
+    for key, value in payload.config.items():
+        field = fields.get(key)
+        if field is None:
+            raise ValueError("camera_configuration_unsupported_fields")
+        if key not in _camera_configuration_editable_field_keys(definition):
+            raise ValueError("camera_configuration_restricted_field")
+        if field.secret:
+            if payload.secret_actions.get(key) != CameraConfigurationSecretAction.replace:
+                raise ValueError("camera_configuration_secret_action_required")
+            continue
+        if value is None or not value.strip():
+            proposed.pop(key, None)
+        else:
+            proposed[key] = value.strip()
+
+    _validate_camera_setup_urls(definition.provider_key, proposed)
+    return proposed
+
+
+def _camera_configuration_validation_summary(
+    *,
+    source_id: str,
+    definition: SourceProviderDefinition,
+    config: dict[str, str],
+) -> CameraConfigurationValidationSummary:
+    configuration = _source_provider_configuration_from_config(
+        source_id=source_id,
+        definition=definition,
+        config=config,
+        supports_zone_editing=definition.supports_zone_editing,
+    )
+    if configuration.missing_fields:
+        return CameraConfigurationValidationSummary(
+            status="configuration_incomplete",
+            message="Required camera configuration is incomplete. Validation did not contact the camera.",
+            missing_fields=configuration.missing_fields,
+            can_apply=False,
+        )
+    return CameraConfigurationValidationSummary(
+        status="configuration_valid",
+        message="Configuration is structurally valid. Validation did not contact the camera or start monitoring.",
+        can_apply=True,
+    )
+
+
+def _camera_configuration_changed_fields(
+    *,
+    source: CameraSourceModel,
+    stream: StreamModel,
+    definition: SourceProviderDefinition,
+    previous_config: dict[str, str],
+    proposed_config: dict[str, str],
+    source_name: str | None,
+    stream_name: str | None,
+) -> tuple[list[str], set[str]]:
+    labels: list[str] = []
+    changed_config_keys: set[str] = set()
+    if source_name is not None and source_name != source.name:
+        labels.append("Camera name")
+    if stream_name is not None and stream_name != stream.name:
+        labels.append("Stream name")
+    for field in definition.fields:
+        if previous_config.get(field.key) != proposed_config.get(field.key):
+            labels.append(field.label)
+            changed_config_keys.add(field.key)
+    return labels, changed_config_keys
+
+
+def _stream_runtime_state_from_checkpoint(
+    checkpoint: StreamRuntimeCheckpointModel,
+) -> StreamRuntimeState:
+    try:
+        return StreamRuntimeState(checkpoint.actual_state)
+    except ValueError:
+        return StreamRuntimeState.interrupted
+
+
+def _camera_configuration_revision_from_model(
+    model: CameraConfigurationRevisionModel,
+) -> CameraConfigurationRevision:
+    try:
+        changed_fields = json.loads(model.changed_fields_json)
+    except (TypeError, json.JSONDecodeError):
+        changed_fields = []
+    return CameraConfigurationRevision(
+        id=model.id,
+        stream_id=model.stream_id,
+        source_id=model.source_id,
+        provider_key=model.provider_key,
+        changed_fields=[value for value in changed_fields if isinstance(value, str)],
+        change_fingerprint=model.change_fingerprint,
+        restart_required=model.restart_required,
+        restart_requested=model.restart_requested,
+        desired_mode=StreamMonitoringMode(model.desired_mode),
+        actual_state_before=StreamRuntimeState(model.actual_state_before),
+        actual_state_after=StreamRuntimeState(model.actual_state_after),
+        outcome=model.outcome,
+        created_at=model.created_at,
+    )
+
+
+def _camera_configuration_preservation_summary() -> list[str]:
+    return [
+        "Camera and Stream identities stay the same.",
+        "Zones, monitoring policy, Events, Visits, evidence, corrections, organization, map placement, alerts, and health history stay intact.",
+        "This change never creates wildlife activity, evidence, Visits, or reviewed truth.",
+    ]
 
 
 def _sanitize_source_provider_config(

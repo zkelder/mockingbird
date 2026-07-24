@@ -169,7 +169,7 @@ def test_current_schema_creates_only_empty_tag_records(tmp_path: Path) -> None:
         db_url=f"sqlite:///{tmp_path / 'migration.sqlite3'}",
         media_root=tmp_path / "media",
     )
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 21
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 22
     table_names = set(inspect(repository.engine).get_table_names())
     assert {"visit_tags", "visit_tag_memberships"}.issubset(table_names)
     with repository.session_factory() as session:

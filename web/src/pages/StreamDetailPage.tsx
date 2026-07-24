@@ -3803,7 +3803,7 @@ export function StreamDetailPage({
                 <button className="primary-button" disabled={isUpdatingMonitoringContinuity} onClick={() => void setDurableMonitoringEnabled(true)} type="button">Enable monitoring</button>
               )}
               <button className="secondary-button" disabled={isValidatingCameraHealth} onClick={() => void validateCameraHealthSetup()} type="button">{isValidatingCameraHealth ? "Validating setup…" : "Validate setup"}</button>
-              <button className="text-action" onClick={onOpenCameraSetup} type="button">Open guided setup</button>
+              <button className="text-action" onClick={onOpenCameraSetup} type="button">Edit camera setup</button>
             </div>
             {cameraHealth.incidents.length > 0 ? (
               <div className="continuity-message">

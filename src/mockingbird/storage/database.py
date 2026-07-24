@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 21
+CURRENT_DATABASE_SCHEMA_VERSION = 22
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -283,6 +283,15 @@ def _migrate_to_camera_health_incidents(connection: Connection) -> None:
     )
 
 
+def _migrate_to_camera_configuration_revisions(connection: Connection) -> None:
+    """Add empty, bounded configuration history without touching camera state or media."""
+
+    Base.metadata.tables["camera_configuration_revisions"].create(
+        bind=connection,
+        checkfirst=True,
+    )
+
+
 def _migrate_to_zone_monitoring_policy_overrides(connection: Connection) -> None:
     """Add empty per-Zone overrides without changing existing Zone behavior."""
 
@@ -488,6 +497,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     19: _migrate_to_visit_tags,
     20: _migrate_to_yard_map,
     21: _migrate_to_camera_health_incidents,
+    22: _migrate_to_camera_configuration_revisions,
 }
 
 

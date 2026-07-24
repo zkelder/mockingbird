@@ -157,6 +157,36 @@ class CameraHealthIncidentModel(Base):
     alert_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class CameraConfigurationRevisionModel(Base):
+    """Bounded redacted history for intentional in-place camera configuration changes."""
+
+    __tablename__ = "camera_configuration_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "stream_id",
+            "idempotency_key",
+            name="uq_camera_configuration_revision_stream_idempotency",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
+    source_id: Mapped[str] = mapped_column(ForeignKey("camera_sources.id"), nullable=False)
+    provider_key: Mapped[str] = mapped_column(String, nullable=False)
+    changed_fields_json: Mapped[str] = mapped_column(Text, nullable=False)
+    change_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
+    preview_token: Mapped[str] = mapped_column(String, nullable=False)
+    restart_required: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    restart_requested: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    desired_mode: Mapped[str] = mapped_column(String, nullable=False)
+    actual_state_before: Mapped[str] = mapped_column(String, nullable=False)
+    actual_state_after: Mapped[str] = mapped_column(String, nullable=False)
+    outcome: Mapped[str] = mapped_column(String, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class StreamMonitoringOperationModel(Base):
     """Durable idempotency record for explicit monitoring controls only."""
 

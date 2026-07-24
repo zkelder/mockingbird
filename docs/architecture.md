@@ -111,6 +111,16 @@ playback status. They normalize into Source/Stream/MediaAsset/MotionEvidence or
 proposal evidence. Provider status does not run providers. Incoming labels or
 events do not bypass Review Queue correction.
 
+Guided Camera Editing changes an existing compatible Source/Stream in place.
+Its read, validation, impact-preview, and bounded revision-history contracts
+redact provider values and credentials; provider type remains fixed. An
+application service coordinates a runtime-affecting save with the existing
+session manager and durable supervisor, preserving desired monitoring intent,
+Zones, Events, Visits, evidence, corrections, organization, map placement,
+alerts, and health history. A restart is requested only after explicit
+confirmation for an already-armed Stream; capacity remains a waiting state
+rather than disabling monitoring.
+
 Provider-specific security, storage, and evidence contracts remain in focused
 design documents routed by [AGENTS.md](../AGENTS.md).
 

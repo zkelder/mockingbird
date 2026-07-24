@@ -20,6 +20,7 @@ import { AlertsControl, AlertsInboxPage } from "./components/AlertsInbox";
 import { ActivityLibraryPage, activityLibraryPath } from "./pages/ActivityLibraryPage";
 import { BirdLogPage } from "./pages/BirdLogPage";
 import { CameraSetupPage } from "./pages/CameraSetupPage";
+import { CameraConfigurationPage } from "./pages/CameraConfigurationPage";
 import { ClassifierManifestPage } from "./pages/ClassifierManifestPage";
 import { ClassifierReadinessPage } from "./pages/ClassifierReadinessPage";
 import { CollectionsPage } from "./pages/CollectionsPage";
@@ -295,6 +296,10 @@ export default function App() {
     navigate({ page: "stream-detail", streamId });
   }
 
+  function openCameraConfiguration(streamId: string) {
+    navigate({ page: "camera-configuration", streamId });
+  }
+
   function openEvent(eventId: string) {
     navigate({ page: "event-detail", eventId });
   }
@@ -438,6 +443,7 @@ export default function App() {
           health={data.health}
           onOpenStream={openStream}
           onOpenStreams={() => setPage("streams")}
+          onOpenCameraConfiguration={openCameraConfiguration}
           onAddCamera={() => setPage("camera-setup")}
           onOpenReview={openReviewQueue}
           onOpenBirdLog={() => setPage("bird-log")}
@@ -455,6 +461,7 @@ export default function App() {
           datasetExports={data.exports}
           onOpenImport={() => setPage("import")}
           onOpenStream={openStream}
+          onOpenCameraConfiguration={openCameraConfiguration}
           onOpenMotionEvidence={openMotionEvidence}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
@@ -495,6 +502,16 @@ export default function App() {
           onCancel={() => setPage("streams")}
           onComplete={(streamId) => openStream(streamId)}
           onSourcesChanged={() => loadAppData({ showLoading: false })}
+        />
+      );
+    }
+
+    if (page === "camera-configuration" && selectedStreamId) {
+      return (
+        <CameraConfigurationPage
+          streamId={selectedStreamId}
+          onCancel={() => openStream(selectedStreamId)}
+          onSaved={() => loadAppData({ showLoading: false })}
         />
       );
     }
@@ -640,7 +657,7 @@ export default function App() {
           onOpenExports={() => setPage("exports")}
           onOpenReview={openReviewQueue}
           onOpenMotionEvidence={openMotionEvidence}
-          onOpenCameraSetup={() => setPage("camera-setup")}
+          onOpenCameraSetup={() => openCameraConfiguration(selectedStream.id)}
           onReviewActivityCreated={() => loadAppData({ showLoading: false })}
         />
       );

@@ -60,6 +60,7 @@ interface StreamsPageProps {
   datasetExports: DatasetExport[];
   onOpenImport: () => void;
   onOpenStream: (streamId: string) => void;
+  onOpenCameraConfiguration: (streamId: string) => void;
   onOpenMotionEvidence: (motionEvidenceId: string) => void;
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
@@ -1669,6 +1670,7 @@ export function StreamsPage({
   datasetExports,
   onOpenImport,
   onOpenStream,
+  onOpenCameraConfiguration,
   onOpenMotionEvidence,
   onOpenEvent,
   onOpenVisit,
@@ -4233,6 +4235,7 @@ export function StreamsPage({
         <LiveCameraOverview
           onOpenReview={(streamId) => onOpenReviewForStream?.(streamId) ?? onOpenReview()}
           onOpenStream={onOpenStream}
+          onOpenCameraConfiguration={onOpenCameraConfiguration}
           onToggleMonitoring={(stream, runtime) =>
             void handleLiveOverviewMonitoring(stream, runtime)
           }

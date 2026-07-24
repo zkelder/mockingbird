@@ -280,6 +280,97 @@ export interface SourceProviderConfigurationUpdate {
   config: Record<string, string | null>;
 }
 
+export type CameraConfigurationSecretAction = "keep" | "replace" | "remove";
+
+export interface CameraConfigurationValidationSummary {
+  status: string;
+  message: string;
+  missing_fields: string[];
+  can_apply: boolean;
+}
+
+export interface CameraConfigurationEditResponse {
+  stream_id: string;
+  source_id: string;
+  source_name: string;
+  stream_name: string;
+  provider_key: string;
+  provider_display_name: string;
+  editable: boolean;
+  editable_fields: SourceProviderField[];
+  configured_fields: string[];
+  missing_fields: string[];
+  field_states: Record<string, "configured" | "not_configured" | string>;
+  state_token: string;
+  monitoring_policy: StreamMonitoringPolicy;
+  runtime: StreamRuntimeStatus;
+  health: CameraHealthSummary;
+  message: string;
+}
+
+export interface CameraConfigurationImpactPreviewRequest {
+  provider_key: string;
+  config: Record<string, string | null>;
+  secret_actions: Record<string, CameraConfigurationSecretAction>;
+  source_name?: string | null;
+  stream_name?: string | null;
+  expected_state_token: string;
+}
+
+export interface CameraConfigurationImpactPreview {
+  stream_id: string;
+  source_id: string;
+  provider_key: string;
+  state_token: string;
+  preview_token: string;
+  changed_fields: string[];
+  restart_required: boolean;
+  requires_explicit_restart_choice: boolean;
+  monitoring_desired: StreamMonitoringMode;
+  monitoring_actual: StreamRuntimeState;
+  open_activity_session_count: number;
+  preview_may_be_briefly_unavailable: boolean;
+  preservation_summary: string[];
+  validation: CameraConfigurationValidationSummary;
+  message: string;
+}
+
+export interface CameraConfigurationApplyRequest extends CameraConfigurationImpactPreviewRequest {
+  preview_token: string;
+  idempotency_key: string;
+  restart_monitoring: boolean;
+}
+
+export interface CameraConfigurationRevision {
+  id: string;
+  stream_id: string;
+  source_id: string;
+  provider_key: string;
+  changed_fields: string[];
+  change_fingerprint: string;
+  restart_required: boolean;
+  restart_requested: boolean;
+  desired_mode: StreamMonitoringMode;
+  actual_state_before: StreamRuntimeState;
+  actual_state_after: StreamRuntimeState;
+  outcome: string;
+  created_at: string;
+}
+
+export interface CameraConfigurationHistoryResponse {
+  items: CameraConfigurationRevision[];
+  limit: number;
+  message: string;
+}
+
+export interface CameraConfigurationApplyResponse {
+  configuration: CameraConfigurationEditResponse;
+  preview: CameraConfigurationImpactPreview;
+  revision: CameraConfigurationRevision;
+  idempotent: boolean;
+  message: string;
+}
+
 export interface CameraSetupOption {
   provider_key: string;
   display_name: string;

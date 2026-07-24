@@ -23,6 +23,7 @@ interface DashboardPageProps {
   health: HealthStatus | null;
   onOpenStream: (streamId: string) => void;
   onOpenStreams: () => void;
+  onOpenCameraConfiguration: (streamId: string) => void;
   onAddCamera: () => void;
   onOpenReview: (context?: ReviewQueueFocus) => void;
   onOpenBirdLog: () => void;
@@ -121,6 +122,7 @@ export function DashboardPage({
   health,
   onOpenStream,
   onOpenStreams,
+  onOpenCameraConfiguration,
   onAddCamera,
   onOpenReview,
   onOpenBirdLog,
@@ -328,7 +330,7 @@ export function DashboardPage({
                 <div className="detail-actions">
                   <button className="secondary-action" onClick={() => onOpenStream(camera.stream_id)} type="button">Open Stream</button>
                   {camera.desired_mode === "armed" ? <button className="secondary-action" onClick={() => void handleDurableMonitoringAction(camera.stream_id, "retry")} type="button">Retry now</button> : null}
-                  <button className="text-action" onClick={onOpenStreams} type="button">Review camera setup</button>
+                  <button className="text-action" onClick={() => onOpenCameraConfiguration(camera.stream_id)} type="button">Edit camera setup</button>
                   {camera.desired_mode === "armed" ? <button className="text-action" onClick={() => void handleDurableMonitoringAction(camera.stream_id, "disable")} type="button">Disable monitoring</button> : null}
                 </div>
               </article>
@@ -341,6 +343,7 @@ export function DashboardPage({
           onOpenReview({ source: "live-motion", search: streamId, status: "unreviewed" })
         }
         onOpenStream={onOpenStream}
+        onOpenCameraConfiguration={onOpenCameraConfiguration}
         onToggleMonitoring={(stream, runtime) =>
           void handleDurableMonitoringAction(
             stream.stream_id,
