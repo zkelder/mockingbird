@@ -87,6 +87,7 @@ class StreamPlaybackKind(str, Enum):
     rtsp = "rtsp"
     local_usb = "local_usb"
     windows_dshow = "windows_dshow"
+    camera_node = "camera_node"
     unknown = "unknown"
 
 
@@ -520,6 +521,7 @@ class CameraConfigurationChangeRequest(BaseModel):
     provider_key: str
     config: dict[str, str | None] = Field(default_factory=dict)
     secret_actions: dict[str, CameraConfigurationSecretAction] = Field(default_factory=dict)
+    node_pairing_token: str | None = Field(default=None, min_length=16, max_length=160)
     source_name: str | None = Field(default=None, max_length=120)
     stream_name: str | None = Field(default=None, max_length=120)
     expected_state_token: str = Field(min_length=16, max_length=160)
@@ -1586,6 +1588,7 @@ class CameraSetupValidationRequest(BaseModel):
 
     provider_key: str
     config: dict[str, str | None] = Field(default_factory=dict)
+    node_pairing_token: str | None = Field(default=None, min_length=16, max_length=160)
 
 
 class CameraSetupValidationResponse(BaseModel):
@@ -1621,6 +1624,7 @@ class CameraSetupCompleteRequest(BaseModel):
     stream_name: str = Field(min_length=1, max_length=120)
     provider_key: str
     config: dict[str, str | None] = Field(default_factory=dict)
+    node_pairing_token: str | None = Field(default=None, min_length=16, max_length=160)
     zones: list[CameraSetupZoneDraft] = Field(min_length=1, max_length=12)
     enable_monitoring: bool = False
     idempotency_key: str = Field(min_length=8, max_length=120)
@@ -1642,6 +1646,48 @@ class CameraSetupCompletionResponse(BaseModel):
     validation: CameraSetupValidationResponse
     idempotent: bool = False
     message: str
+
+
+class CameraNodePairRequest(BaseModel):
+    """One explicit local-LAN pairing request; the pairing code is never stored."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_address: str = Field(min_length=8, max_length=260)
+    pairing_code: str = Field(min_length=8, max_length=128)
+
+
+class CameraNodeAdvertisedCamera(BaseModel):
+    camera_id: str
+    display_name: str
+    status: str
+    snapshot_supported: bool
+    setup_hint: str | None = None
+
+
+class CameraNodePairResponse(BaseModel):
+    pairing_token: str
+    pairing_expires_at: datetime
+    node_id: str
+    display_name: str
+    api_version: str
+    cameras: list[CameraNodeAdvertisedCamera] = Field(default_factory=list, max_length=16)
+    message: str
+
+
+class CameraNodePreviewRequest(BaseModel):
+    """Request one explicitly selected, transient Node snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pairing_token: str = Field(min_length=16, max_length=160)
+    camera_id: str = Field(min_length=1, max_length=120)
+
+
+class CameraNodePairRevokeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stream_id: str = Field(min_length=1, max_length=120)
 
 
 class Detection(BaseModel):

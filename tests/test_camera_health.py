@@ -142,6 +142,29 @@ def test_stale_frame_and_evidence_persistence_are_separate(repository: ProductRe
     assert degraded.health.failure_reason == "MockingBird could not safely persist required evidence."
 
 
+def test_camera_node_credential_failure_is_redacted_and_actionable(repository: ProductRepository) -> None:
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    repository.mark_monitoring_backoff_with_failure_code(
+        candidate,
+        app_instance_id="camera-health-test",
+        failure_count=2,
+        retry_at=now + timedelta(seconds=30),
+        failure_code="authentication_rejected",
+        now=now,
+    )
+
+    health = repository.get_stream_camera_health(candidate.stream_id)
+
+    assert health is not None
+    assert health.health.state == CameraHealthState.recovering
+    assert health.health.failure_reason == (
+        "The paired Camera Node no longer accepts its local credential. Pair it again or revoke access."
+    )
+    assert health.incidents[0].category == "recovery_exhausted"
+    assert health.incidents[0].reason_code == "authentication_rejected"
+
+
 def test_recovery_updates_one_incident_and_alert_then_resolves(repository: ProductRepository) -> None:
     candidate = _enable(repository)
     now = datetime.now(UTC)
@@ -248,8 +271,8 @@ def test_history_is_bounded_newest_first_and_safe_responses_hide_runtime_details
     assert "password" not in rendered
 
 
-def test_schema_v22_contains_empty_bounded_incident_and_configuration_storage(repository: ProductRepository) -> None:
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 22
+def test_schema_v23_contains_empty_bounded_incident_and_configuration_storage(repository: ProductRepository) -> None:
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 23
     tables = set(inspect(repository.engine).get_table_names())
     assert "camera_health_incidents" in tables
     assert "camera_configuration_revisions" in tables
@@ -278,7 +301,7 @@ def test_v20_runtime_checkpoint_migrates_through_v22_camera_configuration_storag
 
     status = initialize_database(engine)
     columns = {column["name"] for column in inspect(engine).get_columns("stream_runtime_checkpoints")}
-    assert status.version == 22
+    assert status.version == 23
     assert {"last_evidence_persisted_at", "last_evidence_failure_at", "evidence_failure_code"}.issubset(columns)
     assert "camera_health_incidents" in inspect(engine).get_table_names()
     assert "camera_configuration_revisions" in inspect(engine).get_table_names()
@@ -307,7 +330,7 @@ def test_v21_configuration_metadata_is_preserved_when_v22_adds_revision_storage(
         preserved = connection.exec_driver_sql(
             "SELECT config_json FROM source_provider_configurations WHERE source_id = 'source-preserved'"
         ).scalar_one()
-    assert status.version == 22
+    assert status.version == 23
     assert preserved == '{"url": "https://camera.local/still.jpg"}'
     assert "camera_configuration_revisions" in inspect(engine).get_table_names()
 

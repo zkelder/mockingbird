@@ -79,6 +79,10 @@ from mockingbird.species.bioclip_adapter import (
     get_bioclip_status,
     run_bioclip_from_image_loader,
 )
+from mockingbird.source_providers.camera_node import (
+    CameraNodeClientError,
+    normalize_camera_node_address,
+)
 from mockingbird.motion.activity_crop import (
     CropBoxNormalized,
     plan_activity_crop,
@@ -1130,6 +1134,83 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
         ],
     ),
     SourceProviderDefinition(
+        provider_key="camera_node",
+        display_name="MockingBird Camera Node",
+        description=(
+            "Paired local edge camera metadata. Frames stay on the LAN and enter "
+            "the existing Stream, Zone, monitoring, and review workflow."
+        ),
+        status=SourceProviderDefinitionStatus.available_contract_only,
+        supports_live_playback=True,
+        supports_zone_editing=True,
+        fields=[
+            SourceProviderField(
+                key="node_base_address",
+                label="Node address",
+                required=True,
+                secret=True,
+                description="Explicit LAN Node address; never shown again by safe configuration APIs.",
+                placeholder="Enter during pairing",
+            ),
+            SourceProviderField(
+                key="node_credential",
+                label="Pairing credential",
+                required=True,
+                secret=True,
+                description="Created by one-time pairing and kept local to MockingBird.",
+                placeholder="Created during pairing",
+            ),
+            SourceProviderField(
+                key="node_camera_id",
+                label="Node camera",
+                required=True,
+                secret=True,
+                description="Opaque camera ID chosen from the paired Node.",
+                placeholder="Selected during pairing",
+            ),
+            SourceProviderField(
+                key="node_id",
+                label="Node identity",
+                required=True,
+                secret=True,
+                description="Opaque identity used to reject an incompatible replacement Node.",
+                placeholder="Recorded during pairing",
+            ),
+            SourceProviderField(
+                key="node_display_name",
+                label="Node display name",
+                required=False,
+                secret=False,
+                description="Sanitized name advertised by the paired Node.",
+                placeholder="Backyard Camera Node",
+            ),
+            SourceProviderField(
+                key="node_api_version",
+                label="Node API version",
+                required=False,
+                secret=False,
+                description="Versioned Node protocol metadata.",
+                placeholder="v1",
+            ),
+            SourceProviderField(
+                key="node_capability_fingerprint",
+                label="Capability fingerprint",
+                required=False,
+                secret=True,
+                description="Local pairing capability marker; it never contains a raw Node payload.",
+                placeholder="Recorded during pairing",
+            ),
+            SourceProviderField(
+                key="node_pairing_state",
+                label="Pairing state",
+                required=False,
+                secret=False,
+                description="Paired or revoked local configuration state.",
+                placeholder="paired",
+            ),
+        ],
+    ),
+    SourceProviderDefinition(
         provider_key="folder_import_future",
         display_name="Folder / trail-cam import",
         description=(
@@ -1382,6 +1463,10 @@ class StreamLivePlaybackConfig:
     contrast: str | None = None
     exposure: str | None = None
     zoom_mode: str | None = None
+    camera_node_base_address: str | None = None
+    camera_node_credential: str | None = None
+    camera_node_camera_id: str | None = None
+    camera_node_id: str | None = None
 
 
 class MotionEvidenceModel(Base):
@@ -1535,6 +1620,7 @@ def _camera_setup_source_kind(provider_key: str) -> SourceKind:
         "local_usb": SourceKind.local_camera,
         "folder_import_future": SourceKind.local_folder,
         "webhook_future": SourceKind.webhook,
+        "camera_node": SourceKind.integration,
     }.get(provider_key, SourceKind.integration)
 
 
@@ -1550,6 +1636,13 @@ def _validate_camera_setup_urls(provider_key: str, config: dict[str, str]) -> No
         allowed_schemes = {"http", "https", "rtsp"} if key == "live_stream_url" else {"http", "https"}
         if parsed.scheme.lower() not in allowed_schemes or not parsed.hostname:
             raise ValueError("camera_setup_invalid_url")
+    if provider_key == "camera_node":
+        address = (config.get("node_base_address") or "").strip()
+        if address:
+            try:
+                normalize_camera_node_address(address)
+            except CameraNodeClientError as error:
+                raise ValueError("camera_setup_invalid_node_address") from error
 
 
 class ProductRepository:
@@ -2337,6 +2430,7 @@ class ProductRepository:
                 "external_url",
                 "local_usb",
                 "manual_media",
+                "camera_node",
             }
             options.append(
                 CameraSetupOption(
@@ -2355,7 +2449,12 @@ class ProductRepository:
                     supports_live_playback=definition.supports_live_playback,
                     fields=definition.fields,
                     message=(
-                        "This computer supports configuring this provider; validation does not contact a camera."
+                        (
+                            "Pair a local Camera Node explicitly, then select one advertised camera. "
+                            "Pairing is the only setup action that contacts a Node."
+                            if definition.provider_key == "camera_node"
+                            else "This computer supports configuring this provider; validation does not contact a camera."
+                        )
                         if available_now
                         else "Local setup required before this provider can be configured here."
                     ),
@@ -2379,7 +2478,7 @@ class ProductRepository:
         unsupported = sorted(set(payload.config) - allowed_fields)
         if unsupported:
             raise ValueError("camera_setup_unsupported_fields")
-        if definition.provider_key not in {"external_url", "local_usb", "manual_media"}:
+        if definition.provider_key not in {"external_url", "local_usb", "manual_media", "camera_node"}:
             return CameraSetupValidationResponse(
                 provider_key=definition.provider_key,
                 status="unsupported_on_this_computer",
@@ -2415,6 +2514,10 @@ class ProductRepository:
         elif definition.provider_key == "external_url":
             status = "configuration_valid"
             message = "Configuration valid. Use Stream Detail later for any explicit preview."
+            can_continue = True
+        elif definition.provider_key == "camera_node":
+            status = "configuration_valid"
+            message = "Paired Camera Node configuration is valid. Snapshot preview and monitoring remain explicit."
             can_continue = True
         else:
             status = "configuration_valid"
@@ -3043,6 +3146,48 @@ class ProductRepository:
                 .limit(bounded_limit)
             ).all()
             return [_camera_configuration_revision_from_model(revision) for revision in revisions]
+
+    def camera_node_pairing_secret(self, stream_id: str) -> tuple[str, str] | None:
+        """Internal-only credential lookup for an explicit pairing revocation call."""
+
+        with self.session_factory() as session:
+            state = _camera_configuration_state_for_stream(session, stream_id)
+            if state is None:
+                return None
+            _, _, model, _, config, _, _ = state
+            if model.provider_key != "camera_node":
+                raise ValueError("camera_node_provider_required")
+            address = (config.get("node_base_address") or "").strip()
+            credential = (config.get("node_credential") or "").strip()
+            return (address, credential) if address and credential else None
+
+    def revoke_camera_node_pairing(self, stream_id: str) -> bool | None:
+        """Remove only pairing access; product history and Source/Stream identity remain."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                state = _camera_configuration_state_for_stream(session, stream_id)
+                if state is None:
+                    return None
+                _, stream, model, _, config, policy, checkpoint = state
+                if model.provider_key != "camera_node":
+                    raise ValueError("camera_node_provider_required")
+                if not (config.get("node_credential") or "").strip():
+                    return False
+                config.pop("node_credential", None)
+                config["node_pairing_state"] = "revoked"
+                model.config_json = json.dumps(config, sort_keys=True)
+                model.updated_at = now
+                checkpoint.actual_state = StreamRuntimeState.stopped.value
+                checkpoint.app_instance_id = None
+                checkpoint.runtime_generation_id = None
+                checkpoint.safety_hold_active = policy.mode == StreamMonitoringMode.armed.value
+                checkpoint.last_clean_stop_at = now
+                checkpoint.last_stop_reason = "camera_node_pairing_revoked"
+                checkpoint.updated_at = now
+                self._sync_monitoring_alert(session, stream.id, now)
+                return True
 
     def preview_source_folder_import(
         self,
@@ -3911,6 +4056,10 @@ class ProductRepository:
 
         return {
             "camera_unavailable": "Camera is not currently providing usable frames.",
+            "node_unavailable": "MockingBird cannot currently reach the paired Camera Node API.",
+            "authentication_rejected": "The paired Camera Node no longer accepts its local credential. Pair it again or revoke access.",
+            "node_camera_unavailable": "The selected camera is not currently available on its paired Camera Node.",
+            "node_snapshot_invalid": "The paired Camera Node did not provide a usable bounded image.",
             "waiting_for_capacity": "Monitoring is waiting for available local capacity.",
             "evidence_persistence_failed": "MockingBird could not safely persist required evidence.",
             "configuration_invalid": "Camera setup needs review before monitoring can start.",
@@ -3978,12 +4127,18 @@ class ProductRepository:
             state = CameraHealthState.waiting_for_capacity
             message = "Monitoring is enabled and waiting for available local capacity."
         elif actual_state == StreamRuntimeState.backoff:
+            node_message = {
+                "node_unavailable": "MockingBird cannot reach the paired Camera Node API; bounded local recovery is scheduled.",
+                "authentication_rejected": "The paired Camera Node rejected its credential; pair the Node again to restore monitoring.",
+                "node_camera_unavailable": "The selected camera is unavailable on its paired Camera Node; bounded local recovery is scheduled.",
+                "node_snapshot_invalid": "The paired Camera Node did not provide a usable image; bounded local recovery is scheduled.",
+            }.get(failure_code)
             if checkpoint is not None and checkpoint.consecutive_failure_count >= 3:
                 state = CameraHealthState.camera_unavailable
-                message = "The camera is unavailable after bounded recovery attempts."
+                message = node_message or "The camera is unavailable after bounded recovery attempts."
             else:
                 state = CameraHealthState.recovering
-                message = "Monitoring is recovering through its bounded local retry path."
+                message = node_message or "Monitoring is recovering through its bounded local retry path."
         elif actual_state == StreamRuntimeState.starting:
             startup_age = (
                 _as_utc(now) - _as_utc(checkpoint.last_start_attempt_at)
@@ -4017,7 +4172,12 @@ class ProductRepository:
                 message = "Monitoring is running, but its last usable frame is no longer recent."
         elif actual_state == StreamRuntimeState.blocked:
             state = CameraHealthState.camera_unavailable
-            message = "Monitoring needs attention before the camera can restart."
+            message = {
+                "node_unavailable": "MockingBird cannot reach the paired Camera Node API. Check the local Node and use retry when ready.",
+                "authentication_rejected": "The paired Camera Node rejected its credential. Pair the Node again before retrying.",
+                "node_camera_unavailable": "The selected camera is unavailable on its paired Camera Node. Check that camera before retrying.",
+                "node_snapshot_invalid": "The paired Camera Node did not provide a usable image. Check the Node before retrying.",
+            }.get(failure_code, "Monitoring needs attention before the camera can restart.")
         elif checkpoint is not None and (
             checkpoint.next_retry_at is not None
             or checkpoint.last_stop_reason == "retry_requested"
@@ -4026,7 +4186,12 @@ class ProductRepository:
             message = "Monitoring is preparing a bounded local retry."
         elif checkpoint is not None and checkpoint.failure_code:
             state = CameraHealthState.camera_unavailable
-            message = "The camera is unavailable and needs attention before it can restart."
+            message = {
+                "node_unavailable": "MockingBird cannot reach the paired Camera Node API.",
+                "authentication_rejected": "The paired Camera Node rejected its credential. Pair the Node again before retrying.",
+                "node_camera_unavailable": "The selected camera is unavailable on its paired Camera Node.",
+                "node_snapshot_invalid": "The paired Camera Node did not provide a usable image.",
+            }.get(failure_code, "The camera is unavailable and needs attention before it can restart.")
         else:
             state = CameraHealthState.starting
             message = "Monitoring is enabled and awaiting local supervision."
@@ -4148,26 +4313,97 @@ class ProductRepository:
             )
         if health.state == CameraHealthState.camera_unavailable:
             exhausted = bool(checkpoint and checkpoint.consecutive_failure_count >= 2)
+            node_failure = (
+                checkpoint.failure_code
+                if checkpoint is not None
+                and checkpoint.failure_code
+                in {
+                    "node_unavailable",
+                    "authentication_rejected",
+                    "node_camera_unavailable",
+                    "node_snapshot_invalid",
+                }
+                else None
+            )
+            title, body = {
+                "node_unavailable": (
+                    "Camera Node is unreachable",
+                    "MockingBird cannot reach this paired Camera Node API. Check its local network and power before retrying.",
+                ),
+                "authentication_rejected": (
+                    "Camera Node pairing needs attention",
+                    "This paired Camera Node rejected its credential. Re-pair the Node or revoke it before retrying.",
+                ),
+                "node_camera_unavailable": (
+                    "Camera Node camera is unavailable",
+                    "The selected camera is not currently available on its paired Camera Node. Check that local camera before retrying.",
+                ),
+                "node_snapshot_invalid": (
+                    "Camera Node image needs attention",
+                    "The paired Camera Node did not provide a usable image. Check its local camera setup before retrying.",
+                ),
+            }.get(
+                node_failure,
+                (
+                    "Camera recovery needs attention" if exhausted else "Camera is unavailable",
+                    "This enabled camera is unavailable after bounded local recovery attempts."
+                    if exhausted
+                    else "This enabled camera is not currently providing usable frames.",
+                ),
+            )
             return (
                 CameraHealthIncidentCategory.recovery_exhausted
                 if exhausted
                 else CameraHealthIncidentCategory.camera_unavailable,
                 AlertSeverity.high if exhausted else AlertSeverity.warning,
-                "camera_unavailable",
-                "recovery_exhausted" if exhausted else "camera_unavailable",
-                "Camera recovery needs attention" if exhausted else "Camera is unavailable",
-                "This enabled camera is unavailable after bounded local recovery attempts."
-                if exhausted
-                else "This enabled camera is not currently providing usable frames.",
+                node_failure or "camera_unavailable",
+                "recovery_exhausted" if exhausted else node_failure or "camera_unavailable",
+                title,
+                body,
             )
         if health.state == CameraHealthState.recovering and checkpoint is not None and checkpoint.consecutive_failure_count >= 2:
+            node_failure = (
+                checkpoint.failure_code
+                if checkpoint.failure_code
+                in {
+                    "node_unavailable",
+                    "authentication_rejected",
+                    "node_camera_unavailable",
+                    "node_snapshot_invalid",
+                }
+                else None
+            )
+            title, body = {
+                "node_unavailable": (
+                    "Camera Node recovery is in progress",
+                    "MockingBird is using its bounded local retry path while the paired Camera Node remains unreachable.",
+                ),
+                "authentication_rejected": (
+                    "Camera Node pairing needs attention",
+                    "MockingBird is using its bounded retry path, but this paired Camera Node rejected its credential. Re-pair it to restore monitoring.",
+                ),
+                "node_camera_unavailable": (
+                    "Camera Node camera recovery is in progress",
+                    "MockingBird is using its bounded local retry path while the selected Camera Node camera is unavailable.",
+                ),
+                "node_snapshot_invalid": (
+                    "Camera Node image recovery is in progress",
+                    "MockingBird is using its bounded local retry path after an unusable Camera Node image.",
+                ),
+            }.get(
+                node_failure,
+                (
+                    "Camera recovery is in progress",
+                    "MockingBird is using its bounded local retry path for this enabled camera.",
+                ),
+            )
             return (
                 CameraHealthIncidentCategory.recovery_exhausted,
                 AlertSeverity.warning,
-                "camera_unavailable",
-                "recovery_exhausted",
-                "Camera recovery is in progress",
-                "MockingBird is using its bounded local retry path for this enabled camera.",
+                node_failure or "camera_unavailable",
+                "recovery_exhausted" if node_failure is None else f"{node_failure}_recovery",
+                title,
+                body,
             )
         return None
 
@@ -4808,6 +5044,7 @@ class ProductRepository:
                     next_retry_at=checkpoint.next_retry_at,
                     last_start_attempt_at=checkpoint.last_start_attempt_at,
                     safety_hold_active=checkpoint.safety_hold_active,
+                    failure_code=checkpoint.failure_code,
                 )
                 for policy, checkpoint in rows
             ]
@@ -4924,6 +5161,7 @@ class ProductRepository:
         failure_count: int,
         retry_at: datetime,
         now: datetime,
+        failure_code: str = "camera_unavailable",
     ) -> None:
         with self.session_factory() as session:
             with session.begin():
@@ -4934,19 +5172,48 @@ class ProductRepository:
                     checkpoint.actual_state == StreamRuntimeState.backoff.value
                     and checkpoint.next_retry_at == retry_at
                     and checkpoint.consecutive_failure_count == failure_count
+                    and checkpoint.failure_code == failure_code
                 ):
                     return
                 checkpoint.actual_state = StreamRuntimeState.backoff.value
                 checkpoint.observed_policy_revision = candidate.policy_revision
                 checkpoint.app_instance_id = app_instance_id
                 checkpoint.last_failure_at = now
-                checkpoint.failure_code = "camera_unavailable"
+                checkpoint.failure_code = failure_code
                 checkpoint.consecutive_failure_count = failure_count
                 checkpoint.failure_count += 1
                 checkpoint.next_retry_at = retry_at
                 checkpoint.last_stop_reason = "runtime_unhealthy"
                 checkpoint.updated_at = now
                 self._sync_monitoring_alert(session, candidate.stream_id, now)
+
+    def mark_monitoring_backoff_with_failure_code(
+        self,
+        candidate: DurableMonitoringCandidate,
+        *,
+        app_instance_id: str,
+        failure_count: int,
+        retry_at: datetime,
+        failure_code: str,
+        now: datetime,
+    ) -> None:
+        """Persist a small approved runtime code without retaining provider errors."""
+
+        if failure_code not in {
+            "authentication_rejected",
+            "node_camera_unavailable",
+            "node_snapshot_invalid",
+            "node_unavailable",
+        }:
+            failure_code = "camera_unavailable"
+        self.mark_monitoring_backoff(
+            candidate,
+            app_instance_id=app_instance_id,
+            failure_count=failure_count,
+            retry_at=retry_at,
+            now=now,
+            failure_code=failure_code,
+        )
 
     def mark_monitoring_blocked(
         self,
@@ -5155,6 +5422,40 @@ class ProductRepository:
                     supports_live_playback=False,
                     adapter_key=configured_provider_key,
                 )
+            if configured_provider_key == "camera_node":
+                configuration = _source_provider_configuration_from_model(
+                    source,
+                    model,
+                    [stream.id],
+                )
+                if not configuration.missing_fields and configuration.supports_live_playback:
+                    return StreamPlaybackStatus(
+                        stream_id=stream.id,
+                        source_id=stream.source_id,
+                        status=StreamPlaybackStatusValue.live_ready,
+                        playback_kind=StreamPlaybackKind.camera_node,
+                        display_title=stream.name,
+                        message="Paired Camera Node is ready for an authenticated bounded snapshot preview.",
+                        setup_hint="Opening preview does not enable monitoring or persist frames.",
+                        supports_zone_editing=True,
+                        supports_live_playback=True,
+                        adapter_key="camera_node",
+                        bridged_mjpeg_url=f"/api/streams/{stream.id}/live/mjpeg",
+                        live_stream_type="camera_node",
+                    )
+                return StreamPlaybackStatus(
+                    stream_id=stream.id,
+                    source_id=stream.source_id,
+                    status=StreamPlaybackStatusValue.not_configured,
+                    playback_kind=StreamPlaybackKind.camera_node,
+                    display_title=stream.name,
+                    message="Camera Node pairing is required before preview or monitoring can run.",
+                    setup_hint="Pair or repair the Camera Node from Edit camera setup.",
+                    supports_zone_editing=True,
+                    supports_live_playback=False,
+                    adapter_key="camera_node",
+                    live_stream_type="camera_node",
+                )
             if configured_provider_key == "local_usb":
                 config = json.loads(model.config_json) if model is not None else {}
                 live_type = _normalize_live_stream_type(config.get("live_stream_type"), "")
@@ -5240,6 +5541,8 @@ class ProductRepository:
                 config.get("live_stream_type"),
                 live_url or "",
             )
+            if provider_key == "camera_node":
+                live_type = "camera_node"
             video_size = (config.get("video_size") or "").strip() or None
             preview_video_size = (config.get("preview_video_size") or "").strip() or None
             capture_video_size = (config.get("capture_video_size") or "").strip() or None
@@ -5281,6 +5584,10 @@ class ProductRepository:
                 contrast=(config.get("contrast") or "").strip() or None,
                 exposure=(config.get("exposure") or "").strip() or None,
                 zoom_mode=(config.get("zoom_mode") or "").strip() or None,
+                camera_node_base_address=(config.get("node_base_address") or "").strip() or None,
+                camera_node_credential=(config.get("node_credential") or "").strip() or None,
+                camera_node_camera_id=(config.get("node_camera_id") or "").strip() or None,
+                camera_node_id=(config.get("node_id") or "").strip() or None,
             )
 
     def streams_for_source(self, source_id: str) -> list[Stream]:
@@ -20121,6 +20428,11 @@ def _source_provider_supports_live_playback(
         return _external_url_supports_browser_live_playback(config)
     if definition.provider_key == "local_usb":
         return _local_usb_supports_live_playback(config)
+    if definition.provider_key == "camera_node":
+        return all(
+            (config.get(key) or "").strip()
+            for key in ("node_base_address", "node_credential", "node_camera_id", "node_id")
+        ) and (config.get("node_pairing_state") or "paired") == "paired"
     return False
 
 
@@ -20147,6 +20459,8 @@ def _normalize_live_stream_type(raw_type: str | None, url: str) -> str:
         return local_camera_bridge.LOCAL_USB_STREAM_TYPE
     if normalized in {"windows_dshow", "dshow", "directshow", "windows_webcam"}:
         return windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE
+    if normalized in {"camera_node", "mockingbird_camera_node", "edge_camera_node"}:
+        return "camera_node"
     if url_lower.startswith(("rtsp://", "rtsps://")) or normalized == "rtsp":
         return "rtsp"
     if normalized in {"mjpeg", "mjpg", "multipart_mjpeg"}:
@@ -20520,6 +20834,7 @@ _CAMERA_CONFIGURATION_EDITABLE_PROVIDER_KEYS = {
     "external_url",
     "local_usb",
     "manual_media",
+    "camera_node",
 }
 _CAMERA_CONFIGURATION_RESTRICTED_FIELD_KEYS = {"ffmpeg_binary_path"}
 _CAMERA_CONFIGURATION_NON_RUNTIME_FIELDS = {
@@ -20527,6 +20842,10 @@ _CAMERA_CONFIGURATION_NON_RUNTIME_FIELDS = {
     "notes",
     "source_label",
     "demo_seed",
+    "node_display_name",
+    "node_api_version",
+    "node_capability_fingerprint",
+    "node_pairing_state",
 }
 
 
@@ -20734,6 +21053,12 @@ def _camera_configuration_proposed_config(
             proposed[key] = value.strip()
 
     _validate_camera_setup_urls(definition.provider_key, proposed)
+    if (
+        definition.provider_key == "camera_node"
+        and (existing_config.get("node_id") or "").strip()
+        and proposed.get("node_id") != existing_config.get("node_id")
+    ):
+        raise ValueError("camera_node_identity_changed")
     return proposed
 
 
@@ -20850,7 +21175,17 @@ def _sanitize_source_provider_config(
         ):
             sanitized[key] = existing_config[key]
             continue
-        if definition.provider_key == "folder_import_future" and key == "folder_path":
+        if definition.provider_key == "camera_node" and key in {
+            "node_base_address",
+            "node_credential",
+            "node_camera_id",
+            "node_id",
+            "node_capability_fingerprint",
+        }:
+            # Pairing writes these locally once. The generic configuration surface
+            # still renders only configured/not-configured markers for every one.
+            sanitized[key] = normalized
+        elif definition.provider_key == "folder_import_future" and key == "folder_path":
             sanitized[key] = normalized
         else:
             sanitized[key] = "configured" if field.secret else normalized
@@ -20969,6 +21304,13 @@ def _source_provider_configuration_from_config(
             "Use webhook motion evidence only for confirmed metadata events; media "
             "upload/download and reviewed truth remain future work."
         )
+    elif definition.provider_key == "camera_node":
+        if _source_provider_supports_live_playback(definition, config):
+            message = "Camera Node pairing is saved. Open Live view for an authenticated bounded snapshot preview."
+            setup_hint = "Monitoring remains off until explicitly enabled on this Stream."
+        else:
+            message = "Camera Node setup is incomplete or pairing was revoked."
+            setup_hint = "Pair or repair the Camera Node before opening preview or monitoring."
     elif definition.provider_key == "local_usb":
         live_type = _normalize_live_stream_type(config.get("live_stream_type"), "")
         if _local_usb_supports_live_playback(config):

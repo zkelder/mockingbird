@@ -56,6 +56,9 @@ MockingBird currently provides:
 - guided Add Camera and in-place Edit Camera Setup paths that keep credentials
   local and masked, check readiness without contacting a camera, preview
   monitoring impact, and finish on the Stream view
+- an optional local-LAN MockingBird Camera Node package for paired bounded
+  snapshots from an edge camera, with no cloud relay, discovery, remote shell,
+  recording, audio, or automatic monitoring
 - a shared Dashboard and Cameras/Streams Live Camera Overview that defaults to
   the latest safe Visit evidence, opens at most four user-selected live tiles
   per browser session, and shows view-only Stream Zones without changing
@@ -120,6 +123,17 @@ Validate startup without launching the server or browser:
 ```sh
 python -m mockingbird --check
 ```
+
+### Optional Camera Node
+
+On a Raspberry Pi or ordinary Linux edge device, start the separately bounded
+Node manually with `python -m mockingbird_node`. It prints a short-lived pairing
+code to that device's local console. In **Add Camera**, choose **MockingBird
+Camera Node**, enter an explicit LAN IP address and that code, then choose one
+advertised camera view. Pairing credentials remain local and masked; previews
+are transient and monitoring stays off until explicitly enabled. There is no
+automatic LAN discovery, service installer, remote shell, cloud relay, audio,
+or recording. See [Camera Node boundary](docs/camera-node-boundary-design.md).
 
 ### Optional local species shadow
 

@@ -61,6 +61,9 @@ setup rather than a product blocker.
 - Camera Health and Guided Camera Editing now expose saved operational state,
   safe in-place compatible camera configuration, redacted change previews, and
   bounded revision history without changing the evidence/review truth boundary.
+- The optional MockingBird Camera Node is a paired local-LAN snapshot adapter
+  beneath the same Source/Stream/Zone/monitoring/review loop. It remains
+  default-off, synthetic-provider-tested, no-cloud, no-discovery, and no-truth.
 
 See [roadmap-history.md](roadmap-history.md) for the concise phase record.
 

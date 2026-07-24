@@ -312,6 +312,7 @@ export interface CameraConfigurationImpactPreviewRequest {
   provider_key: string;
   config: Record<string, string | null>;
   secret_actions: Record<string, CameraConfigurationSecretAction>;
+  node_pairing_token?: string | null;
   source_name?: string | null;
   stream_name?: string | null;
   expected_state_token: string;
@@ -389,6 +390,7 @@ export interface CameraSetupOptionsResponse {
 export interface CameraSetupValidationRequest {
   provider_key: string;
   config: Record<string, string | null>;
+  node_pairing_token?: string | null;
 }
 
 export interface CameraSetupValidationResponse {
@@ -418,6 +420,7 @@ export interface CameraSetupCompleteRequest {
   stream_name: string;
   provider_key: string;
   config: Record<string, string | null>;
+  node_pairing_token?: string | null;
   zones: CameraSetupZoneDraft[];
   enable_monitoring: boolean;
   idempotency_key: string;
@@ -431,6 +434,38 @@ export interface CameraSetupCompletionResponse {
   validation: CameraSetupValidationResponse;
   idempotent: boolean;
   message: string;
+}
+
+export interface CameraNodePairRequest {
+  base_address: string;
+  pairing_code: string;
+}
+
+export interface CameraNodeAdvertisedCamera {
+  camera_id: string;
+  display_name: string;
+  status: string;
+  snapshot_supported: boolean;
+  setup_hint?: string | null;
+}
+
+export interface CameraNodePairResponse {
+  pairing_token: string;
+  pairing_expires_at: string;
+  node_id: string;
+  display_name: string;
+  api_version: string;
+  cameras: CameraNodeAdvertisedCamera[];
+  message: string;
+}
+
+export interface CameraNodePreviewRequest {
+  pairing_token: string;
+  camera_id: string;
+}
+
+export interface CameraNodePairRevokeRequest {
+  stream_id: string;
 }
 
 export type SourceSetupReviewStepStatus =

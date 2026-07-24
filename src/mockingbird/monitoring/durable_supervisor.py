@@ -37,6 +37,7 @@ class DurableMonitoringCandidate:
     next_retry_at: datetime | None
     last_start_attempt_at: datetime | None
     safety_hold_active: bool
+    failure_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class ManagedCameraStatus:
     state: str
     healthy_at: datetime | None = None
     monitor_running: bool = False
+    failure_code: str | None = None
 
 
 class DurableMonitoringStore(Protocol):
@@ -263,7 +265,11 @@ class DurableMonitoringSupervisor:
         except Exception:
             status = None
         if status is None or status.state in {"failed", "stopped", "stopping"}:
-            self._recover_from_failure(candidate, now)
+            self._recover_from_failure(
+                candidate,
+                now,
+                failure_code=status.failure_code if status is not None else None,
+            )
             return
 
         if status.healthy_at is not None:
@@ -307,12 +313,12 @@ class DurableMonitoringSupervisor:
             )
             return
         if candidate.next_retry_at is not None and candidate.next_retry_at > now:
-            self._store.mark_monitoring_backoff(
+            self._mark_monitoring_backoff(
                 candidate,
-                app_instance_id=self._app_instance_id,
                 failure_count=candidate.consecutive_failure_count,
                 retry_at=candidate.next_retry_at,
                 now=now,
+                failure_code=candidate.failure_code,
             )
             return
         if len(self._active_stream_ids) >= self._max_concurrent_streams:
@@ -334,6 +340,8 @@ class DurableMonitoringSupervisor:
         self,
         candidate: DurableMonitoringCandidate,
         now: datetime,
+        *,
+        failure_code: str | None = None,
     ) -> None:
         self._safe_stop(candidate.stream_id, "runtime_unhealthy")
         self._active_stream_ids.discard(candidate.stream_id)
@@ -343,18 +351,48 @@ class DurableMonitoringSupervisor:
                 candidate,
                 app_instance_id=self._app_instance_id,
                 failure_count=failure_count,
-                failure_code="camera_unavailable",
+                failure_code=failure_code or "camera_unavailable",
                 now=now,
             )
             return
         delay_seconds = self._retry_delays_seconds[
             min(failure_count - 1, len(self._retry_delays_seconds) - 1)
         ]
+        self._mark_monitoring_backoff(
+            candidate,
+            failure_count=failure_count,
+            retry_at=now + timedelta(seconds=delay_seconds),
+            now=now,
+            failure_code=failure_code,
+        )
+
+    def _mark_monitoring_backoff(
+        self,
+        candidate: DurableMonitoringCandidate,
+        *,
+        failure_count: int,
+        retry_at: datetime,
+        now: datetime,
+        failure_code: str | None,
+    ) -> None:
+        """Preserve a known-safe provider reason when the store supports it."""
+
+        mark_with_reason = getattr(self._store, "mark_monitoring_backoff_with_failure_code", None)
+        if callable(mark_with_reason) and failure_code:
+            mark_with_reason(
+                candidate,
+                app_instance_id=self._app_instance_id,
+                failure_count=failure_count,
+                retry_at=retry_at,
+                failure_code=failure_code,
+                now=now,
+            )
+            return
         self._store.mark_monitoring_backoff(
             candidate,
             app_instance_id=self._app_instance_id,
             failure_count=failure_count,
-            retry_at=now + timedelta(seconds=delay_seconds),
+            retry_at=retry_at,
             now=now,
         )
 

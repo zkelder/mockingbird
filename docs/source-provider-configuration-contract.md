@@ -23,6 +23,7 @@ Provider definitions describe supported setup contracts:
 - `browser_camera_future`
 - `folder_import_future`
 - `webhook_future`
+- `camera_node`
 
 Future-labeled providers are placeholders/contracts only. They do not implement
 live playback or source connection behavior.
@@ -30,6 +31,15 @@ live playback or source connection behavior.
 `manual_media` is an available metadata path for explicit local media import. It
 can guide users toward importing media for a Source/Stream, but it does not imply
 live playback, capture, or automatic media analysis.
+
+`camera_node` is the explicit paired local-LAN edge-camera provider. Its
+configured Node address, credential, opaque Node/camera identifiers, and
+capability marker are sensitive local configuration: safe configuration and
+guided-edit responses return only configured/not-configured state. Pairing is a
+separate explicit network action; normal configuration validation and status
+reads do not contact the Node. Authenticated Node snapshots feed the existing
+Stream/Zone monitoring path only after monitoring is explicitly enabled. See
+[camera-node-boundary-design.md](camera-node-boundary-design.md).
 
 `external_url` is the contract for future explicit HTTP still-image
 preview/status. See

@@ -104,7 +104,8 @@ startup.
 
 Implemented product paths include demo/manual media, explicit external still
 images, explicit folder/trail-cam import, metadata-only webhook evidence,
-browser-playable streams, RTSP, Linux local USB, and Windows DirectShow.
+browser-playable streams, RTSP, Linux local USB, Windows DirectShow, and the
+paired local-LAN Camera Node snapshot adapter.
 
 Adapters sit below provider configuration, Source connection status, and Stream
 playback status. They normalize into Source/Stream/MediaAsset/MotionEvidence or
@@ -123,6 +124,16 @@ rather than disabling monitoring.
 
 Provider-specific security, storage, and evidence contracts remain in focused
 design documents routed by [AGENTS.md](../AGENTS.md).
+
+Camera Node is an edge adapter, not a parallel product runtime. Its explicit
+one-time pairing creates a locally stored masked credential and one selected
+opaque camera ID beneath the existing Source/Stream. The main app owns all
+Zones, monitoring intent, activity/evidence, Visits, correction truth, backup,
+and retention. Node requests are fixed-path, private-LAN-IP-only, bounded, and
+redirect-free. Add Camera can request one transient bounded JPEG before a Zone
+is drawn; running live/monitoring snapshots use the in-memory frame cache.
+Neither preview form is persisted. See
+[camera-node-boundary-design.md](camera-node-boundary-design.md).
 
 ## Live camera ownership
 

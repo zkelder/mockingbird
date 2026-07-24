@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import type {
   CameraSetupOption,
   CameraSetupValidationResponse,
+  CameraNodePairResponse,
   Point,
   ZoneActivitySensitivity,
   ZoneType,
@@ -59,6 +60,13 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
   const [sensitivity, setSensitivity] = useState<ZoneActivitySensitivity>(initialDraft.sensitivity ?? "normal");
   const [monitoringEnabled, setMonitoringEnabled] = useState(initialDraft.monitoringEnabled ?? false);
   const [validation, setValidation] = useState<CameraSetupValidationResponse | null>(null);
+  const [nodeAddress, setNodeAddress] = useState("");
+  const [pairingCode, setPairingCode] = useState("");
+  const [nodePairing, setNodePairing] = useState<CameraNodePairResponse | null>(null);
+  const [selectedNodeCameraId, setSelectedNodeCameraId] = useState("");
+  const [nodePreviewUrl, setNodePreviewUrl] = useState<string | null>(null);
+  const [isLoadingNodePreview, setIsLoadingNodePreview] = useState(false);
+  const [isPairingNode, setIsPairingNode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isValidating, setIsValidating] = useState(false);
@@ -88,6 +96,10 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
     }));
   }, [providerKey, config, cameraName, streamName, zoneName, zoneType, polygon, sensitivity, monitoringEnabled]);
 
+  useEffect(() => () => {
+    if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl);
+  }, [nodePreviewUrl]);
+
   function pointAt(event: PointerEvent<HTMLDivElement>): Point {
     const rect = event.currentTarget.getBoundingClientRect();
     return {
@@ -116,11 +128,55 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
     setIsValidating(true);
     setError(null);
     try {
-      setValidation(await apiClient.validateCameraSetup({ provider_key: selected.provider_key, config }));
+      setValidation(await apiClient.validateCameraSetup({
+        provider_key: selected.provider_key,
+        config,
+        node_pairing_token: selected.provider_key === "camera_node" ? nodePairing?.pairing_token : undefined,
+      }));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Camera configuration could not be validated.");
     } finally {
       setIsValidating(false);
+    }
+  }
+
+  async function pairNode() {
+    setIsPairingNode(true);
+    setError(null);
+    setValidation(null);
+    try {
+      const pairing = await apiClient.pairCameraNode({ base_address: nodeAddress, pairing_code: pairingCode });
+      setNodePairing(pairing);
+      const available = pairing.cameras.find((camera) => camera.status === "available" && camera.snapshot_supported);
+      const cameraId = available?.camera_id ?? "";
+      setSelectedNodeCameraId(cameraId);
+      setConfig({ node_camera_id: cameraId });
+      if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl);
+      setNodePreviewUrl(null);
+      setPairingCode("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Camera Node pairing could not be completed.");
+    } finally {
+      setIsPairingNode(false);
+    }
+  }
+
+  async function previewNodeCamera(cameraId = selectedNodeCameraId) {
+    if (!nodePairing || !cameraId) return;
+    setIsLoadingNodePreview(true);
+    setError(null);
+    try {
+      const image = await apiClient.previewCameraNode({
+        pairing_token: nodePairing.pairing_token,
+        camera_id: cameraId,
+      });
+      const nextUrl = URL.createObjectURL(image);
+      if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl);
+      setNodePreviewUrl(nextUrl);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Camera Node preview could not be loaded.");
+    } finally {
+      setIsLoadingNodePreview(false);
     }
   }
 
@@ -134,6 +190,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
         stream_name: streamName || `${cameraName} view`,
         provider_key: selected.provider_key,
         config,
+        node_pairing_token: selected.provider_key === "camera_node" ? nodePairing?.pairing_token : undefined,
         zones: [{
           name: zoneName,
           zone_type: zoneType,
@@ -170,17 +227,32 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
       </section>
       <section className="panel page-stack">
         <h2>1. Camera configuration</h2>
-        <label>Camera type<select value={providerKey} onChange={(event) => { setProviderKey(event.target.value); setConfig({}); setValidation(null); }}>
+        <label>Camera type<select value={providerKey} onChange={(event) => { setProviderKey(event.target.value); setConfig({}); setValidation(null); setNodePairing(null); setSelectedNodeCameraId(""); if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl); setNodePreviewUrl(null); }}>
           {options.map((option) => <option key={option.provider_key} disabled={option.availability !== "available_now"} value={option.provider_key}>{option.display_name}{option.availability === "available_now" ? "" : " — unavailable"}</option>)}
         </select></label>
         {selected ? <><p className="meta-text">{selected.message}</p>
-          {selected.fields.map((field) => <label key={field.key}>{field.label}
+          {selected.provider_key === "camera_node" ? <div className="notice-panel">
+            <strong>MockingBird Camera Node</strong>
+            <span>Enter the Node’s explicit LAN address and its locally displayed one-time pairing code. MockingBird does not scan your network.</span>
+            <label>Node address<input onChange={(event) => setNodeAddress(event.target.value)} placeholder="http://192.168.1.50:8787" value={nodeAddress} /></label>
+            <label>One-time pairing code<input onChange={(event) => setPairingCode(event.target.value)} type="password" value={pairingCode} /></label>
+            <button className="secondary-action" disabled={!nodeAddress || !pairingCode || isPairingNode} onClick={() => void pairNode()} type="button">{isPairingNode ? "Pairing…" : "Pair Camera Node"}</button>
+            {nodePairing ? <><span><strong>Node found:</strong> {nodePairing.display_name} ({nodePairing.api_version})</span>
+              <label>Camera view<select onChange={(event) => { setSelectedNodeCameraId(event.target.value); setConfig({ node_camera_id: event.target.value }); setValidation(null); if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl); setNodePreviewUrl(null); }} value={selectedNodeCameraId}>
+                <option value="">Choose an advertised camera</option>
+                {nodePairing.cameras.map((camera) => <option disabled={camera.status !== "available" || !camera.snapshot_supported} key={camera.camera_id} value={camera.camera_id}>{camera.display_name} — {camera.status.replace(/_/g, " ")}</option>)}
+              </select></label>
+              <button className="secondary-action" disabled={!selectedNodeCameraId || isLoadingNodePreview} onClick={() => void previewNodeCamera()} type="button">{isLoadingNodePreview ? "Loading preview…" : "Inspect preview"}</button>
+              {nodePreviewUrl ? <img alt="Transient Camera Node preview" className="camera-node-preview" src={nodePreviewUrl} /> : null}
+              <span className="meta-text">Preview is one explicit, transient image. It is not saved, does not create activity, and monitoring remains off until you choose otherwise.</span>
+            </> : null}
+          </div> : selected.fields.map((field) => <label key={field.key}>{field.label}
             <input onChange={(event) => setConfig((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.secret ? "Leave blank to keep masked" : field.placeholder ?? ""} type={field.secret ? "password" : "text"} value={config[field.key] ?? ""} />
           </label>)}</> : null}
         <label>Camera name<input onChange={(event) => setCameraName(event.target.value)} placeholder="Backyard feeder camera" value={cameraName} /></label>
         <label>Name this view<input onChange={(event) => setStreamName(event.target.value)} placeholder="Feeder view" value={streamName} /></label>
         <button className="secondary-action" disabled={!selected || isValidating} onClick={() => void validateSetup()} type="button">{isValidating ? "Validating…" : "Validate setup"}</button>
-        {validation ? <div className="notice-panel"><strong>{validation.status.replace(/_/g, " ")}</strong><span>{validation.message}</span><span>Validation does not contact the camera, save media, create activity, or enable monitoring.</span></div> : null}
+        {validation ? <div className="notice-panel"><strong>{validation.status.replace(/_/g, " ")}</strong><span>{validation.message}</span><span>{selected?.provider_key === "camera_node" ? "Pairing contacted the chosen Node explicitly; this validation itself saves no media, creates no activity, and does not enable monitoring." : "Validation does not contact the camera, save media, create activity, or enable monitoring."}</span></div> : null}
       </section>
       <section className="panel page-stack">
         <h2>2. Zone setup</h2><p>Zones tell MockingBird which part of this camera view matters. Drag an ordinary activity Zone; Privacy and Ignore Zones stay suppression-only.</p>

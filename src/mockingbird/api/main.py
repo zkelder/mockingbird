@@ -40,6 +40,12 @@ from mockingbird.api.schemas import (
     CameraConfigurationHistoryResponse,
     CameraConfigurationImpactPreview,
     CameraConfigurationImpactPreviewRequest,
+    CameraConfigurationSecretAction,
+    CameraNodeAdvertisedCamera,
+    CameraNodePairRequest,
+    CameraNodePairResponse,
+    CameraNodePreviewRequest,
+    CameraNodePairRevokeRequest,
     CameraHealthDetailResponse,
     CameraHealthIncidentListResponse,
     CameraHealthListResponse,
@@ -344,6 +350,11 @@ from mockingbird.sampler.saved_media_frames import (
     load_saved_image_frame_plane,
 )
 from mockingbird.source_providers import external_url_preview
+from mockingbird.source_providers.camera_node import (
+    CameraNodeClient,
+    CameraNodeClientError,
+    CameraNodePairingStore,
+)
 from mockingbird.species.automatic_identification import (
     AutomaticReviewIdentificationAssist,
 )
@@ -503,6 +514,8 @@ _live_camera_session_manager: live_camera_session.LiveCameraSessionManager | Non
 _live_preview_lease_manager: live_preview_leases.LivePreviewLeaseManager | None = None
 _durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
 _local_storage_retention_service: LocalStorageRetentionService | None = None
+_camera_node_pairing_store: CameraNodePairingStore | None = None
+_camera_node_client: CameraNodeClient | None = None
 _automatic_review_identification_assist: AutomaticReviewIdentificationAssist | None = (
     None
 )
@@ -520,11 +533,82 @@ def get_repository() -> ProductRepository:
         return _repository
 
 
+def get_camera_node_pairing_store() -> CameraNodePairingStore:
+    """Keep unpersisted pairing handoffs local and short-lived until setup completes."""
+
+    global _camera_node_pairing_store
+    if _camera_node_pairing_store is None:
+        _camera_node_pairing_store = CameraNodePairingStore()
+    return _camera_node_pairing_store
+
+
+def get_camera_node_client() -> CameraNodeClient:
+    global _camera_node_client
+    if _camera_node_client is None:
+        _camera_node_client = CameraNodeClient()
+    return _camera_node_client
+
+
+def _camera_node_prepared_config(
+    *,
+    provider_key: str,
+    config: dict[str, str | None],
+    pairing_token: str | None,
+) -> dict[str, str | None]:
+    """Materialize a server-held pairing only for the bounded persistence call.
+
+    Credentials never travel back to the browser and are never included in an
+    API response. The browser can select only an opaque advertised camera ID.
+    """
+
+    if provider_key != "camera_node":
+        return config
+    camera_id = (config.get("node_camera_id") or "").strip()
+    if not pairing_token or not camera_id:
+        raise ValueError("camera_node_pairing_required")
+    pairing = get_camera_node_pairing_store().consume(pairing_token, camera_id=camera_id)
+    if pairing is None:
+        raise ValueError("camera_node_pairing_expired")
+    return {
+        "node_base_address": pairing.base_address,
+        "node_credential": pairing.credential,
+        "node_camera_id": camera_id,
+        "node_id": pairing.node_id,
+        "node_display_name": pairing.display_name,
+        "node_api_version": pairing.api_version,
+        "node_capability_fingerprint": pairing.capability_fingerprint,
+        "node_pairing_state": "paired",
+    }
+
+
+def _camera_node_prepared_edit_payload(
+    payload: CameraConfigurationImpactPreviewRequest | CameraConfigurationApplyRequest,
+) -> CameraConfigurationImpactPreviewRequest | CameraConfigurationApplyRequest:
+    if payload.provider_key != "camera_node" or not payload.node_pairing_token:
+        return payload
+    configured = _camera_node_prepared_config(
+        provider_key=payload.provider_key,
+        config=payload.config,
+        pairing_token=payload.node_pairing_token,
+    )
+    secret_actions = dict(payload.secret_actions)
+    for key in {
+        "node_base_address",
+        "node_credential",
+        "node_camera_id",
+        "node_id",
+        "node_capability_fingerprint",
+    }:
+        secret_actions[key] = CameraConfigurationSecretAction.replace
+    return payload.model_copy(update={"config": configured, "secret_actions": secret_actions})
+
+
 def configure_repository(repository: ProductRepository | None) -> None:
-    global _repository
+    global _repository, _camera_node_pairing_store
     with _repository_access_lock:
         previous_repository = _repository
         _stop_runtime_activity(reason="repository_reconfigured")
+        _camera_node_pairing_store = None
         _repository = repository
         if previous_repository is not None and previous_repository is not repository:
             previous_repository.close()
@@ -2352,6 +2436,21 @@ def _validate_live_camera_session_config(
 ) -> None:
     live_type = configuration.live_stream_type
     target_kind = expected_kind or live_type
+    if target_kind == "camera_node":
+        if configuration.provider_key != "camera_node":
+            raise HTTPException(status_code=400, detail="Camera Node playback requires a Camera Node Source provider.")
+        if live_type != "camera_node":
+            raise HTTPException(status_code=400, detail="Camera Node playback configuration is incomplete.")
+        if not all(
+            (
+                configuration.camera_node_base_address,
+                configuration.camera_node_credential,
+                configuration.camera_node_camera_id,
+                configuration.camera_node_id,
+            )
+        ):
+            raise HTTPException(status_code=409, detail="Pair or repair the Camera Node before opening preview or monitoring.")
+        return
     if target_kind == "rtsp":
         if configuration.provider_key != "external_url":
             raise HTTPException(
@@ -2469,6 +2568,17 @@ def _managed_camera_status(
         state=snapshot.status,
         healthy_at=snapshot.last_frame_at,
         monitor_running=snapshot.monitor_running,
+        failure_code=(
+            snapshot.last_error
+            if snapshot.last_error
+            in {
+                "authentication_rejected",
+                "node_camera_unavailable",
+                "node_snapshot_invalid",
+                "node_unavailable",
+            }
+            else None
+        ),
     )
 
 
@@ -6032,17 +6142,130 @@ async def get_camera_setup_options() -> CameraSetupOptionsResponse:
     return get_repository().camera_setup_options()
 
 
+@app.post("/api/camera-nodes/pair", response_model=CameraNodePairResponse)
+async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResponse:
+    """Make the explicitly requested, bounded LAN pairing call exactly once."""
+
+    try:
+        # Health is deliberately an actual request so "Node found" is never metadata-only.
+        get_camera_node_client().health(payload.base_address)
+        pairing = get_camera_node_client().pair(payload.base_address, payload.pairing_code)
+    except CameraNodeClientError as error:
+        messages = {
+            "node_address_invalid": "Enter a complete HTTP or HTTPS Camera Node address.",
+            "node_address_requires_lan_ip": "Use an explicit local LAN IP address; discovery names are not supported yet.",
+            "node_address_not_local": "Camera Node addresses must be local LAN addresses.",
+            "pairing_code_expired": "The Camera Node pairing code expired. Start the Node again for a new code.",
+            "pairing_rate_limited": "Pairing attempts are temporarily limited on the Camera Node.",
+            "pairing_rejected": "The Camera Node pairing code was rejected.",
+            "node_api_unsupported": "This Camera Node uses an unsupported API version.",
+        }
+        status = 400 if str(error).startswith("node_address") else 409 if str(error).startswith("pairing_") else 502
+        raise HTTPException(status_code=status, detail=messages.get(str(error), "Camera Node is unavailable or returned an invalid response.")) from None
+    session = get_camera_node_pairing_store().create(pairing)
+    return CameraNodePairResponse(
+        pairing_token=session.token,
+        pairing_expires_at=session.expires_at,
+        node_id=pairing.node_id,
+        display_name=pairing.display_name,
+        api_version=pairing.api_version,
+        cameras=[
+            CameraNodeAdvertisedCamera(
+                camera_id=camera.camera_id,
+                display_name=camera.display_name,
+                status=camera.status,
+                snapshot_supported=camera.snapshot_supported,
+                setup_hint=camera.setup_hint,
+            )
+            for camera in pairing.cameras
+        ],
+        message="Camera Node found and paired. Choose one advertised camera to continue setup.",
+    )
+
+
+@app.post("/api/camera-nodes/preview")
+async def preview_camera_node(payload: CameraNodePreviewRequest) -> Response:
+    """Fetch one selected Node image without creating media, evidence, or truth."""
+
+    try:
+        pairing = get_camera_node_pairing_store().consume(
+            payload.pairing_token,
+            camera_id=payload.camera_id,
+        )
+        if pairing is None:
+            raise ValueError("camera_node_pairing_expired")
+        image = get_camera_node_client().snapshot(
+            base_address=pairing.base_address,
+            credential=pairing.credential,
+            camera_id=payload.camera_id,
+        )
+    except CameraNodeClientError as error:
+        messages = {
+            "node_camera_not_allowed": "Choose an available camera advertised by this Camera Node.",
+            "node_camera_unavailable": "The selected Camera Node camera is not currently available.",
+            "authentication_rejected": "Camera Node pairing is no longer accepted. Pair the Node again.",
+            "node_snapshot_invalid": "The Camera Node did not provide a usable preview image.",
+        }
+        status = 409 if str(error) in {"node_camera_not_allowed", "node_camera_unavailable", "authentication_rejected"} else 502
+        raise HTTPException(
+            status_code=status,
+            detail=messages.get(str(error), "Camera Node is unavailable for preview."),
+        ) from None
+    except ValueError as error:
+        if str(error) == "camera_node_pairing_expired":
+            raise HTTPException(status_code=409, detail="Camera Node pairing expired. Pair the Node again.") from None
+        raise
+    return Response(
+        content=image,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.post("/api/camera-nodes/pair/revoke", status_code=204)
+async def revoke_camera_node_pairing(payload: CameraNodePairRevokeRequest) -> Response:
+    repository = get_repository()
+    try:
+        secret = repository.camera_node_pairing_secret(payload.stream_id)
+    except ValueError as error:
+        if str(error) == "camera_node_provider_required":
+            raise HTTPException(status_code=400, detail="This Stream is not backed by a Camera Node.") from None
+        raise
+    if secret is None:
+        raise HTTPException(status_code=409, detail="Camera Node pairing is already unavailable.")
+    address, credential = secret
+    try:
+        # Revocation is explicit. A failed remote request leaves the local pairing
+        # intact so a transient network failure cannot silently strand the Stream.
+        get_camera_node_client().revoke(base_address=address, credential=credential)
+    except CameraNodeClientError:
+        raise HTTPException(status_code=502, detail="Camera Node could not confirm pairing revocation.") from None
+    get_durable_monitoring_supervisor().stop_stream_for_configuration(payload.stream_id)
+    repository.revoke_camera_node_pairing(payload.stream_id)
+    return Response(status_code=204)
+
+
 @app.post("/api/camera-setup/validate", response_model=CameraSetupValidationResponse)
 async def validate_camera_setup(
     payload: CameraSetupValidationRequest,
 ) -> CameraSetupValidationResponse:
     try:
-        return get_repository().validate_camera_setup(payload)
+        prepared_config = _camera_node_prepared_config(
+            provider_key=payload.provider_key,
+            config=payload.config,
+            pairing_token=payload.node_pairing_token,
+        )
+        return get_repository().validate_camera_setup(
+            payload.model_copy(update={"config": prepared_config})
+        )
     except ValueError as error:
         messages = {
             "camera_setup_provider_unsupported": "Choose a supported camera provider.",
             "camera_setup_unsupported_fields": "This provider configuration included unsupported settings.",
             "camera_setup_invalid_url": "Enter a valid URL for the selected provider.",
+            "camera_setup_invalid_node_address": "Enter a valid local LAN Camera Node address.",
+            "camera_node_pairing_required": "Pair a Camera Node and select one advertised camera before validation.",
+            "camera_node_pairing_expired": "Camera Node pairing expired. Pair the Node again before continuing.",
         }
         raise HTTPException(status_code=400, detail=messages.get(str(error), "Camera setup could not be validated.")) from None
 
@@ -6053,7 +6276,12 @@ async def complete_camera_setup(
 ) -> CameraSetupCompletionResponse:
     repository = get_repository()
     try:
-        result = repository.complete_camera_setup(payload)
+        prepared_config = _camera_node_prepared_config(
+            provider_key=payload.provider_key,
+            config=payload.config,
+            pairing_token=payload.node_pairing_token,
+        )
+        result = repository.complete_camera_setup(payload.model_copy(update={"config": prepared_config}))
     except ValueError as error:
         messages = {
             "source_name_exists": "A camera with that name already exists.",
@@ -6061,6 +6289,9 @@ async def complete_camera_setup(
             "camera_setup_provider_unsupported": "Choose a supported camera provider.",
             "camera_setup_unsupported_fields": "This provider configuration included unsupported settings.",
             "camera_setup_invalid_url": "Enter a valid URL for the selected provider.",
+            "camera_setup_invalid_node_address": "Enter a valid local LAN Camera Node address.",
+            "camera_node_pairing_required": "Pair a Camera Node and select one advertised camera before completing setup.",
+            "camera_node_pairing_expired": "Camera Node pairing expired. Pair the Node again before continuing.",
             "camera_setup_idempotency_conflict": "That setup request cannot be safely repeated.",
         }
         status = 409 if str(error) in {"source_name_exists", "camera_setup_idempotency_conflict"} else 400
@@ -7047,6 +7278,10 @@ def _camera_configuration_http_error(error: Exception) -> HTTPException:
         "camera_configuration_monitoring_state_missing": "This camera is missing required local monitoring state and cannot be edited safely.",
         "camera_configuration_provider_unsupported": "This camera provider is not supported by guided editing.",
         "camera_setup_invalid_url": "Enter a valid URL for the selected camera field.",
+        "camera_setup_invalid_node_address": "Enter a valid local LAN Camera Node address.",
+        "camera_node_pairing_required": "Pair a Camera Node and select an advertised camera before saving.",
+        "camera_node_pairing_expired": "Camera Node pairing expired. Pair the Node again before saving.",
+        "camera_node_identity_changed": "This paired Node has a different identity. Add it as a separate camera instead.",
     }
     if code in conflict_messages:
         return HTTPException(status_code=409, detail=conflict_messages[code])
@@ -7081,7 +7316,10 @@ async def preview_camera_configuration(
     payload: CameraConfigurationImpactPreviewRequest,
 ) -> CameraConfigurationImpactPreview:
     try:
-        preview = get_repository().preview_camera_configuration(stream_id, payload)
+        preview = get_repository().preview_camera_configuration(
+            stream_id,
+            _camera_node_prepared_edit_payload(payload),
+        )
     except (CameraConfigurationConflictError, ValueError) as error:
         raise _camera_configuration_http_error(error) from None
     if preview is None:
@@ -7100,7 +7338,7 @@ async def apply_camera_configuration(
     try:
         result = await CameraConfigurationApplicationService(get_repository()).apply(
             stream_id,
-            payload,
+            _camera_node_prepared_edit_payload(payload),
         )
     except (CameraConfigurationConflictError, ValueError, RuntimeError) as error:
         raise _camera_configuration_http_error(error) from None

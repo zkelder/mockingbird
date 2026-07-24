@@ -13,6 +13,13 @@ An adapter-backed input that can provide video, images, clips, or stream data.
 Safe metadata describing the intended provider contract for a Source. It is not a
 provider implementation, connection attempt, evidence, or reviewed truth.
 
+## Camera Node
+
+A separately started local-LAN edge adapter that advertises sanitized local
+camera views and serves authenticated bounded snapshots to one paired
+MockingBird Source. It is not a second product database, monitor policy, review
+system, model runtime, retention service, cloud relay, or remote shell.
+
 ## Manual Media Source
 
 A Source/provider path for explicit local media import into Stream and Zone

@@ -22,6 +22,10 @@ import type {
   CameraConfigurationHistoryResponse,
   CameraConfigurationImpactPreview,
   CameraConfigurationImpactPreviewRequest,
+  CameraNodePairRequest,
+  CameraNodePairResponse,
+  CameraNodePreviewRequest,
+  CameraNodePairRevokeRequest,
   CameraSetupCompleteRequest,
   CameraSetupCompletionResponse,
   CameraSetupOptionsResponse,
@@ -252,6 +256,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function requestImage(path: string, payload: CameraNodePreviewRequest): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      detail = ((await response.json()) as { detail?: string }).detail ?? detail;
+    } catch {
+      // The status text is safe fallback context for a non-JSON response.
+    }
+    throw new ApiError(detail, response.status);
+  }
+  if (!response.headers.get("content-type")?.startsWith("image/jpeg")) {
+    throw new ApiError("Camera Node did not provide a JPEG preview.", 502);
+  }
+  return response.blob();
+}
+
 function previewFolderImport(
   sourceId: string,
   payload?: FolderImportPreviewRequest,
@@ -323,6 +348,18 @@ export const apiClient = {
   },
   getSources: () => request<CameraSource[]>("/api/sources"),
   getCameraSetupOptions: () => request<CameraSetupOptionsResponse>("/api/camera-setup/options"),
+  pairCameraNode: (payload: CameraNodePairRequest) =>
+    request<CameraNodePairResponse>("/api/camera-nodes/pair", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  previewCameraNode: (payload: CameraNodePreviewRequest) =>
+    requestImage("/api/camera-nodes/preview", payload),
+  revokeCameraNodePairing: (payload: CameraNodePairRevokeRequest) =>
+    request<void>("/api/camera-nodes/pair/revoke", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   validateCameraSetup: (payload: CameraSetupValidationRequest) =>
     request<CameraSetupValidationResponse>("/api/camera-setup/validate", {
       method: "POST",

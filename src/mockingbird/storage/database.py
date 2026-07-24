@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 22
+CURRENT_DATABASE_SCHEMA_VERSION = 23
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -292,6 +292,20 @@ def _migrate_to_camera_configuration_revisions(connection: Connection) -> None:
     )
 
 
+def _migrate_to_camera_node_provider_contract(connection: Connection) -> None:
+    """Reserve v23 for Camera Node configuration without inventing paired devices.
+
+    Node identity, opaque selected camera ID, pairing state, and credential stay
+    in the existing local Source provider configuration. No Source, Stream,
+    pairing, media, evidence, alert, or truth record is created by migration.
+    """
+
+    Base.metadata.tables["source_provider_configurations"].create(
+        bind=connection,
+        checkfirst=True,
+    )
+
+
 def _migrate_to_zone_monitoring_policy_overrides(connection: Connection) -> None:
     """Add empty per-Zone overrides without changing existing Zone behavior."""
 
@@ -498,6 +512,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     20: _migrate_to_yard_map,
     21: _migrate_to_camera_health_incidents,
     22: _migrate_to_camera_configuration_revisions,
+    23: _migrate_to_camera_node_provider_contract,
 }
 
 

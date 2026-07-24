@@ -4,6 +4,7 @@ import type {
   CameraConfigurationEditResponse,
   CameraConfigurationImpactPreview,
   CameraConfigurationSecretAction,
+  CameraNodePairResponse,
 } from "../api/types";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
@@ -30,8 +31,22 @@ function configurationPayload(
   secretActions: Record<string, CameraConfigurationSecretAction>,
   sourceName: string,
   streamName: string,
+  nodePairing: CameraNodePairResponse | null,
+  selectedNodeCameraId: string,
 ) {
   const config: Record<string, string | null> = {};
+  if (configuration.provider_key === "camera_node" && nodePairing) {
+    config.node_camera_id = selectedNodeCameraId;
+    return {
+      provider_key: configuration.provider_key,
+      config,
+      secret_actions: {},
+      node_pairing_token: nodePairing.pairing_token,
+      source_name: sourceName.trim() || null,
+      stream_name: streamName.trim() || null,
+      expected_state_token: configuration.state_token,
+    };
+  }
   for (const field of configuration.editable_fields) {
     const value = values[field.key]?.trim();
     if (field.secret) {
@@ -66,6 +81,12 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [restartMonitoring, setRestartMonitoring] = useState(false);
+  const [nodeAddress, setNodeAddress] = useState("");
+  const [pairingCode, setPairingCode] = useState("");
+  const [nodePairing, setNodePairing] = useState<CameraNodePairResponse | null>(null);
+  const [selectedNodeCameraId, setSelectedNodeCameraId] = useState("");
+  const [isPairingNode, setIsPairingNode] = useState(false);
+  const [isRevokingNode, setIsRevokingNode] = useState(false);
 
   const canSave = Boolean(preview?.validation.can_apply && preview.changed_fields.length > 0);
   const secretFields = useMemo(
@@ -114,7 +135,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
     try {
       setPreview(await apiClient.previewCameraConfiguration(
         streamId,
-        configurationPayload(configuration, values, secretActions, sourceName, streamName),
+        configurationPayload(configuration, values, secretActions, sourceName, streamName, nodePairing, selectedNodeCameraId),
       ));
     } catch (caught) {
       setPreview(null);
@@ -124,13 +145,48 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
     }
   }
 
+  async function pairNodeForRepair() {
+    setIsPairingNode(true);
+    setError(null);
+    setPreview(null);
+    try {
+      const pairing = await apiClient.pairCameraNode({ base_address: nodeAddress, pairing_code: pairingCode });
+      setNodePairing(pairing);
+      const initialCamera = pairing.cameras.find((camera) => camera.status === "available" && camera.snapshot_supported)?.camera_id ?? "";
+      setSelectedNodeCameraId(initialCamera);
+      setPairingCode("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Camera Node pairing could not be completed.");
+    } finally {
+      setIsPairingNode(false);
+    }
+  }
+
+  async function revokeNodePairing() {
+    if (!configuration) return;
+    setIsRevokingNode(true);
+    setError(null);
+    try {
+      await apiClient.revokeCameraNodePairing({ stream_id: configuration.stream_id });
+      setNodePairing(null);
+      setPreview(null);
+      setMessage("Camera Node pairing was revoked. Existing Zones, activity, evidence, reviews, and history stay intact.");
+      await onSaved();
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Camera Node pairing could not be revoked.");
+    } finally {
+      setIsRevokingNode(false);
+    }
+  }
+
   async function save() {
     if (!configuration || !preview || !canSave) return;
     setIsSaving(true);
     setError(null);
     try {
       const result = await apiClient.applyCameraConfiguration(streamId, {
-        ...configurationPayload(configuration, values, secretActions, sourceName, streamName),
+        ...configurationPayload(configuration, values, secretActions, sourceName, streamName, nodePairing, selectedNodeCameraId),
         preview_token: preview.preview_token,
         idempotency_key: idempotencyKey(),
         restart_monitoring: restartMonitoring,
@@ -174,7 +230,20 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
             <div className="section-heading"><div><h2>Camera configuration</h2><span className="meta-text">{configuration.provider_display_name} is fixed for this camera. Saved values are never shown here.</span></div></div>
             <label>Camera name<input value={sourceName} onChange={(event) => { setSourceName(event.target.value); setPreview(null); }} /></label>
             <label>Stream name<input value={streamName} onChange={(event) => { setStreamName(event.target.value); setPreview(null); }} /></label>
-            {configuration.editable_fields.map((field) => (
+            {configuration.provider_key === "camera_node" ? <div className="notice-panel">
+              <strong>Repair or change Camera Node view</strong>
+              <span>Pairing is explicit. Enter the Node’s address and one-time local code to repair pairing or choose another advertised camera from the same Node. The saved address and credential remain masked.</span>
+              <label>Node address<input onChange={(event) => { setNodeAddress(event.target.value); setPreview(null); }} placeholder="http://192.168.1.50:8787" value={nodeAddress} /></label>
+              <label>One-time pairing code<input onChange={(event) => setPairingCode(event.target.value)} type="password" value={pairingCode} /></label>
+              <button className="secondary-action" disabled={!nodeAddress || !pairingCode || isPairingNode} onClick={() => void pairNodeForRepair()} type="button">{isPairingNode ? "Pairing…" : "Pair or repair Node"}</button>
+              <button className="secondary-action" disabled={isRevokingNode} onClick={() => void revokeNodePairing()} type="button">{isRevokingNode ? "Revoking…" : "Revoke current pairing"}</button>
+              {nodePairing ? <><span><strong>Node found:</strong> {nodePairing.display_name} ({nodePairing.api_version})</span>
+                <label>Camera view<select onChange={(event) => { setSelectedNodeCameraId(event.target.value); setPreview(null); }} value={selectedNodeCameraId}>
+                  <option value="">Choose an advertised camera</option>
+                  {nodePairing.cameras.map((camera) => <option disabled={camera.status !== "available" || !camera.snapshot_supported} key={camera.camera_id} value={camera.camera_id}>{camera.display_name} — {camera.status.replace(/_/g, " ")}</option>)}
+                </select></label>
+              </> : <span className="meta-text">You can still rename this Camera or Stream without re-pairing.</span>}
+            </div> : configuration.editable_fields.map((field) => (
               <div className="page-stack" key={field.key}>
                 <label>{field.label}{field.required ? " (required)" : ""}
                   {field.secret ? (
@@ -194,7 +263,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
               </div>
             ))}
             <button className="secondary-action" disabled={isPreviewing} onClick={() => void previewChanges()} type="button">{isPreviewing ? "Checking impact…" : "Validate and preview impact"}</button>
-            <span className="meta-text">Validation checks saved configuration only. It does not contact the camera, start monitoring, save media, create activity, or create reviewed truth.</span>
+            <span className="meta-text">{configuration.provider_key === "camera_node" && nodePairing ? "Pairing contacted the Node explicitly; the impact preview does not start monitoring, save media, create activity, or create reviewed truth." : "Validation checks saved configuration only. It does not contact the camera, start monitoring, save media, create activity, or create reviewed truth."}</span>
           </section>
 
           {preview ? <section className="panel page-stack" aria-label="Camera configuration impact preview">

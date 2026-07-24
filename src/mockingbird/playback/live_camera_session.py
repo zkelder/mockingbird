@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from mockingbird.playback import (
+    camera_node_bridge,
     live_frame_cache,
     local_camera_bridge,
     rtsp_bridge,
@@ -43,6 +44,7 @@ DEFAULT_ACTIVITY_MAX_SESSION_SECONDS = 5 * 60
 DEFAULT_MAX_DIAGNOSTIC_EVENTS = 100
 SUPPORTED_SESSION_TYPES = {
     "rtsp",
+    "camera_node",
     local_camera_bridge.LOCAL_USB_STREAM_TYPE,
     windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE,
 }
@@ -1523,8 +1525,16 @@ class _LiveCameraSession:
                 self.status = "failed"
                 self.stop_reason = "process_ended"
                 if self.last_error is None:
+                    safe_failure_code = getattr(self.process, "safe_failure_code", None)
                     self.last_error = (
-                        "Camera process ended before the session was stopped."
+                        safe_failure_code
+                        if safe_failure_code in {
+                            "authentication_rejected",
+                            "node_camera_unavailable",
+                            "node_snapshot_invalid",
+                            "node_unavailable",
+                        }
+                        else "Camera process ended before the session was stopped."
                     )
                 self._record_diagnostic_event_locked(
                     "camera_failed",
@@ -2120,7 +2130,9 @@ def _coerce_datetime(value: Any) -> datetime | None:
     return None
 
 
-def _start_process(config: Any) -> subprocess.Popen[bytes]:
+def _start_process(config: Any) -> subprocess.Popen[bytes] | camera_node_bridge.CameraNodeSnapshotProcess:
+    if config.live_stream_type == "camera_node":
+        return camera_node_bridge.CameraNodeSnapshotProcess(config)
     if config.live_stream_type == "rtsp":
         return rtsp_bridge.start_rtsp_mjpeg_process(config.live_stream_url or "")
     if config.live_stream_type == local_camera_bridge.LOCAL_USB_STREAM_TYPE:
