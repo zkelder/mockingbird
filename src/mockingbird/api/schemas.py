@@ -118,6 +118,27 @@ class StreamRuntimeState(str, Enum):
     interrupted = "interrupted"
 
 
+class CameraHealthState(str, Enum):
+    healthy = "healthy"
+    starting = "starting"
+    waiting_for_capacity = "waiting_for_capacity"
+    camera_unavailable = "camera_unavailable"
+    no_recent_frame = "no_recent_frame"
+    evidence_storage_degraded = "evidence_storage_degraded"
+    recovering = "recovering"
+    stopped = "stopped"
+    setup_incomplete = "setup_incomplete"
+
+
+class CameraHealthIncidentCategory(str, Enum):
+    camera_unavailable = "camera_unavailable"
+    no_recent_frame = "no_recent_frame"
+    evidence_persistence_degraded = "evidence_persistence_degraded"
+    recovery_exhausted = "recovery_exhausted"
+    capacity_waiting = "capacity_waiting"
+    configuration_invalid = "configuration_invalid"
+
+
 class ExternalUrlPreviewStatus(str, Enum):
     available = "available"
     not_configured = "not_configured"
@@ -686,6 +707,9 @@ class StreamRuntimeStatusResponse(BaseModel):
     checkpoint_updated_at: datetime | None = None
     last_start_attempt_at: datetime | None = None
     last_healthy_frame_at: datetime | None = None
+    last_evidence_persisted_at: datetime | None = None
+    last_evidence_failure_at: datetime | None = None
+    evidence_failure_code: str | None = None
     last_clean_stop_at: datetime | None = None
     last_failure_at: datetime | None = None
     failure_code: str | None = None
@@ -701,6 +725,66 @@ class StreamRuntimeStatusResponse(BaseModel):
     creates_review_truth: bool = False
     message: str
     warnings: list[str] = Field(default_factory=list)
+
+
+class CameraHealthIncident(BaseModel):
+    """A bounded, sanitized operational state transition for one Stream."""
+
+    id: str
+    stream_id: str
+    category: CameraHealthIncidentCategory
+    severity: AlertSeverity
+    started_at: datetime
+    updated_at: datetime
+    resolved_at: datetime | None = None
+    reason_code: str
+    condition_fingerprint: str
+    next_retry_at: datetime | None = None
+    occurrence_count: int = Field(ge=1, le=100)
+    alert_id: str | None = None
+
+
+class CameraHealthSummary(BaseModel):
+    """Product-facing camera health; it intentionally excludes connection details."""
+
+    stream_id: str
+    stream_name: str
+    source_id: str
+    source_name: str
+    state: CameraHealthState
+    message: str
+    desired_mode: StreamMonitoringMode
+    actual_state: StreamRuntimeState
+    readiness_status: StreamPlaybackStatusValue
+    preview_available: bool = False
+    last_good_frame_at: datetime | None = None
+    frame_age_seconds: int | None = Field(default=None, ge=0)
+    last_evidence_persisted_at: datetime | None = None
+    last_evidence_failure_at: datetime | None = None
+    open_activity_session_count: int = Field(default=0, ge=0)
+    latest_visit_at: datetime | None = None
+    next_retry_at: datetime | None = None
+    failure_reason: str | None = None
+    unread_alert: bool = False
+    stale: bool = False
+
+
+class CameraHealthDetailResponse(BaseModel):
+    health: CameraHealthSummary
+    incidents: list[CameraHealthIncident] = Field(default_factory=list, max_length=20)
+    message: str
+
+
+class CameraHealthListResponse(BaseModel):
+    items: list[CameraHealthSummary] = Field(default_factory=list, max_length=50)
+    limit: int = Field(ge=1, le=50)
+    message: str
+
+
+class CameraHealthIncidentListResponse(BaseModel):
+    items: list[CameraHealthIncident] = Field(default_factory=list, max_length=20)
+    limit: int = Field(ge=1, le=20)
+    message: str
 
 
 class StreamMonitoringPolicyUpdate(BaseModel):
@@ -1764,6 +1848,7 @@ class DashboardStreamSummary(BaseModel):
     ready_activity_session_count: int = Field(default=0, ge=0)
     needs_review_visit_count: int = Field(default=0, ge=0)
     latest_visit: DashboardVisitSummary | None = None
+    camera_health: CameraHealthSummary | None = None
 
 
 class DashboardReviewedObservation(BaseModel):
@@ -1802,6 +1887,7 @@ class DashboardSummary(BaseModel):
         max_length=8,
     )
     recent_activity: list[DashboardVisitSummary] = Field(default_factory=list, max_length=25)
+    camera_attention: list[CameraHealthSummary] = Field(default_factory=list, max_length=12)
     warnings: list[str] = Field(default_factory=list, max_length=12)
 
 
@@ -4440,6 +4526,7 @@ class YardMapZonePlacement(BaseModel):
 class YardMapActivitySummary(BaseModel):
     monitoring_desired_state: StreamMonitoringMode
     monitoring_actual_state: StreamRuntimeState
+    camera_health_state: CameraHealthState = CameraHealthState.stopped
     open_activity_session: bool = False
     needs_review_count: int = Field(ge=0)
     needs_review_visit_ids: list[str] = Field(default_factory=list, max_length=50)

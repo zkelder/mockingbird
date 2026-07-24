@@ -115,6 +115,12 @@ from mockingbird.api.schemas import (
     CameraSetupOptionsResponse,
     CameraSetupValidationRequest,
     CameraSetupValidationResponse,
+    CameraHealthDetailResponse,
+    CameraHealthIncident,
+    CameraHealthIncidentCategory,
+    CameraHealthListResponse,
+    CameraHealthState,
+    CameraHealthSummary,
     ClassifierManifestExample,
     ClassifierManifestExportFile,
     ClassifierManifestFileExportRequest,
@@ -416,6 +422,7 @@ from mockingbird.storage.models import (
     Base,
     BioClipIdentificationAttemptModel,
     CameraSetupOperationModel,
+    CameraHealthIncidentModel,
     CameraSourceModel,
     DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS,
     DEFAULT_STREAM_MONITORING_MINIMUM_DETECTIONS,
@@ -473,6 +480,13 @@ MAX_ACTIVITY_LIBRARY_SAVED_VIEWS = 15
 MAX_ACTIVE_VISIT_COLLECTIONS = 100
 MAX_COLLECTIONS_PER_VISIT = 20
 MAX_COLLECTION_LIST_ITEMS = 100
+CAMERA_HEALTH_STARTUP_GRACE = timedelta(minutes=2)
+CAMERA_HEALTH_RECENT_FRAME = timedelta(minutes=2)
+CAMERA_HEALTH_DEGRADED_FRAME = timedelta(minutes=8)
+CAMERA_HEALTH_PROLONGED_CAPACITY_WAIT = timedelta(minutes=5)
+CAMERA_HEALTH_CHECKPOINT_INTERVAL = timedelta(seconds=30)
+CAMERA_HEALTH_HISTORY_LIMIT = 20
+CAMERA_HEALTH_MAX_OCCURRENCES = 100
 MAX_ACTIVE_VISIT_TAGS = 200
 MAX_TAGS_PER_VISIT = 20
 MAX_TAG_LIST_ITEMS = 50
@@ -3423,6 +3437,499 @@ class ProductRepository:
             stream = session.get(StreamModel, stream_id)
             return _stream_from_model(stream) if stream else None
 
+    @staticmethod
+    def _camera_health_reason(code: str | None) -> str | None:
+        """Translate runtime codes once so operational views never expose internals."""
+
+        return {
+            "camera_unavailable": "Camera is not currently providing usable frames.",
+            "waiting_for_capacity": "Monitoring is waiting for available local capacity.",
+            "evidence_persistence_failed": "MockingBird could not safely persist required evidence.",
+            "configuration_invalid": "Camera setup needs review before monitoring can start.",
+            "previous_process_ended": "Monitoring will resume when the local supervisor is ready.",
+        }.get(code)
+
+    def _camera_health_summary_from_models(
+        self,
+        session: Session,
+        stream: StreamModel,
+        *,
+        source: CameraSourceModel | None,
+        playback: StreamPlaybackStatus | None,
+        now: datetime,
+        open_activity_session_count: int = 0,
+        latest_visit_at: datetime | None = None,
+    ) -> CameraHealthSummary:
+        """Resolve one product health state from durable intent and bounded checkpoints."""
+
+        policy = session.get(StreamMonitoringPolicyModel, stream.id)
+        checkpoint = session.get(StreamRuntimeCheckpointModel, stream.id)
+        desired_mode = (
+            StreamMonitoringMode(policy.mode)
+            if policy is not None and policy.mode in StreamMonitoringMode._value2member_map_
+            else StreamMonitoringMode.off
+        )
+        actual_state = StreamRuntimeState.stopped
+        if checkpoint is not None and checkpoint.actual_state in StreamRuntimeState._value2member_map_:
+            actual_state = StreamRuntimeState(checkpoint.actual_state)
+        readiness_status = (
+            playback.status if playback is not None else StreamPlaybackStatusValue.unknown
+        )
+        frame_at = checkpoint.last_healthy_frame_at if checkpoint is not None else None
+        frame_age_seconds = (
+            max(0, int((_as_utc(now) - _as_utc(frame_at)).total_seconds()))
+            if frame_at is not None
+            else None
+        )
+        failure_code = (
+            checkpoint.evidence_failure_code
+            if checkpoint is not None and checkpoint.evidence_failure_code
+            else checkpoint.failure_code if checkpoint is not None else None
+        )
+
+        # Frames are operational health signals. Wildlife activity and Visits are
+        # deliberately absent from this decision so a quiet feeder can be healthy.
+        if desired_mode != StreamMonitoringMode.armed:
+            state = CameraHealthState.stopped
+            message = "Monitoring is stopped by its saved local policy."
+        elif source is None or source.status == SourceStatus.needs_setup.value or readiness_status in {
+            StreamPlaybackStatusValue.not_configured,
+            StreamPlaybackStatusValue.needs_stream_url,
+        }:
+            state = CameraHealthState.setup_incomplete
+            message = "Camera setup is incomplete; review the saved configuration before monitoring."
+            failure_code = "configuration_invalid"
+        elif checkpoint is not None and checkpoint.evidence_failure_code:
+            state = CameraHealthState.evidence_storage_degraded
+            message = "Frames may be available, but required evidence persistence needs attention."
+        elif (
+            actual_state == StreamRuntimeState.blocked
+            and checkpoint is not None
+            and checkpoint.failure_code == "waiting_for_capacity"
+        ):
+            state = CameraHealthState.waiting_for_capacity
+            message = "Monitoring is enabled and waiting for available local capacity."
+        elif actual_state == StreamRuntimeState.backoff:
+            if checkpoint is not None and checkpoint.consecutive_failure_count >= 3:
+                state = CameraHealthState.camera_unavailable
+                message = "The camera is unavailable after bounded recovery attempts."
+            else:
+                state = CameraHealthState.recovering
+                message = "Monitoring is recovering through its bounded local retry path."
+        elif actual_state == StreamRuntimeState.starting:
+            startup_age = (
+                _as_utc(now) - _as_utc(checkpoint.last_start_attempt_at)
+                if checkpoint is not None and checkpoint.last_start_attempt_at is not None
+                else timedelta(0)
+            )
+            if startup_age <= CAMERA_HEALTH_STARTUP_GRACE:
+                state = CameraHealthState.starting
+                message = "Monitoring is starting and waiting for its first usable frame."
+            else:
+                state = CameraHealthState.camera_unavailable
+                message = "The camera did not provide a usable frame during the startup window."
+        elif actual_state == StreamRuntimeState.running:
+            if frame_at is None:
+                startup_age = (
+                    _as_utc(now) - _as_utc(checkpoint.last_start_attempt_at)
+                    if checkpoint is not None and checkpoint.last_start_attempt_at is not None
+                    else timedelta(0)
+                )
+                if startup_age <= CAMERA_HEALTH_STARTUP_GRACE:
+                    state = CameraHealthState.starting
+                    message = "Monitoring is running and waiting for its first usable frame."
+                else:
+                    state = CameraHealthState.no_recent_frame
+                    message = "Monitoring is running, but no usable frame has arrived recently."
+            elif frame_age_seconds is not None and frame_age_seconds <= int(CAMERA_HEALTH_RECENT_FRAME.total_seconds()):
+                state = CameraHealthState.healthy
+                message = "Monitoring is running and recently received a usable frame."
+            else:
+                state = CameraHealthState.no_recent_frame
+                message = "Monitoring is running, but its last usable frame is no longer recent."
+        elif actual_state == StreamRuntimeState.blocked:
+            state = CameraHealthState.camera_unavailable
+            message = "Monitoring needs attention before the camera can restart."
+        elif checkpoint is not None and (
+            checkpoint.next_retry_at is not None
+            or checkpoint.last_stop_reason == "retry_requested"
+        ):
+            state = CameraHealthState.recovering
+            message = "Monitoring is preparing a bounded local retry."
+        elif checkpoint is not None and checkpoint.failure_code:
+            state = CameraHealthState.camera_unavailable
+            message = "The camera is unavailable and needs attention before it can restart."
+        else:
+            state = CameraHealthState.starting
+            message = "Monitoring is enabled and awaiting local supervision."
+
+        unread_alert = bool(
+            session.scalar(
+                select(ProductAlertModel.id)
+                .where(
+                    ProductAlertModel.stream_id == stream.id,
+                    ProductAlertModel.category == AlertCategory.monitoring.value,
+                    ProductAlertModel.read_at.is_(None),
+                    ProductAlertModel.dismissed_at.is_(None),
+                    ProductAlertModel.resolved_at.is_(None),
+                )
+                .limit(1)
+            )
+        )
+        stale = bool(
+            checkpoint is not None
+            and desired_mode == StreamMonitoringMode.armed
+            and _as_utc(checkpoint.updated_at) < _as_utc(now) - CAMERA_HEALTH_DEGRADED_FRAME
+        )
+        return CameraHealthSummary(
+            stream_id=stream.id,
+            stream_name=stream.name,
+            source_id=stream.source_id,
+            source_name=source.name if source is not None else "Unavailable Source",
+            state=state,
+            message=message,
+            desired_mode=desired_mode,
+            actual_state=actual_state,
+            readiness_status=readiness_status,
+            preview_available=readiness_status
+            in {StreamPlaybackStatusValue.demo, StreamPlaybackStatusValue.live_ready},
+            last_good_frame_at=frame_at,
+            frame_age_seconds=frame_age_seconds,
+            last_evidence_persisted_at=(
+                checkpoint.last_evidence_persisted_at if checkpoint is not None else None
+            ),
+            last_evidence_failure_at=(
+                checkpoint.last_evidence_failure_at if checkpoint is not None else None
+            ),
+            open_activity_session_count=open_activity_session_count,
+            latest_visit_at=latest_visit_at,
+            next_retry_at=checkpoint.next_retry_at if checkpoint is not None else None,
+            failure_reason=self._camera_health_reason(failure_code),
+            unread_alert=unread_alert,
+            stale=stale,
+        )
+
+    @staticmethod
+    def _camera_health_incident_from_model(
+        incident: CameraHealthIncidentModel,
+    ) -> CameraHealthIncident:
+        return CameraHealthIncident(
+            id=incident.id,
+            stream_id=incident.stream_id,
+            category=CameraHealthIncidentCategory(incident.category),
+            severity=AlertSeverity(incident.severity),
+            started_at=incident.started_at,
+            updated_at=incident.updated_at,
+            resolved_at=incident.resolved_at,
+            reason_code=incident.reason_code,
+            condition_fingerprint=incident.condition_fingerprint,
+            next_retry_at=incident.next_retry_at,
+            occurrence_count=min(CAMERA_HEALTH_MAX_OCCURRENCES, incident.occurrence_count),
+            alert_id=incident.alert_id,
+        )
+
+    def _camera_health_incident_condition(
+        self,
+        health: CameraHealthSummary,
+        checkpoint: StreamRuntimeCheckpointModel | None,
+        *,
+        now: datetime,
+    ) -> tuple[CameraHealthIncidentCategory, AlertSeverity, str, str, str, str] | None:
+        if health.state == CameraHealthState.setup_incomplete:
+            return (
+                CameraHealthIncidentCategory.configuration_invalid,
+                AlertSeverity.warning,
+                "configuration_invalid",
+                "setup_incomplete",
+                "Camera setup needs review",
+                "This enabled camera needs a complete saved setup before monitoring can start.",
+            )
+        if health.state == CameraHealthState.evidence_storage_degraded:
+            return (
+                CameraHealthIncidentCategory.evidence_persistence_degraded,
+                AlertSeverity.high,
+                "evidence_persistence_failed",
+                "evidence_persistence_degraded",
+                "Evidence storage needs attention",
+                "Frames may be available, but MockingBird could not safely persist required evidence.",
+            )
+        if health.state == CameraHealthState.waiting_for_capacity:
+            if (
+                checkpoint is None
+                or _as_utc(checkpoint.updated_at) > _as_utc(now) - CAMERA_HEALTH_PROLONGED_CAPACITY_WAIT
+            ):
+                return None
+            return (
+                CameraHealthIncidentCategory.capacity_waiting,
+                AlertSeverity.warning,
+                "waiting_for_capacity",
+                "capacity_waiting",
+                "Monitoring is waiting for capacity",
+                "This enabled camera has been waiting for available local monitoring capacity.",
+            )
+        if health.state == CameraHealthState.no_recent_frame:
+            if health.frame_age_seconds is None or health.frame_age_seconds < int(CAMERA_HEALTH_DEGRADED_FRAME.total_seconds()):
+                return None
+            return (
+                CameraHealthIncidentCategory.no_recent_frame,
+                AlertSeverity.warning,
+                "no_recent_frame",
+                "no_recent_frame",
+                "Camera frame is no longer recent",
+                "Monitoring is running, but the camera has not provided a usable frame within the expected interval.",
+            )
+        if health.state == CameraHealthState.camera_unavailable:
+            exhausted = bool(checkpoint and checkpoint.consecutive_failure_count >= 2)
+            return (
+                CameraHealthIncidentCategory.recovery_exhausted
+                if exhausted
+                else CameraHealthIncidentCategory.camera_unavailable,
+                AlertSeverity.high if exhausted else AlertSeverity.warning,
+                "camera_unavailable",
+                "recovery_exhausted" if exhausted else "camera_unavailable",
+                "Camera recovery needs attention" if exhausted else "Camera is unavailable",
+                "This enabled camera is unavailable after bounded local recovery attempts."
+                if exhausted
+                else "This enabled camera is not currently providing usable frames.",
+            )
+        if health.state == CameraHealthState.recovering and checkpoint is not None and checkpoint.consecutive_failure_count >= 2:
+            return (
+                CameraHealthIncidentCategory.recovery_exhausted,
+                AlertSeverity.warning,
+                "camera_unavailable",
+                "recovery_exhausted",
+                "Camera recovery is in progress",
+                "MockingBird is using its bounded local retry path for this enabled camera.",
+            )
+        return None
+
+    def _resolve_camera_health_state(
+        self,
+        session: Session,
+        stream_id: str,
+        now: datetime,
+    ) -> None:
+        prefix = f"monitoring:{stream_id}:"
+        for incident in session.scalars(
+            select(CameraHealthIncidentModel).where(
+                CameraHealthIncidentModel.stream_id == stream_id,
+                CameraHealthIncidentModel.resolved_at.is_(None),
+            )
+        ).all():
+            incident.resolved_at = now
+            incident.updated_at = now
+        for alert in session.scalars(
+            select(ProductAlertModel).where(
+                ProductAlertModel.deduplication_key.like(f"{prefix}%"),
+                ProductAlertModel.resolved_at.is_(None),
+            )
+        ).all():
+            alert.resolved_at = now
+            alert.updated_at = now
+        history = session.scalars(
+            select(CameraHealthIncidentModel)
+            .where(
+                CameraHealthIncidentModel.stream_id == stream_id,
+            )
+            .order_by(
+                CameraHealthIncidentModel.updated_at.desc(),
+                CameraHealthIncidentModel.id.desc(),
+            )
+        ).all()
+        for historical in history[CAMERA_HEALTH_HISTORY_LIMIT:]:
+            if historical.resolved_at is not None:
+                session.delete(historical)
+
+    def _sync_camera_health_incident(
+        self,
+        session: Session,
+        stream_id: str,
+        now: datetime,
+    ) -> None:
+        stream = session.get(StreamModel, stream_id)
+        policy = session.get(StreamMonitoringPolicyModel, stream_id)
+        checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
+        if (
+            stream is None
+            or policy is None
+            or policy.mode != StreamMonitoringMode.armed.value
+        ):
+            self._resolve_camera_health_state(session, stream_id, now)
+            return
+        try:
+            playback = self.get_stream_playback_status(stream_id)
+        except Exception:
+            playback = None
+        source = session.get(CameraSourceModel, stream.source_id)
+        health = self._camera_health_summary_from_models(
+            session,
+            stream,
+            source=source,
+            playback=playback,
+            now=now,
+        )
+        condition = self._camera_health_incident_condition(
+            health,
+            checkpoint,
+            now=now,
+        )
+        if condition is None:
+            self._resolve_camera_health_state(session, stream_id, now)
+            return
+        category, severity, reason_code, fingerprint, title, message = condition
+        prefix = f"monitoring:{stream_id}:"
+        for incident in session.scalars(
+            select(CameraHealthIncidentModel).where(
+                CameraHealthIncidentModel.stream_id == stream_id,
+                CameraHealthIncidentModel.resolved_at.is_(None),
+                CameraHealthIncidentModel.condition_fingerprint != fingerprint,
+            )
+        ).all():
+            incident.resolved_at = now
+            incident.updated_at = now
+        for alert in session.scalars(
+            select(ProductAlertModel).where(
+                ProductAlertModel.deduplication_key.like(f"{prefix}%"),
+                ProductAlertModel.resolved_at.is_(None),
+                ProductAlertModel.condition_fingerprint != fingerprint,
+            )
+        ).all():
+            alert.resolved_at = now
+            alert.updated_at = now
+        incident = session.scalar(
+            select(CameraHealthIncidentModel)
+            .where(
+                CameraHealthIncidentModel.stream_id == stream_id,
+                CameraHealthIncidentModel.condition_fingerprint == fingerprint,
+                CameraHealthIncidentModel.resolved_at.is_(None),
+            )
+            .order_by(CameraHealthIncidentModel.updated_at.desc())
+        )
+        if incident is None:
+            incident = CameraHealthIncidentModel(
+                id=uuid.uuid4().hex,
+                stream_id=stream_id,
+                category=category.value,
+                severity=severity.value,
+                started_at=now,
+                updated_at=now,
+                resolved_at=None,
+                reason_code=reason_code,
+                condition_fingerprint=fingerprint,
+                next_retry_at=health.next_retry_at,
+                occurrence_count=1,
+                alert_id=None,
+            )
+            session.add(incident)
+        else:
+            incident.updated_at = now
+            incident.severity = severity.value
+            incident.reason_code = reason_code
+            incident.next_retry_at = health.next_retry_at
+            if checkpoint is not None:
+                incident.occurrence_count = min(
+                    CAMERA_HEALTH_MAX_OCCURRENCES,
+                    max(incident.occurrence_count, checkpoint.failure_count),
+                )
+        alert = self._refresh_product_alert(
+            session,
+            category=AlertCategory.monitoring,
+            severity=severity,
+            title=title,
+            message=message,
+            deduplication_key=f"{prefix}{fingerprint}",
+            condition_fingerprint=fingerprint,
+            action_type=AlertActionType.open_stream,
+            action_parameters={},
+            now=now,
+            stream_id=stream.id,
+            source_id=stream.source_id,
+        )
+        incident.alert_id = alert.id
+        history = session.scalars(
+            select(CameraHealthIncidentModel)
+            .where(
+                CameraHealthIncidentModel.stream_id == stream_id,
+            )
+            .order_by(
+                CameraHealthIncidentModel.updated_at.desc(),
+                CameraHealthIncidentModel.id.desc(),
+            )
+        ).all()
+        for historical in history[CAMERA_HEALTH_HISTORY_LIMIT:]:
+            if historical.resolved_at is not None:
+                session.delete(historical)
+
+    def get_stream_camera_health(
+        self,
+        stream_id: str,
+        *,
+        incident_limit: int = CAMERA_HEALTH_HISTORY_LIMIT,
+    ) -> CameraHealthDetailResponse | None:
+        """Read bounded health only; it never reconciles, probes, or starts a camera."""
+
+        bounded_limit = max(1, min(incident_limit, CAMERA_HEALTH_HISTORY_LIMIT))
+        try:
+            playback = self.get_stream_playback_status(stream_id)
+        except Exception:
+            playback = None
+        with self.session_factory() as session:
+            stream = session.get(StreamModel, stream_id)
+            if stream is None:
+                return None
+            source = session.get(CameraSourceModel, stream.source_id)
+            latest_visit_at = session.scalar(
+                select(EventModel.started_at)
+                .where(EventModel.stream_id == stream_id)
+                .order_by(EventModel.started_at.desc(), EventModel.id.desc())
+                .limit(1)
+            )
+            open_sessions = session.scalar(
+                select(func.count(EventModel.id)).where(
+                    EventModel.stream_id == stream_id,
+                    EventModel.ended_at.is_(None),
+                )
+            ) or 0
+            health = self._camera_health_summary_from_models(
+                session,
+                stream,
+                source=source,
+                playback=playback,
+                now=datetime.now(UTC),
+                open_activity_session_count=open_sessions,
+                latest_visit_at=latest_visit_at,
+            )
+            incidents = [
+                self._camera_health_incident_from_model(incident)
+                for incident in session.scalars(
+                    select(CameraHealthIncidentModel)
+                    .where(CameraHealthIncidentModel.stream_id == stream_id)
+                    .order_by(
+                        CameraHealthIncidentModel.updated_at.desc(),
+                        CameraHealthIncidentModel.id.desc(),
+                    )
+                    .limit(bounded_limit)
+                ).all()
+            ]
+            return CameraHealthDetailResponse(
+                health=health,
+                incidents=incidents,
+                message="Showing saved camera health and bounded recent operational history.",
+            )
+
+    def list_stream_camera_health(
+        self,
+        *,
+        limit: int = 50,
+    ) -> list[CameraHealthSummary]:
+        """Return a bounded all-Stream health summary without altering monitoring intent."""
+
+        return [
+            detail.health
+            for stream in self.list_streams()[: max(1, min(limit, 50))]
+            if (detail := self.get_stream_camera_health(stream.id, incident_limit=1)) is not None
+        ]
+
     def get_stream_monitoring_policy(
         self,
         stream_id: str,
@@ -3560,6 +4067,15 @@ class ProductRepository:
                 ),
                 last_healthy_frame_at=(
                     checkpoint.last_healthy_frame_at if checkpoint else None
+                ),
+                last_evidence_persisted_at=(
+                    checkpoint.last_evidence_persisted_at if checkpoint else None
+                ),
+                last_evidence_failure_at=(
+                    checkpoint.last_evidence_failure_at if checkpoint else None
+                ),
+                evidence_failure_code=(
+                    checkpoint.evidence_failure_code if checkpoint else None
                 ),
                 last_clean_stop_at=(checkpoint.last_clean_stop_at if checkpoint else None),
                 last_failure_at=checkpoint.last_failure_at if checkpoint else None,
@@ -3729,6 +4245,7 @@ class ProductRepository:
                         created_at=now,
                     )
                 )
+                self._sync_monitoring_alert(session, stream_id, now)
                 return False
 
     def disable_stream_monitoring_for_manual_stop(self, stream_id: str) -> None:
@@ -3784,6 +4301,7 @@ class ProductRepository:
                     checkpoint.runtime_generation_id = None
                     checkpoint.last_stop_reason = "previous_process_ended"
                     checkpoint.updated_at = now
+                    self._sync_monitoring_alert(session, checkpoint.stream_id, now)
 
     def list_enabled_monitoring_candidates(
         self,
@@ -3877,15 +4395,32 @@ class ProductRepository:
                 checkpoint = self._checkpoint_for_enabled_candidate(session, candidate)
                 if checkpoint is None:
                     return
-                checkpoint.actual_state = StreamRuntimeState.running.value
-                checkpoint.observed_policy_revision = candidate.policy_revision
-                checkpoint.app_instance_id = app_instance_id
-                checkpoint.last_healthy_frame_at = healthy_at
-                checkpoint.next_retry_at = None
-                checkpoint.failure_code = None
-                checkpoint.consecutive_failure_count = 0
-                checkpoint.safety_hold_active = False
-                checkpoint.updated_at = now
+                last_frame_is_due = (
+                    checkpoint.last_healthy_frame_at is None
+                    or _as_utc(healthy_at) - _as_utc(checkpoint.last_healthy_frame_at)
+                    >= CAMERA_HEALTH_CHECKPOINT_INTERVAL
+                )
+                changed = (
+                    checkpoint.actual_state != StreamRuntimeState.running.value
+                    or checkpoint.observed_policy_revision != candidate.policy_revision
+                    or checkpoint.app_instance_id != app_instance_id
+                    or checkpoint.next_retry_at is not None
+                    or checkpoint.failure_code is not None
+                    or checkpoint.consecutive_failure_count != 0
+                    or checkpoint.safety_hold_active
+                    or last_frame_is_due
+                )
+                if changed:
+                    checkpoint.actual_state = StreamRuntimeState.running.value
+                    checkpoint.observed_policy_revision = candidate.policy_revision
+                    checkpoint.app_instance_id = app_instance_id
+                    if last_frame_is_due:
+                        checkpoint.last_healthy_frame_at = healthy_at
+                    checkpoint.next_retry_at = None
+                    checkpoint.failure_code = None
+                    checkpoint.consecutive_failure_count = 0
+                    checkpoint.safety_hold_active = False
+                    checkpoint.updated_at = now
                 self._sync_monitoring_alert(session, candidate.stream_id, now)
 
     def mark_monitoring_waiting(
@@ -3903,6 +4438,7 @@ class ProductRepository:
                     checkpoint.actual_state == StreamRuntimeState.blocked.value
                     and checkpoint.failure_code == "waiting_for_capacity"
                 ):
+                    self._sync_monitoring_alert(session, candidate.stream_id, now)
                     return
                 checkpoint.actual_state = StreamRuntimeState.blocked.value
                 checkpoint.observed_policy_revision = candidate.policy_revision
@@ -4000,6 +4536,48 @@ class ProductRepository:
                 checkpoint.last_stop_reason = reason
                 checkpoint.updated_at = now
                 self._sync_monitoring_alert(session, stream_id, now)
+
+    def record_stream_health_observation(
+        self,
+        stream_id: str,
+        *,
+        last_evidence_persisted_at: datetime | None,
+        evidence_persistence_failed: bool,
+        now: datetime,
+    ) -> None:
+        """Store sparse lifecycle evidence results without retaining frames or errors.
+
+        This is invoked by the existing supervisor only. It records transitions and
+        periodic successes, never every frame or a raw provider exception.
+        """
+
+        with self.session_factory() as session:
+            with session.begin():
+                checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
+                policy = session.get(StreamMonitoringPolicyModel, stream_id)
+                if checkpoint is None or policy is None:
+                    return
+                changed = False
+                if evidence_persistence_failed:
+                    if checkpoint.evidence_failure_code != "evidence_persistence_failed":
+                        checkpoint.evidence_failure_code = "evidence_persistence_failed"
+                        checkpoint.last_evidence_failure_at = now
+                        changed = True
+                elif (
+                    last_evidence_persisted_at is not None
+                    and (
+                        checkpoint.last_evidence_persisted_at is None
+                        or _as_utc(last_evidence_persisted_at)
+                        - _as_utc(checkpoint.last_evidence_persisted_at)
+                        >= CAMERA_HEALTH_CHECKPOINT_INTERVAL
+                    )
+                ):
+                    checkpoint.last_evidence_persisted_at = last_evidence_persisted_at
+                    checkpoint.evidence_failure_code = None
+                    changed = True
+                if changed:
+                    checkpoint.updated_at = now
+                    self._sync_monitoring_alert(session, stream_id, now)
 
     def get_stream_playback_status(self, stream_id: str) -> StreamPlaybackStatus | None:
         with self.session_factory() as session:
@@ -5153,9 +5731,23 @@ class ProductRepository:
             .where(EventModel.stream_id == stream.id, EventModel.ended_at.is_(None))
             .limit(1)
         ) is not None
+        try:
+            playback = self.get_stream_playback_status(stream.id)
+        except Exception:
+            playback = None
+        health = self._camera_health_summary_from_models(
+            session,
+            stream,
+            source=session.get(CameraSourceModel, stream.source_id),
+            playback=playback,
+            now=datetime.now(UTC),
+            open_activity_session_count=1 if open_activity else 0,
+            latest_visit_at=latest.activity_started_at if latest else None,
+        )
         return YardMapActivitySummary(
             monitoring_desired_state=desired_state,
             monitoring_actual_state=actual_state,
+            camera_health_state=health.state,
             open_activity_session=open_activity,
             needs_review_count=needs_review_count,
             needs_review_visit_ids=needs_review_visit_ids,
@@ -6207,6 +6799,7 @@ class ProductRepository:
 
             warnings: list[str] = []
             stream_summaries: list[DashboardStreamSummary] = []
+            camera_attention: list[CameraHealthSummary] = []
             for stream in stream_models:
                 source = sources_by_id.get(stream.source_id)
                 source_name = source.name if source is not None else "Unavailable Source"
@@ -6241,6 +6834,17 @@ class ProductRepository:
                     else None
                 )
                 runtime = runtime_by_stream.get(stream.id, DashboardStreamRuntimeStatus())
+                camera_health = self._camera_health_summary_from_models(
+                    session,
+                    stream,
+                    source=source,
+                    playback=playback,
+                    now=_as_utc(local_now),
+                    open_activity_session_count=runtime.open_activity_session_count,
+                    latest_visit_at=(
+                        latest_visit.activity_started_at if latest_visit is not None else None
+                    ),
+                )
                 stream_summaries.append(
                     DashboardStreamSummary(
                         stream_id=stream.id,
@@ -6277,8 +6881,15 @@ class ProductRepository:
                         ready_activity_session_count=runtime.ready_activity_session_count,
                         needs_review_visit_count=needs_review_counts.get(stream.id, 0),
                         latest_visit=latest_visit,
+                        camera_health=camera_health,
                     )
                 )
+                if camera_health.state not in {
+                    CameraHealthState.healthy,
+                    CameraHealthState.starting,
+                    CameraHealthState.stopped,
+                }:
+                    camera_attention.append(camera_health)
 
             recent_rows = session.execute(
                 select(VisitModel, EventModel)
@@ -6364,6 +6975,7 @@ class ProductRepository:
                 today_observations=bird_observations,
                 reviewed_non_bird_activity=non_bird_activity,
                 recent_activity=recent_activity,
+                camera_attention=camera_attention[:12],
                 warnings=warnings[:12],
             )
 
@@ -6767,32 +7379,9 @@ class ProductRepository:
         )
 
     def _sync_monitoring_alert(self, session: Session, stream_id: str, now: datetime) -> None:
-        policy = session.get(StreamMonitoringPolicyModel, stream_id)
-        checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
-        stream = session.get(StreamModel, stream_id)
-        prefix = f"monitoring:{stream_id}:"
-        if policy is None or checkpoint is None or stream is None or policy.mode != StreamMonitoringMode.armed.value:
-            for alert in session.scalars(select(ProductAlertModel).where(ProductAlertModel.deduplication_key.like(f"{prefix}%"), ProductAlertModel.resolved_at.is_(None))).all():
-                alert.resolved_at, alert.updated_at = now, now
-            return
-        failure_code = checkpoint.failure_code or "camera_unavailable"
-        meaningful = (
-            checkpoint.actual_state == StreamRuntimeState.blocked.value and failure_code != "waiting_for_capacity"
-        ) or (
-            checkpoint.actual_state == StreamRuntimeState.backoff.value and checkpoint.consecutive_failure_count >= 2
-        )
-        if not meaningful:
-            for alert in session.scalars(select(ProductAlertModel).where(ProductAlertModel.deduplication_key.like(f"{prefix}%"), ProductAlertModel.resolved_at.is_(None))).all():
-                alert.resolved_at, alert.updated_at = now, now
-            return
-        self._refresh_product_alert(
-            session, category=AlertCategory.monitoring,
-            severity=AlertSeverity.high if checkpoint.actual_state == StreamRuntimeState.blocked.value else AlertSeverity.warning,
-            title="Monitoring needs attention", message="This enabled camera is unavailable or recovery is not succeeding. Open the Stream to review its safe status.",
-            deduplication_key=f"{prefix}{failure_code}", condition_fingerprint=failure_code,
-            action_type=AlertActionType.open_stream, action_parameters={}, now=now,
-            stream_id=stream.id, source_id=stream.source_id,
-        )
+        # Monitoring lifecycle is the sole writer. Alert and incident resolution
+        # share this one resolver so health reads cannot create attention state.
+        self._sync_camera_health_incident(session, stream_id, now)
 
     def _sync_storage_alert(self, session: Session, now: datetime) -> None:
         settings = session.get(StorageRetentionSettingsModel, 1)

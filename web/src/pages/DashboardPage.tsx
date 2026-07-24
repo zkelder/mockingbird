@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import type {
   DashboardSummary,
   DashboardVisitSummary,
+  CameraHealthSummary,
   HealthStatus,
   StorageSummary,
   StreamRuntimeStatus,
@@ -29,6 +30,26 @@ interface DashboardPageProps {
 }
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 30_000;
+
+function cameraHealthLabel(state: CameraHealthSummary["state"]): string {
+  return {
+    healthy: "Healthy",
+    starting: "Starting",
+    waiting_for_capacity: "Waiting for capacity",
+    camera_unavailable: "Camera unavailable",
+    no_recent_frame: "No recent frame",
+    evidence_storage_degraded: "Evidence storage degraded",
+    recovering: "Recovering",
+    stopped: "Monitoring stopped",
+    setup_incomplete: "Setup incomplete",
+  }[state];
+}
+
+function cameraHealthTone(state: CameraHealthSummary["state"]): "good" | "review" | "quiet" {
+  if (state === "healthy") return "good";
+  if (state === "stopped" || state === "starting") return "quiet";
+  return "review";
+}
 
 function outcomeLabel(visit: DashboardVisitSummary): string {
   if (visit.review_outcome === "needs_review") {
@@ -281,6 +302,40 @@ export function DashboardPage({
       </section>
 
       {monitorActionError ? <div className="dashboard-action-error" role="alert">{monitorActionError}</div> : null}
+      {summary.camera_attention.length > 0 ? (
+        <section className="panel dashboard-camera-attention" aria-label="Cameras needing attention">
+          <div className="section-heading">
+            <div>
+              <h2>Cameras needing attention</h2>
+              <span className="meta-text">Only enabled Streams with a meaningful current camera-health concern</span>
+            </div>
+            <StatusPill label={`${summary.camera_attention.length} needs attention`} tone="review" />
+          </div>
+          <div className="dashboard-visit-list">
+            {summary.camera_attention.map((camera) => (
+              <article className="dashboard-visit-row" key={camera.stream_id}>
+                <div>
+                  <StatusPill label={cameraHealthLabel(camera.state)} tone={cameraHealthTone(camera.state)} />
+                  <strong>{camera.stream_name}</strong>
+                  <span className="meta-text">{camera.source_name} · {camera.desired_mode} / {camera.actual_state}</span>
+                  <span className="meta-text">
+                    Last good frame {camera.last_good_frame_at ? formatDateTime(camera.last_good_frame_at) : "not yet received"}
+                    {camera.last_evidence_persisted_at ? ` · Evidence write ${formatDateTime(camera.last_evidence_persisted_at)}` : ""}
+                    {camera.next_retry_at ? ` · Next retry ${formatDateTime(camera.next_retry_at)}` : ""}
+                  </span>
+                  <span className="meta-text">{camera.failure_reason ?? camera.message}</span>
+                </div>
+                <div className="detail-actions">
+                  <button className="secondary-action" onClick={() => onOpenStream(camera.stream_id)} type="button">Open Stream</button>
+                  {camera.desired_mode === "armed" ? <button className="secondary-action" onClick={() => void handleDurableMonitoringAction(camera.stream_id, "retry")} type="button">Retry now</button> : null}
+                  <button className="text-action" onClick={onOpenStreams} type="button">Review camera setup</button>
+                  {camera.desired_mode === "armed" ? <button className="text-action" onClick={() => void handleDurableMonitoringAction(camera.stream_id, "disable")} type="button">Disable monitoring</button> : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <LiveCameraOverview
         onOpenReview={(streamId) =>
           onOpenReview({ source: "live-motion", search: streamId, status: "unreviewed" })

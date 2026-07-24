@@ -34,6 +34,9 @@ from mockingbird.api.schemas import (
     CameraSourceCreateResponse,
     CameraSourceMutationResult,
     CameraSourceUpdate,
+    CameraHealthDetailResponse,
+    CameraHealthIncidentListResponse,
+    CameraHealthListResponse,
     ClassifierReadinessReport,
     ClassifierManifestFileExportRequest,
     ClassifierManifestFileExportResponse,
@@ -2512,10 +2515,41 @@ def _supervisor_start_monitor(
     return _managed_camera_status(snapshot)
 
 
+def _evidence_persistence_failed(error: str | None) -> bool:
+    """Classify only clear managed-evidence failures; other review errors are not storage health."""
+
+    normalized = (error or "").lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "evidence persistence",
+            "persist evidence",
+            "storage",
+            "media write",
+            "write media",
+            "save evidence",
+        )
+    )
+
+
 def _supervisor_camera_status(stream_id: str) -> ManagedCameraStatus | None:
     if _live_camera_session_manager is None:
         return None
-    return _managed_camera_status(_live_camera_session_manager.status(stream_id))
+    snapshot = _live_camera_session_manager.status(stream_id)
+    if snapshot is not None and snapshot.monitor_running:
+        try:
+            get_repository().record_stream_health_observation(
+                stream_id,
+                last_evidence_persisted_at=snapshot.last_auto_review_created_at,
+                evidence_persistence_failed=_evidence_persistence_failed(
+                    snapshot.auto_review_last_error
+                ),
+                now=datetime.now(UTC),
+            )
+        except Exception:
+            # A best-effort health checkpoint must never interrupt frame handling.
+            pass
+    return _managed_camera_status(snapshot)
 
 
 def _supervisor_stop_camera(stream_id: str, reason: str) -> None:
@@ -6820,6 +6854,19 @@ async def list_stream_monitoring_statuses(
     )
 
 
+@app.get("/api/camera-health", response_model=CameraHealthListResponse)
+async def list_camera_health(
+    limit: int = Query(default=50, ge=1, le=50),
+) -> CameraHealthListResponse:
+    """Read saved health only; this endpoint never starts, probes, or retries a camera."""
+
+    return CameraHealthListResponse(
+        items=get_repository().list_stream_camera_health(limit=limit),
+        limit=limit,
+        message="Showing saved camera health for configured Streams.",
+    )
+
+
 async def _dashboard_runtime_by_stream(
     repository: ProductRepository,
 ) -> dict[str, DashboardStreamRuntimeStatus]:
@@ -6921,6 +6968,35 @@ async def get_stream_runtime_status(stream_id: str) -> StreamRuntimeStatusRespon
     if status is None:
         raise _not_found("Stream", stream_id)
     return status
+
+
+@app.get(
+    "/api/streams/{stream_id}/camera-health",
+    response_model=CameraHealthDetailResponse,
+)
+async def get_stream_camera_health(stream_id: str) -> CameraHealthDetailResponse:
+    detail = get_repository().get_stream_camera_health(stream_id)
+    if detail is None:
+        raise _not_found("Stream", stream_id)
+    return detail
+
+
+@app.get(
+    "/api/streams/{stream_id}/camera-health/incidents",
+    response_model=CameraHealthIncidentListResponse,
+)
+async def list_stream_camera_health_incidents(
+    stream_id: str,
+    limit: int = Query(default=20, ge=1, le=20),
+) -> CameraHealthIncidentListResponse:
+    detail = get_repository().get_stream_camera_health(stream_id, incident_limit=limit)
+    if detail is None:
+        raise _not_found("Stream", stream_id)
+    return CameraHealthIncidentListResponse(
+        items=detail.incidents,
+        limit=limit,
+        message="Showing bounded recent camera health history.",
+    )
 
 
 @app.put(

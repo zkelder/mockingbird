@@ -1054,6 +1054,15 @@ a.secondary-action {
   outline-offset: 3px;
 }
 
+.yard-map-health-indicator {
+  display: block;
+  margin: 4px auto 0;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 0.68rem;
+}
+
 .yard-map-visit-preview {
   display: block;
   width: 54px;

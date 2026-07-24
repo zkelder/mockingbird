@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 20
+CURRENT_DATABASE_SCHEMA_VERSION = 21
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -257,6 +257,32 @@ def _migrate_to_yard_map(connection: Connection) -> None:
     Base.metadata.tables["yard_map_zone_placements"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_camera_health_incidents(connection: Connection) -> None:
+    """Add bounded operational health state without modifying evidence or truth."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Camera health migration requires local SQLite storage."
+        )
+    columns = {
+        column["name"]
+        for column in inspect(connection).get_columns("stream_runtime_checkpoints")
+    }
+    for column, definition in (
+        ("last_evidence_persisted_at", "DATETIME"),
+        ("last_evidence_failure_at", "DATETIME"),
+        ("evidence_failure_code", "VARCHAR"),
+    ):
+        if column not in columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE stream_runtime_checkpoints ADD COLUMN {column} {definition}"
+            )
+    Base.metadata.tables["camera_health_incidents"].create(
+        bind=connection,
+        checkfirst=True,
+    )
+
+
 def _migrate_to_zone_monitoring_policy_overrides(connection: Connection) -> None:
     """Add empty per-Zone overrides without changing existing Zone behavior."""
 
@@ -461,6 +487,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     18: _migrate_to_visit_collections,
     19: _migrate_to_visit_tags,
     20: _migrate_to_yard_map,
+    21: _migrate_to_camera_health_incidents,
 }
 
 

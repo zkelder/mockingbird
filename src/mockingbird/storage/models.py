@@ -106,6 +106,13 @@ class StreamRuntimeCheckpointModel(Base):
     last_healthy_frame_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    last_evidence_persisted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_evidence_failure_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    evidence_failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
     last_clean_stop_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -125,6 +132,29 @@ class StreamRuntimeCheckpointModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+
+
+class CameraHealthIncidentModel(Base):
+    """Bounded operational history; never a frame log, evidence record, or truth."""
+
+    __tablename__ = "camera_health_incidents"
+    __table_args__ = (
+        Index("ix_camera_health_incidents_stream_updated", "stream_id", "updated_at"),
+        Index("ix_camera_health_incidents_stream_open", "stream_id", "resolved_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    severity: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason_code: Mapped[str] = mapped_column(String, nullable=False)
+    condition_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    alert_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class StreamMonitoringOperationModel(Base):

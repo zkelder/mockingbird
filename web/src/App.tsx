@@ -640,6 +640,7 @@ export default function App() {
           onOpenExports={() => setPage("exports")}
           onOpenReview={openReviewQueue}
           onOpenMotionEvidence={openMotionEvidence}
+          onOpenCameraSetup={() => setPage("camera-setup")}
           onReviewActivityCreated={() => loadAppData({ showLoading: false })}
         />
       );

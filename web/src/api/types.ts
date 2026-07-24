@@ -55,6 +55,23 @@ export type StreamRuntimeState =
   | "blocked"
   | "stopping"
   | "interrupted";
+export type CameraHealthState =
+  | "healthy"
+  | "starting"
+  | "waiting_for_capacity"
+  | "camera_unavailable"
+  | "no_recent_frame"
+  | "evidence_storage_degraded"
+  | "recovering"
+  | "stopped"
+  | "setup_incomplete";
+export type CameraHealthIncidentCategory =
+  | "camera_unavailable"
+  | "no_recent_frame"
+  | "evidence_persistence_degraded"
+  | "recovery_exhausted"
+  | "capacity_waiting"
+  | "configuration_invalid";
 export type ExternalUrlPreviewStatus =
   | "available"
   | "not_configured"
@@ -497,6 +514,9 @@ export interface StreamRuntimeStatus {
   checkpoint_updated_at?: string | null;
   last_start_attempt_at?: string | null;
   last_healthy_frame_at?: string | null;
+  last_evidence_persisted_at?: string | null;
+  last_evidence_failure_at?: string | null;
+  evidence_failure_code?: string | null;
   last_clean_stop_at?: string | null;
   last_failure_at?: string | null;
   failure_code?: string | null;
@@ -512,6 +532,62 @@ export interface StreamRuntimeStatus {
   creates_review_truth: boolean;
   message: string;
   warnings: string[];
+}
+
+export interface CameraHealthIncident {
+  id: string;
+  stream_id: string;
+  category: CameraHealthIncidentCategory;
+  severity: AlertSeverity;
+  started_at: string;
+  updated_at: string;
+  resolved_at?: string | null;
+  reason_code: string;
+  condition_fingerprint: string;
+  next_retry_at?: string | null;
+  occurrence_count: number;
+  alert_id?: string | null;
+}
+
+export interface CameraHealthSummary {
+  stream_id: string;
+  stream_name: string;
+  source_id: string;
+  source_name: string;
+  state: CameraHealthState;
+  message: string;
+  desired_mode: StreamMonitoringMode;
+  actual_state: StreamRuntimeState;
+  readiness_status: StreamPlaybackStatusValue;
+  preview_available: boolean;
+  last_good_frame_at?: string | null;
+  frame_age_seconds?: number | null;
+  last_evidence_persisted_at?: string | null;
+  last_evidence_failure_at?: string | null;
+  open_activity_session_count: number;
+  latest_visit_at?: string | null;
+  next_retry_at?: string | null;
+  failure_reason?: string | null;
+  unread_alert: boolean;
+  stale: boolean;
+}
+
+export interface CameraHealthDetailResponse {
+  health: CameraHealthSummary;
+  incidents: CameraHealthIncident[];
+  message: string;
+}
+
+export interface CameraHealthListResponse {
+  items: CameraHealthSummary[];
+  limit: number;
+  message: string;
+}
+
+export interface CameraHealthIncidentListResponse {
+  items: CameraHealthIncident[];
+  limit: number;
+  message: string;
 }
 
 export interface StreamMonitoringPolicyUpdate {
@@ -1296,6 +1372,7 @@ export interface DashboardStreamSummary {
   ready_activity_session_count: number;
   needs_review_visit_count: number;
   latest_visit?: DashboardVisitSummary | null;
+  camera_health?: CameraHealthSummary | null;
 }
 
 export interface DashboardReviewedObservation {
@@ -1323,6 +1400,7 @@ export interface DashboardSummary {
   today_observations: DashboardReviewedObservation[];
   reviewed_non_bird_activity: DashboardReviewedObservation[];
   recent_activity: DashboardVisitSummary[];
+  camera_attention: CameraHealthSummary[];
   warnings: string[];
 }
 
@@ -2913,7 +2991,7 @@ export interface YardMapPlacementDelete { expected_state_token: string; idempote
 export interface YardMapBackgroundDelete { expected_state_token: string; idempotency_key: string; }
 export interface YardMapStreamPlacement { stream_id: string; x: number; y: number; heading_degrees: number; field_of_view_degrees: number; display_scale?: number | null; state_token: string; updated_at: string; }
 export interface YardMapZonePlacement { zone_id: string; x: number; y: number; area?: YardMapAreaPoint[] | null; state_token: string; updated_at: string; }
-export interface YardMapActivitySummary { monitoring_desired_state: "off" | "armed" | "paused"; monitoring_actual_state: "stopped" | "starting" | "running" | "backoff" | "blocked" | "stopping" | "interrupted"; open_activity_session: boolean; needs_review_count: number; needs_review_visit_ids: string[]; latest_visit_id?: string | null; latest_visit_at?: string | null; latest_confirmed_label?: string | null; latest_preview_url?: string | null; }
+export interface YardMapActivitySummary { monitoring_desired_state: "off" | "armed" | "paused"; monitoring_actual_state: "stopped" | "starting" | "running" | "backoff" | "blocked" | "stopping" | "interrupted"; camera_health_state: CameraHealthState; open_activity_session: boolean; needs_review_count: number; needs_review_visit_ids: string[]; latest_visit_id?: string | null; latest_visit_at?: string | null; latest_confirmed_label?: string | null; latest_preview_url?: string | null; }
 export interface YardMapStreamItem { id: string; name: string; source_name: string; is_live: boolean; placement?: YardMapStreamPlacement | null; activity: YardMapActivitySummary; }
 export interface YardMapZoneItem { id: string; stream_id: string; name: string; zone_type: ZoneType; is_active: boolean; placement?: YardMapZonePlacement | null; }
 export interface YardMapResponse { map?: YardMapSettings | null; streams: YardMapStreamItem[]; zones: YardMapZoneItem[]; range: YardMapRange; warnings: string[]; }

@@ -13,6 +13,9 @@ import type {
   CameraSourceCreateResponse,
   CameraSourceMutationResult,
   CameraSourceUpdateRequest,
+  CameraHealthDetailResponse,
+  CameraHealthIncidentListResponse,
+  CameraHealthListResponse,
   CameraSetupCompleteRequest,
   CameraSetupCompletionResponse,
   CameraSetupOptionsResponse,
@@ -407,6 +410,10 @@ export const apiClient = {
     request<StreamMonitoringStatusListResponse>(
       `/api/streams/monitoring-status?limit=${encodeURIComponent(String(limit))}`,
     ),
+  getCameraHealth: (limit = 50) =>
+    request<CameraHealthListResponse>(
+      `/api/camera-health?limit=${encodeURIComponent(String(limit))}`,
+    ),
   getZones: () => request<Zone[]>("/api/zones"),
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),
   getStreamPlaybackStatus: (streamId: string) =>
@@ -418,6 +425,14 @@ export const apiClient = {
   getStreamRuntimeStatus: (streamId: string) =>
     request<StreamRuntimeStatus>(
       `/api/streams/${encodeURIComponent(streamId)}/runtime-status`,
+    ),
+  getStreamCameraHealth: (streamId: string) =>
+    request<CameraHealthDetailResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/camera-health`,
+    ),
+  getStreamCameraHealthIncidents: (streamId: string, limit = 20) =>
+    request<CameraHealthIncidentListResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/camera-health/incidents?limit=${encodeURIComponent(String(limit))}`,
     ),
   updateStreamMonitoringPolicy: (
     streamId: string,

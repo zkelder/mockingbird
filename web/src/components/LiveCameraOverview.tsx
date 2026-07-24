@@ -94,6 +94,20 @@ function activityState(stream: DashboardStreamSummary): string {
 }
 
 function monitoringState(stream: DashboardStreamSummary, runtime?: StreamRuntimeStatus): string {
+  const health = stream.camera_health;
+  if (health) {
+    return {
+      healthy: "Healthy",
+      starting: "Starting",
+      waiting_for_capacity: "Waiting for capacity",
+      camera_unavailable: "Camera unavailable",
+      no_recent_frame: "No recent frame",
+      evidence_storage_degraded: "Evidence storage degraded",
+      recovering: "Recovering",
+      stopped: "Monitoring stopped",
+      setup_incomplete: "Setup incomplete",
+    }[health.state];
+  }
   if (stream.monitoring_active || runtime?.actual_state === "running") return "Monitoring running";
   if (runtime?.desired_mode === "armed" && runtime.failure_code === "waiting_for_capacity") {
     return "Waiting for monitoring capacity";
@@ -103,6 +117,9 @@ function monitoringState(stream: DashboardStreamSummary, runtime?: StreamRuntime
 }
 
 function monitoringTone(stream: DashboardStreamSummary, runtime?: StreamRuntimeStatus): "good" | "review" | "quiet" {
+  if (stream.camera_health?.state === "healthy") return "good";
+  if (stream.camera_health?.state === "stopped" || stream.camera_health?.state === "starting") return "quiet";
+  if (stream.camera_health) return "review";
   if (stream.monitoring_active || runtime?.actual_state === "running") return "good";
   if (runtime?.desired_mode === "armed") return "review";
   return "quiet";
@@ -352,9 +369,13 @@ export function LiveCameraOverview({
               ) : null}
 
               <div className="camera-overview-facts">
-                <span>Desired: <strong>{runtime?.desired_mode === "armed" ? "Monitoring enabled" : "Monitoring disabled"}</strong></span>
+                <span>Desired: <strong>{(stream.camera_health?.desired_mode ?? runtime?.desired_mode) === "armed" ? "Monitoring enabled" : "Monitoring disabled"}</strong></span>
                 <span>Actual: <strong>{monitoringState(stream, runtime)}</strong></span>
                 <span>{activityState(stream)}</span>
+                <span>Open sessions: <strong>{stream.camera_health?.open_activity_session_count ?? stream.open_activity_session_count}</strong></span>
+                <span>Last good frame: <strong>{stream.camera_health?.last_good_frame_at ? formatDateTime(stream.camera_health.last_good_frame_at) : "Not yet received"}</strong></span>
+                {stream.camera_health?.next_retry_at ? <span>Recovery: <strong>{formatDateTime(stream.camera_health.next_retry_at)}</strong></span> : null}
+                {stream.camera_health?.unread_alert ? <span>Unread camera alert</span> : null}
                 <span>Needs review: <strong>{stream.needs_review_visit_count}</strong></span>
                 <span>Latest Visit: <strong>{stream.latest_visit ? formatDateTime(stream.latest_visit.captured_at) : "None yet"}</strong></span>
                 {stream.setup_incomplete ? <span>Setup incomplete</span> : null}

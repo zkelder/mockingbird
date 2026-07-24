@@ -1,0 +1,317 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+import asyncio
+
+import httpx
+import pytest
+from sqlalchemy import create_engine, func, inspect, select
+
+from mockingbird.api.schemas import CameraHealthState
+from mockingbird.api.main import _evidence_persistence_failed, app, configure_repository
+from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
+from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION, initialize_database
+from mockingbird.storage.models import (
+    CameraHealthIncidentModel,
+    EventModel,
+    MediaAssetModel,
+    ProductAlertModel,
+    ReviewLabelModel,
+    StreamRuntimeCheckpointModel,
+    VisitModel,
+)
+
+
+@pytest.fixture
+def repository(tmp_path: Path) -> ProductRepository:
+    product_repository = ProductRepository(
+        db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
+        media_root=tmp_path / "media",
+    )
+    yield product_repository
+    product_repository.close()
+
+
+def _enable(repository: ProductRepository) -> DurableMonitoringCandidate:
+    stream = repository.list_streams()[0]
+    assert repository.set_stream_monitoring_enabled(
+        stream.id,
+        enabled=True,
+        idempotency_key=f"enable-camera-health-{stream.id}",
+    ) is False
+    return repository.list_enabled_monitoring_candidates(limit=1)[0]
+
+
+def _monitoring_alerts(repository: ProductRepository) -> list[ProductAlertModel]:
+    with repository.session_factory() as session:
+        return session.scalars(
+            select(ProductAlertModel)
+            .where(ProductAlertModel.category == "monitoring")
+            .order_by(ProductAlertModel.created_at, ProductAlertModel.id)
+        ).all()
+
+
+def _incidents(repository: ProductRepository) -> list[CameraHealthIncidentModel]:
+    with repository.session_factory() as session:
+        return session.scalars(
+            select(CameraHealthIncidentModel).order_by(
+                CameraHealthIncidentModel.updated_at.desc(),
+                CameraHealthIncidentModel.id.desc(),
+            )
+        ).all()
+
+
+def test_recent_frame_is_healthy_without_wildlife_activity_or_truth(repository: ProductRepository) -> None:
+    with repository.session_factory() as session:
+        counts_before = (
+            session.scalar(select(func.count(EventModel.id))),
+            session.scalar(select(func.count(VisitModel.id))),
+            session.scalar(select(func.count(MediaAssetModel.id))),
+            session.scalar(select(func.count(ReviewLabelModel.id))),
+        )
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    repository.mark_monitoring_running(
+        candidate,
+        app_instance_id="camera-health-test",
+        healthy_at=now,
+        now=now,
+    )
+
+    detail = repository.get_stream_camera_health(candidate.stream_id)
+    assert detail is not None
+    assert detail.health.state == CameraHealthState.healthy
+    assert detail.health.open_activity_session_count == 0
+    with repository.session_factory() as session:
+        assert (
+            session.scalar(select(func.count(EventModel.id))),
+            session.scalar(select(func.count(VisitModel.id))),
+            session.scalar(select(func.count(MediaAssetModel.id))),
+            session.scalar(select(func.count(ReviewLabelModel.id))),
+        ) == counts_before
+
+
+def test_startup_grace_and_capacity_wait_are_distinct(repository: ProductRepository) -> None:
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    repository.mark_monitoring_starting(
+        candidate,
+        app_instance_id="camera-health-test",
+        now=now,
+    )
+    starting = repository.get_stream_camera_health(candidate.stream_id)
+    assert starting is not None
+    assert starting.health.state == CameraHealthState.starting
+    assert starting.incidents == []
+    assert _monitoring_alerts(repository) == []
+
+    repository.mark_monitoring_waiting(candidate, now=now - timedelta(minutes=6))
+    repository.mark_monitoring_waiting(candidate, now=now)
+    waiting = repository.get_stream_camera_health(candidate.stream_id)
+    assert waiting is not None
+    assert waiting.health.state == CameraHealthState.waiting_for_capacity
+    assert len(waiting.incidents) == 1
+    assert waiting.incidents[0].category == "capacity_waiting"
+
+
+def test_stale_frame_and_evidence_persistence_are_separate(repository: ProductRepository) -> None:
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    repository.mark_monitoring_running(
+        candidate,
+        app_instance_id="camera-health-test",
+        healthy_at=now - timedelta(minutes=9),
+        now=now,
+    )
+    stale_frame = repository.get_stream_camera_health(candidate.stream_id)
+    assert stale_frame is not None
+    assert stale_frame.health.state == CameraHealthState.no_recent_frame
+    assert stale_frame.health.last_good_frame_at is not None
+
+    repository.record_stream_health_observation(
+        candidate.stream_id,
+        last_evidence_persisted_at=None,
+        evidence_persistence_failed=True,
+        now=now,
+    )
+    degraded = repository.get_stream_camera_health(candidate.stream_id)
+    assert degraded is not None
+    assert degraded.health.state == CameraHealthState.evidence_storage_degraded
+    assert degraded.health.failure_reason == "MockingBird could not safely persist required evidence."
+
+
+def test_recovery_updates_one_incident_and_alert_then_resolves(repository: ProductRepository) -> None:
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    repository.mark_monitoring_backoff(
+        candidate,
+        app_instance_id="camera-health-test",
+        failure_count=2,
+        retry_at=now + timedelta(minutes=1),
+        now=now,
+    )
+    repository.mark_monitoring_backoff(
+        candidate,
+        app_instance_id="camera-health-test",
+        failure_count=3,
+        retry_at=now + timedelta(minutes=2),
+        now=now + timedelta(seconds=1),
+    )
+    incidents = _incidents(repository)
+    alerts = _monitoring_alerts(repository)
+    assert len(incidents) == 1
+    assert incidents[0].resolved_at is None
+    assert len(alerts) == 1
+    assert alerts[0].resolved_at is None
+
+    repository.mark_monitoring_running(
+        candidate,
+        app_instance_id="camera-health-test",
+        healthy_at=now + timedelta(seconds=2),
+        now=now + timedelta(seconds=2),
+    )
+    assert _incidents(repository)[0].resolved_at is not None
+    assert _monitoring_alerts(repository)[0].resolved_at is not None
+
+
+def test_health_reads_are_safe_retry_is_idempotent_and_disabled_is_not_an_alert(
+    repository: ProductRepository,
+) -> None:
+    stream = repository.list_streams()[0]
+    before = repository.get_stream_runtime_status(stream.id)
+    assert before is not None and before.desired_mode == "off"
+    detail = repository.get_stream_camera_health(stream.id)
+    assert detail is not None and detail.health.state == CameraHealthState.stopped
+    after = repository.get_stream_runtime_status(stream.id)
+    assert after is not None and after.desired_mode == "off"
+    assert _incidents(repository) == []
+    assert _monitoring_alerts(repository) == []
+
+    candidate = _enable(repository)
+    assert repository.retry_stream_monitoring(candidate.stream_id, idempotency_key="retry-health-once") is False
+    assert repository.retry_stream_monitoring(candidate.stream_id, idempotency_key="retry-health-once") is True
+    assert repository.set_stream_monitoring_enabled(
+        candidate.stream_id,
+        enabled=False,
+        idempotency_key="disable-camera-health",
+    ) is False
+    disabled = repository.get_stream_camera_health(candidate.stream_id)
+    assert disabled is not None and disabled.health.state == CameraHealthState.stopped
+    assert all(alert.resolved_at is not None for alert in _monitoring_alerts(repository))
+
+
+def test_history_is_bounded_newest_first_and_safe_responses_hide_runtime_details(
+    repository: ProductRepository,
+) -> None:
+    candidate = _enable(repository)
+    started = datetime.now(UTC)
+    for index in range(25):
+        now = started + timedelta(minutes=index)
+        repository.mark_monitoring_backoff(
+            candidate,
+            app_instance_id="camera-health-test",
+            failure_count=2,
+            retry_at=now + timedelta(seconds=30),
+            now=now,
+        )
+        repository.mark_monitoring_running(
+            candidate,
+            app_instance_id="camera-health-test",
+            healthy_at=now + timedelta(seconds=1),
+            now=now + timedelta(seconds=1),
+        )
+    detail = repository.get_stream_camera_health(candidate.stream_id)
+    assert detail is not None
+    assert len(_incidents(repository)) <= 20
+    assert detail.incidents == sorted(
+        detail.incidents,
+        key=lambda incident: (incident.updated_at, incident.id),
+        reverse=True,
+    )
+
+    # A future unknown failure code must fall back to a generic product message,
+    # never a driver command, path, camera URL, or exception string.
+    with repository.session_factory() as session:
+        with session.begin():
+            checkpoint = session.get(StreamRuntimeCheckpointModel, candidate.stream_id)
+            assert checkpoint is not None
+            checkpoint.failure_code = "ffmpeg /private/camera-url password=secret"
+            checkpoint.actual_state = "blocked"
+            checkpoint.updated_at = datetime.now(UTC)
+    safe = repository.get_stream_camera_health(candidate.stream_id)
+    assert safe is not None
+    rendered = safe.model_dump_json()
+    assert "ffmpeg" not in rendered
+    assert "camera-url" not in rendered
+    assert "password" not in rendered
+
+
+def test_schema_v21_contains_empty_bounded_incident_storage(repository: ProductRepository) -> None:
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 21
+    tables = set(inspect(repository.engine).get_table_names())
+    assert "camera_health_incidents" in tables
+    assert _incidents(repository) == []
+
+
+def test_v20_runtime_checkpoint_migrates_to_v21_health_storage(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'v20.sqlite3'}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE mockingbird_schema (singleton_id INTEGER PRIMARY KEY, version INTEGER NOT NULL, updated_at DATETIME NOT NULL)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO mockingbird_schema (singleton_id, version, updated_at) VALUES (1, 20, '2026-01-01 00:00:00')"
+        )
+        connection.exec_driver_sql("CREATE TABLE streams (id VARCHAR PRIMARY KEY)")
+        connection.exec_driver_sql(
+            "CREATE TABLE stream_runtime_checkpoints ("
+            "stream_id VARCHAR PRIMARY KEY, observed_policy_revision INTEGER NOT NULL, actual_state VARCHAR NOT NULL, "
+            "app_instance_id VARCHAR, runtime_generation_id VARCHAR, last_start_attempt_at DATETIME, "
+            "last_healthy_frame_at DATETIME, last_clean_stop_at DATETIME, last_failure_at DATETIME, "
+            "failure_code VARCHAR, consecutive_failure_count INTEGER NOT NULL, next_retry_at DATETIME, "
+            "last_stop_reason VARCHAR, start_count INTEGER NOT NULL, failure_count INTEGER NOT NULL, "
+            "evidence_handoff_count INTEGER NOT NULL, safety_hold_active BOOLEAN NOT NULL, updated_at DATETIME NOT NULL)"
+        )
+
+    status = initialize_database(engine)
+    columns = {column["name"] for column in inspect(engine).get_columns("stream_runtime_checkpoints")}
+    assert status.version == 21
+    assert {"last_evidence_persisted_at", "last_evidence_failure_at", "evidence_failure_code"}.issubset(columns)
+    assert "camera_health_incidents" in inspect(engine).get_table_names()
+
+
+def test_camera_health_api_routes_are_bounded_and_read_only(repository: ProductRepository) -> None:
+    stream = repository.list_streams()[0]
+    before = repository.get_stream_runtime_status(stream.id)
+    assert before is not None
+    configure_repository(repository)
+
+    async def request(path: str) -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get(path)
+
+    try:
+        summary = asyncio.run(request("/api/camera-health?limit=1"))
+        detail = asyncio.run(request(f"/api/streams/{stream.id}/camera-health"))
+        history = asyncio.run(request(f"/api/streams/{stream.id}/camera-health/incidents?limit=1"))
+    finally:
+        configure_repository(None)
+
+    assert summary.status_code == 200
+    assert len(summary.json()["items"]) <= 1
+    assert detail.status_code == 200
+    assert detail.json()["health"]["stream_id"] == stream.id
+    assert history.status_code == 200
+    assert len(history.json()["items"]) <= 1
+    after = repository.get_stream_runtime_status(stream.id)
+    assert after is not None and after.desired_mode == before.desired_mode
+
+
+def test_evidence_storage_health_ignores_unrelated_auto_review_errors() -> None:
+    assert _evidence_persistence_failed("Managed storage could not persist evidence")
+    assert not _evidence_persistence_failed(
+        "Auto-create requires completed activity in a named reviewable Zone."
+    )
