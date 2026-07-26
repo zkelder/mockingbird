@@ -23,6 +23,7 @@ from urllib.parse import urlsplit, urlunsplit
 NODE_API_VERSION = "v1"
 MAX_NODE_JSON_BYTES = 128_000
 MAX_NODE_SNAPSHOT_BYTES = 1_500_000
+MAX_NODE_CAPTURE_BYTES = 16_000_000
 PAIRING_SESSION_TTL_SECONDS = 10 * 60
 NODE_CONNECT_TIMEOUT_SECONDS = 2.0
 NODE_METADATA_RESPONSE_TIMEOUT_SECONDS = 3.0
@@ -56,17 +57,22 @@ CAMERA_NODE_RUNTIME_FAILURE_CODES = frozenset(
         "node_camera_unavailable",
         "node_snapshot_invalid",
         "node_snapshot_timeout",
+        "node_capture_profile_unavailable",
         "node_unavailable",
         "provider_reset_required",
     }
 )
 
 _NODE_SNAPSHOT_ERROR_HEADER = "X-MockingBird-Node-Error"
+_NODE_MONITORING_RECOVERY_HEADER = "X-MockingBird-Monitoring-Recovery"
+_NODE_MONITORING_RECOVERY_STATES = frozenset({"restored", "reset_required"})
 _NODE_SNAPSHOT_ERROR_CODES = frozenset(
     {
+        "node_camera_unavailable",
         "node_camera_warmup_timeout",
         "node_snapshot_invalid",
         "node_snapshot_timeout",
+        "node_capture_profile_unavailable",
         "provider_reset_required",
     }
 )
@@ -84,6 +90,52 @@ class CameraNodeCamera:
     snapshot_supported: bool
     setup_hint: str | None = None
     provider_type: str | None = None
+    capture_profiles: tuple["CameraNodeCaptureProfile", ...] = ()
+    capture_readiness: str = "not_initialized"
+    capture_profile_status: tuple["CameraNodeCaptureProfileStatus", ...] = ()
+
+
+@dataclass(frozen=True)
+class CameraNodeCaptureProfile:
+    """An opaque Node-controlled image profile, never a driver configuration."""
+
+    profile_id: str
+    purposes: tuple[str, ...]
+    width: int
+    height: int
+    jpeg_supported: bool
+    max_expected_bytes: int
+    capture_class: str
+    geometry_group: str | None
+    orientation: str
+    mirrored: bool
+    same_fov: bool
+
+    @property
+    def supports_monitoring(self) -> bool:
+        return "monitoring" in self.purposes
+
+    @property
+    def supports_evidence(self) -> bool:
+        return "evidence" in self.purposes
+
+
+@dataclass(frozen=True)
+class CameraNodeCaptureProfileStatus:
+    """Safe optional warm-proof state from a profile-aware Camera Node."""
+
+    profile_id: str
+    state: str
+
+
+@dataclass(frozen=True)
+class CameraNodeCapture:
+    image: bytes
+    profile_id: str
+    captured_at: datetime | None
+    width: int
+    height: int
+    monitoring_recovery: str | None = None
 
 
 @dataclass(frozen=True)
@@ -206,6 +258,43 @@ def _recommended_snapshot_timeout(value: object) -> float | None:
     return _snapshot_timing(float(value)).response_timeout_seconds
 
 
+def _jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
+    if not data.startswith(b"\xff\xd8"):
+        return None
+    index = 2
+    while index + 9 < len(data):
+        if data[index] != 0xFF:
+            index += 1
+            continue
+        marker = data[index + 1]
+        index += 2
+        if marker in {0xD8, 0xD9}:
+            continue
+        if index + 2 > len(data):
+            return None
+        length = int.from_bytes(data[index:index + 2], "big")
+        if length < 2 or index + length > len(data):
+            return None
+        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+            return (
+                int.from_bytes(data[index + 5:index + 7], "big"),
+                int.from_bytes(data[index + 3:index + 5], "big"),
+            )
+        index += length
+    return None
+
+
+def _captured_at_header(headers: dict[str, str]) -> datetime | None:
+    value = headers.get("X-MockingBird-Captured-At", headers.get("x-mockingbird-captured-at"))
+    if not value or len(value) > 80:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 def normalize_camera_node_address(value: str) -> str:
     """Accept an explicit LAN IP base URL only; endpoint paths never come from UI."""
     raw = value.strip()
@@ -253,8 +342,125 @@ def _camera_items(value: object) -> list[CameraNodeCamera]:
         if not all(isinstance(candidate, str) and candidate for candidate in (camera_id, display_name, status)) or len(camera_id) > 120 or len(display_name) > 120 or status not in {"available", "setup_required", "unavailable"}:
             raise CameraNodeClientError("node_response_invalid")
         hint, provider_type = item.get("setup_hint"), item.get("provider_type")
-        cameras.append(CameraNodeCamera(camera_id, display_name, status, bool(item.get("snapshot_supported")), hint if isinstance(hint, str) and len(hint) <= 240 else None, provider_type if provider_type in {"v4l2", "picamera2", "synthetic", "local"} else None))
+        readiness = item.get("capture_readiness", "not_initialized")
+        cameras.append(
+            CameraNodeCamera(
+                camera_id,
+                display_name,
+                status,
+                bool(item.get("snapshot_supported")),
+                hint if isinstance(hint, str) and len(hint) <= 240 else None,
+                provider_type if provider_type in {"v4l2", "picamera2", "synthetic", "local"} else None,
+                tuple(_capture_profiles(item.get("capture_profiles"))),
+                readiness
+                if isinstance(readiness, str)
+                and readiness
+                in {"not_initialized", "warming", "ready", "degraded", "unavailable"}
+                else "unavailable",
+                tuple(_capture_profile_status(item.get("capture_profile_status"))),
+            )
+        )
     return cameras
+
+
+def _capture_profile_status(value: object) -> list[CameraNodeCaptureProfileStatus]:
+    """Read the fixed, sanitized warm-proof vocabulary without raw diagnostics."""
+
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 12:
+        raise CameraNodeClientError("node_response_invalid")
+    allowed_states = {
+        "untested",
+        "testing",
+        "accepted",
+        "rejected_resource",
+        "rejected_alignment",
+        "rejected_latency",
+        "rejected_capture",
+        "rejected_configuration",
+    }
+    statuses: list[CameraNodeCaptureProfileStatus] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise CameraNodeClientError("node_response_invalid")
+        profile_id, state = item.get("profile_id"), item.get("state")
+        if (
+            not isinstance(profile_id, str)
+            or not profile_id
+            or len(profile_id) > 120
+            or "/" in profile_id
+            or not isinstance(state, str)
+            or state not in allowed_states
+        ):
+            raise CameraNodeClientError("node_response_invalid")
+        statuses.append(CameraNodeCaptureProfileStatus(profile_id, state))
+    if len({status.profile_id for status in statuses}) != len(statuses):
+        raise CameraNodeClientError("node_response_invalid")
+    return statuses
+
+
+def _capture_profiles(value: object) -> list[CameraNodeCaptureProfile]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 12:
+        raise CameraNodeClientError("node_response_invalid")
+    profiles: list[CameraNodeCaptureProfile] = []
+    allowed_purposes = {"monitoring", "preview", "evidence"}
+    for item in value:
+        if not isinstance(item, dict):
+            raise CameraNodeClientError("node_response_invalid")
+        profile_id = item.get("profile_id")
+        purposes = item.get("purposes")
+        width, height = item.get("width"), item.get("height")
+        max_expected_bytes = item.get("max_expected_bytes")
+        capture_class = item.get("capture_class")
+        geometry_group = item.get("geometry_group")
+        orientation = item.get("orientation", "normal")
+        if (
+            not isinstance(profile_id, str)
+            or not profile_id
+            or len(profile_id) > 120
+            or "/" in profile_id
+            or not isinstance(purposes, list)
+            or not purposes
+            or len(purposes) > 3
+            or any(not isinstance(value, str) or value not in allowed_purposes for value in purposes)
+            or len(set(purposes)) != len(purposes)
+            or not isinstance(width, int)
+            or not isinstance(height, int)
+            or not 1 <= width <= 16_000
+            or not 1 <= height <= 12_000
+            or not isinstance(max_expected_bytes, int)
+            or not 32_768 <= max_expected_bytes <= MAX_NODE_CAPTURE_BYTES
+            or capture_class not in {
+                "warm",
+                "reconfiguration",
+                "warm_concurrent",
+                "reconfiguration_required",
+            }
+            or (geometry_group is not None and (not isinstance(geometry_group, str) or len(geometry_group) > 120))
+            or orientation not in {"normal", "rotate_90", "rotate_180", "rotate_270"}
+        ):
+            raise CameraNodeClientError("node_response_invalid")
+        profiles.append(
+            CameraNodeCaptureProfile(
+                profile_id=profile_id,
+                purposes=tuple(purposes),
+                width=width,
+                height=height,
+                jpeg_supported=bool(item.get("jpeg_supported")),
+                max_expected_bytes=max_expected_bytes,
+                capture_class=capture_class,
+                geometry_group=geometry_group,
+                orientation=orientation,
+                mirrored=bool(item.get("mirrored")),
+                same_fov=bool(item.get("same_fov")),
+            )
+        )
+    if len({profile.profile_id for profile in profiles}) != len(profiles):
+        raise CameraNodeClientError("node_response_invalid")
+    return profiles
 
 
 class CameraNodeClient:
@@ -390,6 +596,79 @@ class CameraNodeClient:
         if content_type != "image/jpeg" or not data.startswith(b"\xff\xd8"):
             raise CameraNodeClientError("node_snapshot_invalid")
         return data
+
+    def capture(
+        self,
+        *,
+        base_address: str,
+        credential: str,
+        camera_id: str,
+        profile: CameraNodeCaptureProfile,
+    ) -> CameraNodeCapture:
+        """Request one explicitly advertised evidence image with fixed bounds."""
+
+        base = normalize_camera_node_address(base_address)
+        if (
+            not camera_id
+            or len(camera_id) > 120
+            or "/" in camera_id
+            or not profile.profile_id
+            or len(profile.profile_id) > 120
+            or "/" in profile.profile_id
+            or not profile.jpeg_supported
+            or not (profile.supports_monitoring or profile.supports_evidence)
+        ):
+            raise CameraNodeClientError("node_capture_profile_unavailable")
+        maximum_bytes = min(MAX_NODE_CAPTURE_BYTES, profile.max_expected_bytes)
+        status, headers, data = self._request(
+            base_address=base,
+            path=f"/node/v1/cameras/{camera_id}/capture",
+            method="POST",
+            credential=credential,
+            payload={"profile_id": profile.profile_id},
+            max_bytes=maximum_bytes,
+            timing=_snapshot_timing(),
+        )
+        if status == 401:
+            raise CameraNodeClientError("authentication_rejected")
+        node_error = headers.get(
+            _NODE_SNAPSHOT_ERROR_HEADER,
+            headers.get(_NODE_SNAPSHOT_ERROR_HEADER.lower(), ""),
+        )
+        if node_error in _NODE_SNAPSHOT_ERROR_CODES:
+            raise CameraNodeClientError(node_error)
+        if status in {404, 409}:
+            raise CameraNodeClientError("node_capture_profile_unavailable")
+        if status != 200:
+            raise CameraNodeClientError("node_unavailable")
+        content_type = headers.get("Content-Type", headers.get("content-type", "")).split(";", 1)[0].lower()
+        dimensions = _jpeg_dimensions(data)
+        returned_profile = headers.get(
+            "X-MockingBird-Capture-Profile",
+            headers.get("x-mockingbird-capture-profile"),
+        )
+        monitoring_recovery = headers.get(
+            _NODE_MONITORING_RECOVERY_HEADER,
+            headers.get(_NODE_MONITORING_RECOVERY_HEADER.lower()),
+        )
+        if monitoring_recovery not in _NODE_MONITORING_RECOVERY_STATES:
+            monitoring_recovery = None
+        if (
+            content_type != "image/jpeg"
+            or dimensions is None
+            or dimensions[0] > profile.width
+            or dimensions[1] > profile.height
+            or returned_profile != profile.profile_id
+        ):
+            raise CameraNodeClientError("node_snapshot_invalid")
+        return CameraNodeCapture(
+            image=data,
+            profile_id=profile.profile_id,
+            captured_at=_captured_at_header(headers),
+            width=dimensions[0],
+            height=dimensions[1],
+            monitoring_recovery=monitoring_recovery,
+        )
 
     def revoke(self, *, base_address: str, credential: str) -> None:
         base = normalize_camera_node_address(base_address)

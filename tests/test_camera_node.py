@@ -9,7 +9,12 @@ from mockingbird.api import main as api_main
 from mockingbird.api.main import app, configure_repository
 from mockingbird.playback.camera_node_bridge import CameraNodeSnapshotProcess
 from mockingbird.repository.product_repository import ProductRepository, SourceProviderConfigurationModel
-from mockingbird.source_providers.camera_node import CameraNodeClient, CameraNodeClientError, normalize_camera_node_address
+from mockingbird.source_providers.camera_node import (
+    CameraNodeCaptureProfile,
+    CameraNodeClient,
+    CameraNodeClientError,
+    normalize_camera_node_address,
+)
 from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION, create_database_engine, initialize_database
 from mockingbird.storage.models import (
     CameraSourceModel,
@@ -23,6 +28,8 @@ from mockingbird_node.config import CameraNodeConfig
 from mockingbird_node.providers import (
     CompositeCameraProvider,
     NodeCamera,
+    NodeCaptureProfile,
+    NodeCaptureResult,
     PiCamera2Provider,
     SyntheticCameraProvider,
     V4L2CameraProvider,
@@ -90,6 +97,8 @@ def test_camera_node_address_and_client_are_pinned_to_one_local_base_address() -
         client.health("https://8.8.8.8")
     pairing = client.pair("http://127.0.0.1:8787", "correct-one-time-code")
     assert pairing.cameras[0].camera_id == "opaque-camera-1"
+    assert pairing.cameras[0].capture_readiness == "not_initialized"
+    assert pairing.cameras[0].capture_profile_status == ()
     assert "never-echo-node-credential" not in str(pairing.cameras)
     assert all(url.startswith("http://127.0.0.1:8787/node/v1/") for _, url, _ in requester.requests)
     assert all(
@@ -112,6 +121,22 @@ def test_production_defaults_exclude_synthetic_and_unknown_provider_is_rejected(
     assert "synthetic" not in config.enabled_providers
     monkeypatch.setenv("MOCKINGBIRD_NODE_PROVIDERS", "v4l2,not_a_provider")
     with pytest.raises(ValueError, match="provider_invalid"):
+        CameraNodeConfig.from_environment()
+
+
+def test_evidence_bounds_are_opt_in_and_never_smaller_than_monitoring(monkeypatch) -> None:
+    monkeypatch.setenv("MOCKINGBIRD_NODE_PROVIDERS", "picamera2")
+    monkeypatch.setenv("MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_BYTES", "16000000")
+    monkeypatch.setenv("MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_WIDTH", "10000")
+    monkeypatch.setenv("MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_HEIGHT", "8000")
+    config = CameraNodeConfig.from_environment()
+    assert config.max_image_width == 1920
+    assert config.effective_evidence_max_image_width == 10000
+    assert config.effective_evidence_max_image_height == 8000
+    assert config.effective_evidence_max_image_bytes == 16_000_000
+
+    monkeypatch.setenv("MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_WIDTH", "1000")
+    with pytest.raises(ValueError, match="evidence_bounds_invalid"):
         CameraNodeConfig.from_environment()
 
 
@@ -175,8 +200,8 @@ def test_picamera2_fake_runtime_keeps_opaque_identity_warm_and_releases_on_close
 
     provider = PiCamera2Provider(_node_config(provider_key="picamera2"), module=module, cv2_module=Encoder())
     assert provider.cameras()[0].camera_id == "picamera2-camera-0"
-    assert provider.snapshot("picamera2-camera-0").startswith(b"\xff\xd8")
-    assert provider.snapshot("picamera2-camera-0").startswith(b"\xff\xd8")
+    assert provider.snapshot("picamera2-camera-0").image.startswith(b"\xff\xd8")
+    assert provider.snapshot("picamera2-camera-0").image.startswith(b"\xff\xd8")
     assert len(Picamera2.cameras) == 1
     assert Picamera2.cameras[0].captures == 2
     assert not Picamera2.cameras[0].stopped
@@ -219,7 +244,7 @@ def test_picamera2_enables_continuous_autofocus_when_libcamera_supports_it(
     provider = PiCamera2Provider(
         _node_config(provider_key="picamera2"), module=module, cv2_module=Encoder()
     )
-    assert provider.snapshot("picamera2-camera-0").startswith(b"\xff\xd8")
+    assert provider.snapshot("picamera2-camera-0").image.startswith(b"\xff\xd8")
     assert Picamera2.camera.autofocus_controls == [{"AfMode": continuous}]
 
 
@@ -252,7 +277,7 @@ def test_picamera2_autofocus_control_failure_keeps_camera_available(
     provider = PiCamera2Provider(
         _node_config(provider_key="picamera2"), module=module, cv2_module=Encoder()
     )
-    assert provider.snapshot("picamera2-camera-0").startswith(b"\xff\xd8")
+    assert provider.snapshot("picamera2-camera-0").image.startswith(b"\xff\xd8")
 
 
 def test_picamera2_failed_capture_resets_then_later_snapshot_reinitializes() -> None:
@@ -283,8 +308,457 @@ def test_picamera2_failed_capture_resets_then_later_snapshot_reinitializes() -> 
     with pytest.raises(ValueError, match="camera_unusable_frame"):
         provider.snapshot("picamera2-camera-0")
     assert Picamera2.cameras[0].stopped and Picamera2.cameras[0].closed
-    assert provider.snapshot("picamera2-camera-0").startswith(b"\xff\xd8")
+    assert provider.snapshot("picamera2-camera-0").image.startswith(b"\xff\xd8")
     assert len(Picamera2.cameras) == 2
+    provider.close()
+
+
+def test_picamera2_advertises_real_still_modes_and_restores_monitoring_after_evidence_capture() -> None:
+    class Camera:
+        def __init__(self):
+            self.stopped = self.closed = False
+            self.configured_sizes: list[tuple[int, int]] = []
+            self.sensor_modes = [
+                {"size": (1920, 1080), "crop_limits": (0, 0, 9152, 6944)},
+                {"size": (9152, 6944), "crop_limits": (0, 0, 9152, 6944)},
+            ]
+
+        def create_still_configuration(self, *, main):
+            self.configured_sizes.append(main["size"])
+            return object()
+
+        def configure(self, _configuration): return None
+        def start(self): return None
+        def capture_array(self): return object()
+        def stop(self): self.stopped = True
+        def close(self): self.closed = True
+
+    class Picamera2:
+        cameras: list[Camera] = []
+
+        @staticmethod
+        def global_camera_info(): return [{}]
+
+        def __new__(cls, _index):
+            camera = Camera()
+            cls.cameras.append(camera)
+            return camera
+
+    class Encoder:
+        def imencode(self, _suffix, _frame):
+            return True, bytearray(b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x11\x00\xff\xd9")
+
+    config = CameraNodeConfig(
+        "Test Node", "127.0.0.1", 8787, "picamera2", None,
+        1_500_000, 1920, 1080, 60, 2, testing=True,
+        evidence_max_image_bytes=16_000_000,
+        evidence_max_image_width=10_000,
+        evidence_max_image_height=8_000,
+    )
+    module = type("Module", (), {"Picamera2": Picamera2})
+    provider = PiCamera2Provider(config, module=module, cv2_module=Encoder())
+    provider.capture_profiles("picamera2-camera-0")
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+    profiles = provider.capture_profiles("picamera2-camera-0")
+
+    monitoring = next(profile for profile in profiles if "monitoring" in profile.purposes)
+    evidence = next(profile for profile in profiles if "evidence" in profile.purposes)
+    assert (monitoring.width, monitoring.height) == (1920, 1080)
+    assert (evidence.width, evidence.height) == (9152, 6944)
+    assert monitoring.geometry_group == evidence.geometry_group
+    assert evidence.capture_class == "reconfiguration_required"
+    assert evidence.max_expected_bytes == 16_000_000
+
+    provider.snapshot("picamera2-camera-0", profile_id=monitoring.profile_id)
+    evidence_result = provider.snapshot("picamera2-camera-0", profile_id=evidence.profile_id)
+    assert evidence_result.monitoring_recovery == "restored"
+    assert provider._camera_profile_ids["picamera2-camera-0"] == monitoring.profile_id
+    assert Picamera2.cameras[-1].configured_sizes == [(1920, 1080)]
+    assert any((9152, 6944) in camera.configured_sizes for camera in Picamera2.cameras)
+    provider.close()
+
+
+def test_picamera2_restoration_failure_keeps_evidence_and_lazily_recovers_monitoring() -> None:
+    class Camera:
+        def __init__(self, *, fail_start: bool = False):
+            self.fail_start = fail_start
+            self.stopped = self.closed = False
+            self.captures = 0
+            self.configured_size: tuple[int, int] | None = None
+            self.sensor_modes = [
+                {"size": (1920, 1080), "crop_limits": (0, 0, 9152, 6944)},
+                {"size": (3840, 2160), "crop_limits": (0, 0, 9152, 6944)},
+            ]
+
+        def create_still_configuration(self, *, main):
+            self.configured_size = main["size"]
+            return object()
+        def configure(self, _configuration): return None
+        def start(self):
+            if self.fail_start:
+                raise RuntimeError("local restore failed")
+        def capture_array(self):
+            self.captures += 1
+            return object()
+        def stop(self): self.stopped = True
+        def close(self): self.closed = True
+
+    class Picamera2:
+        cameras: list[Camera] = []
+
+        @staticmethod
+        def global_camera_info(): return [{}]
+
+        def __new__(cls, _index):
+            # Mode enumeration, rejected warm probe, initial monitoring,
+            # evidence, then the intentionally failing restore.
+            camera = Camera(fail_start=len(cls.cameras) == 4)
+            cls.cameras.append(camera)
+            return camera
+
+    class Encoder:
+        COLOR_YUV2BGR_I420 = 1
+        def cvtColor(self, frame, _conversion): return frame
+        def imencode(self, _suffix, _frame, *_args):
+            return True, bytearray(b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9")
+
+    config = CameraNodeConfig(
+        "Test Node", "127.0.0.1", 8787, "picamera2", None,
+        1_500_000, 1920, 1080, 60, 2, testing=True,
+        evidence_max_image_bytes=16_000_000,
+        evidence_max_image_width=10_000,
+        evidence_max_image_height=8_000,
+    )
+    module = type("Module", (), {"Picamera2": Picamera2})
+    provider = PiCamera2Provider(config, module=module, cv2_module=Encoder())
+    profiles = provider.capture_profiles("picamera2-camera-0")
+    monitoring = next(profile for profile in profiles if "monitoring" in profile.purposes)
+    evidence = next(profile for profile in profiles if "evidence" in profile.purposes)
+
+    provider.snapshot("picamera2-camera-0", profile_id=monitoring.profile_id)
+    captured = provider.snapshot("picamera2-camera-0", profile_id=evidence.profile_id)
+
+    assert captured.image.startswith(b"\xff\xd8")
+    assert captured.monitoring_recovery == "reset_required"
+    assert provider._cameras == {}
+    assert provider._camera_profile_ids == {}
+    assert Picamera2.cameras[4].stopped and Picamera2.cameras[4].closed
+    assert next(
+        camera for camera in Picamera2.cameras if camera.configured_size == (3840, 2160)
+    ).captures == 1
+
+    recovered = provider.snapshot("picamera2-camera-0", profile_id=monitoring.profile_id)
+    assert recovered.image.startswith(b"\xff\xd8")
+    assert recovered.monitoring_recovery is None
+    assert provider._camera_profile_ids["picamera2-camera-0"] == monitoring.profile_id
+    assert sum(camera.captures for camera in Picamera2.cameras) == 3
+    provider.close()
+
+
+def test_picamera2_warm_dual_stream_uses_one_session_without_reconfiguration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Camera:
+        def __init__(self):
+            self.sensor_modes = [
+                {"size": (1920, 1080), "crop_limits": (0, 0, 9152, 6944)},
+                {"size": (3840, 2160), "crop_limits": (0, 0, 9152, 6944)},
+            ]
+            self.configurations: list[dict[str, object]] = []
+            self.captures: list[str] = []
+            self.controls: list[dict[str, object]] = []
+            self.stopped = self.closed = False
+
+        def create_still_configuration(self, **kwargs):
+            self.configurations.append(kwargs)
+            return object()
+        def configure(self, _configuration): return None
+        def set_controls(self, controls): self.controls.append(controls)
+        def start(self): return None
+        def capture_array(self, stream_name):
+            self.captures.append(stream_name)
+            return object()
+        def stop(self): self.stopped = True
+        def close(self): self.closed = True
+
+    class Picamera2:
+        cameras: list[Camera] = []
+        @staticmethod
+        def global_camera_info(): return [{}]
+        def __new__(cls, _index):
+            camera = Camera()
+            cls.cameras.append(camera)
+            return camera
+
+    class Encoder:
+        COLOR_YUV2BGR_I420 = 1
+        def cvtColor(self, frame, _conversion): return frame
+        def imencode(self, _suffix, _frame, *_args):
+            return True, bytearray(b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9")
+
+    continuous = object()
+    controls = type("Controls", (), {"AfModeEnum": type("AfModeEnum", (), {"Continuous": continuous})})
+    monkeypatch.setattr(
+        "mockingbird_node.providers.import_module",
+        lambda _name: type("Libcamera", (), {"controls": controls})(),
+    )
+    config = CameraNodeConfig(
+        "Test Node", "127.0.0.1", 8787, "picamera2", None,
+        1_500_000, 1920, 1080, 60, 2, testing=True,
+        evidence_max_image_bytes=16_000_000,
+        evidence_max_image_width=10_000,
+        evidence_max_image_height=8_000,
+    )
+    provider = PiCamera2Provider(
+        config, module=type("Module", (), {"Picamera2": Picamera2}), cv2_module=Encoder()
+    )
+
+    provider.capture_profiles("picamera2-camera-0")
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+    profiles = provider.capture_profiles("picamera2-camera-0")
+    monitoring = next(profile for profile in profiles if "monitoring" in profile.purposes)
+    evidence = next(
+        profile
+        for profile in profiles
+        if profile.capture_class == "warm_concurrent" and "evidence" in profile.purposes
+    )
+    assert monitoring.capture_class == evidence.capture_class == "warm_concurrent"
+    assert provider.capture_readiness("picamera2-camera-0") == "ready"
+    assert (evidence.width, evidence.height) == (3840, 2160)
+
+    provider.snapshot("picamera2-camera-0", profile_id=monitoring.profile_id)
+    provider.snapshot("picamera2-camera-0", profile_id=evidence.profile_id)
+    session = Picamera2.cameras[-1]
+    assert len(Picamera2.cameras) == 2
+    assert session.configurations == [{
+        "main": {"size": (3840, 2160), "format": "RGB888"},
+        "lores": {"size": (1920, 1080), "format": "YUV420"},
+        "buffer_count": 2,
+    }]
+    assert session.captures == ["lores", "main"] + ["lores", "main"] * 6
+    assert session.controls == [{"AfMode": continuous}]
+    provider.close()
+    assert session.stopped and session.closed
+
+
+def test_picamera2_warm_candidate_resource_rejection_promotes_next_profile_and_caches_proof() -> None:
+    class Camera:
+        def __init__(self):
+            self.sensor_modes = [
+                {"size": (1920, 1440), "crop_limits": (0, 0, 9248, 6944)},
+                {"size": (3840, 2160), "crop_limits": (0, 0, 9248, 6944)},
+                {"size": (4624, 3472), "crop_limits": (0, 0, 9248, 6944)},
+                {"size": (9248, 6944), "crop_limits": (0, 0, 9248, 6944)},
+            ]
+            self.configurations: list[dict[str, object]] = []
+            self.stopped = self.closed = False
+
+        def create_still_configuration(self, **kwargs):
+            return kwargs
+
+        def configure(self, configuration):
+            self.configurations.append(configuration)
+            if configuration["main"]["size"] == (9248, 6944):
+                raise OSError(12, "local allocation failure")
+
+        def start(self): return None
+        def capture_array(self, _stream_name): return object()
+        def stop(self): self.stopped = True
+        def close(self): self.closed = True
+
+    class Picamera2:
+        cameras: list[Camera] = []
+
+        @staticmethod
+        def global_camera_info(): return [{}]
+
+        def __new__(cls, _index):
+            camera = Camera()
+            cls.cameras.append(camera)
+            return camera
+
+    class Encoder:
+        COLOR_YUV2BGR_I420 = 1
+
+        def cvtColor(self, frame, _conversion): return frame
+
+        def imencode(self, _suffix, _frame, *_args):
+            return True, bytearray(
+                b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9"
+            )
+
+    provider = PiCamera2Provider(
+        CameraNodeConfig(
+            "Test Node", "127.0.0.1", 8787, "picamera2", None,
+            1_500_000, 1920, 1440, 60, 2, testing=True,
+            evidence_max_image_bytes=16_000_000,
+            evidence_max_image_width=10_000,
+            evidence_max_image_height=8_000,
+        ),
+        module=type("Module", (), {"Picamera2": Picamera2}),
+        cv2_module=Encoder(),
+    )
+
+    provider.capture_profiles("picamera2-camera-0")
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+    profiles = provider.capture_profiles("picamera2-camera-0")
+
+    assert provider.capture_readiness("picamera2-camera-0") == "ready"
+    statuses = {
+        item["profile_id"]: item["state"]
+        for item in provider.capture_profile_status("picamera2-camera-0")
+    }
+    assert statuses["picamera2-evidence-9248x6944"] == "rejected_resource"
+    assert statuses["picamera2-evidence-4624x3472"] == "accepted"
+    assert statuses["picamera2-evidence-3840x2160"] == "untested"
+    assert "picamera2-evidence-9248x6944" not in {
+        profile.profile_id for profile in profiles
+    }
+    selected_monitoring = next(
+        profile for profile in profiles if profile.profile_id == "picamera2-monitoring-1920x1440"
+    )
+    selected_evidence = next(
+        profile
+        for profile in profiles
+        if profile.profile_id == "picamera2-warm-evidence-4624x3472"
+    )
+    assert selected_monitoring.capture_class == selected_evidence.capture_class == "warm_concurrent"
+    assert selected_monitoring.geometry_group == selected_evidence.geometry_group
+    assert len(Picamera2.cameras) == 3
+    assert Picamera2.cameras[1].stopped and Picamera2.cameras[1].closed
+    assert all(
+        configuration["main"]["size"] != (3840, 2160)
+        for camera in Picamera2.cameras
+        for configuration in camera.configurations
+    )
+
+    provider.snapshot("picamera2-camera-0", profile_id=selected_monitoring.profile_id)
+    provider.snapshot("picamera2-camera-0", profile_id=selected_evidence.profile_id)
+    provider.capture_profiles("picamera2-camera-0")
+    assert len(Picamera2.cameras) == 3
+    provider.close()
+
+
+def test_picamera2_all_warm_candidates_rejected_keeps_cold_monitoring_degraded() -> None:
+    class Camera:
+        def __init__(self):
+            self.sensor_modes = [
+                {"size": (1920, 1080), "crop_limits": (0, 0, 9152, 6944)},
+                {"size": (3840, 2160), "crop_limits": (0, 0, 9152, 6944)},
+            ]
+            self.stopped = self.closed = False
+
+        def create_still_configuration(self, **kwargs): return kwargs
+        def configure(self, _configuration): raise OSError(12, "local allocation failure")
+        def start(self): return None
+        def stop(self): self.stopped = True
+        def close(self): self.closed = True
+
+    class Picamera2:
+        cameras: list[Camera] = []
+
+        @staticmethod
+        def global_camera_info(): return [{}]
+
+        def __new__(cls, _index):
+            camera = Camera()
+            cls.cameras.append(camera)
+            return camera
+
+    class Encoder:
+        COLOR_YUV2BGR_I420 = 1
+
+        def cvtColor(self, frame, _conversion): return frame
+        def imencode(self, _suffix, _frame, *_args): return True, bytearray(b"jpg")
+
+    provider = PiCamera2Provider(
+        CameraNodeConfig(
+            "Test Node", "127.0.0.1", 8787, "picamera2", None,
+            1_500_000, 1920, 1080, 60, 2, testing=True,
+            evidence_max_image_bytes=16_000_000,
+            evidence_max_image_width=10_000,
+            evidence_max_image_height=8_000,
+        ),
+        module=type("Module", (), {"Picamera2": Picamera2}),
+        cv2_module=Encoder(),
+    )
+
+    provider.capture_profiles("picamera2-camera-0")
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+
+    assert provider.capture_readiness("picamera2-camera-0") == "degraded"
+    assert provider._cameras == {}
+    assert provider._warm_sessions == {}
+    assert all(camera.stopped and camera.closed for camera in Picamera2.cameras)
+    assert provider.capture_profile_status("picamera2-camera-0") == [{
+        "profile_id": "picamera2-evidence-3840x2160",
+        "state": "rejected_resource",
+    }]
+    assert all(
+        profile.capture_class != "warm_concurrent"
+        for profile in provider.capture_profiles("picamera2-camera-0")
+    )
+    provider.close()
+
+
+@pytest.mark.anyio
+async def test_pairing_returns_while_picamera2_warm_proof_runs() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class Camera:
+        sensor_modes = [
+            {"size": (1920, 1080), "crop_limits": (0, 0, 9152, 6944)},
+            {"size": (3840, 2160), "crop_limits": (0, 0, 9152, 6944)},
+        ]
+
+        def create_still_configuration(self, **kwargs): return kwargs
+        def configure(self, _configuration): return None
+        def start(self):
+            started.set()
+            assert release.wait(timeout=1)
+        def capture_array(self, _stream_name): return object()
+        def stop(self): return None
+        def close(self): return None
+
+    class Picamera2:
+        @staticmethod
+        def global_camera_info(): return [{}]
+        def __new__(cls, _index): return Camera()
+
+    class Encoder:
+        COLOR_YUV2BGR_I420 = 1
+
+        def cvtColor(self, frame, _conversion): return frame
+        def imencode(self, _suffix, _frame, *_args):
+            return True, bytearray(
+                b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9"
+            )
+
+    provider = PiCamera2Provider(
+        CameraNodeConfig(
+            "Test Node", "127.0.0.1", 8787, "picamera2", None,
+            1_500_000, 1920, 1080, 60, 2, testing=True,
+            evidence_max_image_bytes=16_000_000,
+            evidence_max_image_width=10_000,
+            evidence_max_image_height=8_000,
+        ),
+        module=type("Module", (), {"Picamera2": Picamera2}),
+        cv2_module=Encoder(),
+    )
+    node = create_node_app(_node_config(provider_key="picamera2"), provider=provider)
+    transport = httpx.ASGITransport(app=node)
+    async with httpx.AsyncClient(transport=transport, base_url="http://node") as client:
+        paired = await client.post(
+            "/node/v1/pair", json={"pairing_code": node.state.pairing_code}
+        )
+
+    assert paired.status_code == 200
+    assert paired.json()["cameras"][0]["capture_readiness"] == "warming"
+    assert started.wait(timeout=1)
+    release.set()
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+    assert provider.capture_readiness("picamera2-camera-0") == "ready"
     provider.close()
 
 
@@ -430,6 +904,214 @@ async def test_node_requires_authentication_and_one_time_pairing_is_bounded() ->
         revoked = await client.post("/node/v1/pair/revoke", headers={"Authorization": f"Bearer {credential}"})
         assert revoked.status_code == 204
         assert (await client.get("/node/v1/cameras", headers={"Authorization": f"Bearer {credential}"})).status_code == 401
+
+
+@pytest.mark.anyio
+async def test_capture_profiles_are_advertised_and_capture_rejects_unlisted_profile_ids() -> None:
+    jpeg = b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9"
+
+    class ProfiledProvider:
+        captured_profile_ids: list[str] = []
+
+        def cameras(self):
+            return [
+                NodeCamera(
+                    "opaque-camera-1",
+                    "Feeder view",
+                    "available",
+                    snapshot_supported=True,
+                    provider_type="test",
+                )
+            ]
+
+        def capture_profiles(self, camera_id):
+            assert camera_id == "opaque-camera-1"
+            return [
+                NodeCaptureProfile(
+                    profile_id="monitoring-opaque",
+                    purposes=("monitoring", "preview"),
+                    width=1920,
+                    height=1080,
+                    jpeg_supported=True,
+                    max_expected_bytes=1_500_000,
+                    capture_class="warm",
+                    geometry_group="same-fov",
+                    same_fov=True,
+                ),
+                NodeCaptureProfile(
+                    profile_id="evidence-opaque",
+                    purposes=("evidence",),
+                    width=9152,
+                    height=6944,
+                    jpeg_supported=True,
+                    max_expected_bytes=16_000_000,
+                    capture_class="reconfiguration",
+                    geometry_group="same-fov",
+                    same_fov=True,
+                ),
+            ]
+
+        def capture_readiness(self, _camera_id):
+            return "ready"
+
+        def capture_profile_status(self, _camera_id):
+            return [
+                {
+                    "profile_id": "candidate-opaque",
+                    "state": "rejected_resource",
+                    "raw_error": "must-not-leave-node",
+                }
+            ]
+
+        def snapshot(self, camera_id, *, profile_id=None):
+            assert camera_id == "opaque-camera-1"
+            assert profile_id is not None
+            self.captured_profile_ids.append(profile_id)
+            return NodeCaptureResult(jpeg, monitoring_recovery="reset_required")
+
+        def close(self):
+            return None
+
+    node = create_node_app(_node_config(), provider=ProfiledProvider())
+    transport = httpx.ASGITransport(app=node)
+    async with httpx.AsyncClient(transport=transport, base_url="http://node") as client:
+        paired = await client.post("/node/v1/pair", json={"pairing_code": node.state.pairing_code})
+        credential = paired.json()["credential"]
+        headers = {"Authorization": f"Bearer {credential}"}
+        cameras = await client.get("/node/v1/cameras", headers=headers)
+        camera_payload = cameras.json()["items"][0]
+        profiles = camera_payload["capture_profiles"]
+        assert {profile["profile_id"] for profile in profiles} == {
+            "monitoring-opaque",
+            "evidence-opaque",
+        }
+        assert camera_payload["capture_readiness"] == "ready"
+        assert camera_payload["capture_profile_status"] == [{
+            "profile_id": "candidate-opaque",
+            "state": "rejected_resource",
+        }]
+        rejected = await client.post(
+            "/node/v1/cameras/opaque-camera-1/capture",
+            headers=headers,
+            json={"profile_id": "not-allowed"},
+        )
+        assert rejected.status_code == 409
+        captured = await client.post(
+            "/node/v1/cameras/opaque-camera-1/capture",
+            headers=headers,
+            json={"profile_id": "evidence-opaque"},
+        )
+    assert captured.status_code == 200
+    assert captured.headers["x-mockingbird-capture-profile"] == "evidence-opaque"
+    assert captured.headers["x-mockingbird-monitoring-recovery"] == "reset_required"
+    assert ProfiledProvider.captured_profile_ids == ["evidence-opaque"]
+
+
+@pytest.mark.anyio
+async def test_capture_rejects_invalid_jpeg_even_when_provider_reports_recovery() -> None:
+    class InvalidProvider:
+        def cameras(self):
+            return [
+                NodeCamera(
+                    "opaque-camera-1", "Feeder view", "available",
+                    snapshot_supported=True, provider_type="test",
+                )
+            ]
+
+        def capture_profiles(self, _camera_id):
+            return [
+                NodeCaptureProfile(
+                    profile_id="evidence-opaque", purposes=("evidence",),
+                    width=3840, height=2160, jpeg_supported=True,
+                    max_expected_bytes=16_000_000,
+                    capture_class="reconfiguration", geometry_group="same-fov",
+                    same_fov=True,
+                )
+            ]
+
+        def snapshot(self, _camera_id, *, profile_id=None):
+            assert profile_id == "evidence-opaque"
+            return NodeCaptureResult(b"not-a-jpeg", monitoring_recovery="reset_required")
+
+        def close(self): return None
+
+    node = create_node_app(_node_config(), provider=InvalidProvider())
+    transport = httpx.ASGITransport(app=node)
+    async with httpx.AsyncClient(transport=transport, base_url="http://node") as client:
+        paired = await client.post("/node/v1/pair", json={"pairing_code": node.state.pairing_code})
+        response = await client.post(
+            "/node/v1/cameras/opaque-camera-1/capture",
+            headers={"Authorization": f"Bearer {paired.json()['credential']}"},
+            json={"profile_id": "evidence-opaque"},
+        )
+    assert response.status_code == 503
+    assert response.headers["x-mockingbird-node-error"] == "node_snapshot_invalid"
+    assert response.content != b"not-a-jpeg"
+
+
+def test_client_accepts_old_capture_response_without_recovery_metadata() -> None:
+    jpeg = b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9"
+
+    class OldNodeRequester(_FakeNodeRequester):
+        def request(self, **kwargs):
+            if kwargs["url"].endswith("/capture"):
+                return (
+                    200,
+                    {
+                        "Content-Type": "image/jpeg",
+                        "X-MockingBird-Capture-Profile": "evidence-opaque",
+                    },
+                    jpeg,
+                )
+            return super().request(**kwargs)
+
+    capture = CameraNodeClient(requester=OldNodeRequester()).capture(
+        base_address="http://127.0.0.1:8787",
+        credential="local-only",
+        camera_id="opaque-camera-1",
+        profile=CameraNodeCaptureProfile(
+            profile_id="evidence-opaque",
+            purposes=("evidence",),
+            width=3840,
+            height=2160,
+            jpeg_supported=True,
+            max_expected_bytes=16_000_000,
+            capture_class="reconfiguration",
+            geometry_group="same-fov",
+            orientation="normal",
+            mirrored=False,
+            same_fov=True,
+        ),
+    )
+    assert capture.image == jpeg
+    assert capture.monitoring_recovery is None
+
+    class RecoveringNodeRequester(OldNodeRequester):
+        def request(self, **kwargs):
+            status, headers, data = super().request(**kwargs)
+            if kwargs["url"].endswith("/capture"):
+                headers["X-MockingBird-Monitoring-Recovery"] = "reset_required"
+            return status, headers, data
+
+    recovered_capture = CameraNodeClient(requester=RecoveringNodeRequester()).capture(
+        base_address="http://127.0.0.1:8787",
+        credential="local-only",
+        camera_id="opaque-camera-1",
+        profile=CameraNodeCaptureProfile(
+            profile_id="evidence-opaque",
+            purposes=("evidence",),
+            width=3840,
+            height=2160,
+            jpeg_supported=True,
+            max_expected_bytes=16_000_000,
+            capture_class="reconfiguration",
+            geometry_group="same-fov",
+            orientation="normal",
+            mirrored=False,
+            same_fov=True,
+        ),
+    )
+    assert recovered_capture.monitoring_recovery == "reset_required"
 
 
 @pytest.mark.anyio

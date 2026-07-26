@@ -28,6 +28,21 @@ class CameraNodeConfig:
     max_preview_viewers: int
     testing: bool = False
     enabled_providers: tuple[str, ...] = ()
+    evidence_max_image_bytes: int | None = None
+    evidence_max_image_width: int | None = None
+    evidence_max_image_height: int | None = None
+
+    @property
+    def effective_evidence_max_image_bytes(self) -> int:
+        return self.evidence_max_image_bytes or self.max_image_bytes
+
+    @property
+    def effective_evidence_max_image_width(self) -> int:
+        return self.evidence_max_image_width or self.max_image_width
+
+    @property
+    def effective_evidence_max_image_height(self) -> int:
+        return self.evidence_max_image_height or self.max_image_height
 
     @classmethod
     def from_environment(cls) -> "CameraNodeConfig":
@@ -64,17 +79,65 @@ class CameraNodeConfig:
             enabled_providers = ("v4l2", "picamera2")
         if "synthetic" in enabled_providers and (not testing or len(enabled_providers) != 1):
             raise ValueError("mockingbird_node_synthetic_testing_only")
+        max_image_bytes = integer(
+            "MOCKINGBIRD_NODE_MAX_IMAGE_BYTES",
+            DEFAULT_MAX_IMAGE_BYTES,
+            minimum=32_768,
+            maximum=32_000_000,
+        )
+        max_image_width = integer(
+            "MOCKINGBIRD_NODE_MAX_IMAGE_WIDTH",
+            DEFAULT_MAX_IMAGE_WIDTH,
+            minimum=160,
+            maximum=16_000,
+        )
+        max_image_height = integer(
+            "MOCKINGBIRD_NODE_MAX_IMAGE_HEIGHT",
+            DEFAULT_MAX_IMAGE_HEIGHT,
+            minimum=120,
+            maximum=12_000,
+        )
+        evidence_max_image_bytes = integer(
+            "MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_BYTES",
+            max_image_bytes,
+            minimum=32_768,
+            maximum=32_000_000,
+        )
+        evidence_max_image_width = integer(
+            "MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_WIDTH",
+            max_image_width,
+            minimum=160,
+            maximum=16_000,
+        )
+        evidence_max_image_height = integer(
+            "MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_HEIGHT",
+            max_image_height,
+            minimum=120,
+            maximum=12_000,
+        )
+        if (
+            evidence_max_image_bytes < max_image_bytes
+            or evidence_max_image_width < max_image_width
+            or evidence_max_image_height < max_image_height
+        ):
+            raise ValueError("mockingbird_node_evidence_bounds_invalid")
         return cls(
             display_name=display_name,
             bind_host=bind_host,
             port=integer("MOCKINGBIRD_NODE_PORT", DEFAULT_PORT, minimum=1, maximum=65535),
             provider_key=enabled_providers[0],
             camera_identifier=os.getenv("MOCKINGBIRD_NODE_CAMERA", "").strip() or None,
-            max_image_bytes=integer("MOCKINGBIRD_NODE_MAX_IMAGE_BYTES", DEFAULT_MAX_IMAGE_BYTES, minimum=32_768, maximum=8_000_000),
-            max_image_width=integer("MOCKINGBIRD_NODE_MAX_IMAGE_WIDTH", DEFAULT_MAX_IMAGE_WIDTH, minimum=160, maximum=3840),
-            max_image_height=integer("MOCKINGBIRD_NODE_MAX_IMAGE_HEIGHT", DEFAULT_MAX_IMAGE_HEIGHT, minimum=120, maximum=2160),
+            max_image_bytes=max_image_bytes,
+            max_image_width=max_image_width,
+            max_image_height=max_image_height,
             pairing_ttl_seconds=integer("MOCKINGBIRD_NODE_PAIRING_TTL_SECONDS", DEFAULT_PAIRING_TTL_SECONDS, minimum=60, maximum=3600),
             max_preview_viewers=integer("MOCKINGBIRD_NODE_MAX_PREVIEW_VIEWERS", DEFAULT_MAX_PREVIEW_VIEWERS, minimum=0, maximum=4),
             testing=testing,
             enabled_providers=enabled_providers,
+            # These opt-in bounds can exceed the economical monitoring profile
+            # for one bounded evidence still. Omitting them preserves the
+            # established snapshot-only Node behavior.
+            evidence_max_image_bytes=evidence_max_image_bytes,
+            evidence_max_image_width=evidence_max_image_width,
+            evidence_max_image_height=evidence_max_image_height,
         )

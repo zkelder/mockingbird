@@ -67,7 +67,23 @@ def _metadata(version: str) -> bytes:
 
 
 def _configuration_example() -> bytes:
-    return b"""# Local-only MockingBird Camera Node configuration\nMOCKINGBIRD_NODE_NAME=Pi Camera Node\nMOCKINGBIRD_NODE_BIND=0.0.0.0\nMOCKINGBIRD_NODE_PORT=8787\nMOCKINGBIRD_NODE_PROVIDERS=picamera2,v4l2\nMOCKINGBIRD_NODE_MAX_IMAGE_BYTES=1500000\nMOCKINGBIRD_NODE_MAX_IMAGE_WIDTH=1920\nMOCKINGBIRD_NODE_MAX_IMAGE_HEIGHT=1080\nMOCKINGBIRD_NODE_PAIRING_TTL_SECONDS=600\nMOCKINGBIRD_NODE_MAX_PREVIEW_VIEWERS=2\n# Synthetic is intentionally omitted: it is test-only.\n"""
+    return (
+        b"# Local-only MockingBird Camera Node configuration\n"
+        b"MOCKINGBIRD_NODE_NAME=Pi Camera Node\n"
+        b"MOCKINGBIRD_NODE_BIND=0.0.0.0\n"
+        b"MOCKINGBIRD_NODE_PORT=8787\n"
+        b"MOCKINGBIRD_NODE_PROVIDERS=picamera2,v4l2\n"
+        b"MOCKINGBIRD_NODE_MAX_IMAGE_BYTES=1500000\n"
+        b"MOCKINGBIRD_NODE_MAX_IMAGE_WIDTH=1920\n"
+        b"MOCKINGBIRD_NODE_MAX_IMAGE_HEIGHT=1080\n"
+        b"# Optional bounded evidence still; monitoring remains 1920x1080.\n"
+        b"MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_BYTES=16000000\n"
+        b"MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_WIDTH=10000\n"
+        b"MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_HEIGHT=8000\n"
+        b"MOCKINGBIRD_NODE_PAIRING_TTL_SECONDS=600\n"
+        b"MOCKINGBIRD_NODE_MAX_PREVIEW_VIEWERS=2\n"
+        b"# Synthetic is intentionally omitted: it is test-only.\n"
+    )
 
 
 def build_camera_node_artifact(
