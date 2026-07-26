@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import import_module
 import re
 import threading
 from pathlib import Path
@@ -189,6 +190,22 @@ class PiCamera2Provider:
                 return None, None
         return module, self._cv2 if self._cv2 is not None else _cv2()
 
+    @staticmethod
+    def _enable_continuous_autofocus(camera: Any) -> None:
+        """Apply a safe default focus policy without making it a Node dependency."""
+
+        try:
+            controls = getattr(import_module("libcamera"), "controls", None)
+            autofocus = getattr(
+                getattr(controls, "AfModeEnum", None), "Continuous", None
+            )
+            if autofocus is not None:
+                camera.set_controls({"AfMode": autofocus})
+        except Exception:
+            # Camera Node remains usable on fixed-focus cameras and older
+            # libcamera runtimes; the optional focus control must not block it.
+            return
+
     def cameras(self) -> list[NodeCamera]:
         module, encoder = self._runtime()
         if module is None or encoder is None:
@@ -230,6 +247,7 @@ class PiCamera2Provider:
                         }
                     )
                 )
+                self._enable_continuous_autofocus(camera)
                 camera.start()
                 return camera
             except BaseException:

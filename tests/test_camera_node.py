@@ -184,6 +184,77 @@ def test_picamera2_fake_runtime_keeps_opaque_identity_warm_and_releases_on_close
     assert Picamera2.cameras[0].stopped and Picamera2.cameras[0].closed
 
 
+def test_picamera2_enables_continuous_autofocus_when_libcamera_supports_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Camera:
+        def __init__(self):
+            self.autofocus_controls: list[dict[str, object]] = []
+        def create_still_configuration(self, **_kwargs): return object()
+        def configure(self, _configuration): return None
+        def set_controls(self, controls): self.autofocus_controls.append(controls)
+        def start(self): return None
+        def capture_array(self): return object()
+        def stop(self): return None
+        def close(self): return None
+
+    class Picamera2:
+        camera = Camera()
+        @staticmethod
+        def global_camera_info(): return [{}]
+        def __new__(cls, _index): return cls.camera
+
+    class Encoder:
+        def imencode(self, _suffix, _frame):
+            return True, bytearray(b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9")
+
+    continuous = object()
+    controls = type("Controls", (), {"AfModeEnum": type("AfModeEnum", (), {"Continuous": continuous})})
+    monkeypatch.setattr(
+        "mockingbird_node.providers.import_module",
+        lambda name: type("Libcamera", (), {"controls": controls})(),
+    )
+    module = type("Module", (), {"Picamera2": Picamera2})
+
+    provider = PiCamera2Provider(
+        _node_config(provider_key="picamera2"), module=module, cv2_module=Encoder()
+    )
+    assert provider.snapshot("picamera2-camera-0").startswith(b"\xff\xd8")
+    assert Picamera2.camera.autofocus_controls == [{"AfMode": continuous}]
+
+
+def test_picamera2_autofocus_control_failure_keeps_camera_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Camera:
+        def create_still_configuration(self, **_kwargs): return object()
+        def configure(self, _configuration): return None
+        def set_controls(self, _controls): raise RuntimeError("local control failure")
+        def start(self): return None
+        def capture_array(self): return object()
+        def stop(self): return None
+        def close(self): return None
+
+    class Picamera2:
+        camera = Camera()
+        @staticmethod
+        def global_camera_info(): return [{}]
+        def __new__(cls, _index): return cls.camera
+
+    class Encoder:
+        def imencode(self, _suffix, _frame):
+            return True, bytearray(b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9")
+
+    monkeypatch.setattr(
+        "mockingbird_node.providers.import_module", lambda name: object()
+    )
+    module = type("Module", (), {"Picamera2": Picamera2})
+    provider = PiCamera2Provider(
+        _node_config(provider_key="picamera2"), module=module, cv2_module=Encoder()
+    )
+    assert provider.snapshot("picamera2-camera-0").startswith(b"\xff\xd8")
+
+
 def test_picamera2_failed_capture_resets_then_later_snapshot_reinitializes() -> None:
     class Camera:
         def __init__(self, *, fail_capture: bool): self.fail_capture = fail_capture; self.stopped = self.closed = False
