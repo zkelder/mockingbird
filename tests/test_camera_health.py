@@ -142,6 +142,50 @@ def test_stale_frame_and_evidence_persistence_are_separate(repository: ProductRe
     assert degraded.health.failure_reason == "MockingBird could not safely persist required evidence."
 
 
+def test_camera_health_normalizes_legacy_naive_checkpoint_timestamps(repository: ProductRepository) -> None:
+    candidate = _enable(repository)
+    now = datetime.now(UTC).replace(microsecond=0)
+    with repository.session_factory() as session:
+        with session.begin():
+            checkpoint = session.get(StreamRuntimeCheckpointModel, candidate.stream_id)
+            assert checkpoint is not None
+            checkpoint.actual_state = "running"
+            checkpoint.last_start_attempt_at = (now - timedelta(seconds=10)).replace(
+                tzinfo=None
+            )
+            checkpoint.last_healthy_frame_at = (now - timedelta(seconds=3)).replace(
+                tzinfo=None
+            )
+            checkpoint.last_evidence_persisted_at = (now - timedelta(seconds=2)).replace(
+                tzinfo=None
+            )
+            checkpoint.last_evidence_failure_at = (now - timedelta(seconds=1)).replace(
+                tzinfo=None
+            )
+            checkpoint.last_clean_stop_at = (now - timedelta(seconds=20)).replace(
+                tzinfo=None
+            )
+            checkpoint.last_failure_at = (now - timedelta(seconds=15)).replace(
+                tzinfo=None
+            )
+            checkpoint.next_retry_at = (now + timedelta(seconds=30)).replace(tzinfo=None)
+            checkpoint.updated_at = now.replace(tzinfo=None)
+
+    status = repository.get_stream_runtime_status(candidate.stream_id)
+    detail = repository.get_stream_camera_health(candidate.stream_id)
+
+    assert status is not None
+    assert status.last_start_attempt_at is not None
+    assert status.last_start_attempt_at.tzinfo == UTC
+    assert status.next_retry_at is not None and status.next_retry_at.tzinfo == UTC
+    assert status.model_dump(mode="json")["last_start_attempt_at"].endswith("Z")
+    assert detail is not None
+    assert detail.health.state == CameraHealthState.healthy
+    assert detail.health.frame_age_seconds is not None
+    assert detail.health.last_good_frame_at is not None
+    assert detail.health.last_good_frame_at.tzinfo == UTC
+
+
 def test_camera_node_credential_failure_is_redacted_and_actionable(repository: ProductRepository) -> None:
     candidate = _enable(repository)
     now = datetime.now(UTC)

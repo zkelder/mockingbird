@@ -84,6 +84,7 @@ from mockingbird.source_providers.camera_node import (
     CameraNodeClientError,
     normalize_camera_node_address,
 )
+from mockingbird.time_utils import normalize_optional_utc, normalize_utc
 from mockingbird.motion.activity_crop import (
     CropBoxNormalized,
     plan_activity_crop,
@@ -4096,7 +4097,9 @@ class ProductRepository:
         readiness_status = (
             playback.status if playback is not None else StreamPlaybackStatusValue.unknown
         )
-        frame_at = checkpoint.last_healthy_frame_at if checkpoint is not None else None
+        frame_at = normalize_optional_utc(
+            checkpoint.last_healthy_frame_at if checkpoint is not None else None
+        )
         frame_age_seconds = (
             max(0, int((_as_utc(now) - _as_utc(frame_at)).total_seconds()))
             if frame_at is not None
@@ -4241,15 +4244,17 @@ class ProductRepository:
             in {StreamPlaybackStatusValue.demo, StreamPlaybackStatusValue.live_ready},
             last_good_frame_at=frame_at,
             frame_age_seconds=frame_age_seconds,
-            last_evidence_persisted_at=(
+            last_evidence_persisted_at=normalize_optional_utc(
                 checkpoint.last_evidence_persisted_at if checkpoint is not None else None
             ),
-            last_evidence_failure_at=(
+            last_evidence_failure_at=normalize_optional_utc(
                 checkpoint.last_evidence_failure_at if checkpoint is not None else None
             ),
             open_activity_session_count=open_activity_session_count,
-            latest_visit_at=latest_visit_at,
-            next_retry_at=checkpoint.next_retry_at if checkpoint is not None else None,
+            latest_visit_at=normalize_optional_utc(latest_visit_at),
+            next_retry_at=normalize_optional_utc(
+                checkpoint.next_retry_at if checkpoint is not None else None
+            ),
             failure_reason=self._camera_health_reason(failure_code),
             unread_alert=unread_alert,
             stale=stale,
@@ -4264,12 +4269,12 @@ class ProductRepository:
             stream_id=incident.stream_id,
             category=CameraHealthIncidentCategory(incident.category),
             severity=AlertSeverity(incident.severity),
-            started_at=incident.started_at,
-            updated_at=incident.updated_at,
-            resolved_at=incident.resolved_at,
+            started_at=normalize_utc(incident.started_at),
+            updated_at=normalize_utc(incident.updated_at),
+            resolved_at=normalize_optional_utc(incident.resolved_at),
             reason_code=incident.reason_code,
             condition_fingerprint=incident.condition_fingerprint,
-            next_retry_at=incident.next_retry_at,
+            next_retry_at=normalize_optional_utc(incident.next_retry_at),
             occurrence_count=min(CAMERA_HEALTH_MAX_OCCURRENCES, incident.occurrence_count),
             alert_id=incident.alert_id,
         )
@@ -4792,29 +4797,37 @@ class ProductRepository:
                     in {StreamRuntimeState.starting, StreamRuntimeState.running}
                     else 0
                 ),
-                checkpoint_updated_at=checkpoint.updated_at if checkpoint else None,
-                last_start_attempt_at=(
+                checkpoint_updated_at=normalize_optional_utc(
+                    checkpoint.updated_at if checkpoint else None
+                ),
+                last_start_attempt_at=normalize_optional_utc(
                     checkpoint.last_start_attempt_at if checkpoint else None
                 ),
-                last_healthy_frame_at=(
+                last_healthy_frame_at=normalize_optional_utc(
                     checkpoint.last_healthy_frame_at if checkpoint else None
                 ),
-                last_evidence_persisted_at=(
+                last_evidence_persisted_at=normalize_optional_utc(
                     checkpoint.last_evidence_persisted_at if checkpoint else None
                 ),
-                last_evidence_failure_at=(
+                last_evidence_failure_at=normalize_optional_utc(
                     checkpoint.last_evidence_failure_at if checkpoint else None
                 ),
                 evidence_failure_code=(
                     checkpoint.evidence_failure_code if checkpoint else None
                 ),
-                last_clean_stop_at=(checkpoint.last_clean_stop_at if checkpoint else None),
-                last_failure_at=checkpoint.last_failure_at if checkpoint else None,
+                last_clean_stop_at=normalize_optional_utc(
+                    checkpoint.last_clean_stop_at if checkpoint else None
+                ),
+                last_failure_at=normalize_optional_utc(
+                    checkpoint.last_failure_at if checkpoint else None
+                ),
                 failure_code=checkpoint.failure_code if checkpoint else None,
                 consecutive_failure_count=(
                     checkpoint.consecutive_failure_count if checkpoint else 0
                 ),
-                next_retry_at=checkpoint.next_retry_at if checkpoint else None,
+                next_retry_at=normalize_optional_utc(
+                    checkpoint.next_retry_at if checkpoint else None
+                ),
                 last_stop_reason=checkpoint.last_stop_reason if checkpoint else "policy_off",
                 safety_hold_active=(checkpoint.safety_hold_active if checkpoint else False),
                 camera_start_requested=(
@@ -5068,8 +5081,10 @@ class ProductRepository:
                     ),
                     actual_state=checkpoint.actual_state,
                     consecutive_failure_count=checkpoint.consecutive_failure_count,
-                    next_retry_at=checkpoint.next_retry_at,
-                    last_start_attempt_at=checkpoint.last_start_attempt_at,
+                    next_retry_at=normalize_optional_utc(checkpoint.next_retry_at),
+                    last_start_attempt_at=normalize_optional_utc(
+                        checkpoint.last_start_attempt_at
+                    ),
                     safety_hold_active=checkpoint.safety_hold_active,
                     failure_code=checkpoint.failure_code,
                 )
@@ -22422,9 +22437,7 @@ def _review_queue_bulk_correction_failure_message(reason: str) -> str:
 def _review_queue_timestamp(value: datetime) -> float:
     """Normalize persisted SQLite datetimes for deterministic newest-first review."""
 
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.timestamp()
+    return normalize_utc(value).timestamp()
 
 
 def _latest_review_label_model_id(labels: list[ReviewLabelModel]) -> str:
@@ -23962,9 +23975,7 @@ def _clean_optional_text(value: str | None) -> str | None:
 
 
 def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+    return normalize_utc(value)
 
 
 def _optional_string(value: Any) -> str | None:

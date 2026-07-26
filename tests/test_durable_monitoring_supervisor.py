@@ -28,6 +28,7 @@ class FakeStore:
     def __init__(self, candidates: list[DurableMonitoringCandidate]) -> None:
         self.candidates = {candidate.stream_id: candidate for candidate in candidates}
         self.events: list[tuple[str, str]] = []
+        self.running_healthy_at: list[datetime] = []
 
     def prepare_for_supervision(self, app_instance_id: str) -> None:
         self.events.append(("prepare", app_instance_id))
@@ -50,6 +51,7 @@ class FakeStore:
             consecutive_failure_count=0,
             next_retry_at=None,
         )
+        self.running_healthy_at.append(healthy_at)
         self.events.append(("running", candidate.stream_id))
 
     def mark_monitoring_waiting(self, candidate, *, now) -> None:
@@ -162,6 +164,76 @@ def test_supervisor_waits_for_a_healthy_frame_and_never_duplicates_a_session() -
     assert camera.start_calls == ["stream-one"]
     assert camera.monitor_calls == ["stream-one"]
     assert store.candidates["stream-one"].actual_state == "running"
+
+
+def test_supervisor_normalizes_legacy_naive_startup_timestamp_before_subtraction() -> None:
+    """Regression for aware runtime UTC minus naive SQLite startup checkpoint."""
+
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    store = FakeStore([_candidate("stream-one")])
+    camera = FakeCamera()
+    supervisor = _supervisor(store, camera)
+
+    supervisor.reconcile_once(now=now)
+    store.candidates["stream-one"] = replace(
+        store.candidates["stream-one"],
+        last_start_attempt_at=now.replace(tzinfo=None),
+    )
+
+    supervisor.reconcile_once(now=now + timedelta(seconds=1))
+
+    assert camera.start_calls == ["stream-one"]
+    assert store.candidates["stream-one"].actual_state == "starting"
+    assert ("backoff", "stream-one") not in store.events
+
+
+def test_supervisor_normalizes_legacy_naive_retry_timestamp_without_duplicate_start() -> None:
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    retry_at = now + timedelta(minutes=1)
+    store = FakeStore(
+        [replace(_candidate("stream-one"), next_retry_at=retry_at.replace(tzinfo=None))]
+    )
+    camera = FakeCamera()
+    supervisor = _supervisor(store, camera)
+
+    supervisor.reconcile_once(now=now)
+    assert camera.start_calls == []
+    assert store.candidates["stream-one"].next_retry_at == retry_at
+
+    supervisor.reconcile_once(now=retry_at)
+    supervisor.reconcile_once(now=retry_at + timedelta(seconds=1))
+
+    assert camera.start_calls == ["stream-one"]
+
+
+def test_supervisor_normalizes_legacy_naive_healthy_timestamp_before_persisting() -> None:
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    store = FakeStore([_candidate("stream-one")])
+    camera = FakeCamera()
+    supervisor = _supervisor(store, camera)
+
+    supervisor.reconcile_once(now=now)
+    camera.statuses["stream-one"] = ManagedCameraStatus(
+        state="running",
+        healthy_at=(now + timedelta(seconds=1)).replace(tzinfo=None),
+    )
+    supervisor.reconcile_once(now=now + timedelta(seconds=1))
+
+    assert store.running_healthy_at == [now + timedelta(seconds=1)]
+
+
+def test_supervisor_blocks_one_malformed_timestamp_without_stopping_other_streams() -> None:
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    malformed = replace(_candidate("stream-malformed"), next_retry_at="not-a-timestamp")
+    store = FakeStore([malformed, _candidate("stream-healthy")])
+    camera = FakeCamera()
+    supervisor = _supervisor(store, camera)
+
+    supervisor.reconcile_once(now=now)
+
+    assert store.candidates["stream-malformed"].actual_state == "blocked"
+    assert ("blocked", "stream-malformed") in store.events
+    assert camera.start_calls == ["stream-healthy"]
 
 
 def test_supervisor_applies_bounded_backoff_then_blocks_failed_camera() -> None:

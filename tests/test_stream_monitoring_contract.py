@@ -239,6 +239,29 @@ def test_runtime_checkpoint_read_preserves_last_known_runtime_without_mutation(
     assert stored_state == "running"
 
 
+def test_runtime_status_api_serializes_legacy_naive_checkpoint_as_utc(
+    repository: ProductRepository,
+) -> None:
+    from datetime import UTC, datetime
+
+    timestamp = datetime(2026, 7, 20, 12, 0, 0)
+    with repository.session_factory() as session:
+        with session.begin():
+            checkpoint = session.get(StreamRuntimeCheckpointModel, STREAM_ID)
+            assert checkpoint is not None
+            checkpoint.last_start_attempt_at = timestamp
+            checkpoint.last_healthy_frame_at = timestamp
+            checkpoint.updated_at = timestamp
+
+    response = ASGITestClient().get(f"/api/streams/{STREAM_ID}/runtime-status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["last_start_attempt_at"].endswith("Z")
+    assert payload["last_healthy_frame_at"].endswith("Z")
+    assert payload["checkpoint_updated_at"].endswith("Z")
+
+
 def test_monitoring_enable_disable_and_retry_are_durable_and_idempotent(
     repository: ProductRepository,
 ) -> None:

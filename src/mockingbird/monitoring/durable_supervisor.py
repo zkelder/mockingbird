@@ -10,10 +10,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 import threading
 from typing import Protocol
 import uuid
+
+from mockingbird.time_utils import normalize_optional_utc, normalize_utc, utc_now
 
 
 DEFAULT_MAX_CONCURRENT_STREAMS = 2
@@ -148,7 +150,7 @@ class DurableMonitoringSupervisor:
         self._startup_timeout_seconds = startup_timeout_seconds
         self._retry_delays_seconds = retry_delays_seconds
         self._max_consecutive_failures = max_consecutive_failures
-        self._clock = clock or (lambda: datetime.now(UTC))
+        self._clock = clock or utc_now
         self._app_instance_id = uuid.uuid4().hex
         self._active_stream_ids: set[str] = set()
         self._reconcile_lock = threading.RLock()
@@ -188,7 +190,7 @@ class DurableMonitoringSupervisor:
         the already-armed Stream may be woken again after its transaction commits.
         """
 
-        now = self._clock()
+        now = normalize_utc(self._clock())
         with self._reconcile_lock:
             self._active_stream_ids.discard(stream_id)
         self._safe_stop(stream_id, "camera_configuration_changed")
@@ -207,7 +209,7 @@ class DurableMonitoringSupervisor:
         if thread is not None and thread.is_alive():
             thread.join(timeout=3)
 
-        now = self._clock()
+        now = normalize_utc(self._clock())
         with self._reconcile_lock:
             active_stream_ids = tuple(self._active_stream_ids)
             self._active_stream_ids.clear()
@@ -221,7 +223,7 @@ class DurableMonitoringSupervisor:
 
         if self._stop_event.is_set():
             return
-        current_time = now or self._clock()
+        current_time = normalize_utc(now or self._clock())
         with self._reconcile_lock:
             candidates = self._store.list_enabled_monitoring_candidates(
                 limit=self._max_concurrent_streams * 25,
@@ -280,15 +282,24 @@ class DurableMonitoringSupervisor:
                     self._recover_from_failure(candidate, now)
                     return
             if status.monitor_running:
+                try:
+                    healthy_at = normalize_utc(status.healthy_at)
+                except ValueError:
+                    self._mark_invalid_timestamp(candidate, now)
+                    return
                 self._store.mark_monitoring_running(
                     candidate,
                     app_instance_id=self._app_instance_id,
-                    healthy_at=status.healthy_at,
+                    healthy_at=healthy_at,
                     now=now,
                 )
                 return
 
-        started_at = candidate.last_start_attempt_at or now
+        try:
+            started_at = normalize_optional_utc(candidate.last_start_attempt_at) or now
+        except ValueError:
+            self._mark_invalid_timestamp(candidate, now)
+            return
         if now - started_at >= timedelta(seconds=self._startup_timeout_seconds):
             self._recover_from_failure(candidate, now)
             return
@@ -312,11 +323,16 @@ class DurableMonitoringSupervisor:
                 now=now,
             )
             return
-        if candidate.next_retry_at is not None and candidate.next_retry_at > now:
+        try:
+            retry_at = normalize_optional_utc(candidate.next_retry_at)
+        except ValueError:
+            self._mark_invalid_timestamp(candidate, now)
+            return
+        if retry_at is not None and retry_at > now:
             self._mark_monitoring_backoff(
                 candidate,
                 failure_count=candidate.consecutive_failure_count,
-                retry_at=candidate.next_retry_at,
+                retry_at=retry_at,
                 now=now,
                 failure_code=candidate.failure_code,
             )
@@ -335,6 +351,23 @@ class DurableMonitoringSupervisor:
             self._start_camera(candidate)
         except Exception:
             self._recover_from_failure(candidate, now)
+
+    def _mark_invalid_timestamp(
+        self,
+        candidate: DurableMonitoringCandidate,
+        now: datetime,
+    ) -> None:
+        """Contain malformed legacy state to one Stream without exposing raw values."""
+
+        self._safe_stop(candidate.stream_id, "timestamp_invalid")
+        self._active_stream_ids.discard(candidate.stream_id)
+        self._store.mark_monitoring_blocked(
+            candidate,
+            app_instance_id=self._app_instance_id,
+            failure_count=max(1, candidate.consecutive_failure_count + 1),
+            failure_code="timestamp_invalid",
+            now=now,
+        )
 
     def _recover_from_failure(
         self,
