@@ -14,6 +14,8 @@ from .config import CameraNodeConfig
 MAX_CAMERAS = 8
 CAPTURE_LOCK_TIMEOUT_SECONDS = 0.5
 CAPTURE_TIMEOUT_SECONDS = 3.0
+PICAMERA2_INITIALIZATION_TIMEOUT_SECONDS = 4.0
+PICAMERA2_FRAME_TIMEOUT_SECONDS = 4.0
 _VIDEO_DEVICE = re.compile(r"^video([0-9]{1,3})$")
 _SYNTHETIC_JPEG = b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9"
 
@@ -74,22 +76,38 @@ def _cv2() -> Any | None:
     return cv2
 
 
-def _bounded_call(callback: Callable[[], Any], *, failure_code: str) -> Any:
-    """Bound one local provider operation; callers still release acquired handles."""
+def _bounded_call(
+    callback: Callable[[], Any],
+    *,
+    failure_code: str,
+    timeout_seconds: float = CAPTURE_TIMEOUT_SECONDS,
+    timeout_code: str | None = None,
+    late_cleanup: Callable[[Any], None] | None = None,
+) -> Any:
+    """Bound a local operation while eventually releasing a late-created resource."""
 
     result: list[Any] = []
     errors: list[BaseException] = []
+    abandoned = threading.Event()
 
     def run() -> None:
         try:
-            result.append(callback())
+            value = callback()
+            if abandoned.is_set():
+                if late_cleanup is not None:
+                    late_cleanup(value)
+            else:
+                result.append(value)
         except BaseException as error:  # Provider exceptions stay Node-local.
             errors.append(error)
 
     worker = threading.Thread(target=run, daemon=True)
     worker.start()
-    worker.join(CAPTURE_TIMEOUT_SECONDS)
-    if worker.is_alive() or errors:
+    worker.join(timeout_seconds)
+    if worker.is_alive():
+        abandoned.set()
+        raise ValueError(timeout_code or failure_code)
+    if errors:
         raise ValueError(failure_code)
     return result[0] if result else None
 
@@ -158,6 +176,7 @@ class V4L2CameraProvider:
 class PiCamera2Provider:
     def __init__(self, config: CameraNodeConfig, *, module: Any | None = None, cv2_module: Any | None = None) -> None:
         self._config, self._module, self._cv2, self._lock = config, module, cv2_module, threading.Lock()
+        self._cameras: dict[str, Any] = {}
 
     def _runtime(self) -> tuple[Any | None, Any | None]:
         module = self._module
@@ -180,6 +199,59 @@ class PiCamera2Provider:
             return [NodeCamera("picamera2-unavailable", "Pi camera unavailable", "unavailable", "Check the local Pi camera stack.", provider_type="picamera2")]
         return [NodeCamera(f"picamera2-camera-{index}", f"Pi camera {index + 1}", "available", snapshot_supported=True, provider_type="picamera2") for index in range(count)] or [NodeCamera("picamera2-no-camera", "No Pi camera available", "unavailable", "Connect a supported local Pi camera.", provider_type="picamera2")]
 
+    @staticmethod
+    def _release_camera(camera: Any) -> bool:
+        try:
+            camera.stop()
+        except Exception:
+            pass
+        try:
+            camera.close()
+        except Exception:
+            return False
+        return True
+
+    def _reset_camera(self, camera_id: str, *, fallback: Any | None = None) -> bool:
+        camera = self._cameras.pop(camera_id, fallback)
+        return True if camera is None else self._release_camera(camera)
+
+    def _initialize_camera(self, module: Any, camera_id: str) -> Any:
+        index = int(camera_id.rsplit("-", 1)[1])
+
+        def initialize() -> Any:
+            camera: Any | None = None
+            try:
+                camera = module.Picamera2(index)
+                camera.configure(
+                    camera.create_still_configuration(
+                        main={
+                            "size": (self._config.max_image_width, self._config.max_image_height),
+                            "format": "RGB888",
+                        }
+                    )
+                )
+                camera.start()
+                return camera
+            except BaseException:
+                if camera is not None:
+                    self._release_camera(camera)
+                raise
+
+        return _bounded_call(
+            initialize,
+            failure_code="camera_initialization_failed",
+            timeout_seconds=PICAMERA2_INITIALIZATION_TIMEOUT_SECONDS,
+            timeout_code="camera_warmup_timeout",
+            late_cleanup=self._release_camera,
+        )
+
+    def _camera_for_snapshot(self, module: Any, camera_id: str) -> Any:
+        camera = self._cameras.get(camera_id)
+        if camera is None:
+            camera = self._initialize_camera(module, camera_id)
+            self._cameras[camera_id] = camera
+        return camera
+
     def snapshot(self, camera_id: str) -> bytes:
         cameras = {camera.camera_id for camera in self.cameras() if camera.status == "available"}
         if camera_id not in cameras:
@@ -189,33 +261,39 @@ class PiCamera2Provider:
             raise ValueError("camera_setup_required")
         if not self._lock.acquire(timeout=CAPTURE_LOCK_TIMEOUT_SECONDS):
             raise ValueError("camera_busy")
-        camera: Any | None = None
         try:
-            index = int(camera_id.rsplit("-", 1)[1])
-            camera = _bounded_call(lambda: module.Picamera2(index), failure_code="camera_initialization_failed")
-            camera.configure(camera.create_still_configuration(main={"size": (self._config.max_image_width, self._config.max_image_height), "format": "RGB888"}))
-            _bounded_call(camera.start, failure_code="camera_initialization_failed")
-            frame = _bounded_call(camera.capture_array, failure_code="camera_unusable_frame")
+            camera = self._camera_for_snapshot(module, camera_id)
+            frame = _bounded_call(
+                camera.capture_array,
+                failure_code="camera_unusable_frame",
+                timeout_seconds=PICAMERA2_FRAME_TIMEOUT_SECONDS,
+                timeout_code="camera_capture_timeout",
+                late_cleanup=lambda _frame: self._reset_camera(camera_id, fallback=camera),
+            )
             ok, encoded = encoder.imencode(".jpg", frame)
             if not ok:
                 raise ValueError("camera_unusable_frame")
             return encoded.tobytes() if hasattr(encoded, "tobytes") else bytes(encoded)
         except PermissionError as error:
+            self._reset_camera(camera_id)
             raise ValueError("camera_permission_denied") from error
-        except ValueError:
+        except ValueError as error:
+            if not self._reset_camera(camera_id):
+                raise ValueError("provider_reset_required") from error
             raise
         except Exception as error:
-            raise ValueError("camera_initialization_failed") from error
+            reset = self._reset_camera(camera_id)
+            code = "camera_initialization_failed" if reset else "provider_reset_required"
+            raise ValueError(code) from error
         finally:
-            if camera is not None:
-                try:
-                    camera.stop(); camera.close()
-                except Exception:
-                    pass
             self._lock.release()
 
     def close(self) -> None:
-        return None
+        with self._lock:
+            cameras = list(self._cameras.values())
+            self._cameras.clear()
+        for camera in cameras:
+            self._release_camera(camera)
 
 
 class CompositeCameraProvider:

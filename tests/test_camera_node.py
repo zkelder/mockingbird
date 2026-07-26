@@ -1,4 +1,5 @@
 import json
+import threading
 
 import httpx
 import pytest
@@ -37,9 +38,11 @@ def anyio_backend() -> str:
 class _FakeNodeRequester:
     def __init__(self) -> None:
         self.requests: list[tuple[str, str, dict[str, str]]] = []
+        self.timings = []
 
-    def request(self, *, method, url, headers, body, max_bytes):
+    def request(self, *, method, url, headers, body, max_bytes, timing):
         self.requests.append((method, url, headers))
+        self.timings.append(timing)
         if url.endswith("/health"):
             return 200, {"Content-Type": "application/json"}, json.dumps({"node_id": "node-test", "display_name": "Test node", "api_version": "v1"}).encode()
         if url.endswith("/pair"):
@@ -53,6 +56,8 @@ class _FakeNodeRequester:
             }).encode()
         if url.endswith("/pair/revoke"):
             return 204, {}, b""
+        if url.endswith("/capabilities"):
+            return 200, {"Content-Type": "application/json"}, json.dumps({"recommended_snapshot_timeout_seconds": 8.0}).encode()
         if url.endswith("/cameras"):
             return 200, {"Content-Type": "application/json"}, json.dumps({"items": [{"camera_id": "opaque-camera-1", "display_name": "Feeder view", "status": "available", "snapshot_supported": True, "provider_type": "v4l2"}]}).encode()
         if "/snapshot" in url:
@@ -87,7 +92,12 @@ def test_camera_node_address_and_client_are_pinned_to_one_local_base_address() -
     assert pairing.cameras[0].camera_id == "opaque-camera-1"
     assert "never-echo-node-credential" not in str(pairing.cameras)
     assert all(url.startswith("http://127.0.0.1:8787/node/v1/") for _, url, _ in requester.requests)
-    assert all("never-echo-node-credential" not in str(headers) for _, _, headers in requester.requests)
+    assert all(
+        "never-echo-node-credential" not in str(headers)
+        for _, url, headers in requester.requests
+        if not url.endswith("/capabilities")
+    )
+    assert any(url.endswith("/capabilities") and headers.get("Authorization") == "Bearer never-echo-node-credential" for _, url, headers in requester.requests)
 
 
 def _node_config(*, provider_key: str = "v4l2", enabled_providers: tuple[str, ...] = ()) -> CameraNodeConfig:
@@ -142,20 +152,23 @@ def test_v4l2_busy_and_picamera2_missing_are_safe_setup_states() -> None:
     assert pi.cameras()[0].status == "setup_required"
 
 
-def test_picamera2_fake_runtime_keeps_opaque_identity_and_releases_camera() -> None:
+def test_picamera2_fake_runtime_keeps_opaque_identity_warm_and_releases_on_close() -> None:
     class Camera:
-        stopped = closed = False
+        def __init__(self): self.stopped = self.closed = False; self.captures = 0
         def create_still_configuration(self, **_kwargs): return object()
         def configure(self, _configuration): return None
         def start(self): return None
-        def capture_array(self): return object()
+        def capture_array(self): self.captures += 1; return object()
         def stop(self): self.stopped = True
         def close(self): self.closed = True
     class Picamera2:
-        camera = Camera()
+        cameras = []
         @staticmethod
         def global_camera_info(): return [{"ignored": "not exposed"}]
-        def __new__(cls, _index): return cls.camera
+        def __new__(cls, _index):
+            camera = Camera()
+            cls.cameras.append(camera)
+            return camera
     module = type("Module", (), {"Picamera2": Picamera2})
     class Encoder:
         def imencode(self, _suffix, _frame): return True, bytearray(b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9")
@@ -163,7 +176,70 @@ def test_picamera2_fake_runtime_keeps_opaque_identity_and_releases_camera() -> N
     provider = PiCamera2Provider(_node_config(provider_key="picamera2"), module=module, cv2_module=Encoder())
     assert provider.cameras()[0].camera_id == "picamera2-camera-0"
     assert provider.snapshot("picamera2-camera-0").startswith(b"\xff\xd8")
+    assert provider.snapshot("picamera2-camera-0").startswith(b"\xff\xd8")
+    assert len(Picamera2.cameras) == 1
+    assert Picamera2.cameras[0].captures == 2
+    assert not Picamera2.cameras[0].stopped
+    provider.close()
+    assert Picamera2.cameras[0].stopped and Picamera2.cameras[0].closed
+
+
+def test_picamera2_failed_capture_resets_then_later_snapshot_reinitializes() -> None:
+    class Camera:
+        def __init__(self, *, fail_capture: bool): self.fail_capture = fail_capture; self.stopped = self.closed = False
+        def create_still_configuration(self, **_kwargs): return object()
+        def configure(self, _configuration): return None
+        def start(self): return None
+        def capture_array(self):
+            if self.fail_capture:
+                raise RuntimeError("driver text must stay local")
+            return object()
+        def stop(self): self.stopped = True
+        def close(self): self.closed = True
+    class Picamera2:
+        cameras = []
+        @staticmethod
+        def global_camera_info(): return [{}]
+        def __new__(cls, _index):
+            camera = Camera(fail_capture=not cls.cameras)
+            cls.cameras.append(camera)
+            return camera
+    module = type("Module", (), {"Picamera2": Picamera2})
+    class Encoder:
+        def imencode(self, _suffix, _frame): return True, bytearray(b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9")
+
+    provider = PiCamera2Provider(_node_config(provider_key="picamera2"), module=module, cv2_module=Encoder())
+    with pytest.raises(ValueError, match="camera_unusable_frame"):
+        provider.snapshot("picamera2-camera-0")
+    assert Picamera2.cameras[0].stopped and Picamera2.cameras[0].closed
+    assert provider.snapshot("picamera2-camera-0").startswith(b"\xff\xd8")
+    assert len(Picamera2.cameras) == 2
+    provider.close()
+
+
+def test_picamera2_failed_initialization_releases_partial_camera_and_concurrent_capture_is_bounded() -> None:
+    class Camera:
+        def __init__(self): self.stopped = self.closed = False
+        def create_still_configuration(self, **_kwargs): return object()
+        def configure(self, _configuration): raise RuntimeError("raw setup text")
+        def stop(self): self.stopped = True
+        def close(self): self.closed = True
+    class Picamera2:
+        camera = Camera()
+        @staticmethod
+        def global_camera_info(): return [{}]
+        def __new__(cls, _index): return cls.camera
+    module = type("Module", (), {"Picamera2": Picamera2})
+    provider = PiCamera2Provider(_node_config(provider_key="picamera2"), module=module, cv2_module=object())
+    with pytest.raises(ValueError, match="camera_initialization_failed"):
+        provider.snapshot("picamera2-camera-0")
     assert Picamera2.camera.stopped and Picamera2.camera.closed
+    provider._lock.acquire()
+    try:
+        with pytest.raises(ValueError, match="camera_busy"):
+            provider.snapshot("picamera2-camera-0")
+    finally:
+        provider._lock.release()
 
 
 def test_composite_provider_keeps_other_camera_available_when_one_fails() -> None:
@@ -191,6 +267,61 @@ def test_node_snapshot_failure_stops_for_durable_bounded_recovery() -> None:
     assert process.wait(timeout=1) == 1
     assert process.safe_failure_code == "authentication_rejected"
     assert process.stdout.read() == b""
+
+
+def test_client_clamps_optional_snapshot_hint_and_old_nodes_keep_the_default() -> None:
+    requester = _FakeNodeRequester()
+    client = CameraNodeClient(requester=requester)
+    pairing = client.pair("http://127.0.0.1:8787", "correct-one-time-code")
+    assert pairing.recommended_snapshot_timeout_seconds == 8.0
+    client.snapshot(
+        base_address=pairing.base_address,
+        credential=pairing.credential,
+        camera_id="opaque-camera-1",
+        recommended_timeout_seconds=99.0,
+    )
+    assert requester.timings[-1].connect_timeout_seconds == 2.0
+    assert requester.timings[-1].response_timeout_seconds == 10.0
+    assert requester.timings[-1].maximum_seconds == 10.0
+
+    class OldNodeRequester(_FakeNodeRequester):
+        def request(self, **kwargs):
+            if kwargs["url"].endswith("/capabilities"):
+                self.requests.append((kwargs["method"], kwargs["url"], kwargs["headers"]))
+                self.timings.append(kwargs["timing"])
+                return 404, {"Content-Type": "application/json"}, b"{}"
+            return super().request(**kwargs)
+
+    old_requester = OldNodeRequester()
+    old_pairing = CameraNodeClient(requester=old_requester).pair("http://127.0.0.1:8787", "correct-one-time-code")
+    assert old_pairing.recommended_snapshot_timeout_seconds is None
+
+
+def test_monitoring_bridge_uses_the_same_default_snapshot_timing() -> None:
+    class RecordingRequester(_FakeNodeRequester):
+        def __init__(self):
+            super().__init__()
+            self.snapshot_requested = threading.Event()
+        def request(self, **kwargs):
+            result = super().request(**kwargs)
+            if "/snapshot" in kwargs["url"]:
+                self.snapshot_requested.set()
+            return result
+
+    class Configuration:
+        stream_id = "node-stream"
+        camera_node_base_address = "http://127.0.0.1:8787"
+        camera_node_credential = "masked-local-only"
+        camera_node_camera_id = "opaque-camera-1"
+
+    requester = RecordingRequester()
+    process = CameraNodeSnapshotProcess(Configuration(), client=CameraNodeClient(requester=requester))
+    assert requester.snapshot_requested.wait(timeout=1)
+    process.terminate()
+    assert process.wait(timeout=1) == 0
+    timing = next(item for item, request in zip(requester.timings, requester.requests) if "/snapshot" in request[1])
+    assert timing.response_timeout_seconds == 8.0
+    assert timing.maximum_seconds == 10.0
 
 
 @pytest.mark.anyio
@@ -228,6 +359,44 @@ async def test_node_requires_authentication_and_one_time_pairing_is_bounded() ->
         revoked = await client.post("/node/v1/pair/revoke", headers={"Authorization": f"Bearer {credential}"})
         assert revoked.status_code == 204
         assert (await client.get("/node/v1/cameras", headers={"Authorization": f"Bearer {credential}"})).status_code == 401
+
+
+@pytest.mark.anyio
+async def test_unauthenticated_snapshot_never_initializes_a_picamera2_instance() -> None:
+    class Picamera2:
+        initialized = 0
+        @staticmethod
+        def global_camera_info(): return [{}]
+        def __new__(cls, _index):
+            cls.initialized += 1
+            return object.__new__(cls)
+    module = type("Module", (), {"Picamera2": Picamera2})
+    provider = PiCamera2Provider(_node_config(provider_key="picamera2"), module=module, cv2_module=object())
+    node = create_node_app(_node_config(provider_key="picamera2"), provider=provider)
+    transport = httpx.ASGITransport(app=node)
+    async with httpx.AsyncClient(transport=transport, base_url="http://node") as client:
+        response = await client.get("/node/v1/cameras/picamera2-camera-0/snapshot")
+    assert response.status_code == 401
+    assert Picamera2.initialized == 0
+
+
+@pytest.mark.anyio
+async def test_node_snapshot_errors_are_sanitized_and_include_only_safe_codes() -> None:
+    class FailingProvider:
+        def cameras(self): return [NodeCamera("opaque-camera-1", "Pi camera 1", "available", snapshot_supported=True, provider_type="picamera2")]
+        def snapshot(self, _camera_id): raise ValueError("camera_capture_timeout")
+        def close(self): return None
+
+    node = create_node_app(_node_config(), provider=FailingProvider())
+    transport = httpx.ASGITransport(app=node)
+    async with httpx.AsyncClient(transport=transport, base_url="http://node") as client:
+        paired = await client.post("/node/v1/pair", json={"pairing_code": node.state.pairing_code})
+        credential = paired.json()["credential"]
+        snapshot = await client.get("/node/v1/cameras/opaque-camera-1/snapshot", headers={"Authorization": f"Bearer {credential}"})
+    assert snapshot.status_code == 503
+    assert snapshot.headers["x-mockingbird-node-error"] == "node_snapshot_timeout"
+    assert "camera_capture_timeout" not in snapshot.text
+    assert "/dev/" not in snapshot.text
 
 
 @pytest.mark.anyio
@@ -292,6 +461,34 @@ async def test_pairing_guided_setup_keeps_credential_masked_and_creates_no_truth
                 config = json.loads(stored.config_json)
                 assert config["node_credential"] == "never-echo-node-credential"
                 assert config["node_pairing_state"] == "paired"
+    finally:
+        configure_repository(None)
+        api_main._camera_node_client = None
+
+
+@pytest.mark.anyio
+async def test_timed_out_node_preview_creates_no_product_records_or_truth(tmp_path) -> None:
+    class TimeoutRequester(_FakeNodeRequester):
+        def request(self, **kwargs):
+            if "/snapshot" in kwargs["url"]:
+                self.requests.append((kwargs["method"], kwargs["url"], kwargs["headers"]))
+                self.timings.append(kwargs["timing"])
+                return 503, {"X-MockingBird-Node-Error": "node_snapshot_timeout"}, b'{"detail":"Camera snapshot timed out."}'
+            return super().request(**kwargs)
+
+    repository = _repository(tmp_path)
+    api_main._camera_node_client = CameraNodeClient(requester=TimeoutRequester())
+    configure_repository(repository)
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            before = _counts(repository)
+            pairing = await client.post("/api/camera-nodes/pair", json={"base_address": "http://127.0.0.1:8787", "pairing_code": "correct-one-time-code"})
+            preview = await client.post("/api/camera-nodes/preview", json={"pairing_token": pairing.json()["pairing_token"], "camera_id": "opaque-camera-1"})
+            assert preview.status_code == 502
+            assert "timed out" in preview.json()["detail"].lower()
+            assert "never-echo-node-credential" not in preview.text
+            assert _counts(repository) == before
     finally:
         configure_repository(None)
         api_main._camera_node_client = None

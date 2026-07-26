@@ -9,21 +9,67 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from http.client import HTTPConnection, HTTPSConnection
 import ipaddress
 import json
 import secrets
+import socket
 import threading
+import time
 from typing import Any, Protocol
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 NODE_API_VERSION = "v1"
 MAX_NODE_JSON_BYTES = 128_000
 MAX_NODE_SNAPSHOT_BYTES = 1_500_000
-NODE_REQUEST_TIMEOUT_SECONDS = 3.0
 PAIRING_SESSION_TTL_SECONDS = 10 * 60
+NODE_CONNECT_TIMEOUT_SECONDS = 2.0
+NODE_METADATA_RESPONSE_TIMEOUT_SECONDS = 3.0
+NODE_WARM_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS = 4.0
+NODE_COLD_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS = 8.0
+NODE_MAX_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS = 10.0
+
+
+@dataclass(frozen=True)
+class CameraNodeRequestTiming:
+    """Fixed, bounded transport timing; Nodes cannot extend the global limit."""
+
+    connect_timeout_seconds: float
+    response_timeout_seconds: float
+    maximum_seconds: float
+    timeout_error: str
+
+
+NODE_METADATA_TIMING = CameraNodeRequestTiming(
+    connect_timeout_seconds=NODE_CONNECT_TIMEOUT_SECONDS,
+    response_timeout_seconds=NODE_METADATA_RESPONSE_TIMEOUT_SECONDS,
+    maximum_seconds=NODE_METADATA_RESPONSE_TIMEOUT_SECONDS,
+    timeout_error="node_unavailable",
+)
+
+
+CAMERA_NODE_RUNTIME_FAILURE_CODES = frozenset(
+    {
+        "authentication_rejected",
+        "node_camera_warmup_timeout",
+        "node_camera_unavailable",
+        "node_snapshot_invalid",
+        "node_snapshot_timeout",
+        "node_unavailable",
+        "provider_reset_required",
+    }
+)
+
+_NODE_SNAPSHOT_ERROR_HEADER = "X-MockingBird-Node-Error"
+_NODE_SNAPSHOT_ERROR_CODES = frozenset(
+    {
+        "node_camera_warmup_timeout",
+        "node_snapshot_invalid",
+        "node_snapshot_timeout",
+        "provider_reset_required",
+    }
+)
 
 
 class CameraNodeClientError(ValueError):
@@ -49,6 +95,7 @@ class CameraNodePairing:
     credential: str
     cameras: list[CameraNodeCamera]
     capability_fingerprint: str
+    recommended_snapshot_timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -59,25 +106,104 @@ class CameraNodePairingSession:
 
 
 class CameraNodeRequester(Protocol):
-    def request(self, *, method: str, url: str, headers: dict[str, str], body: bytes | None, max_bytes: int) -> tuple[int, dict[str, str], bytes]: ...
-
-
-class _NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
-        return None
+    def request(
+        self,
+        *,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None,
+        max_bytes: int,
+        timing: CameraNodeRequestTiming,
+    ) -> tuple[int, dict[str, str], bytes]: ...
 
 
 class UrlLibCameraNodeRequester:
-    def request(self, *, method: str, url: str, headers: dict[str, str], body: bytes | None, max_bytes: int) -> tuple[int, dict[str, str], bytes]:
-        request = Request(url=url, data=body, headers=headers, method=method)
-        opener = build_opener(_NoRedirect())
+    """Fixed-path local client with separate connect and bounded response windows."""
+
+    @staticmethod
+    def _connection(url: str, *, connect_timeout_seconds: float) -> tuple[HTTPConnection | HTTPSConnection, str]:
+        parsed = urlsplit(url)
+        path = parsed.path or "/"
+        if parsed.scheme == "http":
+            return HTTPConnection(parsed.netloc, timeout=connect_timeout_seconds), path
+        if parsed.scheme == "https":
+            return HTTPSConnection(parsed.netloc, timeout=connect_timeout_seconds), path
+        raise CameraNodeClientError("node_endpoint_invalid")
+
+    @staticmethod
+    def _read_response(
+        connection: HTTPConnection | HTTPSConnection,
+        response: Any,
+        *,
+        max_bytes: int,
+        timing: CameraNodeRequestTiming,
+    ) -> bytes:
+        deadline = time.monotonic() + timing.maximum_seconds
+        data = bytearray()
+        while len(data) <= max_bytes:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            if connection.sock is not None:
+                connection.sock.settimeout(min(timing.response_timeout_seconds, remaining))
+            chunk = response.read(min(64 * 1024, max_bytes + 1 - len(data)))
+            if not chunk:
+                return bytes(data)
+            data.extend(chunk)
+        return bytes(data)
+
+    def request(
+        self,
+        *,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None,
+        max_bytes: int,
+        timing: CameraNodeRequestTiming,
+    ) -> tuple[int, dict[str, str], bytes]:
+        connection: HTTPConnection | HTTPSConnection | None = None
         try:
-            with opener.open(request, timeout=NODE_REQUEST_TIMEOUT_SECONDS) as response:
-                return response.status, dict(response.headers.items()), response.read(max_bytes + 1)
-        except HTTPError as error:
-            return error.code, dict(error.headers.items()) if error.headers else {}, error.read(max_bytes + 1)
-        except (URLError, TimeoutError, OSError) as error:
-            raise CameraNodeClientError("node_unavailable") from error
+            connection, path = self._connection(url, connect_timeout_seconds=timing.connect_timeout_seconds)
+            try:
+                connection.request(method, path, body=body, headers=headers)
+            except (socket.timeout, TimeoutError, OSError) as error:
+                raise CameraNodeClientError("node_unavailable") from error
+            try:
+                if connection.sock is not None:
+                    connection.sock.settimeout(min(timing.response_timeout_seconds, timing.maximum_seconds))
+                response = connection.getresponse()
+                data = self._read_response(connection, response, max_bytes=max_bytes, timing=timing)
+            except (socket.timeout, TimeoutError) as error:
+                raise CameraNodeClientError(timing.timeout_error) from error
+            except OSError as error:
+                raise CameraNodeClientError("node_unavailable") from error
+            return response.status, dict(response.headers.items()), data
+        finally:
+            if connection is not None:
+                connection.close()
+
+
+def _snapshot_timing(recommended_timeout_seconds: float | None = None) -> CameraNodeRequestTiming:
+    response_timeout_seconds = NODE_COLD_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS
+    if isinstance(recommended_timeout_seconds, (int, float)) and not isinstance(recommended_timeout_seconds, bool):
+        response_timeout_seconds = min(
+            max(float(recommended_timeout_seconds), NODE_WARM_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS),
+            NODE_MAX_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS,
+        )
+    return CameraNodeRequestTiming(
+        connect_timeout_seconds=NODE_CONNECT_TIMEOUT_SECONDS,
+        response_timeout_seconds=response_timeout_seconds,
+        maximum_seconds=NODE_MAX_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS,
+        timeout_error="node_snapshot_timeout",
+    )
+
+
+def _recommended_snapshot_timeout(value: object) -> float | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    return _snapshot_timing(float(value)).response_timeout_seconds
 
 
 def normalize_camera_node_address(value: str) -> str:
@@ -135,7 +261,17 @@ class CameraNodeClient:
     def __init__(self, *, requester: CameraNodeRequester | None = None) -> None:
         self._requester = requester or UrlLibCameraNodeRequester()
 
-    def _request(self, *, base_address: str, path: str, method: str = "GET", credential: str | None = None, payload: dict[str, str] | None = None, max_bytes: int = MAX_NODE_JSON_BYTES) -> tuple[int, dict[str, str], bytes]:
+    def _request(
+        self,
+        *,
+        base_address: str,
+        path: str,
+        method: str = "GET",
+        credential: str | None = None,
+        payload: dict[str, str] | None = None,
+        max_bytes: int = MAX_NODE_JSON_BYTES,
+        timing: CameraNodeRequestTiming = NODE_METADATA_TIMING,
+    ) -> tuple[int, dict[str, str], bytes]:
         headers = {"Accept": "application/json", "Cache-Control": "no-store"}
         body = None
         if credential:
@@ -143,7 +279,14 @@ class CameraNodeClient:
         if payload is not None:
             body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             headers["Content-Type"] = "application/json"
-        status, response_headers, data = self._requester.request(method=method, url=_node_url(base_address, path), headers=headers, body=body, max_bytes=max_bytes)
+        status, response_headers, data = self._requester.request(
+            method=method,
+            url=_node_url(base_address, path),
+            headers=headers,
+            body=body,
+            max_bytes=max_bytes,
+            timing=timing,
+        )
         if len(data) > max_bytes:
             raise CameraNodeClientError("node_response_too_large")
         if 300 <= status < 400:
@@ -177,7 +320,35 @@ class CameraNodeClient:
             raise CameraNodeClientError("node_response_invalid")
         if api_version != NODE_API_VERSION:
             raise CameraNodeClientError("node_api_unsupported")
-        return CameraNodePairing(base, node_id, display_name, api_version, credential, _camera_items(body.get("cameras")), secrets.token_hex(16))
+        try:
+            capabilities = self.capabilities(base_address=base, credential=credential)
+        except CameraNodeClientError:
+            # Capability timing is optional protocol metadata. A paired old Node
+            # remains compatible with the main app's fixed cold-start allowance.
+            capabilities = {}
+        return CameraNodePairing(
+            base,
+            node_id,
+            display_name,
+            api_version,
+            credential,
+            _camera_items(body.get("cameras")),
+            secrets.token_hex(16),
+            _recommended_snapshot_timeout(capabilities.get("recommended_snapshot_timeout_seconds")),
+        )
+
+    def capabilities(self, *, base_address: str, credential: str) -> dict[str, Any]:
+        base = normalize_camera_node_address(base_address)
+        status, _, data = self._request(
+            base_address=base,
+            path="/node/v1/capabilities",
+            credential=credential,
+        )
+        if status == 401:
+            raise CameraNodeClientError("authentication_rejected")
+        if status != 200:
+            raise CameraNodeClientError("node_unavailable")
+        return _safe_json(data)
 
     def cameras(self, *, base_address: str, credential: str) -> list[CameraNodeCamera]:
         base = normalize_camera_node_address(base_address)
@@ -188,13 +359,29 @@ class CameraNodeClient:
             raise CameraNodeClientError("node_unavailable")
         return _camera_items(_safe_json(data).get("items"))
 
-    def snapshot(self, *, base_address: str, credential: str, camera_id: str) -> bytes:
+    def snapshot(
+        self,
+        *,
+        base_address: str,
+        credential: str,
+        camera_id: str,
+        recommended_timeout_seconds: float | None = None,
+    ) -> bytes:
         base = normalize_camera_node_address(base_address)
         if not camera_id or len(camera_id) > 120 or "/" in camera_id:
             raise CameraNodeClientError("node_camera_not_allowed")
-        status, headers, data = self._request(base_address=base, path=f"/node/v1/cameras/{camera_id}/snapshot", credential=credential, max_bytes=MAX_NODE_SNAPSHOT_BYTES)
+        status, headers, data = self._request(
+            base_address=base,
+            path=f"/node/v1/cameras/{camera_id}/snapshot",
+            credential=credential,
+            max_bytes=MAX_NODE_SNAPSHOT_BYTES,
+            timing=_snapshot_timing(recommended_timeout_seconds),
+        )
         if status == 401:
             raise CameraNodeClientError("authentication_rejected")
+        node_error = headers.get(_NODE_SNAPSHOT_ERROR_HEADER, headers.get(_NODE_SNAPSHOT_ERROR_HEADER.lower(), ""))
+        if node_error in _NODE_SNAPSHOT_ERROR_CODES:
+            raise CameraNodeClientError(node_error)
         if status in {404, 409}:
             raise CameraNodeClientError("node_camera_unavailable")
         if status != 200:

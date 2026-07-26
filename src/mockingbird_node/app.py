@@ -17,6 +17,7 @@ from .providers import CameraProvider, NodeCamera, create_camera_provider
 
 NODE_API_VERSION = "v1"
 _MAX_PAIR_ATTEMPTS = 5
+_RECOMMENDED_SNAPSHOT_TIMEOUT_SECONDS = 8.0
 
 
 class PairRequest(BaseModel):
@@ -132,7 +133,18 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
 
     @app.get("/node/v1/capabilities")
     def capabilities(_: str = Depends(require_pairing)) -> dict[str, object]:
-        return {"node_id": node_id, "api_version": NODE_API_VERSION, "snapshot_supported": True, "preview_mjpeg_supported": False, "max_image_bytes": config.max_image_bytes, "max_image_width": config.max_image_width, "max_image_height": config.max_image_height, "max_preview_viewers": config.max_preview_viewers}
+        return {
+            "node_id": node_id,
+            "api_version": NODE_API_VERSION,
+            "snapshot_supported": True,
+            "preview_mjpeg_supported": False,
+            "max_image_bytes": config.max_image_bytes,
+            "max_image_width": config.max_image_width,
+            "max_image_height": config.max_image_height,
+            "max_preview_viewers": config.max_preview_viewers,
+            # Optional v1 metadata: the desktop clamps this to its own hard limit.
+            "recommended_snapshot_timeout_seconds": _RECOMMENDED_SNAPSHOT_TIMEOUT_SECONDS,
+        }
 
     @app.get("/node/v1/cameras")
     def cameras(_: str = Depends(require_pairing)) -> dict[str, object]:
@@ -148,12 +160,20 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
         try:
             image = provider.snapshot(camera_id)
         except ValueError as error:
-            status, detail = {
-                "camera_busy": (409, "Camera is busy."),
-                "camera_permission_denied": (403, "Camera permission is required on this Node."),
-                "camera_setup_required": (409, "Camera setup is required."),
-            }.get(str(error), (409, "Camera is unavailable."))
-            raise HTTPException(status_code=status, detail=detail) from None
+            error_code, status, detail = {
+                "camera_busy": ("node_camera_unavailable", 409, "Camera is busy."),
+                "camera_permission_denied": ("node_camera_unavailable", 403, "Camera permission is required on this Node."),
+                "camera_setup_required": ("node_camera_unavailable", 409, "Camera setup is required."),
+                "camera_warmup_timeout": ("node_camera_warmup_timeout", 503, "Camera warm-up timed out."),
+                "camera_capture_timeout": ("node_snapshot_timeout", 503, "Camera snapshot timed out."),
+                "camera_unusable_frame": ("node_snapshot_invalid", 503, "Camera did not provide a usable image."),
+                "provider_reset_required": ("provider_reset_required", 503, "Camera provider needs a reset."),
+            }.get(str(error), ("node_camera_unavailable", 409, "Camera is unavailable."))
+            raise HTTPException(
+                status_code=status,
+                detail=detail,
+                headers={"X-MockingBird-Node-Error": error_code},
+            ) from None
         dimensions = _jpeg_dimensions(image)
         if not dimensions or len(image) > config.max_image_bytes or dimensions[0] > config.max_image_width or dimensions[1] > config.max_image_height:
             raise HTTPException(status_code=503, detail="Camera frame is outside Node bounds.")

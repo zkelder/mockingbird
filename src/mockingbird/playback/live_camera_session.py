@@ -20,6 +20,7 @@ from mockingbird.playback import (
     rtsp_bridge,
     windows_camera_bridge,
 )
+from mockingbird.source_providers.camera_node import CAMERA_NODE_RUNTIME_FAILURE_CODES
 
 MJPEG_BOUNDARY = "frame"
 DEFAULT_MAX_RUNTIME_SECONDS = 30 * 60
@@ -1528,12 +1529,7 @@ class _LiveCameraSession:
                     safe_failure_code = getattr(self.process, "safe_failure_code", None)
                     self.last_error = (
                         safe_failure_code
-                        if safe_failure_code in {
-                            "authentication_rejected",
-                            "node_camera_unavailable",
-                            "node_snapshot_invalid",
-                            "node_unavailable",
-                        }
+                        if safe_failure_code in CAMERA_NODE_RUNTIME_FAILURE_CODES
                         else "Camera process ended before the session was stopped."
                     )
                 self._record_diagnostic_event_locked(

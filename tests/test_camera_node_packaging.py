@@ -22,6 +22,7 @@ def test_camera_node_artifact_is_slim_and_launcher_checks_without_starting(tmp_p
 
     manifest = json.loads(artifact.manifest.read_text(encoding="utf-8"))
     assert manifest["artifact"] == artifact.wheel.name
+    assert manifest["source_state"] == "unspecified"
     assert manifest["runtime_requirements"] == [
         "fastapi>=0.111,<0.116",
         "pydantic>=2.7,<3.0",

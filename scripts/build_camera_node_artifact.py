@@ -70,7 +70,11 @@ def _configuration_example() -> bytes:
     return b"""# Local-only MockingBird Camera Node configuration\nMOCKINGBIRD_NODE_NAME=Pi Camera Node\nMOCKINGBIRD_NODE_BIND=0.0.0.0\nMOCKINGBIRD_NODE_PORT=8787\nMOCKINGBIRD_NODE_PROVIDERS=picamera2,v4l2\nMOCKINGBIRD_NODE_MAX_IMAGE_BYTES=1500000\nMOCKINGBIRD_NODE_MAX_IMAGE_WIDTH=1920\nMOCKINGBIRD_NODE_MAX_IMAGE_HEIGHT=1080\nMOCKINGBIRD_NODE_PAIRING_TTL_SECONDS=600\nMOCKINGBIRD_NODE_MAX_PREVIEW_VIEWERS=2\n# Synthetic is intentionally omitted: it is test-only.\n"""
 
 
-def build_camera_node_artifact(output_dir: Path) -> CameraNodeArtifact:
+def build_camera_node_artifact(
+    output_dir: Path,
+    *,
+    source_state: str = "unspecified",
+) -> CameraNodeArtifact:
     """Write a standalone wheel and deployment metadata with no application files."""
 
     version = _source_version()
@@ -101,6 +105,7 @@ def build_camera_node_artifact(output_dir: Path) -> CameraNodeArtifact:
             {
                 "artifact": wheel.name,
                 "package": "mockingbird-camera-node",
+                "source_state": source_state,
                 "version": version,
                 "runtime_requirements": list(RUNTIME_REQUIREMENTS),
                 "wheel_contents": [
@@ -126,8 +131,13 @@ def build_camera_node_artifact(output_dir: Path) -> CameraNodeArtifact:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output_dir", type=Path)
+    parser.add_argument(
+        "--source-state",
+        default="unspecified",
+        help="human-readable committed or working-tree source identifier for this artifact",
+    )
     arguments = parser.parse_args()
-    artifact = build_camera_node_artifact(arguments.output_dir)
+    artifact = build_camera_node_artifact(arguments.output_dir, source_state=arguments.source_state)
     print(artifact.wheel)
 
 

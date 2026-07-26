@@ -80,6 +80,7 @@ from mockingbird.species.bioclip_adapter import (
     run_bioclip_from_image_loader,
 )
 from mockingbird.source_providers.camera_node import (
+    CAMERA_NODE_RUNTIME_FAILURE_CODES,
     CameraNodeClientError,
     normalize_camera_node_address,
 )
@@ -4059,7 +4060,10 @@ class ProductRepository:
             "node_unavailable": "MockingBird cannot currently reach the paired Camera Node API.",
             "authentication_rejected": "The paired Camera Node no longer accepts its local credential. Pair it again or revoke access.",
             "node_camera_unavailable": "The selected camera is not currently available on its paired Camera Node.",
+            "node_camera_warmup_timeout": "The paired Camera Node did not finish warming its camera within the bounded window.",
             "node_snapshot_invalid": "The paired Camera Node did not provide a usable bounded image.",
+            "node_snapshot_timeout": "The paired Camera Node did not provide a frame within the bounded snapshot window.",
+            "provider_reset_required": "The paired Camera Node needs to reset its local camera provider.",
             "waiting_for_capacity": "Monitoring is waiting for available local capacity.",
             "evidence_persistence_failed": "MockingBird could not safely persist required evidence.",
             "configuration_invalid": "Camera setup needs review before monitoring can start.",
@@ -4131,7 +4135,10 @@ class ProductRepository:
                 "node_unavailable": "MockingBird cannot reach the paired Camera Node API; bounded local recovery is scheduled.",
                 "authentication_rejected": "The paired Camera Node rejected its credential; pair the Node again to restore monitoring.",
                 "node_camera_unavailable": "The selected camera is unavailable on its paired Camera Node; bounded local recovery is scheduled.",
+                "node_camera_warmup_timeout": "The paired Camera Node camera did not finish warming up; bounded local recovery is scheduled.",
                 "node_snapshot_invalid": "The paired Camera Node did not provide a usable image; bounded local recovery is scheduled.",
+                "node_snapshot_timeout": "The paired Camera Node did not provide a frame within the bounded snapshot window; recovery is scheduled.",
+                "provider_reset_required": "The paired Camera Node is resetting its local camera provider before bounded recovery.",
             }.get(failure_code)
             if checkpoint is not None and checkpoint.consecutive_failure_count >= 3:
                 state = CameraHealthState.camera_unavailable
@@ -4176,7 +4183,10 @@ class ProductRepository:
                 "node_unavailable": "MockingBird cannot reach the paired Camera Node API. Check the local Node and use retry when ready.",
                 "authentication_rejected": "The paired Camera Node rejected its credential. Pair the Node again before retrying.",
                 "node_camera_unavailable": "The selected camera is unavailable on its paired Camera Node. Check that camera before retrying.",
+                "node_camera_warmup_timeout": "The paired Camera Node camera did not finish warming up. Try again shortly.",
                 "node_snapshot_invalid": "The paired Camera Node did not provide a usable image. Check the Node before retrying.",
+                "node_snapshot_timeout": "The paired Camera Node did not provide a frame within the bounded snapshot window. Try again shortly.",
+                "provider_reset_required": "The paired Camera Node needs to reset its local camera provider before retrying.",
             }.get(failure_code, "Monitoring needs attention before the camera can restart.")
         elif checkpoint is not None and (
             checkpoint.next_retry_at is not None
@@ -4190,7 +4200,10 @@ class ProductRepository:
                 "node_unavailable": "MockingBird cannot reach the paired Camera Node API.",
                 "authentication_rejected": "The paired Camera Node rejected its credential. Pair the Node again before retrying.",
                 "node_camera_unavailable": "The selected camera is unavailable on its paired Camera Node.",
+                "node_camera_warmup_timeout": "The paired Camera Node camera did not finish warming up.",
                 "node_snapshot_invalid": "The paired Camera Node did not provide a usable image.",
+                "node_snapshot_timeout": "The paired Camera Node did not provide a frame within the bounded snapshot window.",
+                "provider_reset_required": "The paired Camera Node needs to reset its local camera provider.",
             }.get(failure_code, "The camera is unavailable and needs attention before it can restart.")
         else:
             state = CameraHealthState.starting
@@ -4317,12 +4330,7 @@ class ProductRepository:
                 checkpoint.failure_code
                 if checkpoint is not None
                 and checkpoint.failure_code
-                in {
-                    "node_unavailable",
-                    "authentication_rejected",
-                    "node_camera_unavailable",
-                    "node_snapshot_invalid",
-                }
+                in CAMERA_NODE_RUNTIME_FAILURE_CODES
                 else None
             )
             title, body = {
@@ -4338,9 +4346,21 @@ class ProductRepository:
                     "Camera Node camera is unavailable",
                     "The selected camera is not currently available on its paired Camera Node. Check that local camera before retrying.",
                 ),
+                "node_camera_warmup_timeout": (
+                    "Camera Node warm-up timed out",
+                    "The paired Camera Node did not finish warming its camera within the bounded window. MockingBird will recover conservatively.",
+                ),
                 "node_snapshot_invalid": (
                     "Camera Node image needs attention",
                     "The paired Camera Node did not provide a usable image. Check its local camera setup before retrying.",
+                ),
+                "node_snapshot_timeout": (
+                    "Camera Node snapshot timed out",
+                    "The paired Camera Node did not provide a frame within the bounded snapshot window. MockingBird will recover conservatively.",
+                ),
+                "provider_reset_required": (
+                    "Camera Node provider needs a reset",
+                    "The paired Camera Node needs to reset its local camera provider before retrying.",
                 ),
             }.get(
                 node_failure,
@@ -4365,12 +4385,7 @@ class ProductRepository:
             node_failure = (
                 checkpoint.failure_code
                 if checkpoint.failure_code
-                in {
-                    "node_unavailable",
-                    "authentication_rejected",
-                    "node_camera_unavailable",
-                    "node_snapshot_invalid",
-                }
+                in CAMERA_NODE_RUNTIME_FAILURE_CODES
                 else None
             )
             title, body = {
@@ -4386,9 +4401,21 @@ class ProductRepository:
                     "Camera Node camera recovery is in progress",
                     "MockingBird is using its bounded local retry path while the selected Camera Node camera is unavailable.",
                 ),
+                "node_camera_warmup_timeout": (
+                    "Camera Node warm-up recovery is in progress",
+                    "MockingBird is using its bounded local retry path while the paired Camera Node camera warms up.",
+                ),
                 "node_snapshot_invalid": (
                     "Camera Node image recovery is in progress",
                     "MockingBird is using its bounded local retry path after an unusable Camera Node image.",
+                ),
+                "node_snapshot_timeout": (
+                    "Camera Node snapshot recovery is in progress",
+                    "MockingBird is using its bounded local retry path after a bounded Camera Node snapshot timeout.",
+                ),
+                "provider_reset_required": (
+                    "Camera Node provider recovery is in progress",
+                    "MockingBird is using its bounded local retry path while the paired Camera Node resets its local camera provider.",
                 ),
             }.get(
                 node_failure,
@@ -5199,12 +5226,7 @@ class ProductRepository:
     ) -> None:
         """Persist a small approved runtime code without retaining provider errors."""
 
-        if failure_code not in {
-            "authentication_rejected",
-            "node_camera_unavailable",
-            "node_snapshot_invalid",
-            "node_unavailable",
-        }:
+        if failure_code not in CAMERA_NODE_RUNTIME_FAILURE_CODES:
             failure_code = "camera_unavailable"
         self.mark_monitoring_backoff(
             candidate,

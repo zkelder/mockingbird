@@ -351,6 +351,7 @@ from mockingbird.sampler.saved_media_frames import (
 )
 from mockingbird.source_providers import external_url_preview
 from mockingbird.source_providers.camera_node import (
+    CAMERA_NODE_RUNTIME_FAILURE_CODES,
     CameraNodeClient,
     CameraNodeClientError,
     CameraNodePairingStore,
@@ -2584,12 +2585,7 @@ def _managed_camera_status(
         failure_code=(
             snapshot.last_error
             if snapshot.last_error
-            in {
-                "authentication_rejected",
-                "node_camera_unavailable",
-                "node_snapshot_invalid",
-                "node_unavailable",
-            }
+            in CAMERA_NODE_RUNTIME_FAILURE_CODES
             else None
         ),
     )
@@ -6212,13 +6208,17 @@ async def preview_camera_node(payload: CameraNodePreviewRequest) -> Response:
             base_address=pairing.base_address,
             credential=pairing.credential,
             camera_id=payload.camera_id,
+            recommended_timeout_seconds=pairing.recommended_snapshot_timeout_seconds,
         )
     except CameraNodeClientError as error:
         messages = {
             "node_camera_not_allowed": "Choose an available camera advertised by this Camera Node.",
             "node_camera_unavailable": "The selected Camera Node camera is not currently available.",
             "authentication_rejected": "Camera Node pairing is no longer accepted. Pair the Node again.",
+            "node_camera_warmup_timeout": "Camera Node warm-up timed out. Try the preview again shortly.",
             "node_snapshot_invalid": "The Camera Node did not provide a usable preview image.",
+            "node_snapshot_timeout": "Camera Node preview timed out while waiting for a frame.",
+            "provider_reset_required": "Camera Node needs to reset its camera provider before preview is available.",
         }
         status = 409 if str(error) in {"node_camera_not_allowed", "node_camera_unavailable", "authentication_rejected"} else 502
         raise HTTPException(
