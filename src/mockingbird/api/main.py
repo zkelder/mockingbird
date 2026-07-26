@@ -42,6 +42,7 @@ from mockingbird.api.schemas import (
     CameraConfigurationImpactPreviewRequest,
     CameraConfigurationSecretAction,
     CameraNodeAdvertisedCamera,
+    CameraNodeCaptureProfile,
     CameraNodePairRequest,
     CameraNodePairResponse,
     CameraNodePreviewRequest,
@@ -352,6 +353,7 @@ from mockingbird.sampler.saved_media_frames import (
 from mockingbird.source_providers import external_url_preview
 from mockingbird.source_providers.camera_node import (
     CAMERA_NODE_RUNTIME_FAILURE_CODES,
+    CameraNodeCaptureProfile as NodeCaptureProfile,
     CameraNodeClient,
     CameraNodeClientError,
     CameraNodePairingStore,
@@ -520,6 +522,8 @@ _camera_node_client: CameraNodeClient | None = None
 _automatic_review_identification_assist: AutomaticReviewIdentificationAssist | None = (
     None
 )
+_CAMERA_NODE_PAIRING_REFRESH_ATTEMPTS = 12
+_CAMERA_NODE_PAIRING_REFRESH_INTERVAL_SECONDS = 1.0
 _backup_operation_lock = threading.Lock()
 _repository_access_lock = threading.RLock()
 
@@ -550,6 +554,123 @@ def get_camera_node_client() -> CameraNodeClient:
     return _camera_node_client
 
 
+async def _refresh_camera_node_pairing_profiles(
+    *,
+    pairing_token: str,
+    pairing: CameraNodePairing,
+) -> None:
+    """Boundedly refresh a just-paired Node while its local warm proof completes.
+
+    This work is part of the explicit one-time pairing action.  It does not
+    start a camera from a status/configuration read, persist credentials, or
+    create product records; it updates only the short-lived pairing handoff.
+    """
+
+    client = get_camera_node_client()
+    store = get_camera_node_pairing_store()
+    for attempt in range(_CAMERA_NODE_PAIRING_REFRESH_ATTEMPTS):
+        try:
+            cameras = client.cameras(
+                base_address=pairing.base_address,
+                credential=pairing.credential,
+            )
+        except CameraNodeClientError:
+            return
+        if not store.refresh_cameras(pairing_token, cameras):
+            return
+        if any(_camera_node_has_warm_profile_pair(camera) for camera in cameras):
+            return
+        if attempt + 1 < _CAMERA_NODE_PAIRING_REFRESH_ATTEMPTS:
+            await asyncio.sleep(_CAMERA_NODE_PAIRING_REFRESH_INTERVAL_SECONDS)
+
+
+def _camera_node_profile_selection(camera: Any) -> tuple[NodeCaptureProfile | None, NodeCaptureProfile | None]:
+    """Resolve safe Node-owned monitoring/evidence profiles without device details."""
+
+    profiles = [
+        profile
+        for profile in getattr(camera, "capture_profiles", ())
+        if profile.jpeg_supported
+    ]
+    monitoring_candidates = [
+        profile for profile in profiles if profile.supports_monitoring
+    ]
+    warm_evidence_candidates = sorted(
+        (
+            profile
+            for profile in profiles
+            if profile.supports_evidence
+            and profile.capture_class == "warm_concurrent"
+            and profile.same_fov
+            and profile.geometry_group is not None
+        ),
+        key=lambda profile: profile.width * profile.height,
+        reverse=True,
+    )
+    for evidence in warm_evidence_candidates:
+        aligned_monitoring = [
+            profile
+            for profile in monitoring_candidates
+            if profile.geometry_group == evidence.geometry_group
+            and profile.same_fov
+        ]
+        if aligned_monitoring:
+            return max(
+                aligned_monitoring,
+                key=lambda profile: profile.width * profile.height,
+            ), evidence
+    monitoring = max(
+        (
+            profile
+            for profile in monitoring_candidates
+            if profile.width <= 1920 and profile.height <= 1080
+        ),
+        key=lambda profile: profile.width * profile.height,
+        default=(
+            min(
+                monitoring_candidates,
+                key=lambda profile: profile.width * profile.height,
+            )
+            if monitoring_candidates
+            else None
+        ),
+    )
+    evidence_candidates = [
+        profile for profile in profiles if profile.supports_evidence
+    ]
+    aligned = [
+        profile
+        for profile in evidence_candidates
+        if monitoring is not None
+        and profile.geometry_group is not None
+        and profile.geometry_group == monitoring.geometry_group
+        and profile.same_fov
+    ]
+    # An unaligned still can still be preserved as full-frame evidence; the
+    # crop path will explicitly decline to map a track onto it.
+    preferred = [
+        profile
+        for profile in (aligned or evidence_candidates)
+        if profile.capture_class == "warm_concurrent"
+    ]
+    evidence = max(
+        preferred or aligned or evidence_candidates,
+        key=lambda profile: profile.width * profile.height,
+        default=None,
+    )
+    return monitoring, evidence
+
+
+def _camera_node_has_warm_profile_pair(camera: Any) -> bool:
+    monitoring, evidence = _camera_node_profile_selection(camera)
+    return bool(
+        monitoring is not None
+        and evidence is not None
+        and monitoring.capture_class == "warm_concurrent"
+        and evidence.capture_class == "warm_concurrent"
+    )
+
+
 def _camera_node_prepared_config(
     *,
     provider_key: str,
@@ -571,18 +692,30 @@ def _camera_node_prepared_config(
     pairing = get_camera_node_pairing_store().consume(pairing_token, camera_id=camera_id)
     if pairing is None:
         raise ValueError("camera_node_pairing_expired")
+    selected_camera = next(
+        (camera for camera in pairing.cameras if camera.camera_id == camera_id),
+        None,
+    )
     if verify_camera:
         advertised = get_camera_node_client().cameras(
             base_address=pairing.base_address,
             credential=pairing.credential,
         )
-        if not any(
-            camera.camera_id == camera_id
-            and camera.status == "available"
-            and camera.snapshot_supported
-            for camera in advertised
-        ):
+        selected_camera = next(
+            (
+                camera
+                for camera in advertised
+                if camera.camera_id == camera_id
+                and camera.status == "available"
+                and camera.snapshot_supported
+            ),
+            None,
+        )
+        if selected_camera is None:
             raise ValueError("camera_node_camera_unavailable")
+    monitoring_profile, evidence_profile = _camera_node_profile_selection(
+        selected_camera
+    ) if selected_camera is not None else (None, None)
     return {
         "node_base_address": pairing.base_address,
         "node_credential": pairing.credential,
@@ -592,6 +725,12 @@ def _camera_node_prepared_config(
         "node_api_version": pairing.api_version,
         "node_capability_fingerprint": pairing.capability_fingerprint,
         "node_pairing_state": "paired",
+        "node_monitoring_profile_id": (
+            monitoring_profile.profile_id if monitoring_profile is not None else None
+        ),
+        "node_evidence_profile_id": (
+            evidence_profile.profile_id if evidence_profile is not None else None
+        ),
     }
 
 
@@ -605,6 +744,9 @@ def _camera_node_prepared_edit_payload(
         config=payload.config,
         pairing_token=payload.node_pairing_token,
     )
+    for key in {"node_monitoring_profile_id", "node_evidence_profile_id"}:
+        if not configured.get(key):
+            configured.pop(key, None)
     secret_actions = dict(payload.secret_actions)
     for key in {
         "node_base_address",
@@ -614,6 +756,12 @@ def _camera_node_prepared_edit_payload(
         "node_capability_fingerprint",
     }:
         secret_actions[key] = CameraConfigurationSecretAction.replace
+    for key in {"node_monitoring_profile_id", "node_evidence_profile_id"}:
+        secret_actions[key] = (
+            CameraConfigurationSecretAction.replace
+            if configured.get(key)
+            else CameraConfigurationSecretAction.remove
+        )
     return payload.model_copy(update={"config": configured, "secret_actions": secret_actions})
 
 
@@ -6172,6 +6320,12 @@ async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResp
         status = 400 if str(error).startswith("node_address") else 409 if str(error).startswith("pairing_") else 502
         raise HTTPException(status_code=status, detail=messages.get(str(error), "Camera Node is unavailable or returned an invalid response.")) from None
     session = get_camera_node_pairing_store().create(pairing)
+    asyncio.create_task(
+        _refresh_camera_node_pairing_profiles(
+            pairing_token=session.token,
+            pairing=pairing,
+        )
+    )
     return CameraNodePairResponse(
         pairing_token=session.token,
         pairing_expires_at=session.expires_at,
@@ -6186,6 +6340,22 @@ async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResp
                 snapshot_supported=camera.snapshot_supported,
                 setup_hint=camera.setup_hint,
                 provider_type=camera.provider_type,
+                capture_profiles=[
+                    CameraNodeCaptureProfile(
+                        profile_id=profile.profile_id,
+                        purposes=list(profile.purposes),
+                        width=profile.width,
+                        height=profile.height,
+                        jpeg_supported=profile.jpeg_supported,
+                        max_expected_bytes=profile.max_expected_bytes,
+                        capture_class=profile.capture_class,
+                        geometry_group=profile.geometry_group,
+                        orientation=profile.orientation,
+                        mirrored=profile.mirrored,
+                        same_fov=profile.same_fov,
+                    )
+                    for profile in camera.capture_profiles
+                ],
             )
             for camera in pairing.cameras
         ],

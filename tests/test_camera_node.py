@@ -10,9 +10,11 @@ from mockingbird.api.main import app, configure_repository
 from mockingbird.playback.camera_node_bridge import CameraNodeSnapshotProcess
 from mockingbird.repository.product_repository import ProductRepository, SourceProviderConfigurationModel
 from mockingbird.source_providers.camera_node import (
+    CameraNodeCamera,
     CameraNodeCaptureProfile,
     CameraNodeClient,
     CameraNodeClientError,
+    CameraNodePairing,
     normalize_camera_node_address,
 )
 from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION, create_database_engine, initialize_database
@@ -760,6 +762,89 @@ async def test_pairing_returns_while_picamera2_warm_proof_runs() -> None:
     provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
     assert provider.capture_readiness("picamera2-camera-0") == "ready"
     provider.close()
+
+
+def test_pairing_store_refreshes_only_transient_advertised_camera_metadata() -> None:
+    store = api_main.CameraNodePairingStore()
+    pairing = CameraNodePairing(
+        base_address="http://192.168.1.112:8787",
+        node_id="node-test",
+        display_name="Test node",
+        api_version="v1",
+        credential="local-only-credential",
+        cameras=[CameraNodeCamera("picamera2-camera-0", "Pi camera", "available", True)],
+        capability_fingerprint="fingerprint",
+    )
+    session = store.create(pairing)
+    refreshed = CameraNodeCamera(
+        camera_id="picamera2-camera-0",
+        display_name="Pi camera",
+        status="available",
+        snapshot_supported=True,
+        capture_profiles=(
+            CameraNodeCaptureProfile(
+                profile_id="opaque-monitoring",
+                purposes=("monitoring",),
+                width=1920,
+                height=1440,
+                jpeg_supported=True,
+                max_expected_bytes=1_500_000,
+                capture_class="warm_concurrent",
+                geometry_group="same-fov",
+                orientation="normal",
+                mirrored=False,
+                same_fov=True,
+            ),
+        ),
+    )
+    assert store.refresh_cameras(session.token, [refreshed]) is True
+    selected = store.consume(session.token, camera_id="picamera2-camera-0")
+    assert selected is not None
+    assert selected.cameras[0].capture_profiles[0].profile_id == "opaque-monitoring"
+    assert "local-only-credential" not in str(selected.cameras)
+
+
+def test_profile_refresh_waits_for_a_proven_warm_concurrent_pair() -> None:
+    pending_monitoring = CameraNodeCaptureProfile(
+        profile_id="opaque-monitoring",
+        purposes=("monitoring",),
+        width=1920,
+        height=1080,
+        jpeg_supported=True,
+        max_expected_bytes=1_500_000,
+        capture_class="warm",
+        geometry_group="same-fov",
+        orientation="normal",
+        mirrored=False,
+        same_fov=True,
+    )
+    pending_evidence = CameraNodeCaptureProfile(
+        profile_id="opaque-evidence",
+        purposes=("evidence",),
+        width=4624,
+        height=3472,
+        jpeg_supported=True,
+        max_expected_bytes=16_000_000,
+        capture_class="reconfiguration_required",
+        geometry_group="same-fov",
+        orientation="normal",
+        mirrored=False,
+        same_fov=True,
+    )
+    selected = api_main._camera_node_profile_selection(
+        CameraNodeCamera(
+            "picamera2-camera-0", "Pi camera", "available", True,
+            capture_profiles=(pending_monitoring, pending_evidence),
+        )
+    )
+    assert selected[0] is pending_monitoring
+    assert selected[1] is pending_evidence
+    assert api_main._camera_node_has_warm_profile_pair(
+        CameraNodeCamera(
+            "picamera2-camera-0", "Pi camera", "available", True,
+            capture_profiles=(pending_monitoring, pending_evidence),
+        )
+    ) is False
 
 
 def test_picamera2_failed_initialization_releases_partial_camera_and_concurrent_capture_is_bounded() -> None:

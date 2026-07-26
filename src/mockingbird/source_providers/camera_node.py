@@ -707,5 +707,27 @@ class CameraNodePairingStore:
                 raise CameraNodeClientError("node_camera_not_allowed")
             return session.pairing
 
+    def refresh_cameras(
+        self,
+        token: str,
+        cameras: list[CameraNodeCamera],
+    ) -> bool:
+        """Refresh only the transient advertised views for one explicit pairing.
+
+        A PiCamera2 Node may complete its bounded warm-profile proof shortly
+        after accepting a one-time code.  The durable credential remains inside
+        the existing session; this method replaces only safe advertised camera
+        metadata so setup can select the already-proven Node-owned profiles.
+        """
+
+        now = datetime.now(UTC)
+        with self._lock:
+            self._purge(now)
+            session = self._sessions.get(token)
+            if session is None:
+                return False
+            session.pairing.cameras[:] = list(cameras)
+            return True
+
     def _purge(self, now: datetime) -> None:
         self._sessions = {token: session for token, session in self._sessions.items() if session.expires_at > now}
