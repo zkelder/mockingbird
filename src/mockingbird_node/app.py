@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
+import json
+import os
+from pathlib import Path
 import secrets
 import threading
 
@@ -47,13 +50,65 @@ class CaptureRequest(BaseModel):
 
 
 class _PairingState:
-    def __init__(self, ttl_seconds: int) -> None:
+    """One local pairing that survives a Node restart without storing its bearer."""
+
+    def __init__(self, ttl_seconds: int, *, state_path: Path | None = None) -> None:
         self._code = secrets.token_urlsafe(18)
         self._expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
-        self._credential: str | None = None
+        self._state_path = state_path
+        self._credential_digest, self._state_invalid = self._load_state()
+        self._pairing_code_consumed = bool(self._credential_digest) or self._state_invalid
         self._attempts = 0
-        self._revoked: set[str] = set()
         self._lock = threading.RLock()
+
+    def _load_state(self) -> tuple[str | None, bool]:
+        if self._state_path is None:
+            return None, False
+        try:
+            payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None, False
+        except (OSError, ValueError, TypeError):
+            return None, True
+        if not isinstance(payload, dict) or payload.get("version") != 1:
+            return None, True
+        digest = payload.get("credential_sha256")
+        if digest is None:
+            return None, False
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            return None, True
+        return digest, False
+
+    def _persist_state(self) -> None:
+        if self._state_path is None:
+            return
+        self._state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        payload = json.dumps(
+            {
+                "version": 1,
+                "credential_sha256": self._credential_digest,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        temporary = self._state_path.with_name(
+            f".{self._state_path.name}.{secrets.token_hex(8)}.tmp"
+        )
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self._state_path)
+            os.chmod(self._state_path, 0o600)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
 
     @property
     def code(self) -> str:
@@ -67,26 +122,39 @@ class _PairingState:
         with self._lock:
             if datetime.now(UTC) >= self._expires_at:
                 raise ValueError("pairing_code_expired")
-            if self._credential is not None:
+            if self._credential_digest is not None or self._pairing_code_consumed:
                 raise ValueError("pairing_code_used")
             if self._attempts >= _MAX_PAIR_ATTEMPTS:
                 raise ValueError("pairing_rate_limited")
             if not hmac.compare_digest(code, self._code):
                 self._attempts += 1
                 raise ValueError("pairing_rejected")
-            self._credential = secrets.token_urlsafe(32)
-            return self._credential
+            credential = secrets.token_urlsafe(32)
+            self._credential_digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
+            self._pairing_code_consumed = True
+            self._persist_state()
+            return credential
 
     def authenticated(self, credential: str) -> bool:
         with self._lock:
-            return bool(self._credential and credential not in self._revoked and hmac.compare_digest(credential, self._credential))
+            digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
+            return bool(
+                self._credential_digest
+                and hmac.compare_digest(digest, self._credential_digest)
+            )
 
     def revoke(self, credential: str) -> bool:
         with self._lock:
             if not self.authenticated(credential):
                 return False
-            self._revoked.add(credential)
+            self._credential_digest = None
+            self._persist_state()
             return True
+
+    @property
+    def pairing_required(self) -> bool:
+        with self._lock:
+            return self._credential_digest is None
 
 
 def _camera_payload(
@@ -187,7 +255,10 @@ def _jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
 def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraProvider | None = None) -> FastAPI:
     config = config or CameraNodeConfig.from_environment()
     provider = provider or create_camera_provider(config)
-    pairing = _PairingState(config.pairing_ttl_seconds)
+    pairing = _PairingState(
+        config.pairing_ttl_seconds,
+        state_path=config.pairing_state_path,
+    )
     node_id = f"node-{hashlib.sha256(config.display_name.encode()).hexdigest()[:16]}"
     app = FastAPI(title="MockingBird Camera Node", version=NODE_API_VERSION)
 
@@ -285,7 +356,7 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
     @app.get("/node/v1/health")
     def health() -> dict[str, object]:
         cameras = provider.cameras()
-        return {"node_id": node_id, "display_name": config.display_name, "api_version": NODE_API_VERSION, "status": "available", "camera_count": len(cameras), "available_camera_count": sum(camera.status == "available" for camera in cameras), "pairing_required": True}
+        return {"node_id": node_id, "display_name": config.display_name, "api_version": NODE_API_VERSION, "status": "available", "camera_count": len(cameras), "available_camera_count": sum(camera.status == "available" for camera in cameras), "pairing_required": pairing.pairing_required}
 
     @app.post("/node/v1/pair", response_model=PairResponse)
     def pair(payload: PairRequest) -> PairResponse:

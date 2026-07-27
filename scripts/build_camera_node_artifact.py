@@ -81,6 +81,8 @@ def _configuration_example() -> bytes:
         b"MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_WIDTH=10000\n"
         b"MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_HEIGHT=8000\n"
         b"MOCKINGBIRD_NODE_PAIRING_TTL_SECONDS=600\n"
+        b"# Persists a hash verifier only, so an existing pairing survives a restart.\n"
+        b"# MOCKINGBIRD_NODE_PAIRING_STATE_PATH=/home/pi/.local/state/mockingbird-camera-node/pairing.json\n"
         b"MOCKINGBIRD_NODE_MAX_PREVIEW_VIEWERS=2\n"
         b"# Synthetic is intentionally omitted: it is test-only.\n"
     )

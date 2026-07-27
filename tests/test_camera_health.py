@@ -209,6 +209,49 @@ def test_camera_node_credential_failure_is_redacted_and_actionable(repository: P
     assert health.incidents[0].reason_code == "authentication_rejected"
 
 
+def test_node_failure_retry_updates_one_incident_and_alert_until_healthy(
+    repository: ProductRepository,
+) -> None:
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    repository.mark_monitoring_backoff_with_failure_code(
+        candidate,
+        app_instance_id="camera-health-test",
+        failure_count=2,
+        retry_at=now + timedelta(seconds=5),
+        failure_code="authentication_rejected",
+        now=now,
+    )
+    retry_candidate = repository.list_enabled_monitoring_candidates(limit=1)[0]
+    repository.mark_monitoring_starting(
+        retry_candidate,
+        app_instance_id="camera-health-test",
+        now=now + timedelta(seconds=5),
+    )
+    retry_candidate = repository.list_enabled_monitoring_candidates(limit=1)[0]
+    repository.mark_monitoring_backoff_with_failure_code(
+        retry_candidate,
+        app_instance_id="camera-health-test",
+        failure_count=3,
+        retry_at=now + timedelta(seconds=35),
+        failure_code="authentication_rejected",
+        now=now + timedelta(seconds=6),
+    )
+
+    assert len(_incidents(repository)) == 1
+    alerts = _monitoring_alerts(repository)
+    assert len(alerts) == 1 and alerts[0].resolved_at is None
+
+    repository.mark_monitoring_running(
+        repository.list_enabled_monitoring_candidates(limit=1)[0],
+        app_instance_id="camera-health-test",
+        healthy_at=now + timedelta(seconds=7),
+        now=now + timedelta(seconds=7),
+    )
+    assert _incidents(repository)[0].resolved_at is not None
+    assert _monitoring_alerts(repository)[0].resolved_at is not None
+
+
 def test_camera_node_session_recovery_is_operational_only(
     repository: ProductRepository,
 ) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
 
 
 DEFAULT_PORT = 8787
@@ -31,6 +32,7 @@ class CameraNodeConfig:
     evidence_max_image_bytes: int | None = None
     evidence_max_image_width: int | None = None
     evidence_max_image_height: int | None = None
+    pairing_state_path: Path | None = None
 
     @property
     def effective_evidence_max_image_bytes(self) -> int:
@@ -121,6 +123,17 @@ class CameraNodeConfig:
             or evidence_max_image_height < max_image_height
         ):
             raise ValueError("mockingbird_node_evidence_bounds_invalid")
+        state_home = Path(
+            os.getenv("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
+        )
+        pairing_state_path = Path(
+            os.getenv(
+                "MOCKINGBIRD_NODE_PAIRING_STATE_PATH",
+                str(state_home / "mockingbird-camera-node" / "pairing.json"),
+            )
+        ).expanduser()
+        if not pairing_state_path.is_absolute():
+            raise ValueError("mockingbird_node_pairing_state_path_invalid")
         return cls(
             display_name=display_name,
             bind_host=bind_host,
@@ -140,4 +153,5 @@ class CameraNodeConfig:
             evidence_max_image_bytes=evidence_max_image_bytes,
             evidence_max_image_width=evidence_max_image_width,
             evidence_max_image_height=evidence_max_image_height,
+            pairing_state_path=pairing_state_path,
         )

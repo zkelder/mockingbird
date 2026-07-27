@@ -1,4 +1,6 @@
 import json
+from pathlib import Path
+import tempfile
 import threading
 
 import httpx
@@ -25,7 +27,7 @@ from mockingbird.storage.models import (
     StreamModel,
     VisitModel,
 )
-from mockingbird_node.app import create_node_app
+from mockingbird_node.app import _PairingState, create_node_app
 from mockingbird_node.config import CameraNodeConfig
 from mockingbird_node.providers import (
     CompositeCameraProvider,
@@ -1165,6 +1167,99 @@ async def test_node_requires_authentication_and_one_time_pairing_is_bounded() ->
         revoked = await client.post("/node/v1/pair/revoke", headers={"Authorization": f"Bearer {credential}"})
         assert revoked.status_code == 204
         assert (await client.get("/node/v1/cameras", headers={"Authorization": f"Bearer {credential}"})).status_code == 401
+
+
+@pytest.mark.anyio
+async def test_pairing_verifier_survives_node_restart_without_storing_bearer(tmp_path) -> None:
+    state_path = tmp_path / "pairing.json"
+    config = CameraNodeConfig(
+        display_name="Persistent Synthetic Node",
+        bind_host="127.0.0.1",
+        port=8787,
+        provider_key="synthetic",
+        camera_identifier=None,
+        max_image_bytes=1_500_000,
+        max_image_width=1920,
+        max_image_height=1080,
+        pairing_ttl_seconds=60,
+        max_preview_viewers=0,
+        testing=True,
+        pairing_state_path=state_path,
+    )
+    first_node = create_node_app(config, provider=SyntheticCameraProvider())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=first_node),
+        base_url="http://node",
+    ) as client:
+        paired = await client.post(
+            "/node/v1/pair", json={"pairing_code": first_node.state.pairing_code}
+        )
+        assert paired.status_code == 200
+        credential = paired.json()["credential"]
+        assert (await client.get("/node/v1/health")).json()["pairing_required"] is False
+
+    persisted = state_path.read_text(encoding="utf-8")
+    assert credential not in persisted
+    assert len(json.loads(persisted)["credential_sha256"]) == 64
+
+    restarted_node = create_node_app(config, provider=SyntheticCameraProvider())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=restarted_node),
+        base_url="http://node",
+    ) as client:
+        preserved = await client.get(
+            "/node/v1/cameras", headers={"Authorization": f"Bearer {credential}"}
+        )
+        assert preserved.status_code == 200
+        assert (await client.get("/node/v1/health")).json()["pairing_required"] is False
+        replacement = await client.post(
+            "/node/v1/pair", json={"pairing_code": restarted_node.state.pairing_code}
+        )
+        assert replacement.status_code == 409
+        revoked = await client.post(
+            "/node/v1/pair/revoke", headers={"Authorization": f"Bearer {credential}"}
+        )
+        assert revoked.status_code == 204
+
+    revoked_node = create_node_app(config, provider=SyntheticCameraProvider())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=revoked_node),
+        base_url="http://node",
+    ) as client:
+        assert (
+            await client.get(
+                "/node/v1/cameras", headers={"Authorization": f"Bearer {credential}"}
+            )
+        ).status_code == 401
+        assert (await client.get("/node/v1/health")).json()["pairing_required"] is True
+        repaired = await client.post(
+            "/node/v1/pair", json={"pairing_code": revoked_node.state.pairing_code}
+        )
+        assert repaired.status_code == 200
+        replacement_credential = repaired.json()["credential"]
+        assert replacement_credential != credential
+        assert (
+            await client.get(
+                "/node/v1/cameras",
+                headers={"Authorization": f"Bearer {replacement_credential}"},
+            )
+        ).status_code == 200
+        assert (
+            await client.get(
+                "/node/v1/cameras", headers={"Authorization": f"Bearer {credential}"}
+            )
+        ).status_code == 401
+
+
+def test_pairing_verifier_file_is_private_and_hash_only() -> None:
+    with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
+        state_path = Path(temporary_directory) / "pairing.json"
+        pairing = _PairingState(60, state_path=state_path)
+        credential = pairing.pair(pairing.code)
+        persisted = state_path.read_text(encoding="utf-8")
+        assert credential not in persisted
+        assert len(json.loads(persisted)["credential_sha256"]) == 64
+        assert state_path.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.anyio

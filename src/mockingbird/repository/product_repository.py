@@ -4169,6 +4169,13 @@ class ProductRepository:
             else:
                 state = CameraHealthState.recovering
                 message = node_message or "Monitoring is recovering through its bounded local retry path."
+        elif actual_state == StreamRuntimeState.starting and checkpoint is not None and checkpoint.failure_code:
+            state = (
+                CameraHealthState.camera_unavailable
+                if checkpoint.consecutive_failure_count >= 3
+                else CameraHealthState.recovering
+            )
+            message = "Monitoring is retrying after a bounded camera failure."
         elif actual_state == StreamRuntimeState.starting:
             startup_age = (
                 _as_utc(now) - _as_utc(checkpoint.last_start_attempt_at)
@@ -4402,7 +4409,11 @@ class ProductRepository:
                 else CameraHealthIncidentCategory.camera_unavailable,
                 AlertSeverity.high if exhausted else AlertSeverity.warning,
                 node_failure or "camera_unavailable",
-                "recovery_exhausted" if exhausted else node_failure or "camera_unavailable",
+                (
+                    f"{node_failure}_recovery"
+                    if node_failure
+                    else "recovery_exhausted"
+                ),
                 title,
                 body,
             )
@@ -5145,7 +5156,6 @@ class ProductRepository:
                 checkpoint.observed_policy_revision = candidate.policy_revision
                 checkpoint.app_instance_id = app_instance_id
                 checkpoint.next_retry_at = None
-                checkpoint.failure_code = None
                 checkpoint.updated_at = now
                 self._sync_monitoring_alert(session, candidate.stream_id, now)
 
