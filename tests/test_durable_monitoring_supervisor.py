@@ -236,6 +236,23 @@ def test_supervisor_blocks_one_malformed_timestamp_without_stopping_other_stream
     assert camera.start_calls == ["stream-healthy"]
 
 
+def test_supervisor_does_not_restart_in_the_same_pass_after_backoff() -> None:
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    store = FakeStore([_candidate("stream-one")])
+    camera = FakeCamera()
+    supervisor = _supervisor(store, camera)
+
+    supervisor.reconcile_once(now=now)
+    camera.statuses["stream-one"] = ManagedCameraStatus(
+        state="failed",
+        failure_code="provider_session_failed",
+    )
+    supervisor.reconcile_once(now=now + timedelta(seconds=1))
+
+    assert camera.start_calls == ["stream-one"]
+    assert store.candidates["stream-one"].actual_state == "backoff"
+    assert store.candidates["stream-one"].next_retry_at == now + timedelta(seconds=6)
+
 def test_supervisor_applies_bounded_backoff_then_blocks_failed_camera() -> None:
     now = datetime(2026, 7, 20, tzinfo=UTC)
     store = FakeStore([_candidate("stream-one")])

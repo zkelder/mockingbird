@@ -209,6 +209,42 @@ def test_camera_node_credential_failure_is_redacted_and_actionable(repository: P
     assert health.incidents[0].reason_code == "authentication_rejected"
 
 
+def test_camera_node_session_recovery_is_operational_only(
+    repository: ProductRepository,
+) -> None:
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        counts_before = (
+            session.scalar(select(func.count(EventModel.id))),
+            session.scalar(select(func.count(VisitModel.id))),
+            session.scalar(select(func.count(MediaAssetModel.id))),
+            session.scalar(select(func.count(ReviewLabelModel.id))),
+        )
+
+    repository.mark_monitoring_backoff_with_failure_code(
+        candidate,
+        app_instance_id="camera-health-test",
+        failure_count=1,
+        retry_at=now + timedelta(seconds=5),
+        failure_code="provider_session_failed",
+        now=now,
+    )
+
+    health = repository.get_stream_camera_health(candidate.stream_id)
+
+    assert health is not None
+    assert health.health.state == CameraHealthState.recovering
+    assert health.health.failure_reason == (
+        "The paired Camera Node is reopening its selected camera session."
+    )
+    with repository.session_factory() as session:
+        assert (
+            session.scalar(select(func.count(EventModel.id))),
+            session.scalar(select(func.count(VisitModel.id))),
+            session.scalar(select(func.count(MediaAssetModel.id))),
+            session.scalar(select(func.count(ReviewLabelModel.id))),
+        ) == counts_before
 def test_recovery_updates_one_incident_and_alert_then_resolves(repository: ProductRepository) -> None:
     candidate = _enable(repository)
     now = datetime.now(UTC)

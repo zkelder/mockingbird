@@ -1210,6 +1210,22 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 description="Paired or revoked local configuration state.",
                 placeholder="paired",
             ),
+            SourceProviderField(
+                key="node_monitoring_profile_id",
+                label="Monitoring capture profile",
+                required=False,
+                secret=True,
+                description="Opaque Node profile selected during pairing for bounded monitoring frames.",
+                placeholder="Selected during pairing",
+            ),
+            SourceProviderField(
+                key="node_evidence_profile_id",
+                label="Evidence capture profile",
+                required=False,
+                secret=True,
+                description="Opaque Node profile selected during pairing for bounded evidence capture.",
+                placeholder="Selected during pairing",
+            ),
         ],
     ),
     SourceProviderDefinition(
@@ -1469,6 +1485,8 @@ class StreamLivePlaybackConfig:
     camera_node_credential: str | None = None
     camera_node_camera_id: str | None = None
     camera_node_id: str | None = None
+    camera_node_monitoring_profile_id: str | None = None
+    camera_node_evidence_profile_id: str | None = None
 
 
 class MotionEvidenceModel(Base):
@@ -4065,6 +4083,8 @@ class ProductRepository:
             "node_snapshot_invalid": "The paired Camera Node did not provide a usable bounded image.",
             "node_snapshot_timeout": "The paired Camera Node did not provide a frame within the bounded snapshot window.",
             "provider_reset_required": "The paired Camera Node needs to reset its local camera provider.",
+            "provider_session_failed": "The paired Camera Node is reopening its selected camera session.",
+            "provider_warming": "The paired Camera Node is still warming its selected camera session.",
             "waiting_for_capacity": "Monitoring is waiting for available local capacity.",
             "evidence_persistence_failed": "MockingBird could not safely persist required evidence.",
             "configuration_invalid": "Camera setup needs review before monitoring can start.",
@@ -5625,6 +5645,12 @@ class ProductRepository:
                 camera_node_credential=(config.get("node_credential") or "").strip() or None,
                 camera_node_camera_id=(config.get("node_camera_id") or "").strip() or None,
                 camera_node_id=(config.get("node_id") or "").strip() or None,
+                camera_node_monitoring_profile_id=(
+                    (config.get("node_monitoring_profile_id") or "").strip() or None
+                ),
+                camera_node_evidence_profile_id=(
+                    (config.get("node_evidence_profile_id") or "").strip() or None
+                ),
             )
 
     def streams_for_source(self, source_id: str) -> list[Stream]:
@@ -21218,6 +21244,8 @@ def _sanitize_source_provider_config(
             "node_camera_id",
             "node_id",
             "node_capability_fingerprint",
+            "node_monitoring_profile_id",
+            "node_evidence_profile_id",
         }:
             # Pairing writes these locally once. The generic configuration surface
             # still renders only configured/not-configured markers for every one.

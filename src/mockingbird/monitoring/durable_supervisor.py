@@ -241,13 +241,16 @@ class DurableMonitoringSupervisor:
                 )
                 self._active_stream_ids.discard(stream_id)
 
+            recovered_stream_ids: set[str] = set()
             for stream_id in tuple(self._active_stream_ids):
                 candidate = candidate_by_stream.get(stream_id)
-                if candidate is not None:
-                    self._reconcile_active(candidate, current_time)
+                if candidate is not None and self._reconcile_active(
+                    candidate, current_time
+                ):
+                    recovered_stream_ids.add(stream_id)
 
             for candidate in candidates:
-                if candidate.stream_id in self._active_stream_ids:
+                if candidate.stream_id in self._active_stream_ids | recovered_stream_ids:
                     continue
                 self._reconcile_inactive(candidate, current_time)
 
@@ -261,7 +264,7 @@ class DurableMonitoringSupervisor:
         self,
         candidate: DurableMonitoringCandidate,
         now: datetime,
-    ) -> None:
+    ) -> bool:
         try:
             status = self._camera_status(candidate.stream_id)
         except Exception:
@@ -272,7 +275,7 @@ class DurableMonitoringSupervisor:
                 now,
                 failure_code=status.failure_code if status is not None else None,
             )
-            return
+            return True
 
         if status.healthy_at is not None:
             if not status.monitor_running:
@@ -280,34 +283,35 @@ class DurableMonitoringSupervisor:
                     status = self._start_monitor(candidate)
                 except Exception:
                     self._recover_from_failure(candidate, now)
-                    return
+                    return True
             if status.monitor_running:
                 try:
                     healthy_at = normalize_utc(status.healthy_at)
                 except ValueError:
                     self._mark_invalid_timestamp(candidate, now)
-                    return
+                    return True
                 self._store.mark_monitoring_running(
                     candidate,
                     app_instance_id=self._app_instance_id,
                     healthy_at=healthy_at,
                     now=now,
                 )
-                return
+                return False
 
         try:
             started_at = normalize_optional_utc(candidate.last_start_attempt_at) or now
         except ValueError:
             self._mark_invalid_timestamp(candidate, now)
-            return
+            return True
         if now - started_at >= timedelta(seconds=self._startup_timeout_seconds):
             self._recover_from_failure(candidate, now)
-            return
+            return True
         self._store.mark_monitoring_starting(
             candidate,
             app_instance_id=self._app_instance_id,
             now=now,
         )
+        return False
 
     def _reconcile_inactive(
         self,

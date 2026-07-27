@@ -101,3 +101,13 @@ profiles once in the background. Each candidate is only `untested`, `testing`,
 is released before the next candidate is tried. The first accepted pair is
 cached for that Node process. Capability output may report those fixed states,
 but never allocation text, pipeline details, device paths, or driver settings.
+
+## Warm-session recovery
+
+If an accepted PiCamera2 warm session loses its owner, the Node releases that
+owner and reopens the same cached accepted monitoring/evidence pair before one
+bounded retry. It does not reselect profiles, fall back to a different geometry,
+or expose driver failures. Continuous autofocus is reapplied as part of the new
+warm session. While a just-paired Node is still warming, the desktop waits only
+through its bounded capability window for that same opaque monitoring profile;
+it never silently substitutes another profile.

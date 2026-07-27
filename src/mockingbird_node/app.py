@@ -215,7 +215,11 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
         }
         profile = profiles.get(profile_id)
         if profile is None or not profile.jpeg_supported:
-            raise HTTPException(status_code=409, detail="Camera capture profile is unavailable.")
+            raise HTTPException(
+                status_code=409,
+                detail="Camera capture profile is unavailable.",
+                headers={"X-MockingBird-Node-Error": "profile_not_advertised"},
+            )
         try:
             result = provider.snapshot(camera_id, profile_id=profile.profile_id)
         except ValueError as error:
@@ -228,6 +232,9 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
                 "camera_unusable_frame": ("node_snapshot_invalid", 503, "Camera did not provide a usable image."),
                 "capture_profile_not_allowed": ("node_capture_profile_unavailable", 409, "Camera capture profile is unavailable."),
                 "provider_reset_required": ("provider_reset_required", 503, "Camera provider needs a reset."),
+                "provider_session_failed": (
+                    "provider_session_failed", 503, "Camera session recovery failed."
+                ),
             }.get(str(error), ("node_camera_unavailable", 409, "Camera is unavailable."))
             raise HTTPException(
                 status_code=status,

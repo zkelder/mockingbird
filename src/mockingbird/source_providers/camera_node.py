@@ -60,6 +60,8 @@ CAMERA_NODE_RUNTIME_FAILURE_CODES = frozenset(
         "node_capture_profile_unavailable",
         "node_unavailable",
         "provider_reset_required",
+        "provider_session_failed",
+        "provider_warming",
     }
 )
 
@@ -74,8 +76,14 @@ _NODE_SNAPSHOT_ERROR_CODES = frozenset(
         "node_snapshot_timeout",
         "node_capture_profile_unavailable",
         "provider_reset_required",
+        "profile_not_advertised",
+        "provider_session_failed",
     }
 )
+_NODE_SNAPSHOT_ERROR_ALIASES = {
+    "profile_not_advertised": "node_capture_profile_unavailable",
+}
+
 
 
 class CameraNodeClientError(ValueError):
@@ -587,7 +595,9 @@ class CameraNodeClient:
             raise CameraNodeClientError("authentication_rejected")
         node_error = headers.get(_NODE_SNAPSHOT_ERROR_HEADER, headers.get(_NODE_SNAPSHOT_ERROR_HEADER.lower(), ""))
         if node_error in _NODE_SNAPSHOT_ERROR_CODES:
-            raise CameraNodeClientError(node_error)
+            raise CameraNodeClientError(
+                _NODE_SNAPSHOT_ERROR_ALIASES.get(node_error, node_error)
+            )
         if status in {404, 409}:
             raise CameraNodeClientError("node_camera_unavailable")
         if status != 200:
@@ -636,7 +646,9 @@ class CameraNodeClient:
             headers.get(_NODE_SNAPSHOT_ERROR_HEADER.lower(), ""),
         )
         if node_error in _NODE_SNAPSHOT_ERROR_CODES:
-            raise CameraNodeClientError(node_error)
+            raise CameraNodeClientError(
+                _NODE_SNAPSHOT_ERROR_ALIASES.get(node_error, node_error)
+            )
         if status in {404, 409}:
             raise CameraNodeClientError("node_capture_profile_unavailable")
         if status != 200:

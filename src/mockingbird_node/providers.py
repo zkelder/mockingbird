@@ -908,6 +908,56 @@ class PiCamera2Provider:
             self._cameras[camera_id] = camera
         return camera
 
+    def _reopen_accepted_warm_session(
+        self,
+        module: Any,
+        camera_id: str,
+    ) -> None:
+        """Replace one failed warm owner without repeating candidate selection."""
+
+        profiles = self._profile_cache.get(camera_id, ())
+        monitoring = next(
+            (
+                profile
+                for profile in profiles
+                if profile.capture_class == "warm_concurrent"
+                and "monitoring" in profile.purposes
+            ),
+            None,
+        )
+        evidence = next(
+            (
+                profile
+                for profile in profiles
+                if profile.capture_class == "warm_concurrent"
+                and "evidence" in profile.purposes
+            ),
+            None,
+        )
+        if (
+            monitoring is None
+            or evidence is None
+            or not monitoring.same_fov
+            or monitoring.geometry_group != evidence.geometry_group
+        ):
+            raise ValueError("provider_session_failed")
+
+        self._reset_camera(camera_id)
+        try:
+            camera = self._initialize_warm_camera(
+                module, camera_id, monitoring, evidence
+            )
+        except Exception as error:
+            self._reset_camera(camera_id)
+            raise ValueError("provider_session_failed") from error
+        self._cameras[camera_id] = camera
+        self._camera_profile_ids[camera_id] = monitoring.profile_id
+        self._warm_sessions[camera_id] = _WarmConcurrentSession(
+            camera=camera,
+            monitoring_profile_id=monitoring.profile_id,
+            evidence_profile_id=evidence.profile_id,
+        )
+
     def _camera_for_profile(
         self,
         module: Any,
@@ -923,7 +973,7 @@ class PiCamera2Provider:
                 session.monitoring_profile_id,
                 session.evidence_profile_id,
             }:
-                raise ValueError("capture_profile_not_allowed")
+                raise ValueError("provider_session_missing")
             return session.camera
         if (
             camera_id in self._cameras
@@ -1019,59 +1069,89 @@ class PiCamera2Provider:
                     else "monitoring_ready"
                 ),
             )
-            camera = self._camera_for_profile(module, camera_id, profile, transaction)
             stream_name = (
                 "main"
-                if profile.capture_class == "warm_concurrent" and "evidence" in profile.purposes
+                if profile.capture_class == "warm_concurrent"
+                and "evidence" in profile.purposes
                 else "lores"
                 if profile.capture_class == "warm_concurrent"
                 else None
             )
-            frame = _bounded_call(
-                (lambda: camera.capture_array(stream_name)) if stream_name else camera.capture_array,
-                failure_code="camera_unusable_frame",
-                timeout_seconds=PICAMERA2_FRAME_TIMEOUT_SECONDS,
-                timeout_code="camera_capture_timeout",
-                late_cleanup=(
-                    None
-                    if profile.capture_class == "warm_concurrent"
-                    else lambda _frame: self._reset_camera(camera_id, fallback=camera)
-                ),
-            )
-            image = _encode_bounded_jpeg(
-                encoder,
-                _jpeg_frame(
-                    encoder,
-                    frame,
-                    yuv420=(stream_name == "lores"),
-                ),
-                maximum_bytes=profile.max_expected_bytes,
-            )
-            if profile.capture_class != "reconfiguration_required":
-                return NodeCaptureResult(image=image)
-            transaction.state = "evidence_captured"
-            return self._restore_monitoring_after_evidence_capture(
-                module=module,
-                camera_id=camera_id,
-                profile=profile,
-                image=image,
-                transaction=transaction,
-            )
-        except PermissionError as error:
-            self._reset_camera(camera_id)
-            raise ValueError("camera_permission_denied") from error
-        except ValueError as error:
-            if profile.capture_class == "warm_concurrent":
-                raise
-            if not self._reset_camera(camera_id):
-                raise ValueError("provider_reset_required") from error
-            raise
-        except Exception as error:
-            if profile.capture_class == "warm_concurrent":
-                raise ValueError("camera_unusable_frame") from error
-            reset = self._reset_camera(camera_id)
-            code = "camera_initialization_failed" if reset else "provider_reset_required"
-            raise ValueError(code) from error
+            recovered_warm_session = False
+            while True:
+                try:
+                    camera = self._camera_for_profile(
+                        module, camera_id, profile, transaction
+                    )
+                    frame = _bounded_call(
+                        (lambda: camera.capture_array(stream_name))
+                        if stream_name
+                        else camera.capture_array,
+                        failure_code="camera_unusable_frame",
+                        timeout_seconds=PICAMERA2_FRAME_TIMEOUT_SECONDS,
+                        timeout_code="camera_capture_timeout",
+                        late_cleanup=(
+                            None
+                            if profile.capture_class == "warm_concurrent"
+                            else lambda _frame: self._reset_camera(
+                                camera_id, fallback=camera
+                            )
+                        ),
+                    )
+                    image = _encode_bounded_jpeg(
+                        encoder,
+                        _jpeg_frame(
+                            encoder,
+                            frame,
+                            yuv420=(stream_name == "lores"),
+                        ),
+                        maximum_bytes=profile.max_expected_bytes,
+                    )
+                    if profile.capture_class != "reconfiguration_required":
+                        return NodeCaptureResult(
+                            image=image,
+                            monitoring_recovery=(
+                                "restored" if recovered_warm_session else None
+                            ),
+                        )
+                    transaction.state = "evidence_captured"
+                    return self._restore_monitoring_after_evidence_capture(
+                        module=module,
+                        camera_id=camera_id,
+                        profile=profile,
+                        image=image,
+                        transaction=transaction,
+                    )
+                except PermissionError as error:
+                    self._reset_camera(camera_id)
+                    raise ValueError("camera_permission_denied") from error
+                except ValueError as error:
+                    if profile.capture_class != "warm_concurrent":
+                        if not self._reset_camera(camera_id):
+                            raise ValueError("provider_reset_required") from error
+                        raise
+                    if recovered_warm_session:
+                        self._reset_camera(camera_id)
+                        raise ValueError("provider_session_failed") from error
+                except Exception as error:
+                    if profile.capture_class != "warm_concurrent":
+                        reset = self._reset_camera(camera_id)
+                        code = (
+                            "camera_initialization_failed"
+                            if reset
+                            else "provider_reset_required"
+                        )
+                        raise ValueError(code) from error
+                    if recovered_warm_session:
+                        self._reset_camera(camera_id)
+                        raise ValueError("provider_session_failed") from error
+
+                try:
+                    self._reopen_accepted_warm_session(module, camera_id)
+                except Exception as recovery_error:
+                    self._reset_camera(camera_id)
+                    raise ValueError("provider_session_failed") from recovery_error
+                recovered_warm_session = True
         finally:
             self._lock.release()
 

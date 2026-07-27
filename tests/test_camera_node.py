@@ -641,6 +641,119 @@ def test_picamera2_warm_candidate_resource_rejection_promotes_next_profile_and_c
     provider.close()
 
 
+def test_picamera2_warm_session_failure_reopens_the_accepted_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lost warm owner is runtime recovery, not an unavailable profile."""
+
+    class Camera:
+        def __init__(self) -> None:
+            self.sensor_modes = [
+                {"size": (1920, 1440), "crop_limits": (0, 0, 9248, 6944)},
+                {"size": (4624, 3472), "crop_limits": (0, 0, 9248, 6944)},
+            ]
+            self.controls: list[dict[str, object]] = []
+            self.fail_next_capture = False
+            self.stopped = self.closed = False
+
+        def create_still_configuration(self, **kwargs):
+            return kwargs
+
+        def configure(self, _configuration):
+            return None
+
+        def set_controls(self, controls):
+            self.controls.append(controls)
+
+        def start(self):
+            return None
+
+        def capture_array(self, _stream_name):
+            if self.fail_next_capture:
+                self.fail_next_capture = False
+                raise RuntimeError("local camera session failure")
+            return object()
+
+        def stop(self):
+            self.stopped = True
+
+        def close(self):
+            self.closed = True
+
+    class Picamera2:
+        cameras: list[Camera] = []
+
+        @staticmethod
+        def global_camera_info():
+            return [{}]
+
+        def __new__(cls, _index):
+            camera = Camera()
+            cls.cameras.append(camera)
+            return camera
+
+    class Encoder:
+        COLOR_YUV2BGR_I420 = 1
+
+        def cvtColor(self, frame, _conversion):
+            return frame
+
+        def imencode(self, _suffix, _frame, *_args):
+            return True, bytearray(
+                b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9"
+            )
+
+    continuous = object()
+    controls = type(
+        "Controls",
+        (),
+        {"AfModeEnum": type("AfModeEnum", (), {"Continuous": continuous})},
+    )
+    monkeypatch.setattr(
+        "mockingbird_node.providers.import_module",
+        lambda _name: type("Libcamera", (), {"controls": controls})(),
+    )
+    provider = PiCamera2Provider(
+        CameraNodeConfig(
+            "Test Node", "127.0.0.1", 8787, "picamera2", None,
+            1_500_000, 1920, 1440, 60, 2, testing=True,
+            evidence_max_image_bytes=16_000_000,
+            evidence_max_image_width=10_000,
+            evidence_max_image_height=8_000,
+        ),
+        module=type("Module", (), {"Picamera2": Picamera2}),
+        cv2_module=Encoder(),
+    )
+    try:
+        provider.capture_profiles("picamera2-camera-0")
+        provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+        profiles = provider.capture_profiles("picamera2-camera-0")
+        monitoring = next(profile for profile in profiles if "monitoring" in profile.purposes)
+        evidence = next(profile for profile in profiles if "evidence" in profile.purposes)
+        first_session = provider._warm_sessions["picamera2-camera-0"].camera
+        first_session.fail_next_capture = True
+
+        recovered = provider.snapshot(
+            "picamera2-camera-0", profile_id=monitoring.profile_id
+        )
+
+        assert recovered.image.startswith(b"\xff\xd8")
+        assert first_session.stopped and first_session.closed
+        assert [profile.profile_id for profile in provider.capture_profiles("picamera2-camera-0")][:2] == [
+            monitoring.profile_id,
+            evidence.profile_id,
+        ]
+        assert provider.capture_profile_status("picamera2-camera-0") == [{
+            "profile_id": "picamera2-evidence-4624x3472",
+            "state": "accepted",
+        }]
+        recovered_session = provider._warm_sessions["picamera2-camera-0"].camera
+        assert recovered_session is not first_session
+        assert recovered_session.controls == [{"AfMode": continuous}]
+    finally:
+        provider.close()
+
+
 def test_picamera2_all_warm_candidates_rejected_keeps_cold_monitoring_degraded() -> None:
     class Camera:
         def __init__(self):
@@ -899,6 +1012,69 @@ def test_node_snapshot_failure_stops_for_durable_bounded_recovery() -> None:
     assert process.stdout.read() == b""
 
 
+def test_monitoring_bridge_waits_for_a_warming_selected_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jpeg = b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9"
+    profile = CameraNodeCaptureProfile(
+        profile_id="monitoring-opaque",
+        purposes=("monitoring",),
+        width=1920,
+        height=1440,
+        jpeg_supported=True,
+        max_expected_bytes=1_500_000,
+        capture_class="warm_concurrent",
+        geometry_group="same-fov",
+        orientation="normal",
+        mirrored=False,
+        same_fov=True,
+    )
+
+    class WarmingClient:
+        def __init__(self) -> None:
+            self.camera_calls = 0
+            self.captured = threading.Event()
+
+        def cameras(self, **_kwargs):
+            self.camera_calls += 1
+            profiles = () if self.camera_calls == 1 else (profile,)
+            readiness = "warming" if self.camera_calls == 1 else "ready"
+            return [
+                CameraNodeCamera(
+                    "opaque-camera-1",
+                    "Feeder view",
+                    "available",
+                    True,
+                    capture_profiles=profiles,
+                    capture_readiness=readiness,
+                )
+            ]
+
+        def capture(self, **kwargs):
+            assert kwargs["profile"].profile_id == "monitoring-opaque"
+            self.captured.set()
+            return type("Capture", (), {"image": jpeg})()
+
+    class Configuration:
+        stream_id = "node-stream"
+        camera_node_base_address = "http://127.0.0.1:8787"
+        camera_node_credential = "masked-local-only"
+        camera_node_camera_id = "opaque-camera-1"
+        camera_node_monitoring_profile_id = "monitoring-opaque"
+
+    monkeypatch.setattr(
+        "mockingbird.playback.camera_node_bridge.PROFILE_LOOKUP_RETRY_DELAY_SECONDS",
+        0.01,
+        raising=False,
+    )
+    client = WarmingClient()
+    process = CameraNodeSnapshotProcess(Configuration(), client=client)
+    assert client.captured.wait(timeout=1)
+    process.terminate()
+    assert process.wait(timeout=1) == 0
+    assert process.safe_failure_code is None
+    assert client.camera_calls == 2
+    assert process.stdout.read() == jpeg
 def test_client_clamps_optional_snapshot_hint_and_old_nodes_keep_the_default() -> None:
     requester = _FakeNodeRequester()
     client = CameraNodeClient(requester=requester)
@@ -1091,6 +1267,70 @@ async def test_capture_profiles_are_advertised_and_capture_rejects_unlisted_prof
     assert captured.headers["x-mockingbird-monitoring-recovery"] == "reset_required"
     assert ProfiledProvider.captured_profile_ids == ["evidence-opaque"]
 
+
+@pytest.mark.anyio
+async def test_capture_distinguishes_an_unadvertised_profile_from_session_failure() -> None:
+    class FailingWarmSessionProvider:
+        def cameras(self):
+            return [
+                NodeCamera(
+                    "opaque-camera-1",
+                    "Feeder view",
+                    "available",
+                    snapshot_supported=True,
+                    provider_type="test",
+                )
+            ]
+
+        def capture_profiles(self, _camera_id):
+            return [
+                NodeCaptureProfile(
+                    profile_id="monitoring-opaque",
+                    purposes=("monitoring",),
+                    width=1920,
+                    height=1440,
+                    jpeg_supported=True,
+                    max_expected_bytes=1_500_000,
+                    capture_class="warm_concurrent",
+                    geometry_group="same-fov",
+                    same_fov=True,
+                )
+            ]
+
+        def snapshot(self, _camera_id, *, profile_id=None):
+            assert profile_id == "monitoring-opaque"
+            raise ValueError("provider_session_failed")
+
+        def close(self):
+            return None
+
+    node = create_node_app(
+        _node_config(), provider=FailingWarmSessionProvider()
+    )
+    transport = httpx.ASGITransport(app=node)
+    async with httpx.AsyncClient(transport=transport, base_url="http://node") as client:
+        paired = await client.post(
+            "/node/v1/pair", json={"pairing_code": node.state.pairing_code}
+        )
+        headers = {"Authorization": f"Bearer {paired.json()['credential']}"}
+        unknown = await client.post(
+            "/node/v1/cameras/opaque-camera-1/capture",
+            headers=headers,
+            json={"profile_id": "not-advertised"},
+        )
+        failed_session = await client.post(
+            "/node/v1/cameras/opaque-camera-1/capture",
+            headers=headers,
+            json={"profile_id": "monitoring-opaque"},
+        )
+
+    assert unknown.status_code == 409
+    assert unknown.headers["x-mockingbird-node-error"] == "profile_not_advertised"
+    assert failed_session.status_code == 503
+    assert (
+        failed_session.headers["x-mockingbird-node-error"]
+        == "provider_session_failed"
+    )
 
 @pytest.mark.anyio
 async def test_capture_rejects_invalid_jpeg_even_when_provider_reports_recovery() -> None:

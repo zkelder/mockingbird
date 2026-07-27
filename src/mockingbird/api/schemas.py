@@ -1664,6 +1664,24 @@ class CameraNodeAdvertisedCamera(BaseModel):
     snapshot_supported: bool
     setup_hint: str | None = None
     provider_type: str | None = None
+    capture_profiles: list["CameraNodeCaptureProfile"] = Field(
+        default_factory=list,
+        max_length=12,
+    )
+
+
+class CameraNodeCaptureProfile(BaseModel):
+    profile_id: str
+    purposes: list[str] = Field(default_factory=list, max_length=3)
+    width: int = Field(ge=1, le=16_000)
+    height: int = Field(ge=1, le=12_000)
+    jpeg_supported: bool
+    max_expected_bytes: int = Field(ge=32_768, le=16_000_000)
+    capture_class: str
+    geometry_group: str | None = None
+    orientation: str = "normal"
+    mirrored: bool = False
+    same_fov: bool = False
 
 
 class CameraNodePairResponse(BaseModel):

@@ -16,6 +16,8 @@ from mockingbird.source_providers.camera_node import CameraNodeClient, CameraNod
 
 
 SNAPSHOT_INTERVAL_SECONDS = 1.0
+PROFILE_LOOKUP_ATTEMPTS = 12
+PROFILE_LOOKUP_RETRY_DELAY_SECONDS = 0.25
 
 
 class CameraNodeSnapshotProcess:
@@ -29,6 +31,7 @@ class CameraNodeSnapshotProcess:
         self._stopped = threading.Event()
         self._return_code: int | None = None
         self.safe_failure_code: str | None = None
+        self._monitoring_profile = None
         self._thread = threading.Thread(
             target=self._run,
             name=f"mockingbird-camera-node-{config.stream_id}",
@@ -52,15 +55,78 @@ class CameraNodeSnapshotProcess:
             raise TimeoutError("camera_node_bridge_stop_timeout")
         return self._return_code or 0
 
+    def _monitoring_profile_from_capabilities(
+        self, profile_id: str
+    ) -> tuple[Any | None, bool]:
+        """Wait only through a bounded warm-up window for the durable opaque ID."""
+
+        camera_id = self._config.camera_node_camera_id or ""
+        still_warming = False
+        for attempt in range(PROFILE_LOOKUP_ATTEMPTS):
+            cameras = self._client.cameras(
+                base_address=self._config.camera_node_base_address or "",
+                credential=self._config.camera_node_credential or "",
+            )
+            camera = next(
+                (item for item in cameras if item.camera_id == camera_id), None
+            )
+            profile = next(
+                (
+                    item
+                    for item in (camera.capture_profiles if camera else ())
+                    if item.profile_id == profile_id and item.supports_monitoring
+                ),
+                None,
+            )
+            if profile is not None:
+                return profile, False
+            still_warming = bool(
+                camera is not None
+                and camera.capture_readiness in {"not_initialized", "warming"}
+            )
+            if (
+                not still_warming
+                or attempt == PROFILE_LOOKUP_ATTEMPTS - 1
+                or self._stopped.wait(PROFILE_LOOKUP_RETRY_DELAY_SECONDS)
+            ):
+                break
+        return None, still_warming
+
     def _run(self) -> None:
         try:
+            profile_id = getattr(
+                self._config, "camera_node_monitoring_profile_id", None
+            )
+            if profile_id:
+                try:
+                    self._monitoring_profile, still_warming = (
+                        self._monitoring_profile_from_capabilities(profile_id)
+                    )
+                except CameraNodeClientError as error:
+                    self.safe_failure_code = str(error)
+                    return
+                if self._monitoring_profile is None:
+                    self.safe_failure_code = (
+                        "provider_warming"
+                        if still_warming
+                        else "node_capture_profile_unavailable"
+                    )
+                    return
             while not self._stopped.is_set():
                 try:
-                    frame = self._client.snapshot(
-                        base_address=self._config.camera_node_base_address or "",
-                        credential=self._config.camera_node_credential or "",
-                        camera_id=self._config.camera_node_camera_id or "",
-                    )
+                    if self._monitoring_profile is None:
+                        frame = self._client.snapshot(
+                            base_address=self._config.camera_node_base_address or "",
+                            credential=self._config.camera_node_credential or "",
+                            camera_id=self._config.camera_node_camera_id or "",
+                        )
+                    else:
+                        frame = self._client.capture(
+                            base_address=self._config.camera_node_base_address or "",
+                            credential=self._config.camera_node_credential or "",
+                            camera_id=self._config.camera_node_camera_id or "",
+                            profile=self._monitoring_profile,
+                        ).image
                 except CameraNodeClientError as error:
                     # The main app records only these product-safe codes, never transport text.
                     self.safe_failure_code = str(error)
