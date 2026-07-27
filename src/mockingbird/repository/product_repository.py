@@ -14095,7 +14095,7 @@ class ProductRepository:
             item = self._review_identification_item_for_visit(session, visit_id)
             frames = self._review_identification_assistant_frames(
                 item.evidence_frames,
-                VisitIdentificationEvidenceMode.all_retained_evidence,
+                VisitIdentificationEvidenceMode.primary_only,
             )
             summary = self._review_identification_summary_for_item(session, item)
             latest_run = session.scalars(
@@ -14113,7 +14113,7 @@ class ProductRepository:
                 evidence_mode=(
                     VisitIdentificationEvidenceMode(latest_run.evidence_mode)
                     if latest_run is not None
-                    else VisitIdentificationEvidenceMode.all_retained_evidence
+                    else VisitIdentificationEvidenceMode.primary_only
                 ),
                 selected_frames=frames,
                 run=latest_run,
@@ -14197,6 +14197,34 @@ class ProductRepository:
                         separators=(",", ":"),
                     ).encode("utf-8")
                 ).hexdigest()
+                prior_completed_input = session.scalar(
+                    select(ReviewIdentificationAssistantRunModel)
+                    .where(
+                        ReviewIdentificationAssistantRunModel.visit_id == visit_id,
+                        ReviewIdentificationAssistantRunModel.input_configuration_sha256
+                        == input_hash,
+                        ReviewIdentificationAssistantRunModel.status.in_(
+                            ["succeeded", "no_result"]
+                        ),
+                    )
+                    .order_by(
+                        ReviewIdentificationAssistantRunModel.completed_at.desc(),
+                        ReviewIdentificationAssistantRunModel.id.desc(),
+                    )
+                )
+                if prior_completed_input is not None:
+                    return self._visit_identification_assistant_response(
+                        session,
+                        item=item,
+                        summary=summary,
+                        evidence_mode=payload.evidence_mode,
+                        selected_frames=frames,
+                        run=prior_completed_input,
+                        message=(
+                            "This exact saved input already has identification evidence."
+                        ),
+                    )
+
                 run = ReviewIdentificationAssistantRunModel(
                     id=f"review-identification-assistant-{uuid.uuid4().hex}",
                     visit_id=visit_id,
@@ -14321,33 +14349,28 @@ class ProductRepository:
         frames: list[VisitEvidenceFrame],
         evidence_mode: VisitIdentificationEvidenceMode,
     ) -> list[VisitEvidenceFrame]:
-        """Keep manual runs inside the existing four-frame retained-evidence cap."""
+        """Select one persisted image without silently lowering evidence quality."""
 
-        role_priority = {
-            "activity_crop": 0,
-            "high_resolution_original": 1,
-        }
         retained = frames[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]
-        # Preserve the established temporal ordering for legacy monitoring-only
-        # Visits.  Once high-resolution evidence exists, make the crop/full
-        # pair the preferred bounded model input before monitoring context.
-        bounded = (
-            sorted(
-                retained,
-                key=lambda frame: (
-                    role_priority.get(frame.evidence_role, 2),
-                    0 if frame.is_primary else 1,
-                    frame.captured_at,
-                    frame.media_asset_id,
-                ),
-            )
-            if any(frame.evidence_role in role_priority for frame in retained)
-            else retained
-        )
-        if evidence_mode == VisitIdentificationEvidenceMode.primary_only:
-            primary = next((frame for frame in bounded if frame.is_primary), None)
-            return [primary] if primary is not None else bounded[:1]
-        return bounded
+        if not retained:
+            return []
+        # A completed activity crop is the reviewed bird evidence.  The full
+        # high-resolution still is the explicit fallback, followed only then by
+        # the normal primary/best monitoring frame.  Keep the legacy request
+        # enum for API compatibility, but one manual suggestion run always has
+        # one accountable MediaAsset input.
+        for evidence_role in ("activity_crop", "high_resolution_original"):
+            candidates = [
+                frame for frame in retained if frame.evidence_role == evidence_role
+            ]
+            if candidates:
+                primary = next(
+                    (frame for frame in candidates if frame.is_primary),
+                    None,
+                )
+                return [primary or candidates[0]]
+        primary = next((frame for frame in retained if frame.is_primary), None)
+        return [primary] if primary is not None else retained[:1]
 
     def _review_identification_item_for_visit(
         self,
@@ -14371,10 +14394,11 @@ class ProductRepository:
             event.stream_id,
         )
         evidence_frames = self._visit_evidence_frames_from_visit(session, visit, event)
-        primary_frame = next(
-            (frame for frame in evidence_frames if frame.is_primary),
-            evidence_frames[0] if evidence_frames else None,
+        selected_frames = self._review_identification_assistant_frames(
+            evidence_frames,
+            VisitIdentificationEvidenceMode.primary_only,
         )
+        primary_frame = selected_frames[0] if selected_frames else None
         media_asset = (
             session.get(MediaAssetModel, primary_frame.media_asset_id)
             if primary_frame is not None
@@ -14594,7 +14618,7 @@ class ProductRepository:
             selected_evidence_frames=selected_frames,
             run=run_record,
             attempts=attempt_records,
-            suggestions=suggestion_rows[:20],
+            suggestions=suggestion_rows[:BIOCLIP_REVIEW_TOP_K],
             message=message,
             creates_truth=False,
             creates_export=False,
@@ -15182,6 +15206,7 @@ class ProductRepository:
             suggestion_payload = _bioclip_species_suggestion_payload(
                 prediction,
                 run_context=run_context,
+                crop_provenance=crop_observation,
                 request_notes=_clean_optional_text(request.notes),
             )
             if suggestion_payload is None:
@@ -15937,7 +15962,6 @@ class ProductRepository:
     ) -> None:
         filters = [
             SpeciesSuggestionModel.adapter_id == BIOCLIP_ADAPTER_ID,
-            SpeciesSuggestionModel.media_asset_id == run_context.media_asset_id,
             SpeciesSuggestionModel.status == SpeciesSuggestionStatus.pending.value,
         ]
         if run_context.visit_id is not None:
@@ -23329,6 +23353,23 @@ def _load_bioclip_input_image(
         expected_mtime_ns=expected_mtime_ns,
     ):
         raise ValueError("bioclip_media_changed")
+    input_hasher = hashlib.sha256()
+    try:
+        with path.open("rb") as source:
+            while chunk := source.read(64 * 1024):
+                input_hasher.update(chunk)
+    except OSError as error:
+        raise ValueError("missing_media_file") from error
+    if not _media_file_identity_matches(
+        path,
+        expected_size_bytes=expected_size_bytes,
+        expected_mtime_ns=expected_mtime_ns,
+    ):
+        raise ValueError("bioclip_media_changed")
+    if observation is not None:
+        # Fingerprint the exact persisted MediaAsset bytes without exposing a
+        # local path in review APIs or evidence records.
+        observation["input_sha256"] = input_hasher.hexdigest()
 
     try:
         from PIL import Image, UnidentifiedImageError
@@ -23409,6 +23450,7 @@ def _bioclip_species_suggestion_payload(
     prediction: BioClipPrediction,
     *,
     run_context: _ReviewSpeciesRunContext,
+    crop_provenance: dict[str, Any],
     request_notes: str | None,
 ) -> SpeciesSuggestionCreateRequest | None:
     ranked = tuple(prediction.suggestions)
@@ -23440,6 +23482,9 @@ def _bioclip_species_suggestion_payload(
         "model_provenance": provenance,
         **run_context.crop.box_normalized.model_dump(),
     }
+    input_sha256 = crop_provenance.get("input_sha256")
+    if isinstance(input_sha256, str) and re.fullmatch(r"[0-9a-f]{64}", input_sha256):
+        evidence_region["input_sha256"] = input_sha256
     if run_context.crop.detection_proposal_id is not None:
         evidence_region["detection_proposal_id"] = (
             run_context.crop.detection_proposal_id

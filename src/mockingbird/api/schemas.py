@@ -3030,7 +3030,7 @@ class ReviewIdentificationRequest(BaseModel):
 
 
 class VisitIdentificationEvidenceMode(str, Enum):
-    """A reviewer may use the primary frame or the already-retained sequence only."""
+    """Legacy request values; the assistant resolves one effective saved input."""
 
     primary_only = "primary_only"
     all_retained_evidence = "all_retained_evidence"
@@ -3042,7 +3042,7 @@ class VisitIdentificationAssistantRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evidence_mode: VisitIdentificationEvidenceMode = (
-        VisitIdentificationEvidenceMode.all_retained_evidence
+        VisitIdentificationEvidenceMode.primary_only
     )
     idempotency_key: str = Field(min_length=1, max_length=128)
 

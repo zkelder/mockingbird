@@ -1,8 +1,4 @@
-import { useState } from "react";
-import type {
-  VisitIdentificationAssistantResponse,
-  VisitIdentificationEvidenceMode,
-} from "../api/types";
+import type { VisitIdentificationAssistantResponse } from "../api/types";
 import { formatDateTime, formatLabel } from "../utils";
 
 interface IdentificationAssistantProps {
@@ -11,8 +7,9 @@ interface IdentificationAssistantProps {
   isLoading?: boolean;
   isRunning?: boolean;
   prefilledSuggestionId?: string | null;
-  onAnalyze: (mode: VisitIdentificationEvidenceMode) => void;
+  onAnalyze: () => void;
   onUseSuggestion: (label: string, suggestionId: string) => void;
+  onRejectSuggestion?: (suggestionId: string) => void;
   onClearPrefill?: () => void;
 }
 
@@ -24,14 +21,13 @@ export function IdentificationAssistant({
   prefilledSuggestionId,
   onAnalyze,
   onUseSuggestion,
+  onRejectSuggestion,
   onClearPrefill,
 }: IdentificationAssistantProps) {
-  const [evidenceMode, setEvidenceMode] = useState<VisitIdentificationEvidenceMode>(
-    "all_retained_evidence",
-  );
   const availability = assistant?.availability;
   const canRun = Boolean(availability?.can_run || availability?.can_run_on_best_frame);
   const selectedFrames = assistant?.selected_evidence_frames ?? [];
+  const selectedFrame = selectedFrames[0];
 
   return (
     <section className="review-identification-assist identification-assistant" aria-label="Identification Assistant">
@@ -56,9 +52,9 @@ export function IdentificationAssistant({
             <small>{availability.message}</small>
           </div>
           <div className="data-row">
-            <span>Saved evidence</span>
-            <strong>{selectedFrames.length} retained frame{selectedFrames.length === 1 ? "" : "s"}</strong>
-            <small>Primary plus at most three supporting frames; no camera or live-stream access.</small>
+            <span>Selected model input</span>
+            <strong>{selectedFrame ? "One saved image" : "No saved image"}</strong>
+            <small>High-resolution crop first, then full still, then the best monitoring evidence. No camera or live-stream access.</small>
           </div>
           <div className="data-row">
             <span>Truth boundary</span>
@@ -69,33 +65,13 @@ export function IdentificationAssistant({
       ) : null}
 
       <div className="identification-assistant-controls">
-        <label>
-          <input
-            checked={evidenceMode === "primary_only"}
-            disabled={isRunning}
-            name="identification-evidence-mode"
-            onChange={() => setEvidenceMode("primary_only")}
-            type="radio"
-          />
-          Primary frame only
-        </label>
-        <label>
-          <input
-            checked={evidenceMode === "all_retained_evidence"}
-            disabled={isRunning}
-            name="identification-evidence-mode"
-            onChange={() => setEvidenceMode("all_retained_evidence")}
-            type="radio"
-          />
-          All retained evidence
-        </label>
         <button
           className="secondary-action"
           disabled={!canRun || isRunning}
-          onClick={() => onAnalyze(evidenceMode)}
+          onClick={onAnalyze}
           type="button"
         >
-          {isRunning ? "Analyzing saved evidence..." : "Analyze evidence"}
+          {isRunning ? "Suggesting species..." : "Suggest species"}
         </button>
       </div>
       {!canRun && availability ? (
@@ -114,8 +90,17 @@ export function IdentificationAssistant({
         </span>
       ) : null}
       {assistant?.suggestions.length ? (
-        <div className="visit-suggestion-list identification-assistant-results">
-          {assistant.suggestions.map((suggestion) => (
+        <div className="identification-assistant-results-layout">
+          {selectedFrame ? (
+            <figure className="identification-assistant-input">
+              <img alt="Analyzed saved evidence" src={selectedFrame.preview_url} />
+              <figcaption>
+                Analyzed input · {formatLabel(selectedFrame.evidence_role ?? "saved evidence")}
+              </figcaption>
+            </figure>
+          ) : null}
+          <div className="visit-suggestion-list identification-assistant-results">
+          {assistant.suggestions.slice(0, 5).map((suggestion) => (
             <article className="visit-suggestion-card" key={`${suggestion.attempt_id ?? "saved"}:${suggestion.suggestion_id}:${suggestion.rank}:${suggestion.label}`}>
               <div className="item-title-row">
                 <div>
@@ -144,9 +129,20 @@ export function IdentificationAssistant({
                   Use suggestion
                 </button>
                 <span className="field-helper">Prefills only. Explicit correction save remains required.</span>
+                {onRejectSuggestion && suggestion.status === "pending" ? (
+                  <button
+                    className="text-action"
+                    disabled={isRunning}
+                    onClick={() => onRejectSuggestion(suggestion.suggestion_id)}
+                    type="button"
+                  >
+                    Dismiss suggestion
+                  </button>
+                ) : null}
               </div>
             </article>
           ))}
+          </div>
         </div>
       ) : assistant && !isLoading ? (
         <span className="meta-text">No useful suggestion is available yet. You can still review and save a correction normally.</span>

@@ -3388,7 +3388,40 @@ a.secondary-action {
 }
 
 .identification-assistant-results {
+  margin-top: 0;
+}
+
+.identification-assistant-results-layout {
+  align-items: start;
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: minmax(180px, 0.65fr) minmax(0, 1fr);
   margin-top: 0.9rem;
+}
+
+.identification-assistant-input {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.identification-assistant-input img {
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.identification-assistant-input figcaption {
+  color: var(--muted-text);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 640px) {
+  .identification-assistant-results-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 .review-identification-setup-details {

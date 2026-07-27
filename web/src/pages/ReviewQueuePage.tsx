@@ -13,7 +13,6 @@ import type {
   ReviewQueueItem,
   TaxonomyLabel,
   VisitIdentificationAssistantResponse,
-  VisitIdentificationEvidenceMode,
   VisitTagSummary,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
@@ -1934,14 +1933,24 @@ export function ReviewQueuePage({
     setIdentifyingId(item.id);
     setMessage(null);
     try {
-      const result = await apiClient.identifyReviewQueueItem(targetType, targetId, {
-        adapter_id: identification?.adapter_id ?? undefined,
-        media_asset_id: mediaAssetId ?? undefined,
-      });
+      const message =
+        targetType === "visit"
+          ? (
+              await apiClient.startVisitIdentificationAssistant(targetId, {
+                evidence_mode: "primary_only",
+                idempotency_key: createFastReviewKey("identification-assistant"),
+              })
+            ).message
+          : (
+              await apiClient.identifyReviewQueueItem(targetType, targetId, {
+                adapter_id: identification?.adapter_id ?? undefined,
+                media_asset_id: mediaAssetId ?? undefined,
+              })
+            ).identification.message;
       const refreshedQueue = await apiClient.getReviewQueue();
       setQueueItems(refreshedQueue);
       await refreshDetectionEvidence();
-      setMessage(result.identification.message);
+      setMessage(message);
     } catch (caught) {
       setMessage(
         caught instanceof Error ? caught.message : "Identification assist could not run.",
@@ -2484,8 +2493,8 @@ export function ReviewQueuePage({
                     {identifyingId === item.id
                       ? "Checking..."
                       : itemTriage.category === "no_clear_proposal"
-                        ? "Check again"
-                        : "Check saved frame"}
+                        ? "Suggest species again"
+                        : "Suggest species"}
                   </button>
                 ) : null}
               </div>
@@ -2796,16 +2805,6 @@ export function ReviewQueuePage({
               <IdentificationAssistPanel
                 identification={identification}
                 isBusy={identifyingId !== null || savingId === item.id}
-                onAcceptLabel={(label, suggestionId) =>
-                  void saveCorrectionWithLabel(
-                    item,
-                    label,
-                    `Accepted identification assist evidence${
-                      suggestionId ? ` (${suggestionId})` : ""
-                    }.`,
-                    suggestionId,
-                  )
-                }
                 onFillLabel={(label) =>
                   setDrafts((current) => ({
                     ...current,
@@ -3282,7 +3281,7 @@ function FastReviewPanel({
     };
   }, [activeItem?.target_id]);
 
-  async function runIdentificationAssistant(evidenceMode: VisitIdentificationEvidenceMode) {
+  async function runIdentificationAssistant() {
     if (!activeItem || isRunningIdentificationAssistant) {
       return;
     }
@@ -3292,7 +3291,7 @@ function FastReviewPanel({
       const result = await apiClient.startVisitIdentificationAssistant(
         reviewQueueTargetId(activeItem),
         {
-          evidence_mode: evidenceMode,
+          evidence_mode: "primary_only",
           idempotency_key: createFastReviewKey("identification-assistant"),
         },
       );
@@ -3312,6 +3311,29 @@ function FastReviewPanel({
       );
     } finally {
       setIsRunningIdentificationAssistant(false);
+    }
+  }
+
+  async function dismissIdentificationAssistantSuggestion(suggestionId: string) {
+    try {
+      const updated = await apiClient.updateSpeciesSuggestionStatus(suggestionId, "rejected");
+      setIdentificationAssistant((current) =>
+        current
+          ? {
+              ...current,
+              suggestions: current.suggestions.map((suggestion) =>
+                suggestion.suggestion_id === updated.id
+                  ? { ...suggestion, status: updated.status }
+                  : suggestion,
+              ),
+            }
+          : current,
+      );
+      setMessage("Suggestion dismissed as evidence. No review truth was created.");
+    } catch (caught) {
+      setIdentificationAssistantError(
+        caught instanceof Error ? caught.message : "Suggestion could not be dismissed.",
+      );
     }
   }
 
@@ -3500,8 +3522,9 @@ function FastReviewPanel({
             error={identificationAssistantError}
             isLoading={isLoadingIdentificationAssistant}
             isRunning={isRunningIdentificationAssistant}
-            onAnalyze={(mode) => void runIdentificationAssistant(mode)}
+            onAnalyze={() => void runIdentificationAssistant()}
             onClearPrefill={clearIdentificationAssistantPrefill}
+            onRejectSuggestion={(suggestionId) => void dismissIdentificationAssistantSuggestion(suggestionId)}
             onUseSuggestion={useIdentificationAssistantSuggestion}
             prefilledSuggestionId={assistantPrefillSuggestionId}
           />
@@ -3611,7 +3634,6 @@ function FastReviewPanel({
 function IdentificationAssistPanel({
   identification,
   isBusy,
-  onAcceptLabel,
   onFillLabel,
   onRejectProposal,
   onRejectSuggestion,
@@ -3620,7 +3642,6 @@ function IdentificationAssistPanel({
 }: {
   identification: ReviewIdentificationSummary | null;
   isBusy: boolean;
-  onAcceptLabel: (label: string, suggestionId?: string | null) => void;
   onFillLabel: (label: string) => void;
   onRejectProposal: () => void;
   onRejectSuggestion: () => void;
@@ -3850,7 +3871,7 @@ function IdentificationAssistPanel({
               ? "Running..."
               : identification.adapter_is_demo
                 ? "Run demo placeholder"
-                : "Run identification"}
+                : "Suggest species"}
           </button>
         ) : null}
         {suggestedLabel ? (
@@ -3861,15 +3882,7 @@ function IdentificationAssistPanel({
               onClick={() => onFillLabel(suggestedLabel)}
               type="button"
             >
-              Use label
-            </button>
-            <button
-              className="primary-action"
-              disabled={isBusy}
-              onClick={() => onAcceptLabel(suggestedLabel, suggestionId)}
-              type="button"
-            >
-              Accept as correction
+              Prefill correction
             </button>
           </>
         ) : null}

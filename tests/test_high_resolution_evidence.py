@@ -213,7 +213,7 @@ def test_full_still_crop_lineage_is_primary_review_evidence_without_truth(
         frames,
         VisitIdentificationEvidenceMode.all_retained_evidence,
     )
-    assert [frame.media_asset_id for frame in selected] == [crop.id, full.id]
+    assert [frame.media_asset_id for frame in selected] == [crop.id]
     assert len(evidence_repository.list_review_labels()) == labels_before
 
 

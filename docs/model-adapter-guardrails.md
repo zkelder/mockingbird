@@ -16,6 +16,13 @@ User corrections remain dataset truth. Exports use reviewed and corrected labels
 
 Species classifier outputs are `SpeciesSuggestion` evidence only. They must not create reviewed labels, dataset coverage truth, export truth, analytics truth, or reviewed Visit/Event state without explicit user correction.
 
+For an explicit Visit-level suggestion, the backend chooses exactly one retained
+MediaAsset: the activity crop first, then the full high-resolution still, then
+the normal best monitoring evidence. The durable attempt records the selected
+MediaAsset, input SHA-256 fingerprint, bounded ranked candidates, configured candidate
+scope, safe model provenance, and latency. It does not expose paths, raw model
+output, or credentials.
+
 SpeciesNet or any other species classifier runtime must follow
 [speciesnet-runtime-investigation.md](speciesnet-runtime-investigation.md)
 before dependencies, model files, download behavior, or classifier calls are

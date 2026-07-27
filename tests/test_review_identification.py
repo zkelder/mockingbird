@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from mockingbird.api.main import app, configure_repository
-from mockingbird.api.schemas import Point, ZoneCreate, ZoneType
+from mockingbird.api.schemas import BoundingBox, Point, ZoneCreate, ZoneType
 from mockingbird.detectors.local_image_detector import (
     LOCAL_IMAGE_DETECTOR_ID,
     LocalDetectorBox,
@@ -205,6 +205,35 @@ async def create_activity_review_item(
         result["visit_id"] if create_visit else result["event_id"],
         evidence_id,
     )
+
+
+def test_bioclip_input_provenance_records_exact_media_sha256(tmp_path: Path) -> None:
+    from PIL import Image
+
+    image_path = tmp_path / "high-resolution-crop.jpg"
+    Image.new("RGB", (222, 177), color=(20, 40, 60)).save(image_path, format="JPEG")
+    stat = image_path.stat()
+    observation: dict[str, object] = {}
+    image = product_repository._load_bioclip_input_image(
+        local_path=str(image_path),
+        expected_size_bytes=stat.st_size,
+        expected_mtime_ns=stat.st_mtime_ns,
+        content_type="image/jpeg",
+        crop=product_repository._ReviewSpeciesCropContext(
+            source="activity_crop",
+            box_normalized=BoundingBox(x=0.0, y=0.0, width=1.0, height=1.0),
+            label="High-resolution primary crop",
+        ),
+        observation=observation,
+    )
+    try:
+        assert observation["input_sha256"] == hashlib.sha256(
+            image_path.read_bytes()
+        ).hexdigest()
+        assert observation["effective_dimensions"] == {"width": 222, "height": 177}
+        assert observation["used_for_inference"] is True
+    finally:
+        image.close()
 
 
 async def test_review_queue_does_not_derive_focus_from_zone_without_activity(

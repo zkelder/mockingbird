@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
+import json
 from pathlib import Path
 
 import httpx
@@ -9,6 +11,7 @@ import pytest
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import VisitEvidenceFrame, VisitIdentificationEvidenceMode
 from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.storage.models import ReviewIdentificationAssistantRunModel
 
 
 STREAM_ID = "stream-backyard-feeder"
@@ -110,6 +113,62 @@ async def test_unavailable_assistant_request_is_durable_and_idempotent(
     assert status["review_label_count"] == before["review_label_count"]
 
 
+async def test_completed_identical_input_returns_existing_assistant_run(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    imported = await create_visit(client)
+    visit_id = str(imported["visit"]["id"])
+    media_asset_id = str(imported["media_asset"]["id"])
+    assistant = (
+        await client.get(f"/api/visits/{visit_id}/identification-assistant")
+    ).json()
+    input_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "visit_id": visit_id,
+                "evidence_mode": "primary_only",
+                "media_asset_ids": [media_asset_id],
+                "adapter_id": assistant["availability"]["adapter_id"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    with isolated_repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                ReviewIdentificationAssistantRunModel(
+                    id="review-identification-assistant-existing",
+                    visit_id=visit_id,
+                    idempotency_key="completed-original-input",
+                    evidence_mode="primary_only",
+                    selected_media_asset_ids_json=json.dumps([media_asset_id]),
+                    input_configuration_sha256=input_hash,
+                    request_origin="user_triggered_review_assistance",
+                    status="succeeded",
+                    started_at=datetime.now(UTC),
+                    completed_at=datetime.now(UTC),
+                    attempt_ids_json="[]",
+                    error_code=None,
+                )
+            )
+
+    response = await client.post(
+        f"/api/visits/{visit_id}/identification-assistant",
+        json={
+            "evidence_mode": "primary_only",
+            "idempotency_key": "completed-repeat-input",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["run"]["id"] == "review-identification-assistant-existing"
+    assert response.json()["message"] == (
+        "This exact saved input already has identification evidence."
+    )
+
+
 async def test_reviewed_visit_analysis_does_not_change_existing_truth(
     client: httpx.AsyncClient,
 ) -> None:
@@ -163,8 +222,46 @@ def test_assistant_frame_selection_never_exceeds_retained_evidence_cap(
     )
 
     assert [frame.media_asset_id for frame in primary] == ["media-2"]
-    assert len(retained) == 4
-    assert [frame.media_asset_id for frame in retained] == ["media-0", "media-1", "media-2", "media-3"]
+    assert [frame.media_asset_id for frame in retained] == ["media-2"]
+
+
+def test_assistant_high_resolution_fallback_order(
+    isolated_repository: ProductRepository,
+) -> None:
+    captured_at = datetime.now(UTC)
+    monitoring = VisitEvidenceFrame(
+        media_asset_id="monitoring-frame",
+        preview_url="/api/media/monitoring-frame/preview",
+        captured_at=captured_at,
+        relative_position=0.0,
+        frame_sequence=1,
+        is_primary=True,
+        content_type="image/jpeg",
+    )
+    full = monitoring.model_copy(
+        update={
+            "media_asset_id": "high-resolution-full",
+            "is_primary": False,
+            "evidence_role": "high_resolution_original",
+        }
+    )
+    crop = monitoring.model_copy(
+        update={
+            "media_asset_id": "high-resolution-crop",
+            "is_primary": False,
+            "evidence_role": "activity_crop",
+        }
+    )
+
+    assert [frame.media_asset_id for frame in isolated_repository._review_identification_assistant_frames(
+        [monitoring, full, crop], VisitIdentificationEvidenceMode.primary_only
+    )] == ["high-resolution-crop"]
+    assert [frame.media_asset_id for frame in isolated_repository._review_identification_assistant_frames(
+        [monitoring, full], VisitIdentificationEvidenceMode.primary_only
+    )] == ["high-resolution-full"]
+    assert [frame.media_asset_id for frame in isolated_repository._review_identification_assistant_frames(
+        [monitoring], VisitIdentificationEvidenceMode.primary_only
+    )] == ["monitoring-frame"]
 
 
 async def test_prior_repeated_suggestions_are_displayed_without_double_counting_support(

@@ -8,7 +8,6 @@ import type {
   VisitDetail,
   VisitEvidenceFrame,
   VisitIdentificationAssistantResponse,
-  VisitIdentificationEvidenceMode,
   VisitOrganizationState,
   VisitCollectionSummary,
   VisitTagSummary,
@@ -354,12 +353,40 @@ export function VisitDetailPage({
     );
   }
 
-  async function runIdentificationAssistant(evidenceMode: VisitIdentificationEvidenceMode) {
+  async function dismissIdentificationAssistantSuggestion(suggestionId: string) {
+    try {
+      const updated = await apiClient.updateSpeciesSuggestionStatus(suggestionId, "rejected");
+      setSpeciesSuggestions((current) =>
+        current.map((suggestion) =>
+          suggestion.id === updated.id ? updated : suggestion,
+        ),
+      );
+      setIdentificationAssistant((current) =>
+        current
+          ? {
+              ...current,
+              suggestions: current.suggestions.map((suggestion) =>
+                suggestion.suggestion_id === updated.id
+                  ? { ...suggestion, status: updated.status }
+                  : suggestion,
+              ),
+            }
+          : current,
+      );
+      setMessage("Suggestion dismissed as evidence. No review truth was created.");
+    } catch (caught) {
+      setIdentificationAssistantError(
+        caught instanceof Error ? caught.message : "Suggestion could not be dismissed.",
+      );
+    }
+  }
+
+  async function runIdentificationAssistant() {
     setIsRunningIdentificationAssistant(true);
     setIdentificationAssistantError(null);
     try {
       const result = await apiClient.startVisitIdentificationAssistant(visitId, {
-        evidence_mode: evidenceMode,
+        evidence_mode: "primary_only",
         idempotency_key: newReviewRequestKey("identification-assistant"),
       });
       setIdentificationAssistant(result);
@@ -1073,8 +1100,9 @@ export function VisitDetailPage({
           error={identificationAssistantError}
           isLoading={isLoadingIdentificationAssistant}
           isRunning={isRunningIdentificationAssistant}
-          onAnalyze={(mode) => void runIdentificationAssistant(mode)}
+          onAnalyze={() => void runIdentificationAssistant()}
           onClearPrefill={clearCorrectionPrefill}
+          onRejectSuggestion={(suggestionId) => void dismissIdentificationAssistantSuggestion(suggestionId)}
           onUseSuggestion={useIdentificationAssistantSuggestion}
           prefilledSuggestionId={correctionSuggestionId}
         />
