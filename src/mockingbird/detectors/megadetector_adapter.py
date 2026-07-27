@@ -9,10 +9,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from hashlib import sha256
 from importlib import import_module, util
 import math
 import os
 from pathlib import Path
+import tempfile
+import threading
 from types import ModuleType
 from typing import Any
 
@@ -26,10 +29,25 @@ MEGADETECTOR_RUNTIME_CACHE_PATH_ENV = "MOCKINGBIRD_MEGADETECTOR_RUNTIME_CACHE_PA
 MEGADETECTOR_DEFAULT_RUNTIME_CACHE_PATH = "data/runtime/megadetector"
 MEGADETECTOR_DEFAULT_CONFIDENCE_THRESHOLD = 0.1
 MEGADETECTOR_MAX_PROPOSALS = 20
+MEGADETECTOR_MAX_LIVE_CROP_BYTES = 4_000_000
+MEGADETECTOR_OFFICIAL_MODEL_VERSION = "MDv5a.0.1"
+MEGADETECTOR_OFFICIAL_MODEL_SOURCE = (
+    "https://github.com/agentmorris/MegaDetector/blob/main/megadetector.md"
+)
+MEGADETECTOR_OFFICIAL_MODEL_URL = (
+    "https://github.com/agentmorris/MegaDetector/releases/download/v5.0/"
+    "md_v5a.0.1.pt"
+)
+MEGADETECTOR_OFFICIAL_MODEL_LICENSE = "MIT"
+MEGADETECTOR_OFFICIAL_MODEL_SHA256 = (
+    "FE3E90E4B1955821AB7C1F88B446DC0C8CB25E109FDD1872916A55305294A5EF"
+)
 MEGADETECTOR_SETUP_HINT = (
     f"Install optional {MEGADETECTOR_RUNTIME_EXTRA} support only when needed. "
     f"Set {MEGADETECTOR_MODEL_PATH_ENV} to an existing local MDv5 .pt model file. "
     "No model files are bundled or downloaded automatically. "
+    f"The approved artifact is {MEGADETECTOR_OFFICIAL_MODEL_VERSION} with a "
+    "verified SHA-256; a checksum mismatch fails closed. "
     "MegaDetector outputs animal/person/vehicle proposal evidence only."
 )
 
@@ -40,6 +58,14 @@ MEGADETECTOR_CATEGORY_LABELS = {
     "2": "person",
     "3": "vehicle",
 }
+
+# Model initialization is expensive, while the live monitor intentionally has
+# only one active inference. Cache the approved local runtime per exact model
+# path and serialize execution rather than loading a second detector or relying
+# on unproven runtime concurrency.
+_runtime_detector_lock = threading.RLock()
+_cached_runtime_detector: Any | None = None
+_cached_runtime_model_path: str | None = None
 
 
 class MegaDetectorError(RuntimeError):
@@ -55,6 +81,10 @@ class MegaDetectorModelFileError(MegaDetectorConfigurationError):
 
 
 class MegaDetectorModelFormatError(MegaDetectorConfigurationError):
+    pass
+
+
+class MegaDetectorModelChecksumError(MegaDetectorConfigurationError):
     pass
 
 
@@ -223,6 +253,7 @@ def run_megadetector_on_image(
 
     if status.model_path is None:
         raise MegaDetectorConfigurationError(status.detail)
+    _verify_official_model_checksum(Path(status.model_path))
 
     return _execute_megadetector_runtime(
         media_local_path=str(image_path),
@@ -232,6 +263,89 @@ def run_megadetector_on_image(
         zone_context=zone_context,
         focus_box=focus_box,
     )
+
+
+def run_megadetector_on_jpeg_bytes(
+    *,
+    image: bytes,
+    coordinate_box: MegaDetectorBox,
+) -> list[MegaDetectorProposal]:
+    """Run the existing local adapter on one bounded, caller-owned Zone crop.
+
+    The live monitor supplies already-captured bytes; this helper never opens a
+    camera, contacts a service, or retains the crop after the one local run.
+    ``coordinate_box`` maps the Zone-crop output back to full-frame normalized
+    product coordinates.
+    """
+
+    if not image or len(image) > MEGADETECTOR_MAX_LIVE_CROP_BYTES:
+        raise MegaDetectorUnsupportedMediaError("live_crop_invalid")
+    if not _valid_box(coordinate_box):
+        raise MegaDetectorOutputError("unsupported_detector_output")
+
+    cache_root = _prepare_megadetector_runtime_environment()
+    input_root = cache_root / "live-input"
+    try:
+        input_root.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise MegaDetectorRuntimeUnavailableError(
+            "MegaDetector could not prepare its local runtime cache."
+        ) from error
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", suffix=".jpg", dir=input_root, delete=False
+        ) as temporary_file:
+            temporary_file.write(image)
+            temporary_path = Path(temporary_file.name)
+        proposals = run_megadetector_on_image(
+            local_path=str(temporary_path),
+            content_type="image/jpeg",
+        )
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                # A cache cleanup failure cannot convert inference evidence into
+                # a monitoring failure; the ignored cache stays local.
+                pass
+    return _remap_focused_proposals(proposals, coordinate_box)
+
+
+def megadetector_model_provenance() -> dict[str, str]:
+    """Static provenance for the one local artifact this adapter accepts."""
+
+    return {
+        "version": MEGADETECTOR_OFFICIAL_MODEL_VERSION,
+        "source": MEGADETECTOR_OFFICIAL_MODEL_SOURCE,
+        "model_url": MEGADETECTOR_OFFICIAL_MODEL_URL,
+        "license": MEGADETECTOR_OFFICIAL_MODEL_LICENSE,
+        "sha256": MEGADETECTOR_OFFICIAL_MODEL_SHA256,
+    }
+
+
+def _verify_official_model_checksum(model_path: Path) -> str:
+    """Hash the explicit local file before inference; never fetch a replacement."""
+
+    digest = sha256()
+    try:
+        with model_path.open("rb") as model_file:
+            for chunk in iter(lambda: model_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as error:
+        raise MegaDetectorModelFileError(
+            "Configured MegaDetector model file could not be read."
+        ) from error
+    actual = digest.hexdigest().upper()
+    if actual != MEGADETECTOR_OFFICIAL_MODEL_SHA256:
+        raise MegaDetectorModelChecksumError(
+            "Configured MegaDetector model checksum does not match the approved "
+            f"{MEGADETECTOR_OFFICIAL_MODEL_VERSION} artifact. No inference or "
+            "automatic download was attempted."
+        )
+    return actual
 
 
 def _load_megadetector_runtime() -> ModuleType:
@@ -281,17 +395,15 @@ def _execute_megadetector_runtime(
         visualization_utils = import_module(
             "megadetector.visualization.visualization_utils"
         )
-        detector = run_detector.load_detector(
-            str(resolved_model_path),
-            force_model_download=False,
-        )
-        image = visualization_utils.load_image(media_local_path)
-        inference_image, applied_focus_box = _focused_image(image, focus_box)
-        output = detector.generate_detections_one_image(
-            inference_image,
-            image_id=media_local_path,
-            detection_threshold=threshold,
-        )
+        with _runtime_detector_lock:
+            detector = _cached_detector_for_model(run_detector, resolved_model_path)
+            image = visualization_utils.load_image(media_local_path)
+            inference_image, applied_focus_box = _focused_image(image, focus_box)
+            output = detector.generate_detections_one_image(
+                inference_image,
+                image_id=media_local_path,
+                detection_threshold=threshold,
+            )
     except MegaDetectorError:
         raise
     except Exception as error:  # pragma: no cover - depends on the optional runtime.
@@ -300,6 +412,45 @@ def _execute_megadetector_runtime(
     proposals = _parse_megadetector_output(output, threshold=threshold)
     return _remap_focused_proposals(proposals, applied_focus_box)
 
+
+def _cached_detector_for_model(run_detector: ModuleType, model_path: Path) -> Any:
+    """Load one explicit local model once; callers already verify its checksum."""
+
+    global _cached_runtime_detector, _cached_runtime_model_path
+    resolved_path = str(model_path)
+    if (
+        _cached_runtime_detector is None
+        or _cached_runtime_model_path != resolved_path
+    ):
+        _cached_runtime_detector = run_detector.load_detector(
+            resolved_path,
+            force_model_download=False,
+        )
+        _cached_runtime_model_path = resolved_path
+    return _cached_runtime_detector
+
+
+def megadetector_execution_device() -> str | None:
+    """Return a coarse device label without exposing runtime internals."""
+
+    with _runtime_detector_lock:
+        detector = _cached_runtime_detector
+        if detector is None:
+            return None
+        candidates = (
+            getattr(detector, "device", None),
+            getattr(getattr(detector, "model", None), "device", None),
+        )
+
+    for candidate in candidates:
+        device_value = str(candidate).lower()
+        if "cuda" in device_value:
+            return "cuda"
+        if "mps" in device_value:
+            return "mps"
+        if "cpu" in device_value:
+            return "cpu"
+    return "unknown"
 
 def _prepare_megadetector_runtime_environment() -> Path:
     """Keep optional runtime caches local and disable package auto-install hooks."""

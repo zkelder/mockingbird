@@ -8,6 +8,7 @@ import httpx
 import pytest
 from sqlalchemy import create_engine, func, inspect, select
 
+from mockingbird.api import main as api_main
 from mockingbird.api.schemas import CameraHealthState
 from mockingbird.api.main import _evidence_persistence_failed, app, configure_repository
 from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
@@ -91,6 +92,42 @@ def test_recent_frame_is_healthy_without_wildlife_activity_or_truth(repository: 
             session.scalar(select(func.count(MediaAssetModel.id))),
             session.scalar(select(func.count(ReviewLabelModel.id))),
         ) == counts_before
+
+
+def test_successful_evidence_reset_is_temporarily_recovering_until_monitoring_frame(
+    repository: ProductRepository,
+) -> None:
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    repository.mark_monitoring_running(
+        candidate,
+        app_instance_id="camera-health-test",
+        healthy_at=now,
+        now=now,
+    )
+    detail = repository.get_stream_camera_health(candidate.stream_id)
+    assert detail is not None and detail.health.state == CameraHealthState.healthy
+
+    class PendingRecovery:
+        pending = True
+
+        def monitoring_recovery_pending(self, stream_id: str) -> bool:
+            assert stream_id == candidate.stream_id
+            return self.pending
+
+    manager = PendingRecovery()
+    previous = api_main._live_camera_session_manager
+    api_main._live_camera_session_manager = manager
+    try:
+        recovering = api_main._camera_health_with_pending_node_recovery(detail)
+        assert recovering.health.state == CameraHealthState.recovering
+        assert recovering.health.failure_reason == "provider_reset_required"
+
+        manager.pending = False
+        recovered = api_main._camera_health_with_pending_node_recovery(detail)
+        assert recovered.health.state == CameraHealthState.healthy
+    finally:
+        api_main._live_camera_session_manager = previous
 
 
 def test_startup_grace_and_capacity_wait_are_distinct(repository: ProductRepository) -> None:
@@ -394,8 +431,8 @@ def test_history_is_bounded_newest_first_and_safe_responses_hide_runtime_details
     assert "password" not in rendered
 
 
-def test_schema_v23_contains_empty_bounded_incident_and_configuration_storage(repository: ProductRepository) -> None:
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 23
+def test_schema_v24_contains_empty_bounded_incident_and_configuration_storage(repository: ProductRepository) -> None:
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 24
     tables = set(inspect(repository.engine).get_table_names())
     assert "camera_health_incidents" in tables
     assert "camera_configuration_revisions" in tables
@@ -424,8 +461,10 @@ def test_v20_runtime_checkpoint_migrates_through_v22_camera_configuration_storag
 
     status = initialize_database(engine)
     columns = {column["name"] for column in inspect(engine).get_columns("stream_runtime_checkpoints")}
-    assert status.version == 23
+    assert status.version == 24
     assert {"last_evidence_persisted_at", "last_evidence_failure_at", "evidence_failure_code"}.issubset(columns)
+    media_columns = {column["name"] for column in inspect(engine).get_columns("media_assets")}
+    assert {"parent_media_asset_id", "normalized_track_box_json", "alignment_status"}.issubset(media_columns)
     assert "camera_health_incidents" in inspect(engine).get_table_names()
     assert "camera_configuration_revisions" in inspect(engine).get_table_names()
 
@@ -453,7 +492,7 @@ def test_v21_configuration_metadata_is_preserved_when_v22_adds_revision_storage(
         preserved = connection.exec_driver_sql(
             "SELECT config_json FROM source_provider_configurations WHERE source_id = 'source-preserved'"
         ).scalar_one()
-    assert status.version == 23
+    assert status.version == 24
     assert preserved == '{"url": "https://camera.local/still.jpg"}'
     assert "camera_configuration_revisions" in inspect(engine).get_table_names()
 

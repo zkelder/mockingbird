@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 23
+CURRENT_DATABASE_SCHEMA_VERSION = 24
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -306,6 +306,56 @@ def _migrate_to_camera_node_provider_contract(connection: Connection) -> None:
     )
 
 
+def _migrate_to_high_resolution_activity_evidence(connection: Connection) -> None:
+    """Add empty v24 evidence lineage fields without changing existing media or Visits."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "High-resolution evidence migration requires local SQLite storage."
+        )
+    # Complete historical databases already have both tables.  Creating empty
+    # missing tables is still safer than failing an otherwise recoverable
+    # partial local database, and never creates media, Visits, or truth rows.
+    Base.metadata.tables["media_assets"].create(bind=connection, checkfirst=True)
+    Base.metadata.tables["visit_evidence_links"].create(bind=connection, checkfirst=True)
+    media_columns = {
+        column["name"] for column in inspect(connection).get_columns("media_assets")
+    }
+    for column, definition in (
+        ("parent_media_asset_id", "VARCHAR"),
+        ("evidence_role", "VARCHAR"),
+        ("image_width", "INTEGER"),
+        ("image_height", "INTEGER"),
+        ("capture_profile_id", "VARCHAR"),
+        ("normalized_track_box_json", "TEXT"),
+        ("normalized_padded_crop_box_json", "TEXT"),
+        ("geometry_transform_id", "VARCHAR"),
+        ("trigger_id", "VARCHAR"),
+        ("trigger_started_at", "DATETIME"),
+        ("capture_requested_at", "DATETIME"),
+        ("captured_at", "DATETIME"),
+        ("alignment_status", "VARCHAR"),
+        ("alignment_failure_code", "VARCHAR"),
+    ):
+        if column not in media_columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE media_assets ADD COLUMN {column} {definition}"
+            )
+    evidence_columns = {
+        column["name"]
+        for column in inspect(connection).get_columns("visit_evidence_links")
+    }
+    if "evidence_role" not in evidence_columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE visit_evidence_links ADD COLUMN evidence_role "
+            "VARCHAR NOT NULL DEFAULT 'monitoring_frame'"
+        )
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_media_assets_parent_media_asset "
+        "ON media_assets(parent_media_asset_id)"
+    )
+
+
 def _migrate_to_zone_monitoring_policy_overrides(connection: Connection) -> None:
     """Add empty per-Zone overrides without changing existing Zone behavior."""
 
@@ -513,6 +563,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     21: _migrate_to_camera_health_incidents,
     22: _migrate_to_camera_configuration_revisions,
     23: _migrate_to_camera_node_provider_contract,
+    24: _migrate_to_high_resolution_activity_evidence,
 }
 
 

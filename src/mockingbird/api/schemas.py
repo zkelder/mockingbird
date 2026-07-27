@@ -1756,6 +1756,20 @@ class MediaAsset(BaseModel):
     file_size_bytes: int = Field(ge=0)
     created_at: datetime
     notes: str | None = None
+    parent_media_asset_id: str | None = None
+    evidence_role: str | None = None
+    image_width: int | None = Field(default=None, ge=1)
+    image_height: int | None = Field(default=None, ge=1)
+    capture_profile_id: str | None = None
+    normalized_track_box: list[float] | None = None
+    normalized_padded_crop_box: list[float] | None = None
+    geometry_transform_id: str | None = None
+    trigger_id: str | None = None
+    trigger_started_at: datetime | None = None
+    capture_requested_at: datetime | None = None
+    captured_at: datetime | None = None
+    alignment_status: str | None = None
+    alignment_failure_code: str | None = None
 
 
 class VisitEvidenceFrame(BaseModel):
@@ -1769,6 +1783,7 @@ class VisitEvidenceFrame(BaseModel):
     content_type: str
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
+    evidence_role: str = "monitoring_frame"
 
 
 class VisitCurationHistoryEntry(BaseModel):
@@ -2516,6 +2531,7 @@ class MotionEvaluateSavedMediaResponse(BaseModel):
 class LiveMotionEvaluateRequest(BaseModel):
     save_best_frame: bool = True
     create_review_activity: bool = False
+    detector_preset: Literal["high_sensitivity", "normal", "low_noise"] = "normal"
     bird_sized_feeder_motion: bool = True
     pixel_delta_threshold: float = Field(default=25.0, ge=0)
     min_changed_ratio: float = Field(default=0.02, ge=0, le=1)
@@ -2601,6 +2617,74 @@ class LiveMotionEvaluateResponse(BaseModel):
     camera_session_latest_frame_age_ms: int | None = Field(default=None, ge=0)
     camera_session_runtime_limit_seconds: int | None = Field(default=None, ge=1)
     frames: list[LiveMotionFrameSummary] = Field(default_factory=list)
+    detector_preset: Literal["high_sensitivity", "normal", "low_noise"] = "normal"
+    source_frame_width: int | None = Field(default=None, ge=1)
+    source_frame_height: int | None = Field(default=None, ge=1)
+    analysis_frame_width: int | None = Field(default=None, ge=1)
+    analysis_frame_height: int | None = Field(default=None, ge=1)
+    zone_source_crop_width: int | None = Field(default=None, ge=1)
+    zone_source_crop_height: int | None = Field(default=None, ge=1)
+    analysis_zone_id: str | None = None
+    analysis_frame_identity: str | None = None
+    analysis_frame_age_ms: int | None = Field(default=None, ge=0)
+    duplicate_frame_count: int = Field(default=0, ge=0)
+    dropped_frame_count: int = Field(default=0, ge=0)
+    frozen_frame_count: int = Field(default=0, ge=0)
+    foreground_model_state: str | None = None
+    foreground_mask_available: bool = False
+    foreground_mask_data_url: str | None = None
+    global_illumination_suppressed: bool = False
+    latest_ignored_frame_reason: str | None = None
+    motion_regions: list[dict[str, Any]] = Field(default_factory=list)
+    tracked_objects: list[dict[str, Any]] = Field(default_factory=list)
+    activity_triggers: list[dict[str, Any]] = Field(default_factory=list)
+    object_detector_available: bool = False
+    object_detector_unavailable_reason: str | None = None
+    object_detector_zone_id: str | None = None
+    object_detector_zone_source_crop_width: int | None = Field(default=None, ge=1)
+    object_detector_zone_source_crop_height: int | None = Field(default=None, ge=1)
+    object_detector_input_width: int | None = Field(default=None, ge=1)
+    object_detector_input_height: int | None = Field(default=None, ge=1)
+    object_detector_boxes: list[dict[str, Any]] = Field(default_factory=list)
+    object_detector_tracks: list[dict[str, Any]] = Field(default_factory=list)
+    object_detector_triggers: list[dict[str, Any]] = Field(default_factory=list)
+    object_detector_cadence_seconds: float | None = Field(default=None, ge=0)
+    object_detector_inference_latency_ms: int | None = Field(default=None, ge=0)
+    object_detector_queue_depth: int = Field(default=0, ge=0)
+    object_detector_queue_capacity: int = Field(default=1, ge=1)
+    object_detector_dropped_frame_count: int = Field(default=0, ge=0)
+    object_detector_stale_frame_count: int = Field(default=0, ge=0)
+    object_detector_timed_out_count: int = Field(default=0, ge=0)
+    object_detector_runtime_state: Literal["ready", "loading", "running", "delayed", "timed_out", "recovering", "unavailable"] = "ready"
+    object_detector_model_configuration_state: str = "unknown"
+    object_detector_model_loaded: bool = False
+    object_detector_worker_alive: bool = False
+    object_detector_in_flight_job_identity: str | None = None
+    object_detector_in_flight_age_ms: int | None = Field(default=None, ge=0)
+    object_detector_last_submitted_at: datetime | None = None
+    object_detector_last_completed_at: datetime | None = None
+    object_detector_last_completed_age_ms: int | None = Field(default=None, ge=0)
+    object_detector_latest_successful_inference_latency_ms: int | None = Field(default=None, ge=0)
+    object_detector_worker_reset_count: int = Field(default=0, ge=0)
+    object_detector_recovery_count: int = Field(default=0, ge=0)
+    object_detector_queue_replacement_count: int = Field(default=0, ge=0)
+    object_detector_execution_device: str | None = None
+    object_detector_last_safe_error_category: str | None = None
+    object_detector_runtime_generation: int = Field(default=0, ge=0)
+    activity_trigger_source: Literal["object_verified", "motion_fallback"] | None = None
+    selected_evidence_profile_id: str | None = None
+    high_resolution_capture_status: str | None = None
+    high_resolution_frame_width: int | None = Field(default=None, ge=1)
+    high_resolution_frame_height: int | None = Field(default=None, ge=1)
+    high_resolution_crop_width: int | None = Field(default=None, ge=1)
+    high_resolution_crop_height: int | None = Field(default=None, ge=1)
+    high_resolution_alignment_status: str | None = None
+    high_resolution_alignment_failure_code: str | None = None
+    high_resolution_capture_failure_code: str | None = None
+    high_resolution_capture_latency_ms: int | None = Field(default=None, ge=0)
+    high_resolution_track_to_capture_delay_ms: int | None = Field(default=None, ge=0)
+    high_resolution_track_box: list[float] | None = None
+    high_resolution_padded_crop_box: list[float] | None = None
     frame_scores: list[MotionFrameScoreResponse] = Field(default_factory=list)
     candidates: list[MotionCandidateResponse] = Field(default_factory=list)
     activity_areas: list[MotionActivityAreaResponse] = Field(default_factory=list)

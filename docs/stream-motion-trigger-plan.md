@@ -8,6 +8,65 @@ stream visible in app -> sample frames locally -> evaluate user-drawn zones or a
 
 This is not a permanent replacement for MegaDetector. It is the first lightweight event trigger that protects the product loop while heavier detectors remain optional enrichment.
 
+## Current tracked-activity implementation
+
+Live monitoring now uses a shared, bounded desktop-side pipeline:
+
+`fresh frame -> MOG2 foreground mask -> compact Zone-aware regions -> temporal tracks -> activity session`
+
+- Each ordinary Zone is mapped into the fresh monitoring frame, cropped at
+  source resolution, then resized to a bounded analysis canvas (normally no
+  larger than 640×360). This preserves more bird-scale pixels than reducing the
+  entire frame before looking at a small feeder or perch Zone. Resulting region
+  boxes map back to normalized full-frame coordinates.
+- Per-Stream/Zone detector state rejects duplicate identities and non-monotonic
+  observations, counts skipped/dropped frames, suppresses abrupt global lighting
+  changes, and resets after a prolonged gap or a frame-size change.
+- Privacy and Ignore masks are applied before region extraction and tracking.
+  The retired global changed-pixel percentage and sustained-motion duration are
+  compatibility diagnostics only; they do not open a tracked activity.
+- A compact coherent track normally needs two observations in a short bounded
+  window. After triggering, a stationary object may remain part of the open
+  activity until the existing per-Zone quiet-close policy ends it.
+- The activity session keeps at most two pre-trigger cache frames plus the
+  existing bounded candidate sample in memory. It writes no ring-buffer frame
+  until a reviewable Visit is being created, and it never records video.
+- Track/region facts are persisted as MotionEvidence provenance. A coherent
+  unverified track is still a needs-review candidate; it does not create a
+  ReviewLabel, Journal entry, species suggestion, or dataset truth.
+
+MegaDetector is an optional local primary object-trigger path when its explicit
+desktop runtime and pinned local model are available. A single bounded worker
+receives only masked ordinary-Zone crops from the monitoring cache at a
+Zone-specific cadence. Its animal/person/vehicle boxes are normalized back to
+the monitoring frame and tracked separately from MOG2. A qualifying `animal`
+track in a feeder, perch, or birdbath Zone may open activity even when MOG2 has
+no foreground region. MOG2 remains a distinct temporal-context, diagnostic,
+and motion-fallback path; neither detector is a hard gate for the other.
+
+The object runtime never opens a camera, accesses a network service, analyzes a
+full high-resolution evidence still, creates a ReviewLabel, or writes Journal,
+dataset, or export truth. It accepts one active inference and one replaceable
+waiting crop, rejects stale/late results, and fails without interrupting frame
+acquisition or monitoring.
+
+## High-resolution evidence handoff
+
+For a Camera Node whose advertised monitoring and evidence profiles prove a
+compatible field of view, the first coherent track may request one bounded
+high-resolution still immediately. A normalized track box is transformed for
+orientation/mirroring differences, expanded by bounded padding, and used to
+derive one activity crop. The full still, derived crop, and the existing small
+temporal monitoring sequence are persisted only when the activity is promoted
+to a reviewable Visit. The crop is preferred review/identification evidence;
+the full still remains available for context and recropping.
+
+If capture fails, arrives too late, or profile geometry cannot prove the map,
+the live activity still follows its normal low-resolution needs-review path.
+The full still is retained without a tight crop when alignment is unavailable.
+Neither path runs a model, creates a ReviewLabel, or creates Journal/dataset
+truth automatically.
+
 ## Phase 8A Status
 
 Phase 8A implements the pure deterministic scoring foundation for caller-provided grayscale frame planes.

@@ -47,6 +47,7 @@ from mockingbird.detectors.megadetector_adapter import (
     SUPPORTED_MEGADETECTOR_IMAGE_CONTENT_TYPES,
     MegaDetectorConfigurationError,
     MegaDetectorBox,
+    MegaDetectorModelChecksumError,
     MegaDetectorModelFormatError,
     MegaDetectorModelFileError,
     MegaDetectorOutputError,
@@ -8740,6 +8741,12 @@ class ProductRepository:
                                         frame_sequence=link_payload.get("frame_sequence"),
                                         sort_order=int(link_payload.get("sort_order", 0)),
                                         is_primary=restored_primary,
+                                        evidence_role=(
+                                            _optional_string(
+                                                link_payload.get("evidence_role")
+                                            )
+                                            or "monitoring_frame"
+                                        ),
                                         created_at=_parse_datetime(link_payload["created_at"]),
                                     )
                                 )
@@ -9065,10 +9072,21 @@ class ProductRepository:
         assets = session.scalars(
             select(MediaAssetModel).order_by(MediaAssetModel.created_at, MediaAssetModel.id)
         ).all()
+        parent_ids_with_derivatives = {
+            asset.parent_media_asset_id
+            for asset in assets
+            if asset.parent_media_asset_id
+        }
         for asset in assets:
             path, relative, size, unsafe_reason = self._storage_managed_media_path(asset)
             if path is None or relative is None or size is None:
                 protected_counts[unsafe_reason or "ambiguous_media"] += 1
+                continue
+            if asset.id in parent_ids_with_derivatives:
+                # A retained derivative must never point at a silently removed
+                # original. Resolve that relationship explicitly before cleanup.
+                protected_counts["derived_media_reference"] += 1
+                protected_bytes["derived_media_reference"] += size
                 continue
             age_days = max(0, (now - _as_utc(asset.created_at)).days)
             links = session.scalars(
@@ -9225,6 +9243,7 @@ class ProductRepository:
             "frame_sequence": link.frame_sequence,
             "sort_order": link.sort_order,
             "is_primary": link.is_primary,
+            "evidence_role": link.evidence_role,
             "created_at": _as_utc(link.created_at).isoformat(),
         }
 
@@ -10225,6 +10244,20 @@ class ProductRepository:
         content_type: str = "image/jpeg",
         playback_type: str | None = None,
         note: str | None = None,
+        parent_media_asset_id: str | None = None,
+        evidence_role: str | None = None,
+        image_width: int | None = None,
+        image_height: int | None = None,
+        capture_profile_id: str | None = None,
+        normalized_track_box: tuple[float, float, float, float] | None = None,
+        normalized_padded_crop_box: tuple[float, float, float, float] | None = None,
+        geometry_transform_id: str | None = None,
+        trigger_id: str | None = None,
+        trigger_started_at: datetime | None = None,
+        capture_requested_at: datetime | None = None,
+        evidence_captured_at: datetime | None = None,
+        alignment_status: str | None = None,
+        alignment_failure_code: str | None = None,
     ) -> MediaAsset:
         if not content:
             raise ValueError("empty_file")
@@ -10245,6 +10278,10 @@ class ProductRepository:
                     raise ValueError("missing_stream")
                 if stream_model.source_id != source_id:
                     raise ValueError("stream_source_mismatch")
+                if parent_media_asset_id:
+                    parent = session.get(MediaAssetModel, parent_media_asset_id)
+                    if parent is None or parent.stream_id != stream_id:
+                        raise ValueError("media_stream_mismatch")
 
                 media_id = self._next_id(session, MediaAssetModel, "media-asset")
                 original_filename = f"live-motion-best-frame-{media_id}{extension}"
@@ -10272,6 +10309,24 @@ class ProductRepository:
                     file_size_bytes=len(content),
                     created_at=captured_at,
                     notes=notes,
+                    parent_media_asset_id=parent_media_asset_id,
+                    evidence_role=evidence_role,
+                    image_width=image_width,
+                    image_height=image_height,
+                    capture_profile_id=capture_profile_id,
+                    normalized_track_box_json=_normalized_box_to_json(
+                        normalized_track_box
+                    ),
+                    normalized_padded_crop_box_json=_normalized_box_to_json(
+                        normalized_padded_crop_box
+                    ),
+                    geometry_transform_id=geometry_transform_id,
+                    trigger_id=trigger_id,
+                    trigger_started_at=trigger_started_at,
+                    capture_requested_at=capture_requested_at,
+                    captured_at=evidence_captured_at or captured_at,
+                    alignment_status=alignment_status,
+                    alignment_failure_code=alignment_failure_code,
                 )
                 session.add(asset_model)
                 session.flush()
@@ -11055,6 +11110,88 @@ class ProductRepository:
                 return []
             return self._visit_evidence_frames_from_visit(session, visit, event)
 
+    def attach_visit_evidence_media_assets(
+        self,
+        visit_id: str,
+        frames: Iterable[dict[str, Any]],
+    ) -> list[VisitEvidenceFrame]:
+        """Attach one bounded, already-persisted evidence set to a new Visit.
+
+        This is deliberately narrower than reviewer curation: it establishes the
+        initial evidence relationship during pending-motion promotion and cannot
+        create labels, corrections, or any review truth.
+        """
+
+        requested = list(frames)
+        if not requested or len(requested) > MAX_LIVE_VISIT_EVIDENCE_FRAMES:
+            raise ValueError("invalid_visit_evidence_selection")
+        with self.session_factory() as session:
+            with session.begin():
+                visit, event = self._require_active_visit(session, visit_id)
+                existing = self._visit_evidence_link_models(session, visit.id)
+                if existing:
+                    return self._visit_evidence_frames_from_links(
+                        session,
+                        visit=visit,
+                        event=event,
+                        links=existing,
+                    )
+
+                parsed: list[tuple[MediaAssetModel, datetime, int | None, str, bool]] = []
+                seen_media_ids: set[str] = set()
+                primary_count = 0
+                for raw in requested:
+                    media_asset_id = _optional_string(raw.get("media_asset_id"))
+                    captured_at = _optional_datetime(raw.get("captured_at"))
+                    role = _optional_string(raw.get("evidence_role")) or "monitoring_frame"
+                    is_primary = bool(raw.get("is_primary"))
+                    if (
+                        media_asset_id is None
+                        or captured_at is None
+                        or media_asset_id in seen_media_ids
+                        or not re.fullmatch(r"[a-z_]{1,64}", role)
+                    ):
+                        raise ValueError("invalid_visit_evidence_selection")
+                    asset = session.get(MediaAssetModel, media_asset_id)
+                    if asset is None or asset.stream_id != event.stream_id:
+                        raise ValueError("media_stream_mismatch")
+                    seen_media_ids.add(media_asset_id)
+                    primary_count += int(is_primary)
+                    parsed.append(
+                        (
+                            asset,
+                            captured_at,
+                            _optional_int(raw.get("frame_sequence")),
+                            role,
+                            is_primary,
+                        )
+                    )
+                if primary_count != 1:
+                    raise ValueError("invalid_visit_evidence_selection")
+
+                created_at = datetime.now(UTC)
+                primary_asset: MediaAssetModel | None = None
+                for sort_order, (asset, captured_at, frame_sequence, role, is_primary) in enumerate(parsed):
+                    session.add(
+                        VisitEvidenceLinkModel(
+                            id=f"visit-evidence-{uuid.uuid4().hex}",
+                            visit_id=visit.id,
+                            media_asset_id=asset.id,
+                            captured_at=captured_at,
+                            frame_sequence=frame_sequence,
+                            sort_order=sort_order,
+                            is_primary=is_primary,
+                            evidence_role=role,
+                            created_at=created_at,
+                        )
+                    )
+                    if is_primary:
+                        primary_asset = asset
+                if primary_asset is not None:
+                    visit.representative_media_path = primary_asset.local_path
+                session.flush()
+                return self._visit_evidence_frames_from_visit(session, visit, event)
+
     def _visit_evidence_link_models(
         self,
         session: Session,
@@ -11111,7 +11248,7 @@ class ProductRepository:
         return [
             VisitEvidenceFrame(
                 media_asset_id=link.media_asset_id,
-                preview_url=f"/api/media/{link.media_asset_id}/file",
+                preview_url=f"/api/media/{link.media_asset_id}/preview",
                 captured_at=_as_utc(link.captured_at),
                 relative_position=(
                     0.0
@@ -11128,6 +11265,9 @@ class ProductRepository:
                 frame_sequence=link.frame_sequence,
                 is_primary=link.media_asset_id == primary_id,
                 content_type=asset.content_type,
+                width=asset.image_width,
+                height=asset.image_height,
+                evidence_role=link.evidence_role or asset.evidence_role or "monitoring_frame",
             )
             for link, asset in parsed
         ]
@@ -11174,12 +11314,15 @@ class ProductRepository:
         return [
             VisitEvidenceFrame(
                 media_asset_id=asset.id,
-                preview_url=f"/api/media/{asset.id}/file",
+                preview_url=f"/api/media/{asset.id}/preview",
                 captured_at=asset.created_at,
                 relative_position=0.0,
                 frame_sequence=None,
                 is_primary=True,
                 content_type=asset.content_type,
+                width=asset.image_width,
+                height=asset.image_height,
+                evidence_role=asset.evidence_role or "monitoring_frame",
             )
         ]
 
@@ -11205,6 +11348,7 @@ class ProductRepository:
                     frame_sequence=frame.frame_sequence,
                     sort_order=index,
                     is_primary=frame.is_primary,
+                    evidence_role=frame.evidence_role,
                     created_at=created_at,
                 )
             )
@@ -11546,6 +11690,7 @@ class ProductRepository:
                                 frame_sequence=frame.frame_sequence,
                                 sort_order=order,
                                 is_primary=frame.is_primary,
+                                evidence_role=frame.evidence_role,
                                 created_at=created_at,
                             )
                         )
@@ -12029,6 +12174,7 @@ class ProductRepository:
                             frame_sequence=frame.frame_sequence,
                             sort_order=order,
                             is_primary=frame.is_primary,
+                            evidence_role=frame.evidence_role,
                             created_at=created_at,
                         )
                     )
@@ -12151,7 +12297,9 @@ class ProductRepository:
         if not activity_session_id or not isinstance(raw_frames, list):
             return []
 
-        parsed: list[tuple[datetime, int | None, str, bool, str, int | None, int | None]] = []
+        parsed: list[
+            tuple[datetime, int | None, str, bool, str, int | None, int | None, str]
+        ] = []
         seen_media_ids: set[str] = set()
         for raw_frame in raw_frames[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]:
             if not isinstance(raw_frame, dict):
@@ -12177,6 +12325,9 @@ class ProductRepository:
                     asset.content_type,
                     _optional_int(raw_frame.get("width")),
                     _optional_int(raw_frame.get("height")),
+                    _optional_string(raw_frame.get("evidence_role"))
+                    or asset.evidence_role
+                    or "monitoring_frame",
                 )
             )
 
@@ -12198,7 +12349,7 @@ class ProductRepository:
         return [
             VisitEvidenceFrame(
                 media_asset_id=media_asset_id,
-                preview_url=f"/api/media/{media_asset_id}/file",
+                preview_url=f"/api/media/{media_asset_id}/preview",
                 captured_at=captured_at,
                 relative_position=(
                     0.0
@@ -12217,6 +12368,7 @@ class ProductRepository:
                 content_type=content_type,
                 width=width if width and width > 0 else None,
                 height=height if height and height > 0 else None,
+                evidence_role=evidence_role,
             )
             for (
                 captured_at,
@@ -12226,6 +12378,7 @@ class ProductRepository:
                 content_type,
                 width,
                 height,
+                evidence_role,
             ) in parsed
         ]
 
@@ -13142,6 +13295,8 @@ class ProductRepository:
                     )
                 except MegaDetectorModelFormatError as error:
                     raise ValueError("megadetector_model_format_unsupported") from error
+                except MegaDetectorModelChecksumError as error:
+                    raise ValueError("megadetector_model_checksum_mismatch") from error
                 except MegaDetectorModelFileError as error:
                     raise ValueError("megadetector_model_file_missing") from error
                 except MegaDetectorConfigurationError as error:
@@ -13938,7 +14093,10 @@ class ProductRepository:
 
         with self.session_factory() as session:
             item = self._review_identification_item_for_visit(session, visit_id)
-            frames = item.evidence_frames[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]
+            frames = self._review_identification_assistant_frames(
+                item.evidence_frames,
+                VisitIdentificationEvidenceMode.all_retained_evidence,
+            )
             summary = self._review_identification_summary_for_item(session, item)
             latest_run = session.scalars(
                 select(ReviewIdentificationAssistantRunModel)
@@ -14165,7 +14323,27 @@ class ProductRepository:
     ) -> list[VisitEvidenceFrame]:
         """Keep manual runs inside the existing four-frame retained-evidence cap."""
 
-        bounded = frames[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]
+        role_priority = {
+            "activity_crop": 0,
+            "high_resolution_original": 1,
+        }
+        retained = frames[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]
+        # Preserve the established temporal ordering for legacy monitoring-only
+        # Visits.  Once high-resolution evidence exists, make the crop/full
+        # pair the preferred bounded model input before monitoring context.
+        bounded = (
+            sorted(
+                retained,
+                key=lambda frame: (
+                    role_priority.get(frame.evidence_role, 2),
+                    0 if frame.is_primary else 1,
+                    frame.captured_at,
+                    frame.media_asset_id,
+                ),
+            )
+            if any(frame.evidence_role in role_priority for frame in retained)
+            else retained
+        )
         if evidence_mode == VisitIdentificationEvidenceMode.primary_only:
             primary = next((frame for frame in bounded if frame.is_primary), None)
             return [primary] if primary is not None else bounded[:1]
@@ -22404,6 +22582,34 @@ def _media_asset_from_model(asset: MediaAssetModel) -> MediaAsset:
         file_size_bytes=asset.file_size_bytes,
         created_at=_as_utc(asset.created_at),
         notes=asset.notes,
+        parent_media_asset_id=asset.parent_media_asset_id,
+        evidence_role=asset.evidence_role,
+        image_width=asset.image_width,
+        image_height=asset.image_height,
+        capture_profile_id=asset.capture_profile_id,
+        normalized_track_box=_normalized_box_from_json(
+            asset.normalized_track_box_json
+        ),
+        normalized_padded_crop_box=_normalized_box_from_json(
+            asset.normalized_padded_crop_box_json
+        ),
+        geometry_transform_id=asset.geometry_transform_id,
+        trigger_id=asset.trigger_id,
+        trigger_started_at=(
+            _as_utc(asset.trigger_started_at)
+            if asset.trigger_started_at is not None
+            else None
+        ),
+        capture_requested_at=(
+            _as_utc(asset.capture_requested_at)
+            if asset.capture_requested_at is not None
+            else None
+        ),
+        captured_at=(
+            _as_utc(asset.captured_at) if asset.captured_at is not None else None
+        ),
+        alignment_status=asset.alignment_status,
+        alignment_failure_code=asset.alignment_failure_code,
     )
 
 
@@ -23758,6 +23964,38 @@ def _bbox_to_json(bbox: BoundingBox | None) -> str | None:
     if bbox is None:
         return None
     return json.dumps(bbox.model_dump())
+
+
+def _normalized_box_to_json(
+    box: tuple[float, float, float, float] | None,
+) -> str | None:
+    if box is None or len(box) != 4:
+        return None
+    try:
+        values = [float(value) for value in box]
+    except (TypeError, ValueError):
+        return None
+    if any(value < 0.0 or value > 1.0 for value in values):
+        return None
+    left, top, right, bottom = values
+    if right <= left or bottom <= top:
+        return None
+    return json.dumps(values)
+
+
+def _normalized_box_from_json(value: str | None) -> list[float] | None:
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, list) or len(parsed) != 4:
+        return None
+    try:
+        return [float(item) for item in parsed]
+    except (TypeError, ValueError):
+        return None
 
 
 def _detector_bbox_to_json(bbox) -> str | None:

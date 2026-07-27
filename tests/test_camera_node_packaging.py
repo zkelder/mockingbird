@@ -29,6 +29,7 @@ def test_camera_node_artifact_is_slim_and_launcher_checks_without_starting(tmp_p
         "uvicorn[standard]>=0.30,<1.0",
     ]
     assert "MOCKINGBIRD_NODE_PROVIDERS=picamera2,v4l2" in artifact.configuration_example.read_text(encoding="utf-8")
+    assert "MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_WIDTH=10000" in artifact.configuration_example.read_text(encoding="utf-8")
     assert "synthetic" not in artifact.requirements.read_text(encoding="utf-8")
 
     environment_root = tmp_path / "node-environment"

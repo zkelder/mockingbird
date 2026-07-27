@@ -33,6 +33,20 @@ Current implementation rules:
 - cap retained proposals at 20
 - create `DetectionProposal` evidence only
 
+Approved local-artifact provenance for the current MDv5 path:
+
+- version: `MDv5a.0.1`
+- official source record: `agentmorris/MegaDetector` user guide
+- official artifact URL:
+  `https://github.com/agentmorris/MegaDetector/releases/download/v5.0/md_v5a.0.1.pt`
+- recorded repository license: MIT
+- SHA-256: `FE3E90E4B1955821AB7C1F88B446DC0C8CB25E109FDD1872916A55305294A5EF`
+
+The adapter accepts an explicit existing `.pt` path only. Before an actual run,
+it streams the local file through SHA-256 and fails closed on a mismatch; it
+does not infer, create proposals, or attempt a replacement download. The
+artifact itself remains an explicit user-approved, ignored local file.
+
 Official references reviewed:
 
 - [MegaDetector repository](https://github.com/agentmorris/MegaDetector)

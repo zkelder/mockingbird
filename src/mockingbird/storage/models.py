@@ -428,6 +428,11 @@ class VisitEvidenceLinkModel(Base):
     frame_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    evidence_role: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+        default="monitoring_frame",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -485,6 +490,24 @@ class MediaAssetModel(Base):
         DateTime(timezone=True), nullable=False
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # v24 provenance is evidence-only: no field here can imply reviewed truth.
+    parent_media_asset_id: Mapped[str | None] = mapped_column(
+        ForeignKey("media_assets.id"),
+        nullable=True,
+    )
+    evidence_role: Mapped[str | None] = mapped_column(String, nullable=True)
+    image_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    image_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    capture_profile_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    normalized_track_box_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    normalized_padded_crop_box_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    geometry_transform_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    trigger_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    trigger_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    capture_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    alignment_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    alignment_failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class StorageRetentionSettingsModel(Base):

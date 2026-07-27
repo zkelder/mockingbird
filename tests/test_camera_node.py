@@ -1746,12 +1746,12 @@ async def test_node_repair_uses_in_place_preview_and_explicit_revocation(tmp_pat
         api_main._camera_node_client = None
 
 
-def test_schema_v23_adds_no_camera_node_configuration_to_existing_sources(tmp_path) -> None:
+def test_schema_v24_adds_no_camera_node_configuration_to_existing_sources(tmp_path) -> None:
     database_path = tmp_path / "migration.sqlite3"
     engine = create_database_engine(f"sqlite:///{database_path}")
     try:
         status = initialize_database(engine)
-        assert status.version == CURRENT_DATABASE_SCHEMA_VERSION == 23
+        assert status.version == CURRENT_DATABASE_SCHEMA_VERSION == 24
         with engine.connect() as connection:
             count = connection.exec_driver_sql("SELECT COUNT(*) FROM source_provider_configurations WHERE provider_key = 'camera_node'").scalar_one()
         assert count == 0

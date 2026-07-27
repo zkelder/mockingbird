@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from hashlib import sha1
 import re
@@ -219,6 +219,10 @@ class LiveActivitySessionSnapshot:
     session_duration_seconds: float
     manual_review_needed: bool
     notification_event: str | None
+    detector_evidence: dict[str, Any]
+    track_generation_id: str | None
+    high_resolution_capture_claim: dict[str, Any] | None
+    high_resolution_evidence: dict[str, Any] | None
     creates_truth: bool = False
 
     def as_dict(self) -> dict[str, Any]:
@@ -282,6 +286,14 @@ class LiveActivitySessionSnapshot:
             "session_duration_seconds": self.session_duration_seconds,
             "manual_review_needed": self.manual_review_needed,
             "notification_event": self.notification_event,
+            "detector_evidence": dict(self.detector_evidence),
+            "track_generation_id": self.track_generation_id,
+            "high_resolution_capture_claim": _high_resolution_capture_claim_snapshot(
+                self.high_resolution_capture_claim
+            ),
+            "high_resolution_evidence": _high_resolution_evidence_snapshot(
+                self.high_resolution_evidence
+            ),
             "creates_truth": self.creates_truth,
         }
 
@@ -379,6 +391,21 @@ class LiveCameraSessionManager:
         with self._lock:
             session = self._sessions.get(stream_id)
         return session.snapshot() if session is not None else None
+
+    def monitoring_recovery_pending(self, stream_id: str) -> bool:
+        """Report only whether a successful Node capture awaits one normal frame."""
+
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        return session.monitoring_recovery_pending() if session is not None else False
+
+    def mark_monitoring_recovery_pending(self, stream_id: str) -> None:
+        """Keep recovery status transient; the normal frame reader clears it."""
+
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is not None:
+            session.mark_monitoring_recovery_pending()
 
     def get_latest_frame_for_capture(
         self,
@@ -494,6 +521,38 @@ class LiveCameraSessionManager:
             quiet_window_seconds=quiet_window_seconds,
         )
 
+    def record_activity_track_support(
+        self,
+        stream_id: str,
+        track_generation_id: str,
+        *,
+        observed_at: datetime,
+        detector_evidence: Mapping[str, Any],
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.record_activity_track_support(
+            track_generation_id,
+            observed_at=observed_at,
+            detector_evidence=detector_evidence,
+        )
+
+    def record_activity_pretrigger_frames(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+        frames: list[Mapping[str, Any]],
+    ) -> LiveActivitySessionSnapshot | None:
+        """Attach a tiny in-memory pre-trigger sample to an open activity."""
+
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.record_activity_pretrigger_frames(activity_session_id, frames)
+
     def get_activity_session(
         self,
         stream_id: str,
@@ -559,6 +618,77 @@ class LiveCameraSessionManager:
             activity_session_id,
             frame_key,
             media_asset_id,
+        )
+
+    def record_activity_high_resolution_evidence(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+        values: Mapping[str, Any],
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.record_activity_high_resolution_evidence(
+            activity_session_id,
+            values,
+        )
+
+    def get_activity_high_resolution_evidence(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.get_activity_high_resolution_evidence(activity_session_id)
+
+    def claim_activity_high_resolution_capture(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+        values: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.claim_activity_high_resolution_capture(activity_session_id, values)
+
+    def complete_activity_high_resolution_capture(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+        capture_claim_id: str,
+        values: Mapping[str, Any],
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.complete_activity_high_resolution_capture(
+            activity_session_id, capture_claim_id, values
+        )
+
+    def mark_activity_high_resolution_media_assets(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+        *,
+        full_media_asset_id: str,
+        crop_media_asset_id: str | None,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.mark_activity_high_resolution_media_assets(
+            activity_session_id,
+            full_media_asset_id=full_media_asset_id,
+            crop_media_asset_id=crop_media_asset_id,
         )
 
     def mark_activity_review_created(
@@ -698,6 +828,7 @@ class _LiveCameraSession:
         self.started_at = datetime.now(UTC)
         self.last_frame_at: datetime | None = None
         self.frame_count = 0
+        self._monitoring_recovery_pending = False
         self.clients_connected = 0
         self.monitor_running = False
         self.auto_create_review_candidates = False
@@ -721,6 +852,7 @@ class _LiveCameraSession:
         self.last_motion_result: dict[str, Any] | None = None
         self.current_activity_session_id: str | None = None
         self.activity_sessions: dict[str, _LiveActivitySession] = {}
+        self.track_capture_claims: dict[str, dict[str, Any]] = {}
         self.last_error: str | None = None
         self.stop_reason: str | None = None
         self.camera_settings = _camera_settings_from_config(config)
@@ -919,6 +1051,14 @@ class _LiveCameraSession:
             activity.update(values)
             self.last_activity = activity
 
+    def mark_monitoring_recovery_pending(self) -> None:
+        with self._lock:
+            self._monitoring_recovery_pending = True
+
+    def monitoring_recovery_pending(self) -> bool:
+        with self._lock:
+            return self._monitoring_recovery_pending
+
     def record_activity_detection(
         self,
         values: Mapping[str, Any],
@@ -985,8 +1125,17 @@ class _LiveCameraSession:
                     frame_content_type=frame_content_type,
                 )
             snapshot = existing.snapshot()
-            self.current_activity_session_id = snapshot.activity_session_id
-            self.last_activity = snapshot.as_dict()
+            current_activity = self._activity_session(self.current_activity_session_id)
+            preserve_confirmed_current_activity = (
+                snapshot.detection_count == 0
+                and current_activity is not None
+                and current_activity.detection_count > 0
+                and not current_activity.review_activity_created
+                and not current_activity.ready_for_review
+            )
+            if not preserve_confirmed_current_activity:
+                self.current_activity_session_id = snapshot.activity_session_id
+                self.last_activity = snapshot.as_dict()
             if starts_new_session:
                 self._record_diagnostic_event_locked(
                     "activity_started"
@@ -1015,6 +1164,51 @@ class _LiveCameraSession:
                 snapshot.image_quality_warnings,
                 activity=snapshot,
             )
+            return snapshot
+
+    def record_activity_track_support(
+        self,
+        track_generation_id: str,
+        *,
+        observed_at: datetime,
+        detector_evidence: Mapping[str, Any],
+    ) -> LiveActivitySessionSnapshot | None:
+        """Keep a still-current detector track from being quiet-closed by MOG2."""
+
+        with self._lock:
+            activity = next(
+                (
+                    item
+                    for item in self.activity_sessions.values()
+                    if item.track_generation_id == track_generation_id
+                    and not item.review_activity_created
+                    and not item.ready_for_review
+                ),
+                None,
+            )
+            if activity is None:
+                return None
+            activity.record_track_support(
+                observed_at=observed_at,
+                detector_evidence=detector_evidence,
+            )
+            snapshot = activity.snapshot()
+            self.current_activity_session_id = snapshot.activity_session_id
+            self.last_activity = snapshot.as_dict()
+            return snapshot
+
+    def record_activity_pretrigger_frames(
+        self,
+        activity_session_id: str,
+        frames: list[Mapping[str, Any]],
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            if activity is None or activity.review_activity_created:
+                return None
+            activity.record_pretrigger_frames(frames)
+            snapshot = activity.snapshot()
+            self.last_activity = snapshot.as_dict()
             return snapshot
 
     def get_activity_session(
@@ -1094,6 +1288,140 @@ class _LiveCameraSession:
                 len(activity.evidence_media_asset_ids)
                 + (1 if activity.best_media_asset_id is not None else 0),
             )
+            snapshot = activity.snapshot()
+            self.last_activity = snapshot.as_dict()
+            return snapshot
+
+    def record_activity_high_resolution_evidence(
+        self,
+        activity_session_id: str,
+        values: Mapping[str, Any],
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            if activity is None or activity.review_activity_created:
+                return None
+            if activity.high_resolution_evidence is None:
+                activity.record_high_resolution_evidence(values)
+            snapshot = activity.snapshot()
+            self.last_activity = snapshot.as_dict()
+            return snapshot
+
+    def get_activity_high_resolution_evidence(
+        self,
+        activity_session_id: str,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            if activity is None or activity.high_resolution_evidence is None:
+                return None
+            return dict(activity.high_resolution_evidence)
+
+    def claim_activity_high_resolution_capture(
+        self,
+        activity_session_id: str,
+        values: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Reserve one capture for one immutable object-track generation."""
+
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            track_generation_id = _optional_str(values.get("track_generation_id"))
+            if (
+                activity is None
+                or activity.review_activity_created
+                or not track_generation_id
+                or activity.track_generation_id != track_generation_id
+                or track_generation_id in self.track_capture_claims
+            ):
+                return None
+            claimed_at = _coerce_datetime(values.get("claim_timestamp")) or datetime.now(UTC)
+            claim_id = sha1(
+                (
+                    f"{self.stream_id}|{activity_session_id}|{track_generation_id}|"
+                    f"{values.get('qualifying_frame_identity')}|{claimed_at.isoformat()}"
+                ).encode("utf-8")
+            ).hexdigest()[:20]
+            claim = {
+                **dict(values),
+                "capture_claim_id": claim_id,
+                "stream_id": self.stream_id,
+                "activity_session_id": activity_session_id,
+                "track_generation_id": track_generation_id,
+                "claim_timestamp": claimed_at,
+                "request_timestamp": claimed_at,
+                "completion_timestamp": None,
+                "status": "requested",
+            }
+            self.track_capture_claims[track_generation_id] = claim
+            activity.high_resolution_capture_claim = dict(claim)
+            self.last_activity = activity.snapshot().as_dict()
+            return dict(claim)
+
+    def complete_activity_high_resolution_capture(
+        self,
+        activity_session_id: str,
+        capture_claim_id: str,
+        values: Mapping[str, Any],
+    ) -> LiveActivitySessionSnapshot | None:
+        """Reject a late capture unless it still belongs to its original claim."""
+
+        with self._lock:
+            track_generation_id = _optional_str(values.get("track_generation_id"))
+            claim = self.track_capture_claims.get(track_generation_id or "")
+            if claim is None or claim.get("capture_claim_id") != capture_claim_id:
+                return None
+            if claim.get("status") != "requested":
+                activity = self._activity_session(str(claim.get("activity_session_id") or ""))
+                return activity.snapshot() if activity is not None else None
+            completed_at = _coerce_datetime(values.get("completion_timestamp")) or datetime.now(UTC)
+            activity = self._activity_session(str(claim.get("activity_session_id") or ""))
+            compatible = (
+                activity is not None
+                and activity.activity_session_id == activity_session_id
+                and activity.track_generation_id == track_generation_id
+            )
+            completed = {
+                **claim,
+                **dict(values),
+                "completion_timestamp": completed_at,
+                "status": "succeeded"
+                if compatible and isinstance(values.get("full_image"), bytes)
+                else "stale"
+                if not compatible
+                else "failed",
+            }
+            self.track_capture_claims[str(track_generation_id)] = completed
+            if activity is None:
+                return None
+            activity.high_resolution_capture_claim = dict(completed)
+            # Only a successful completion is usable evidence. Failed/stale
+            # claims remain diagnostic lineage and cannot satisfy another track.
+            if completed["status"] == "succeeded":
+                activity.record_high_resolution_evidence(completed)
+            else:
+                activity.high_resolution_evidence = dict(completed)
+            snapshot = activity.snapshot()
+            self.last_activity = snapshot.as_dict()
+            return snapshot
+
+    def mark_activity_high_resolution_media_assets(
+        self,
+        activity_session_id: str,
+        *,
+        full_media_asset_id: str,
+        crop_media_asset_id: str | None,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            if activity is None or activity.high_resolution_evidence is None:
+                return None
+            evidence = dict(activity.high_resolution_evidence)
+            evidence.pop("full_image", None)
+            evidence.pop("crop_image", None)
+            evidence["full_media_asset_id"] = full_media_asset_id
+            evidence["crop_media_asset_id"] = crop_media_asset_id
+            activity.high_resolution_evidence = evidence
             snapshot = activity.snapshot()
             self.last_activity = snapshot.as_dict()
             return snapshot
@@ -1507,6 +1835,7 @@ class _LiveCameraSession:
                         self.frame_count += 1
                         self.last_frame_at = stored.captured_at
                         self.status = "running"
+                        self._monitoring_recovery_pending = False
 
             if self._stop_event.is_set():
                 _stop_process(self.process)
@@ -1606,6 +1935,10 @@ class _LiveActivitySession:
     evidence_media_asset_ids: dict[str, str]
     saved_candidate_count: int = 0
     notification_event: str | None = None
+    detector_evidence: dict[str, Any] = field(default_factory=dict)
+    track_generation_id: str | None = None
+    high_resolution_capture_claim: dict[str, Any] | None = None
+    high_resolution_evidence: dict[str, Any] | None = None
     _emitted_notification_events: set[str] | None = None
     review_activity_created: bool = False
     motion_evidence_id: str | None = None
@@ -1682,6 +2015,10 @@ class _LiveActivitySession:
             candidate_frames=deque(maxlen=DEFAULT_ACTIVITY_MAX_CANDIDATE_FRAMES),
             first_candidate_frame=None,
             evidence_media_asset_ids={},
+            detector_evidence={},
+            track_generation_id=_optional_str(values.get("track_generation_id")),
+            high_resolution_capture_claim=None,
+            high_resolution_evidence=None,
             _emitted_notification_events=set(),
         )
         session.record_detection(
@@ -1733,6 +2070,8 @@ class _LiveActivitySession:
         self.image_quality_warnings = list(values.get("image_quality_warnings") or [])
         self.near_miss = near_miss
         self.margin_to_threshold = _optional_float(values.get("margin_to_threshold"))
+        if isinstance(values.get("detector_evidence"), Mapping):
+            self.detector_evidence = dict(values["detector_evidence"])
         candidate_score = _optional_float(values.get("best_score"))
         candidate_frame = _LiveActivityCandidateFrame(
             sequence=_optional_int(values.get("best_frame_sequence")),
@@ -1784,6 +2123,89 @@ class _LiveActivitySession:
         # Burst candidates are in-memory evidence only and capped per activity session.
         self.candidate_frames.append(candidate)
 
+    def record_pretrigger_frames(self, frames: list[Mapping[str, Any]]) -> None:
+        """Keep at most the supplied pre-entry frames in the existing capped burst.
+
+        These bytes come from the Stream's short-lived frame cache.  They are
+        not written to storage here; normal bounded evidence selection decides
+        whether any become Visit media after the activity is finalized.
+        """
+
+        existing_keys = {
+            self._candidate_frame_key(candidate)
+            for candidate in (self.first_candidate_frame, *self.candidate_frames)
+            if candidate is not None
+        }
+        for values in sorted(
+            frames[:2],
+            key=lambda value: (
+                _coerce_datetime(value.get("captured_at")) or self.started_at,
+                _optional_int(value.get("sequence")) or -1,
+            ),
+        ):
+            frame_bytes = values.get("frame_bytes")
+            if not isinstance(frame_bytes, bytes) or not frame_bytes:
+                continue
+            candidate = _LiveActivityCandidateFrame(
+                sequence=_optional_int(values.get("sequence")),
+                captured_at=(
+                    _coerce_datetime(values.get("captured_at")) or self.started_at
+                ),
+                score=None,
+                changed_ratio=None,
+                changed_pixels=None,
+                total_scored_pixels=None,
+                near_miss=False,
+                activity_detected=False,
+                frame_bytes=frame_bytes,
+                content_type=_optional_str(values.get("content_type")),
+                width=_optional_int(values.get("width")),
+                height=_optional_int(values.get("height")),
+            )
+            key = self._candidate_frame_key(candidate)
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            self._append_candidate_frame(candidate)
+
+    def record_high_resolution_evidence(self, values: Mapping[str, Any]) -> None:
+        """Retain one bounded capture in memory until the existing review handoff."""
+
+        full_image = values.get("full_image")
+        crop_image = values.get("crop_image")
+        if not isinstance(full_image, bytes) or not full_image:
+            # A qualified track gets at most one bounded capture attempt (plus
+            # the caller's one transient retry). Remembering a safe failure
+            # prevents a monitor tick from becoming a capture loop while the
+            # existing low-resolution activity can still reach review.
+            failure_code = values.get("capture_failure_code")
+            if (
+                not isinstance(failure_code, str)
+                or not _DIAGNOSTIC_TOKEN_PATTERN.fullmatch(failure_code)
+            ):
+                return
+            self.high_resolution_evidence = dict(values)
+            return
+        if len(full_image) > 16_000_000 or (
+            crop_image is not None
+            and (not isinstance(crop_image, bytes) or len(crop_image) > 16_000_000)
+        ):
+            return
+        self.high_resolution_evidence = dict(values)
+
+    def record_track_support(
+        self,
+        *,
+        observed_at: datetime,
+        detector_evidence: Mapping[str, Any],
+    ) -> None:
+        """Detector observations, not MOG2 foreground, define this track's quiet edge."""
+
+        if observed_at > self.last_seen_at:
+            self.last_seen_at = observed_at
+        self.frames_evaluated_count += 1
+        self.detector_evidence = dict(detector_evidence)
+
     def _policy_seconds(self, key: str, fallback: int, *, minimum: int) -> int:
         value = (self.monitoring_policy or {}).get(key)
         if isinstance(value, int) and not isinstance(value, bool):
@@ -1804,11 +2226,10 @@ class _LiveActivitySession:
         return self._policy_seconds("minimum_sustained_activity_seconds", 0, minimum=0)
 
     def is_sustained(self) -> bool:
-        if self.detection_count <= 0:
-            return False
-        return (
-            self.last_seen_at - self.started_at
-        ).total_seconds() >= self.minimum_sustained_activity_seconds()
+        # A tracked detector has already qualified a short coherent entry before
+        # opening this session.  Requiring the legacy multi-second pixel-motion
+        # duration here would discard birds that land and become stationary.
+        return self.detection_count > 0
 
     def _finalize_for_review(
         self,
@@ -2070,6 +2491,14 @@ class _LiveActivitySession:
                 and not self.review_activity_created
             ),
             notification_event=self.notification_event,
+            detector_evidence=dict(self.detector_evidence),
+            track_generation_id=self.track_generation_id,
+            high_resolution_capture_claim=_high_resolution_capture_claim_snapshot(
+                self.high_resolution_capture_claim
+            ),
+            high_resolution_evidence=_high_resolution_evidence_snapshot(
+                self.high_resolution_evidence
+            ),
             creates_truth=False,
         )
 
@@ -2079,6 +2508,85 @@ def _activity_session_id(stream_id: str, region_key: str, started_at: datetime) 
         f"{stream_id}|{region_key}|{started_at.isoformat()}".encode("utf-8")
     ).hexdigest()[:16]
     return f"live-activity-{digest}"
+
+
+def _high_resolution_evidence_snapshot(
+    values: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Expose capture provenance without putting JPEG bytes in status responses."""
+
+    if values is None:
+        return None
+    safe_keys = (
+        "monitoring_profile_id",
+        "evidence_profile_id",
+        "capture_profile_id",
+        "full_media_asset_id",
+        "crop_media_asset_id",
+        "full_width",
+        "full_height",
+        "crop_width",
+        "crop_height",
+        "geometry_transform_id",
+        "alignment_status",
+        "alignment_failure_code",
+        "capture_failure_code",
+        "trigger_id",
+        "trigger_started_at",
+        "capture_requested_at",
+        "captured_at",
+        "capture_latency_ms",
+        "track_to_capture_delay_ms",
+        "normalized_track_box",
+        "normalized_padded_crop_box",
+    )
+    snapshot = {key: values[key] for key in safe_keys if key in values}
+    full_image = values.get("full_image")
+    crop_image = values.get("crop_image")
+    snapshot["full_image_present"] = isinstance(full_image, bytes) and bool(full_image)
+    snapshot["full_image_size_bytes"] = (
+        len(full_image) if isinstance(full_image, bytes) else None
+    )
+    snapshot["crop_image_present"] = isinstance(crop_image, bytes) and bool(crop_image)
+    snapshot["crop_image_size_bytes"] = (
+        len(crop_image) if isinstance(crop_image, bytes) else None
+    )
+    return snapshot
+
+
+def _high_resolution_capture_claim_snapshot(
+    values: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return claim provenance without leaking retained JPEG bytes into status."""
+
+    if values is None:
+        return None
+    safe_keys = (
+        "capture_claim_id",
+        "stream_id",
+        "zone_id",
+        "activity_session_id",
+        "track_generation_id",
+        "qualifying_frame_identity",
+        "detector_name",
+        "detector_class",
+        "detector_score",
+        "normalized_track_box",
+        "monitoring_width",
+        "monitoring_height",
+        "zone_geometry",
+        "alignment_group_id",
+        "monitoring_profile_id",
+        "evidence_profile_id",
+        "monitoring_geometry_group_id",
+        "evidence_profile_width",
+        "evidence_profile_height",
+        "claim_timestamp",
+        "request_timestamp",
+        "completion_timestamp",
+        "status",
+    )
+    return {key: values[key] for key in safe_keys if key in values}
 
 
 def _optional_str(value: Any) -> str | None:

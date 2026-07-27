@@ -25,6 +25,16 @@ function relativeLabel(frame: VisitEvidenceFrame): string {
   return `${Math.round(frame.relative_position * 100)}% through visit`;
 }
 
+function evidenceRoleLabel(frame: VisitEvidenceFrame): string {
+  const labels: Record<string, string> = {
+    activity_crop: "High-resolution activity crop",
+    high_resolution_original: "Full-resolution original",
+    pretrigger: "Pre-trigger context",
+    tracked_best_frame: "Tracked monitoring frame",
+  };
+  return labels[frame.evidence_role] ?? "Monitoring context";
+}
+
 /** A local frame-sequence player for already-serialized Visit evidence. */
 export function VisitEvidenceSequence({
   frames,
@@ -88,6 +98,8 @@ export function VisitEvidenceSequence({
 
   const primaryFrameIndex = Math.max(0, frames.findIndex((frame) => frame.is_primary));
   const previewUrl = (frame: VisitEvidenceFrame) => `${apiClient.baseUrl}${frame.preview_url}`;
+  const fullResolutionUrl = (frame: VisitEvidenceFrame) =>
+    `${apiClient.baseUrl}/api/media/${frame.media_asset_id}/full-resolution`;
   return (
     <div className="review-evidence-sequence">
       <div className="review-evidence-sequence-image">
@@ -106,8 +118,14 @@ export function VisitEvidenceSequence({
         <strong>{selectedFrame.is_primary ? "Primary evidence" : "Supporting evidence"}</strong>
         <span>{formatDateTime(selectedFrame.captured_at)}</span>
         <span>{relativeLabel(selectedFrame)}</span>
+        <span>{evidenceRoleLabel(selectedFrame)}</span>
         {selectedFrame.width && selectedFrame.height ? (
           <span>{selectedFrame.width} × {selectedFrame.height}</span>
+        ) : null}
+        {selectedFrame.evidence_role === "high_resolution_original" ? (
+          <a href={fullResolutionUrl(selectedFrame)} rel="noreferrer" target="_blank">
+            Open full-resolution original
+          </a>
         ) : null}
       </div>
       <div className="review-evidence-sequence-controls">
@@ -177,7 +195,7 @@ export function VisitEvidenceSequence({
               type="button"
             >
               <img alt="" src={previewUrl(frame)} />
-              {frame.is_primary ? <span>Primary</span> : null}
+              <span>{frame.is_primary ? "Primary" : evidenceRoleLabel(frame)}</span>
             </button>
           ))}
         </div>

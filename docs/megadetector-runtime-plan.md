@@ -2,18 +2,22 @@
 
 ## Decision
 
-Phase 23 reopens MegaDetector as an optional second-stage verifier for saved
-motion best frames. The executable path uses the official `megadetector` Python
-package and an explicit local MDv5 `.pt` file, isolated behind the
-`detector-megadetector` optional dependency.
+Phase 25 retains the explicit saved-frame adapter and adds one bounded
+desktop-only live-monitor seam: an already-cached, privacy/Ignore-masked
+ordinary-Zone crop may enter the same official `megadetector` adapter through a
+single latest-frame worker. The executable path uses the official
+`megadetector` Python package and an explicit local MDv5 `.pt` file, isolated
+behind the `detector-megadetector` optional dependency.
 
 The fallback path is the existing unavailable-safe MegaDetector wrapper. If the dependency is not installed or the model path is not configured, MockingBird must keep starting normally and report the adapter as unavailable or not configured.
 
 ONNX is not the first implementation path unless MockingBird already has a local compatible MegaDetector ONNX artifact and a proven output mapping. For now, ONNX remains a possible later optimization path, not the primary route.
 
-The adapter now implements bounded, explicit image inference. It still adds no
-model files, automatic downloads, camera work, background execution, or truth
-creation.
+The adapter implements bounded, explicit image inference. The live seam has no
+camera or network access: the camera session owns frame acquisition and hands
+it a masked Zone JPEG. It has one active inference and one replaceable waiting
+job; late results are discarded. It adds no model files, automatic downloads,
+or truth creation.
 
 Review-candidate runs decode the existing saved best frame and, when measured
 motion bounds are available, apply a padded activity focus in memory. Detector
@@ -30,8 +34,8 @@ Phase 7K's PyTorch-Wildlife path remains archived. The Phase 23 checkpoint in
 smaller official package path instead; it does not reopen PyTorch-Wildlife.
 
 The product flow remains [stream-motion-trigger-plan.md](stream-motion-trigger-plan.md):
-stream -> zones -> lightweight motion trigger -> saved best-frame evidence ->
-optional MegaDetector proposal evidence -> user correction truth.
+stream -> Zones -> bounded local object track or motion fallback -> one
+high-resolution still/crop -> reviewable Visit -> user correction truth.
 
 ## Why This Runtime Path
 
@@ -74,6 +78,11 @@ The model path must be explicit local configuration:
 - `MOCKINGBIRD_MEGADETECTOR_CONFIDENCE_THRESHOLD` optional
 
 Model files should live outside Git-tracked source, for example under `data/models/` or another local ignored path. The `data/` directory remains ignored.
+
+The initial approved artifact is `MDv5a.0.1` from
+`https://github.com/agentmorris/MegaDetector/releases/download/v5.0/md_v5a.0.1.pt`.
+Its required SHA-256 and MIT provenance are pinned in the adapter; any other
+bytes fail closed before inference.
 
 ## Initial Media Scope
 

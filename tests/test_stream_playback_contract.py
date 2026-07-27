@@ -8,6 +8,7 @@ import subprocess
 from types import SimpleNamespace
 
 import httpx
+import numpy as np
 import pytest
 
 from mockingbird.api import main as api_main
@@ -44,7 +45,10 @@ from mockingbird.playback.live_camera_session import (
 )
 from mockingbird.playback.live_preview_leases import LivePreviewLeaseManager
 from mockingbird.repository.product_repository import ProductRepository
-from mockingbird.sampler.saved_media_frames import SavedMediaFrame
+from mockingbird.sampler.saved_media_frames import (
+    SavedMediaFrame,
+    SavedMediaFrameDecodeError,
+)
 from mockingbird.storage.models import (
     CameraSourceModel,
     EventModel,
@@ -1023,6 +1027,10 @@ def patch_live_motion_decoder(
         "mockingbird.api.main.load_image_frame_plane_bytes",
         fake_load_image_frame_plane_bytes,
     )
+    monkeypatch.setattr(
+        "mockingbird.api.main._source_luminance_plane",
+        lambda frame_bytes: np.asarray(frames_by_bytes[frame_bytes], dtype=np.uint8),
+    )
 
 
 def patch_camera_processes_to_fail(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1412,6 +1420,136 @@ async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_on
     for key in before:
         if key != "media_assets":
             assert after[key] == before[key]
+
+
+async def test_tracked_detector_creates_one_unverified_review_visit_without_truth(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A compact track qualifies in sub-second replay without the legacy duration gate."""
+
+    def tracked_frame(left: int | None = None) -> list[list[int]]:
+        pixels = [[0] * 640 for _ in range(360)]
+        if left is not None:
+            for row in range(170, 184):
+                for column in range(left, left + 14):
+                    pixels[row][column] = 255
+        return pixels
+
+    frames = [
+        b"\xff\xd8tracked-0\xff\xd9",
+        b"\xff\xd8tracked-1\xff\xd9",
+        b"\xff\xd8tracked-2\xff\xd9",
+        b"\xff\xd8tracked-3\xff\xd9",
+    ]
+    captured_at = datetime.now(UTC)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frames[0]: tracked_frame(),
+            frames[1]: tracked_frame(),
+            frames[2]: tracked_frame(250),
+            frames[3]: tracked_frame(253),
+        },
+    )
+    for index, frame in enumerate(frames):
+        live_frame_cache.store_latest_frame(
+            STREAM_ID,
+            frame,
+            captured_at=captured_at + timedelta(milliseconds=index * 200),
+        )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={"create_review_activity": True, "detector_preset": "high_sensitivity"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["activity_detected"] is True
+    assert result["analysis_frame_width"] == 640
+    assert result["analysis_frame_height"] == 360
+    assert result["motion_regions"]
+    assert result["tracked_objects"]
+    assert result["activity_triggers"]
+    assert result["activity_triggers"][0]["verified"] is False
+    assert result["event_id"]
+    assert result["visit_id"]
+    assert result["motion_evidence_id"]
+    assert result["review_status"] == "needs_review"
+    assert result["suggested_label"] is None
+    assert result["suggestion_id"] is None
+    assert result["creates_truth"] is False
+
+    after = await product_counts(client)
+    assert after["events"] == before["events"] + 1
+    assert after["visits"] == before["visits"] + 1
+    assert after["motion_evidence"] == before["motion_evidence"] + 1
+    assert after["review_labels"] == before["review_labels"]
+    assert after["species_suggestions"] == before["species_suggestions"]
+
+
+async def test_tracked_live_monitor_skips_one_malformed_frame_and_keeps_tracking(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def tracked_frame(left: int | None = None) -> list[list[int]]:
+        pixels = [[0] * 640 for _ in range(360)]
+        if left is not None:
+            for row in range(170, 184):
+                for column in range(left, left + 14):
+                    pixels[row][column] = 255
+        return pixels
+
+    frames = [
+        b"tracked-good-0",
+        b"tracked-good-1",
+        b"tracked-malformed",
+        b"tracked-good-2",
+        b"tracked-good-3",
+    ]
+    frame_planes = {
+        frames[0]: tracked_frame(),
+        frames[1]: tracked_frame(),
+        frames[3]: tracked_frame(250),
+        frames[4]: tracked_frame(253),
+    }
+
+    def decode(
+        frame_bytes: bytes,
+        *,
+        content_type: str,
+        max_dimension: int = 32,
+    ) -> SavedMediaFrame:
+        if frame_bytes == frames[2]:
+            raise SavedMediaFrameDecodeError("synthetic malformed frame")
+        frame = frame_planes[frame_bytes]
+        return SavedMediaFrame(width=len(frame[0]), height=len(frame), frame=frame)
+
+    monkeypatch.setattr("mockingbird.api.main.load_image_frame_plane_bytes", decode)
+    captured_at = datetime.now(UTC)
+    for index, frame in enumerate(frames):
+        live_frame_cache.store_latest_frame(
+            STREAM_ID,
+            frame,
+            captured_at=captured_at + timedelta(milliseconds=index * 200),
+        )
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={"detector_preset": "high_sensitivity"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "activity_detected"
+    assert result["activity_detected"] is True
+    assert result["frames_considered"] == 4
+    assert result["dropped_frame_count"] >= 1
+    assert result["activity_triggers"]
+    assert "malformed live frames were skipped" in " ".join(result["warnings"])
 
 
 async def test_live_motion_evaluation_uses_backend_session_frames_without_browser_request(

@@ -236,6 +236,39 @@ def test_preview_stale_recovery_restore_and_idempotent_settings(
     assert repeated_restore is not None and repeated_restore.idempotent is True
 
 
+def test_parent_still_is_protected_while_a_derived_activity_crop_exists(
+    repository: ProductRepository,
+) -> None:
+    parent_path = _add_media(
+        repository,
+        media_id="retention-high-resolution-original",
+        age_days=365,
+    )
+    crop_path = _add_media(
+        repository,
+        media_id="retention-activity-crop",
+        age_days=365,
+    )
+    with repository.session_factory() as session:
+        with session.begin():
+            parent = session.get(MediaAssetModel, "retention-high-resolution-original")
+            crop = session.get(MediaAssetModel, "retention-activity-crop")
+            assert parent is not None and crop is not None
+            parent.evidence_role = "high_resolution_original"
+            crop.parent_media_asset_id = parent.id
+            crop.evidence_role = "activity_crop"
+
+    preview = repository.preview_storage_cleanup()
+
+    eligible = {item.category: item.media_count for item in preview.categories}
+    protected = {item.category for item in preview.protected_counts}
+    assert preview.eligible_media_count == 1
+    assert eligible == {"orphaned_managed_media": 1}
+    assert "derived_media_reference" in protected
+    assert parent_path.exists()
+    assert crop_path.exists()
+
+
 def test_interrupted_move_remains_recoverable_without_removing_links(
     repository: ProductRepository,
     monkeypatch: pytest.MonkeyPatch,

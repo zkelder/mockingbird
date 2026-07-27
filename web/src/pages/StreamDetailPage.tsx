@@ -126,30 +126,26 @@ const liveMonitorSensitivitySettings: Record<
   LiveMonitorSensitivity,
   {
     label: string;
-    min_changed_ratio: number;
-    pixel_delta_threshold: number;
+    detector_preset: "high_sensitivity" | "normal" | "low_noise";
     interval_ms: number;
     max_frames: number;
   }
 > = {
   low: {
-    label: "Low",
-    min_changed_ratio: 0.035,
-    pixel_delta_threshold: 35,
+    label: "Low noise",
+    detector_preset: "low_noise",
     interval_ms: 2500,
     max_frames: 12,
   },
   normal: {
     label: "Normal",
-    min_changed_ratio: 0.012,
-    pixel_delta_threshold: 18,
+    detector_preset: "normal",
     interval_ms: 1500,
     max_frames: 20,
   },
   high: {
-    label: "High",
-    min_changed_ratio: 0.003,
-    pixel_delta_threshold: 10,
+    label: "High sensitivity",
+    detector_preset: "high_sensitivity",
     interval_ms: 750,
     max_frames: 24,
   },
@@ -169,7 +165,7 @@ function zoneMonitoringDraftFromPolicy(policy: ZoneMonitoringPolicy): ZoneMonito
 }
 
 function zoneMonitoringSummary(policy: ZoneMonitoringPolicy): string {
-  return `${formatLabel(policy.activity_sensitivity)} sensitivity · ignore activity under ${policy.minimum_sustained_activity_seconds}s · finish after ${policy.quiet_period_seconds}s quiet`;
+  return `${formatLabel(policy.activity_sensitivity)} sensitivity · short coherent track opens activity · finish after ${policy.quiet_period_seconds}s quiet`;
 }
 
 function zoneSessionPolicyStatus(activity: Record<string, unknown> | null): string | null {
@@ -181,16 +177,6 @@ function zoneSessionPolicyStatus(activity: Record<string, unknown> | null): stri
     return "Very brief activity was ignored.";
   }
   if (activity.ready_for_review) return "Visit is finalized and ready for review.";
-  const policy = activity.monitoring_policy;
-  const duration = typeof activity.session_duration_seconds === "number"
-    ? activity.session_duration_seconds
-    : 0;
-  const sustained = policy && typeof policy === "object" && "minimum_sustained_activity_seconds" in policy
-    ? (policy as { minimum_sustained_activity_seconds?: unknown }).minimum_sustained_activity_seconds
-    : 0;
-  if (typeof sustained === "number" && duration < sustained) {
-    return "Waiting for sustained activity before opening a Visit.";
-  }
   return "Activity is open; waiting through this Zone's quiet period.";
 }
 
@@ -732,7 +718,6 @@ export function StreamDetailPage({
   const [autoReviewMinDetections, setAutoReviewMinDetections] = useState(1);
   const [liveMonitorSensitivity, setLiveMonitorSensitivity] =
     useState<LiveMonitorSensitivity>("normal");
-  const [birdSizedFeederMotion, setBirdSizedFeederMotion] = useState(true);
   const [sourceProviderConfig, setSourceProviderConfig] =
     useState<SourceProviderConfiguration | null>(null);
   const [cameraTuningDraft, setCameraTuningDraft] = useState<CameraTuningDraft>({
@@ -744,6 +729,7 @@ export function StreamDetailPage({
   const [isOpeningCameraControls, setIsOpeningCameraControls] = useState(false);
   const [liveMotionFocusZoneId, setLiveMotionFocusZoneId] = useState("");
   const [showLiveMotionDebug, setShowLiveMotionDebug] = useState(false);
+  const [showForegroundMask, setShowForegroundMask] = useState(false);
   const [liveStatusNotice, setLiveStatusNotice] = useState<string | null>(null);
   const liveMotionInFlightRef = useRef(false);
   const lastAutoReviewQueueItemRef = useRef<string | null>(null);
@@ -799,7 +785,6 @@ export function StreamDetailPage({
       if (status.status !== "stopped" && status.last_motion_result) {
         setLiveMotionResult(status.last_motion_result);
         setLiveMonitorState(liveMonitorStateFor(status.last_motion_result));
-        setBirdSizedFeederMotion(status.last_motion_result.bird_sized_feeder_motion);
       } else if (status.monitor_running) {
         setLiveMonitorState((current) => (current === "idle" ? "waiting" : current));
       }
@@ -1002,7 +987,6 @@ export function StreamDetailPage({
       lastAutoIdentificationSuggestionRef.current = null;
       setBackendAutoCreateReviewCandidates(null);
       setIsUpdatingAutoCreate(false);
-      setBirdSizedFeederMotion(true);
       setSourceProviderConfig(null);
       setCameraTuningDraft({ ...emptyCameraTuningDraft });
       setCameraTuningMessage(null);
@@ -1592,9 +1576,7 @@ export function StreamDetailPage({
       const result = await apiClient.startLiveMotionMonitor(detail.stream.id, {
         save_best_frame: true,
         create_review_activity: false,
-        bird_sized_feeder_motion: birdSizedFeederMotion,
-        min_changed_ratio: sensitivitySettings.min_changed_ratio,
-        pixel_delta_threshold: sensitivitySettings.pixel_delta_threshold,
+        detector_preset: sensitivitySettings.detector_preset,
         max_frames: sensitivitySettings.max_frames,
         min_triggered_frames: 1,
         focus_zone_id: liveMotionFocusZoneId || null,
@@ -2438,36 +2420,6 @@ export function StreamDetailPage({
     liveMotionResult?.review_queue_item_id ??
     null;
   const liveSensitivityLabel = liveMonitorSensitivitySettings[liveMonitorSensitivity].label;
-  const liveStrongestChangeLabel = formatPercent(liveMotionResult?.strongest_changed_ratio);
-  const liveStrongestThresholdLabel = formatPercent(
-    liveMotionResult?.effective_threshold_used ??
-    liveMotionResult?.threshold_used ??
-      liveMotionResult?.strongest_zone_min_changed_ratio ??
-      liveMotionResult?.min_changed_ratio,
-  );
-  const liveThresholdSourceLabel = liveMotionResult?.threshold_source
-    ? formatLabel(liveMotionResult.threshold_source)
-    : "Requested";
-  const liveStrongestPairLabel =
-    liveMotionResult?.frame_pair_sequences?.length === 2
-      ? `${liveMotionResult.frame_pair_sequences[0]}->${liveMotionResult.frame_pair_sequences[1]}`
-      : liveMotionResult?.strongest_frame_start_sequence &&
-          liveMotionResult?.strongest_frame_end_sequence
-        ? `${liveMotionResult.strongest_frame_start_sequence}->${liveMotionResult.strongest_frame_end_sequence}`
-        : "n/a";
-  const liveChangedPixelsLabel =
-    liveMotionResult?.changed_pixels != null &&
-    (liveMotionResult.total_scored_pixels ?? liveMotionResult.total_pixels) != null
-      ? `${liveMotionResult.changed_pixels}/${
-          liveMotionResult.total_scored_pixels ?? liveMotionResult.total_pixels
-        }`
-      : "n/a";
-  const liveFineMotionLabel = liveMotionResult?.fine_motion_applied ? "applied" : "standard";
-  const liveBirdSizedMotionLabel =
-    (liveMotionResult?.bird_sized_feeder_motion ?? birdSizedFeederMotion) ? "on" : "off";
-  const liveMarginLabel = formatPercent(liveMotionResult?.margin_to_threshold);
-  const liveMeanDeltaLabel =
-    liveMotionResult?.mean_delta != null ? liveMotionResult.mean_delta.toFixed(1) : "n/a";
   const liveCadenceLabel =
     liveMotionResult?.evaluation_cadence_seconds != null
       ? `${liveMotionResult.evaluation_cadence_seconds.toFixed(2)}s`
@@ -2966,8 +2918,8 @@ export function StreamDetailPage({
             <details className="stream-live-secondary-panel stream-live-collapsible-panel">
               <summary>
                 <span className="stream-live-panel-summary-copy">
-                  <strong>Motion calibration</strong>
-                  <span>Camera tuning, feeder motion, focus, and diagnostics.</span>
+                  <strong>Activity detection</strong>
+                  <span>Tracked outdoor activity, Zones, and diagnostics.</span>
                 </span>
               </summary>
               <div className="stream-live-collapsible-body">
@@ -2979,14 +2931,23 @@ export function StreamDetailPage({
                     decide Bird Log and export truth.
                   </span>
                 </div>
-                <label className="stream-live-debug-toggle">
-                  <input
+              <label className="stream-live-debug-toggle">
+                <input
                     checked={showLiveMotionDebug}
                     onChange={(event) => setShowLiveMotionDebug(event.target.checked)}
                     type="checkbox"
                   />
-                  Show motion overlay
-                </label>
+                Show detection overlays
+              </label>
+              <label className="stream-live-debug-toggle">
+                <input
+                  checked={showForegroundMask}
+                  disabled={!liveMotionResult?.foreground_mask_data_url}
+                  onChange={(event) => setShowForegroundMask(event.target.checked)}
+                  type="checkbox"
+                />
+                Foreground mask
+              </label>
               </div>
               <div className="stream-live-field-guidance">
                 <span>For birds, draw a tight Feeder Zone around the perch/feeding ports.</span>
@@ -2994,15 +2955,6 @@ export function StreamDetailPage({
                 <span>Use Ground Zone separately for ground activity.</span>
                 <span>If birds are still missed, move/zoom camera so feeder fills more of the frame.</span>
               </div>
-              <label className="stream-live-debug-toggle stream-live-bird-motion-toggle">
-                <input
-                  checked={birdSizedFeederMotion}
-                  disabled={liveMonitorRunning || isEvaluatingLiveMotion}
-                  onChange={(event) => setBirdSizedFeederMotion(event.target.checked)}
-                  type="checkbox"
-                />
-                Bird-sized feeder motion for Feeder/Birdbath/Perch zones.
-              </label>
               <div className="stream-live-sensitivity" aria-label="Monitoring sensitivity">
                 {liveMonitorSensitivityOptions.map((option) => (
                   <button
@@ -3064,7 +3016,7 @@ export function StreamDetailPage({
                 open={showLiveMotionDebug}
                 onToggle={(event) => setShowLiveMotionDebug(event.currentTarget.open)}
               >
-                <summary>Motion calibration diagnostics</summary>
+                <summary>Detector details</summary>
                 <div className="stream-live-calibration-grid">
                   <label>
                     <span>Monitoring focus</span>
@@ -3143,38 +3095,233 @@ export function StreamDetailPage({
                     <strong>Cadence</strong> {liveCadenceLabel}
                   </span>
                   <span>
-                    <strong>Strongest change</strong> {liveStrongestChangeLabel}
+                    <strong>Source</strong>{" "}
+                    {liveMotionResult?.source_frame_width && liveMotionResult.source_frame_height
+                      ? `${liveMotionResult.source_frame_width}×${liveMotionResult.source_frame_height}`
+                      : "waiting"}
                   </span>
                   <span>
-                    <strong>Threshold</strong> {liveStrongestThresholdLabel}
+                    <strong>Analysis</strong>{" "}
+                    {liveMotionResult?.analysis_frame_width && liveMotionResult.analysis_frame_height
+                      ? `${liveMotionResult.analysis_frame_width}×${liveMotionResult.analysis_frame_height}`
+                      : "waiting"}
                   </span>
                   <span>
-                    <strong>Changed pixels</strong> {liveChangedPixelsLabel}
+                    <strong>Foreground</strong>{" "}
+                    {liveMotionResult?.foreground_model_state ?? "warming"}
                   </span>
                   <span>
-                    <strong>Bird-sized</strong> {liveBirdSizedMotionLabel}
+                    <strong>Regions</strong> {liveMotionResult?.motion_regions.length ?? 0}
                   </span>
                   <span>
-                    <strong>Fine motion</strong> {liveFineMotionLabel}
+                    <strong>Tracks</strong> {liveMotionResult?.tracked_objects.length ?? 0}
                   </span>
                   <span>
-                    <strong>Threshold source</strong> {liveThresholdSourceLabel}
+                    <strong>Objects</strong> {liveMotionResult?.object_detector_boxes.length ?? 0}
                   </span>
                   <span>
-                    <strong>Margin</strong> {liveMarginLabel}
+                    <strong>Trigger</strong>{" "}
+                    {liveMotionResult?.activity_triggers.length ? "qualified" : "watching"}
                   </span>
                   <span>
-                    <strong>Mean delta</strong> {liveMeanDeltaLabel}
+                    <strong>Freshness</strong> {formatAgeMs(liveMotionResult?.analysis_frame_age_ms)}
                   </span>
                   <span>
-                    <strong>Frame pair</strong> {liveStrongestPairLabel}
+                    <strong>Dropped</strong> {liveMotionResult?.dropped_frame_count ?? 0}
                   </span>
                 </div>
-                {liveMotionResult?.near_miss ? (
-                  <span className="stream-live-hint">
-                    Near miss: tighten the feeder Zone, use feeder focus, or move the camera closer.
-                  </span>
-                ) : null}
+                <details className="stream-live-debug-details">
+                  <summary>Detection view</summary>
+                  <div className="stream-live-monitor-facts">
+                    <span>
+                      <strong>Analysis</strong>{" "}
+                      {liveMotionResult?.analysis_frame_width && liveMotionResult.analysis_frame_height
+                        ? `${liveMotionResult.analysis_frame_width}×${liveMotionResult.analysis_frame_height}`
+                        : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Zone crop</strong>{" "}
+                      {liveMotionResult?.zone_source_crop_width && liveMotionResult.zone_source_crop_height
+                        ? `${liveMotionResult.zone_source_crop_width}×${liveMotionResult.zone_source_crop_height}`
+                        : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Regions</strong> {liveMotionResult?.motion_regions.length ?? 0}
+                    </span>
+                    <span>
+                      <strong>Tracks</strong> {liveMotionResult?.tracked_objects.length ?? 0}
+                    </span>
+                    <span>
+                      <strong>Object boxes</strong> {liveMotionResult?.object_detector_boxes.length ?? 0}
+                    </span>
+                    <span>
+                      <strong>Object tracks</strong> {liveMotionResult?.object_detector_tracks.length ?? 0}
+                    </span>
+                    <span>
+                      <strong>Object trigger</strong>{" "}
+                      {liveMotionResult?.activity_trigger_source === "object_verified"
+                        ? "object verified"
+                        : liveMotionResult?.activity_trigger_source === "motion_fallback"
+                          ? "motion fallback"
+                          : "watching"}
+                    </span>
+                    <span>
+                      <strong>Detector crop</strong>{" "}
+                      {liveMotionResult?.object_detector_zone_source_crop_width && liveMotionResult.object_detector_zone_source_crop_height
+                        ? `${liveMotionResult.object_detector_zone_source_crop_width}×${liveMotionResult.object_detector_zone_source_crop_height}`
+                        : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Detector input</strong>{" "}
+                      {liveMotionResult?.object_detector_input_width && liveMotionResult.object_detector_input_height
+                        ? `${liveMotionResult.object_detector_input_width}×${liveMotionResult.object_detector_input_height}`
+                        : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Detector cadence</strong>{" "}
+                      {liveMotionResult?.object_detector_cadence_seconds != null
+                        ? `${liveMotionResult.object_detector_cadence_seconds.toFixed(2)} s`
+                        : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Inference</strong>{" "}
+                      {liveMotionResult?.object_detector_inference_latency_ms != null
+                        ? `${liveMotionResult.object_detector_inference_latency_ms} ms`
+                        : liveMotionResult?.object_detector_unavailable_reason
+                          ? "unavailable"
+                          : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Object queue</strong>{" "}
+                      {liveMotionResult
+                        ? `${liveMotionResult.object_detector_queue_depth}/${liveMotionResult.object_detector_queue_capacity}`
+                        : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Object drops</strong>{" "}
+                      {liveMotionResult?.object_detector_dropped_frame_count ?? 0}
+                    </span>
+                    <span>
+                      <strong>Detector runtime</strong>{" "}
+                      {formatLabel(liveMotionResult?.object_detector_runtime_state ?? "ready")}
+                    </span>
+                    <span>
+                      <strong>Model</strong>{" "}
+                      {liveMotionResult?.object_detector_model_loaded
+                        ? "loaded"
+                        : liveMotionResult?.object_detector_model_configuration_state ?? "waiting"}
+                    </span>
+                    <span>
+                      <strong>Worker</strong>{" "}
+                      {liveMotionResult?.object_detector_worker_alive ? "alive" : "not running"}
+                    </span>
+                    <span>
+                      <strong>Active crop</strong>{" "}
+                      {liveMotionResult?.object_detector_in_flight_job_identity
+                        ? `${liveMotionResult.object_detector_in_flight_job_identity} · ${formatAgeMs(liveMotionResult.object_detector_in_flight_age_ms)}`
+                        : "none"}
+                    </span>
+                    <span>
+                      <strong>Latest success</strong>{" "}
+                      {liveMotionResult?.object_detector_latest_successful_inference_latency_ms != null
+                        ? `${liveMotionResult.object_detector_latest_successful_inference_latency_ms} ms · ${formatAgeMs(liveMotionResult.object_detector_last_completed_age_ms)} ago`
+                        : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Timeouts</strong> {liveMotionResult?.object_detector_timed_out_count ?? 0}
+                    </span>
+                    <span>
+                      <strong>Recovery</strong>{" "}
+                      {liveMotionResult
+                        ? `${liveMotionResult.object_detector_recovery_count} recoveries · ${liveMotionResult.object_detector_worker_reset_count} resets · ${liveMotionResult.object_detector_queue_replacement_count} replacements`
+                        : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Device</strong>{" "}
+                      {liveMotionResult?.object_detector_execution_device ?? "not selected"}
+                    </span>
+                    <span>
+                      <strong>Runtime note</strong>{" "}
+                      {liveMotionResult?.object_detector_last_safe_error_category
+                        ? formatLabel(liveMotionResult.object_detector_last_safe_error_category)
+                        : "none"}
+                    </span>
+                    <span>
+                      <strong>Trigger</strong>{" "}
+                      {liveMotionResult?.activity_triggers.length ? "qualified" : "watching"}
+                    </span>
+                    <span>
+                      <strong>Foreground</strong>{" "}
+                      {liveMotionResult?.foreground_model_state ?? "warming"}
+                    </span>
+                    <span>
+                      <strong>Duplicates</strong> {liveMotionResult?.duplicate_frame_count ?? 0}
+                    </span>
+                    <span>
+                      <strong>Dropped</strong> {liveMotionResult?.dropped_frame_count ?? 0}
+                    </span>
+                    <span>
+                      <strong>Freshness</strong> {formatAgeMs(liveMotionResult?.analysis_frame_age_ms)}
+                    </span>
+                    <span>
+                      <strong>Evidence profile</strong>{" "}
+                      {liveMotionResult?.selected_evidence_profile_id ?? "not selected"}
+                    </span>
+                    <span>
+                      <strong>High-res still</strong>{" "}
+                      {liveMotionResult?.high_resolution_frame_width && liveMotionResult.high_resolution_frame_height
+                        ? `${liveMotionResult.high_resolution_frame_width}×${liveMotionResult.high_resolution_frame_height}`
+                        : liveMotionResult?.high_resolution_capture_failure_code
+                          ? "not captured"
+                          : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Activity crop</strong>{" "}
+                      {liveMotionResult?.high_resolution_crop_width && liveMotionResult.high_resolution_crop_height
+                        ? `${liveMotionResult.high_resolution_crop_width}×${liveMotionResult.high_resolution_crop_height}`
+                        : liveMotionResult?.high_resolution_alignment_failure_code
+                          ? "full still retained"
+                          : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Capture latency</strong>{" "}
+                      {liveMotionResult?.high_resolution_capture_latency_ms != null
+                        ? `${liveMotionResult.high_resolution_capture_latency_ms} ms`
+                        : "waiting"}
+                    </span>
+                    <span>
+                      <strong>Track to capture</strong>{" "}
+                      {liveMotionResult?.high_resolution_track_to_capture_delay_ms != null
+                        ? `${liveMotionResult.high_resolution_track_to_capture_delay_ms} ms`
+                        : "waiting"}
+                    </span>
+                  </div>
+                  {liveMotionResult?.global_illumination_suppressed ? (
+                    <span className="stream-live-hint">
+                      Global illumination change was ignored for this frame.
+                    </span>
+                  ) : null}
+                  {liveMotionResult?.latest_ignored_frame_reason ? (
+                    <span className="stream-live-hint">
+                      Latest ignored frame: {formatLabel(liveMotionResult.latest_ignored_frame_reason)}.
+                    </span>
+                  ) : null}
+                  {liveMotionResult?.object_detector_unavailable_reason ? (
+                    <span className="stream-live-hint">
+                      Object detector: {formatLabel(liveMotionResult.object_detector_unavailable_reason)}.
+                    </span>
+                  ) : null}
+                  {liveMotionResult?.high_resolution_capture_failure_code ? (
+                    <span className="stream-live-hint">
+                      High-resolution capture: {formatLabel(liveMotionResult.high_resolution_capture_failure_code)}.
+                    </span>
+                  ) : null}
+                  {liveMotionResult?.high_resolution_alignment_failure_code ? (
+                    <span className="stream-live-hint">
+                      Crop alignment: {formatLabel(liveMotionResult.high_resolution_alignment_failure_code)}; full still remains the evidence context.
+                    </span>
+                  ) : null}
+                </details>
                 {liveQualityWarnings.length > 0 ? (
                   <div className="stream-live-suppressed-list">
                     <strong>Image quality</strong>
@@ -3267,6 +3414,22 @@ export function StreamDetailPage({
                   </span>
                 </div>
               )}
+              {showForegroundMask && liveMotionResult?.foreground_mask_data_url ? (
+                <img
+                  alt="Foreground mask for current analysis frame"
+                  src={liveMotionResult.foreground_mask_data_url}
+                  style={{
+                    height: "100%",
+                    imageRendering: "pixelated",
+                    left: 0,
+                    opacity: 0.48,
+                    pointerEvents: "none",
+                    position: "absolute",
+                    top: 0,
+                    width: "100%",
+                  }}
+                />
+              ) : null}
             </div>
             <div
               className={`stream-live-zone-surface${drawMode ? " draw-mode" : ""}${
@@ -3319,6 +3482,71 @@ export function StreamDetailPage({
                   <polygon className="zone-shape zone-draft" points={polygonPoints(draftPolygon)} />
                 ) : null}
               </svg>
+              {showLiveMotionDebug
+                ? liveMotionResult?.motion_regions.map((region, index) => {
+                    const left = region.left;
+                    const top = region.top;
+                    const right = region.right;
+                    const bottom = region.bottom;
+                    if (
+                      typeof left !== "number" ||
+                      typeof top !== "number" ||
+                      typeof right !== "number" ||
+                      typeof bottom !== "number"
+                    ) {
+                      return null;
+                    }
+                    return (
+                      <span
+                        aria-label="Current motion region"
+                        key={`motion-region-${index}`}
+                        style={{
+                          border: "2px solid #f8c85b",
+                          boxSizing: "border-box",
+                          height: `${Math.max(0, bottom - top) * 100}%`,
+                          left: `${left * 100}%`,
+                          pointerEvents: "none",
+                          position: "absolute",
+                          top: `${top * 100}%`,
+                          width: `${Math.max(0, right - left) * 100}%`,
+                        }}
+                      />
+                    );
+                  })
+                : null}
+              {showLiveMotionDebug
+                ? liveMotionResult?.tracked_objects.map((track, index) => {
+                    const left = track.left;
+                    const top = track.top;
+                    const right = track.right;
+                    const bottom = track.bottom;
+                    if (
+                      typeof left !== "number" ||
+                      typeof top !== "number" ||
+                      typeof right !== "number" ||
+                      typeof bottom !== "number"
+                    ) {
+                      return null;
+                    }
+                    return (
+                      <span
+                        aria-label="Tracked object"
+                        key={`tracked-object-${index}`}
+                        style={{
+                          border: "2px solid #54d6a8",
+                          borderRadius: 3,
+                          boxSizing: "border-box",
+                          height: `${Math.max(0, bottom - top) * 100}%`,
+                          left: `${left * 100}%`,
+                          pointerEvents: "none",
+                          position: "absolute",
+                          top: `${top * 100}%`,
+                          width: `${Math.max(0, right - left) * 100}%`,
+                        }}
+                      />
+                    );
+                  })
+                : null}
               {detail.zones.map((zone) => {
                 const anchor = zoneLabelAnchor(zone);
                 const expandedLabel = drawMode || selectedZoneId === zone.id;
@@ -3411,13 +3639,14 @@ export function StreamDetailPage({
                   <strong>Strongest zone</strong> {liveStrongestZoneName ?? "none yet"}
                 </span>
                 <span>
-                  <strong>Strongest change</strong> {liveStrongestChangeLabel}
+                  <strong>Tracks</strong> {liveMotionResult?.tracked_objects.length ?? 0}
                 </span>
                 <span>
-                  <strong>Threshold</strong> {liveStrongestThresholdLabel}
+                  <strong>Trigger</strong>{" "}
+                  {liveMotionResult?.activity_triggers.length ? "qualified" : "watching"}
                 </span>
                 <span>
-                  <strong>Frame pair</strong> {liveStrongestPairLabel}
+                  <strong>Freshness</strong> {formatAgeMs(liveMotionResult?.analysis_frame_age_ms)}
                 </span>
                 {liveCooldownLabel ? (
                   <span>
@@ -4116,25 +4345,10 @@ export function StreamDetailPage({
                   <details className="zone-monitoring-advanced">
                     <summary>Advanced timing and evidence</summary>
                     <div className="zone-monitoring-grid">
-                      <label>
-                        Ignore very brief activity (seconds)
-                        <input
-                          min="0"
-                          max="60"
-                          onChange={(event) =>
-                            setZoneMonitoringDraft((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    minimum_sustained_activity_seconds: Number(event.target.value),
-                                  }
-                                : current,
-                            )
-                          }
-                          type="number"
-                          value={zoneMonitoringDraft.minimum_sustained_activity_seconds}
-                        />
-                      </label>
+                      <span className="meta-text">
+                        A short coherent track qualifies activity. The saved legacy sustained
+                        duration is retained for compatibility and does not gate tracking.
+                      </span>
                       <label>
                         Finish Visit after quiet (seconds)
                         <input

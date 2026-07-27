@@ -111,3 +111,22 @@ or expose driver failures. Continuous autofocus is reapplied as part of the new
 warm session. While a just-paired Node is still warming, the desktop waits only
 through its bounded capability window for that same opaque monitoring profile;
 it never silently substitutes another profile.
+
+## High-resolution activity evidence boundary
+
+Monitoring is economical localization, not permanent evidence resolution. Once
+a coherent Zone track qualifies, the desktop may request one bounded still from
+the selected `evidence` profile, with at most one transient retry. The returned
+full JPEG remains in memory until the existing reviewable-Visit handoff; no
+still, crop, Event, Visit, label, or truth is created for ordinary monitoring
+frames or an unqualified track.
+
+The desktop maps a tracked normalized box to a still only when the two
+advertised profiles prove compatible field of view and geometry. Orientation
+and mirror differences are transformed in normalized coordinates. If alignment
+is not proven, MockingBird retains the full still for review, marks the crop
+unavailable, and keeps the low-resolution temporal evidence rather than
+inventing a misleading crop. When alignment is proven, one conservatively
+padded crop is a derived MediaAsset of that full still. The crop may be primary
+review/identification evidence; the full still remains linked for context,
+recropping, retention, and backup.

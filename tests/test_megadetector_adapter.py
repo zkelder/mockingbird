@@ -1,4 +1,5 @@
 import importlib
+import hashlib
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from mockingbird.detectors import megadetector_adapter
 from mockingbird.detectors.megadetector_adapter import (
     MEGADETECTOR_ADAPTER_ID,
     MEGADETECTOR_DEFAULT_CONFIDENCE_THRESHOLD,
+    MEGADETECTOR_OFFICIAL_MODEL_URL,
     MEGADETECTOR_LABELS_PATH_ENV,
     MEGADETECTOR_MODEL_PATH_ENV,
     MEGADETECTOR_RUNTIME_CACHE_PATH_ENV,
@@ -21,6 +23,7 @@ from mockingbird.detectors.megadetector_adapter import (
     MegaDetectorOutputError,
     MegaDetectorProposal,
     MegaDetectorRuntimeStatus,
+    run_megadetector_on_jpeg_bytes,
 )
 from mockingbird.repository.product_repository import ProductRepository
 
@@ -141,8 +144,14 @@ def mark_megadetector_available(
     labels_path: str | None = None,
 ) -> Path:
     model_path = tmp_path / "mock-megadetector.pt"
-    model_path.write_bytes(b"local model placeholder")
+    model_bytes = b"local model placeholder"
+    model_path.write_bytes(model_bytes)
     monkeypatch.setenv(MEGADETECTOR_MODEL_PATH_ENV, str(model_path))
+    monkeypatch.setattr(
+        megadetector_adapter,
+        "MEGADETECTOR_OFFICIAL_MODEL_SHA256",
+        hashlib.sha256(model_bytes).hexdigest().upper(),
+    )
     if labels_path is not None:
         monkeypatch.setenv(MEGADETECTOR_LABELS_PATH_ENV, labels_path)
     monkeypatch.setattr(
@@ -217,6 +226,62 @@ def test_runtime_status_inspects_official_megadetector_package(
 
     assert status.available is True
     assert inspected == ["megadetector"]
+
+
+def test_megadetector_records_one_official_artifact_and_rejects_a_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "unexpected-model.pt"
+    model_path.write_bytes(b"not the approved artifact")
+
+    provenance = megadetector_adapter.megadetector_model_provenance()
+
+    assert provenance["version"] == "MDv5a.0.1"
+    assert provenance["license"] == "MIT"
+    assert provenance["source"].startswith("https://github.com/agentmorris/")
+    assert provenance["model_url"] == MEGADETECTOR_OFFICIAL_MODEL_URL
+    assert provenance["model_url"].endswith("/md_v5a.0.1.pt")
+    assert len(provenance["sha256"]) == 64
+    with pytest.raises(
+        megadetector_adapter.MegaDetectorModelChecksumError,
+        match="checksum does not match",
+    ):
+        megadetector_adapter._verify_official_model_checksum(model_path)
+
+
+def test_live_zone_crop_uses_existing_adapter_and_remaps_without_retaining_input(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    mark_megadetector_available(monkeypatch, tmp_path)
+    mock_megadetector_output(
+        monkeypatch,
+        [
+            MegaDetectorProposal(
+                label="animal",
+                confidence=0.8,
+                bbox=MegaDetectorBox(x=0.25, y=0.5, width=0.2, height=0.25),
+            )
+        ],
+    )
+    crop_box = MegaDetectorBox(x=0.2, y=0.1, width=0.5, height=0.6)
+
+    proposals = run_megadetector_on_jpeg_bytes(
+        image=b"bounded-zone-jpeg",
+        coordinate_box=crop_box,
+    )
+
+    assert proposals == [
+        MegaDetectorProposal(
+            label="animal",
+            confidence=0.8,
+            bbox=MegaDetectorBox(x=0.325, y=0.4, width=0.1, height=0.15),
+        )
+    ]
+    input_root = Path(os.environ[MEGADETECTOR_RUNTIME_CACHE_PATH_ENV]) / "live-input"
+    assert input_root.is_dir()
+    assert list(input_root.iterdir()) == []
 
 
 def test_runtime_executes_explicit_local_model_and_maps_official_output(
@@ -834,3 +899,11 @@ async def test_mocked_megadetector_conversion_exports_corrected_truth(
     assert evaluation["reviewed_count"] == 1
     assert evaluation["mismatched_count"] == 1
     assert evaluation["items"][0]["outcome"] == "mismatched_reviewed_truth"
+
+def test_execution_device_status_is_sanitized(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(megadetector_adapter, "_cached_runtime_detector", None)
+    assert megadetector_adapter.megadetector_execution_device() is None
+
+    monkeypatch.setattr(megadetector_adapter, "_cached_runtime_detector", SimpleNamespace(device="cuda:0"))
+    assert megadetector_adapter.megadetector_execution_device() == "cuda"
+    monkeypatch.setattr(megadetector_adapter, "_cached_runtime_detector", SimpleNamespace(model=SimpleNamespace(device="cpu")))
