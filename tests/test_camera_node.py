@@ -643,6 +643,87 @@ def test_picamera2_warm_candidate_resource_rejection_promotes_next_profile_and_c
     provider.close()
 
 
+def test_picamera2_warm_required_pair_retries_once_after_resource_rejections() -> None:
+    """One fresh required-pair retry must not silently promote a smaller mode."""
+
+    class Camera:
+        def __init__(self):
+            self.sensor_modes = [
+                {"size": (1920, 1440), "crop_limits": (0, 0, 9248, 6944)},
+                {"size": (3840, 2160), "crop_limits": (0, 0, 9248, 6944)},
+                {"size": (4624, 3472), "crop_limits": (0, 0, 9248, 6944)},
+                {"size": (8000, 6000), "crop_limits": (0, 0, 9248, 6944)},
+                {"size": (9248, 6944), "crop_limits": (0, 0, 9248, 6944)},
+            ]
+            self.stopped = self.closed = False
+
+        def create_still_configuration(self, **kwargs): return kwargs
+
+        def configure(self, configuration):
+            size = configuration["main"]["size"]
+            Picamera2.configured_sizes.append(size)
+            if size in {(9248, 6944), (8000, 6000)}:
+                raise OSError(12, "bounded local allocation failure")
+            if size == (4624, 3472):
+                Picamera2.required_attempts += 1
+                if Picamera2.required_attempts == 1:
+                    raise RuntimeError("candidate cleanup still settling")
+            if size == (3840, 2160):
+                raise AssertionError("must not substitute a smaller warm evidence mode")
+
+        def start(self): return None
+        def capture_array(self, _stream_name): return object()
+        def stop(self): self.stopped = True
+        def close(self): self.closed = True
+
+    class Picamera2:
+        cameras: list[Camera] = []
+        configured_sizes: list[tuple[int, int]] = []
+        required_attempts = 0
+
+        @staticmethod
+        def global_camera_info(): return [{}]
+
+        def __new__(cls, _index):
+            camera = Camera()
+            cls.cameras.append(camera)
+            return camera
+
+    class Encoder:
+        COLOR_YUV2BGR_I420 = 1
+
+        def cvtColor(self, frame, _conversion): return frame
+        def imencode(self, _suffix, _frame, *_args): return True, bytearray(b"jpg")
+
+    provider = PiCamera2Provider(
+        CameraNodeConfig(
+            "Test Node", "127.0.0.1", 8787, "picamera2", None,
+            1_500_000, 1920, 1440, 60, 2, testing=True,
+            evidence_max_image_bytes=16_000_000,
+            evidence_max_image_width=10_000,
+            evidence_max_image_height=8_000,
+        ),
+        module=type("Module", (), {"Picamera2": Picamera2}),
+        cv2_module=Encoder(),
+    )
+
+    provider.capture_profiles("picamera2-camera-0")
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+
+    assert provider.capture_readiness("picamera2-camera-0") == "ready"
+    assert Picamera2.configured_sizes == [
+        (9248, 6944), (8000, 6000), (4624, 3472), (4624, 3472),
+    ]
+    assert provider.capture_profile_status("picamera2-camera-0") == [
+        {"profile_id": "picamera2-evidence-9248x6944", "state": "rejected_resource"},
+        {"profile_id": "picamera2-evidence-8000x6000", "state": "rejected_resource"},
+        {"profile_id": "picamera2-evidence-4624x3472", "state": "accepted"},
+        {"profile_id": "picamera2-evidence-3840x2160", "state": "untested"},
+    ]
+    assert all(camera.stopped and camera.closed for camera in Picamera2.cameras[:-1])
+    provider.close()
+
+
 def test_picamera2_warm_session_failure_reopens_the_accepted_pair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

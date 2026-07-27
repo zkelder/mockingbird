@@ -98,7 +98,9 @@ implementations beneath this contract; synthetic remains explicitly test-only.
 For a warm dual-stream PiCamera2 pair, the Node evaluates its ordered candidate
 profiles once in the background. Each candidate is only `untested`, `testing`,
 `accepted`, or rejected by a bounded safe category; a rejected larger candidate
-is released before the next candidate is tried. The first accepted pair is
+is released before the next candidate is tried. After a resource-limited rejection,
+the required 1920×1440/4624×3472 pair may make one fresh bounded retry before any
+smaller pair is considered. The first accepted pair is
 cached for that Node process. Capability output may report those fixed states,
 but never allocation text, pipeline details, device paths, or driver settings.
 

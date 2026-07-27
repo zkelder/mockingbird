@@ -9,7 +9,7 @@ from hashlib import sha1
 from importlib import import_module
 import re
 import threading
-from time import monotonic
+from time import monotonic, sleep
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -26,6 +26,8 @@ WARM_SESSION_READY_TIMEOUT_SECONDS = 5.0
 WARM_MONITORING_TIMEOUT_SECONDS = 2.0
 WARM_EVIDENCE_ACCEPTANCE_SECONDS = 1.5
 WARM_EVIDENCE_TIMEOUT_SECONDS = 2.0
+WARM_CANDIDATE_RECLAIM_SECONDS = 0.2
+WARM_REQUIRED_PAIR_RETRY_DELAY_SECONDS = 0.2
 MAX_ADVERTISED_CAPTURE_BYTES = 16_000_000
 _VIDEO_DEVICE = re.compile(r"^video([0-9]{1,3})$")
 _SYNTHETIC_JPEG = b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x11\x00\xff\xd9"
@@ -679,6 +681,32 @@ class PiCamera2Provider:
     ) -> tuple[NodeCaptureProfile, NodeCaptureProfile, str] | None:
         """Keep the highest aligned candidate that proves fast enough in one session."""
 
+        resource_rejection_seen = False
+        retried_required_profiles: set[str] = set()
+
+        def reject_warm_candidate(
+            camera: Any | None,
+            profile_id: str,
+            state: str,
+            monitoring: NodeCaptureProfile,
+            evidence: NodeCaptureProfile,
+        ) -> bool:
+            nonlocal resource_rejection_seen
+            self._set_warm_candidate_state(camera_id, profile_id, state)
+            self._reclaim_warm_candidate(camera)
+            if state == "rejected_resource":
+                resource_rejection_seen = True
+                sleep(WARM_CANDIDATE_RECLAIM_SECONDS)
+            if (
+                resource_rejection_seen
+                and self._is_required_warm_pair(monitoring, evidence)
+                and profile_id not in retried_required_profiles
+            ):
+                retried_required_profiles.add(profile_id)
+                sleep(WARM_REQUIRED_PAIR_RETRY_DELAY_SECONDS)
+                return True
+            return False
+
         for candidate in candidates:
             monitoring, cold_evidence = candidate.monitoring, candidate.evidence
             self._set_warm_candidate_state(
@@ -760,12 +788,14 @@ class PiCamera2Provider:
                     if monotonic() - evidence_started > WARM_EVIDENCE_ACCEPTANCE_SECONDS:
                         raise ValueError("camera_capture_timeout")
             except _WarmCandidateFailure as error:
-                self._set_warm_candidate_state(
-                    camera_id, cold_evidence.profile_id, error.state
-                )
-                if camera is not None:
-                    self._release_camera(camera)
-                gc.collect()
+                if reject_warm_candidate(
+                    camera,
+                    cold_evidence.profile_id,
+                    error.state,
+                    warm_monitoring,
+                    warm_evidence,
+                ):
+                    candidates.insert(candidates.index(candidate) + 1, candidate)
                 continue
             except ValueError as error:
                 state = {
@@ -774,20 +804,24 @@ class PiCamera2Provider:
                     "camera_unusable_frame": "rejected_capture",
                     "camera_initialization_failed": "rejected_configuration",
                 }.get(str(error), "rejected_capture")
-                self._set_warm_candidate_state(
-                    camera_id, cold_evidence.profile_id, state
-                )
-                if camera is not None:
-                    self._release_camera(camera)
-                gc.collect()
+                if reject_warm_candidate(
+                    camera,
+                    cold_evidence.profile_id,
+                    state,
+                    warm_monitoring,
+                    warm_evidence,
+                ):
+                    candidates.insert(candidates.index(candidate) + 1, candidate)
                 continue
             except Exception:
-                self._set_warm_candidate_state(
-                    camera_id, cold_evidence.profile_id, "rejected_capture"
-                )
-                if camera is not None:
-                    self._release_camera(camera)
-                gc.collect()
+                if reject_warm_candidate(
+                    camera,
+                    cold_evidence.profile_id,
+                    "rejected_capture",
+                    warm_monitoring,
+                    warm_evidence,
+                ):
+                    candidates.insert(candidates.index(candidate) + 1, candidate)
                 continue
             self._cameras[camera_id] = camera
             self._camera_profile_ids[camera_id] = warm_monitoring.profile_id
@@ -801,6 +835,24 @@ class PiCamera2Provider:
             )
             return warm_monitoring, warm_evidence, cold_evidence.profile_id
         return None
+
+    @staticmethod
+    def _is_required_warm_pair(
+        monitoring: NodeCaptureProfile, evidence: NodeCaptureProfile
+    ) -> bool:
+        """Allow one fresh proof only for the required full-sensor warm pair."""
+
+        return (
+            (monitoring.width, monitoring.height) == (1920, 1440)
+            and (evidence.width, evidence.height) == (4624, 3472)
+        )
+
+    def _reclaim_warm_candidate(self, camera: Any | None) -> None:
+        """Discard one failed owner before the next bounded candidate attempt."""
+
+        if camera is not None:
+            self._release_camera(camera)
+        gc.collect()
 
     @staticmethod
     def _release_camera(camera: Any) -> bool:
