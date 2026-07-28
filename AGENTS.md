@@ -60,6 +60,34 @@ Every implementation task must restate before edits:
 Follow [docs/development-workflow.md](docs/development-workflow.md) for tier
 definitions, validation reporting, and documentation maintenance rules.
 
+### Required implementation operating order
+
+1. Verify the repository root, branch, HEAD/worktree state, and staged state.
+2. Read the applicable `AGENTS.md` files.
+3. Read [docs/development-workflow.md](docs/development-workflow.md).
+4. Read only the smallest conditional-document set routed for the task.
+5. Inspect the existing implementation and closest tests.
+6. Add a failing focused test before fixing a defect.
+7. Implement the smallest complete capability.
+8. Run focused validation at the selected tier.
+9. Inspect the exact staged diff.
+10. Commit without pushing.
+
+### Workspace and instruction boundaries
+
+- The native WSL checkout is authoritative. Stop rather than proceed when the
+  repository root is under `/mnt/c`.
+- Preserve a dirty worktree unless the user explicitly authorizes the exact
+  recovery or cleanup action.
+- Nested `AGENTS.md` files may add narrower instructions, but they may not
+  weaken these repository-root safety boundaries.
+
+### Implementation-first Phase Gate
+
+Before feature implementation, state the concrete capability, why it matters to
+the core product loop, code areas touched, tests proving it, and the minimal
+documentation required. Documentation is a guardrail, not a phase deliverable.
+
 ## Conditional document router
 
 Read the smallest applicable set before working in one of these areas.
@@ -88,6 +116,10 @@ same category.
 ## Implementation standards
 
 - Prefer tests for behavior changes and regression fixes.
+- Add useful comments for non-obvious lifecycle, concurrency, persistence,
+  security, or geometry behavior; do not narrate syntax.
+- Do not run a broad unrelated test suite unless the task packet specifically
+  justifies it.
 - Preserve provider smoke flows: status reads do nothing, provider writes are
   explicit, and correction remains truth.
 - Do not add network calls, capture/decoding, workers, dependencies, model
