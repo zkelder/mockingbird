@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha1
+from math import ceil, isfinite
 from typing import Iterable
 
 import cv2
@@ -12,6 +13,9 @@ import numpy as np
 
 NormalizedBox = tuple[float, float, float, float]
 MAX_HIGH_RESOLUTION_CROP_BYTES = 16_000_000
+MIN_REFINED_CROP_WIDTH_PIXELS = 64
+MIN_REFINED_CROP_HEIGHT_PIXELS = 64
+MAX_REFINED_CROP_AREA_RATIO = 0.90
 
 
 @dataclass(frozen=True)
@@ -146,6 +150,44 @@ def crop_jpeg(
         height=y1 - y0,
         normalized_crop_box=(x0 / width, y0 / height, x1 / width, y1 / height),
     )
+
+
+def validate_refined_crop_box(
+    box: Iterable[float],
+    *,
+    image_width: int,
+    image_height: int,
+) -> NormalizedBox | None:
+    """Validate a reviewer selection before reading or writing a derived image.
+
+    The bounds are deliberately normalized and source-relative: callers cannot
+    supply a media path, output dimensions, or pixel data. The same rounded
+    pixel geometry used by ``crop_jpeg`` is checked so a valid-looking browser
+    rectangle cannot collapse into an unusable saved crop.
+    """
+
+    values = tuple(box)
+    if image_width < 1 or image_height < 1 or len(values) != 4:
+        return None
+    try:
+        left, top, right, bottom = (float(value) for value in values)
+    except (TypeError, ValueError):
+        return None
+    if (
+        not all(isfinite(value) for value in (left, top, right, bottom))
+        or not 0.0 <= left < right <= 1.0
+        or not 0.0 <= top < bottom <= 1.0
+        or (right - left) * (bottom - top) > MAX_REFINED_CROP_AREA_RATIO
+    ):
+        return None
+    x0, y0 = int(left * image_width), int(top * image_height)
+    x1, y1 = int(ceil(right * image_width)), int(ceil(bottom * image_height))
+    if (
+        x1 - x0 < MIN_REFINED_CROP_WIDTH_PIXELS
+        or y1 - y0 < MIN_REFINED_CROP_HEIGHT_PIXELS
+    ):
+        return None
+    return (left, top, right, bottom)
 
 
 def _orientation_delta(source: str, destination: str) -> int | None:

@@ -141,6 +141,12 @@ SpeciesNet or another species classifier remains a separate adapter. It should r
 
 User correction remains the truth for dataset/export use.
 
+## High-Resolution Crop Refinement
+
+When a Visit retains a full-resolution still, a reviewer may save a bounded normalized crop from that still. The server resolves the parent from the active Visit; it never accepts a media path, URL, bytes, or output dimensions from the browser. Each changed selection creates immutable derived evidence with parent, geometry, dimensions, and output hash provenance.
+
+The refined crop becomes the effective primary review image, while the automatic crop and full still remain available as history and context. Re-running identification is always explicit, and suggestions made from an older image remain evidence only; crop refinement never creates a ReviewLabel, Event, Visit, candidate, or dataset truth.
+
 ## Failure/Noise Handling
 
 Expected noise cases include:

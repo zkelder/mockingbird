@@ -159,6 +159,8 @@ from mockingbird.api.schemas import (
     ReviewStatus,
     VisitEvidenceCurationRequest,
     VisitEvidenceCurationResponse,
+    RefinedCropCreateRequest,
+    RefinedCropResponse,
     VisitMergeCandidatesResponse,
     VisitMergePreview,
     VisitMergePreviewRequest,
@@ -11020,6 +11022,8 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
             else None
         ),
         evidence_frames=repository.visit_evidence_frames(visit.id),
+        crop_history=repository.visit_crop_history(visit.id),
+        stale_species_suggestions=repository.visit_has_stale_species_suggestions(visit.id),
         detection_proposals=detection_proposals,
         detection_runs=_detection_runs_for_proposals(repository, detection_proposals),
         review_labels=(
@@ -11059,6 +11063,61 @@ async def curate_visit_evidence(
         if str(error) == "missing_visit":
             raise _not_found("Visit", visit_id) from error
         raise HTTPException(status_code=400, detail="Visit evidence selection is not valid.") from error
+
+
+@app.post(
+    "/api/visits/{visit_id}/refined-crop",
+    response_model=RefinedCropResponse,
+)
+async def create_refined_visit_crop(
+    visit_id: str,
+    payload: RefinedCropCreateRequest,
+) -> RefinedCropResponse:
+    try:
+        return get_repository().create_refined_visit_crop(visit_id, payload)
+    except VisitCurationConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This Visit is superseded and cannot receive a refined crop.",
+        ) from error
+    except ValueError as error:
+        reason = str(error)
+        if reason == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        messages = {
+            "missing_high_resolution_parent": "This Visit has no retained full-resolution image to refine.",
+            "invalid_refined_crop_geometry": "Keep the crop inside the image, above the minimum size, and below the maximum area.",
+            "missing_media_file": "The retained full-resolution image is unavailable locally.",
+            "invalid_high_resolution_parent": "The retained full-resolution image could not be used to create a crop.",
+        }
+        raise HTTPException(
+            status_code=400,
+            detail=messages.get(reason, "The refined crop could not be saved."),
+        ) from error
+
+
+@app.post(
+    "/api/visits/{visit_id}/crop-history/{media_asset_id}/promote",
+    response_model=RefinedCropResponse,
+)
+async def promote_visit_crop_history(
+    visit_id: str,
+    media_asset_id: str,
+) -> RefinedCropResponse:
+    try:
+        return get_repository().promote_visit_crop_history(visit_id, media_asset_id)
+    except VisitCurationConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This Visit is superseded and its crop history cannot be changed.",
+        ) from error
+    except ValueError as error:
+        if str(error) == "missing_visit":
+            raise _not_found("Visit", visit_id) from error
+        raise HTTPException(
+            status_code=400,
+            detail="That crop is not valid retained history for this Visit.",
+        ) from error
 
 
 @app.post("/api/visits/{visit_id}/split/preview", response_model=VisitSplitPreview)

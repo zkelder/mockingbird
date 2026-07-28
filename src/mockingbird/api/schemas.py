@@ -1831,6 +1831,15 @@ class MediaAsset(BaseModel):
     captured_at: datetime | None = None
     alignment_status: str | None = None
     alignment_failure_code: str | None = None
+    normalized_crop_box: list[float] | None = None
+    derived_from_visit_id: str | None = None
+    derived_from_event_id: str | None = None
+    derived_from_zone_id: str | None = None
+    parent_image_width: int | None = Field(default=None, ge=1)
+    parent_image_height: int | None = Field(default=None, ge=1)
+    content_sha256: str | None = None
+    derivation_source: str | None = None
+    previous_effective_crop_media_asset_id: str | None = None
 
 
 class VisitEvidenceFrame(BaseModel):
@@ -1845,6 +1854,7 @@ class VisitEvidenceFrame(BaseModel):
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
     evidence_role: str = "monitoring_frame"
+    normalized_crop_box: list[float] | None = None
 
 
 class VisitCurationHistoryEntry(BaseModel):
@@ -1876,6 +1886,41 @@ class VisitEvidenceCurationResponse(BaseModel):
     evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
     review_state_token: str
     idempotent: bool = False
+    message: str
+
+
+class RefinedCropCreateRequest(BaseModel):
+    """A reviewer can submit only normalized source-image geometry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+
+class VisitCropHistoryEntry(BaseModel):
+    media_asset_id: str
+    preview_url: str
+    parent_media_asset_id: str
+    evidence_role: str
+    derivation_source: str
+    normalized_crop_box: list[float] | None = None
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
+    created_at: datetime
+    is_primary: bool
+    previous_effective_crop_media_asset_id: str | None = None
+
+
+class RefinedCropResponse(BaseModel):
+    visit: Visit
+    refined_crop: MediaAsset
+    evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
+    crop_history: list[VisitCropHistoryEntry] = Field(default_factory=list)
+    stale_species_suggestions: bool = False
+    created: bool = False
     message: str
 
 
@@ -3181,6 +3226,7 @@ class ReviewQueueItem(BaseModel):
     identification: ReviewIdentificationSummary | None = None
     media_asset: MediaAsset | None = None
     evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
+    stale_species_suggestions: bool = False
     review_status: ReviewStatus
     review_state_token: str = ""
     reason: str
@@ -4568,6 +4614,8 @@ class VisitDetail(BaseModel):
     motion_evidence: MotionEvidenceResponse | None = None
     media_asset: MediaAsset | None = None
     evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
+    crop_history: list[VisitCropHistoryEntry] = Field(default_factory=list)
+    stale_species_suggestions: bool = False
     detection_proposals: list[DetectionProposal] = Field(default_factory=list)
     detection_runs: list[DetectionRun] = Field(default_factory=list)
     review_labels: list[ReviewLabel]

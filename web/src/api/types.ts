@@ -1401,6 +1401,19 @@ export interface MediaAsset {
   file_size_bytes: number;
   created_at: string;
   notes?: string | null;
+  parent_media_asset_id?: string | null;
+  evidence_role?: string | null;
+  image_width?: number | null;
+  image_height?: number | null;
+  normalized_crop_box?: number[] | null;
+  derived_from_visit_id?: string | null;
+  derived_from_event_id?: string | null;
+  derived_from_zone_id?: string | null;
+  parent_image_width?: number | null;
+  parent_image_height?: number | null;
+  content_sha256?: string | null;
+  derivation_source?: string | null;
+  previous_effective_crop_media_asset_id?: string | null;
 }
 
 export interface VisitEvidenceFrame {
@@ -1414,6 +1427,7 @@ export interface VisitEvidenceFrame {
   width?: number | null;
   height?: number | null;
   evidence_role: string;
+  normalized_crop_box?: number[] | null;
 }
 
 export interface StreamVisitSummary {
@@ -2709,6 +2723,7 @@ export interface ReviewQueueItem {
   identification?: ReviewIdentificationSummary | null;
   media_asset?: MediaAsset | null;
   evidence_frames: VisitEvidenceFrame[];
+  stale_species_suggestions: boolean;
   review_status: ReviewStatus;
   review_state_token: string;
   reason: string;
@@ -2815,6 +2830,37 @@ export interface VisitEvidenceCurationResponse {
   evidence_frames: VisitEvidenceFrame[];
   review_state_token: string;
   idempotent: boolean;
+  message: string;
+}
+
+export interface RefinedCropCreateRequest {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export interface VisitCropHistoryEntry {
+  media_asset_id: string;
+  preview_url: string;
+  parent_media_asset_id: string;
+  evidence_role: string;
+  derivation_source: string;
+  normalized_crop_box?: number[] | null;
+  width?: number | null;
+  height?: number | null;
+  created_at: string;
+  is_primary: boolean;
+  previous_effective_crop_media_asset_id?: string | null;
+}
+
+export interface RefinedCropResponse {
+  visit: Visit;
+  refined_crop: MediaAsset;
+  evidence_frames: VisitEvidenceFrame[];
+  crop_history: VisitCropHistoryEntry[];
+  stale_species_suggestions: boolean;
+  created: boolean;
   message: string;
 }
 
@@ -3124,6 +3170,8 @@ export interface VisitDetail {
   motion_evidence?: MotionEvidence | null;
   media_asset?: MediaAsset | null;
   evidence_frames: VisitEvidenceFrame[];
+  crop_history: VisitCropHistoryEntry[];
+  stale_species_suggestions: boolean;
   detection_proposals: DetectionProposal[];
   detection_runs: DetectionRun[];
   review_labels: ReviewLabel[];

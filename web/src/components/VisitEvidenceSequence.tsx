@@ -27,6 +27,7 @@ function relativeLabel(frame: VisitEvidenceFrame): string {
 
 function evidenceRoleLabel(frame: VisitEvidenceFrame): string {
   const labels: Record<string, string> = {
+    user_refined_crop: "User-refined high-resolution crop",
     activity_crop: "High-resolution activity crop",
     high_resolution_original: "Full-resolution original",
     pretrigger: "Pre-trigger context",

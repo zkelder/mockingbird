@@ -92,6 +92,10 @@ from mockingbird.motion.activity_crop import (
     plan_activity_crop,
     plan_activity_crop_bounds,
 )
+from mockingbird.motion.high_resolution_evidence import (
+    crop_jpeg,
+    validate_refined_crop_box,
+)
 from mockingbird.api.schemas import (
     AdapterEvaluationItem,
     AdapterEvaluationOutcome,
@@ -375,6 +379,9 @@ from mockingbird.api.schemas import (
     VisitCurationSequencePreview,
     VisitEvidenceCurationRequest,
     VisitEvidenceCurationResponse,
+    RefinedCropCreateRequest,
+    RefinedCropResponse,
+    VisitCropHistoryEntry,
     VisitEvidenceFrame,
     VisitMergeCandidate,
     VisitMergeCandidatesResponse,
@@ -9563,6 +9570,12 @@ class ProductRepository:
                 protected_counts["linked_evidence_or_analysis"] += 1
                 protected_bytes["linked_evidence_or_analysis"] += size
                 continue
+            if asset.evidence_role in {"activity_crop", "user_refined_crop"} and links:
+                # Crop revisions are deliberate reviewer evidence; preview cleanup
+                # must not discard the automatic or prior refined crop history.
+                protected_counts["crop_revision_history"] += 1
+                protected_bytes["crop_revision_history"] += size
+                continue
             if active_pairs:
                 # A single asset with both active and superseded Visit links has
                 # ambiguous recovery context. Keep it until that relationship is
@@ -11694,6 +11707,10 @@ class ProductRepository:
                 width=asset.image_width,
                 height=asset.image_height,
                 evidence_role=link.evidence_role or asset.evidence_role or "monitoring_frame",
+                normalized_crop_box=(
+                    _normalized_box_from_json(asset.normalized_crop_box_json)
+                    or _normalized_box_from_json(asset.normalized_padded_crop_box_json)
+                ),
             )
             for link, asset in parsed
         ]
@@ -11749,6 +11766,9 @@ class ProductRepository:
                 width=asset.image_width,
                 height=asset.image_height,
                 evidence_role=asset.evidence_role or "monitoring_frame",
+                normalized_crop_box=(
+                    asset.normalized_crop_box or asset.normalized_padded_crop_box
+                ),
             )
         ]
 
@@ -11803,6 +11823,10 @@ class ProductRepository:
                 message = "Merged into a newer Visit. Original Visit retained in history."
             elif entry.action == "merged_from":
                 message = "Merged from earlier Visits."
+            elif entry.action == "crop_refinement":
+                message = "Saved a refined high-resolution crop without changing review truth."
+            elif entry.action == "crop_primary_promoted":
+                message = "Restored an earlier crop as the primary review image without regenerating media."
             elif entry.action == "zone_reassigned":
                 prior_zone = session.get(ZoneModel, entry.prior_zone_id) if entry.prior_zone_id else None
                 destination = session.get(ZoneModel, details.get("zone_id")) if details.get("zone_id") else None
@@ -12002,6 +12026,373 @@ class ProductRepository:
                     evidence_frames=self._visit_evidence_frames_from_visit(session, visit, event),
                     review_state_token=self._review_state_token(session, "visit", visit.id),
                     message="Visit evidence updated. The original media files were retained.",
+                )
+
+    def _visit_crop_history_from_session(
+        self,
+        session: Session,
+        *,
+        visit: VisitModel,
+        event: EventModel,
+    ) -> list[VisitCropHistoryEntry]:
+        entries: list[VisitCropHistoryEntry] = []
+        for link in self._visit_evidence_link_models(session, visit.id):
+            role = link.evidence_role
+            if role not in {"activity_crop", "user_refined_crop"}:
+                continue
+            asset = session.get(MediaAssetModel, link.media_asset_id)
+            if (
+                asset is None
+                or asset.stream_id != event.stream_id
+                or asset.parent_media_asset_id is None
+            ):
+                continue
+            parent = session.get(MediaAssetModel, asset.parent_media_asset_id)
+            if parent is None or parent.stream_id != event.stream_id:
+                continue
+            entries.append(
+                VisitCropHistoryEntry(
+                    media_asset_id=asset.id,
+                    preview_url=f"/api/media/{asset.id}/preview",
+                    parent_media_asset_id=parent.id,
+                    evidence_role=role,
+                    derivation_source=(
+                        asset.derivation_source
+                        or ("user_refined_crop" if role == "user_refined_crop" else "activity_crop")
+                    ),
+                    normalized_crop_box=(
+                        _normalized_box_from_json(asset.normalized_crop_box_json)
+                        or _normalized_box_from_json(asset.normalized_padded_crop_box_json)
+                    ),
+                    width=asset.image_width,
+                    height=asset.image_height,
+                    created_at=_as_utc(asset.created_at),
+                    is_primary=link.is_primary,
+                    previous_effective_crop_media_asset_id=(
+                        asset.previous_effective_crop_media_asset_id
+                    ),
+                )
+            )
+        return sorted(
+            entries,
+            key=lambda entry: (entry.created_at, entry.media_asset_id),
+            reverse=True,
+        )
+
+    def visit_crop_history(self, visit_id: str) -> list[VisitCropHistoryEntry]:
+        with self.session_factory() as session:
+            visit = session.get(VisitModel, visit_id)
+            if visit is None:
+                return []
+            event = session.get(EventModel, visit.event_id)
+            if event is None:
+                return []
+            return self._visit_crop_history_from_session(
+                session,
+                visit=visit,
+                event=event,
+            )
+
+    def _visit_has_stale_species_suggestions(
+        self,
+        session: Session,
+        *,
+        visit_id: str,
+        effective_media_asset_id: str | None = None,
+    ) -> bool:
+        if effective_media_asset_id is None:
+            links = self._visit_evidence_link_models(session, visit_id)
+            effective_media_asset_id = next(
+                (link.media_asset_id for link in links if link.is_primary),
+                None,
+            )
+        if effective_media_asset_id is None:
+            return False
+        return session.scalar(
+            select(SpeciesSuggestionModel.id)
+            .where(
+                SpeciesSuggestionModel.visit_id == visit_id,
+                SpeciesSuggestionModel.media_asset_id.is_not(None),
+                SpeciesSuggestionModel.media_asset_id != effective_media_asset_id,
+            )
+            .limit(1)
+        ) is not None
+
+    def visit_has_stale_species_suggestions(self, visit_id: str) -> bool:
+        with self.session_factory() as session:
+            if session.get(VisitModel, visit_id) is None:
+                return False
+            return self._visit_has_stale_species_suggestions(
+                session,
+                visit_id=visit_id,
+            )
+
+    def _set_visit_crop_primary(
+        self,
+        session: Session,
+        *,
+        visit: VisitModel,
+        event: EventModel,
+        links: list[VisitEvidenceLinkModel],
+        crop_link: VisitEvidenceLinkModel,
+    ) -> None:
+        # One Visit primary is an invariant shared by the queue, Fast Review,
+        # and exported review context. Full evidence stays linked for zoom.
+        for link in links:
+            link.is_primary = link.id == crop_link.id
+        crop_asset = session.get(MediaAssetModel, crop_link.media_asset_id)
+        if crop_asset is None or crop_asset.stream_id != event.stream_id:
+            raise ValueError("invalid_refined_crop_history")
+        visit.representative_media_path = crop_asset.local_path
+
+    def _refined_crop_parent(
+        self,
+        session: Session,
+        *,
+        links: list[VisitEvidenceLinkModel],
+        event: EventModel,
+    ) -> tuple[VisitEvidenceLinkModel, MediaAssetModel]:
+        parents: list[tuple[VisitEvidenceLinkModel, MediaAssetModel]] = []
+        for link in links:
+            asset = session.get(MediaAssetModel, link.media_asset_id)
+            if (
+                asset is not None
+                and asset.stream_id == event.stream_id
+                and link.evidence_role == "high_resolution_original"
+                and asset.evidence_role == "high_resolution_original"
+                and asset.parent_media_asset_id is None
+                and asset.image_width is not None
+                and asset.image_height is not None
+            ):
+                parents.append((link, asset))
+        if not parents:
+            raise ValueError("missing_high_resolution_parent")
+        return parents[-1]
+
+    def create_refined_visit_crop(
+        self,
+        visit_id: str,
+        payload: RefinedCropCreateRequest,
+    ) -> RefinedCropResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                visit, event = self._require_active_visit(session, visit_id)
+                links = self._ensure_visit_evidence_links(session, visit=visit, event=event)
+                parent_link, parent = self._refined_crop_parent(
+                    session,
+                    links=links,
+                    event=event,
+                )
+                requested_box = validate_refined_crop_box(
+                    (payload.left, payload.top, payload.right, payload.bottom),
+                    image_width=parent.image_width,
+                    image_height=parent.image_height,
+                )
+                if requested_box is None:
+                    raise ValueError("invalid_refined_crop_geometry")
+                parent_path, _relative, _size, unsafe_reason = self._storage_managed_media_path(parent)
+                if parent_path is None:
+                    raise ValueError(unsafe_reason or "missing_media_file")
+                try:
+                    crop = crop_jpeg(parent_path.read_bytes(), requested_box)
+                except OSError as error:
+                    raise ValueError("missing_media_file") from error
+                if crop is None:
+                    raise ValueError("invalid_high_resolution_parent")
+                normalized_box_json = _normalized_box_to_json(crop.normalized_crop_box)
+                if normalized_box_json is None:
+                    raise ValueError("invalid_refined_crop_geometry")
+
+                existing = session.scalars(
+                    select(MediaAssetModel)
+                    .where(
+                        MediaAssetModel.parent_media_asset_id == parent.id,
+                        MediaAssetModel.derived_from_visit_id == visit.id,
+                        MediaAssetModel.derivation_source == "user_refined_crop",
+                        MediaAssetModel.normalized_crop_box_json == normalized_box_json,
+                    )
+                    .order_by(MediaAssetModel.created_at, MediaAssetModel.id)
+                ).first()
+                created = existing is None
+                now = datetime.now(UTC)
+                current_primary = next((link for link in links if link.is_primary), None)
+                primary_changed = (
+                    existing is None
+                    or current_primary is None
+                    or current_primary.media_asset_id != existing.id
+                )
+                previous_effective_crop_id = (
+                    current_primary.media_asset_id
+                    if current_primary is not None
+                    and current_primary.evidence_role in {"activity_crop", "user_refined_crop"}
+                    else None
+                )
+                if existing is None:
+                    media_id = self._next_id(session, MediaAssetModel, "media-asset")
+                    filename, local_path = self._write_media_file(
+                        f"{media_id}-user-refined-crop.jpg",
+                        crop.image,
+                    )
+                    existing = MediaAssetModel(
+                        id=media_id,
+                        source_id=parent.source_id,
+                        stream_id=event.stream_id,
+                        filename=filename,
+                        content_type="image/jpeg",
+                        media_type="image",
+                        local_path=str(local_path),
+                        original_filename=f"user-refined-crop-{media_id}.jpg",
+                        file_size_bytes=len(crop.image),
+                        created_at=now,
+                        notes=(
+                            "User-refined crop derived from retained high-resolution Visit evidence. "
+                            "Creates no Event, Visit, candidate, ReviewLabel, or truth."
+                        ),
+                        parent_media_asset_id=parent.id,
+                        evidence_role="user_refined_crop",
+                        image_width=crop.width,
+                        image_height=crop.height,
+                        normalized_crop_box_json=normalized_box_json,
+                        derived_from_visit_id=visit.id,
+                        derived_from_event_id=event.id,
+                        derived_from_zone_id=visit.zone_id or event.primary_zone_id,
+                        parent_image_width=parent.image_width,
+                        parent_image_height=parent.image_height,
+                        content_sha256=hashlib.sha256(crop.image).hexdigest(),
+                        derivation_source="user_refined_crop",
+                        previous_effective_crop_media_asset_id=previous_effective_crop_id,
+                        captured_at=parent.captured_at or parent.created_at,
+                    )
+                    session.add(existing)
+                    session.flush()
+
+                crop_link = next(
+                    (link for link in links if link.media_asset_id == existing.id),
+                    None,
+                )
+                if crop_link is None:
+                    crop_link = VisitEvidenceLinkModel(
+                        id=f"visit-evidence-{uuid.uuid4().hex}",
+                        visit_id=visit.id,
+                        media_asset_id=existing.id,
+                        captured_at=parent_link.captured_at,
+                        frame_sequence=parent_link.frame_sequence,
+                        sort_order=max((link.sort_order for link in links), default=-1) + 1,
+                        is_primary=False,
+                        evidence_role="user_refined_crop",
+                        created_at=now,
+                    )
+                    session.add(crop_link)
+                    links.append(crop_link)
+                self._set_visit_crop_primary(
+                    session,
+                    visit=visit,
+                    event=event,
+                    links=links,
+                    crop_link=crop_link,
+                )
+                if created or primary_changed:
+                    self._record_visit_curation(
+                        session,
+                        visit_id=visit.id,
+                        action="crop_refinement",
+                        created_at=now,
+                        details={
+                            "crop_media_asset_id": existing.id,
+                            "parent_media_asset_id": parent.id,
+                            "created": created,
+                        },
+                    )
+                session.flush()
+                frames = self._visit_evidence_frames_from_visit(session, visit, event)
+                return RefinedCropResponse(
+                    visit=_visit_from_model(visit),
+                    refined_crop=_media_asset_from_model(existing),
+                    evidence_frames=frames,
+                    crop_history=self._visit_crop_history_from_session(
+                        session,
+                        visit=visit,
+                        event=event,
+                    ),
+                    stale_species_suggestions=self._visit_has_stale_species_suggestions(
+                        session,
+                        visit_id=visit.id,
+                        effective_media_asset_id=existing.id,
+                    ),
+                    created=created,
+                    message=(
+                        "Refined crop saved as the primary review image. Existing suggestions remain evidence only."
+                        if created
+                        else "This exact refined crop already exists and is now the primary review image."
+                    ),
+                )
+
+    def promote_visit_crop_history(
+        self,
+        visit_id: str,
+        media_asset_id: str,
+    ) -> RefinedCropResponse:
+        with self.session_factory() as session:
+            with session.begin():
+                visit, event = self._require_active_visit(session, visit_id)
+                links = self._ensure_visit_evidence_links(session, visit=visit, event=event)
+                crop_link = next(
+                    (
+                        link
+                        for link in links
+                        if link.media_asset_id == media_asset_id
+                        and link.evidence_role in {"activity_crop", "user_refined_crop"}
+                    ),
+                    None,
+                )
+                if crop_link is None:
+                    raise ValueError("invalid_refined_crop_history")
+                crop = session.get(MediaAssetModel, crop_link.media_asset_id)
+                parent = (
+                    session.get(MediaAssetModel, crop.parent_media_asset_id)
+                    if crop is not None and crop.parent_media_asset_id
+                    else None
+                )
+                if (
+                    crop is None
+                    or parent is None
+                    or crop.stream_id != event.stream_id
+                    or parent.stream_id != event.stream_id
+                    or parent.evidence_role != "high_resolution_original"
+                ):
+                    raise ValueError("invalid_refined_crop_history")
+                self._set_visit_crop_primary(
+                    session,
+                    visit=visit,
+                    event=event,
+                    links=links,
+                    crop_link=crop_link,
+                )
+                now = datetime.now(UTC)
+                self._record_visit_curation(
+                    session,
+                    visit_id=visit.id,
+                    action="crop_primary_promoted",
+                    created_at=now,
+                    details={"crop_media_asset_id": crop.id},
+                )
+                session.flush()
+                return RefinedCropResponse(
+                    visit=_visit_from_model(visit),
+                    refined_crop=_media_asset_from_model(crop),
+                    evidence_frames=self._visit_evidence_frames_from_visit(session, visit, event),
+                    crop_history=self._visit_crop_history_from_session(
+                        session,
+                        visit=visit,
+                        event=event,
+                    ),
+                    stale_species_suggestions=self._visit_has_stale_species_suggestions(
+                        session,
+                        visit_id=visit.id,
+                        effective_media_asset_id=crop.id,
+                    ),
+                    created=False,
+                    message="Earlier crop restored as the primary review image. No media was regenerated.",
                 )
 
     def preview_visit_split(
@@ -15010,7 +15401,11 @@ class ProductRepository:
         # the normal primary/best monitoring frame.  Keep the legacy request
         # enum for API compatibility, but one manual suggestion run always has
         # one accountable MediaAsset input.
-        for evidence_role in ("activity_crop", "high_resolution_original"):
+        for evidence_role in (
+            "user_refined_crop",
+            "activity_crop",
+            "high_resolution_original",
+        ):
             candidates = [
                 frame for frame in retained if frame.evidence_role == evidence_role
             ]
@@ -15126,6 +15521,11 @@ class ProductRepository:
             **_review_focus_crop_fields(focus_crop_context),
             media_asset=_media_asset_from_model(media_asset) if media_asset is not None else None,
             evidence_frames=evidence_frames,
+            stale_species_suggestions=self._visit_has_stale_species_suggestions(
+                session,
+                visit_id=visit.id,
+                effective_media_asset_id=best_media_asset_id,
+            ),
             review_status=ReviewStatus(visit.review_status),
             review_state_token=self._review_state_token(session, "visit", visit.id),
             reason="Review saved Visit evidence and explicitly correct the final label.",
@@ -19771,6 +20171,11 @@ class ProductRepository:
                 **_review_focus_crop_fields(focus_crop_context),
                 media_asset=media_asset,
                 evidence_frames=evidence_frames,
+                stale_species_suggestions=self._visit_has_stale_species_suggestions(
+                    session,
+                    visit_id=visit.id,
+                    effective_media_asset_id=best_media_asset_id,
+                ),
                 review_status=visit.review_status,
                 review_state_token=self._review_state_token(session, "visit", visit.id),
                 reason="Confirm or correct the suggested species label.",
@@ -23553,6 +23958,17 @@ def _media_asset_from_model(asset: MediaAssetModel) -> MediaAsset:
         ),
         alignment_status=asset.alignment_status,
         alignment_failure_code=asset.alignment_failure_code,
+        normalized_crop_box=_normalized_box_from_json(asset.normalized_crop_box_json),
+        derived_from_visit_id=asset.derived_from_visit_id,
+        derived_from_event_id=asset.derived_from_event_id,
+        derived_from_zone_id=asset.derived_from_zone_id,
+        parent_image_width=asset.parent_image_width,
+        parent_image_height=asset.parent_image_height,
+        content_sha256=asset.content_sha256,
+        derivation_source=asset.derivation_source,
+        previous_effective_crop_media_asset_id=(
+            asset.previous_effective_crop_media_asset_id
+        ),
     )
 
 

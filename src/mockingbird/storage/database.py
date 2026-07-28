@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 25
+CURRENT_DATABASE_SCHEMA_VERSION = 26
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -356,6 +356,38 @@ def _migrate_to_high_resolution_activity_evidence(connection: Connection) -> Non
     )
 
 
+def _migrate_to_high_resolution_crop_refinement(connection: Connection) -> None:
+    """Add empty v26 reviewer-crop lineage fields without changing evidence or truth."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "High-resolution crop refinement migration requires local SQLite storage."
+        )
+    Base.metadata.tables["media_assets"].create(bind=connection, checkfirst=True)
+    columns = {
+        column["name"] for column in inspect(connection).get_columns("media_assets")
+    }
+    for column, definition in (
+        ("normalized_crop_box_json", "TEXT"),
+        ("derived_from_visit_id", "VARCHAR"),
+        ("derived_from_event_id", "VARCHAR"),
+        ("derived_from_zone_id", "VARCHAR"),
+        ("parent_image_width", "INTEGER"),
+        ("parent_image_height", "INTEGER"),
+        ("content_sha256", "VARCHAR"),
+        ("derivation_source", "VARCHAR"),
+        ("previous_effective_crop_media_asset_id", "VARCHAR"),
+    ):
+        if column not in columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE media_assets ADD COLUMN {column} {definition}"
+            )
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_media_assets_refined_crop_lookup "
+        "ON media_assets(derived_from_visit_id, parent_media_asset_id, derivation_source)"
+    )
+
+
 def _migrate_to_zone_monitoring_policy_overrides(connection: Connection) -> None:
     """Add empty per-Zone overrides without changing existing Zone behavior."""
 
@@ -596,6 +628,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     23: _migrate_to_camera_node_provider_contract,
     24: _migrate_to_high_resolution_activity_evidence,
     25: _migrate_to_species_candidate_packs,
+    26: _migrate_to_high_resolution_crop_refinement,
 }
 
 

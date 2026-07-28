@@ -24,6 +24,7 @@ import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
 import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
 import { TaxonomyBadge } from "../components/TaxonomyBadge";
 import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
+import { RefinedCropEditor } from "../components/RefinedCropEditor";
 import { displayTaxonomyLabel, findTaxonomyLabel, isBirdReviewLabel } from "../components/taxonomy";
 import { formatDateTime, formatLabel } from "../utils";
 
@@ -664,6 +665,33 @@ export function VisitDetailPage({
       )
     : "";
   const sortedSpeciesSuggestions = [...speciesSuggestions].sort(compareSpeciesSuggestions);
+  const fullResolutionFrame = detail.evidence_frames.find(
+    (frame) => frame.evidence_role === "high_resolution_original",
+  ) ?? null;
+  const effectiveCropFrame = detail.evidence_frames.find((frame) => frame.is_primary) ?? null;
+  const effectiveCropBounds =
+    effectiveCropFrame?.normalized_crop_box ??
+    detail.crop_history.find((entry) => entry.is_primary)?.normalized_crop_box ??
+    null;
+
+  async function refreshCropEvidence(messageText: string) {
+    setMessage(messageText);
+    await Promise.all([
+      loadDetail({ showLoading: false }),
+      loadSpeciesSuggestions({ showLoading: false }),
+      loadIdentificationAssistant(),
+      onCorrectionSaved(),
+    ]);
+  }
+
+  async function promoteCrop(mediaAssetId: string) {
+    try {
+      const response = await apiClient.promoteVisitCropHistory(visitId, mediaAssetId);
+      await refreshCropEvidence(response.message);
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "Could not restore that crop.");
+    }
+  }
 
   return (
     <div className="page-stack">
@@ -692,6 +720,46 @@ export function VisitDetailPage({
       </div>
 
       {message ? <div className="notice-panel">{message}</div> : null}
+
+      {fullResolutionFrame ? (
+        <section className="panel high-resolution-crop-panel">
+          <div className="section-heading">
+            <div>
+              <h2>High-resolution evidence</h2>
+              <span className="meta-text">Adjusting a crop creates a new derived review image; the full still and automatic crop remain intact.</span>
+            </div>
+            <EvidenceBadge label="Evidence only" tone="evidence" />
+          </div>
+          {detail.evidence_frames.length > 0 ? <VisitEvidenceSequence frames={detail.evidence_frames} /> : null}
+          <div className="detail-actions">
+            <RefinedCropEditor
+              fullFrame={fullResolutionFrame}
+              initialBounds={effectiveCropBounds}
+              onSaved={(response) => { void refreshCropEvidence(response.message); }}
+              visitId={visitId}
+            />
+          </div>
+          {detail.stale_species_suggestions ? (
+            <div className="notice-panel compact-notice">Suggestions were generated from an earlier image. Run Suggest species again to analyze the refined crop.</div>
+          ) : null}
+          {detail.crop_history.length > 0 ? (
+            <div className="crop-history-list" aria-label="Crop history">
+              <strong>Crop history</strong>
+              {detail.crop_history.map((crop) => (
+                <article className="crop-history-item" key={crop.media_asset_id}>
+                  <img alt="Crop history thumbnail" src={`${apiClient.baseUrl}${crop.preview_url}`} />
+                  <div>
+                    <strong>{crop.derivation_source === "user_refined_crop" ? "User-refined crop" : "Automatic crop"}</strong>
+                    <span>{crop.width ?? "?"} × {crop.height ?? "?"} px · {formatDateTime(crop.created_at)}</span>
+                    <span>Parent full image: {crop.parent_media_asset_id}</span>
+                  </div>
+                  {crop.is_primary ? <StatusPill label="Primary" tone="good" /> : <button className="secondary-action" onClick={() => void promoteCrop(crop.media_asset_id)} type="button">Make primary</button>}
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {activeCorrectionPrefill ? (
         <section className="prefill-notice">

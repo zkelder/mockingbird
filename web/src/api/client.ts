@@ -114,6 +114,8 @@ import type {
   ReviewCorrectionResult,
   VisitEvidenceCurationRequest,
   VisitEvidenceCurationResponse,
+  RefinedCropCreateRequest,
+  RefinedCropResponse,
   VisitMergeCandidatesResponse,
   VisitMergePreview,
   VisitMergePreviewRequest,
@@ -764,6 +766,16 @@ export const apiClient = {
     request<VisitEvidenceCurationResponse>(
       `/api/visits/${encodeURIComponent(visitId)}/evidence-curation`,
       { method: "POST", body: JSON.stringify(payload) },
+    ),
+  createRefinedVisitCrop: (visitId: string, payload: RefinedCropCreateRequest) =>
+    request<RefinedCropResponse>(`/api/visits/${encodeURIComponent(visitId)}/refined-crop`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  promoteVisitCropHistory: (visitId: string, mediaAssetId: string) =>
+    request<RefinedCropResponse>(
+      `/api/visits/${encodeURIComponent(visitId)}/crop-history/${encodeURIComponent(mediaAssetId)}/promote`,
+      { method: "POST" },
     ),
   previewVisitSplit: (visitId: string, payload: VisitSplitPreviewRequest) =>
     request<VisitSplitPreview>(`/api/visits/${encodeURIComponent(visitId)}/split/preview`, {

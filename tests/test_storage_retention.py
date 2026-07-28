@@ -269,6 +269,52 @@ def test_parent_still_is_protected_while_a_derived_activity_crop_exists(
     assert crop_path.exists()
 
 
+def test_refined_crop_history_is_protected_even_when_it_is_not_primary(
+    repository: ProductRepository,
+) -> None:
+    _add_media(repository, media_id="retention-refined-parent", age_days=365)
+    _add_media(repository, media_id="retention-refined-automatic", age_days=365)
+    _add_media(repository, media_id="retention-refined-user", age_days=365)
+    with repository.session_factory() as session:
+        with session.begin():
+            parent = session.get(MediaAssetModel, "retention-refined-parent")
+            automatic = session.get(MediaAssetModel, "retention-refined-automatic")
+            refined = session.get(MediaAssetModel, "retention-refined-user")
+            assert parent is not None and automatic is not None and refined is not None
+            parent.evidence_role = "high_resolution_original"
+            automatic.parent_media_asset_id = parent.id
+            automatic.evidence_role = "activity_crop"
+            refined.parent_media_asset_id = parent.id
+            refined.evidence_role = "user_refined_crop"
+            refined.derivation_source = "user_refined_crop"
+
+    _add_active_visit_with_evidence(
+        repository,
+        visit_id="retention-refined-history-visit",
+        evidence=[
+            ("retention-refined-parent", False),
+            ("retention-refined-automatic", True),
+            ("retention-refined-user", False),
+        ],
+        review_status="reviewed",
+        reviewed_label="false_positive",
+    )
+    repository.update_storage_retention_settings(
+        _settings_payload(
+            "retention-refined-history-settings",
+            retain_reviewed_bird_wildlife_evidence=False,
+            reviewed_non_bird_age_days=30,
+        )
+    )
+
+    preview = repository.preview_storage_cleanup()
+
+    protected = {item.category: item.media_count for item in preview.protected_counts}
+    assert preview.eligible_media_count == 0
+    assert protected["crop_revision_history"] == 2
+    assert protected["derived_media_reference"] == 1
+
+
 def test_interrupted_move_remains_recoverable_without_removing_links(
     repository: ProductRepository,
     monkeypatch: pytest.MonkeyPatch,

@@ -24,6 +24,7 @@ import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { ReviewFilterTabs, type ReviewFilterOption } from "../components/ReviewFilterTabs";
 import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
+import { RefinedCropEditor } from "../components/RefinedCropEditor";
 import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
 import { StatusPill } from "../components/StatusPill";
 import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
@@ -3561,6 +3562,12 @@ function FastReviewPanel({
       ),
     [activeItem],
   );
+  const activeFullResolutionFrame = activeItem?.evidence_frames.find(
+    (frame) => frame.evidence_role === "high_resolution_original",
+  ) ?? null;
+  const activeCropBounds = activeItem?.evidence_frames.find(
+    (frame) => frame.is_primary,
+  )?.normalized_crop_box ?? null;
   const helperGroups = useMemo(
     () => labelHelperGroups(suggestedLabels, recentLabelValues, taxonomyLabelValues),
     [recentLabelValues, suggestedLabels, taxonomyLabelValues],
@@ -4037,6 +4044,22 @@ function FastReviewPanel({
           ) : (
             <div className="fast-review-no-evidence">No saved evidence frame is available for this Visit.</div>
           )}
+          {activeItem.visit_id && activeFullResolutionFrame ? (
+            <div className="detail-actions">
+              <RefinedCropEditor
+                fullFrame={activeFullResolutionFrame}
+                initialBounds={activeCropBounds}
+                onSaved={(response) => {
+                  setMessage(response.message);
+                  void refreshProductState();
+                }}
+                visitId={activeItem.visit_id}
+              />
+            </div>
+          ) : null}
+          {activeItem.stale_species_suggestions ? (
+            <div className="notice-panel compact-notice">Suggestions were generated from an earlier image. Run Suggest species again to analyze the refined crop.</div>
+          ) : null}
         </div>
         <div className="fast-review-form">
           <IdentificationAssistant

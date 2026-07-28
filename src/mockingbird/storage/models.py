@@ -558,6 +558,19 @@ class MediaAssetModel(Base):
     captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     alignment_status: Mapped[str | None] = mapped_column(String, nullable=True)
     alignment_failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    # v26 reviewer refinement keeps an immutable source-relative crop lineage.
+    normalized_crop_box_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    derived_from_visit_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    derived_from_event_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    derived_from_zone_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    parent_image_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parent_image_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    content_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    derivation_source: Mapped[str | None] = mapped_column(String, nullable=True)
+    previous_effective_crop_media_asset_id: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+    )
 
 
 class StorageRetentionSettingsModel(Base):
