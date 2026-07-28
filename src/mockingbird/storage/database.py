@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 26
+CURRENT_DATABASE_SCHEMA_VERSION = 27
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -356,6 +356,15 @@ def _migrate_to_high_resolution_activity_evidence(connection: Connection) -> Non
     )
 
 
+def _migrate_to_monitoring_exposure_intervals(connection: Connection) -> None:
+    """Add empty durable healthy-frame history without backfilling uptime."""
+
+    Base.metadata.tables["monitoring_exposure_intervals"].create(
+        bind=connection,
+        checkfirst=True,
+    )
+
+
 def _migrate_to_high_resolution_crop_refinement(connection: Connection) -> None:
     """Add empty v26 reviewer-crop lineage fields without changing evidence or truth."""
 
@@ -588,6 +597,10 @@ def _migrate_to_species_candidate_packs(connection: Connection) -> None:
         bind=connection,
         checkfirst=True,
     )
+    Base.metadata.tables["bioclip_identification_attempts"].create(
+        bind=connection,
+        checkfirst=True,
+    )
     attempt_columns = {
         column["name"]
         for column in inspect(connection).get_columns("bioclip_identification_attempts")
@@ -629,6 +642,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     24: _migrate_to_high_resolution_activity_evidence,
     25: _migrate_to_species_candidate_packs,
     26: _migrate_to_high_resolution_crop_refinement,
+    27: _migrate_to_monitoring_exposure_intervals,
 }
 
 

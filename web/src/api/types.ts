@@ -684,6 +684,12 @@ export interface StreamRuntimeStatus {
   checkpoint_updated_at?: string | null;
   last_start_attempt_at?: string | null;
   last_healthy_frame_at?: string | null;
+  exposure_interval_active: boolean;
+  current_healthy_duration_seconds?: number | null;
+  durable_exposure_today_seconds: number;
+  exposure_history_available_from?: string | null;
+  latest_confirmed_exposure_at?: string | null;
+  most_recent_exposure_close_reason?: string | null;
   last_evidence_persisted_at?: string | null;
   last_evidence_failure_at?: string | null;
   evidence_failure_code?: string | null;
@@ -3618,6 +3624,9 @@ export interface ZoneInsightsSpeciesComposition {
 
 export interface ZoneInsightsMetrics {
   healthy_monitored_hours?: number | null;
+  exposure_history_available_from?: string | null;
+  exposure_history_is_partial: boolean;
+  exposure_interval_count: number;
   confirmed_bird_visit_count: number;
   confirmed_bird_visits_per_monitored_hour?: number | null;
   total_confirmed_bird_dwell_seconds: number;

@@ -23,6 +23,7 @@ from mockingbird.repository.product_repository import ProductRepository, Species
 from mockingbird.storage.models import (
     CameraHealthIncidentModel,
     CameraSourceModel,
+    MonitoringExposureIntervalModel,
     EventModel,
     ReviewLabelModel,
     StreamModel,
@@ -138,7 +139,22 @@ def repository(tmp_path: Path) -> ProductRepository:
                     updated_at=RANGE_END,
                 )
             )
-            # These intervals overlap and must be merged before subtracting.
+            # Durable intervals already exclude unhealthy/recovering time.
+            session.add(
+                MonitoringExposureIntervalModel(
+                    id="exposure-zone-insights",
+                    stream_id=STREAM_ID,
+                    source_id=SOURCE_ID,
+                    runtime_generation_id="zone-insights-generation",
+                    started_at=RANGE_START,
+                    last_confirmed_fresh_at=RANGE_START + timedelta(hours=2),
+                    ended_at=RANGE_START + timedelta(hours=2),
+                    close_reason="provider_failure",
+                    created_at=RANGE_START,
+                    updated_at=RANGE_START + timedelta(hours=2),
+                )
+            )
+            # Camera Health remains operational history; it no longer mutates durable exposure.
             session.add_all(
                 [
                     CameraHealthIncidentModel(
@@ -372,3 +388,74 @@ def test_zone_insights_api_validates_range_and_is_read_only(repository: ProductR
     assert valid.json()["applied_filters"]["source_id"] == SOURCE_ID
     assert invalid.status_code == 422
     assert _counts(repository) == before
+
+
+
+def test_zone_insights_reports_durable_history_boundaries_and_insufficient_exposure(
+    repository: ProductRepository,
+) -> None:
+    before = _counts(repository)
+    partial = repository.zone_insights(
+        ZoneInsightsRequest(
+            start_at=RANGE_START - timedelta(hours=2),
+            end_at=RANGE_END,
+            stream_id=STREAM_ID,
+        )
+    )
+    feeder = next(zone for zone in partial.zones if zone.zone_id == FEEDER_ZONE_ID)
+    assert feeder.metrics.exposure_history_available_from == RANGE_START
+    assert feeder.metrics.exposure_history_is_partial is True
+    assert feeder.metrics.exposure_interval_count == 1
+    assert feeder.metrics.healthy_monitored_hours == 2
+    assert any(
+        "Earlier time in this range is excluded from rate calculations."
+        in warning
+        for warning in partial.warnings
+    )
+
+    insufficient = repository.zone_insights(
+        ZoneInsightsRequest(
+            start_at=RANGE_START,
+            end_at=RANGE_START + timedelta(hours=1),
+            stream_id=STREAM_ID,
+        )
+    )
+    limited_feeder = next(
+        zone for zone in insufficient.zones if zone.zone_id == FEEDER_ZONE_ID
+    )
+    assert limited_feeder.metrics.healthy_monitored_hours == 1
+    assert limited_feeder.metrics.confirmed_bird_visits_per_monitored_hour is None
+    assert limited_feeder.metrics.data_quality_status == "limited_monitoring"
+    assert _counts(repository) == before
+
+
+def test_zone_insights_unions_overlapping_durable_intervals(
+    repository: ProductRepository,
+) -> None:
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                MonitoringExposureIntervalModel(
+                    id="exposure-zone-insights-overlap",
+                    stream_id=STREAM_ID,
+                    source_id=SOURCE_ID,
+                    runtime_generation_id="zone-insights-overlap",
+                    started_at=RANGE_START + timedelta(hours=1),
+                    last_confirmed_fresh_at=RANGE_START + timedelta(hours=3),
+                    ended_at=RANGE_START + timedelta(hours=3),
+                    close_reason="session_stopped",
+                    created_at=RANGE_START + timedelta(hours=1),
+                    updated_at=RANGE_START + timedelta(hours=3),
+                )
+            )
+
+    summary = repository.zone_insights(
+        ZoneInsightsRequest(
+            start_at=RANGE_START,
+            end_at=RANGE_END,
+            stream_id=STREAM_ID,
+        )
+    )
+    feeder = next(zone for zone in summary.zones if zone.zone_id == FEEDER_ZONE_ID)
+    assert feeder.metrics.exposure_interval_count == 2
+    assert feeder.metrics.healthy_monitored_hours == 3

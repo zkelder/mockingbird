@@ -887,6 +887,12 @@ class StreamRuntimeStatusResponse(BaseModel):
     checkpoint_updated_at: datetime | None = None
     last_start_attempt_at: datetime | None = None
     last_healthy_frame_at: datetime | None = None
+    exposure_interval_active: bool = False
+    current_healthy_duration_seconds: float | None = Field(default=None, ge=0)
+    durable_exposure_today_seconds: float = Field(default=0, ge=0)
+    exposure_history_available_from: datetime | None = None
+    latest_confirmed_exposure_at: datetime | None = None
+    most_recent_exposure_close_reason: str | None = None
     last_evidence_persisted_at: datetime | None = None
     last_evidence_failure_at: datetime | None = None
     evidence_failure_code: str | None = None
@@ -3918,6 +3924,9 @@ class ZoneInsightsSpeciesComposition(BaseModel):
 
 class ZoneInsightsMetrics(BaseModel):
     healthy_monitored_hours: float | None = Field(default=None, ge=0)
+    exposure_history_available_from: datetime | None = None
+    exposure_history_is_partial: bool = False
+    exposure_interval_count: int = Field(default=0, ge=0)
     confirmed_bird_visit_count: int = Field(ge=0)
     confirmed_bird_visits_per_monitored_hour: float | None = Field(default=None, ge=0)
     total_confirmed_bird_dwell_seconds: float = Field(ge=0)

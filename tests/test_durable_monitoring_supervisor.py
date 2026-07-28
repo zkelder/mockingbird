@@ -95,7 +95,9 @@ class FakeStore:
         )
         self.events.append(("blocked", candidate.stream_id))
 
-    def mark_monitoring_stopped(self, stream_id, *, reason, now) -> None:
+    def mark_monitoring_stopped(
+        self, stream_id, *, reason, now, last_healthy_at=None
+    ) -> None:
         candidate = self.candidates.get(stream_id)
         if candidate is not None:
             self.candidates[stream_id] = replace(candidate, actual_state="stopped")

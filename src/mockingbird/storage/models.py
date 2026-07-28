@@ -184,6 +184,55 @@ class StreamRuntimeCheckpointModel(Base):
     )
 
 
+class MonitoringExposureIntervalModel(Base):
+    """A bounded healthy-frame interval; it is operational history, never evidence."""
+
+    __tablename__ = "monitoring_exposure_intervals"
+    __table_args__ = (
+        CheckConstraint(
+            "ended_at IS NULL OR ended_at > started_at",
+            name="ck_monitoring_exposure_interval_positive_duration",
+        ),
+        CheckConstraint(
+            "last_confirmed_fresh_at >= started_at",
+            name="ck_monitoring_exposure_interval_fresh_after_start",
+        ),
+        CheckConstraint(
+            "close_reason IS NULL OR close_reason IN "
+            "('monitoring_disabled', 'session_stopped', 'provider_failure', "
+            "'fresh_frame_stale', 'application_shutdown', 'unclean_restart', "
+            "'source_unusable', 'runtime_generation_replaced')",
+            name="ck_monitoring_exposure_interval_close_reason",
+        ),
+        Index(
+            "uq_monitoring_exposure_intervals_one_open_stream",
+            "stream_id",
+            unique=True,
+            sqlite_where=text("ended_at IS NULL"),
+        ),
+        Index(
+            "ix_monitoring_exposure_intervals_stream_started",
+            "stream_id",
+            "started_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
+    source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("camera_sources.id"), nullable=True
+    )
+    runtime_generation_id: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_confirmed_fresh_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    close_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class CameraHealthIncidentModel(Base):
     """Bounded operational history; never a frame log, evidence record, or truth."""
 

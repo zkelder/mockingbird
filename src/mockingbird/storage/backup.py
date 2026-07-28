@@ -45,6 +45,7 @@ _ENTITY_COUNT_TABLES = {
     "species_suggestions": "species_suggestions",
     "bioclip_attempts": "bioclip_identification_attempts",
     "dataset_exports": "dataset_exports",
+    "monitoring_exposure_intervals": "monitoring_exposure_intervals",
 }
 _EXTERNAL_REFERENCE_CONFIG_KEYS = {
     "device_url",

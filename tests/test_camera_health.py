@@ -431,15 +431,16 @@ def test_history_is_bounded_newest_first_and_safe_responses_hide_runtime_details
     assert "password" not in rendered
 
 
-def test_schema_v24_contains_empty_bounded_incident_and_configuration_storage(repository: ProductRepository) -> None:
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 26
+def test_schema_v27_contains_empty_bounded_incident_configuration_and_exposure_storage(repository: ProductRepository) -> None:
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 27
     tables = set(inspect(repository.engine).get_table_names())
     assert "camera_health_incidents" in tables
     assert "camera_configuration_revisions" in tables
+    assert "monitoring_exposure_intervals" in tables
     assert _incidents(repository) == []
 
 
-def test_v20_runtime_checkpoint_migrates_through_v22_camera_configuration_storage(tmp_path: Path) -> None:
+def test_v20_runtime_checkpoint_migrates_through_v27_exposure_storage(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'v20.sqlite3'}")
     with engine.begin() as connection:
         connection.exec_driver_sql(
@@ -461,15 +462,16 @@ def test_v20_runtime_checkpoint_migrates_through_v22_camera_configuration_storag
 
     status = initialize_database(engine)
     columns = {column["name"] for column in inspect(engine).get_columns("stream_runtime_checkpoints")}
-    assert status.version == 24
+    assert status.version == CURRENT_DATABASE_SCHEMA_VERSION
     assert {"last_evidence_persisted_at", "last_evidence_failure_at", "evidence_failure_code"}.issubset(columns)
     media_columns = {column["name"] for column in inspect(engine).get_columns("media_assets")}
     assert {"parent_media_asset_id", "normalized_track_box_json", "alignment_status"}.issubset(media_columns)
     assert "camera_health_incidents" in inspect(engine).get_table_names()
     assert "camera_configuration_revisions" in inspect(engine).get_table_names()
+    assert "monitoring_exposure_intervals" in inspect(engine).get_table_names()
 
 
-def test_v21_configuration_metadata_is_preserved_when_v22_adds_revision_storage(
+def test_v21_configuration_metadata_is_preserved_through_v27_exposure_storage(
     tmp_path: Path,
 ) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'v21.sqlite3'}")
@@ -492,9 +494,10 @@ def test_v21_configuration_metadata_is_preserved_when_v22_adds_revision_storage(
         preserved = connection.exec_driver_sql(
             "SELECT config_json FROM source_provider_configurations WHERE source_id = 'source-preserved'"
         ).scalar_one()
-    assert status.version == 24
+    assert status.version == CURRENT_DATABASE_SCHEMA_VERSION
     assert preserved == '{"url": "https://camera.local/still.jpg"}'
     assert "camera_configuration_revisions" in inspect(engine).get_table_names()
+    assert "monitoring_exposure_intervals" in inspect(engine).get_table_names()
 
 
 def test_camera_health_api_routes_are_bounded_and_read_only(repository: ProductRepository) -> None:

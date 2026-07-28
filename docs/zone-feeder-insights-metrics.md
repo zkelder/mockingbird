@@ -21,14 +21,21 @@ leaves and returns.
 
 ## Monitoring exposure and confidence
 
-The current durable monitoring store keeps the latest runtime generation,
-latest healthy frame, and bounded Camera Health incidents—not a complete uptime
-ledger. Healthy monitored time is therefore the selected-range overlap of that
-latest generation from its saved start through its fresh-frame/stop/failure
-boundary, minus overlapping saved unhealthy incidents. Disabled, failed,
-recovering, stale, and unavailable periods are not counted. When those facts do
-not support an interval, exposure and normalized rate are null rather than
-estimated.
+Durable exposure history begins only when a Stream receives its first fresh
+monitoring frame. It records bounded healthy intervals, updates their
+fresh-frame checkpoint no more often than the configured cadence, and closes
+them on failure, staleness, disablement, orderly shutdown, or unclean restart.
+Zone Insights clips and unions those intervals for the selected range, never
+infers uptime from enabled intent, runtime checkpoints, Camera Health, or a
+calendar day.
+
+Each metric returns the first durable exposure date, whether the selected range
+predates that history, and the number of contributing intervals. When the
+selected range starts before durable history, its earlier portion is excluded
+and the UI warns explicitly. A Stream with no durable interval has unavailable
+exposure; a Stream with history but no overlap has zero exposure. Mixed Stream
+selections with missing history withhold the aggregate normalized rate rather
+than combining known exposure with assumed uptime.
 
 Visits per monitored hour is returned only with at least two supported healthy
 hours. Zone ranking by rate is shown only for `sufficient` results. Results warn

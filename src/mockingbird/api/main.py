@@ -12461,6 +12461,7 @@ def restore_local_backup(
             media_root=media_root,
             classifier_manifest_export_root=classifier_export_root,
         )
+        restored_repository.prepare_for_supervision("local-backup-restore")
         configure_repository(restored_repository)
         restored_repository_configured = True
         restored_status = restored_repository.local_data_status()

@@ -119,7 +119,7 @@ def quality_status(
         return (
             "unavailable_exposure",
             [
-                "Healthy monitored time is unavailable: durable history retains only the latest bounded runtime generation.",
+                "Healthy monitored time is unavailable: no durable exposure interval overlaps this range.",
             ],
         )
     warnings: list[str] = []

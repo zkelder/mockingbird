@@ -19,6 +19,7 @@ from mockingbird.storage.database import (
 from mockingbird.storage.models import (
     EventModel,
     MediaAssetModel,
+    MonitoringExposureIntervalModel,
     ReviewLabelModel,
     StreamModel,
     StreamMonitoringPolicyModel,
@@ -95,6 +96,7 @@ def _persisted_contract_state(repository: ProductRepository) -> dict[str, object
             "events": session.scalar(select(func.count(EventModel.id))),
             "visits": session.scalar(select(func.count(VisitModel.id))),
             "media_assets": session.scalar(select(func.count(MediaAssetModel.id))),
+            "monitoring_exposure_intervals": session.scalar(select(func.count(MonitoringExposureIntervalModel.id))),
             "review_labels": session.scalar(select(func.count(ReviewLabelModel.id))),
         }
 
@@ -171,6 +173,12 @@ def test_monitoring_contract_gets_are_side_effect_free_and_start_no_runtime(
     assert status["actual_state"] == "stopped"
     assert status["camera_start_requested"] is False
     assert status["monitor_start_requested"] is False
+    assert status["exposure_interval_active"] is False
+    assert status["current_healthy_duration_seconds"] is None
+    assert status["durable_exposure_today_seconds"] == 0
+    assert status["exposure_history_available_from"] is None
+    assert status["latest_confirmed_exposure_at"] is None
+    assert status["most_recent_exposure_close_reason"] is None
     assert status["creates_review_candidates"] is False
     assert status["creates_review_truth"] is False
     assert _persisted_contract_state(repository) == before

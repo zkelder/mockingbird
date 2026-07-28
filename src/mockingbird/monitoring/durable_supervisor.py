@@ -15,6 +15,7 @@ import threading
 from typing import Protocol
 import uuid
 
+from mockingbird.monitoring.exposure_history import DURABLE_EXPOSURE_FRESHNESS_LIMIT
 from mockingbird.time_utils import normalize_optional_utc, normalize_utc, utc_now
 
 
@@ -111,6 +112,7 @@ class DurableMonitoringStore(Protocol):
         *,
         reason: str,
         now: datetime,
+        last_healthy_at: datetime | None = None,
     ) -> None: ...
 
 
@@ -153,6 +155,7 @@ class DurableMonitoringSupervisor:
         self._clock = clock or utc_now
         self._app_instance_id = uuid.uuid4().hex
         self._active_stream_ids: set[str] = set()
+        self._last_healthy_at_by_stream: dict[str, datetime] = {}
         self._reconcile_lock = threading.RLock()
         self._wake_event = threading.Event()
         self._stop_event = threading.Event()
@@ -193,11 +196,13 @@ class DurableMonitoringSupervisor:
         now = normalize_utc(self._clock())
         with self._reconcile_lock:
             self._active_stream_ids.discard(stream_id)
+            last_healthy_at = self._last_healthy_at_by_stream.pop(stream_id, None)
         self._safe_stop(stream_id, "camera_configuration_changed")
         self._store.mark_monitoring_stopped(
             stream_id,
             reason="camera_configuration_changed",
             now=now,
+            last_healthy_at=last_healthy_at,
         )
 
     def shutdown(self, *, reason: str) -> None:
@@ -215,8 +220,14 @@ class DurableMonitoringSupervisor:
             self._active_stream_ids.clear()
             self._thread = None
         for stream_id in active_stream_ids:
+            last_healthy_at = self._last_healthy_at_by_stream.pop(stream_id, None)
             self._safe_stop(stream_id, reason)
-            self._store.mark_monitoring_stopped(stream_id, reason=reason, now=now)
+            self._store.mark_monitoring_stopped(
+                stream_id,
+                reason=reason,
+                now=now,
+                last_healthy_at=last_healthy_at,
+            )
 
     def reconcile_once(self, *, now: datetime | None = None) -> None:
         """Run one deterministic scheduling pass; used by the loop and lifecycle tests."""
@@ -238,6 +249,7 @@ class DurableMonitoringSupervisor:
                     stream_id,
                     reason="policy_disabled",
                     now=current_time,
+                    last_healthy_at=self._last_healthy_at_by_stream.pop(stream_id, None),
                 )
                 self._active_stream_ids.discard(stream_id)
 
@@ -278,6 +290,19 @@ class DurableMonitoringSupervisor:
             return True
 
         if status.healthy_at is not None:
+            try:
+                healthy_at = normalize_utc(status.healthy_at)
+            except ValueError:
+                self._mark_invalid_timestamp(candidate, now)
+                return True
+            confirmed_healthy_at = min(healthy_at, now)
+            if now - confirmed_healthy_at > DURABLE_EXPOSURE_FRESHNESS_LIMIT:
+                self._recover_from_failure(
+                    candidate,
+                    now,
+                    failure_code="fresh_frame_stale",
+                )
+                return True
             if not status.monitor_running:
                 try:
                     status = self._start_monitor(candidate)
@@ -285,15 +310,11 @@ class DurableMonitoringSupervisor:
                     self._recover_from_failure(candidate, now)
                     return True
             if status.monitor_running:
-                try:
-                    healthy_at = normalize_utc(status.healthy_at)
-                except ValueError:
-                    self._mark_invalid_timestamp(candidate, now)
-                    return True
+                self._last_healthy_at_by_stream[candidate.stream_id] = confirmed_healthy_at
                 self._store.mark_monitoring_running(
                     candidate,
                     app_instance_id=self._app_instance_id,
-                    healthy_at=healthy_at,
+                    healthy_at=confirmed_healthy_at,
                     now=now,
                 )
                 return False
@@ -365,6 +386,7 @@ class DurableMonitoringSupervisor:
 
         self._safe_stop(candidate.stream_id, "timestamp_invalid")
         self._active_stream_ids.discard(candidate.stream_id)
+        self._last_healthy_at_by_stream.pop(candidate.stream_id, None)
         self._store.mark_monitoring_blocked(
             candidate,
             app_instance_id=self._app_instance_id,
@@ -382,6 +404,7 @@ class DurableMonitoringSupervisor:
     ) -> None:
         self._safe_stop(candidate.stream_id, "runtime_unhealthy")
         self._active_stream_ids.discard(candidate.stream_id)
+        self._last_healthy_at_by_stream.pop(candidate.stream_id, None)
         failure_count = candidate.consecutive_failure_count + 1
         if failure_count >= self._max_consecutive_failures:
             self._store.mark_monitoring_blocked(

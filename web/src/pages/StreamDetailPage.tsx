@@ -4207,6 +4207,38 @@ export function StreamDetailPage({
                   ? formatDateTime(runtimeStatus.next_retry_at)
                   : "Not scheduled"}
               </span>
+              <span>
+                <strong>Exposure</strong>{" "}
+                {runtimeStatus.exposure_interval_active ? "Active" : "Closed"}
+              </span>
+              <span>
+                <strong>Current healthy time</strong>{" "}
+                {runtimeStatus.current_healthy_duration_seconds != null
+                  ? formatVisitDuration(runtimeStatus.current_healthy_duration_seconds)
+                  : "No active interval"}
+              </span>
+              <span>
+                <strong>Exposure today</strong>{" "}
+                {formatVisitDuration(runtimeStatus.durable_exposure_today_seconds)}
+              </span>
+              <span>
+                <strong>Exposure history</strong>{" "}
+                {runtimeStatus.exposure_history_available_from
+                  ? formatDateTime(runtimeStatus.exposure_history_available_from)
+                  : "Not collected yet"}
+              </span>
+              <span>
+                <strong>Last fresh frame</strong>{" "}
+                {runtimeStatus.latest_confirmed_exposure_at
+                  ? formatDateTime(runtimeStatus.latest_confirmed_exposure_at)
+                  : "Not confirmed yet"}
+              </span>
+              {runtimeStatus.most_recent_exposure_close_reason ? (
+                <span>
+                  <strong>Last exposure close</strong>{" "}
+                  {formatLabel(runtimeStatus.most_recent_exposure_close_reason)}
+                </span>
+              ) : null}
             </div>
             <div className="continuity-message">
               <strong>{runtimeStatus.message}</strong>

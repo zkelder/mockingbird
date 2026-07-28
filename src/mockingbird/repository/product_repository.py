@@ -26,11 +26,10 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from mockingbird.analytics.zone_insights import (
     TimeInterval,
-    bounded_healthy_runtime_interval,
     interval_seconds,
+    merge_intervals,
     median_duration_seconds,
     quality_status,
-    subtract_intervals,
 )
 
 from mockingbird.api import demo_data
@@ -460,6 +459,11 @@ from mockingbird.api.schemas import (
 )
 from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
 from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
+from mockingbird.monitoring.exposure_history import (
+    DURABLE_EXPOSURE_CHECKPOINT_INTERVAL,
+    DURABLE_EXPOSURE_FRESHNESS_LIMIT,
+    exposure_close_reason_for_transition,
+)
 from mockingbird.source_providers import folder_import_preview
 from mockingbird.source_providers.webhook_validation import classify_webhook_payload
 from mockingbird.storage.database import (
@@ -487,6 +491,7 @@ from mockingbird.storage.models import (
     DetectionRunModel,
     EventModel,
     MediaAssetModel,
+    MonitoringExposureIntervalModel,
     ProductAlertModel,
     ReviewIdentificationAssistantRunModel,
     ReviewLabelModel,
@@ -538,12 +543,24 @@ MAX_ACTIVE_VISIT_COLLECTIONS = 100
 MAX_COLLECTIONS_PER_VISIT = 20
 MAX_COLLECTION_LIST_ITEMS = 100
 CAMERA_HEALTH_STARTUP_GRACE = timedelta(minutes=2)
-CAMERA_HEALTH_RECENT_FRAME = timedelta(minutes=2)
+CAMERA_HEALTH_RECENT_FRAME = DURABLE_EXPOSURE_FRESHNESS_LIMIT
 CAMERA_HEALTH_DEGRADED_FRAME = timedelta(minutes=8)
 CAMERA_HEALTH_PROLONGED_CAPACITY_WAIT = timedelta(minutes=5)
 CAMERA_HEALTH_CHECKPOINT_INTERVAL = timedelta(seconds=30)
 CAMERA_HEALTH_HISTORY_LIMIT = 20
 CAMERA_HEALTH_MAX_OCCURRENCES = 100
+
+
+@dataclass(frozen=True)
+class _ZoneExposure:
+    """Read-side durable exposure facts for one Stream and selected range."""
+
+    healthy_seconds: float | None
+    history_available_from: datetime | None
+    history_is_partial: bool
+    interval_count: int
+
+
 CAMERA_CONFIGURATION_HISTORY_LIMIT = 20
 MAX_ACTIVE_VISIT_TAGS = 200
 MAX_TAGS_PER_VISIT = 20
@@ -2880,6 +2897,14 @@ class ProductRepository:
 
                 if payload.archived is True:
                     source.status = SourceStatus.archived.value
+                    archived_at = datetime.now(UTC)
+                    for stream in streams:
+                        self._close_open_monitoring_exposure(
+                            session,
+                            stream_id=stream.id,
+                            close_reason="source_unusable",
+                            now=archived_at,
+                        )
                 elif payload.archived is False and source.status == SourceStatus.archived.value:
                     source.status = SourceStatus.needs_setup.value
 
@@ -5211,6 +5236,8 @@ class ProductRepository:
     def get_stream_runtime_status(
         self,
         stream_id: str,
+        *,
+        now: datetime | None = None,
     ) -> StreamRuntimeStatusResponse | None:
         """Read last-known continuity metadata without touching any runtime manager."""
 
@@ -5239,6 +5266,54 @@ class ProductRepository:
                     checkpoint_state = StreamRuntimeState.interrupted
                     warnings.append("The last runtime checkpoint has an unknown state.")
                     actual_state = checkpoint_state
+
+            exposure_intervals = session.scalars(
+                select(MonitoringExposureIntervalModel)
+                .where(MonitoringExposureIntervalModel.stream_id == stream_id)
+                .order_by(
+                    MonitoringExposureIntervalModel.started_at,
+                    MonitoringExposureIntervalModel.id,
+                )
+            ).all()
+            open_exposure = next(
+                (interval for interval in reversed(exposure_intervals) if interval.ended_at is None),
+                None,
+            )
+            exposure_history_available_from = (
+                min(_as_utc(interval.started_at) for interval in exposure_intervals)
+                if exposure_intervals
+                else None
+            )
+            latest_confirmed_exposure_at = (
+                max(_as_utc(interval.last_confirmed_fresh_at) for interval in exposure_intervals)
+                if exposure_intervals
+                else None
+            )
+            closed_exposures = [
+                interval for interval in exposure_intervals if interval.ended_at is not None
+            ]
+            most_recent_closed_exposure = max(
+                closed_exposures,
+                key=lambda interval: (_as_utc(interval.ended_at), interval.id),
+                default=None,
+            )
+            status_now = _as_utc(now or datetime.now(UTC))
+            today_start = status_now.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_intervals = [
+                TimeInterval(
+                    max(today_start, _as_utc(interval.started_at)),
+                    min(
+                        status_now,
+                        _as_utc(interval.ended_at)
+                        if interval.ended_at is not None
+                        else _as_utc(interval.last_confirmed_fresh_at),
+                    ),
+                )
+                for interval in exposure_intervals
+            ]
+            durable_exposure_today_seconds = interval_seconds(
+                merge_intervals(today_intervals)
+            )
 
             if desired_mode == StreamMonitoringMode.off:
                 message = "Monitoring is disabled; no camera or monitor start is requested."
@@ -5289,6 +5364,28 @@ class ProductRepository:
                 ),
                 last_healthy_frame_at=normalize_optional_utc(
                     checkpoint.last_healthy_frame_at if checkpoint else None
+                ),
+                exposure_interval_active=open_exposure is not None,
+                current_healthy_duration_seconds=(
+                    max(
+                        0.0,
+                        (
+                            _as_utc(open_exposure.last_confirmed_fresh_at)
+                            - _as_utc(open_exposure.started_at)
+                        ).total_seconds(),
+                    )
+                    if open_exposure is not None
+                    else None
+                ),
+                durable_exposure_today_seconds=round(
+                    durable_exposure_today_seconds, 4
+                ),
+                exposure_history_available_from=exposure_history_available_from,
+                latest_confirmed_exposure_at=latest_confirmed_exposure_at,
+                most_recent_exposure_close_reason=(
+                    most_recent_closed_exposure.close_reason
+                    if most_recent_closed_exposure is not None
+                    else None
                 ),
                 last_evidence_persisted_at=normalize_optional_utc(
                     checkpoint.last_evidence_persisted_at if checkpoint else None
@@ -5344,11 +5441,12 @@ class ProductRepository:
         *,
         enabled: bool,
         idempotency_key: str,
+        now: datetime | None = None,
     ) -> bool | None:
         """Persist explicit desired state once; callers wake the in-memory supervisor."""
 
         operation = "enable" if enabled else "disable"
-        now = datetime.now(UTC)
+        now = _as_utc(now or datetime.now(UTC))
         with self.session_factory() as session:
             with session.begin():
                 stream = session.get(StreamModel, stream_id)
@@ -5402,6 +5500,13 @@ class ProductRepository:
                         checkpoint.last_clean_stop_at = now
                     checkpoint.updated_at = now
 
+                if not enabled:
+                    self._close_open_monitoring_exposure(
+                        session,
+                        stream_id=stream_id,
+                        close_reason="monitoring_disabled",
+                        now=now,
+                    )
                 session.add(
                     StreamMonitoringOperationModel(
                         idempotency_key=idempotency_key,
@@ -5493,6 +5598,12 @@ class ProductRepository:
                     policy.paused_at = None
                     policy.pause_reason = None
                     policy.updated_at = now
+                self._close_open_monitoring_exposure(
+                    session,
+                    stream_id=stream_id,
+                    close_reason="monitoring_disabled",
+                    now=now,
+                )
                 checkpoint.observed_policy_revision = policy.policy_revision
                 checkpoint.actual_state = StreamRuntimeState.stopped.value
                 checkpoint.app_instance_id = None
@@ -5523,6 +5634,18 @@ class ProductRepository:
                         StreamRuntimeCheckpointModel.actual_state.in_(nonterminal_states)
                     )
                 ).all()
+                open_stream_ids = session.scalars(
+                    select(MonitoringExposureIntervalModel.stream_id)
+                    .where(MonitoringExposureIntervalModel.ended_at.is_(None))
+                    .distinct()
+                ).all()
+                for stream_id in open_stream_ids:
+                    self._close_open_monitoring_exposure(
+                        session,
+                        stream_id=stream_id,
+                        close_reason="unclean_restart",
+                        now=now,
+                    )
                 for checkpoint in checkpoints:
                     checkpoint.actual_state = StreamRuntimeState.interrupted.value
                     checkpoint.app_instance_id = None
@@ -5589,6 +5712,117 @@ class ProductRepository:
             return None
         return session.get(StreamRuntimeCheckpointModel, candidate.stream_id)
 
+    @staticmethod
+    def _close_open_monitoring_exposure(
+        session: Session,
+        *,
+        stream_id: str,
+        close_reason: str,
+        now: datetime,
+        last_healthy_at: datetime | None = None,
+    ) -> None:
+        """Close at durable fresh-frame evidence, never at an assumed outage boundary."""
+
+        now = _as_utc(now)
+        supplied_fresh_at = normalize_optional_utc(last_healthy_at)
+        intervals = session.scalars(
+            select(MonitoringExposureIntervalModel)
+            .where(
+                MonitoringExposureIntervalModel.stream_id == stream_id,
+                MonitoringExposureIntervalModel.ended_at.is_(None),
+            )
+            .order_by(
+                MonitoringExposureIntervalModel.started_at,
+                MonitoringExposureIntervalModel.id,
+            )
+        ).all()
+        for interval in intervals:
+            if (
+                supplied_fresh_at is not None
+                and supplied_fresh_at > _as_utc(interval.last_confirmed_fresh_at)
+                and supplied_fresh_at <= now
+            ):
+                interval.last_confirmed_fresh_at = supplied_fresh_at
+            end_at = min(now, _as_utc(interval.last_confirmed_fresh_at))
+            if end_at <= _as_utc(interval.started_at):
+                # A single first frame never becomes a zero-length usable span.
+                session.delete(interval)
+                continue
+            interval.ended_at = end_at
+            interval.close_reason = close_reason
+            interval.updated_at = now
+
+    @staticmethod
+    def _record_monitoring_exposure_frame(
+        session: Session,
+        *,
+        stream_id: str,
+        checkpoint: StreamRuntimeCheckpointModel,
+        healthy_at: datetime,
+        now: datetime,
+    ) -> None:
+        """Checkpoint fresh-frame availability at a bounded cadence, not per frame."""
+
+        now = _as_utc(now)
+        healthy_at = min(_as_utc(healthy_at), now)
+        if now - healthy_at > DURABLE_EXPOSURE_FRESHNESS_LIMIT:
+            return
+        stream = session.get(StreamModel, stream_id)
+        if stream is None:
+            return
+        runtime_generation_id = checkpoint.runtime_generation_id
+        if not runtime_generation_id:
+            runtime_generation_id = uuid.uuid4().hex
+            checkpoint.runtime_generation_id = runtime_generation_id
+
+        open_interval = session.scalar(
+            select(MonitoringExposureIntervalModel)
+            .where(
+                MonitoringExposureIntervalModel.stream_id == stream_id,
+                MonitoringExposureIntervalModel.ended_at.is_(None),
+            )
+            .order_by(
+                MonitoringExposureIntervalModel.started_at.desc(),
+                MonitoringExposureIntervalModel.id.desc(),
+            )
+            .limit(1)
+        )
+        if (
+            open_interval is not None
+            and open_interval.runtime_generation_id != runtime_generation_id
+        ):
+            ProductRepository._close_open_monitoring_exposure(
+                session,
+                stream_id=stream_id,
+                close_reason="runtime_generation_replaced",
+                now=now,
+            )
+            session.flush()
+            open_interval = None
+        if open_interval is None:
+            session.add(
+                MonitoringExposureIntervalModel(
+                    id=uuid.uuid4().hex,
+                    stream_id=stream_id,
+                    source_id=stream.source_id,
+                    runtime_generation_id=runtime_generation_id,
+                    started_at=healthy_at,
+                    last_confirmed_fresh_at=healthy_at,
+                    ended_at=None,
+                    close_reason=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            return
+        last_confirmed = _as_utc(open_interval.last_confirmed_fresh_at)
+        if (
+            healthy_at > last_confirmed
+            and healthy_at - last_confirmed >= DURABLE_EXPOSURE_CHECKPOINT_INTERVAL
+        ):
+            open_interval.last_confirmed_fresh_at = healthy_at
+            open_interval.updated_at = now
+
     def mark_monitoring_starting(
         self,
         candidate: DurableMonitoringCandidate,
@@ -5651,6 +5885,13 @@ class ProductRepository:
                     checkpoint.consecutive_failure_count = 0
                     checkpoint.safety_hold_active = False
                     checkpoint.updated_at = now
+                self._record_monitoring_exposure_frame(
+                    session,
+                    stream_id=candidate.stream_id,
+                    checkpoint=checkpoint,
+                    healthy_at=healthy_at,
+                    now=now,
+                )
                 self._sync_monitoring_alert(session, candidate.stream_id, now)
 
     def mark_monitoring_waiting(
@@ -5700,6 +5941,16 @@ class ProductRepository:
                     and checkpoint.failure_code == failure_code
                 ):
                     return
+                self._close_open_monitoring_exposure(
+                    session,
+                    stream_id=candidate.stream_id,
+                    close_reason=(
+                        "fresh_frame_stale"
+                        if failure_code == "fresh_frame_stale"
+                        else "provider_failure"
+                    ),
+                    now=now,
+                )
                 checkpoint.actual_state = StreamRuntimeState.backoff.value
                 checkpoint.observed_policy_revision = candidate.policy_revision
                 checkpoint.app_instance_id = app_instance_id
@@ -5724,7 +5975,7 @@ class ProductRepository:
     ) -> None:
         """Persist a small approved runtime code without retaining provider errors."""
 
-        if failure_code not in CAMERA_NODE_RUNTIME_FAILURE_CODES:
+        if failure_code not in CAMERA_NODE_RUNTIME_FAILURE_CODES | {"fresh_frame_stale"}:
             failure_code = "camera_unavailable"
         self.mark_monitoring_backoff(
             candidate,
@@ -5755,6 +6006,16 @@ class ProductRepository:
                     and checkpoint.consecutive_failure_count == failure_count
                 ):
                     return
+                self._close_open_monitoring_exposure(
+                    session,
+                    stream_id=candidate.stream_id,
+                    close_reason=(
+                        "fresh_frame_stale"
+                        if failure_code == "fresh_frame_stale"
+                        else "provider_failure"
+                    ),
+                    now=now,
+                )
                 checkpoint.actual_state = StreamRuntimeState.blocked.value
                 checkpoint.observed_policy_revision = candidate.policy_revision
                 checkpoint.app_instance_id = app_instance_id
@@ -5773,6 +6034,7 @@ class ProductRepository:
         *,
         reason: str,
         now: datetime,
+        last_healthy_at: datetime | None = None,
     ) -> None:
         with self.session_factory() as session:
             with session.begin():
@@ -5780,6 +6042,13 @@ class ProductRepository:
                 checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
                 if checkpoint is None:
                     return
+                self._close_open_monitoring_exposure(
+                    session,
+                    stream_id=stream_id,
+                    close_reason=exposure_close_reason_for_transition(reason),
+                    now=now,
+                    last_healthy_at=last_healthy_at,
+                )
                 checkpoint.actual_state = StreamRuntimeState.stopped.value
                 checkpoint.observed_policy_revision = (
                     policy.policy_revision if policy is not None else 1
@@ -18156,7 +18425,7 @@ class ProductRepository:
                     )
 
             exposure_by_stream = {
-                stream.id: self._zone_insights_exposure_seconds(
+                stream.id: self._zone_insights_exposure(
                     session,
                     stream_id=stream.id,
                     start_at=start_at,
@@ -18173,7 +18442,7 @@ class ProductRepository:
                 metrics = self._zone_insight_metrics(
                     records=records,
                     confirmed_records=confirmed,
-                    healthy_seconds=exposure_by_stream.get(stream.id),
+                    exposure=exposure_by_stream[stream.id],
                 )
                 results.append(
                     ZoneInsightsZone(
@@ -18233,19 +18502,34 @@ class ProductRepository:
                 aggregate_records,
                 taxonomy_filter,
             )
-            aggregate_exposure_seconds = sum(
-                seconds
-                for seconds in exposure_by_stream.values()
-                if seconds is not None
+            stream_exposures = list(exposure_by_stream.values())
+            exposure_history_starts = [
+                exposure.history_available_from
+                for exposure in stream_exposures
+                if exposure.history_available_from is not None
+            ]
+            aggregate_exposure = _ZoneExposure(
+                healthy_seconds=(
+                    sum(exposure.healthy_seconds or 0.0 for exposure in stream_exposures)
+                    if stream_exposures
+                    and all(exposure.healthy_seconds is not None for exposure in stream_exposures)
+                    else None
+                ),
+                history_available_from=(
+                    min(exposure_history_starts) if exposure_history_starts else None
+                ),
+                history_is_partial=(
+                    any(exposure.history_is_partial for exposure in stream_exposures)
+                    or any(exposure.history_available_from is None for exposure in stream_exposures)
+                ),
+                interval_count=sum(
+                    exposure.interval_count for exposure in stream_exposures
+                ),
             )
             aggregate = self._zone_insight_metrics(
                 records=aggregate_records,
                 confirmed_records=aggregate_confirmed,
-                healthy_seconds=(
-                    aggregate_exposure_seconds if any(
-                        seconds is not None for seconds in exposure_by_stream.values()
-                    ) else None
-                ),
+                exposure=aggregate_exposure,
             )
             aggregate_drilldown = self._zone_insight_drilldown(
                 start_at=start_at,
@@ -18289,9 +18573,18 @@ class ProductRepository:
                 for hour in range(24)
             ]
             warnings = [
-                "Healthy monitored time is a bounded runtime estimate from the latest saved monitoring generation, not all historical camera uptime.",
                 "Visits are activity sessions, not estimates of unique birds. A bird may create more than one Visit if it leaves and returns. Visit totals do not represent unique individuals.",
             ]
+            if aggregate.exposure_history_is_partial and aggregate.exposure_history_available_from is not None:
+                warnings.append(
+                    "Durable monitoring exposure is available from "
+                    f"{aggregate.exposure_history_available_from.strftime('%B %d, %Y').replace(' 0', ' ')}. "
+                    "Earlier time in this range is excluded from rate calculations."
+                )
+            elif aggregate.exposure_history_available_from is None:
+                warnings.append(
+                    "No durable monitoring exposure has been recorded for every selected Stream yet, so aggregate rates are withheld."
+                )
             if taxonomy_filter is None and payload.confirmed_taxonomy_id is not None:
                 warnings.append("The selected confirmed taxonomy is unavailable, so no confirmed species matches were counted.")
             if truncated_zones:
@@ -18330,48 +18623,60 @@ class ProductRepository:
                 warnings=warnings,
             )
 
-    def _zone_insights_exposure_seconds(
+    def _zone_insights_exposure(
         self,
         session: Session,
         *,
         stream_id: str,
         start_at: datetime,
         end_at: datetime,
-    ) -> float | None:
-        checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
-        if checkpoint is None:
-            return None
-        interval = bounded_healthy_runtime_interval(
-            range_start_at=start_at,
-            range_end_at=end_at,
-            actual_state=checkpoint.actual_state,
-            last_start_attempt_at=normalize_optional_utc(checkpoint.last_start_attempt_at),
-            last_healthy_frame_at=normalize_optional_utc(checkpoint.last_healthy_frame_at),
-            last_clean_stop_at=normalize_optional_utc(checkpoint.last_clean_stop_at),
-            last_failure_at=normalize_optional_utc(checkpoint.last_failure_at),
-            freshness_limit=CAMERA_HEALTH_RECENT_FRAME,
-        )
-        if interval is None:
-            return None
-        unhealthy = [
-            TimeInterval(
-                max(start_at, _as_utc(incident.started_at)),
-                min(end_at, _as_utc(incident.resolved_at) if incident.resolved_at is not None else end_at),
+    ) -> _ZoneExposure:
+        """Aggregate only persisted fresh-frame intervals; never infer historical uptime."""
+
+        history_available_from = session.scalar(
+            select(func.min(MonitoringExposureIntervalModel.started_at)).where(
+                MonitoringExposureIntervalModel.stream_id == stream_id
             )
-            for incident in session.scalars(
-                select(CameraHealthIncidentModel)
-                .where(
-                    CameraHealthIncidentModel.stream_id == stream_id,
-                    CameraHealthIncidentModel.started_at < end_at,
-                    or_(
-                        CameraHealthIncidentModel.resolved_at.is_(None),
-                        CameraHealthIncidentModel.resolved_at > start_at,
+        )
+        if history_available_from is None:
+            return _ZoneExposure(
+                healthy_seconds=None,
+                history_available_from=None,
+                history_is_partial=False,
+                interval_count=0,
+            )
+        history_available_from = _as_utc(history_available_from)
+        rows = session.scalars(
+            select(MonitoringExposureIntervalModel).where(
+                MonitoringExposureIntervalModel.stream_id == stream_id,
+                MonitoringExposureIntervalModel.started_at < end_at,
+                func.coalesce(
+                    MonitoringExposureIntervalModel.ended_at,
+                    MonitoringExposureIntervalModel.last_confirmed_fresh_at,
+                ) > start_at,
+            )
+        ).all()
+        intervals = [
+            TimeInterval(
+                max(start_at, _as_utc(row.started_at)),
+                min(
+                    end_at,
+                    _as_utc(
+                        row.ended_at
+                        if row.ended_at is not None
+                        else row.last_confirmed_fresh_at
                     ),
-                )
-            ).all()
+                ),
+            )
+            for row in rows
         ]
-        seconds = interval_seconds(subtract_intervals([interval], unhealthy))
-        return seconds if seconds > 0 else None
+        healthy_seconds = interval_seconds(merge_intervals(intervals))
+        return _ZoneExposure(
+            healthy_seconds=healthy_seconds,
+            history_available_from=history_available_from,
+            history_is_partial=start_at < history_available_from,
+            interval_count=len(rows),
+        )
 
     @staticmethod
     def _zone_insight_confirmed_records(
@@ -18396,7 +18701,7 @@ class ProductRepository:
         *,
         records: list[dict[str, Any]],
         confirmed_records: list[dict[str, Any]],
-        healthy_seconds: float | None,
+        exposure: _ZoneExposure,
     ) -> ZoneInsightsMetrics:
         reviewed_records = [
             record
@@ -18415,6 +18720,7 @@ class ProductRepository:
             record["summary"].review_outcome == VisitReviewOutcome.false_positive
             for record in reviewed_records
         )
+        healthy_seconds = exposure.healthy_seconds
         healthy_hours = healthy_seconds / 3600 if healthy_seconds is not None else None
         quality, warnings = quality_status(
             healthy_monitored_seconds=healthy_seconds,
@@ -18422,6 +18728,16 @@ class ProductRepository:
             active_visit_count=len(records),
             confirmed_bird_visit_count=len(confirmed_records),
         )
+        if exposure.history_is_partial and exposure.history_available_from is not None:
+            warnings.append(
+                "Durable monitoring exposure is available from "
+                f"{exposure.history_available_from.strftime('%B %d, %Y').replace(' 0', ' ')}. "
+                "Earlier time in this range is excluded from rate calculations."
+            )
+        elif exposure.history_available_from is None:
+            warnings.append(
+                "No durable monitoring exposure has been recorded for this Stream yet."
+            )
         warnings.append(
             "Evidence success percentage is unavailable because durable capture-attempt history is not retained."
         )
@@ -18436,6 +18752,9 @@ class ProductRepository:
         }
         return ZoneInsightsMetrics(
             healthy_monitored_hours=round(healthy_hours, 4) if healthy_hours is not None else None,
+            exposure_history_available_from=exposure.history_available_from,
+            exposure_history_is_partial=exposure.history_is_partial,
+            exposure_interval_count=exposure.interval_count,
             confirmed_bird_visit_count=len(confirmed_records),
             confirmed_bird_visits_per_monitored_hour=(
                 round(len(confirmed_records) / healthy_hours, 4)

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import zipfile
+from tempfile import TemporaryDirectory
 
 import httpx
 import pytest
@@ -28,6 +29,7 @@ from mockingbird.storage.database import (
 from mockingbird.storage.models import (
     BioClipIdentificationAttemptModel,
     MediaAssetModel,
+    MonitoringExposureIntervalModel,
 )
 
 
@@ -476,3 +478,54 @@ def test_backup_restore_preserves_stream_candidate_pack_selection(
         transaction.commit()
     finally:
         restored_repository.close()
+
+
+def test_backup_restore_closes_open_exposure_as_historical_evidence() -> None:
+    with TemporaryDirectory(dir="/tmp") as temporary_directory:
+        root = Path(temporary_directory)
+        repository = _repository(root)
+        now = datetime(2026, 7, 20, 9, tzinfo=UTC)
+        with repository.session_factory() as session:
+            with session.begin():
+                session.add(
+                    MonitoringExposureIntervalModel(
+                        id="exposure-backup-open",
+                        stream_id="stream-backyard-feeder",
+                        source_id="source-backyard-demo",
+                        runtime_generation_id="backup-generation",
+                        started_at=now,
+                        last_confirmed_fresh_at=now + timedelta(minutes=5),
+                        ended_at=None,
+                        close_reason=None,
+                        created_at=now,
+                        updated_at=now + timedelta(minutes=5),
+                    )
+                )
+        manager = _manager(repository, root)
+        backup = manager.create_backup()
+        plan = manager.create_restore_plan(manager.verify_backup(backup.backup.id))
+        assert plan.expected_entity_counts["monitoring_exposure_intervals"] == 1
+        repository.close()
+
+        transaction = manager.replace_live_files(manager.verify_backup(backup.backup.id))
+        restored_repository = _repository(root)
+        restored_repository.prepare_for_supervision("local-backup-restore")
+        try:
+            with restored_repository.session_factory() as session:
+                restored = session.get(
+                    MonitoringExposureIntervalModel, "exposure-backup-open"
+                )
+                assert restored is not None
+                assert restored.stream_id == "stream-backyard-feeder"
+                assert restored.source_id == "source-backyard-demo"
+                assert restored.ended_at is not None
+                assert restored.ended_at.replace(tzinfo=UTC) == now + timedelta(minutes=5)
+                assert restored.close_reason == "unclean_restart"
+            status = restored_repository.get_stream_runtime_status(
+                "stream-backyard-feeder", now=now + timedelta(minutes=6)
+            )
+            assert status is not None
+            assert status.exposure_interval_active is False
+            transaction.commit()
+        finally:
+            restored_repository.close()
