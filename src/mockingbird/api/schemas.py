@@ -1214,6 +1214,7 @@ class LiveCameraSessionStatusResponse(BaseModel):
     activity_ready_for_review: bool = False
     activity_manual_review_needed: bool = False
     activity_review_state: str | None = None
+    activity_subject_state: str | None = None
     activity_quiet_remaining_seconds: int | None = Field(default=None, ge=0)
     activity_best_frame_sequence: int | None = Field(default=None, ge=0)
     activity_best_score: float | None = None
@@ -2857,6 +2858,7 @@ class LiveMotionEvaluateResponse(BaseModel):
     activity_completed_at: datetime | None = None
     activity_ready_for_review: bool = False
     activity_review_state: str | None = None
+    activity_subject_state: str | None = None
     activity_quiet_remaining_seconds: int | None = Field(default=None, ge=0)
     activity_manual_review_needed: bool = False
     activity_best_frame_sequence: int | None = Field(default=None, ge=0)

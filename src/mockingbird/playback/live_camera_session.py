@@ -42,6 +42,11 @@ DEFAULT_ACTIVITY_MAX_CANDIDATE_FRAMES = 30
 DEFAULT_ACTIVITY_MAX_VISIT_EVIDENCE_FRAMES = 4
 DEFAULT_ACTIVITY_MAX_SAVED_CANDIDATES = DEFAULT_ACTIVITY_MAX_VISIT_EVIDENCE_FRAMES
 DEFAULT_ACTIVITY_MAX_SESSION_SECONDS = 5 * 60
+# A completed foreground/object track should settle promptly even while leaves,
+# shadows, or another subject keep moving elsewhere in the same Zone. Zone
+# policy's longer quiet period remains a nearby-return merge window below.
+DEFAULT_ACTIVITY_LOCAL_QUIET_SECONDS = 4
+MAX_ACTIVITY_SUPPORT_CENTROIDS = 8
 DEFAULT_MAX_DIAGNOSTIC_EVENTS = 100
 SUPPORTED_SESSION_TYPES = {
     "rtsp",
@@ -221,6 +226,7 @@ class LiveActivitySessionSnapshot:
     notification_event: str | None
     detector_evidence: dict[str, Any]
     track_generation_id: str | None
+    subject_state: str
     high_resolution_capture_claim: dict[str, Any] | None
     high_resolution_evidence: dict[str, Any] | None
     creates_truth: bool = False
@@ -288,6 +294,7 @@ class LiveActivitySessionSnapshot:
             "notification_event": self.notification_event,
             "detector_evidence": dict(self.detector_evidence),
             "track_generation_id": self.track_generation_id,
+            "subject_state": self.subject_state,
             "high_resolution_capture_claim": _high_resolution_capture_claim_snapshot(
                 self.high_resolution_capture_claim
             ),
@@ -528,6 +535,7 @@ class LiveCameraSessionManager:
         *,
         observed_at: datetime,
         detector_evidence: Mapping[str, Any],
+        support_box: tuple[float, float, float, float] | None = None,
     ) -> LiveActivitySessionSnapshot | None:
         with self._lock:
             session = self._sessions.get(stream_id)
@@ -537,6 +545,7 @@ class LiveCameraSessionManager:
             track_generation_id,
             observed_at=observed_at,
             detector_evidence=detector_evidence,
+            support_box=support_box,
         )
 
     def record_activity_pretrigger_frames(
@@ -1067,10 +1076,21 @@ class _LiveCameraSession:
         frame_content_type: str | None,
         quiet_window_seconds: int,
     ) -> LiveActivitySessionSnapshot:
+        """Add one localized observation without letting broad Zone motion refresh it."""
+
         with self._lock:
             now = _coerce_datetime(values.get("last_seen_at")) or datetime.now(UTC)
             region_key = str(values.get("region_key") or "unknown-region")
+            support_box = _support_box_from_values(values)
             existing = self.activity_sessions.get(region_key)
+            if support_box is not None:
+                local_match = self._local_activity_match(
+                    support_box,
+                    observed_at=now,
+                    quiet_window_seconds=quiet_window_seconds,
+                )
+                if local_match is not None:
+                    existing = local_match
             if (
                 existing is not None
                 and not existing.review_activity_created
@@ -1078,10 +1098,8 @@ class _LiveCameraSession:
                 and (now - existing.started_at).total_seconds()
                 >= existing.maximum_visit_duration_seconds()
             ):
-                # Close at the session's captured policy boundary before a later
-                # configuration edit or restart can change the meaning of the Visit.
                 existing._finalize_for_review(
-                    quiet_seconds=existing.quiet_period_seconds(quiet_window_seconds),
+                    quiet_seconds=DEFAULT_ACTIVITY_LOCAL_QUIET_SECONDS,
                     reason="maximum_duration",
                     force_sustained=True,
                 )
@@ -1096,16 +1114,31 @@ class _LiveCameraSession:
                 return snapshot
             starts_new_session = (
                 existing is None
-                or existing.ready_for_review
-                or (now - existing.last_seen_at).total_seconds()
-                > existing.quiet_period_seconds(quiet_window_seconds)
+                or existing.review_activity_created
+                or (
+                    existing.ready_for_review
+                    and not existing.can_merge_nearby_return(
+                        support_box,
+                        observed_at=now,
+                        quiet_window_seconds=quiet_window_seconds,
+                    )
+                )
+                or (
+                    not existing.ready_for_review
+                    and not existing.can_accept_local_support(
+                        support_box,
+                        observed_at=now,
+                        quiet_window_seconds=quiet_window_seconds,
+                    )
+                )
             )
-            previous_detection_count = (
-                existing.detection_count if existing is not None else 0
-            )
-            previous_near_miss_count = (
-                existing.near_miss_count if existing is not None else 0
-            )
+            previous_detection_count = existing.detection_count if existing is not None else 0
+            previous_near_miss_count = existing.near_miss_count if existing is not None else 0
+            if not starts_new_session and existing.is_duplicate_observation(values):
+                snapshot = existing.snapshot()
+                self.current_activity_session_id = snapshot.activity_session_id
+                self.last_activity = snapshot.as_dict()
+                return snapshot
             if starts_new_session:
                 existing = _LiveActivitySession.from_detection(
                     values,
@@ -1116,7 +1149,10 @@ class _LiveCameraSession:
                     frame_bytes=frame_bytes,
                     frame_content_type=frame_content_type,
                 )
-                self.activity_sessions[region_key] = existing
+                storage_key = region_key
+                if storage_key in self.activity_sessions:
+                    storage_key = f"{region_key}|activity:{existing.activity_session_id}"
+                self.activity_sessions[storage_key] = existing
             else:
                 existing.record_detection(
                     values,
@@ -1138,9 +1174,7 @@ class _LiveCameraSession:
                 self.last_activity = snapshot.as_dict()
             if starts_new_session:
                 self._record_diagnostic_event_locked(
-                    "activity_started"
-                    if snapshot.detection_count > 0
-                    else "near_miss_started",
+                    "activity_started" if snapshot.detection_count > 0 else "near_miss_started",
                     status=snapshot.review_state,
                     activity=snapshot,
                 )
@@ -1166,32 +1200,39 @@ class _LiveCameraSession:
             )
             return snapshot
 
+    def _local_activity_match(
+        self,
+        support_box: tuple[float, float, float, float],
+        *,
+        observed_at: datetime,
+        quiet_window_seconds: int,
+    ) -> "_LiveActivitySession | None":
+        candidates = [
+            activity
+            for activity in self.activity_sessions.values()
+            if not activity.review_activity_created
+            and activity.can_accept_local_support(
+                support_box,
+                observed_at=observed_at,
+                quiet_window_seconds=quiet_window_seconds,
+            )
+        ]
+        return max(candidates, key=lambda item: item.last_local_support_at, default=None)
+
     def record_activity_track_support(
         self,
         track_generation_id: str,
         *,
         observed_at: datetime,
         detector_evidence: Mapping[str, Any],
+        support_box: tuple[float, float, float, float] | None = None,
     ) -> LiveActivitySessionSnapshot | None:
-        """Keep a still-current detector track from being quiet-closed by MOG2."""
-
         with self._lock:
-            activity = next(
-                (
-                    item
-                    for item in self.activity_sessions.values()
-                    if item.track_generation_id == track_generation_id
-                    and not item.review_activity_created
-                    and not item.ready_for_review
-                ),
-                None,
-            )
+            normalized_support_box = _support_box_from_sequence(support_box)
+            activity = next((item for item in self.activity_sessions.values() if not item.review_activity_created and not item.ready_for_review and (item.owns_track_generation(track_generation_id) or (normalized_support_box is not None and item.can_accept_local_support(normalized_support_box, observed_at=observed_at, quiet_window_seconds=DEFAULT_ACTIVITY_LOCAL_QUIET_SECONDS)))), None)
             if activity is None:
                 return None
-            activity.record_track_support(
-                observed_at=observed_at,
-                detector_evidence=detector_evidence,
-            )
+            activity.record_track_support(observed_at=observed_at, detector_evidence=detector_evidence, support_box=normalized_support_box, track_generation_id=track_generation_id)
             snapshot = activity.snapshot()
             self.current_activity_session_id = snapshot.activity_session_id
             self.last_activity = snapshot.as_dict()
@@ -1331,7 +1372,7 @@ class _LiveCameraSession:
                 activity is None
                 or activity.review_activity_created
                 or not track_generation_id
-                or activity.track_generation_id != track_generation_id
+                or not activity.owns_track_generation(track_generation_id)
                 or track_generation_id in self.track_capture_claims
             ):
                 return None
@@ -1379,7 +1420,7 @@ class _LiveCameraSession:
             compatible = (
                 activity is not None
                 and activity.activity_session_id == activity_session_id
-                and activity.track_generation_id == track_generation_id
+                and activity.owns_track_generation(track_generation_id)
             )
             completed = {
                 **claim,
@@ -1459,7 +1500,7 @@ class _LiveCameraSession:
                 return None
             already_ready = activity.ready_for_review
             activity.mark_ready_for_review(
-                quiet_seconds=activity.quiet_period_seconds(quiet_seconds)
+                quiet_seconds=DEFAULT_ACTIVITY_LOCAL_QUIET_SECONDS
             )
             snapshot = activity.snapshot()
             self.last_activity = snapshot.as_dict()
@@ -1489,12 +1530,19 @@ class _LiveCameraSession:
             for activity in self.activity_sessions.values():
                 if activity.review_activity_created or activity.detection_count <= 0:
                     continue
-                activity_quiet_seconds = activity.quiet_period_seconds(quiet_seconds)
-                elapsed_seconds = (now - activity.last_seen_at).total_seconds()
-                if elapsed_seconds < activity_quiet_seconds:
+                elapsed_seconds = (now - activity.last_local_support_at).total_seconds()
+                maximum_reached = (
+                    (now - activity.started_at).total_seconds()
+                    >= activity.maximum_visit_duration_seconds()
+                )
+                if not maximum_reached and elapsed_seconds < DEFAULT_ACTIVITY_LOCAL_QUIET_SECONDS:
                     continue
                 was_ready = activity.ready_for_review
-                activity.mark_ready_for_review(quiet_seconds=activity_quiet_seconds)
+                activity._finalize_for_review(
+                    quiet_seconds=DEFAULT_ACTIVITY_LOCAL_QUIET_SECONDS,
+                    reason="maximum_duration" if maximum_reached else "local_quiet",
+                    force_sustained=maximum_reached,
+                )
                 snapshot = activity.snapshot()
                 if snapshot.ready_for_review:
                     ready.append(snapshot)
@@ -1937,6 +1985,12 @@ class _LiveActivitySession:
     notification_event: str | None = None
     detector_evidence: dict[str, Any] = field(default_factory=dict)
     track_generation_id: str | None = None
+    associated_track_generation_ids: set[str] = field(default_factory=set)
+    support_box: tuple[float, float, float, float] | None = None
+    support_centroids: deque[tuple[float, float]] = field(default_factory=lambda: deque(maxlen=MAX_ACTIVITY_SUPPORT_CENTROIDS))
+    last_local_support_at: datetime | None = None
+    last_support_frame_sequence: int | None = None
+    detector_supported: bool = False
     high_resolution_capture_claim: dict[str, Any] | None = None
     high_resolution_evidence: dict[str, Any] | None = None
     _emitted_notification_events: set[str] | None = None
@@ -2017,6 +2071,12 @@ class _LiveActivitySession:
             evidence_media_asset_ids={},
             detector_evidence={},
             track_generation_id=_optional_str(values.get("track_generation_id")),
+            associated_track_generation_ids={item for item in [_optional_str(values.get("track_generation_id"))] if item is not None},
+            support_box=_support_box_from_values(values),
+            support_centroids=deque(maxlen=MAX_ACTIVITY_SUPPORT_CENTROIDS),
+            last_local_support_at=now,
+            last_support_frame_sequence=None,
+            detector_supported=False,
             high_resolution_capture_claim=None,
             high_resolution_evidence=None,
             _emitted_notification_events=set(),
@@ -2054,6 +2114,15 @@ class _LiveActivitySession:
             1, int(values.get("frames_evaluated_count") or 1)
         )
         self.last_seen_at = now
+        self.last_local_support_at = now
+        self.last_support_frame_sequence = _optional_int(values.get("best_frame_sequence"))
+        support_box = _support_box_from_values(values)
+        if support_box is not None:
+            self.support_box = support_box
+            self.support_centroids.append(_support_box_centroid(support_box))
+        track_generation_id = _optional_str(values.get("track_generation_id"))
+        if track_generation_id is not None:
+            self.associated_track_generation_ids.add(track_generation_id)
         self.completed_at = None
         self.ready_for_review = False
         self.finalized_reason = None
@@ -2198,13 +2267,52 @@ class _LiveActivitySession:
         *,
         observed_at: datetime,
         detector_evidence: Mapping[str, Any],
+        support_box: tuple[float, float, float, float] | None = None,
+        track_generation_id: str | None = None,
     ) -> None:
-        """Detector observations, not MOG2 foreground, define this track's quiet edge."""
-
         if observed_at > self.last_seen_at:
             self.last_seen_at = observed_at
+        if observed_at > (self.last_local_support_at or self.started_at):
+            self.last_local_support_at = observed_at
+        if support_box is not None:
+            self.support_box = support_box
+            self.support_centroids.append(_support_box_centroid(support_box))
+        if track_generation_id is not None:
+            self.associated_track_generation_ids.add(track_generation_id)
+        self.detector_supported = True
         self.frames_evaluated_count += 1
         self.detector_evidence = dict(detector_evidence)
+
+    def is_duplicate_observation(self, values: Mapping[str, Any]) -> bool:
+        sequence = _optional_int(values.get("best_frame_sequence"))
+        return sequence is not None and sequence == self.last_support_frame_sequence
+
+    def owns_track_generation(self, track_generation_id: str) -> bool:
+        return bool(track_generation_id and (self.track_generation_id == track_generation_id or track_generation_id in self.associated_track_generation_ids))
+
+    def can_accept_local_support(self, support_box: tuple[float, float, float, float] | None, *, observed_at: datetime, quiet_window_seconds: int) -> bool:
+        if self.review_activity_created:
+            return False
+        if support_box is None:
+            return True
+        if self.support_box is None or not _support_boxes_related(self.support_box, support_box):
+            return False
+        return (observed_at - (self.last_local_support_at or self.last_seen_at)).total_seconds() <= self.return_merge_window_seconds(quiet_window_seconds)
+
+    def can_merge_nearby_return(self, support_box: tuple[float, float, float, float] | None, *, observed_at: datetime, quiet_window_seconds: int) -> bool:
+        return self.can_accept_local_support(support_box, observed_at=observed_at, quiet_window_seconds=quiet_window_seconds)
+
+    @property
+    def subject_state(self) -> str:
+        if self.review_activity_created or self.ready_for_review:
+            return "candidate_ready"
+        if self.high_resolution_evidence and self.high_resolution_evidence.get("capture_failure_code"):
+            return "evidence_degraded"
+        if self.high_resolution_evidence and isinstance(self.high_resolution_evidence.get("full_image"), bytes):
+            return "waiting_for_local_quiet"
+        if self.detector_supported:
+            return "animal_activity"
+        return "motion_detected"
 
     def _policy_seconds(self, key: str, fallback: int, *, minimum: int) -> int:
         value = (self.monitoring_policy or {}).get(key)
@@ -2214,6 +2322,9 @@ class _LiveActivitySession:
 
     def quiet_period_seconds(self, fallback: int) -> int:
         return self._policy_seconds("quiet_period_seconds", fallback, minimum=1)
+
+    def return_merge_window_seconds(self, fallback: int) -> int:
+        return max(DEFAULT_ACTIVITY_LOCAL_QUIET_SECONDS, self.quiet_period_seconds(fallback))
 
     def maximum_visit_duration_seconds(self) -> int:
         return self._policy_seconds(
@@ -2245,15 +2356,11 @@ class _LiveActivitySession:
             return
         if not force_sustained and not self.is_sustained():
             self.ready_for_review = False
-            self.completed_at = self.last_seen_at + _timedelta_seconds(
-                self.quiet_period_seconds(quiet_seconds)
-            )
+            self.completed_at = (self.last_local_support_at or self.last_seen_at) + _timedelta_seconds(quiet_seconds)
             self.finalized_reason = "brief_activity"
             return
         self.ready_for_review = True
-        self.completed_at = self.last_seen_at + _timedelta_seconds(
-            self.quiet_period_seconds(quiet_seconds)
-        )
+        self.completed_at = (self.last_local_support_at or self.last_seen_at) + _timedelta_seconds(quiet_seconds)
         self.finalized_reason = reason
 
     def evidence_frames(
@@ -2493,6 +2600,7 @@ class _LiveActivitySession:
             notification_event=self.notification_event,
             detector_evidence=dict(self.detector_evidence),
             track_generation_id=self.track_generation_id,
+            subject_state=self.subject_state,
             high_resolution_capture_claim=_high_resolution_capture_claim_snapshot(
                 self.high_resolution_capture_claim
             ),
@@ -2616,6 +2724,41 @@ def _optional_float(value: Any) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def _support_box_from_values(values: Mapping[str, Any]) -> tuple[float, float, float, float] | None:
+    explicit = values.get("support_box")
+    if isinstance(explicit, (list, tuple)):
+        return _support_box_from_sequence(explicit)
+    return _support_box_from_sequence((values.get("activity_left"), values.get("activity_top"), values.get("activity_right"), values.get("activity_bottom")))
+
+
+def _support_box_from_sequence(values: object) -> tuple[float, float, float, float] | None:
+    if not isinstance(values, (list, tuple)) or len(values) != 4:
+        return None
+    parsed = tuple(_optional_float(value) for value in values)
+    if any(value is None for value in parsed):
+        return None
+    left, top, right, bottom = (float(value) for value in parsed)
+    return (left, top, right, bottom) if 0.0 <= left < right <= 1.0 and 0.0 <= top < bottom <= 1.0 else None
+
+
+def _support_box_centroid(box: tuple[float, float, float, float]) -> tuple[float, float]:
+    left, top, right, bottom = box
+    return (left + right) / 2.0, (top + bottom) / 2.0
+
+
+def _support_boxes_related(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> bool:
+    intersection_left, intersection_top = max(left[0], right[0]), max(left[1], right[1])
+    intersection_right, intersection_bottom = min(left[2], right[2]), min(left[3], right[3])
+    intersection = max(0.0, intersection_right - intersection_left) * max(0.0, intersection_bottom - intersection_top)
+    left_area = (left[2] - left[0]) * (left[3] - left[1])
+    right_area = (right[2] - right[0]) * (right[3] - right[1])
+    union = left_area + right_area - intersection
+    if union > 0 and intersection / union >= 0.05:
+        return True
+    first, second = _support_box_centroid(left), _support_box_centroid(right)
+    return ((first[0] - second[0]) ** 2 + (first[1] - second[1]) ** 2) ** 0.5 <= 0.10
 
 
 def _timedelta_seconds(seconds: int) -> timedelta:

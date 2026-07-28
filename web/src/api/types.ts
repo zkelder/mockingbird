@@ -969,6 +969,7 @@ export interface LiveCameraSessionStatus {
   activity_ready_for_review: boolean;
   activity_manual_review_needed: boolean;
   activity_review_state?: string | null;
+  activity_subject_state?: string | null;
   activity_quiet_remaining_seconds?: number | null;
   activity_best_frame_sequence?: number | null;
   activity_best_score?: number | null;
@@ -2349,6 +2350,7 @@ export interface LiveMotionEvaluateResponse {
   activity_completed_at?: string | null;
   activity_ready_for_review: boolean;
   activity_review_state?: string | null;
+  activity_subject_state?: string | null;
   activity_quiet_remaining_seconds?: number | null;
   activity_manual_review_needed: boolean;
   activity_best_frame_sequence?: number | null;

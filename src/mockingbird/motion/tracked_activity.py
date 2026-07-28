@@ -97,6 +97,7 @@ class MotionRegion:
 @dataclass(frozen=True)
 class TrackedObject:
     track_id: str
+    track_generation_id: str
     state: Literal["active", "stationary", "disappeared"]
     first_seen_at: datetime
     last_seen_at: datetime
@@ -116,6 +117,7 @@ class TrackedObject:
     def as_dict(self) -> dict[str, object]:
         return {
             "track_id": self.track_id,
+            "track_generation_id": self.track_generation_id,
             "state": self.state,
             "first_seen_at": self.first_seen_at,
             "last_seen_at": self.last_seen_at,
@@ -137,11 +139,14 @@ class TrackedObject:
 @dataclass(frozen=True)
 class TrackTrigger:
     track_id: str
+    track_generation_id: str
     zone_id: str
     first_frame_identity: str | None
     best_frame_identity: str | None
     pretrigger_frame_identities: tuple[str, ...]
     reason: Literal["coherent_track", "verified_track"]
+    box: tuple[float, float, float, float]
+    captured_at: datetime
     verified: bool = False
 
 
@@ -159,6 +164,7 @@ class TrackedActivityResult:
 @dataclass
 class _Track:
     track_id: str
+    track_generation_id: str
     first_seen_at: datetime
     last_seen_at: datetime
     first_sequence: int
@@ -181,11 +187,13 @@ class _Track:
     def from_region(
         cls,
         track_id: str,
+        track_generation_id: str,
         region: MotionRegion,
         sequence: int,
     ) -> "_Track":
         track = cls(
             track_id=track_id,
+            track_generation_id=track_generation_id,
             first_seen_at=region.captured_at,
             last_seen_at=region.captured_at,
             first_sequence=sequence,
@@ -217,6 +225,7 @@ class _Track:
         region = self.region
         return TrackedObject(
             track_id=self.track_id,
+            track_generation_id=self.track_generation_id,
             state=self.state,
             first_seen_at=self.first_seen_at,
             last_seen_at=self.last_seen_at,
@@ -545,8 +554,11 @@ class TrackedOutdoorActivityDetector:
         for index in sorted(unmatched):
             region = regions[index]
             track_id = f"track-{self._next_track:04d}"
+            track_generation_id = f"{self.stream_id}:motion-generation-{self._next_track:08d}"
             self._next_track += 1
-            self._tracks[track_id] = _Track.from_region(track_id, region, sequence)
+            self._tracks[track_id] = _Track.from_region(
+                track_id, track_generation_id, region, sequence
+            )
 
         for track in self._tracks.values():
             if track.triggered or track.state != "active":
@@ -560,11 +572,19 @@ class TrackedOutdoorActivityDetector:
             triggers.append(
                 TrackTrigger(
                     track_id=track.track_id,
+                    track_generation_id=track.track_generation_id,
                     zone_id=track.region.zone_id,
                     first_frame_identity=(track.boxes[0].frame_identity if track.boxes else None),
                     best_frame_identity=track.best_frame_identity,
                     pretrigger_frame_identities=pretrigger,
                     reason="coherent_track",
+                    box=(
+                        track.region.left,
+                        track.region.top,
+                        track.region.right,
+                        track.region.bottom,
+                    ),
+                    captured_at=track.region.captured_at,
                     verified=False,
                 )
             )

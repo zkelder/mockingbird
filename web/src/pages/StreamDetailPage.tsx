@@ -2393,12 +2393,22 @@ export function StreamDetailPage({
       liveSession?.activity_manual_review_needed ??
       liveSessionActivity?.manual_review_needed,
   );
+  const liveActivitySubjectState =
+    liveMotionResult?.activity_subject_state ??
+    liveSession?.activity_subject_state ??
+    liveSessionActivityString("subject_state");
   const liveActivityTitle =
     liveReviewActivityCreated
       ? `Review activity created for ${liveActivityAreaLabel}`
-      : liveActivityDetectionCount === 0 && liveActivityNearMissCount > 0
-        ? `Possible activity near ${liveActivityAreaLabel}`
-      : `Activity detected in ${liveActivityAreaLabel}`;
+      : liveActivitySubjectState === "waiting_for_local_quiet"
+        ? `Waiting for local quiet near ${liveActivityAreaLabel}`
+        : liveActivitySubjectState === "animal_activity"
+          ? `Animal activity near ${liveActivityAreaLabel}`
+          : liveActivitySubjectState === "evidence_degraded"
+            ? `Evidence degraded near ${liveActivityAreaLabel}`
+            : liveActivityDetectionCount === 0 && liveActivityNearMissCount > 0
+            ? `Possible activity near ${liveActivityAreaLabel}`
+            : `Activity detected in ${liveActivityAreaLabel}`;
   const liveBestMediaAssetId =
     liveMotionResult?.best_media_asset_id ?? liveSessionActivityString("best_media_asset_id");
   const liveBestFrameMessage =
@@ -3105,7 +3115,7 @@ export function StreamDetailPage({
                   <strong>Created</strong> {liveAutoReviewCount}
                 </span>
                 <span>
-                  <strong>Activity state</strong> {liveActivityReviewStateLabel}
+                  <strong>Activity state</strong> {liveActivitySubjectState ? formatLabel(liveActivitySubjectState) : liveActivityReviewStateLabel}
                 </span>
                 <span>
                   <strong>Quiet</strong>{" "}
@@ -3908,7 +3918,7 @@ export function StreamDetailPage({
                     <strong>Saved candidates</strong> {liveActivitySavedCandidateCount}
                   </span>
                   <span>
-                    <strong>State</strong> {liveActivityReviewStateLabel}
+                    <strong>State</strong> {liveActivitySubjectState ? formatLabel(liveActivitySubjectState) : liveActivityReviewStateLabel}
                   </span>
                   {liveCooldownLabel ? (
                     <span>

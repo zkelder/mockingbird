@@ -84,7 +84,7 @@ def test_mog2_trigger_telemetry_has_no_object_generation_requirement() -> None:
     payload = _tracked_activity_evidence_payload(result)
 
     assert payload["triggers"][0]["track_id"] == result.triggers[0].track_id
-    assert "track_generation_id" not in payload["triggers"][0]
+    assert payload["triggers"][0]["track_generation_id"] == result.triggers[0].track_generation_id
 
 def test_duplicate_and_global_illumination_frames_are_not_activity() -> None:
     detector = TrackedOutdoorActivityDetector("stream-two")
@@ -332,6 +332,7 @@ def test_distinct_track_generations_own_independent_capture_claims() -> None:
     assert completed_bird.high_resolution_capture_claim["status"] == "succeeded"
     assert completed_bird.high_resolution_evidence["full_image_present"] is True
     assert completed_bird.high_resolution_evidence["full_image_size_bytes"] == len(b"bird-jpeg")
+    assert completed_bird.subject_state == "waiting_for_local_quiet"
 
     stale = session.complete_activity_high_resolution_capture(
         false_positive.activity_session_id,
@@ -401,6 +402,7 @@ def test_failed_claim_and_current_detector_support_do_not_create_a_capture_loop(
     assert failed is not None
     assert failed.high_resolution_capture_claim["status"] == "failed"
     assert failed.high_resolution_evidence["full_image_present"] is False
+    assert failed.subject_state == "evidence_degraded"
     assert (
         session.claim_activity_high_resolution_capture(
             activity.activity_session_id,
@@ -469,3 +471,171 @@ def test_near_miss_cannot_preempt_an_open_confirmed_track_session() -> None:
     assert session.current_activity_session_id == confirmed.activity_session_id
     assert session.last_activity is not None
     assert session.last_activity["activity_session_id"] == confirmed.activity_session_id
+
+def _localized_session(*, stream_id: str) -> _LiveCameraSession:
+    return _LiveCameraSession(
+        config=SimpleNamespace(
+            stream_id=stream_id,
+            source_id=f"source-{stream_id}",
+            live_stream_type="camera_node",
+        ),
+        process=SimpleNamespace(),
+        max_runtime_seconds=300,
+    )
+
+
+def _localized_detection(
+    *,
+    region_key: str,
+    generation: str,
+    seen_at: datetime,
+    box: tuple[float, float, float, float],
+) -> dict[str, object]:
+    return {
+        "region_key": region_key,
+        "region_kind": "zone",
+        "region_id": "feeder",
+        "zone_id": "feeder",
+        "zone_name": "Feeder",
+        "zone_type": "feeder",
+        "track_generation_id": generation,
+        "support_box": list(box),
+        "activity_detected": True,
+        "last_seen_at": seen_at,
+        "best_score": 0.8,
+        "best_frame_sequence": 1,
+        "best_frame_captured_at": seen_at,
+        "best_frame_width": 1920,
+        "best_frame_height": 1440,
+        "activity_left": box[0],
+        "activity_top": box[1],
+        "activity_right": box[2],
+        "activity_bottom": box[3],
+        "monitoring_policy": {"quiet_period_seconds": 20},
+    }
+
+
+def test_bird_local_session_closes_while_distant_wind_continues() -> None:
+    session = _localized_session(stream_id="stream-local-wind")
+    now = datetime.now(UTC)
+    bird = session.record_activity_detection(
+        _localized_detection(
+            region_key="zone:feeder",
+            generation="motion-bird",
+            seen_at=now - timedelta(seconds=5),
+            box=(0.20, 0.30, 0.28, 0.40),
+        ),
+        frame_bytes=b"bird",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+    wind = session.record_activity_detection(
+        _localized_detection(
+            region_key="zone:feeder",
+            generation="motion-wind",
+            seen_at=now,
+            box=(0.70, 0.12, 0.88, 0.42),
+        ),
+        frame_bytes=b"wind",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+
+    ready = session.mark_quiet_activity_sessions_ready_for_review(quiet_seconds=30)
+
+    assert bird is not None and wind is not None
+    assert bird.activity_session_id != wind.activity_session_id
+    assert [item.activity_session_id for item in ready] == [bird.activity_session_id]
+    assert ready[0].subject_state == "candidate_ready"
+
+
+def test_nearby_motion_and_animal_support_merge_one_subject_session() -> None:
+    session = _localized_session(stream_id="stream-local-merge")
+    now = datetime.now(UTC)
+    first = session.record_activity_detection(
+        _localized_detection(
+            region_key="zone:feeder|track:motion-001",
+            generation="motion-001",
+            seen_at=now,
+            box=(0.20, 0.30, 0.28, 0.40),
+        ),
+        frame_bytes=b"bird-first",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+    duplicate = session.record_activity_detection(
+        _localized_detection(
+            region_key="zone:feeder|track:motion-002",
+            generation="motion-002",
+            seen_at=now + timedelta(milliseconds=500),
+            box=(0.21, 0.30, 0.29, 0.40),
+        ),
+        frame_bytes=b"bird-second",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+    supported = session.record_activity_track_support(
+        "object-001",
+        observed_at=now + timedelta(seconds=1),
+        detector_evidence={"object_detector": {"animal": True}},
+        support_box=(0.215, 0.305, 0.295, 0.405),
+    )
+
+    assert first is not None and duplicate is not None and supported is not None
+    assert duplicate.activity_session_id == first.activity_session_id
+    assert supported.activity_session_id == first.activity_session_id
+    assert len(session.activity_sessions) == 1
+    activity = next(iter(session.activity_sessions.values()))
+    assert activity.owns_track_generation("object-001")
+    assert supported.subject_state == "animal_activity"
+
+
+def test_failed_high_resolution_claim_still_becomes_a_reviewable_local_session() -> (
+    None
+):
+    now = datetime.now(UTC)
+    activity = _LiveActivitySession.from_detection(
+        _localized_detection(
+            region_key="zone:feeder|track:motion-failure",
+            generation="motion-failure",
+            seen_at=now - timedelta(seconds=5),
+            box=(0.20, 0.30, 0.28, 0.40),
+        ),
+        stream_id="stream-local-failure",
+        source_id="source-local-failure",
+        region_key="zone:feeder|track:motion-failure",
+        now=now - timedelta(seconds=5),
+        frame_bytes=b"monitoring",
+        frame_content_type="image/jpeg",
+    )
+    session = _localized_session(stream_id="stream-local-failure")
+    session.activity_sessions = {activity.region_key: activity}
+    session.current_activity_session_id = activity.activity_session_id
+    session.track_capture_claims = {}
+    session.last_activity = None
+    claim = session.claim_activity_high_resolution_capture(
+        activity.activity_session_id,
+        {
+            "track_generation_id": "motion-failure",
+            "qualifying_frame_identity": "frame",
+        },
+    )
+    assert claim is not None
+    failed = session.complete_activity_high_resolution_capture(
+        activity.activity_session_id,
+        str(claim["capture_claim_id"]),
+        {
+            "track_generation_id": "motion-failure",
+            "capture_failure_code": "node_unavailable",
+        },
+    )
+
+    ready = session.mark_quiet_activity_sessions_ready_for_review(quiet_seconds=30)
+
+    assert failed is not None
+    assert failed.high_resolution_evidence["full_image_present"] is False
+    assert failed.subject_state == "evidence_degraded"
+    assert [item.activity_session_id for item in ready] == [
+        activity.activity_session_id
+    ]
+    assert ready[0].subject_state == "candidate_ready"

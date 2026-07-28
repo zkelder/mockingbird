@@ -291,6 +291,25 @@ It must not create reviewed labels, mark visits/events reviewed, bypass review, 
 
 Exports, coverage, QA, analytics, and adapter evaluation use reviewed/corrected labels as truth.
 
+## Subject-Local Activity Session Guardrails
+
+A qualifying foreground track owns an in-memory activity session with an immutable
+track generation, normalized support box, bounded centroid history, local quiet
+timer, optional object-detector support, and one capture claim. A different
+subject or wind elsewhere in the same Zone must not refresh that session.
+
+The local close timer is short (about four seconds). A Zone policy's longer
+quiet period is only a nearby-return merge window for the same support geometry.
+Each session has a hard maximum duration. Repeated evaluation of the same cached
+frame is not fresh support.
+
+MegaDetector may consume one bounded monitoring-resolution motion crop through
+its existing bounded worker queue. It is optional evidence only: motion does not
+wait for it, and high-resolution stills are never detector input. One successful
+or failed high-resolution handoff is claimed per immutable session generation;
+a failure preserves the normal monitoring evidence and still reaches Review
+Queue without creating truth.
+
 ## Failure/Noise Cases
 
 Expected noise cases:
