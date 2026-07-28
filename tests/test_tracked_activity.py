@@ -639,3 +639,193 @@ def test_failed_high_resolution_claim_still_becomes_a_reviewable_local_session()
         activity.activity_session_id
     ]
     assert ready[0].subject_state == "candidate_ready"
+
+
+
+def test_finalized_local_session_releases_capture_claim_and_keeps_distant_wind() -> None:
+    session = _localized_session(stream_id="stream-finalized-local")
+    now = datetime.now(UTC)
+    bird = session.record_activity_detection(
+        _localized_detection(
+            region_key="zone:feeder|track:bird",
+            generation="generation-bird",
+            seen_at=now - timedelta(seconds=5),
+            box=(0.20, 0.30, 0.28, 0.40),
+        ),
+        frame_bytes=b"bird-monitoring",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+    wind = session.record_activity_detection(
+        _localized_detection(
+            region_key="zone:feeder|track:wind",
+            generation="generation-wind",
+            seen_at=now,
+            box=(0.70, 0.12, 0.88, 0.42),
+        ),
+        frame_bytes=b"wind-monitoring",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+    assert bird is not None and wind is not None
+
+    claim = session.claim_activity_high_resolution_capture(
+        bird.activity_session_id,
+        {
+            "track_generation_id": "generation-bird",
+            "qualifying_frame_identity": "bird-frame",
+        },
+    )
+    assert claim is not None
+    captured = session.complete_activity_high_resolution_capture(
+        bird.activity_session_id,
+        str(claim["capture_claim_id"]),
+        {
+            "track_generation_id": "generation-bird",
+            "full_image": b"bird-high-resolution",
+        },
+    )
+    assert captured is not None
+    ready = session.mark_quiet_activity_sessions_ready_for_review(quiet_seconds=30)
+    assert [item.activity_session_id for item in ready] == [bird.activity_session_id]
+    assert session.claim_activity_finalization(bird.activity_session_id) is not None
+    assert session.claim_activity_finalization(bird.activity_session_id) is None
+
+    finalized = session.mark_activity_review_created(
+        bird.activity_session_id,
+        {
+            "motion_evidence_id": "motion-evidence-bird",
+            "event_id": "event-bird",
+            "visit_id": "visit-bird",
+            "review_queue_item_id": "review-queue-visit-bird",
+        },
+    )
+
+    assert finalized is not None
+    assert session.get_activity_session(bird.activity_session_id) is None
+    assert session.get_activity_session(wind.activity_session_id) is not None
+    assert "generation-bird" not in session.track_capture_claims
+    assert (
+        session.complete_activity_high_resolution_capture(
+            bird.activity_session_id,
+            str(claim["capture_claim_id"]),
+            {"track_generation_id": "generation-bird", "full_image": b"late"},
+        )
+        is None
+    )
+    assert session.mark_activity_review_created(bird.activity_session_id, {}) is None
+
+
+def test_three_locally_quiet_sessions_finalize_once_and_leave_no_registry_entries() -> None:
+    session = _localized_session(stream_id="stream-three-stale")
+    now = datetime.now(UTC)
+    activity_ids: list[str] = []
+    for index in range(3):
+        values = _localized_detection(
+            region_key=f"zone:feeder|track:stale-{index}",
+            generation=f"generation-stale-{index}",
+            seen_at=now - timedelta(seconds=7 + index),
+            box=(0.20, 0.30, 0.28, 0.40),
+        )
+        for field in (
+            "support_box",
+            "activity_left",
+            "activity_top",
+            "activity_right",
+            "activity_bottom",
+        ):
+            values.pop(field)
+        activity = session.record_activity_detection(
+            values,
+            frame_bytes=f"stale-{index}".encode(),
+            frame_content_type="image/jpeg",
+            quiet_window_seconds=30,
+        )
+        assert activity is not None
+        activity_ids.append(activity.activity_session_id)
+
+    ready = session.mark_quiet_activity_sessions_ready_for_review(quiet_seconds=30)
+    assert {item.activity_session_id for item in ready} == set(activity_ids)
+    for index, activity in enumerate(ready):
+        assert session.claim_activity_finalization(activity.activity_session_id) is not None
+        completed = session.mark_activity_review_created(
+            activity.activity_session_id,
+            {
+                "motion_evidence_id": f"motion-evidence-stale-{index}",
+                "event_id": f"event-stale-{index}",
+                "visit_id": f"visit-stale-{index}",
+                "review_queue_item_id": f"review-queue-stale-{index}",
+            },
+        )
+        assert completed is not None
+        assert session.mark_activity_review_created(activity.activity_session_id, {}) is None
+
+    assert session.activity_sessions == {}
+    assert session.mark_quiet_activity_sessions_ready_for_review(quiet_seconds=30) == []
+
+
+def test_quiet_near_miss_is_cancelled_and_registry_is_bounded() -> None:
+    session = _localized_session(stream_id="stream-bounded-registry")
+    now = datetime.now(UTC)
+    near_miss_values = _localized_detection(
+        region_key="zone:feeder|near-miss",
+        generation="generation-near-miss",
+        seen_at=now - timedelta(seconds=5),
+        box=(0.20, 0.30, 0.28, 0.40),
+    )
+    near_miss_values.update({"activity_detected": False, "near_miss": True})
+    near_miss = session.record_activity_detection(
+        near_miss_values,
+        frame_bytes=b"noise",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+    assert near_miss is not None
+    claim = session.claim_activity_high_resolution_capture(
+        near_miss.activity_session_id,
+        {
+            "track_generation_id": "generation-near-miss",
+            "qualifying_frame_identity": "noise-frame",
+        },
+    )
+    assert claim is not None
+    assert session.complete_activity_high_resolution_capture(
+        near_miss.activity_session_id,
+        str(claim["capture_claim_id"]),
+        {
+            "track_generation_id": "generation-near-miss",
+            "full_image": b"unmanaged-if-not-retired",
+        },
+    ) is not None
+    assert session.mark_quiet_activity_sessions_ready_for_review(quiet_seconds=30) == []
+    assert session.get_activity_session(near_miss.activity_session_id) is None
+    assert "generation-near-miss" not in session.track_capture_claims
+
+    for index in range(13):
+        values = _localized_detection(
+            region_key=f"zone:feeder|track:registry-{index}",
+            generation=f"generation-registry-{index}",
+            seen_at=now - timedelta(seconds=20 - index),
+            box=(0.20, 0.30, 0.28, 0.40),
+        )
+        for field in (
+            "support_box",
+            "activity_left",
+            "activity_top",
+            "activity_right",
+            "activity_bottom",
+        ):
+            values.pop(field)
+        activity = session.record_activity_detection(
+            values,
+            frame_bytes=f"activity-{index}".encode(),
+            frame_content_type="image/jpeg",
+            quiet_window_seconds=30,
+        )
+        assert activity is not None
+
+    assert len(session.activity_sessions) == 12
+    assert all(
+        activity.track_generation_id != "generation-registry-0"
+        for activity in session.activity_sessions.values()
+    )

@@ -5519,6 +5519,37 @@ class ProductRepository:
                 self._sync_monitoring_alert(session, stream_id, now)
                 return False
 
+    def set_stream_monitoring_auto_create_review_candidates(
+        self,
+        stream_id: str,
+        *,
+        enabled: bool,
+        now: datetime | None = None,
+    ) -> StreamMonitoringPolicyResponse | None:
+        """Persist the existing Stream-scoped auto-create setting independently."""
+
+        timestamp = _as_utc(now or datetime.now(UTC))
+        with self.session_factory() as session:
+            with session.begin():
+                stream = session.get(StreamModel, stream_id)
+                if stream is None:
+                    return None
+                policy = session.get(StreamMonitoringPolicyModel, stream_id)
+                checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
+                if policy is None or checkpoint is None:
+                    policy, checkpoint = _new_stream_monitoring_records(
+                        stream_id, created_at=timestamp
+                    )
+                    session.add_all((policy, checkpoint))
+                    session.flush()
+                if policy.auto_create_review_candidates != bool(enabled):
+                    policy.auto_create_review_candidates = bool(enabled)
+                    policy.policy_revision += 1
+                    policy.updated_at = timestamp
+                    checkpoint.observed_policy_revision = policy.policy_revision
+                    checkpoint.updated_at = timestamp
+                return _stream_monitoring_policy_from_model(stream, policy)
+
     def retry_stream_monitoring(
         self,
         stream_id: str,

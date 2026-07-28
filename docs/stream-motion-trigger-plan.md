@@ -301,7 +301,13 @@ subject or wind elsewhere in the same Zone must not refresh that session.
 The local close timer is short (about four seconds). A Zone policy's longer
 quiet period is only a nearby-return merge window for the same support geometry.
 Each session has a hard maximum duration. Repeated evaluation of the same cached
-frame is not fresh support.
+frame is not fresh support. Finalized, canceled, and expired sessions release their
+in-memory capture claims and leave the bounded active registry; the latest completed
+review snapshot remains status metadata, not an open runtime session.
+
+`Auto-create Review Queue candidates` is a Stream monitoring setting persisted with
+the durable monitor policy. Runtime reconstruction restores that setting without
+enabling automatic identification or creating reviewed truth.
 
 MegaDetector may consume one bounded monitoring-resolution motion crop through
 its existing bounded worker queue. It is optional evidence only: motion does not

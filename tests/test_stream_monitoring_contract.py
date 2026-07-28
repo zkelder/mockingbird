@@ -320,6 +320,67 @@ def test_monitoring_enable_disable_and_retry_are_durable_and_idempotent(
     assert after["review_labels"] == before["review_labels"]
 
 
+def test_auto_create_setting_is_durable_for_backend_reconstruction(
+    repository: ProductRepository,
+) -> None:
+    assert (
+        repository.set_stream_monitoring_enabled(
+            STREAM_ID,
+            enabled=True,
+            idempotency_key="enable-monitoring-auto-create-001",
+        )
+        is False
+    )
+    initial = repository.get_stream_monitoring_policy(STREAM_ID)
+    assert initial is not None and initial.auto_create_review_candidates is False
+
+    updated = repository.set_stream_monitoring_auto_create_review_candidates(
+        STREAM_ID,
+        enabled=True,
+    )
+    repeated = repository.set_stream_monitoring_auto_create_review_candidates(
+        STREAM_ID,
+        enabled=True,
+    )
+    candidates = repository.list_enabled_monitoring_candidates(limit=10)
+
+    assert updated is not None and updated.auto_create_review_candidates is True
+    assert repeated is not None
+    assert repeated.policy_revision == updated.policy_revision
+    assert updated.policy_revision == initial.policy_revision + 1
+    assert [(item.stream_id, item.auto_create_review_candidates) for item in candidates] == [
+        (STREAM_ID, True)
+    ]
+
+
+def test_live_motion_settings_persist_auto_create_without_auto_identification(
+    repository: ProductRepository,
+) -> None:
+    response = ASGITestClient().post(
+        f"/api/streams/{STREAM_ID}/live-motion/settings",
+        json={
+            "auto_create_review_candidates": True,
+            "auto_identify_review_candidates": False,
+            "auto_review_quiet_seconds": 30,
+            "auto_review_min_detections": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["auto_create_review_candidates"] is False
+    assert response.json()["auto_identify_review_candidates"] is False
+    policy = repository.get_stream_monitoring_policy(STREAM_ID)
+    assert policy is not None and policy.auto_create_review_candidates is True
+
+    omitted = ASGITestClient().post(
+        f"/api/streams/{STREAM_ID}/live-motion/settings",
+        json={"auto_identify_review_candidates": False},
+    )
+    assert omitted.status_code == 200
+    preserved = repository.get_stream_monitoring_policy(STREAM_ID)
+    assert preserved is not None and preserved.auto_create_review_candidates is True
+
+
 def test_monitoring_api_exposes_idempotent_enable_and_bounded_status_read(
     repository: ProductRepository,
 ) -> None:

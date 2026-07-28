@@ -47,6 +47,7 @@ DEFAULT_ACTIVITY_MAX_SESSION_SECONDS = 5 * 60
 # policy's longer quiet period remains a nearby-return merge window below.
 DEFAULT_ACTIVITY_LOCAL_QUIET_SECONDS = 4
 MAX_ACTIVITY_SUPPORT_CENTROIDS = 8
+MAX_ACTIVITY_SESSIONS_PER_STREAM = 12
 DEFAULT_MAX_DIAGNOSTIC_EVENTS = 100
 SUPPORTED_SESSION_TYPES = {
     "rtsp",
@@ -59,6 +60,7 @@ _DIAGNOSTIC_EVENT_TYPES = {
     "activity_confirmed",
     "activity_ready_for_review",
     "activity_started",
+    "activity_retired",
     "auto_review_failed",
     "best_frame_saved",
     "camera_failed",
@@ -548,6 +550,27 @@ class LiveCameraSessionManager:
             support_box=support_box,
         )
 
+    def claim_activity_finalization(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+    ) -> LiveActivitySessionSnapshot | None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.claim_activity_finalization(activity_session_id)
+
+    def release_activity_finalization(
+        self,
+        stream_id: str,
+        activity_session_id: str,
+    ) -> None:
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is not None:
+            session.release_activity_finalization(activity_session_id)
+
     def record_activity_pretrigger_frames(
         self,
         stream_id: str,
@@ -858,10 +881,12 @@ class _LiveCameraSession:
         self.last_auto_review_queue_item_id: str | None = None
         self.last_motion_evaluation_at: datetime | None = None
         self.last_activity: dict[str, Any] | None = None
+        self.last_reviewed_activity: dict[str, Any] | None = None
         self.last_motion_result: dict[str, Any] | None = None
         self.current_activity_session_id: str | None = None
         self.activity_sessions: dict[str, _LiveActivitySession] = {}
         self.track_capture_claims: dict[str, dict[str, Any]] = {}
+        self._finalizing_activity_session_ids: set[str] = set()
         self.last_error: str | None = None
         self.stop_reason: str | None = None
         self.camera_settings = _camera_settings_from_config(config)
@@ -1153,6 +1178,7 @@ class _LiveCameraSession:
                 if storage_key in self.activity_sessions:
                     storage_key = f"{region_key}|activity:{existing.activity_session_id}"
                 self.activity_sessions[storage_key] = existing
+                self._enforce_activity_session_bound_locked()
             else:
                 existing.record_detection(
                     values,
@@ -1200,6 +1226,54 @@ class _LiveCameraSession:
             )
             return snapshot
 
+    def _retire_activity_session_locked(
+        self,
+        storage_key: str,
+        activity: "_LiveActivitySession",
+        *,
+        reason: str,
+    ) -> None:
+        """Drop transient bytes and claims once a session cannot accept support."""
+
+        self.activity_sessions.pop(storage_key, None)
+        getattr(self, "_finalizing_activity_session_ids", set()).discard(
+            activity.activity_session_id
+        )
+        generations = activity.associated_track_generation_ids | (
+            {activity.track_generation_id} if activity.track_generation_id else set()
+        )
+        for generation in generations:
+            self.track_capture_claims.pop(generation, None)
+        if self.current_activity_session_id == activity.activity_session_id:
+            self.current_activity_session_id = None
+        snapshot = activity.snapshot()
+        payload = snapshot.as_dict()
+        payload["registry_state"] = reason
+        self.last_activity = payload
+        if activity.review_activity_created and activity.review_queue_item_id:
+            self.last_reviewed_activity = dict(payload)
+        self._record_diagnostic_event_locked(
+            "activity_retired", status=reason, activity=snapshot
+        )
+
+    def _enforce_activity_session_bound_locked(self) -> None:
+        while len(self.activity_sessions) > MAX_ACTIVITY_SESSIONS_PER_STREAM:
+            storage_key, activity = min(
+                self.activity_sessions.items(),
+                key=lambda item: (
+                    item[1].last_local_support_at or item[1].last_seen_at,
+                    item[1].activity_session_id,
+                ),
+            )
+            activity._finalize_for_review(
+                quiet_seconds=DEFAULT_ACTIVITY_LOCAL_QUIET_SECONDS,
+                reason="registry_bound",
+                force_sustained=False,
+            )
+            self._retire_activity_session_locked(
+                storage_key, activity, reason="registry_bound"
+            )
+
     def _local_activity_match(
         self,
         support_box: tuple[float, float, float, float],
@@ -1237,6 +1311,32 @@ class _LiveCameraSession:
             self.current_activity_session_id = snapshot.activity_session_id
             self.last_activity = snapshot.as_dict()
             return snapshot
+
+    def claim_activity_finalization(
+        self,
+        activity_session_id: str,
+    ) -> LiveActivitySessionSnapshot | None:
+        """Claim one locally closed session before creating product records."""
+
+        with self._lock:
+            activity = self._activity_session(activity_session_id)
+            claimed = getattr(self, "_finalizing_activity_session_ids", set())
+            if (
+                activity is None
+                or not activity.ready_for_review
+                or activity.review_activity_created
+                or activity.activity_session_id in claimed
+            ):
+                return None
+            claimed.add(activity.activity_session_id)
+            self._finalizing_activity_session_ids = claimed
+            return activity.snapshot()
+
+    def release_activity_finalization(self, activity_session_id: str) -> None:
+        with self._lock:
+            getattr(self, "_finalizing_activity_session_ids", set()).discard(
+                activity_session_id
+            )
 
     def record_activity_pretrigger_frames(
         self,
@@ -1486,6 +1586,18 @@ class _LiveCameraSession:
                     status=snapshot.review_state,
                     activity=snapshot,
                 )
+            storage_key = next(
+                (
+                    key
+                    for key, item in self.activity_sessions.items()
+                    if item.activity_session_id == activity_session_id
+                ),
+                None,
+            )
+            if storage_key is not None:
+                self._retire_activity_session_locked(
+                    storage_key, activity, reason="finalized"
+                )
             return snapshot
 
     def mark_activity_ready_for_review(
@@ -1527,8 +1639,11 @@ class _LiveCameraSession:
         with self._lock:
             now = datetime.now(UTC)
             ready: list[LiveActivitySessionSnapshot] = []
-            for activity in self.activity_sessions.values():
-                if activity.review_activity_created or activity.detection_count <= 0:
+            for storage_key, activity in tuple(self.activity_sessions.items()):
+                if activity.review_activity_created:
+                    self._retire_activity_session_locked(
+                        storage_key, activity, reason="finalized"
+                    )
                     continue
                 elapsed_seconds = (now - activity.last_local_support_at).total_seconds()
                 maximum_reached = (
@@ -1536,6 +1651,11 @@ class _LiveCameraSession:
                     >= activity.maximum_visit_duration_seconds()
                 )
                 if not maximum_reached and elapsed_seconds < DEFAULT_ACTIVITY_LOCAL_QUIET_SECONDS:
+                    continue
+                if activity.detection_count <= 0:
+                    self._retire_activity_session_locked(
+                        storage_key, activity, reason="cancelled"
+                    )
                     continue
                 was_ready = activity.ready_for_review
                 activity._finalize_for_review(
@@ -1546,6 +1666,12 @@ class _LiveCameraSession:
                 snapshot = activity.snapshot()
                 if snapshot.ready_for_review:
                     ready.append(snapshot)
+                else:
+                    self._retire_activity_session_locked(
+                        storage_key,
+                        activity,
+                        reason=activity.finalized_reason or "cancelled",
+                    )
                 if not was_ready:
                     self.last_activity = snapshot.as_dict()
                     self._record_diagnostic_event_locked(
@@ -1553,6 +1679,7 @@ class _LiveCameraSession:
                         status=snapshot.review_state,
                         activity=snapshot,
                     )
+            self._enforce_activity_session_bound_locked()
             return sorted(
                 ready,
                 key=lambda activity: (activity.last_seen_at, activity.activity_session_id),
@@ -1812,7 +1939,9 @@ class _LiveCameraSession:
                 latest_activity_review_queue_item_id=(
                     latest_reviewed_activity.review_queue_item_id
                     if latest_reviewed_activity is not None
-                    else None
+                    else (getattr(self, "last_reviewed_activity", None) or {}).get(
+                        "review_queue_item_id"
+                    )
                 ),
                 last_activity=dict(self.last_activity) if self.last_activity else None,
                 last_motion_result=(

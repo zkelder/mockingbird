@@ -6901,6 +6901,7 @@ async def test_live_camera_diagnostics_record_product_transitions_without_truth(
         "activity_ready_for_review",
         "best_frame_saved",
         "review_candidate_created",
+        "activity_retired",
     ]
     diagnostic_text = repr(events)
     assert "near-miss-frame" not in diagnostic_text

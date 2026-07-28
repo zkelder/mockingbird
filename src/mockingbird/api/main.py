@@ -3605,7 +3605,7 @@ def _live_camera_session_response(
             snapshot.latest_activity_review_queue_item_id
         ),
         **_live_activity_session_status_fields(
-            snapshot.current_activity_session,
+            snapshot.current_activity_session or snapshot.last_activity,
             quiet_seconds=snapshot.auto_review_quiet_seconds,
         ),
         last_activity=snapshot.last_activity,
@@ -3843,15 +3843,13 @@ def _supervisor_start_monitor(
     def monitor_evaluate() -> dict[str, Any]:
         # Monitoring can create review candidates only through the persisted,
         # explicitly enabled existing setting. It never creates reviewed truth.
-        if candidate.auto_create_review_candidates:
-            _maybe_auto_create_live_review_candidate(candidate.stream_id)
+        _maybe_auto_create_live_review_candidate(candidate.stream_id)
         result = _evaluate_live_stream_motion(
             candidate.stream_id,
             evaluate_request,
             evaluation_cadence_seconds=candidate.evaluation_interval_seconds,
         )
-        if candidate.auto_create_review_candidates:
-            _maybe_auto_create_live_review_candidate(candidate.stream_id)
+        _maybe_auto_create_live_review_candidate(candidate.stream_id)
         snapshot_after_evaluation = get_live_camera_session_manager().status(
             candidate.stream_id
         )
@@ -7331,6 +7329,22 @@ async def start_live_stream_motion_monitor(
     payload: LiveMotionMonitorStartRequest | None = None,
 ) -> LiveMotionEvaluateResponse:
     request = payload or LiveMotionMonitorStartRequest()
+    existing_policy = get_repository().get_stream_monitoring_policy(stream_id)
+    if existing_policy is None:
+        raise _not_found("Stream", stream_id)
+    auto_create_review_candidates = (
+        request.auto_create_review_candidates
+        if "auto_create_review_candidates" in request.model_fields_set
+        else existing_policy.auto_create_review_candidates
+    )
+    request = request.model_copy(
+        update={"auto_create_review_candidates": auto_create_review_candidates}
+    )
+    get_repository().set_stream_monitoring_auto_create_review_candidates(
+        stream_id,
+        enabled=auto_create_review_candidates,
+    )
+    get_durable_monitoring_supervisor().wake()
     evaluate_request = LiveMotionEvaluateRequest(
         **request.model_dump(
             exclude={
@@ -7402,6 +7416,22 @@ async def update_live_stream_motion_monitor_settings(
 ) -> LiveCameraSessionStatusResponse:
     request = payload or LiveMotionMonitorSettingsRequest()
     configuration = _stream_live_playback_config_or_404(stream_id)
+    existing_policy = get_repository().get_stream_monitoring_policy(stream_id)
+    if existing_policy is None:
+        raise _not_found("Stream", stream_id)
+    auto_create_review_candidates = (
+        request.auto_create_review_candidates
+        if "auto_create_review_candidates" in request.model_fields_set
+        else existing_policy.auto_create_review_candidates
+    )
+    request = request.model_copy(
+        update={"auto_create_review_candidates": auto_create_review_candidates}
+    )
+    get_repository().set_stream_monitoring_auto_create_review_candidates(
+        stream_id,
+        enabled=auto_create_review_candidates,
+    )
+    get_durable_monitoring_supervisor().wake()
     snapshot = get_live_camera_session_manager().update_monitor_settings(
         stream_id,
         auto_create_review_candidates=request.auto_create_review_candidates,
@@ -7997,25 +8027,27 @@ def _maybe_auto_create_live_review_candidate(
 ) -> LiveMotionReviewActivityResponse | None:
     manager = get_live_camera_session_manager()
     snapshot = manager.status(stream_id)
-    if (
-        snapshot is None
-        or not snapshot.monitor_running
-        or not snapshot.auto_create_review_candidates
-    ):
+    if snapshot is None or not snapshot.monitor_running:
         return None
 
-    # A Stream can have independent live sessions in several named Zones. Close
-    # every elapsed session on this monitor tick so new activity in one Zone
-    # cannot strand a quiet session in another.
+    # Local quiet cleanup is independent of product auto-create. A reset or a
+    # user-disabled candidate setting must never strand transient sessions.
     ready_sessions = manager.mark_quiet_activity_sessions_ready_for_review(
         stream_id,
         quiet_seconds=snapshot.auto_review_quiet_seconds,
     )
+    if not snapshot.auto_create_review_candidates:
+        return None
     latest_result: LiveMotionReviewActivityResponse | None = None
     for activity in ready_sessions:
         if activity.review_activity_created:
             continue
         if activity.detection_count < snapshot.auto_review_min_detections:
+            continue
+        claimed = manager.claim_activity_finalization(
+            stream_id, activity.activity_session_id
+        )
+        if claimed is None:
             continue
         try:
             result = _create_live_stream_motion_review_activity(
@@ -8024,6 +8056,7 @@ def _maybe_auto_create_live_review_candidate(
                 activity_session_id=activity.activity_session_id,
             )
         except HTTPException as error:
+            manager.release_activity_finalization(stream_id, activity.activity_session_id)
             manager.record_auto_review_error(stream_id, str(error.detail))
             continue
 
@@ -8040,9 +8073,24 @@ def _maybe_auto_create_live_review_candidate(
             )
             _maybe_schedule_automatic_review_identification(stream_id, result)
             latest_result = result
-        elif result.status not in {"already_exists", "created"}:
+        elif result.status == "already_exists":
+            manager.mark_activity_review_created(
+                stream_id,
+                activity.activity_session_id,
+                {
+                    "motion_evidence_id": result.motion_evidence_id,
+                    "event_id": result.event_id,
+                    "visit_id": result.visit_id,
+                    "review_queue_item_id": result.review_queue_item_id,
+                    "creates_truth": False,
+                },
+            )
+            latest_result = result
+        elif result.status != "created":
+            manager.release_activity_finalization(stream_id, activity.activity_session_id)
             manager.record_auto_review_error(stream_id, result.message)
         else:
+            manager.release_activity_finalization(stream_id, activity.activity_session_id)
             latest_result = result
     return latest_result
 
