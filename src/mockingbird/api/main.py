@@ -2122,7 +2122,7 @@ def _tracked_auto_area() -> TrackedZone:
 
 
 def _source_luminance_plane(data: bytes) -> np.ndarray:
-    """Decode one cached still at its monitoring resolution for Zone-first crops."""
+    """Decode one cached still at its monitoring resolution for full-frame analysis."""
 
     decoded = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
     if decoded is None or decoded.ndim != 2 or decoded.size == 0:
@@ -2140,13 +2140,16 @@ def _tracked_live_motion_result(
     evaluated_at: datetime,
     preset: AnalysisPreset,
 ) -> TrackedActivityResult | None:
-    """Analyze each ordinary Zone from source-resolution monitoring frames.
+    """Track whole-stream foreground, then associate it with optional Zones.
 
-    Foreground state is intentionally per Stream/Zone.  Each Zone is cropped
-    before it is resized to the bounded detector plane, then regions are mapped
-    back to the original normalized Stream frame for evidence capture.
+    A normal Zone is product context, not a detector input boundary. Each
+    fresh monitoring frame is privacy/ignore masked, aspect-preservingly bounded,
+    and observed by the one Stream-owned foreground model. Regions that land
+    in an enabled normal Zone inherit that context; every other usable-frame
+    region remains general activity.
     """
 
+    del uses_auto_regions  # Retained at the API seam for response compatibility.
     if not cached_frames or len(cached_frames) != len(source_luminance_frames):
         return None
     blocked_zones = [
@@ -2154,7 +2157,7 @@ def _tracked_live_motion_result(
         for zone in zones
         if zone.is_active and zone.zone_type.value in {"privacy", "ignore"}
     ]
-    ordinary_zones = [
+    association_zones = [
         zone
         for zone in zones
         if zone.is_active
@@ -2162,134 +2165,76 @@ def _tracked_live_motion_result(
         and zone.monitoring_policy is not None
         and zone.monitoring_policy.monitoring_enabled
     ]
-    if uses_auto_regions:
-        ordinary_zones = []
+    tracked_zones = tuple(
+        [_tracked_zone_from_product_zone(zone) for zone in association_zones]
+        + [_tracked_auto_area()]
+        + [_tracked_zone_from_product_zone(zone) for zone in blocked_zones]
+    )
     result: TrackedActivityResult | None = None
-    manager = get_tracked_activity_detector_manager()
+    detector = get_tracked_activity_detector_manager().for_stream(
+        stream_id, preset=preset
+    )
     for cached_frame, source_frame in zip(
         cached_frames, source_luminance_frames, strict=True
     ):
         height, width = source_frame.shape
-        frame_regions = []
-        frame_tracks = []
-        frame_triggers = []
-        foreground_mask: np.ndarray | None = None
-        illumination_suppressed = False
-        model_states: list[str] = []
-        analysis_width = analysis_height = 0
-        zone_crop_width = zone_crop_height = 0
-        analysis_zone_id: str | None = None
-        telemetry = None
-        zone_inputs = ordinary_zones or ([None] if uses_auto_regions else [])
-        for product_zone in zone_inputs:
-            zone_id = product_zone.id if product_zone is not None else "auto-activity-area"
-            zone_type = (
-                product_zone.zone_type.value if product_zone is not None else "yard"
-            )
-            cropped = _tracked_zone_analysis_crop(
-                source_frame,
-                zone=product_zone,
-                blocked_zones=blocked_zones,
-            )
-            if cropped is None:
-                continue
-            analysis_frame, coordinate_box = cropped
-            detector = manager.for_zone(stream_id, zone_id, preset=preset)
-            tracked_zone = TrackedZone(
-                zone_id=zone_id,
-                zone_type=zone_type,
-                points=((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
-            )
-            observed = detector.observe(
-                analysis_frame,
-                sequence=cached_frame.sequence,
-                captured_at=cached_frame.captured_at,
-                source_width=width,
-                source_height=height,
-                frame_identity=sha1(cached_frame.frame_bytes).hexdigest()[:20],
-                zones=(tracked_zone,),
-                coordinate_box=coordinate_box,
-                now=evaluated_at,
-            )
-            telemetry = observed.telemetry
-            analysis_width = observed.telemetry.analysis_width
-            analysis_height = observed.telemetry.analysis_height
-            zone_crop_width = max(1, round((coordinate_box[2] - coordinate_box[0]) * width))
-            zone_crop_height = max(1, round((coordinate_box[3] - coordinate_box[1]) * height))
-            analysis_zone_id = zone_id
-            frame_regions.extend(observed.regions)
-            frame_tracks.extend(observed.tracks)
-            frame_triggers.extend(observed.triggers)
-            foreground_mask = observed.foreground_mask
-            illumination_suppressed = illumination_suppressed or observed.global_illumination_suppressed
-            model_states.append(observed.foreground_model_state)
-        if telemetry is None:
+        cropped = _tracked_stream_analysis_frame(
+            source_frame,
+            blocked_zones=blocked_zones,
+        )
+        if cropped is None:
             continue
+        analysis_frame, coordinate_box = cropped
+        observed = detector.observe(
+            analysis_frame,
+            sequence=cached_frame.sequence,
+            captured_at=cached_frame.captured_at,
+            source_width=width,
+            source_height=height,
+            frame_identity=sha1(cached_frame.frame_bytes).hexdigest()[:20],
+            zones=tracked_zones,
+            coordinate_box=coordinate_box,
+            now=evaluated_at,
+        )
         result = TrackedActivityResult(
             telemetry=FrameTelemetry(
                 source_width=width,
                 source_height=height,
-                analysis_width=analysis_width,
-                analysis_height=analysis_height,
-                frame_identity=telemetry.frame_identity,
-                captured_at=telemetry.captured_at,
-                frame_age_ms=telemetry.frame_age_ms,
-                duplicate_frame_count=telemetry.duplicate_frame_count,
-                dropped_frame_count=telemetry.dropped_frame_count,
-                frozen_frame_count=telemetry.frozen_frame_count,
-                accepted=telemetry.accepted,
-                ignored_reason=telemetry.ignored_reason,
-                zone_source_crop_width=zone_crop_width,
-                zone_source_crop_height=zone_crop_height,
-                analysis_zone_id=analysis_zone_id,
+                analysis_width=observed.telemetry.analysis_width,
+                analysis_height=observed.telemetry.analysis_height,
+                frame_identity=observed.telemetry.frame_identity,
+                captured_at=observed.telemetry.captured_at,
+                frame_age_ms=observed.telemetry.frame_age_ms,
+                duplicate_frame_count=observed.telemetry.duplicate_frame_count,
+                dropped_frame_count=observed.telemetry.dropped_frame_count,
+                frozen_frame_count=observed.telemetry.frozen_frame_count,
+                accepted=observed.telemetry.accepted,
+                ignored_reason=observed.telemetry.ignored_reason,
+                zone_source_crop_width=width,
+                zone_source_crop_height=height,
+                analysis_zone_id="whole-stream",
             ),
-            regions=tuple(frame_regions),
-            tracks=tuple(frame_tracks),
-            triggers=tuple(frame_triggers),
-            foreground_mask=foreground_mask,
-            global_illumination_suppressed=illumination_suppressed,
-            foreground_model_state=(
-                "ready" if model_states and all(state == "ready" for state in model_states)
-                else "warming"
-            ),
+            regions=observed.regions,
+            tracks=observed.tracks,
+            triggers=observed.triggers,
+            foreground_mask=observed.foreground_mask,
+            global_illumination_suppressed=observed.global_illumination_suppressed,
+            foreground_model_state=observed.foreground_model_state,
         )
     return result
 
 
-def _tracked_zone_analysis_crop(
+def _tracked_stream_analysis_frame(
     frame: np.ndarray,
     *,
-    zone: Zone | None,
     blocked_zones: list[Zone],
 ) -> tuple[np.ndarray, tuple[float, float, float, float]] | None:
-    """Mask privacy/ignore first, then resize only the requested Zone crop."""
+    """Mask only Privacy/Ignore geometry and bound the full frame without stretch."""
 
     if frame.ndim != 2 or frame.size == 0:
         return None
     height, width = frame.shape
-    if zone is None:
-        left, top, right, bottom = 0.0, 0.0, 1.0, 1.0
-        allowed = np.full((height, width), 255, dtype=np.uint8)
-    else:
-        points = np.asarray(
-            [
-                [
-                    round(max(0.0, min(1.0, point.x)) * (width - 1)),
-                    round(max(0.0, min(1.0, point.y)) * (height - 1)),
-                ]
-                for point in zone.polygon
-            ],
-            dtype=np.int32,
-        )
-        if len(points) < 3:
-            return None
-        x, y, crop_width, crop_height = cv2.boundingRect(points)
-        if crop_width < 2 or crop_height < 2:
-            return None
-        left, top = x / width, y / height
-        right, bottom = min(1.0, (x + crop_width) / width), min(1.0, (y + crop_height) / height)
-        allowed = np.zeros((height, width), dtype=np.uint8)
-        cv2.fillPoly(allowed, [points], 255)
+    usable = frame.copy()
     for blocked in blocked_zones:
         points = np.asarray(
             [
@@ -2302,21 +2247,21 @@ def _tracked_zone_analysis_crop(
             dtype=np.int32,
         )
         if len(points) >= 3:
-            cv2.fillPoly(allowed, [points], 0)
-    x0, y0 = int(left * width), int(top * height)
-    x1, y1 = max(x0 + 1, int(np.ceil(right * width))), max(y0 + 1, int(np.ceil(bottom * height)))
-    source_crop = frame[y0:y1, x0:x1].copy()
-    allowed_crop = allowed[y0:y1, x0:x1]
-    if source_crop.size == 0 or not np.any(allowed_crop):
-        return None
-    source_crop[allowed_crop == 0] = 0
-    analysis = cv2.resize(
-        source_crop,
-        (_LIVE_TRACKED_ACTIVITY_MAX_DIMENSION, 360),
-        interpolation=cv2.INTER_AREA,
-    )
-    return analysis.astype(np.uint8), (left, top, right, bottom)
-
+            cv2.fillPoly(usable, [points], 0)
+    longest_edge = max(width, height)
+    scale = min(1.0, _LIVE_TRACKED_ACTIVITY_MAX_DIMENSION / float(longest_edge))
+    if scale < 1.0:
+        analysis = cv2.resize(
+            usable,
+            (
+                max(1, round(width * scale)),
+                max(1, round(height * scale)),
+            ),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        analysis = usable
+    return analysis.astype(np.uint8), (0.0, 0.0, 1.0, 1.0)
 
 def _object_detector_zone_crop(
     frame_bytes: bytes,
@@ -2890,10 +2835,10 @@ def _motion_activity_summary(
     if activity_detected:
         if strongest_zone_name:
             return f"Activity detected in {strongest_zone_name}."
-        if uses_auto_regions:
-            return "Activity detected in auto area."
         if strongest_activity_area_label:
             return f"Activity detected in {strongest_activity_area_label}."
+        if uses_auto_regions:
+            return "Activity detected in automatic activity area."
         return "Activity detected."
 
     if suppressed_zone_summaries:
@@ -5586,12 +5531,21 @@ def _evaluate_live_stream_motion(
                 content_type=cached_frame.content_type,
                 max_dimension=_LIVE_TRACKED_ACTIVITY_MAX_DIMENSION,
             )
-            source_luminance = _source_luminance_plane(cached_frame.frame_bytes)
         except SavedMediaFrameDecodeError:
-            # A corrupted snapshot must not take the monitor down.  The next
+            # A corrupted snapshot must not take the monitor down. The next
             # valid sequence number is observed as a bounded dropped-frame gap.
             skipped_decode_count += 1
             continue
+        try:
+            source_luminance = _source_luminance_plane(cached_frame.frame_bytes)
+        except SavedMediaFrameDecodeError:
+            # The canonical decoder can supply a bounded plane for synthetic
+            # or recoverable cache decoders; production JPEG/PNG frames retain
+            # their source-resolution luminance plane above.
+            source_luminance = np.asarray(decoded.frame, dtype=np.uint8)
+            if source_luminance.ndim != 2 or source_luminance.size == 0:
+                skipped_decode_count += 1
+                continue
         decoded_cached_frames.append(cached_frame)
         decoded_frames.append(decoded)
         source_luminance_frames.append(source_luminance)
@@ -5671,9 +5625,9 @@ def _evaluate_live_stream_motion(
         for zone in all_zones
         if zone.is_active and zone.zone_type.value in {"privacy", "ignore"}
     ]
-    # A user-disabled activity Zone must not quietly fall back to automatic capture.
+    # Zone policy shapes attribution after motion; it never disables core whole-stream motion.
     uses_auto_regions = not reviewable_zones and not has_active_activity_zone
-    region_source = "auto_regions" if uses_auto_regions else "user_zones"
+    region_source = "whole_stream"
     suppressed_auto_region_count = 0
     debug_cell_zones: list[MotionZoneInput] = []
     auto_cells: list[_AutoMotionCell] = []
@@ -5720,17 +5674,8 @@ def _evaluate_live_stream_motion(
         frame_index_start=cached_frames[0].sequence,
         create_motion_evidence=request.create_review_activity,
     )
-    # The selected Pi profile pair is the high-resolution bird-evidence path:
-    # it must be entered only by an object-verified track. Other established
-    # live sources retain their explicit one-pair motion evaluation contract
-    # while the stateful tracker is warming or unavailable.
-    requires_object_verified_activity = bool(
-        configuration is not None
-        and configuration.provider_key == "camera_node"
-        and configuration.live_stream_type == "camera_node"
-        and configuration.camera_node_monitoring_profile_id
-        and configuration.camera_node_evidence_profile_id
-    )
+    # Camera Node profiles select optional evidence capture after a qualifying
+    # motion session. They never change the motion-to-activity admission rule.
     suppressed_zone_summaries = _motion_suppressed_zone_summaries(
         [frame.frame for frame in decoded_frames],
         blocked_zones,
@@ -5781,23 +5726,10 @@ def _evaluate_live_stream_motion(
     for candidate, trigger in zip(object_candidates, object_detector.triggers, strict=True):
         object_trigger_by_candidate[(candidate.zone_id, candidate.best_frame_index)] = trigger
 
-    if requires_object_verified_activity:
-        # Preserve foreground telemetry for diagnostics, but do not allow an
-        # unverified MOG2 track to open a selected Pi evidence session.
-        sampler_result = SamplerResult(
-            frame_scores=sampler_result.frame_scores,
-            candidates=[],
-        )
-
     used_legacy_motion_sampler = False
-    if (
-        not requires_object_verified_activity
-        and not sampler_result.candidates
-        and not object_candidates
-    ):
-        # This compatibility result remains a bounded, explicit live-motion
-        # evaluation. It cannot initiate the selected Pi high-resolution
-        # evidence flow above, which requires an object detector track.
+    if not sampler_result.candidates and not object_candidates:
+        # Compatibility scoring remains bounded and diagnostics-shaped while
+        # the Stream-owned foreground model is warming or unavailable.
         try:
             sampler_result = _live_motion_sampler_result(
                 [frame.frame for frame in decoded_frames],
@@ -5816,6 +5748,22 @@ def _evaluate_live_stream_motion(
         for frame_score in sampler_result.frame_scores
     ]
     motion_candidates = sampler_result.candidates + object_candidates
+    legacy_ignore_dominates = bool(
+        used_legacy_motion_sampler
+        and not object_candidates
+        and suppressed_zone_summaries
+        and max(
+            (candidate.peak_changed_ratio for candidate in motion_candidates),
+            default=0.0,
+        )
+        <= suppressed_zone_summaries[0].peak_changed_ratio
+    )
+    if legacy_ignore_dominates:
+        motion_candidates = []
+        warnings.append(
+            "Ignored-zone motion was stronger than ordinary-zone motion; "
+            "review candidate suppressed."
+        )
     if uses_auto_regions:
         activity_areas = [
             MotionActivityAreaResponse(
@@ -5832,6 +5780,11 @@ def _evaluate_live_stream_motion(
         motion_zones = [_activity_area_zone_input(area) for area in activity_areas]
 
     best_candidate = _best_motion_candidate(motion_candidates)
+    whole_stream_activity = bool(
+        best_candidate is not None
+        and best_candidate.zone_id == "auto-activity-area"
+        and not (uses_auto_regions and used_legacy_motion_sampler)
+    )
     object_trigger = (
         object_trigger_by_candidate.get(
             (best_candidate.zone_id, best_candidate.best_frame_index)
@@ -5861,7 +5814,7 @@ def _evaluate_live_stream_motion(
     # Privacy and Ignore masks were already applied before components reached
     # tracking.  Legacy ratio summaries remain diagnostic-only and cannot
     # suppress a coherent ordinary-Zone track.
-    suppressed_strongest_motion = False
+    suppressed_strongest_motion = legacy_ignore_dominates
 
     candidate_responses = [
         _motion_candidate_response(candidate) for candidate in motion_candidates
@@ -5872,6 +5825,9 @@ def _evaluate_live_stream_motion(
     if object_trigger is not None:
         strongest_zone_id = object_trigger.zone_id
         strongest_changed_ratio = object_trigger.score
+    elif whole_stream_activity:
+        strongest_zone_id = None
+        strongest_changed_ratio = best_candidate.peak_changed_ratio if best_candidate else 0.0
     elif uses_auto_regions:
         strongest_zone_id = best_candidate.zone_id if best_candidate else None
         strongest_changed_ratio = (
@@ -5888,9 +5844,30 @@ def _evaluate_live_stream_motion(
 
     activity_area_by_id = {area.area_id: area for area in activity_areas}
     strongest_activity_area = (
-        activity_area_by_id.get(best_candidate.zone_id)
-        if best_candidate
-        else (activity_area_by_id.get(strongest_zone_id) if strongest_zone_id else None)
+        MotionActivityAreaResponse(
+            area_id="whole-stream-activity",
+            label="General activity",
+            source="whole_stream",
+            left=0.0,
+            top=0.0,
+            right=1.0,
+            bottom=1.0,
+            zone_id=None,
+        )
+        if whole_stream_activity
+        else (
+            activity_areas[0]
+            if uses_auto_regions and best_candidate
+            else (
+                activity_area_by_id.get(best_candidate.zone_id)
+                if best_candidate
+                else (
+                    activity_area_by_id.get(strongest_zone_id)
+                    if strongest_zone_id
+                    else None
+                )
+            )
+        )
     )
     strongest_zone = zones_by_id.get(strongest_zone_id) if strongest_zone_id else None
     strongest_zone_name = strongest_zone.name if strongest_zone else None
@@ -6001,7 +5978,15 @@ def _evaluate_live_stream_motion(
             changed_pixel_count=tracked_best_region.pixel_area,
         )
         if tracked_best_region is not None
-        else None
+        else _measured_activity_bounds(
+            [frame.frame for frame in decoded_frames],
+            frame_index=(
+                best_candidate.best_frame_index if best_candidate is not None else None
+            ),
+            frame_index_start=cached_frames[0].sequence,
+            activity_area=strongest_activity_area,
+            pixel_delta_threshold=request.pixel_delta_threshold,
+        )
     )
     best_live_frame = (
         next(
@@ -6054,8 +6039,14 @@ def _evaluate_live_stream_motion(
             best_candidate.best_frame_index if best_candidate else None,
         )
     )
-    session_region_kind = "auto_area" if uses_auto_regions else "zone"
-    session_region_id = _activity_session_region_id(strongest_activity_area)
+    session_region_kind = (
+        "stream" if whole_stream_activity else "auto_area" if uses_auto_regions else "zone"
+    )
+    session_region_id = (
+        "whole-frame"
+        if whole_stream_activity
+        else _activity_session_region_id(strongest_activity_area)
+    )
     existing_session_references = _motion_evidence_session_references(
         repository.list_motion_evidence(stream_id=stream.id)
     )
@@ -6068,26 +6059,7 @@ def _evaluate_live_stream_motion(
         activity_region_key = f"{activity_region_key}|object-track:{object_track_generation_id}"
     has_reviewable_live_activity = bool(best_candidate)
     strongest_zone_policy = strongest_zone.monitoring_policy if strongest_zone else None
-    session_activity_signal = (
-        burst_live_frame is not None
-        and (
-            (uses_auto_regions and activity_detected)
-            or (
-                not uses_auto_regions
-                and strongest_zone_policy is not None
-                and strongest_zone_policy.monitoring_enabled
-                and strongest_zone_id is not None
-                and (
-                    activity_detected
-                    or (
-                        strongest_zone_type
-                        in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}
-                        and near_miss
-                    )
-                )
-            )
-        )
-    )
+    session_activity_signal = burst_live_frame is not None and activity_detected
     session_recommendation = recommend_activity_session(
         source_id=stream.source_id,
         stream_id=stream.id,
@@ -6128,7 +6100,11 @@ def _evaluate_live_stream_motion(
                 "region_key": activity_region_key,
                 "region_kind": session_region_kind,
                 "region_id": session_region_id,
-                "zone_id": strongest_zone_id if not uses_auto_regions else None,
+                "zone_id": (
+                    None
+                    if whole_stream_activity or uses_auto_regions
+                    else strongest_zone_id
+                ),
                 "zone_name": strongest_zone_name
                 or (strongest_activity_area.label if strongest_activity_area else None),
                 "zone_type": strongest_zone_type.value
@@ -6174,10 +6150,20 @@ def _evaluate_live_stream_motion(
                 else None,
                 "effective_threshold_used": effective_threshold_used,
                 "threshold_source": (
-                    "object_verified" if object_trigger is not None else "tracked_region"
+                    "object_verified"
+                    if object_trigger is not None
+                    else (
+                        strongest_scoring_policy.threshold_source
+                        if strongest_scoring_policy is not None
+                        else "tracked_region"
+                    )
                 ),
                 "track_generation_id": object_track_generation_id,
-                "fine_motion_applied": False,
+                "fine_motion_applied": (
+                    strongest_scoring_policy.fine_motion_applied
+                    if strongest_scoring_policy is not None
+                    else False
+                ),
                 "bird_sized_feeder_motion": request.bird_sized_feeder_motion,
                 "detector_evidence": detector_evidence_payload,
                 "monitoring_policy": (
@@ -6558,7 +6544,11 @@ def _evaluate_live_stream_motion(
                 MotionEvidenceCreateRequest(
                     source_id=stream.source_id,
                     stream_id=stream.id,
-                    zone_id=(None if uses_auto_regions else best_candidate.zone_id),
+                    zone_id=(
+                        None
+                        if whole_stream_activity or uses_auto_regions
+                        else best_candidate.zone_id
+                    ),
                     start_frame_index=best_candidate.start_frame_index,
                     end_frame_index=best_candidate.end_frame_index,
                     best_frame_index=best_candidate.best_frame_index,
@@ -7652,7 +7642,16 @@ def _create_live_stream_motion_review_activity(
                     if zone_name
                     else "Live motion activity"
                 ),
-                visit_label_hint="unknown_animal",
+                visit_label_hint=(
+                    "unknown_bird"
+                    if activity.get("zone_type")
+                    in {
+                        ZoneType.feeder.value,
+                        ZoneType.birdbath.value,
+                        ZoneType.perch.value,
+                    }
+                    else "unknown_animal"
+                ),
                 notes=(
                     "Auto-created review activity from completed live stream motion."
                     if auto_created

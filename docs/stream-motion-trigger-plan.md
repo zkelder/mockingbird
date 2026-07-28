@@ -4,30 +4,27 @@
 
 This plan defines the next active event-trigger path for MockingBird:
 
-stream visible in app -> sample frames locally -> evaluate user-drawn zones or automatic activity areas -> score and debounce motion across multiple sampled frames -> measure changed-pixel bounds around the selected activity -> save candidate snapshot evidence -> create reviewable visit/event evidence -> later detector/classifier receives the best frame or activity crop -> user correction is dataset/export truth.
+monitoring Stream -> fresh usable-frame motion -> optional Zone association -> bounded activity session -> candidate snapshot evidence -> reviewable Visit/Event evidence -> warm high-resolution evidence when a compatible Camera Node profile is available -> user correction is dataset/export truth.
 
 This is not a permanent replacement for MegaDetector. It is the first lightweight event trigger that protects the product loop while heavier detectors remain optional enrichment.
 
 ## Current tracked-activity implementation
 
-Live monitoring now uses a shared, bounded desktop-side pipeline:
+Live monitoring now uses a shared, bounded desktop-side pipeline: fresh frame -> Privacy/Ignore mask -> aspect-bounded full-frame MOG2 -> regions -> optional Zone association -> temporal tracks -> activity session.
 
-`fresh frame -> MOG2 foreground mask -> compact Zone-aware regions -> temporal tracks -> activity session`
-
-- Each ordinary Zone is mapped into the fresh monitoring frame, cropped at
-  source resolution, then resized to a bounded analysis canvas (normally no
-  larger than 640×360). This preserves more bird-scale pixels than reducing the
-  entire frame before looking at a small feeder or perch Zone. Resulting region
-  boxes map back to normalized full-frame coordinates.
-- Per-Stream/Zone detector state rejects duplicate identities and non-monotonic
+- Every usable monitoring frame is analyzed once at bounded, aspect-preserved
+  resolution (long edge no larger than 640). Normal Zones do not crop or gate
+  motion; they add context after a region is found. A region outside every
+  normal Zone is general stream activity.
+- Per-Stream detector state rejects duplicate identities and non-monotonic
   observations, counts skipped/dropped frames, suppresses abrupt global lighting
   changes, and resets after a prolonged gap or a frame-size change.
 - Privacy and Ignore masks are applied before region extraction and tracking.
-  The retired global changed-pixel percentage and sustained-motion duration are
-  compatibility diagnostics only; they do not open a tracked activity.
+
 - A compact coherent track normally needs two observations in a short bounded
   window. After triggering, a stationary object may remain part of the open
-  activity until the existing per-Zone quiet-close policy ends it.
+  activity until the default quiet-close policy, or an associated Zone policy,
+  ends it.
 - The activity session keeps at most two pre-trigger cache frames plus the
   existing bounded candidate sample in memory. It writes no ring-buffer frame
   until a reviewable Visit is being created, and it never records video.

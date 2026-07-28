@@ -463,17 +463,22 @@ class TrackedOutdoorActivityDetector:
         coordinate_box: tuple[float, float, float, float],
     ) -> list[MotionRegion]:
         height, width = foreground.shape
-        ordinary = tuple(zone for zone in zones if not zone.blocked)
-        if not ordinary:
-            return []
-        allowed = np.zeros_like(foreground)
+        ordinary = tuple(
+            zone
+            for zone in zones
+            if not zone.blocked and zone.zone_id != "auto-activity-area"
+        )
+        general = next(
+            (zone for zone in zones if zone.zone_id == "auto-activity-area"),
+            None,
+        )
         blocked = np.zeros_like(foreground)
-        for zone in ordinary:
-            cv2.fillPoly(allowed, [_zone_polygon(zone, width, height)], 255)
         for zone in zones:
             if zone.blocked:
                 cv2.fillPoly(blocked, [_zone_polygon(zone, width, height)], 255)
-        mask = cv2.bitwise_and(foreground, allowed)
+        # Product Zones classify a region after extraction; they never narrow
+        # the motion input. Privacy/Ignore geometry is the only exclusion.
+        mask = foreground.copy()
         mask[blocked > 0] = 0
         component_count, _labels, stats, centroids = cv2.connectedComponentsWithStats(
             mask, connectivity=8
@@ -483,7 +488,9 @@ class TrackedOutdoorActivityDetector:
             x, y, box_width, box_height, area = (int(item) for item in stats[index])
             if area <= 0:
                 continue
-            zone = _region_zone(ordinary, x, y, box_width, box_height, width, height)
+            zone = _region_zone(
+                ordinary, x, y, box_width, box_height, width, height
+            ) or general
             if zone is None:
                 continue
             zone_pixels = max(1, _zone_area_pixels(zone, width, height))

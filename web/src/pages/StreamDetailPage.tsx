@@ -2362,7 +2362,7 @@ export function StreamDetailPage({
   const liveActivityAreaLabel =
     liveStrongestZoneName ??
     liveMotionResult?.strongest_activity_area_label ??
-    (liveMotionResult?.uses_auto_regions ? "auto area" : "unzoned activity");
+    (liveMotionResult?.uses_auto_regions ? "automatic activity" : "general activity");
   const liveActivityDetectionCount =
     liveMotionResult?.activity_detection_count ??
     liveSession?.activity_detection_count ??
@@ -2521,7 +2521,9 @@ export function StreamDetailPage({
   );
   const liveLastError =
     liveMotionResult?.last_error ?? liveMotionError ?? liveSessionError ?? null;
-  const showLiveMonitorFacts = Boolean(liveMonitorRunning || liveMotionResult || liveSession);
+  const showLiveMonitorFacts = Boolean(
+    showLiveMotionDebug && (liveMonitorRunning || liveMotionResult || liveSession),
+  );
   const liveWorkflowState =
     liveViewError || liveMotionError || liveSessionError || liveMotionResult?.last_error
       ? "error"
@@ -2550,15 +2552,15 @@ export function StreamDetailPage({
         liveMotionResult?.last_error ??
         "Live camera needs attention."
       : liveWorkflowState === "review_created"
-        ? "Review activity created. Open Review Queue to confirm or correct."
+        ? "Activity open — review candidate ready."
         : liveWorkflowState === "cooldown"
-          ? liveMotionResult?.last_evaluation_message ?? "Cooldown active."
+          ? "Activity open — waiting for quiet."
         : liveWorkflowState === "activity"
-          ? liveMotionResult?.activity_summary ?? "Activity detected."
+          ? "Motion detected."
           : liveWorkflowState === "ignored"
-            ? liveSuppressedMessage ?? "Motion ignored in privacy/ignore zone."
+            ? "Quiet — ignored-zone motion."
           : liveWorkflowState === "monitoring"
-            ? "Watching recent live frames for activity."
+            ? "Quiet — monitoring."
             : liveWorkflowState === "streaming"
               ? backendLiveSessionSupported
                 ? "Camera session is running."
@@ -3063,8 +3065,8 @@ export function StreamDetailPage({
             <details className="stream-live-secondary-panel stream-live-collapsible-panel">
               <summary>
                 <span className="stream-live-panel-summary-copy">
-                  <strong>Activity detection</strong>
-                  <span>Tracked outdoor activity, Zones, and diagnostics.</span>
+                  <strong>Activity monitoring</strong>
+                  <span>Whole-stream motion with optional Zone context.</span>
                 </span>
               </summary>
               <div className="stream-live-collapsible-body">
@@ -3072,33 +3074,15 @@ export function StreamDetailPage({
                 <div>
                   <strong>Review candidate handoff</strong>
                   <span>
-                    Monitoring can create needs-review activity candidates. Corrections still
-                    decide Bird Log and export truth.
+                    Motion opens bounded activity sessions. Zones add context; review still
+                    decides Bird Log and export truth.
                   </span>
                 </div>
-              <label className="stream-live-debug-toggle">
-                <input
-                    checked={showLiveMotionDebug}
-                    onChange={(event) => setShowLiveMotionDebug(event.target.checked)}
-                    type="checkbox"
-                  />
-                Show detection overlays
-              </label>
-              <label className="stream-live-debug-toggle">
-                <input
-                  checked={showForegroundMask}
-                  disabled={!liveMotionResult?.foreground_mask_data_url}
-                  onChange={(event) => setShowForegroundMask(event.target.checked)}
-                  type="checkbox"
-                />
-                Foreground mask
-              </label>
               </div>
               <div className="stream-live-field-guidance">
-                <span>For birds, draw a tight Feeder Zone around the perch/feeding ports.</span>
-                <span>Use Ignore zones for road/cars/background movement.</span>
-                <span>Use Ground Zone separately for ground activity.</span>
-                <span>If birds are still missed, move/zoom camera so feeder fills more of the frame.</span>
+                <span>Motion watches the usable stream; a Zone adds context after motion is found.</span>
+                <span>Use Privacy or Ignore Zones to exclude areas from monitoring.</span>
+                <span>Use a Feeder, Ground, or Perch Zone to organize review activity.</span>
               </div>
               <div className="stream-live-sensitivity" aria-label="Monitoring sensitivity">
                 {liveMonitorSensitivityOptions.map((option) => (
@@ -3158,10 +3142,45 @@ export function StreamDetailPage({
               ) : null}
               <details
                 className="stream-live-debug-details"
-                open={showLiveMotionDebug}
-                onToggle={(event) => setShowLiveMotionDebug(event.currentTarget.open)}
+                onToggle={(event) => {
+                  if (!event.currentTarget.open) {
+                    setShowLiveMotionDebug(false);
+                    setShowForegroundMask(false);
+                  }
+                }}
               >
-                <summary>Detector details</summary>
+                <summary>Developer details</summary>
+                <div className="stream-live-collapsible-body">
+                  <div className="stream-live-panel-header">
+                    <label className="stream-live-debug-toggle">
+                      <input
+                        checked={showLiveMotionDebug}
+                        onChange={(event) => {
+                          setShowLiveMotionDebug(event.target.checked);
+                          if (!event.target.checked) {
+                            setShowForegroundMask(false);
+                          }
+                        }}
+                        type="checkbox"
+                      />
+                      Show detection overlays
+                    </label>
+                    <label className="stream-live-debug-toggle">
+                      <input
+                        checked={showForegroundMask}
+                        disabled={!liveMotionResult?.foreground_mask_data_url}
+                        onChange={(event) => setShowForegroundMask(event.target.checked)}
+                        type="checkbox"
+                      />
+                      Foreground mask
+                    </label>
+                  </div>
+                  <details
+                    className="stream-live-debug-details"
+                    open={showLiveMotionDebug}
+                    onToggle={(event) => setShowLiveMotionDebug(event.currentTarget.open)}
+                  >
+                    <summary>Detection details</summary>
                 <div className="stream-live-calibration-grid">
                   <label>
                     <span>Monitoring focus</span>
@@ -3285,7 +3304,7 @@ export function StreamDetailPage({
                         : "waiting"}
                     </span>
                     <span>
-                      <strong>Zone crop</strong>{" "}
+                      <strong>Usable frame</strong>{" "}
                       {liveMotionResult?.zone_source_crop_width && liveMotionResult.zone_source_crop_height
                         ? `${liveMotionResult.zone_source_crop_width}×${liveMotionResult.zone_source_crop_height}`
                         : "waiting"}
@@ -3483,6 +3502,8 @@ export function StreamDetailPage({
                     ))}
                   </div>
                 ) : null}
+              </details>
+                </div>
               </details>
               </div>
             </details>

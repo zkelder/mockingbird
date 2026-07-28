@@ -2286,6 +2286,165 @@ async def test_live_motion_auto_region_reaches_review_without_named_zone(
     assert zones_response.json() == []
 
 
+
+async def test_camera_node_motion_does_not_require_a_zone_or_available_detector(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured evidence profile may enrich a Visit, never gate its motion."""
+
+    stream_id = add_stream_without_zones(isolated_repository, stream_id="stream-motion-first")
+    frames = [
+        b"\xff\xd8motion-first-0\xff\xd9",
+        b"\xff\xd8motion-first-1\xff\xd9",
+        b"\xff\xd8motion-first-2\xff\xd9",
+        b"\xff\xd8motion-first-3\xff\xd9",
+    ]
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frames[0]: blank_frame(width=100, height=100),
+            frames[1]: blank_frame(width=100, height=100),
+            frames[2]: frame_with(
+                [(y, x) for y in range(30, 35) for x in range(62, 67)],
+                width=100,
+                height=100,
+            ),
+            frames[3]: frame_with(
+                [(y, x) for y in range(30, 35) for x in range(65, 70)],
+                width=100,
+                height=100,
+            ),
+        },
+    )
+    # This is deliberately only a local configuration shape. No Camera Node
+    # call is made; unavailable enrichment cannot suppress monitoring motion.
+    monkeypatch.setattr(
+        isolated_repository,
+        "get_stream_live_playback_config",
+        lambda _stream_id: SimpleNamespace(
+            provider_key="camera_node",
+            live_stream_type="camera_node",
+            camera_node_monitoring_profile_id="monitoring-profile",
+            camera_node_evidence_profile_id="evidence-profile",
+        ),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_live_object_detector_result",
+        lambda **_kwargs: (
+            api_main.ObjectDetectorSnapshot(
+                runtime_state="unavailable",
+                model_configuration_state="not_configured",
+                unavailable_reason="model_unavailable",
+            ),
+            {
+                "zone_id": None,
+                "source_width": None,
+                "source_height": None,
+                "input_width": None,
+                "input_height": None,
+            },
+        ),
+    )
+    captured_at = datetime.now(UTC)
+    for index, frame in enumerate(frames):
+        live_frame_cache.store_latest_frame(
+            stream_id,
+            frame,
+            captured_at=captured_at + timedelta(milliseconds=index * 200),
+        )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{stream_id}/live-motion/evaluate",
+        json={"create_review_activity": True, "detector_preset": "high_sensitivity"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["activity_detected"] is True
+    assert result["object_detector_available"] is False
+    assert result["object_detector_unavailable_reason"] == "model_unavailable"
+    assert result["event_id"]
+    assert result["visit_id"]
+    assert result["motion_evidence_id"]
+    assert result["strongest_zone_id"] is None
+    assert result["creates_truth"] is False
+    evidence = result["created_evidence"][0]
+    assert evidence["zone_id"] is None
+    assert evidence["scoring_config"]["activity_region_kind"] == "stream"
+    after = await product_counts(client)
+    assert after["events"] == before["events"] + 1
+    assert after["visits"] == before["visits"] + 1
+    assert after["motion_evidence"] == before["motion_evidence"] + 1
+    assert after["review_labels"] == before["review_labels"]
+
+
+async def test_whole_stream_motion_outside_feeder_creates_unzoned_visit(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normal Zone geometry is post-detection context, not the motion gate."""
+
+    frames = [
+        b"\xff\xd8outside-feeder-0\xff\xd9",
+        b"\xff\xd8outside-feeder-1\xff\xd9",
+        b"\xff\xd8outside-feeder-2\xff\xd9",
+        b"\xff\xd8outside-feeder-3\xff\xd9",
+    ]
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frames[0]: blank_frame(width=100, height=100),
+            frames[1]: blank_frame(width=100, height=100),
+            # Right of the partial feeder and above the ground Zone.
+            frames[2]: frame_with(
+                [(y, x) for y in range(16, 21) for x in range(78, 83)],
+                width=100,
+                height=100,
+            ),
+            frames[3]: frame_with(
+                [(y, x) for y in range(16, 21) for x in range(81, 86)],
+                width=100,
+                height=100,
+            ),
+        },
+    )
+    captured_at = datetime.now(UTC)
+    for index, frame in enumerate(frames):
+        live_frame_cache.store_latest_frame(
+            STREAM_ID,
+            frame,
+            captured_at=captured_at + timedelta(milliseconds=index * 200),
+        )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{STREAM_ID}/live-motion/evaluate",
+        json={"create_review_activity": True, "detector_preset": "high_sensitivity"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["activity_detected"] is True
+    assert result["strongest_zone_id"] is None
+    assert result["strongest_zone_name"] is None
+    assert result["event_id"]
+    assert result["visit_id"]
+    assert result["creates_truth"] is False
+    evidence = result["created_evidence"][0]
+    assert evidence["zone_id"] is None
+    assert evidence["scoring_config"]["activity_region_kind"] == "stream"
+    after = await product_counts(client)
+    assert after["events"] == before["events"] + 1
+    assert after["visits"] == before["visits"] + 1
+    assert after["motion_evidence"] == before["motion_evidence"] + 1
+    assert after["review_labels"] == before["review_labels"]
+
 async def test_live_motion_review_handoff_suggests_unknown_animal_for_ground_zone(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
