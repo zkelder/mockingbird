@@ -236,6 +236,7 @@ def test_distinct_track_generations_own_independent_capture_claims() -> None:
                 "zone_name": "Feeder",
                 "zone_type": "feeder",
                 "track_generation_id": generation,
+                "promotion_category": "animal",
                 "best_score": 0.8,
                 "best_frame_sequence": offset,
                 "best_frame_captured_at": started_at + timedelta(seconds=offset),
@@ -353,6 +354,7 @@ def test_failed_claim_and_current_detector_support_do_not_create_a_capture_loop(
             "zone_name": "Feeder",
             "zone_type": "feeder",
             "track_generation_id": "generation-failed",
+            "promotion_category": "animal",
             "best_score": 0.8,
             "best_frame_sequence": 3,
             "best_frame_captured_at": now - timedelta(seconds=60),
@@ -490,6 +492,7 @@ def _localized_detection(
     generation: str,
     seen_at: datetime,
     box: tuple[float, float, float, float],
+    promotion_category: str | None = "animal",
 ) -> dict[str, object]:
     return {
         "region_key": region_key,
@@ -499,6 +502,7 @@ def _localized_detection(
         "zone_name": "Feeder",
         "zone_type": "feeder",
         "track_generation_id": generation,
+        "promotion_category": promotion_category,
         "support_box": list(box),
         "activity_detected": True,
         "last_seen_at": seen_at,
@@ -513,6 +517,41 @@ def _localized_detection(
         "activity_bottom": box[3],
         "monitoring_policy": {"quiet_period_seconds": 20},
     }
+
+
+def test_unpromoted_motion_cannot_claim_high_resolution_or_reach_review() -> None:
+    session = _localized_session(stream_id="stream-transient-motion")
+    now = datetime.now(UTC)
+    activity = session.record_activity_detection(
+        _localized_detection(
+            region_key="zone:feeder|track:motion-only",
+            generation="motion-only",
+            seen_at=now - timedelta(seconds=5),
+            box=(0.20, 0.30, 0.28, 0.40),
+            promotion_category=None,
+        ),
+        frame_bytes=b"wind-motion",
+        frame_content_type="image/jpeg",
+        quiet_window_seconds=30,
+    )
+
+    assert activity is not None
+    assert activity.subject_state == "motion_detected"
+    assert session.claim_activity_high_resolution_capture(
+        activity.activity_session_id,
+        {
+            "track_generation_id": "motion-only",
+            "qualifying_frame_identity": "wind-motion",
+        },
+    ) is None
+    assert session.mark_quiet_activity_sessions_ready_for_review(quiet_seconds=30) == []
+    assert session.get_activity_session(activity.activity_session_id) is None
+    assert session.last_activity is not None
+    assert session.last_activity["finalized_reason"] == "unpromoted_motion"
+    assert session.last_activity["motion_evidence_id"] is None
+    assert session.last_activity["event_id"] is None
+    assert session.last_activity["visit_id"] is None
+    assert session.last_activity["review_queue_item_id"] is None
 
 
 def test_bird_local_session_closes_while_distant_wind_continues() -> None:
@@ -587,7 +626,7 @@ def test_nearby_motion_and_animal_support_merge_one_subject_session() -> None:
     assert len(session.activity_sessions) == 1
     activity = next(iter(session.activity_sessions.values()))
     assert activity.owns_track_generation("object-001")
-    assert supported.subject_state == "animal_activity"
+    assert supported.subject_state == "promoted_animal"
 
 
 def test_failed_high_resolution_claim_still_becomes_a_reviewable_local_session() -> (

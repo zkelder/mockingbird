@@ -228,6 +228,7 @@ class LiveActivitySessionSnapshot:
     notification_event: str | None
     detector_evidence: dict[str, Any]
     track_generation_id: str | None
+    promotion_category: str | None
     subject_state: str
     high_resolution_capture_claim: dict[str, Any] | None
     high_resolution_evidence: dict[str, Any] | None
@@ -296,6 +297,7 @@ class LiveActivitySessionSnapshot:
             "notification_event": self.notification_event,
             "detector_evidence": dict(self.detector_evidence),
             "track_generation_id": self.track_generation_id,
+            "promotion_category": self.promotion_category,
             "subject_state": self.subject_state,
             "high_resolution_capture_claim": _high_resolution_capture_claim_snapshot(
                 self.high_resolution_capture_claim
@@ -538,6 +540,7 @@ class LiveCameraSessionManager:
         observed_at: datetime,
         detector_evidence: Mapping[str, Any],
         support_box: tuple[float, float, float, float] | None = None,
+        promotion_category: str = "animal",
     ) -> LiveActivitySessionSnapshot | None:
         with self._lock:
             session = self._sessions.get(stream_id)
@@ -548,6 +551,7 @@ class LiveCameraSessionManager:
             observed_at=observed_at,
             detector_evidence=detector_evidence,
             support_box=support_box,
+            promotion_category=promotion_category,
         )
 
     def claim_activity_finalization(
@@ -1300,13 +1304,20 @@ class _LiveCameraSession:
         observed_at: datetime,
         detector_evidence: Mapping[str, Any],
         support_box: tuple[float, float, float, float] | None = None,
+        promotion_category: str = "animal",
     ) -> LiveActivitySessionSnapshot | None:
         with self._lock:
             normalized_support_box = _support_box_from_sequence(support_box)
             activity = next((item for item in self.activity_sessions.values() if not item.review_activity_created and not item.ready_for_review and (item.owns_track_generation(track_generation_id) or (normalized_support_box is not None and item.can_accept_local_support(normalized_support_box, observed_at=observed_at, quiet_window_seconds=DEFAULT_ACTIVITY_LOCAL_QUIET_SECONDS)))), None)
             if activity is None:
                 return None
-            activity.record_track_support(observed_at=observed_at, detector_evidence=detector_evidence, support_box=normalized_support_box, track_generation_id=track_generation_id)
+            activity.record_track_support(
+                observed_at=observed_at,
+                detector_evidence=detector_evidence,
+                support_box=normalized_support_box,
+                track_generation_id=track_generation_id,
+                promotion_category=promotion_category,
+            )
             snapshot = activity.snapshot()
             self.current_activity_session_id = snapshot.activity_session_id
             self.last_activity = snapshot.as_dict()
@@ -1471,6 +1482,7 @@ class _LiveCameraSession:
             if (
                 activity is None
                 or activity.review_activity_created
+                or not activity.is_animal_promoted
                 or not track_generation_id
                 or not activity.owns_track_generation(track_generation_id)
                 or track_generation_id in self.track_capture_claims
@@ -1664,14 +1676,14 @@ class _LiveCameraSession:
                     force_sustained=maximum_reached,
                 )
                 snapshot = activity.snapshot()
-                if snapshot.ready_for_review:
-                    ready.append(snapshot)
-                else:
+                if not snapshot.ready_for_review:
                     self._retire_activity_session_locked(
                         storage_key,
                         activity,
                         reason=activity.finalized_reason or "cancelled",
                     )
+                    continue
+                ready.append(snapshot)
                 if not was_ready:
                     self.last_activity = snapshot.as_dict()
                     self._record_diagnostic_event_locked(
@@ -2114,6 +2126,7 @@ class _LiveActivitySession:
     notification_event: str | None = None
     detector_evidence: dict[str, Any] = field(default_factory=dict)
     track_generation_id: str | None = None
+    promotion_category: str | None = None
     associated_track_generation_ids: set[str] = field(default_factory=set)
     support_box: tuple[float, float, float, float] | None = None
     support_centroids: deque[tuple[float, float]] = field(default_factory=lambda: deque(maxlen=MAX_ACTIVITY_SUPPORT_CENTROIDS))
@@ -2200,6 +2213,7 @@ class _LiveActivitySession:
             evidence_media_asset_ids={},
             detector_evidence={},
             track_generation_id=_optional_str(values.get("track_generation_id")),
+            promotion_category=None,
             associated_track_generation_ids={item for item in [_optional_str(values.get("track_generation_id"))] if item is not None},
             support_box=_support_box_from_values(values),
             support_centroids=deque(maxlen=MAX_ACTIVITY_SUPPORT_CENTROIDS),
@@ -2270,6 +2284,9 @@ class _LiveActivitySession:
         self.margin_to_threshold = _optional_float(values.get("margin_to_threshold"))
         if isinstance(values.get("detector_evidence"), Mapping):
             self.detector_evidence = dict(values["detector_evidence"])
+        promotion_category = _optional_str(values.get("promotion_category"))
+        if promotion_category in {"animal", "person", "vehicle"}:
+            self.promotion_category = promotion_category
         candidate_score = _optional_float(values.get("best_score"))
         candidate_frame = _LiveActivityCandidateFrame(
             sequence=_optional_int(values.get("best_frame_sequence")),
@@ -2398,6 +2415,7 @@ class _LiveActivitySession:
         detector_evidence: Mapping[str, Any],
         support_box: tuple[float, float, float, float] | None = None,
         track_generation_id: str | None = None,
+        promotion_category: str = "animal",
     ) -> None:
         if observed_at > self.last_seen_at:
             self.last_seen_at = observed_at
@@ -2409,6 +2427,8 @@ class _LiveActivitySession:
         if track_generation_id is not None:
             self.associated_track_generation_ids.add(track_generation_id)
         self.detector_supported = True
+        if promotion_category in {"animal", "person", "vehicle"}:
+            self.promotion_category = promotion_category
         self.frames_evaluated_count += 1
         self.detector_evidence = dict(detector_evidence)
 
@@ -2439,9 +2459,15 @@ class _LiveActivitySession:
             return "evidence_degraded"
         if self.high_resolution_evidence and isinstance(self.high_resolution_evidence.get("full_image"), bytes):
             return "waiting_for_local_quiet"
-        if self.detector_supported:
-            return "animal_activity"
+        if self.promotion_category == "animal":
+            return "promoted_animal"
+        if self.promotion_category in {"person", "vehicle"}:
+            return f"safe_category_{self.promotion_category}"
         return "motion_detected"
+
+    @property
+    def is_animal_promoted(self) -> bool:
+        return self.promotion_category == "animal"
 
     def _policy_seconds(self, key: str, fallback: int, *, minimum: int) -> int:
         value = (self.monitoring_policy or {}).get(key)
@@ -2482,6 +2508,17 @@ class _LiveActivitySession:
             self.ready_for_review = True
             if self.completed_at is None:
                 self.completed_at = self.last_seen_at
+            return
+        if not self.is_animal_promoted:
+            self.ready_for_review = False
+            self.completed_at = (
+                self.last_local_support_at or self.last_seen_at
+            ) + _timedelta_seconds(quiet_seconds)
+            self.finalized_reason = (
+                "unpromoted_motion"
+                if self.promotion_category is None
+                else f"non_reviewable_{self.promotion_category}"
+            )
             return
         if not force_sustained and not self.is_sustained():
             self.ready_for_review = False
@@ -2651,6 +2688,10 @@ class _LiveActivitySession:
             return "maximum_duration"
         if self.finalized_reason == "brief_activity":
             return "brief_activity_ignored"
+        if self.finalized_reason == "unpromoted_motion":
+            return "transient_motion"
+        if self.finalized_reason in {"non_reviewable_person", "non_reviewable_vehicle"}:
+            return "safe_category_ignored"
         if self.ready_for_review:
             return "ready_for_review"
         return "waiting_for_quiet"
@@ -2724,11 +2765,13 @@ class _LiveActivitySession:
             manual_review_needed=(
                 self.ready_for_review
                 and self.detection_count > 0
+                and self.is_animal_promoted
                 and not self.review_activity_created
             ),
             notification_event=self.notification_event,
             detector_evidence=dict(self.detector_evidence),
             track_generation_id=self.track_generation_id,
+            promotion_category=self.promotion_category,
             subject_state=self.subject_state,
             high_resolution_capture_claim=_high_resolution_capture_claim_snapshot(
                 self.high_resolution_capture_claim

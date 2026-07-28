@@ -2337,6 +2337,9 @@ export function StreamDetailPage({
       liveSession?.current_activity_session_id ||
       liveSessionActivity?.activity_session_id,
   );
+  const liveAnimalDetected = Boolean(
+    liveMotionResult?.object_detector_triggers.some((trigger) => trigger.class === "animal"),
+  );
   const liveReviewActivityCreated = Boolean(
     liveMotionResult?.review_activity_created ||
       liveSession?.activity_review_activity_created ||
@@ -2541,7 +2544,7 @@ export function StreamDetailPage({
         ? "review_created"
         : liveMotionResult?.session_status === "cooldown"
           ? "cooldown"
-        : liveActivityDetected
+        : liveAnimalDetected
           ? "activity"
           : liveSuppressedZones.length > 0
             ? "ignored"
@@ -2562,11 +2565,11 @@ export function StreamDetailPage({
         liveMotionResult?.last_error ??
         "Live camera needs attention."
       : liveWorkflowState === "review_created"
-        ? "Activity open — review candidate ready."
+        ? "Animal Visit ready for review."
         : liveWorkflowState === "cooldown"
-          ? "Activity open — waiting for quiet."
+          ? "Animal activity open — waiting for local quiet."
         : liveWorkflowState === "activity"
-          ? "Motion detected."
+          ? "Animal detected."
           : liveWorkflowState === "ignored"
             ? "Quiet — ignored-zone motion."
           : liveWorkflowState === "monitoring"
@@ -2869,8 +2872,8 @@ export function StreamDetailPage({
                 <span>
                   <strong>Auto-create Review Queue candidates</strong>
                   <span>
-                    Creates Review Queue items from completed activity sessions. Does not
-                    update Bird Log.
+                    Automatically creates Review Queue candidates from detected animal
+                    activity. Does not update Bird Log.
                   </span>
                   <span>{liveAutoReviewStatusText}</span>
                 </span>

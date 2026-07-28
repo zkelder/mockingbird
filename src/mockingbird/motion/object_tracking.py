@@ -1,9 +1,10 @@
 """Bounded local object inference and temporal tracks for live outdoor Zones.
 
 This is deliberately a small bridge between the optional MegaDetector adapter
-and the existing activity/session handoff.  It owns neither a camera nor a
-product record: callers provide already-captured Zone crops, and detections
-remain observational evidence until the normal review flow creates a Visit.
+and the existing activity/session handoff. It owns neither a camera nor a
+product record: callers provide already-captured, privacy/ignore-masked full
+monitoring frames, and detections remain observational evidence until the
+normal review flow creates a Visit.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ def detector_interval_seconds(zone_type: str) -> float:
 
     if zone_type in {"feeder", "perch", "birdbath"}:
         return 0.75
-    if zone_type in {"yard", "ground"}:
+    if zone_type in {"yard", "ground", "whole_stream"}:
         return 1.5
     if zone_type == "driveway":
         return 2.0
@@ -952,6 +953,8 @@ def _allowed_labels_for_zone(zone_type: str) -> set[str]:
         return OBJECT_LABELS
     if zone_type in {"yard", "ground"}:
         return {"animal", "person"}
+    if zone_type == "whole_stream":
+        return OBJECT_LABELS
     return {"animal"}
 
 

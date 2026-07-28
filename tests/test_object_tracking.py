@@ -3,12 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from threading import Event
 from time import sleep
-from types import SimpleNamespace
 
-import cv2
-import numpy as np
 
-from mockingbird.api.main import _object_detector_zone_crop
 from mockingbird.detectors.megadetector_adapter import MegaDetectorBox, MegaDetectorProposal
 from mockingbird.motion.object_tracking import LiveObjectDetectorManager
 from mockingbird.motion import object_tracking
@@ -86,6 +82,26 @@ def test_feeder_animal_track_triggers_without_any_motion_input() -> None:
         assert snapshot.triggers[0].track_id == "object-track-0001"
         assert snapshot.triggers[0].label == "animal"
         assert snapshot.triggers[0].score == 0.8
+    finally:
+        manager.shutdown()
+
+
+def test_whole_stream_animal_track_triggers_without_zone_or_motion_crop() -> None:
+    manager = LiveObjectDetectorManager(runner=lambda _image, _box: [_proposal()])
+    try:
+        _submit(
+            manager,
+            sequence=1,
+            zone_id="whole-stream",
+            zone_type="whole_stream",
+            image=b"masked-1920x1440-monitoring-frame",
+        )
+        snapshot = _completed(manager)
+
+        assert snapshot.cadence_seconds == 1.5
+        assert snapshot.detections[0].label == "animal"
+        assert snapshot.detections[0].zone_id == "whole-stream"
+        assert snapshot.triggers[0].zone_id == "whole-stream"
     finally:
         manager.shutdown()
 
@@ -410,38 +426,3 @@ def test_process_restart_generates_a_new_capture_ownership_identity() -> None:
         assert first.track_generation_id != second.track_generation_id
     finally:
         second_manager.shutdown()
-
-def test_object_crop_masks_privacy_before_the_detector_receives_bytes() -> None:
-    image = np.full((100, 200, 3), 255, dtype=np.uint8)
-    ok, encoded = cv2.imencode(".jpg", image)
-    assert ok
-    ordinary = SimpleNamespace(
-        polygon=[
-            SimpleNamespace(x=0.0, y=0.0),
-            SimpleNamespace(x=1.0, y=0.0),
-            SimpleNamespace(x=1.0, y=1.0),
-            SimpleNamespace(x=0.0, y=1.0),
-        ]
-    )
-    privacy = SimpleNamespace(
-        polygon=[
-            SimpleNamespace(x=0.4, y=0.2),
-            SimpleNamespace(x=0.6, y=0.2),
-            SimpleNamespace(x=0.6, y=0.8),
-            SimpleNamespace(x=0.4, y=0.8),
-        ]
-    )
-
-    crop = _object_detector_zone_crop(
-        encoded.tobytes(), zone=ordinary, blocked_zones=[privacy]
-    )
-
-    assert crop is not None
-    data, coordinate_box, source_width, source_height, input_width, input_height = crop
-    received = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
-    assert received is not None
-    assert coordinate_box == (0.0, 0.0, 1.0, 1.0)
-    assert (source_width, source_height) == (200, 100)
-    assert (input_width, input_height) == (200, 100)
-    assert int(received[50, 100].max()) < 8
-    assert int(received[10, 10].min()) > 220

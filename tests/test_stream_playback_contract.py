@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from hashlib import sha1
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
@@ -25,8 +26,12 @@ from mockingbird.api.main import (
 from mockingbird.api.schemas import (
     DashboardStreamRuntimeStatus,
     LivePreviewLeaseRequest,
+    MotionEvidenceCreateRequest,
+    Point,
     ReviewStatus,
     SourceKind,
+    Zone,
+    ZoneType,
     SourceStatus,
     ZoneActivitySensitivity,
     ZoneMonitoringPolicyUpdate,
@@ -828,6 +833,102 @@ def test_live_activity_evidence_selector_is_bounded_ordered_and_primary() -> Non
     assert frames[-1].sequence == 35
 
 
+def test_live_detector_uses_full_monitoring_frame_and_post_detection_zone_attribution() -> None:
+    image = np.full((1440, 1920, 3), 255, dtype=np.uint8)
+    encoded, raw_frame = api_main.cv2.imencode(".jpg", image)
+    assert encoded
+    privacy = Zone(
+        id="zone-privacy",
+        stream_id=STREAM_ID,
+        name="Privacy",
+        zone_type=ZoneType.privacy,
+        polygon=[
+            Point(x=0.0, y=0.0),
+            Point(x=0.25, y=0.0),
+            Point(x=0.25, y=1.0),
+            Point(x=0.0, y=1.0),
+        ],
+        is_active=True,
+    )
+    feeder = Zone(
+        id="zone-feeder",
+        stream_id=STREAM_ID,
+        name="Feeder",
+        zone_type=ZoneType.feeder,
+        polygon=[
+            Point(x=0.5, y=0.25),
+            Point(x=0.8, y=0.25),
+            Point(x=0.8, y=0.7),
+            Point(x=0.5, y=0.7),
+        ],
+        is_active=True,
+    )
+
+    prepared = api_main._object_detector_monitoring_frame(
+        raw_frame.tobytes(),
+        blocked_zones=[privacy],
+    )
+
+    assert prepared is not None
+    detector_input, coordinate_box, source_width, source_height, input_width, input_height = prepared
+    assert coordinate_box == (0.0, 0.0, 1.0, 1.0)
+    assert (source_width, source_height) == (1920, 1440)
+    assert (input_width, input_height) == (1280, 960)
+    decoded = api_main.cv2.imdecode(
+        np.frombuffer(detector_input, dtype=np.uint8),
+        api_main.cv2.IMREAD_COLOR,
+    )
+    assert decoded is not None
+    assert float(decoded[:, : input_width // 4].mean()) < 5.0
+
+    timestamp = datetime.now(UTC)
+    snapshot = api_main.ObjectDetectorSnapshot(
+        triggers=(
+            api_main.ObjectTrackTrigger(
+                track_id="object-track-zone",
+                track_generation_id="whole-stream:object-generation-zone-0001",
+                zone_id="whole-stream",
+                label="animal",
+                score=0.91,
+                box=(0.58, 0.35, 0.68, 0.52),
+                frame_identity="detector-frame",
+                captured_at=timestamp,
+            ),
+        )
+    )
+    associated = api_main._associate_object_detector_zones(
+        snapshot,
+        zones_by_id={feeder.id: feeder, privacy.id: privacy},
+    )
+
+    assert associated.triggers[0].zone_id == feeder.id
+
+
+def test_promoted_high_resolution_metadata_uses_utc_json_timestamps() -> None:
+    captured_at = datetime(2026, 7, 28, 18, 5, 4, tzinfo=UTC)
+    timestamp = captured_at.astimezone(UTC).isoformat()
+    request = MotionEvidenceCreateRequest(
+        peak_changed_ratio=0.91,
+        triggered_frame_count=2,
+        scoring_config={
+            "visit_evidence_frames": [
+                {
+                    "media_asset_id": "media-asset-crop",
+                    "captured_at": timestamp,
+                    "frame_sequence": 12,
+                    "is_primary": True,
+                    "evidence_role": "activity_crop",
+                }
+            ]
+        },
+    )
+
+    assert request.scoring_config["visit_evidence_frames"][0]["captured_at"] == timestamp
+    assert json.loads(json.dumps(request.scoring_config))["visit_evidence_frames"][0][
+        "captured_at"
+    ] == timestamp
+
+
 def blank_frame(*, width: int = 4, height: int = 4) -> list[list[int]]:
     return [[0 for _x in range(width)] for _y in range(height)]
 
@@ -961,6 +1062,7 @@ def assert_live_review_queue_item_quality(
     best_frame_sequence: int | None = None,
     expected_focus_crop_normalized: dict[str, float] | None = None,
     expected_focus_crop_pixels: dict[str, int] | None = None,
+    detector_promoted: bool = False,
 ) -> None:
     assert item["target_type"] == "visit"
     assert item["target_id"] == created["visit_id"]
@@ -985,7 +1087,17 @@ def assert_live_review_queue_item_quality(
     if best_frame_sequence is not None:
         assert item["best_frame_sequence"] == best_frame_sequence
     assert item["best_changed_ratio"] > 0
-    assert item["best_changed_pixels"] > 0
+    if detector_promoted:
+        assert item["best_changed_pixels"] >= 0
+    else:
+        assert item["best_changed_pixels"] > 0
+    if detector_promoted:
+        assert item["best_total_scored_pixels"] >= 0
+        assert item["effective_threshold_used"] is None
+        assert item["threshold_source"] == "object_verified"
+        assert item["focus_crop_available"] is True
+        assert item["identification"]["creates_truth"] is False
+        return
     assert item["best_total_scored_pixels"] > 0
     assert item["effective_threshold_used"] is not None
     assert item["threshold_source"] is not None
@@ -2287,12 +2399,12 @@ async def test_live_motion_auto_region_reaches_review_without_named_zone(
 
 
 
-async def test_camera_node_motion_does_not_require_a_zone_or_available_detector(
+async def test_camera_node_motion_without_megadetector_stays_transient(
     client: httpx.AsyncClient,
     isolated_repository: ProductRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A configured evidence profile may enrich a Visit, never gate its motion."""
+    """Unavailable MegaDetector preserves motion telemetry but creates no product."""
 
     stream_id = add_stream_without_zones(isolated_repository, stream_id="stream-motion-first")
     frames = [
@@ -2368,26 +2480,268 @@ async def test_camera_node_motion_does_not_require_a_zone_or_available_detector(
     assert result["activity_detected"] is True
     assert result["object_detector_available"] is False
     assert result["object_detector_unavailable_reason"] == "model_unavailable"
-    assert result["event_id"]
-    assert result["visit_id"]
-    assert result["motion_evidence_id"]
-    assert result["strongest_zone_id"] is None
+    assert result["event_id"] is None
+    assert result["visit_id"] is None
+    assert result["motion_evidence_id"] is None
+    assert result["best_media_asset_id"] is None
+    assert result["created_evidence"] == []
+    assert result["can_create_review_activity"] is False
+    assert result["review_activity_available"] is False
     assert result["creates_truth"] is False
-    evidence = result["created_evidence"][0]
-    assert evidence["zone_id"] is None
-    assert evidence["scoring_config"]["activity_region_kind"] == "stream"
+    assert "waiting for MegaDetector animal confirmation" in result["message"]
+    assert await product_counts(client) == before
+
+
+async def test_megadetector_animal_promotion_creates_one_review_visit(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A matching animal promotion is the only path from motion to review."""
+
+    stream_id = add_stream_without_zones(
+        isolated_repository, stream_id="stream-animal-promotion"
+    )
+    frames = [
+        b"\xff\xd8animal-promotion-0\xff\xd9",
+        b"\xff\xd8animal-promotion-1\xff\xd9",
+        b"\xff\xd8animal-promotion-2\xff\xd9",
+        b"\xff\xd8animal-promotion-3\xff\xd9",
+    ]
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frames[0]: blank_frame(width=100, height=100),
+            frames[1]: blank_frame(width=100, height=100),
+            frames[2]: frame_with(
+                [(y, x) for y in range(30, 35) for x in range(62, 67)],
+                width=100,
+                height=100,
+            ),
+            frames[3]: frame_with(
+                [(y, x) for y in range(30, 35) for x in range(65, 70)],
+                width=100,
+                height=100,
+            ),
+        },
+    )
+    captured_at = datetime.now(UTC)
+    for index, frame in enumerate(frames):
+        live_frame_cache.store_latest_frame(
+            stream_id,
+            frame,
+            captured_at=captured_at + timedelta(milliseconds=index * 200),
+        )
+    trigger = api_main.ObjectTrackTrigger(
+        track_id="object-track-animal",
+        track_generation_id="object-generation-animal-0001",
+        zone_id="auto-activity-area",
+        label="animal",
+        score=0.91,
+        box=(0.60, 0.28, 0.72, 0.44),
+        frame_identity=sha1(frames[-1]).hexdigest()[:20],
+        captured_at=captured_at + timedelta(milliseconds=600),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_live_object_detector_result",
+        lambda **_kwargs: (
+            api_main.ObjectDetectorSnapshot(
+                triggers=(trigger,),
+                runtime_state="ready",
+                model_configuration_state="configured",
+                model_loaded=True,
+            ),
+            {
+                "zone_id": "auto-activity-area",
+                "source_width": 100,
+                "source_height": 100,
+                "input_width": 100,
+                "input_height": 100,
+            },
+        ),
+    )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{stream_id}/live-motion/evaluate",
+        json={"create_review_activity": True, "detector_preset": "high_sensitivity"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["object_detector_triggers"][0]["class"] == "animal"
+    assert result["review_activity_created"] is True
+    assert result["event_id"].startswith("event-motion-")
+    assert result["visit_id"].startswith("visit-motion-")
+    assert result["motion_evidence_id"].startswith("motion-evidence-")
+    assert result["best_media_asset_id"].startswith("media-asset-")
+    assert result["creates_truth"] is False
     after = await product_counts(client)
     assert after["events"] == before["events"] + 1
     assert after["visits"] == before["visits"] + 1
     assert after["motion_evidence"] == before["motion_evidence"] + 1
+    assert after["media_assets"] == before["media_assets"] + 1
     assert after["review_labels"] == before["review_labels"]
+    assert after["species_suggestions"] == before["species_suggestions"]
+    assert after["dataset_exports"] == before["dataset_exports"]
 
 
-async def test_whole_stream_motion_outside_feeder_creates_unzoned_visit(
+async def test_person_or_vehicle_detection_never_creates_a_durable_visit(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream_id = add_stream_without_zones(
+        isolated_repository, stream_id="stream-person-context-only"
+    )
+    frames = [b"\xff\xd8person-context-0\xff\xd9", b"\xff\xd8person-context-1\xff\xd9"]
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {frame: blank_frame(width=100, height=100) for frame in frames},
+    )
+    captured_at = datetime.now(UTC)
+    for index, frame in enumerate(frames):
+        live_frame_cache.store_latest_frame(
+            stream_id,
+            frame,
+            captured_at=captured_at + timedelta(milliseconds=index * 200),
+        )
+    trigger = api_main.ObjectTrackTrigger(
+        track_id="object-track-person",
+        track_generation_id="whole-stream:object-generation-person-0001",
+        zone_id="whole-stream",
+        label="person",
+        score=0.93,
+        box=(0.2, 0.2, 0.4, 0.8),
+        frame_identity=sha1(frames[-1]).hexdigest()[:20],
+        captured_at=captured_at + timedelta(milliseconds=200),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_live_object_detector_result",
+        lambda **_kwargs: (
+            api_main.ObjectDetectorSnapshot(
+                triggers=(trigger,),
+                runtime_state="ready",
+                model_configuration_state="configured",
+                model_loaded=True,
+            ),
+            {
+                "zone_id": "whole-stream",
+                "source_width": 100,
+                "source_height": 100,
+                "input_width": 100,
+                "input_height": 100,
+            },
+        ),
+    )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{stream_id}/live-motion/evaluate",
+        json={"create_review_activity": True, "detector_preset": "high_sensitivity"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["object_detector_triggers"][0]["class"] == "person"
+    assert result["event_id"] is None
+    assert result["visit_id"] is None
+    assert result["motion_evidence_id"] is None
+    assert result["review_activity_created"] is False
+    assert result["creates_truth"] is False
+    assert await product_counts(client) == before
+
+
+async def test_stationary_animal_track_without_fresh_trigger_stays_non_durable(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream_id = add_stream_without_zones(
+        isolated_repository, stream_id="stream-stationary-animal-context"
+    )
+    frames = [
+        b"\xff\xd8stationary-animal-0\xff\xd9",
+        b"\xff\xd8stationary-animal-1\xff\xd9",
+        b"\xff\xd8stationary-animal-2\xff\xd9",
+    ]
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {
+            frames[0]: blank_frame(width=100, height=100),
+            frames[1]: frame_with([(y, x) for y in range(30, 36) for x in range(50, 56)], width=100, height=100),
+            frames[2]: frame_with([(y, x) for y in range(30, 36) for x in range(52, 58)], width=100, height=100),
+        },
+    )
+    captured_at = datetime.now(UTC)
+    for index, frame in enumerate(frames):
+        live_frame_cache.store_latest_frame(
+            stream_id,
+            frame,
+            captured_at=captured_at + timedelta(milliseconds=index * 200),
+        )
+    stationary_track = api_main.ObjectTrack(
+        track_id="object-track-stationary",
+        track_generation_id="whole-stream:object-generation-stationary-0001",
+        label="animal",
+        score=0.91,
+        state="stationary",
+        first_seen_at=captured_at,
+        last_seen_at=captured_at,
+        hit_count=1,
+        missed_count=3,
+        zone_id="whole-stream",
+        box=(0.5, 0.3, 0.58, 0.38),
+        frame_identity=sha1(frames[0]).hexdigest()[:20],
+        triggered=True,
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_live_object_detector_result",
+        lambda **_kwargs: (
+            api_main.ObjectDetectorSnapshot(
+                tracks=(stationary_track,),
+                runtime_state="ready",
+                model_configuration_state="configured",
+                model_loaded=True,
+            ),
+            {
+                "zone_id": "whole-stream",
+                "source_width": 100,
+                "source_height": 100,
+                "input_width": 100,
+                "input_height": 100,
+            },
+        ),
+    )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{stream_id}/live-motion/evaluate",
+        json={"create_review_activity": True, "detector_preset": "high_sensitivity"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["object_detector_tracks"][0]["state"] == "stationary"
+    assert result["object_detector_triggers"] == []
+    assert result["event_id"] is None
+    assert result["visit_id"] is None
+    assert result["motion_evidence_id"] is None
+    assert result["review_activity_created"] is False
+    assert await product_counts(client) == before
+
+
+async def test_whole_stream_animal_outside_feeder_creates_one_unzoned_visit(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Normal Zone geometry is post-detection context, not the motion gate."""
+    """A detector-qualified animal outside Zones creates one general Visit."""
 
     frames = [
         b"\xff\xd8outside-feeder-0\xff\xd9",
@@ -2421,6 +2775,35 @@ async def test_whole_stream_motion_outside_feeder_creates_unzoned_visit(
             frame,
             captured_at=captured_at + timedelta(milliseconds=index * 200),
         )
+    trigger = api_main.ObjectTrackTrigger(
+        track_id="object-track-outside-feeder",
+        track_generation_id="whole-stream:object-generation-outside-feeder-0001",
+        zone_id="whole-stream",
+        label="animal",
+        score=0.82,
+        box=(0.78, 0.15, 0.88, 0.25),
+        frame_identity=sha1(frames[-1]).hexdigest()[:20],
+        captured_at=captured_at + timedelta(milliseconds=600),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_live_object_detector_result",
+        lambda **_kwargs: (
+            api_main.ObjectDetectorSnapshot(
+                triggers=(trigger,),
+                runtime_state="ready",
+                model_configuration_state="configured",
+                model_loaded=True,
+            ),
+            {
+                "zone_id": "whole-stream",
+                "source_width": 100,
+                "source_height": 100,
+                "input_width": 100,
+                "input_height": 100,
+            },
+        ),
+    )
     before = await product_counts(client)
 
     response = await client.post(
@@ -3952,6 +4335,35 @@ async def test_unattended_monitoring_auto_creates_review_candidate_after_quiet_o
             ),
         },
     )
+    promoted_trigger = api_main.ObjectTrackTrigger(
+        track_id="object-track-auto-review",
+        track_generation_id="object-generation-auto-review-0001",
+        zone_id="zone-feeder",
+        label="animal",
+        score=0.91,
+        box=(0.28, 0.38, 0.38, 0.50),
+        frame_identity=sha1(frame_1).hexdigest()[:20],
+        captured_at=datetime.now(UTC),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_live_object_detector_result",
+        lambda **_kwargs: (
+            api_main.ObjectDetectorSnapshot(
+                triggers=(promoted_trigger,),
+                runtime_state="ready",
+                model_configuration_state="configured",
+                model_loaded=True,
+            ),
+            {
+                "zone_id": "zone-feeder",
+                "source_width": 100,
+                "source_height": 100,
+                "input_width": 100,
+                "input_height": 100,
+            },
+        ),
+    )
     await configure_local_usb_camera(client, device="/dev/video0")
     start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
     assert start_response.status_code == 200
@@ -4001,7 +4413,21 @@ async def test_unattended_monitoring_auto_creates_review_candidate_after_quiet_o
     assert (await client.get("/api/review-queue")).json() == before_queue
     assert await product_counts(client) == before
 
-    await asyncio.sleep(4.5)
+    now = datetime.now(UTC)
+
+    class FutureDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            future = now + timedelta(seconds=5)
+            return future if tz is not None else future.replace(tzinfo=None)
+
+    monkeypatch.setattr(
+        "mockingbird.playback.live_camera_session.datetime",
+        FutureDatetime,
+    )
+    forced_result = api_main._maybe_auto_create_live_review_candidate(STREAM_ID)
+    assert forced_result is not None
+    assert forced_result.review_activity_created is True
 
     auto_status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
     assert auto_status["status"] == "running"
@@ -4048,13 +4474,7 @@ async def test_unattended_monitoring_auto_creates_review_candidate_after_quiet_o
         activity_session_id=monitor["activity_session_id"],
         detection_count=1,
         best_frame_sequence=2,
-        expected_focus_crop_normalized={
-            "x": 0.335,
-            "y": 0.235,
-            "width": 0.15,
-            "height": 0.15,
-        },
-        expected_focus_crop_pixels={"x": 33, "y": 23, "width": 16, "height": 16},
+        detector_promoted=True,
     )
     assert queue_item["identification"]["creates_truth"] is False
     assert queue_item["identification"]["can_run"] is False
@@ -4062,7 +4482,7 @@ async def test_unattended_monitoring_auto_creates_review_candidate_after_quiet_o
     assert queue_item["suggestion_id"] is None
 
     after_auto = await product_counts(client)
-    assert after_auto["media_assets"] == before["media_assets"] + 1
+    assert after_auto["media_assets"] == before["media_assets"] + 2
     assert after_auto["motion_evidence"] == before["motion_evidence"] + 1
     assert after_auto["events"] == before["events"] + 1
     assert after_auto["visits"] == before["visits"] + 1
@@ -4326,12 +4746,12 @@ async def test_unattended_monitoring_closes_each_quiet_zone_once(
     assert first_evidence_ids.isdisjoint(second_evidence_ids)
 
 
-async def test_unattended_monitoring_respects_min_detection_gate(
+async def test_unattended_monitoring_does_not_create_records_without_animal_promotion(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    frame_0 = b"\xff\xd8auto-review-min-0\xff\xd9"
-    frame_1 = b"\xff\xd8auto-review-min-1\xff\xd9"
+    frame_0 = b"\xff\xd8auto-review-unpromoted-0\xff\xd9"
+    frame_1 = b"\xff\xd8auto-review-unpromoted-1\xff\xd9"
     fake_process = FakeFfmpegProcess([frame_0, frame_1])
 
     monkeypatch.setattr(
@@ -4353,51 +4773,81 @@ async def test_unattended_monitoring_respects_min_detection_gate(
             ),
         },
     )
+    monkeypatch.setattr(
+        api_main,
+        "_live_object_detector_result",
+        lambda **_kwargs: (
+            api_main.ObjectDetectorSnapshot(
+                runtime_state="unavailable",
+                model_configuration_state="not_configured",
+                unavailable_reason="model_unavailable",
+            ),
+            {
+                "zone_id": "zone-feeder",
+                "source_width": 100,
+                "source_height": 100,
+                "input_width": 100,
+                "input_height": 100,
+            },
+        ),
+    )
     await configure_local_usb_camera(client, device="/dev/video0")
-    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
-    assert start_response.status_code == 200
+    assert (await client.post(f"/api/streams/{STREAM_ID}/live-session/start")).status_code == 200
     await wait_for_live_session_frame_count(client, STREAM_ID, minimum=2)
     before = await product_counts(client)
     before_queue = (await client.get("/api/review-queue")).json()
 
-    monitor_response = await client.post(
-        f"/api/streams/{STREAM_ID}/live-motion/start",
-        json={
-            "save_best_frame": True,
-            "auto_create_review_candidates": True,
-            "auto_review_quiet_seconds": 1,
-            "auto_review_min_detections": 2,
-            "min_changed_ratio": 0.003,
-            "pixel_delta_threshold": 10,
-            "min_triggered_frames": 1,
-            "interval_seconds": 10,
-        },
-    )
-    assert monitor_response.status_code == 200
-    monitor = monitor_response.json()
-    assert monitor["activity_detection_count"] == 1
+    monitor = (
+        await client.post(
+            f"/api/streams/{STREAM_ID}/live-motion/start",
+            json={
+                "save_best_frame": True,
+                "auto_create_review_candidates": True,
+                "auto_review_quiet_seconds": 1,
+                "auto_review_min_detections": 1,
+                "min_changed_ratio": 0.003,
+                "pixel_delta_threshold": 10,
+                "min_triggered_frames": 1,
+                "interval_seconds": 10,
+            },
+        )
+    ).json()
+    assert monitor["activity_detected"] is True
+    assert monitor["activity_promotion_category"] is None
     assert monitor["review_activity_created"] is False
 
-    await asyncio.sleep(1.1)
+    now = datetime.now(UTC)
+
+    class FutureDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            future = now + timedelta(seconds=5)
+            return future if tz is not None else future.replace(tzinfo=None)
+
+    monkeypatch.setattr(
+        "mockingbird.playback.live_camera_session.datetime",
+        FutureDatetime,
+    )
+    assert api_main._maybe_auto_create_live_review_candidate(STREAM_ID) is None
+
     status = (await client.get(f"/api/streams/{STREAM_ID}/live-session/status")).json()
-    assert status["activity_ready_for_review"] is True
-    assert status["activity_review_state"] == "ready_for_review"
-    assert status["activity_review_activity_created"] is False
+    assert status["open_activity_session_count"] == 0
+    assert status["ready_activity_session_count"] == 0
+    assert status["activity_ready_for_review"] is False
+    assert status["activity_review_state"] is None
     assert status["auto_review_created_count"] == 0
-    assert status["auto_review_last_error"] is None
     assert (await client.get("/api/review-queue")).json() == before_queue
     assert await product_counts(client) == before
 
-    manual_response = await client.post(
-        f"/api/streams/{STREAM_ID}/live-motion/review-activity"
-    )
-    assert manual_response.status_code == 200
-    manual = manual_response.json()
-    assert manual["review_activity_created"] is True
-    assert manual["creates_truth"] is False
-    after_manual = await product_counts(client)
-    assert after_manual["motion_evidence"] == before["motion_evidence"] + 1
-    assert after_manual["review_labels"] == before["review_labels"]
+    manual = (
+        await client.post(f"/api/streams/{STREAM_ID}/live-motion/review-activity")
+    ).json()
+    assert manual["status"] == "no_activity"
+    assert manual["review_activity_created"] is False
+    assert manual["event_id"] is None
+    assert manual["visit_id"] is None
+    assert manual["motion_evidence_id"] is None
+    assert await product_counts(client) == before
 
 
 async def test_feeder_near_miss_starts_tentative_burst_before_confirmed_activity(

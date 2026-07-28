@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from hashlib import sha1
 import json
@@ -2264,17 +2264,16 @@ def _tracked_stream_analysis_frame(
         analysis = usable
     return analysis.astype(np.uint8), (0.0, 0.0, 1.0, 1.0)
 
-def _object_detector_zone_crop(
+def _object_detector_monitoring_frame(
     frame_bytes: bytes,
     *,
-    zone: Zone,
     blocked_zones: list[Zone],
 ) -> tuple[bytes, tuple[float, float, float, float], int, int, int, int] | None:
-    """Build one masked high-detail ordinary-Zone JPEG for local inference.
+    """Prepare the usable full monitoring frame for bounded live inference.
 
-    The input comes from the already-owned monitoring cache.  Privacy and
-    Ignore geometry is applied before this bounded crop enters the optional
-    detector, and the full 3840×2160 evidence still is never analyzed here.
+    Object detection is independent of foreground motion and Zone selection.
+    Privacy and Ignore geometry is masked before the local model sees the
+    frame; resizing preserves the monitoring frame's aspect ratio.
     """
 
     image = cv2.imdecode(np.frombuffer(frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
@@ -2283,25 +2282,10 @@ def _object_detector_zone_crop(
     source_height, source_width = image.shape[:2]
     if source_width < 2 or source_height < 2:
         return None
-    points = np.asarray(
-        [
-            [
-                round(max(0.0, min(1.0, point.x)) * (source_width - 1)),
-                round(max(0.0, min(1.0, point.y)) * (source_height - 1)),
-            ]
-            for point in zone.polygon
-        ],
-        dtype=np.int32,
-    )
-    if len(points) < 3:
-        return None
-    x, y, width, height = cv2.boundingRect(points)
-    if width < 2 or height < 2:
-        return None
-    mask = np.zeros((source_height, source_width), dtype=np.uint8)
-    cv2.fillPoly(mask, [points], 255)
+    usable = image.copy()
+    mask = np.full(usable.shape[:2], 255, dtype=np.uint8)
     for blocked in blocked_zones:
-        blocked_points = np.asarray(
+        points = np.asarray(
             [
                 [
                     round(max(0.0, min(1.0, point.x)) * (source_width - 1)),
@@ -2311,103 +2295,113 @@ def _object_detector_zone_crop(
             ],
             dtype=np.int32,
         )
-        if len(blocked_points) >= 3:
-            cv2.fillPoly(mask, [blocked_points], 0)
-    crop = image[y : y + height, x : x + width].copy()
-    crop_mask = mask[y : y + height, x : x + width]
-    if crop.size == 0 or not np.any(crop_mask):
-        return None
-    crop[crop_mask == 0] = 0
-    # Preserve source detail through the bird-scale 720–1280px range rather
-    # than sending the old 640×360 MOG2 plane to object inference.
-    longest = max(crop.shape[:2])
-    if longest > 1280:
-        scale = 1280 / float(longest)
-        crop = cv2.resize(
-            crop,
-            (max(1, round(crop.shape[1] * scale)), max(1, round(crop.shape[0] * scale))),
-            interpolation=cv2.INTER_AREA,
-        )
-    encoded, output = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
-    if not encoded:
-        return None
-    data = output.tobytes()
-    if not data or len(data) > 4_000_000:
-        return None
-    coordinate_box = (
-        x / source_width,
-        y / source_height,
-        min(1.0, (x + width) / source_width),
-        min(1.0, (y + height) / source_height),
-    )
-    return data, coordinate_box, width, height, crop.shape[1], crop.shape[0]
-
-
-def _object_detector_motion_crop(
-    frame_bytes: bytes,
-    *,
-    region: MotionRegion,
-    blocked_zones: list[Zone],
-) -> tuple[bytes, tuple[float, float, float, float], int, int, int, int] | None:
-    """Build one bounded monitoring-resolution crop around localized foreground."""
-
-    image = cv2.imdecode(np.frombuffer(frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-    if image is None or image.ndim != 3:
-        return None
-    source_height, source_width = image.shape[:2]
-    if source_width < 2 or source_height < 2:
-        return None
-    padding = 0.20
-    left = max(0.0, region.left - padding * (region.right - region.left))
-    top = max(0.0, region.top - padding * (region.bottom - region.top))
-    right = min(1.0, region.right + padding * (region.right - region.left))
-    bottom = min(1.0, region.bottom + padding * (region.bottom - region.top))
-    x0, y0 = round(left * source_width), round(top * source_height)
-    x1, y1 = round(right * source_width), round(bottom * source_height)
-    if x1 - x0 < 2 or y1 - y0 < 2:
-        return None
-    crop = image[y0:y1, x0:x1].copy()
-    mask = np.full(crop.shape[:2], 255, dtype=np.uint8)
-    for blocked in blocked_zones:
-        points = np.asarray(
-            [
-                [
-                    round(point.x * (source_width - 1)) - x0,
-                    round(point.y * (source_height - 1)) - y0,
-                ]
-                for point in blocked.polygon
-            ],
-            dtype=np.int32,
-        )
         if len(points) >= 3:
             cv2.fillPoly(mask, [points], 0)
     if not np.any(mask):
         return None
-    crop[mask == 0] = 0
-    longest = max(crop.shape[:2])
+    usable[mask == 0] = 0
+    longest = max(usable.shape[:2])
     if longest > 1280:
         scale = 1280 / float(longest)
-        crop = cv2.resize(
-            crop,
+        usable = cv2.resize(
+            usable,
             (
-                max(1, round(crop.shape[1] * scale)),
-                max(1, round(crop.shape[0] * scale)),
+                max(1, round(usable.shape[1] * scale)),
+                max(1, round(usable.shape[0] * scale)),
             ),
             interpolation=cv2.INTER_AREA,
         )
-    encoded, output = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    encoded, output = cv2.imencode(".jpg", usable, [cv2.IMWRITE_JPEG_QUALITY, 90])
     if not encoded:
         return None
-    data = output.tobytes()
-    if not data or len(data) > 4_000_000:
+    image_bytes = output.tobytes()
+    if not image_bytes or len(image_bytes) > 4_000_000:
         return None
     return (
-        data,
-        (left, top, right, bottom),
-        x1 - x0,
-        y1 - y0,
-        crop.shape[1],
-        crop.shape[0],
+        image_bytes,
+        (0.0, 0.0, 1.0, 1.0),
+        source_width,
+        source_height,
+        usable.shape[1],
+        usable.shape[0],
+    )
+
+
+def _object_detection_zone_id(
+    box: tuple[float, float, float, float],
+    *,
+    zones_by_id: dict[str, Zone],
+) -> str:
+    """Associate an observation after inference using centroid then overlap."""
+
+    left, top, right, bottom = box
+    center = ((left + right) / 2.0, (top + bottom) / 2.0)
+    rectangle = np.asarray(
+        [[left, top], [right, top], [right, bottom], [left, bottom]],
+        dtype=np.float32,
+    )
+    box_area = max((right - left) * (bottom - top), 1e-9)
+    candidates: list[tuple[bool, float, float, str]] = []
+    for zone in zones_by_id.values():
+        if not zone.is_active or zone.zone_type in {ZoneType.privacy, ZoneType.ignore}:
+            continue
+        polygon = np.asarray(
+            [[point.x, point.y] for point in zone.polygon],
+            dtype=np.float32,
+        )
+        if len(polygon) < 3:
+            continue
+        centroid_inside = cv2.pointPolygonTest(polygon, center, False) >= 0
+        try:
+            overlap, _ = cv2.intersectConvexConvex(
+                cv2.convexHull(polygon), rectangle
+            )
+        except cv2.error:
+            overlap = 0.0
+        overlap_ratio = max(0.0, float(overlap)) / box_area
+        if centroid_inside or overlap_ratio > 0.0:
+            candidates.append(
+                (
+                    centroid_inside,
+                    overlap_ratio,
+                    abs(float(cv2.contourArea(polygon))),
+                    zone.id,
+                )
+            )
+    if not candidates:
+        return "whole-stream"
+    # Prefer a centroid match, then the greatest normalized overlap, then the
+    # most specific Zone; IDs make ties stable across runs.
+    return sorted(
+        candidates,
+        key=lambda item: (-int(item[0]), -item[1], item[2], item[3]),
+    )[0][3]
+
+
+def _associate_object_detector_zones(
+    snapshot: ObjectDetectorSnapshot,
+    *,
+    zones_by_id: dict[str, Zone],
+) -> ObjectDetectorSnapshot:
+    """Project full-frame observations onto optional product Zone context."""
+
+    def zone_id_for(box: tuple[float, float, float, float]) -> str:
+        return _object_detection_zone_id(box, zones_by_id=zones_by_id)
+
+    return replace(
+        snapshot,
+        detections=tuple(
+            replace(detection, zone_id=zone_id_for(detection.box))
+            for detection in snapshot.detections
+        ),
+        tracks=tuple(
+            replace(track, zone_id=zone_id_for(track.box))
+            for track in snapshot.tracks
+        ),
+        triggers=tuple(
+            replace(trigger, zone_id=zone_id_for(trigger.box))
+            for trigger in snapshot.triggers
+        ),
     )
 
 
@@ -2415,53 +2409,54 @@ def _live_object_detector_result(
     *,
     stream_id: str,
     cached_frames: list[live_frame_cache.LiveFrame],
-    motion_regions: list[MotionRegion],
     zones_by_id: dict[str, Zone],
     blocked_zones: list[Zone],
 ) -> tuple[ObjectDetectorSnapshot, dict[str, int | str | None]]:
-    """Queue one latest localized monitoring crop and poll bounded local MD work."""
+    """Continuously queue the latest usable monitoring frame for local MD."""
 
     manager = get_live_object_detector_manager()
     metadata: dict[str, int | str | None] = {
-        "zone_id": None,
+        "zone_id": "whole-stream",
         "source_width": None,
         "source_height": None,
         "input_width": None,
         "input_height": None,
     }
-    if not cached_frames or not motion_regions:
-        return manager.poll(stream_id), metadata
-    region = max(motion_regions, key=lambda item: item.pixel_area)
+    if not cached_frames:
+        return _associate_object_detector_zones(
+            manager.poll(stream_id), zones_by_id=zones_by_id
+        ), metadata
     frame = cached_frames[-1]
-    crop = _object_detector_motion_crop(
+    prepared = _object_detector_monitoring_frame(
         frame.frame_bytes,
-        region=region,
         blocked_zones=blocked_zones,
     )
-    if crop is None:
-        return manager.poll(stream_id), metadata
-    image, coordinate_box, source_width, source_height, input_width, input_height = crop
-    zone = zones_by_id.get(region.zone_id)
-    zone_type = zone.zone_type.value if zone is not None else "yard"
-    metadata = {
-        "zone_id": region.zone_id,
-        "source_width": source_width,
-        "source_height": source_height,
-        "input_width": input_width,
-        "input_height": input_height,
-    }
+    if prepared is None:
+        return _associate_object_detector_zones(
+            manager.poll(stream_id), zones_by_id=zones_by_id
+        ), metadata
+    image, coordinate_box, source_width, source_height, input_width, input_height = prepared
+    metadata.update(
+        {
+            "source_width": source_width,
+            "source_height": source_height,
+            "input_width": input_width,
+            "input_height": input_height,
+        }
+    )
     manager.submit(
         stream_id=stream_id,
-        zone_id=region.zone_id,
-        zone_type=zone_type,
+        zone_id="whole-stream",
+        zone_type="whole_stream",
         frame_identity=sha1(frame.frame_bytes).hexdigest()[:20],
         sequence=frame.sequence,
         captured_at=frame.captured_at,
         coordinate_box=coordinate_box,
         image=image,
     )
-    return manager.poll(stream_id), metadata
-
+    return _associate_object_detector_zones(
+        manager.poll(stream_id), zones_by_id=zones_by_id
+    ), metadata
 
 def _object_track_motion_candidate(
     trigger: ObjectTrackTrigger,
@@ -2477,21 +2472,6 @@ def _object_track_motion_candidate(
         best_frame_index=sequence,
         peak_changed_ratio=trigger.score,
         triggered_frame_count=1,
-    )
-
-
-def _object_track_as_current_trigger(track: ObjectTrack) -> ObjectTrackTrigger:
-    """Adapt a current coherent track for session support, never a new trigger."""
-
-    return ObjectTrackTrigger(
-        track_id=track.track_id,
-        track_generation_id=track.track_generation_id,
-        zone_id=track.zone_id,
-        label=track.label,
-        score=track.score,
-        box=track.box,
-        frame_identity=track.frame_identity,
-        captured_at=track.last_seen_at,
     )
 
 
@@ -3406,6 +3386,7 @@ def _live_activity_session_status_fields(
             quiet_seconds=quiet_seconds,
         ),
         "activity_subject_state": activity.get("subject_state"),
+        "activity_promotion_category": activity.get("promotion_category"),
         "activity_quiet_remaining_seconds": quiet_remaining_seconds,
         "activity_best_frame_sequence": activity.get("best_frame_sequence"),
         "activity_best_score": activity.get("best_score"),
@@ -3460,6 +3441,7 @@ def _live_activity_evaluate_fields(
             quiet_seconds=quiet_seconds,
         ),
         "activity_subject_state": activity.get("subject_state"),
+        "activity_promotion_category": activity.get("promotion_category"),
         "activity_quiet_remaining_seconds": quiet_remaining_seconds,
         "activity_manual_review_needed": bool(activity.get("manual_review_needed")),
         "activity_best_frame_sequence": activity.get("best_frame_sequence"),
@@ -3497,7 +3479,12 @@ def _live_activity_ready_for_review(
 ) -> bool:
     if activity.get("review_activity_created"):
         return True
-    if activity.get("finalized_reason") == "brief_activity":
+    if activity.get("finalized_reason") in {
+        "brief_activity",
+        "unpromoted_motion",
+        "non_reviewable_person",
+        "non_reviewable_vehicle",
+    }:
         return False
     if int(activity.get("detection_count") or 0) <= 0:
         return False
@@ -3521,6 +3508,13 @@ def _live_activity_review_state(
         return "maximum_duration"
     if activity.get("finalized_reason") == "brief_activity":
         return "brief_activity_ignored"
+    if activity.get("finalized_reason") == "unpromoted_motion":
+        return "transient_motion"
+    if activity.get("finalized_reason") in {
+        "non_reviewable_person",
+        "non_reviewable_vehicle",
+    }:
+        return "safe_category_ignored"
     if int(activity.get("detection_count") or 0) <= 0 and int(
         activity.get("near_miss_count") or 0
     ) > 0:
@@ -4582,7 +4576,7 @@ def _ensure_live_activity_high_resolution_media_assets(
                 {
                     "activity_session_id": str(activity_session_id),
                     "media_asset_id": existing_full_asset.id,
-                    "captured_at": captured_at,
+                    "captured_at": captured_at.astimezone(UTC).isoformat(),
                     "frame_sequence": frame_sequence,
                     "is_primary": existing_crop_asset is None,
                     "width": full_width,
@@ -4595,7 +4589,7 @@ def _ensure_live_activity_high_resolution_media_assets(
                     {
                         "activity_session_id": str(activity_session_id),
                         "media_asset_id": existing_crop_asset.id,
-                        "captured_at": captured_at,
+                        "captured_at": captured_at.astimezone(UTC).isoformat(),
                         "frame_sequence": frame_sequence,
                         "is_primary": True,
                         "width": captured.get("crop_width"),
@@ -4694,7 +4688,7 @@ def _ensure_live_activity_high_resolution_media_assets(
         {
             "activity_session_id": str(activity_session_id),
             "media_asset_id": full_asset.id,
-            "captured_at": captured_at,
+            "captured_at": captured_at.astimezone(UTC).isoformat(),
             "frame_sequence": frame_sequence,
             "is_primary": crop_asset is None,
             "width": full_width,
@@ -4707,7 +4701,7 @@ def _ensure_live_activity_high_resolution_media_assets(
             {
                 "activity_session_id": str(activity_session_id),
                 "media_asset_id": crop_asset.id,
-                "captured_at": captured_at,
+                "captured_at": captured_at.astimezone(UTC).isoformat(),
                 "frame_sequence": frame_sequence,
                 "is_primary": True,
                 "width": captured["crop_width"],
@@ -5774,16 +5768,15 @@ def _evaluate_live_stream_motion(
         frame_index_start=cached_frames[0].sequence,
         create_motion_evidence=request.create_review_activity,
     )
-    # Camera Node profiles select optional evidence capture after a qualifying
-    # motion session. They never change the motion-to-activity admission rule.
+    # Camera Node profiles select optional evidence capture after detector-
+    # qualified activity. They never change detector admission or Zone geometry.
     suppressed_zone_summaries = _motion_suppressed_zone_summaries(
         [frame.frame for frame in decoded_frames],
         blocked_zones,
         sampler_config,
     )
-    # Region tracking, not a global changed-pixel percentage, is the live
-    # activity trigger.  The compatibility score/candidate shape below only
-    # keeps current Stream Detail and evidence contracts stable.
+    # Foreground tracking is diagnostics-only. MegaDetector observations,
+    # not changed-pixel scoring, are the only durable activity admission path.
     try:
         tracked_activity = _tracked_live_motion_result(
             stream_id=stream.id,
@@ -5803,7 +5796,6 @@ def _evaluate_live_stream_motion(
     object_detector, object_detector_metadata = _live_object_detector_result(
         stream_id=stream.id,
         cached_frames=cached_frames,
-        motion_regions=list(tracked_activity.regions) if tracked_activity else [],
         zones_by_id=zones_by_id,
         blocked_zones=blocked_zones,
     )
@@ -5880,10 +5872,24 @@ def _evaluate_live_stream_motion(
         ]
         motion_zones = [_activity_area_zone_input(area) for area in activity_areas]
 
-    best_candidate = _best_motion_candidate(motion_candidates)
+    # Animal tracks are the only durable admission signal. Person and vehicle
+    # observations remain detector telemetry; foreground motion remains bounded
+    # live indication and pre-trigger context.
+    animal_object_candidates = [
+        candidate
+        for candidate, trigger in zip(
+            object_candidates, object_detector.triggers, strict=True
+        )
+        if trigger.label == "animal"
+    ]
+    best_candidate = (
+        _best_motion_candidate(animal_object_candidates)
+        or _best_motion_candidate(object_candidates)
+        or _best_motion_candidate(sampler_result.candidates)
+    )
     whole_stream_activity = bool(
         best_candidate is not None
-        and best_candidate.zone_id == "auto-activity-area"
+        and best_candidate.zone_id in {"auto-activity-area", "whole-stream"}
         and not (uses_auto_regions and used_legacy_motion_sampler)
     )
     object_trigger = (
@@ -5907,25 +5913,38 @@ def _evaluate_live_stream_motion(
         ),
         None,
     )
+    # A track is admitted only on its fresh immutable trigger. A later
+    # stationary snapshot remains telemetry and cannot keep local support alive
+    # or reopen a finalized Visit for the same track generation.
+    object_promotion_trigger = (
+        object_trigger
+        if object_trigger is not None and object_trigger.label == "animal"
+        else None
+    )
+    supporting_object_track = next(
+        (
+            track
+            for track in object_detector.tracks
+            if object_promotion_trigger is not None
+            and track.track_generation_id
+            == object_promotion_trigger.track_generation_id
+        ),
+        None,
+    )
     object_track_generation_id = (
-        object_trigger.track_generation_id if object_trigger is not None else None
+        object_promotion_trigger.track_generation_id
+        if object_promotion_trigger is not None
+        else None
     )
     motion_track_generation_id = (
         tracked_trigger.track_generation_id if tracked_trigger is not None else None
     )
     activity_track_generation_id = object_track_generation_id or motion_track_generation_id
-    supporting_object_track = next(
-        (
-            track
-            for track in object_detector.tracks
-            if track.label == "animal"
-            and track.triggered
-            and track.state == "active"
-            and zones_by_id.get(track.zone_id) is not None
-            and zones_by_id[track.zone_id].zone_type
-            in {ZoneType.feeder, ZoneType.birdbath, ZoneType.perch}
-        ),
-        None,
+    animal_promotion_trigger = (
+        object_promotion_trigger
+        if object_promotion_trigger is not None
+        and object_promotion_trigger.label == "animal"
+        else None
     )
     strongest_suppressed_zone = (
         suppressed_zone_summaries[0] if suppressed_zone_summaries else None
@@ -5941,9 +5960,13 @@ def _evaluate_live_stream_motion(
     raw_strongest_zone_id, raw_strongest_changed_ratio = _strongest_motion_summary(
         frame_score_responses,
     )
-    if object_trigger is not None:
-        strongest_zone_id = object_trigger.zone_id
-        strongest_changed_ratio = object_trigger.score
+    if object_promotion_trigger is not None:
+        strongest_zone_id = (
+            object_promotion_trigger.zone_id
+            if object_promotion_trigger.zone_id in zones_by_id
+            else None
+        )
+        strongest_changed_ratio = object_promotion_trigger.score
     elif whole_stream_activity:
         strongest_zone_id = None
         strongest_changed_ratio = best_candidate.peak_changed_ratio if best_candidate else 0.0
@@ -6008,12 +6031,12 @@ def _evaluate_live_stream_motion(
     )
     strongest_zone_min_changed_ratio = (
         strongest_scoring_policy.min_changed_ratio
-        if strongest_scoring_policy is not None and object_trigger is None
+        if strongest_scoring_policy is not None and object_promotion_trigger is None
         else None
     )
     effective_threshold_used = (
         strongest_scoring_policy.min_changed_ratio
-        if strongest_scoring_policy is not None and object_trigger is None
+        if strongest_scoring_policy is not None and object_promotion_trigger is None
         else None
     )
     strongest_score, strongest_score_frame_index = _strongest_live_motion_score(
@@ -6030,7 +6053,7 @@ def _evaluate_live_stream_motion(
         strongest_score=strongest_score,
         effective_threshold=effective_threshold_used,
         scoring_policy=(
-            strongest_scoring_policy if object_trigger is None else None
+            strongest_scoring_policy if object_promotion_trigger is None else None
         ),
     )
     diagnostic_message = _live_motion_diagnostic_message(
@@ -6042,7 +6065,7 @@ def _evaluate_live_stream_motion(
         effective_threshold=effective_threshold_used,
         fine_motion_applied=(
             strongest_scoring_policy.fine_motion_applied
-            if strongest_scoring_policy is not None and object_trigger is None
+            if strongest_scoring_policy is not None and object_promotion_trigger is None
             else False
         ),
     )
@@ -6069,13 +6092,30 @@ def _evaluate_live_stream_motion(
         if best_candidate is not None
         else strongest_score_frame_index
     )
+    promoted_animal_region = (
+        _object_trigger_region(
+            animal_promotion_trigger,
+            source_width=(
+                tracked_activity.telemetry.source_width
+                if tracked_activity
+                else frame_summaries[-1].width
+            ),
+            source_height=(
+                tracked_activity.telemetry.source_height
+                if tracked_activity
+                else frame_summaries[-1].height
+            ),
+        )
+        if animal_promotion_trigger is not None
+        else None
+    )
     tracked_best_region = (
         _object_trigger_region(
-            object_trigger,
+            object_promotion_trigger,
             source_width=(tracked_activity.telemetry.source_width if tracked_activity else frame_summaries[-1].width),
             source_height=(tracked_activity.telemetry.source_height if tracked_activity else frame_summaries[-1].height),
         )
-        if object_trigger is not None
+        if object_promotion_trigger is not None
         else _tracked_trigger_region(
             tracked_trigger,
             source_width=(tracked_activity.telemetry.source_width if tracked_activity else frame_summaries[-1].width),
@@ -6110,12 +6150,24 @@ def _evaluate_live_stream_motion(
             (
                 cached_frame
                 for cached_frame in cached_frames
-                if cached_frame.sequence == best_candidate.best_frame_index
+                if sha1(cached_frame.frame_bytes).hexdigest()[:20]
+                == object_promotion_trigger.frame_identity
             ),
             None,
         )
-        if best_candidate
-        else None
+        if object_promotion_trigger is not None
+        else (
+            next(
+                (
+                    cached_frame
+                    for cached_frame in cached_frames
+                    if cached_frame.sequence == best_candidate.best_frame_index
+                ),
+                None,
+            )
+            if best_candidate
+            else None
+        )
     )
     best_live_frame_summary = (
         next(
@@ -6157,7 +6209,12 @@ def _evaluate_live_stream_motion(
         )
     )
     session_region_kind = (
-        "stream" if whole_stream_activity else "auto_area" if uses_auto_regions else "zone"
+        "stream"
+        if whole_stream_activity
+        or (object_promotion_trigger is not None and strongest_zone is None)
+        else "auto_area"
+        if uses_auto_regions
+        else "zone"
     )
     session_region_id = (
         "whole-frame"
@@ -6174,16 +6231,18 @@ def _evaluate_live_stream_motion(
     )
     if activity_track_generation_id is not None:
         activity_region_key = f"{activity_region_key}|track:{activity_track_generation_id}"
-    has_reviewable_live_activity = bool(best_candidate)
+    has_reviewable_live_activity = object_promotion_trigger is not None
     strongest_zone_policy = strongest_zone.monitoring_policy if strongest_zone else None
-    session_activity_signal = burst_live_frame is not None and activity_detected
+    session_activity_signal = (
+        burst_live_frame is not None and object_promotion_trigger is not None
+    )
     session_recommendation = recommend_activity_session(
         source_id=stream.source_id,
         stream_id=stream.id,
         region_kind=session_region_kind,
         region_id=session_region_id,
         activity_at=best_live_frame.captured_at if best_live_frame else None,
-        activity_detected=bool(motion_candidates),
+        activity_detected=object_promotion_trigger is not None,
         review_activity_available=has_reviewable_live_activity,
         best_snapshot_media_asset_id=None,
         existing_activities=existing_session_references,
@@ -6228,7 +6287,7 @@ def _evaluate_live_stream_motion(
                 if strongest_zone_type is not None
                 else None,
                 "last_seen_at": burst_live_frame.captured_at,
-                "activity_detected": activity_detected,
+                "activity_detected": object_promotion_trigger is not None,
                 "frames_evaluated_count": len(cached_frames),
                 "start_frame_sequence": burst_start_sequence,
                 "end_frame_sequence": burst_end_sequence,
@@ -6268,7 +6327,7 @@ def _evaluate_live_stream_motion(
                 "effective_threshold_used": effective_threshold_used,
                 "threshold_source": (
                     "object_verified"
-                    if object_trigger is not None
+                    if object_promotion_trigger is not None
                     else (
                         strongest_scoring_policy.threshold_source
                         if strongest_scoring_policy is not None
@@ -6276,6 +6335,11 @@ def _evaluate_live_stream_motion(
                     )
                 ),
                 "track_generation_id": activity_track_generation_id,
+                "promotion_category": (
+                    object_promotion_trigger.label
+                    if object_promotion_trigger is not None
+                    else None
+                ),
                 "support_box": (
                     [
                         tracked_best_region.left,
@@ -6311,21 +6375,35 @@ def _evaluate_live_stream_motion(
                 else active_quiet_seconds
             ),
         )
-        if activity_snapshot is not None and best_candidate is not None:
-            pretrigger_frames = (
-                _object_pretrigger_live_frames(
-                    object_trigger,
-                    cached_frames=cached_frames,
-                    frame_summaries=frame_summaries,
-                )
-                if object_trigger is not None
-                else _tracked_pretrigger_live_frames(
-                    tracked_activity,
-                    cached_frames=cached_frames,
-                    frame_summaries=frame_summaries,
-                    zone_id=best_candidate.zone_id,
-                    track_generation_id=motion_track_generation_id,
-                )
+        manager = get_live_camera_session_manager()
+        if activity_snapshot is not None and supporting_object_track is not None:
+            support_snapshot = manager.record_activity_track_support(
+                stream.id,
+                supporting_object_track.track_generation_id,
+                observed_at=supporting_object_track.last_seen_at,
+                detector_evidence={
+                    **detector_evidence_payload,
+                    "current_track": {
+                        "track_id": supporting_object_track.track_id,
+                        "track_generation_id": supporting_object_track.track_generation_id,
+                        "zone_id": supporting_object_track.zone_id,
+                        "class": supporting_object_track.label,
+                        "score": supporting_object_track.score,
+                        "box": list(supporting_object_track.box),
+                        "frame_identity": supporting_object_track.frame_identity,
+                        "captured_at": supporting_object_track.last_seen_at.isoformat(),
+                    },
+                },
+                support_box=supporting_object_track.box,
+                promotion_category=supporting_object_track.label,
+            )
+            if support_snapshot is not None:
+                activity_snapshot = support_snapshot
+        if activity_snapshot is not None and object_promotion_trigger is not None:
+            pretrigger_frames = _object_pretrigger_live_frames(
+                object_promotion_trigger,
+                cached_frames=cached_frames,
+                frame_summaries=frame_summaries,
             )
             if pretrigger_frames:
                 activity_snapshot = (
@@ -6336,45 +6414,22 @@ def _evaluate_live_stream_motion(
                     )
                     or activity_snapshot
                 )
-            manager = get_live_camera_session_manager()
             if (
-                tracked_best_region is not None
+                activity_snapshot.promotion_category == "animal"
+                and animal_promotion_trigger is not None
+                and promoted_animal_region is not None
                 and manager.get_activity_high_resolution_evidence(
                     stream.id,
                     activity_snapshot.activity_session_id,
                 )
                 is None
             ):
-                capture_trigger = object_trigger or tracked_trigger
-                capture_track_generation_id = activity_snapshot.track_generation_id
-                if (
-                    capture_trigger is not None
-                    and capture_track_generation_id is not None
-                ):
+                capture_trigger = animal_promotion_trigger
+                capture_track_generation_id = capture_trigger.track_generation_id
+                if capture_track_generation_id is not None:
                     capture_zone = zones_by_id.get(capture_trigger.zone_id)
-                    capture_box = (
-                        list(capture_trigger.box)
-                        if object_trigger is not None
-                        else list(
-                            tracked_best_region
-                            and (
-                                tracked_best_region.left,
-                                tracked_best_region.top,
-                                tracked_best_region.right,
-                                tracked_best_region.bottom,
-                            )
-                            or ()
-                        )
-                    )
-                    qualifying_frame_identity = (
-                        capture_trigger.frame_identity
-                        if object_trigger is not None
-                        else (
-                            capture_trigger.best_frame_identity
-                            or capture_trigger.first_frame_identity
-                            or ""
-                        )
-                    )
+                    capture_box = list(capture_trigger.box)
+                    qualifying_frame_identity = capture_trigger.frame_identity
                     claim = manager.claim_activity_high_resolution_capture(
                         stream.id,
                         activity_snapshot.activity_session_id,
@@ -6382,21 +6437,9 @@ def _evaluate_live_stream_motion(
                             "zone_id": capture_trigger.zone_id,
                             "track_generation_id": capture_track_generation_id,
                             "qualifying_frame_identity": qualifying_frame_identity,
-                            "detector_name": (
-                                "megadetector"
-                                if object_trigger is not None
-                                else "localized_motion"
-                            ),
-                            "detector_class": (
-                                object_trigger.label
-                                if object_trigger is not None
-                                else "coherent_motion"
-                            ),
-                            "detector_score": (
-                                object_trigger.score
-                                if object_trigger is not None
-                                else strongest_changed_ratio
-                            ),
+                            "detector_name": "megadetector",
+                            "detector_class": "animal",
+                            "detector_score": capture_trigger.score,
                             "normalized_track_box": capture_box,
                             "monitoring_width": frame_summaries[-1].width,
                             "monitoring_height": frame_summaries[-1].height,
@@ -6413,7 +6456,7 @@ def _evaluate_live_stream_motion(
                     if claim is not None:
                         captured_evidence = _capture_high_resolution_activity_evidence(
                             configuration=configuration,
-                            region=tracked_best_region,
+                            region=promoted_animal_region,
                             trigger_track_id=capture_trigger.track_id,
                             trigger_at=capture_trigger.captured_at,
                             capture_claim=claim,
@@ -6482,35 +6525,18 @@ def _evaluate_live_stream_motion(
         live_activity_session = (
             activity_snapshot.as_dict() if activity_snapshot is not None else None
         )
-    if supporting_object_track is not None:
-        support_snapshot = get_live_camera_session_manager().record_activity_track_support(
-            stream.id,
-            supporting_object_track.track_generation_id,
-            observed_at=supporting_object_track.last_seen_at,
-            detector_evidence={
-                **detector_evidence_payload,
-                "current_track": {
-                    "track_id": supporting_object_track.track_id,
-                    "track_generation_id": supporting_object_track.track_generation_id,
-                    "zone_id": supporting_object_track.zone_id,
-                    "class": supporting_object_track.label,
-                    "score": supporting_object_track.score,
-                    "box": list(supporting_object_track.box),
-                    "frame_identity": supporting_object_track.frame_identity,
-                    "captured_at": supporting_object_track.last_seen_at.isoformat(),
-                },
-            },
-            support_box=supporting_object_track.box,
-        )
-        if support_snapshot is not None:
-            live_activity_session = support_snapshot.as_dict()
     best_media_asset_id: str | None = None
     visit_evidence_frames: list[dict[str, Any]] = []
     if live_activity_session is not None:
         best_media_asset_id = live_activity_session.get("best_media_asset_id")
+    promoted_animal_activity = bool(
+        (live_activity_session or {}).get("promotion_category") == "animal"
+        or animal_promotion_trigger is not None
+    )
     should_save_best_frame = (
         bool(best_candidate)
         and best_live_frame is not None
+        and promoted_animal_activity
         and (request.save_best_frame or request.create_review_activity)
         and live_activity_session is None
         and session_recommendation.session_status == "new_activity"
@@ -6531,7 +6557,11 @@ def _evaluate_live_stream_motion(
         except ValueError as error:
             raise _media_import_error(error) from error
         best_media_asset_id = media_asset.id
-    if request.create_review_activity and live_activity_session is not None:
+    if (
+        request.create_review_activity
+        and promoted_animal_activity
+        and live_activity_session is not None
+    ):
         best_media_asset_id, live_activity_session = (
             _ensure_live_activity_best_media_asset(
                 repository=repository,
@@ -6580,7 +6610,8 @@ def _evaluate_live_stream_motion(
         live_activity_session and live_activity_session.get("review_activity_created")
     )
     can_create_review_activity = (
-        has_reviewable_live_activity
+        promoted_animal_activity
+        and has_reviewable_live_activity
         and not live_activity_review_created
         and (
             live_activity_session is not None
@@ -6636,6 +6667,7 @@ def _evaluate_live_stream_motion(
 
     if (
         request.create_review_activity
+        and promoted_animal_activity
         and live_activity_session is not None
         and live_activity_session.get("motion_evidence_id")
     ):
@@ -6650,6 +6682,7 @@ def _evaluate_live_stream_motion(
             review_activity_available = False
     elif (
         request.create_review_activity
+        and promoted_animal_activity
         and motion_candidates
         and not session_recommendation.should_create_review_activity
     ):
@@ -6689,7 +6722,12 @@ def _evaluate_live_stream_motion(
                 "This looks like the same recent activity, so MockingBird did not create "
                 "another review item."
             )
-    elif request.create_review_activity and best_candidate and best_live_frame:
+    elif (
+        request.create_review_activity
+        and promoted_animal_activity
+        and best_candidate
+        and best_live_frame
+    ):
         try:
             pending_evidence = repository.create_motion_evidence(
                 MotionEvidenceCreateRequest(
@@ -6799,11 +6837,13 @@ def _evaluate_live_stream_motion(
                             json.dumps(
                                 live_activity_session.get("detector_evidence") or {},
                                 sort_keys=True,
+                                default=str,
                             )
                             if live_activity_session is not None
                             else json.dumps(
                                 detector_evidence_payload,
                                 sort_keys=True,
+                                default=str,
                             )
                         ),
                         **(
@@ -6942,6 +6982,11 @@ def _evaluate_live_stream_motion(
     )
     if activity_detected and best_media_asset_id:
         message = f"{diagnostic_message or activity_summary} Best frame was saved for explicit review."
+    elif activity_detected and not promoted_animal_activity:
+        message = (
+            "Localized motion observed; waiting for MegaDetector animal confirmation. "
+            "No review item or evidence media was created."
+        )
     elif activity_detected:
         message = diagnostic_message or activity_summary
     elif suppressed_zone_summaries:
@@ -7241,7 +7286,7 @@ def _evaluate_live_stream_motion(
         ),
         fine_motion_applied=(
             strongest_scoring_policy.fine_motion_applied
-            if strongest_scoring_policy is not None and object_trigger is None
+            if strongest_scoring_policy is not None and object_promotion_trigger is None
             else False
         ),
         changed_pixels=strongest_score.changed_pixels if strongest_score else None,
@@ -7643,6 +7688,24 @@ def _create_live_stream_motion_review_activity(
             suggestion_confidence=activity.get("suggestion_confidence"),
         )
 
+    if activity.get("promotion_category") != "animal":
+        return _live_motion_review_activity_response(
+            stream_id=stream.id,
+            source_id=stream.source_id,
+            status="waiting_for_detector_promotion",
+            message=(
+                "Stored motion remains transient until MegaDetector confirms an animal."
+            ),
+            activity_detected=bool(activity.get("detection_count")),
+            activity_session_id=activity.get("activity_session_id"),
+            activity_detection_count=activity.get("detection_count") or 0,
+            activity_started_at=_live_activity_datetime(activity.get("started_at")),
+            activity_last_seen_at=_live_activity_datetime(activity.get("last_seen_at")),
+            warnings=[
+                "Unconfirmed motion cannot create media, an Event, a Visit, or a Review Queue item."
+            ],
+        )
+
     if int(activity.get("detection_count") or 0) <= 0:
         return _live_motion_review_activity_response(
             stream_id=stream.id,
@@ -8040,7 +8103,7 @@ def _maybe_auto_create_live_review_candidate(
         return None
     latest_result: LiveMotionReviewActivityResponse | None = None
     for activity in ready_sessions:
-        if activity.review_activity_created:
+        if activity.review_activity_created or activity.promotion_category != "animal":
             continue
         if activity.detection_count < snapshot.auto_review_min_detections:
             continue
