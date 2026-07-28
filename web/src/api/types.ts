@@ -45,6 +45,7 @@ export type StreamPlaybackKind =
   | "rtsp"
   | "local_usb"
   | "windows_dshow"
+  | "camera_node"
   | "unknown";
 export type StreamMonitoringMode = "off" | "armed" | "paused";
 export type StreamRuntimeState =
@@ -1550,9 +1551,11 @@ export interface DashboardStreamSummary {
   stream_name: string;
   source_id: string;
   source_name: string;
+  source_kind: SourceKind;
   source_status: SourceStatus;
   setup_incomplete: boolean;
   availability_status: StreamPlaybackStatusValue;
+  playback_kind: StreamPlaybackKind;
   availability_message: string;
   live_preview: DashboardLivePreview;
   zone_overlays: DashboardZoneOverlay[];

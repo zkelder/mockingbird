@@ -6,6 +6,7 @@ import type {
   StreamRuntimeStatus,
 } from "../api/types";
 import { formatDateTime } from "../utils";
+import { CurrentFrameView } from "./CurrentFrameView";
 import { EmptyState } from "./EmptyState";
 import { StatusPill } from "./StatusPill";
 
@@ -94,6 +95,12 @@ function activityState(stream: DashboardStreamSummary): string {
   return "No open activity";
 }
 
+function exposureDurationLabel(seconds?: number | null): string {
+  if (seconds == null || seconds <= 0) return "just started";
+  if (seconds < 60) return `${Math.round(seconds)} sec`;
+  return `${Math.floor(seconds / 60)} min`;
+}
+
 function monitoringState(stream: DashboardStreamSummary, runtime?: StreamRuntimeStatus): string {
   const health = stream.camera_health;
   if (health) {
@@ -130,6 +137,21 @@ function isActivePreview(state: PreviewState | undefined): boolean {
   return state?.state === "connecting" || state?.state === "live";
 }
 
+function isProductActiveCamera(
+  stream: DashboardStreamSummary,
+  runtime?: StreamRuntimeStatus,
+): boolean {
+  if (stream.source_kind === "demo") return false;
+  return (
+    stream.monitoring_active ||
+    runtime?.actual_state === "running" ||
+    runtime?.actual_state === "starting" ||
+    runtime?.desired_mode === "armed" ||
+    stream.camera_health?.state === "healthy" ||
+    (stream.playback_kind === "camera_node" && stream.availability_status === "live_ready")
+  );
+}
+
 export function LiveCameraOverview({
   streams,
   runtimeByStream,
@@ -139,6 +161,8 @@ export function LiveCameraOverview({
   onToggleMonitoring,
 }: LiveCameraOverviewProps) {
   const [isVisualOverview, setIsVisualOverview] = useState(true);
+  const [showInactiveCameras, setShowInactiveCameras] = useState(false);
+  const [showDemoData, setShowDemoData] = useState(false);
   const [showZonesByStream, setShowZonesByStream] = useState<Record<string, boolean>>({});
   const [previews, setPreviews] = useState<Record<string, PreviewState>>({});
   const previewsRef = useRef(previews);
@@ -303,6 +327,21 @@ export function LiveCameraOverview({
     [closeBackendPreview],
   );
 
+  const activeStreams = streams.filter((stream) =>
+    isProductActiveCamera(stream, runtimeByStream[stream.stream_id]),
+  );
+  const inactiveStreams = streams.filter(
+    (stream) =>
+      stream.source_kind !== "demo" &&
+      !isProductActiveCamera(stream, runtimeByStream[stream.stream_id]),
+  );
+  const demoStreams = streams.filter((stream) => stream.source_kind === "demo");
+  const visibleStreams = [
+    ...activeStreams,
+    ...(showInactiveCameras ? inactiveStreams : []),
+    ...(showDemoData ? demoStreams : []),
+  ];
+
   if (!streams.length) {
     return (
       <section className="panel camera-overview-panel">
@@ -337,8 +376,34 @@ export function LiveCameraOverview({
           {isVisualOverview ? "Compact status" : "Visual overview"}
         </button>
       </div>
+      <div className="camera-overview-groups">
+        <div className="camera-overview-group-heading">
+          <strong>Active cameras</strong>
+          <span>{activeStreams.length ? "Monitoring, healthy, or selected for everyday use" : "No active camera is reporting yet"}</span>
+        </div>
+        {inactiveStreams.length ? (
+          <button
+            aria-expanded={showInactiveCameras}
+            className="text-action"
+            onClick={() => setShowInactiveCameras((current) => !current)}
+            type="button"
+          >
+            {showInactiveCameras ? "Hide inactive saved cameras" : `Show inactive saved cameras (${inactiveStreams.length})`}
+          </button>
+        ) : null}
+        {demoStreams.length ? (
+          <button
+            aria-expanded={showDemoData}
+            className="text-action"
+            onClick={() => setShowDemoData((current) => !current)}
+            type="button"
+          >
+            {showDemoData ? "Hide demo and test data" : "Show demo and test data"}
+          </button>
+        ) : null}
+      </div>
       <div className={`camera-overview-grid${isVisualOverview ? "" : " is-compact"}`}>
-        {streams.map((stream) => {
+        {visibleStreams.map((stream) => {
           const runtime = runtimeByStream[stream.stream_id];
           const preview = previews[stream.stream_id];
           const showZones = Boolean(showZonesByStream[stream.stream_id]);
@@ -355,7 +420,14 @@ export function LiveCameraOverview({
 
               {isVisualOverview ? (
                 <div className="camera-overview-frame">
-                  {preview?.state === "live" ? (
+                  {stream.playback_kind === "camera_node" ? (
+                    <CurrentFrameView
+                      active={isVisualOverview}
+                      alt={`Current view from ${stream.stream_name}`}
+                      className="camera-overview-media"
+                      streamId={stream.stream_id}
+                    />
+                  ) : preview?.state === "live" ? (
                     preview.mediaKind === "video" ? (
                       <video autoPlay className="camera-overview-media" muted onError={() => previewFailed(stream.stream_id)} playsInline src={preview.mediaUrl} />
                     ) : (
@@ -376,6 +448,7 @@ export function LiveCameraOverview({
                 <span>{activityState(stream)}</span>
                 <span>Open sessions: <strong>{stream.camera_health?.open_activity_session_count ?? stream.open_activity_session_count}</strong></span>
                 <span>Last good frame: <strong>{stream.camera_health?.last_good_frame_at ? formatDateTime(stream.camera_health.last_good_frame_at) : "Not yet received"}</strong></span>
+                {runtime?.exposure_interval_active ? <span>Active exposure: <strong>{exposureDurationLabel(runtime.current_healthy_duration_seconds)}</strong></span> : null}
                 {stream.camera_health?.next_retry_at ? <span>Recovery: <strong>{formatDateTime(stream.camera_health.next_retry_at)}</strong></span> : null}
                 {stream.camera_health?.unread_alert ? <span>Unread camera alert</span> : null}
                 <span>Needs review: <strong>{stream.needs_review_visit_count}</strong></span>
@@ -392,7 +465,7 @@ export function LiveCameraOverview({
                   Open Stream
                 </button>
                 {onOpenCameraConfiguration ? <button className="text-action" onClick={() => onOpenCameraConfiguration(stream.stream_id)} type="button">Edit camera setup</button> : null}
-                {isActivePreview(preview) ? (
+                {stream.playback_kind === "camera_node" ? null : isActivePreview(preview) ? (
                   <button className="secondary-action" onClick={() => stopPreview(stream.stream_id)} type="button">
                     Stop live view
                   </button>

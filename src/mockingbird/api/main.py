@@ -9764,6 +9764,57 @@ async def stop_stream_live_camera_session(
     )
 
 
+@app.get("/api/streams/{stream_id}/live-session/current-frame")
+async def get_stream_live_camera_current_frame(stream_id: str) -> Response:
+    """Return one cached camera frame without opening a camera or monitor.
+
+    This is deliberately a still-image read: a browser can refresh it at a
+    bounded cadence while the existing app-owned session remains the sole
+    camera owner. It never starts monitoring, writes media, or creates
+    activity/review data.
+    """
+
+    _stream_live_playback_config_or_404(stream_id, require_active_source=True)
+    snapshot = (
+        _live_camera_session_manager.status(stream_id)
+        if _live_camera_session_manager is not None
+        else None
+    )
+    if snapshot is None or snapshot.status not in {"starting", "running"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Camera session is not active; viewing never starts monitoring.",
+        )
+
+    frame = live_frame_cache.get_last_frame(stream_id)
+    if frame is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No camera frame is available yet.",
+        )
+
+    decoded = cv2.imdecode(np.frombuffer(frame.frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if decoded is None:
+        raise HTTPException(status_code=502, detail="The latest camera frame could not be decoded.")
+    height, width = decoded.shape[:2]
+    age_ms = frame.age_ms()
+    state = "live" if age_ms <= 2_500 else "delayed" if age_ms <= 10_000 else "stale"
+    return Response(
+        content=frame.frame_bytes,
+        media_type=frame.content_type,
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+            "X-MockingBird-Frame-Sequence": str(frame.sequence),
+            "X-MockingBird-Frame-Captured-At": frame.captured_at.isoformat(),
+            "X-MockingBird-Frame-Age-Ms": str(age_ms),
+            "X-MockingBird-Frame-Width": str(width),
+            "X-MockingBird-Frame-Height": str(height),
+            "X-MockingBird-Frame-State": state,
+        },
+    )
+
+
 @app.get(
     "/api/streams/{stream_id}/live-session/status",
     response_model=LiveCameraSessionStatusResponse,

@@ -85,19 +85,20 @@ const initialData: AppData = {
 };
 
 const productNavItems: Array<{ page: Page; label: string }> = [
-  { page: "dashboard", label: "Overview" },
-  { page: "streams", label: "Cameras / Streams" },
-  { page: "yard-map", label: "Yard & Camera Map" },
-  { page: "activity-library", label: "Activity Library" },
-  { page: "review", label: "Review Queue" },
-  { page: "bird-log", label: "Bird Log" },
-  { page: "exports", label: "Exports / Data" },
+  { page: "dashboard", label: "Dashboard" },
+  { page: "streams", label: "Cameras" },
+  { page: "review", label: "Review" },
+  { page: "activity-library", label: "Activity" },
+  { page: "analytics", label: "Insights" },
+  { page: "settings", label: "Settings" },
 ];
 
 const advancedNavItems: Array<{ page: Page; label: string }> = [
+  { page: "yard-map", label: "Yard & Camera Map" },
+  { page: "bird-log", label: "Bird Log" },
+  { page: "exports", label: "Exports / Data" },
   { page: "import", label: "Import Media" },
   { page: "folder-import", label: "Folder Import" },
-  { page: "analytics", label: "Analytics" },
   { page: "saved-media-retention", label: "Saved Media Retention" },
   { page: "motion-evidence", label: "Advanced Evidence" },
   { page: "detection-proposals", label: "Detection Proposals" },
@@ -140,6 +141,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
   const [isAdvancedNavOpen, setIsAdvancedNavOpen] = useState(false);
+  const [isDeveloperMode, setIsDeveloperMode] = useState(false);
 
   function applyRoute(route: AppRoute) {
     setPageState(route.page);
@@ -447,6 +449,7 @@ export default function App() {
           onAddCamera={() => setPage("camera-setup")}
           onOpenReview={openReviewQueue}
           onOpenBirdLog={() => setPage("bird-log")}
+          onOpenInsights={() => setPage("analytics")}
           onOpenVisit={openVisit}
         />
       );
@@ -653,6 +656,8 @@ export default function App() {
           reviewQueue={data.reviewQueue}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
+          onOpenActivity={() => setPage("activity-library")}
+          onOpenInsights={() => setPage("analytics")}
           onOpenImport={() => setPage("import")}
           onOpenExports={() => setPage("exports")}
           onOpenReview={openReviewQueue}
@@ -840,24 +845,34 @@ export default function App() {
               {item.label}
             </button>
           ))}
-          <details
-            className="nav-group"
-            open={isAdvancedNavOpen || isAdvancedPageActive}
-            onToggle={(event) => setIsAdvancedNavOpen(event.currentTarget.open)}
+          <button
+            aria-pressed={isDeveloperMode}
+            className={`nav-item developer-mode-toggle${isDeveloperMode ? " active" : ""}`}
+            onClick={() => setIsDeveloperMode((current) => !current)}
+            type="button"
           >
-            <summary>Advanced / Developer tools</summary>
-            <div className="nav-group-items">
-              {advancedNavItems.map((item) => (
-                <button
-                  className={page === item.page ? "nav-item active" : "nav-item"}
-                  key={item.page}
-                  onClick={() => setPage(item.page)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          </details>
+            {isDeveloperMode ? "Hide Developer Mode" : "Developer Mode"}
+          </button>
+          {isDeveloperMode || isAdvancedPageActive ? (
+            <details
+              className="nav-group"
+              open={isAdvancedNavOpen || isAdvancedPageActive}
+              onToggle={(event) => setIsAdvancedNavOpen(event.currentTarget.open)}
+            >
+              <summary>Developer tools</summary>
+              <div className="nav-group-items">
+                {advancedNavItems.map((item) => (
+                  <button
+                    className={page === item.page ? "nav-item active" : "nav-item"}
+                    key={item.page}
+                    onClick={() => setPage(item.page)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </details>
+          ) : null}
           {selectedStream || selectedEventId || selectedVisitId ? (
             <span className="nav-section-label">Current context</span>
           ) : null}

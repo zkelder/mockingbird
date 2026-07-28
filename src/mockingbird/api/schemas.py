@@ -2144,9 +2144,11 @@ class DashboardStreamSummary(BaseModel):
     stream_name: str
     source_id: str
     source_name: str
+    source_kind: SourceKind
     source_status: SourceStatus
     setup_incomplete: bool = False
     availability_status: StreamPlaybackStatusValue
+    playback_kind: StreamPlaybackKind = StreamPlaybackKind.placeholder
     availability_message: str
     live_preview: DashboardLivePreview
     zone_overlays: list[DashboardZoneOverlay] = Field(default_factory=list, max_length=32)

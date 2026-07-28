@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Start one intentionally detached local field trial with its ignored operator config.
+set -euo pipefail
+
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+SESSION_NAME=mockingbird-field-trial
+RUNTIME_DIR=/tmp/mockingbird-field-trial
+CONFIG_FILE=${MOCKINGBIRD_FIELD_TRIAL_CONFIG:-"$ROOT_DIR/data/field-trial.env"}
+PYTHON_BIN=${MOCKINGBIRD_FIELD_TRIAL_PYTHON:-"$ROOT_DIR/.venv/bin/python"}
+BACKEND_URL=${MOCKINGBIRD_FIELD_TRIAL_BACKEND_URL:-http://127.0.0.1:8000}
+FRONTEND_URL=${MOCKINGBIRD_FIELD_TRIAL_FRONTEND_URL:-http://127.0.0.1:5173}
+
+fail() {
+  printf "%s\n" "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "Required command is unavailable: $1"
+}
+
+load_local_configuration() {
+  [ -r "$CONFIG_FILE" ] || fail "Field-trial configuration is missing. Create the ignored data/field-trial.env file from the documented template."
+  set -a
+  # The operator-owned file is intentionally ignored and never copied to logs or metadata.
+  . "$CONFIG_FILE"
+  set +a
+}
+
+verify_megadetector() {
+  [ -x "$PYTHON_BIN" ] || fail "Field-trial Python environment is unavailable."
+  [ -n "${MOCKINGBIRD_MEGADETECTOR_MODEL_PATH:-}" ] || fail "MegaDetector is not ready. The field trial was not started."
+  "$PYTHON_BIN" -c 'from mockingbird.detectors.megadetector_adapter import get_megadetector_status; import sys; sys.exit(0 if get_megadetector_status().status == "available" else 1)' \
+    || fail "MegaDetector is not ready. The field trial was not started."
+}
+
+session_exists() {
+  tmux has-session -t "$SESSION_NAME" 2>/dev/null
+}
+
+write_metadata() {
+  local backend_pid frontend_pid
+  backend_pid=$(tmux list-panes -t "$SESSION_NAME:backend" -F "#{pane_pid}" 2>/dev/null | head -n 1 || true)
+  frontend_pid=$(tmux list-panes -t "$SESSION_NAME:frontend" -F "#{pane_pid}" 2>/dev/null | head -n 1 || true)
+  mkdir -p "$RUNTIME_DIR"
+  printf "{\"session\":\"%s\",\"backend_url\":\"%s\",\"frontend_url\":\"%s\",\"backend_pid\":\"%s\",\"frontend_pid\":\"%s\",\"detector_ready\":true}\n" \
+    "$SESSION_NAME" "$BACKEND_URL" "$FRONTEND_URL" "$backend_pid" "$frontend_pid" > "$RUNTIME_DIR/metadata.json"
+}
+
+wait_for_url() {
+  local url=$1
+  local attempt
+  for attempt in $(seq 1 50); do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+verify_running_detector() {
+  curl -fsS "$BACKEND_URL/api/model-adapters/megadetector" | "$PYTHON_BIN" -c 'import json, sys; payload = json.load(sys.stdin); sys.exit(0 if payload.get("status") == "available" else 1)'
+}
+
+start_trial() {
+  require_command tmux
+  require_command curl
+  load_local_configuration
+  verify_megadetector
+  session_exists && fail "A duplicate mockingbird-field-trial session already exists. Use status or stop first."
+  mkdir -p "$RUNTIME_DIR"
+  : > "$RUNTIME_DIR/backend.log"
+  : > "$RUNTIME_DIR/frontend.log"
+  tmux new-session -d -s "$SESSION_NAME" -n backend \
+    "cd \"$ROOT_DIR\" && exec \"$PYTHON_BIN\" -m uvicorn mockingbird.api.main:app --host 127.0.0.1 --port 8000 >> \"$RUNTIME_DIR/backend.log\" 2>&1"
+  tmux new-window -d -t "$SESSION_NAME" -n frontend \
+    "cd \"$ROOT_DIR/web\" && exec npm run dev -- --host 127.0.0.1 --port 5173 --strictPort >> \"$RUNTIME_DIR/frontend.log\" 2>&1"
+  if ! wait_for_url "$BACKEND_URL/health" || ! wait_for_url "$FRONTEND_URL"; then
+    tmux send-keys -t "$SESSION_NAME:backend" C-c
+    tmux send-keys -t "$SESSION_NAME:frontend" C-c
+    tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+    fail "Field trial did not become healthy. Inspect logs before retrying."
+  fi
+  if ! verify_running_detector; then
+    tmux send-keys -t "$SESSION_NAME:backend" C-c
+    tmux send-keys -t "$SESSION_NAME:frontend" C-c
+    tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+    fail "MegaDetector is not ready. The field trial was stopped."
+  fi
+  write_metadata
+  printf "Field trial is healthy at %s (session %s).\n" "$FRONTEND_URL" "$SESSION_NAME"
+}
+
+stop_trial() {
+  if ! session_exists; then
+    printf "No mockingbird-field-trial session is running.\n"
+    return 0
+  fi
+  # Ctrl-C lets the backend lifespan close durable exposure intervals before tmux exits.
+  tmux send-keys -t "$SESSION_NAME:backend" C-c
+  tmux send-keys -t "$SESSION_NAME:frontend" C-c
+  sleep 1
+  tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+  printf "Field trial stopped through the application shutdown path.\n"
+}
+
+status_trial() {
+  if ! session_exists; then
+    printf "Field trial is stopped.\n"
+    return 0
+  fi
+  printf "Field trial session: %s\n" "$SESSION_NAME"
+  tmux list-panes -a -t "$SESSION_NAME" -F "#{window_name}: pid #{pane_pid} (#{pane_current_command})"
+  [ -f "$RUNTIME_DIR/metadata.json" ] && printf "Operator metadata: %s\n" "$RUNTIME_DIR/metadata.json"
+}
+
+show_logs() {
+  tail -n 120 "$RUNTIME_DIR/backend.log" 2>/dev/null || true
+  tail -n 120 "$RUNTIME_DIR/frontend.log" 2>/dev/null || true
+}
+
+open_browser() {
+  require_command xdg-open
+  xdg-open "$FRONTEND_URL" >/dev/null 2>&1 &
+}
+
+case ${1:-status} in
+  start) start_trial ;;
+  stop) stop_trial ;;
+  status) status_trial ;;
+  logs) show_logs ;;
+  open-browser) open_browser ;;
+  *) fail "Usage: $0 {start|stop|status|logs|open-browser}" ;;
+esac

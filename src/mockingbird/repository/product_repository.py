@@ -8427,6 +8427,11 @@ class ProductRepository:
                         stream_name=stream.name,
                         source_id=stream.source_id,
                         source_name=source_name,
+                        source_kind=(
+                            SourceKind(source.kind)
+                            if source is not None
+                            else SourceKind.manual_upload
+                        ),
                         source_status=source_status,
                         setup_incomplete=(
                             source_status == SourceStatus.needs_setup
@@ -8446,6 +8451,11 @@ class ProductRepository:
                             playback.message
                             if playback is not None
                             else "Readiness is temporarily unavailable."
+                        ),
+                        playback_kind=(
+                            playback.playback_kind
+                            if playback is not None
+                            else StreamPlaybackKind.placeholder
                         ),
                         live_preview=self._dashboard_live_preview(playback),
                         zone_overlays=zone_overlays_by_stream.get(stream.id, []),
@@ -8571,6 +8581,7 @@ class ProductRepository:
             StreamPlaybackKind.rtsp,
             StreamPlaybackKind.local_usb,
             StreamPlaybackKind.windows_dshow,
+            StreamPlaybackKind.camera_node,
         }:
             return DashboardLivePreview(
                 kind=DashboardLivePreviewKind.backend_session,

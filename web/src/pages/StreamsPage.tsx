@@ -1695,7 +1695,11 @@ export function StreamsPage({
     Record<string, SourceProviderConfiguration>
   >({});
   const [setupReviews, setSetupReviews] = useState<Record<string, SourceSetupReviewResponse>>({});
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(sources[0]?.id ?? null);
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(
+    sources.find((source) => source.kind !== "demo")?.id ?? sources[0]?.id ?? null,
+  );
+  const [showDemoSources, setShowDemoSources] = useState(false);
+  const [isCameraSetupOpen, setIsCameraSetupOpen] = useState(false);
   const [providerKey, setProviderKey] = useState("");
   const [configDraft, setConfigDraft] = useState<Record<string, string>>({});
   const [windowsCameraDiscovery, setWindowsCameraDiscovery] =
@@ -1960,6 +1964,9 @@ export function StreamsPage({
   }, [sources, selectedSourceId, pendingSelectedSourceId]);
 
   const selectedSource = sources.find((source) => source.id === selectedSourceId) ?? null;
+  const visibleSources = sources.filter(
+    (source) => source.kind !== "demo" || showDemoSources || source.id === selectedSourceId,
+  );
   const realSourceCount = sources.filter((source) => source.kind !== "demo").length;
   const selectedConnection = selectedSourceId ? connectionStatuses[selectedSourceId] : null;
   const selectedConfiguration = selectedSourceId
@@ -4246,7 +4253,16 @@ export function StreamsPage({
         <section className="panel"><span className="meta-text">Loading Live Camera Overview…</span></section>
       )}
       {selectedSource ? (
-        <section className="panel source-setup-panel source-workflow-panel">
+        <details
+          className="panel source-setup-panel source-workflow-panel"
+          open={isCameraSetupOpen || isAddCameraOpen}
+          onToggle={(event) => setIsCameraSetupOpen(event.currentTarget.open)}
+        >
+          <summary className="source-setup-summary">
+            <strong>Camera setup and repair</strong>
+            <span>Rename, repair, archive, or configure a saved camera.</span>
+          </summary>
+          <div className="source-setup-details-body">
           <div className="section-heading">
             <div>
               <h2>Camera setup</h2>
@@ -4278,7 +4294,7 @@ export function StreamsPage({
                     setSetupMessage(null);
                   }}
                 >
-                  {sources.map((source) => (
+                  {visibleSources.map((source) => (
                     <option key={source.id} value={source.id}>
                       {source.name}
                       {source.kind === "demo" ? " (sample)" : ""}
@@ -4294,6 +4310,15 @@ export function StreamsPage({
               >
                 Add Camera
               </button>
+              {sources.some((source) => source.kind === "demo") ? (
+                <button
+                  className="text-action"
+                  onClick={() => setShowDemoSources((current) => !current)}
+                  type="button"
+                >
+                  {showDemoSources ? "Hide demo and test data" : "Show demo and test data"}
+                </button>
+              ) : null}
             </div>
             <div className="source-summary-line">
               <strong>{selectedProviderLabel}</strong>
@@ -7869,7 +7894,8 @@ export function StreamsPage({
               )}
             </div>
           </section>
-        </section>
+          </div>
+        </details>
       ) : (
         <EmptyState
           title="No Sources available"

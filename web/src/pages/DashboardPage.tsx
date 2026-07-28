@@ -5,6 +5,7 @@ import type {
   DashboardVisitSummary,
   CameraHealthSummary,
   HealthStatus,
+  ModelAdapter,
   StorageSummary,
   StreamRuntimeStatus,
 } from "../api/types";
@@ -27,6 +28,7 @@ interface DashboardPageProps {
   onAddCamera: () => void;
   onOpenReview: (context?: ReviewQueueFocus) => void;
   onOpenBirdLog: () => void;
+  onOpenInsights: () => void;
   onOpenVisit: (visitId: string) => void;
 }
 
@@ -126,6 +128,7 @@ export function DashboardPage({
   onAddCamera,
   onOpenReview,
   onOpenBirdLog,
+  onOpenInsights,
   onOpenVisit,
 }: DashboardPageProps) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -137,6 +140,7 @@ export function DashboardPage({
     Record<string, StreamRuntimeStatus>
   >({});
   const [storageSummary, setStorageSummary] = useState<StorageSummary | null>(null);
+  const [detectorStatus, setDetectorStatus] = useState<ModelAdapter | null>(null);
 
   const refreshDashboard = useCallback(async (initialLoad = false) => {
     if (initialLoad) {
@@ -145,13 +149,15 @@ export function DashboardPage({
       setIsRefreshing(true);
     }
     try {
-      const [nextSummary, monitoringStatuses, nextStorageSummary] = await Promise.all([
+      const [nextSummary, monitoringStatuses, nextStorageSummary, nextDetectorStatus] = await Promise.all([
         apiClient.getDashboardSummary(),
         apiClient.getStreamMonitoringStatuses().catch(() => null),
         apiClient.getStorageRetentionSummary().catch(() => null),
+        apiClient.getModelAdapter("megadetector").catch(() => null),
       ]);
       setSummary(nextSummary);
       setStorageSummary(nextStorageSummary);
+      setDetectorStatus(nextDetectorStatus);
       if (monitoringStatuses) {
         setDurableStatusByStream(
           Object.fromEntries(
@@ -249,6 +255,9 @@ export function DashboardPage({
           <button className="primary-action" onClick={onOpenStreams} type="button">
             Open Cameras / Streams
           </button>
+          <button className="secondary-action" onClick={onOpenInsights} type="button">
+            Zone & Feeder Insights
+          </button>
           <button className="secondary-action" onClick={() => void refreshDashboard()} type="button">
             {isRefreshing ? "Refreshing…" : "Refresh"}
           </button>
@@ -301,6 +310,11 @@ export function DashboardPage({
           <strong>{headline.reviewed_observation_count_today}</strong>
           <small>Correction-derived bird truth</small>
         </button>
+        <div className="dashboard-operation-card">
+          <span>Detector</span>
+          <strong>{detectorStatus?.status === "available" ? "Ready" : "Unavailable"}</strong>
+          <small>{detectorStatus?.status === "available" ? "MegaDetector is ready for evidence proposals" : "Monitoring stays safe without it"}</small>
+        </div>
       </section>
 
       {monitorActionError ? <div className="dashboard-action-error" role="alert">{monitorActionError}</div> : null}

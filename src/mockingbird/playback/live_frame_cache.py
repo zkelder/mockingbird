@@ -79,6 +79,19 @@ def get_latest_frame(
     return frame
 
 
+def get_last_frame(stream_id: str) -> LiveFrame | None:
+    """Return the latest cached frame even when it is stale.
+
+    The current-frame viewer must present a stale image honestly instead of
+    pretending there is no recent camera context. It remains an in-memory,
+    read-only cache lookup; callers still require an active session before
+    exposing the frame.
+    """
+
+    frames = _RECENT_FRAMES.get(stream_id)
+    return frames[-1] if frames else None
+
+
 def get_recent_frames(
     stream_id: str,
     *,
@@ -164,6 +177,7 @@ __all__ = [
     "get_cache_status",
     "get_recent_frames",
     "get_latest_frame",
+    "get_last_frame",
     "iter_cached_stream_ids",
     "store_latest_frame",
 ]

@@ -613,6 +613,8 @@ export const apiClient = {
     ),
   liveCameraSessionMjpegUrl: (streamId: string) =>
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live-session/mjpeg`,
+  liveCameraCurrentFrameUrl: (streamId: string) =>
+    `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live-session/current-frame`,
   openLiveOverviewPreview: (streamId: string, payload: LivePreviewLeaseRequest) =>
     request<LivePreviewLeaseResponse>(
       `/api/streams/${encodeURIComponent(streamId)}/live-preview/open`,

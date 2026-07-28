@@ -35,6 +35,7 @@ import type {
   ZoneMonitoringPolicyUpdate,
   ZoneType,
 } from "../api/types";
+import { CurrentFrameView, type CurrentFrameMetadata } from "../components/CurrentFrameView";
 import { EmptyState } from "../components/EmptyState";
 import { StatusPill } from "../components/StatusPill";
 import { StreamPanel } from "../components/StreamPanel";
@@ -46,6 +47,8 @@ interface StreamDetailPageProps {
   reviewQueue: ReviewQueueItem[];
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
+  onOpenActivity: () => void;
+  onOpenInsights: () => void;
   onOpenImport: () => void;
   onOpenExports: () => void;
   onOpenReview: (
@@ -301,12 +304,17 @@ function isWindowsDshowBridgePlayback(status?: StreamPlaybackStatus | null): boo
   );
 }
 
+function isCameraNodePlayback(status?: StreamPlaybackStatus | null): boolean {
+  return status?.status === "live_ready" && status.playback_kind === "camera_node";
+}
+
 function hasRealLivePlayback(status?: StreamPlaybackStatus | null): boolean {
   return (
     isBrowserPlayablePlayback(status) ||
     isRtspBridgePlayback(status) ||
     isLocalCameraBridgePlayback(status) ||
-    isWindowsDshowBridgePlayback(status)
+    isWindowsDshowBridgePlayback(status) ||
+    isCameraNodePlayback(status)
   );
 }
 
@@ -343,7 +351,8 @@ function supportsLiveMotionMonitoring(status?: StreamPlaybackStatus | null): boo
   return (
     isRtspBridgePlayback(status) ||
     isLocalCameraBridgePlayback(status) ||
-    isWindowsDshowBridgePlayback(status)
+    isWindowsDshowBridgePlayback(status) ||
+    isCameraNodePlayback(status)
   );
 }
 
@@ -627,6 +636,8 @@ export function StreamDetailPage({
   reviewQueue,
   onOpenEvent,
   onOpenVisit,
+  onOpenActivity,
+  onOpenInsights,
   onOpenImport,
   onOpenExports,
   onOpenReview,
@@ -1305,6 +1316,17 @@ export function StreamDetailPage({
       isMounted = false;
     };
   }, [streamId]);
+
+  useEffect(() => {
+    if (!detail || !isCameraNodePlayback(detail.playback)) {
+      return;
+    }
+    // A paired Node can show an already-running session’s cached still without
+    // taking ownership of the camera or enabling monitoring.
+    setLiveViewOpen(true);
+    setLiveViewState("opening");
+    setLiveViewError(null);
+  }, [detail?.stream.id, detail?.playback.playback_kind, detail?.playback.status]);
 
   useEffect(() => {
     if (!detail || hasRealLivePlayback(detail.playback)) {
@@ -2189,7 +2211,10 @@ export function StreamDetailPage({
   const nativeCameraControlsBlocked =
     liveMonitorRunning ||
     ["starting", "running", "stopping"].includes(liveSession?.status ?? "");
-  const liveUrl = liveStreamUrl(detail.playback, detail.stream.id);
+  const cameraNodePlayback = isCameraNodePlayback(detail.playback);
+  const liveUrl = cameraNodePlayback
+    ? apiClient.liveCameraCurrentFrameUrl(detail.stream.id)
+    : liveStreamUrl(detail.playback, detail.stream.id);
   const liveElementKey = `${liveUrl ?? "no-live-url"}-${liveViewReloadToken}`;
   const liveViewStatusLabel =
     backendLiveSessionSupported && liveSessionRunning && !liveViewOpen
@@ -2599,7 +2624,12 @@ export function StreamDetailPage({
         </div>
       </div>
 
-      <section className="panel" aria-label="Species candidate pack">
+      <details className="panel stream-secondary-details" aria-label="Species candidate pack">
+        <summary className="source-setup-summary">
+          <strong>Species candidate pack</strong>
+          <span>Optional reviewer-assistance scope; it does not run automatically.</span>
+        </summary>
+        <div className="stream-secondary-details-body">
         <div className="section-heading">
           <div>
             <span className="eyebrow">Evidence-only identification</span>
@@ -2663,7 +2693,8 @@ export function StreamDetailPage({
           <div className="notice-panel">{candidatePackSelection.warning}</div>
         ) : null}
         {candidatePackError ? <div className="error-panel compact-error">{candidatePackError}</div> : null}
-      </section>
+        </div>
+      </details>
 
       {realLivePlayback ? (
         <section className="stream-live-hero" aria-label={`${detail.stream.name} live stream`}>
@@ -3459,7 +3490,25 @@ export function StreamDetailPage({
 
           <div className={`stream-live-frame${drawMode ? " draw-mode" : ""}`}>
             <div className="stream-live-media-layer">
-              {liveViewOpen && liveUrl ? (
+              {cameraNodePlayback ? (
+                <CurrentFrameView
+                  active={liveViewOpen}
+                  alt={`${detail.stream.name} current camera frame`}
+                  streamId={detail.stream.id}
+                  onFrameChange={(frame: CurrentFrameMetadata) => {
+                    if (frame.state === "unavailable") {
+                      setLiveViewState("no_frames");
+                      setLiveViewError("No current camera frame is available.");
+                      return;
+                    }
+                    setLiveViewState("streaming");
+                    setLiveViewError(null);
+                    if (frame.width && frame.height) {
+                      setLiveMediaSize({ width: frame.width, height: frame.height });
+                    }
+                  }}
+                />
+              ) : liveViewOpen && liveUrl ? (
                 detail.playback.playback_kind === "browser_video" ||
                 detail.playback.playback_kind === "hls" ? (
                   <video
@@ -4693,6 +4742,10 @@ export function StreamDetailPage({
                 </button>
               </>
             )}
+          </div>
+          <div className="detail-actions">
+            <button className="text-action" onClick={onOpenActivity} type="button">Open Activity</button>
+            <button className="text-action" onClick={onOpenInsights} type="button">Open Zone & Feeder Insights</button>
           </div>
         </div>
       </section>

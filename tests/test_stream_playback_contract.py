@@ -686,6 +686,17 @@ async def test_overview_preview_lease_starts_only_an_explicit_view_and_preserves
     ]
 
 
+def test_dashboard_summary_exposes_durable_source_and_playback_classification(
+    isolated_repository: ProductRepository,
+) -> None:
+    summary = isolated_repository.dashboard_summary(now=datetime.now().astimezone())
+
+    demo_stream = next(item for item in summary.streams if item.source_id == SOURCE_ID)
+    assert demo_stream.source_kind == SourceKind.demo
+    assert demo_stream.playback_kind.value == "demo_panel"
+
+
+
 def test_dashboard_summary_serializes_an_empty_stream_installation(
     isolated_repository: ProductRepository,
 ) -> None:
@@ -3131,6 +3142,75 @@ async def test_live_camera_session_start_reuses_single_reader_and_reports_status
     assert fake_process.terminated is True
     assert fake_process.waited is True
     assert await product_counts(client) == before
+
+
+async def test_current_frame_endpoint_returns_cached_frame_with_safe_metadata_and_no_writes(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await configure_local_usb_camera(client, device="/dev/video0")
+    before = await product_counts(client)
+    encoded, frame_bytes = api_main.cv2.imencode(
+        ".jpg",
+        np.zeros((1440, 1920, 3), dtype=np.uint8),
+    )
+    assert encoded is True
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_bytes.tobytes(),
+        captured_at=datetime.now(UTC),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_live_camera_session_manager",
+        SimpleNamespace(status=lambda stream_id: SimpleNamespace(status="running")),
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live-session/current-frame")
+
+    assert response.status_code == 200
+    assert response.content.startswith(b"\xff\xd8")
+    assert response.headers["cache-control"] == "no-store, max-age=0"
+    assert response.headers["x-mockingbird-frame-sequence"] == "1"
+    assert response.headers["x-mockingbird-frame-width"] == "1920"
+    assert response.headers["x-mockingbird-frame-height"] == "1440"
+    assert int(response.headers["x-mockingbird-frame-age-ms"]) >= 0
+    assert await product_counts(client) == before
+
+
+async def test_current_frame_endpoint_labels_stale_frames_without_starting_a_session(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await configure_local_usb_camera(client, device="/dev/video0")
+    encoded, frame_bytes = api_main.cv2.imencode(
+        ".jpg",
+        np.zeros((4, 6, 3), dtype=np.uint8),
+    )
+    assert encoded is True
+    live_frame_cache.store_latest_frame(
+        STREAM_ID,
+        frame_bytes.tobytes(),
+        captured_at=datetime.now(UTC) - timedelta(seconds=12),
+    )
+    starts: list[str] = []
+    monkeypatch.setattr(
+        api_main,
+        "_live_camera_session_manager",
+        SimpleNamespace(
+            status=lambda stream_id: SimpleNamespace(status="running"),
+            start=lambda *_args, **_kwargs: starts.append("started"),
+        ),
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live-session/current-frame")
+
+    assert response.status_code == 200
+    assert response.headers["x-mockingbird-frame-state"] == "stale"
+    assert int(response.headers["x-mockingbird-frame-age-ms"]) >= 12_000
+    assert starts == []
+
+
 
 
 async def test_live_camera_session_mjpeg_uses_existing_session_without_new_reader(
