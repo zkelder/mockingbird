@@ -19,10 +19,12 @@ import type {
   ReviewQueueItem,
   SourceProviderConfiguration,
   SourceSetupReviewResponse,
+  SpeciesCandidatePack,
   Stream,
   StreamMonitoringPolicy,
   StreamPlaybackStatus,
   StreamRuntimeStatus,
+  StreamSpeciesCandidatePackSelection,
   StreamVisitSummary,
   Visit,
   VisitDetail,
@@ -635,6 +637,12 @@ export function StreamDetailPage({
   const [detail, setDetail] = useState<StreamDetailState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [candidatePacks, setCandidatePacks] = useState<SpeciesCandidatePack[]>([]);
+  const [candidatePackSelection, setCandidatePackSelection] =
+    useState<StreamSpeciesCandidatePackSelection | null>(null);
+  const [candidatePackDraftId, setCandidatePackDraftId] = useState("");
+  const [candidatePackError, setCandidatePackError] = useState<string | null>(null);
+  const [isSavingCandidatePack, setIsSavingCandidatePack] = useState(false);
   const [recentVisitFilter, setRecentVisitFilter] = useState<RecentVisitFilter>("all");
   const [recentVisitZoneId, setRecentVisitZoneId] = useState("all");
   const [recentVisitsRefreshToken, setRecentVisitsRefreshToken] = useState(0);
@@ -939,6 +947,11 @@ export function StreamDetailPage({
     async function loadStreamDetail() {
       setIsLoading(true);
       setError(null);
+      setCandidatePacks([]);
+      setCandidatePackSelection(null);
+      setCandidatePackDraftId("");
+      setCandidatePackError(null);
+      setIsSavingCandidatePack(false);
       setZoneError(null);
       setZoneMessage(null);
       setDeleteZoneConfirmId(null);
@@ -999,13 +1012,24 @@ export function StreamDetailPage({
       lastReviewNoticeRef.current = null;
       try {
         const stream = await apiClient.getStream(streamId);
-        const [playback, setupReview, providerConfiguration, zones, events, recentVisits] = await Promise.all([
+        const [
+          playback,
+          setupReview,
+          providerConfiguration,
+          zones,
+          events,
+          recentVisits,
+          nextCandidatePacks,
+          nextCandidatePackSelection,
+        ] = await Promise.all([
           apiClient.getStreamPlaybackStatus(streamId),
           apiClient.getSourceSetupReview(stream.source_id),
           apiClient.getSourceProviderConfiguration(stream.source_id),
           apiClient.getStreamZones(streamId),
           apiClient.getStreamEvents(streamId),
           apiClient.getStreamRecentVisits(streamId, { limit: 12 }),
+          apiClient.listSpeciesCandidatePacks(false),
+          apiClient.getStreamSpeciesCandidatePackSelection(streamId),
         ]);
         const visitPairs = await Promise.all(
           events.map(async (event) => [event.id, await apiClient.getEventVisits(event.id)] as const),
@@ -1022,6 +1046,9 @@ export function StreamDetailPage({
           });
           setSourceProviderConfig(providerConfiguration);
           setCameraTuningDraft(cameraTuningDraftFromConfig(providerConfiguration));
+          setCandidatePacks(nextCandidatePacks);
+          setCandidatePackSelection(nextCandidatePackSelection);
+          setCandidatePackDraftId(nextCandidatePackSelection.effective_pack.id);
         }
       } catch (caught) {
         if (isMounted) {
@@ -1040,6 +1067,27 @@ export function StreamDetailPage({
       isMounted = false;
     };
   }, [streamId]);
+
+  async function saveSpeciesCandidatePack() {
+    if (!candidatePackDraftId || isSavingCandidatePack) {
+      return;
+    }
+    setIsSavingCandidatePack(true);
+    setCandidatePackError(null);
+    try {
+      const selection = await apiClient.setStreamSpeciesCandidatePackSelection(streamId, {
+        candidate_pack_id: candidatePackDraftId,
+      });
+      setCandidatePackSelection(selection);
+      setCandidatePackDraftId(selection.effective_pack.id);
+    } catch (caught) {
+      setCandidatePackError(
+        caught instanceof Error ? caught.message : "Could not update the Stream candidate pack.",
+      );
+    } finally {
+      setIsSavingCandidatePack(false);
+    }
+  }
 
   async function setDurableMonitoringEnabled(enabled: boolean) {
     setIsUpdatingMonitoringContinuity(true);
@@ -2550,6 +2598,72 @@ export function StreamDetailPage({
           )}
         </div>
       </div>
+
+      <section className="panel" aria-label="Species candidate pack">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">Evidence-only identification</span>
+            <h2>Species candidate pack</h2>
+            <span className="meta-text">
+              Future explicit species suggestions for this Stream use this ordered bird scope.
+            </span>
+          </div>
+          {candidatePackSelection ? (
+            <StatusPill
+              label={`${candidatePackSelection.effective_pack.candidate_count} species`}
+              tone="quiet"
+            />
+          ) : null}
+        </div>
+        {candidatePackSelection ? (
+          <div className="review-identification-grid">
+            <div className="data-row">
+              <span>Effective pack</span>
+              <strong>
+                {candidatePackSelection.effective_pack.display_name} v{candidatePackSelection.effective_pack.version}
+              </strong>
+              <small>
+                Compared against {candidatePackSelection.effective_pack.candidate_count} species. Historical suggestion evidence is unchanged.
+              </small>
+            </div>
+            <label>
+              Use active pack
+              <select
+                value={candidatePackDraftId}
+                onChange={(event) => setCandidatePackDraftId(event.target.value)}
+              >
+                {candidatePacks.filter((pack) => pack.status === "active").map((pack) => (
+                  <option key={pack.id} value={pack.id}>
+                    {pack.display_name} v{pack.version} ({pack.candidate_count} species)
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="data-row">
+              <span>Apply</span>
+              <button
+                className="secondary-action"
+                disabled={
+                  !candidatePackDraftId ||
+                  candidatePackDraftId === candidatePackSelection.effective_pack.id ||
+                  isSavingCandidatePack
+                }
+                onClick={() => void saveSpeciesCandidatePack()}
+                type="button"
+              >
+                {isSavingCandidatePack ? "Saving..." : "Use this pack"}
+              </button>
+              <small>Pack management is available in Species Suggestions.</small>
+            </div>
+          </div>
+        ) : (
+          <span className="meta-text">Loading the Stream candidate-pack selection...</span>
+        )}
+        {candidatePackSelection?.warning ? (
+          <div className="notice-panel">{candidatePackSelection.warning}</div>
+        ) : null}
+        {candidatePackError ? <div className="error-panel compact-error">{candidatePackError}</div> : null}
+      </section>
 
       {realLivePlayback ? (
         <section className="stream-live-hero" aria-label={`${detail.stream.name} live stream`}>

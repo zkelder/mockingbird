@@ -273,9 +273,21 @@ artifacts in the desktop process environment. The explicit
 `scripts/prepare_bioclip_candidate_cache.py` setup command can generate the
 matching cache from a bounded frozen file of existing MockingBird bird taxonomy
 labels and a pinned expected weight digest. It forces the model libraries
-offline, cannot download an artifact, and never runs during review. Rebuilding
-that cache is an explicit configuration operation whenever the candidate scope
-or model artifact changes.
+offline, cannot download an artifact, and never runs during review.
+
+Each Stream resolves one immutable versioned bird candidate pack. Backyard Core
+v1 preserves the established ordered 14-species scope; a user pack contains
+2-200 existing bird-species taxonomy members and an edit creates a successor,
+rather than rewriting historical evidence. New attempts retain the pack ID,
+version, ordered-member hash, and candidate count. Completed-run reuse also
+requires that pack hash, so a selected-pack change creates a new explicit
+evidence set and supersedes only earlier pending BioCLIP evidence.
+
+A pack may select only labels already present in the configured local candidate
+bank. Selection reuses the verified matching rows from that precomputed cache;
+a missing label reports setup required and never builds embeddings during a
+review request. Rebuilding the full cache remains an explicit offline
+configuration operation when its label bank or model artifact changes.
 
 ## Supported Media Scope
 
@@ -344,10 +356,10 @@ reuses it for sequential requests, and is terminated and recreated after a
 timeout, crash, or parent shutdown. Side-effect-free status rejects an
 unsupported OpenCLIP runtime line before execution, and Windows worker startup
 passes a bounded shared-memory descriptor instead of pickling full RGB bytes
-into spawn arguments. A completed pending suggestion is reused only when both
-the exact input SHA-256 and verified model/cache configuration match; a changed
-input or artifact creates a new pending set and supersedes only prior pending
-BioCLIP evidence.
+into spawn arguments. A completed pending suggestion is reused only when the
+exact input SHA-256, verified model/cache configuration, and candidate-pack
+hash match; a changed input, artifact, or pack creates a new pending set and
+supersedes only prior pending BioCLIP evidence.
 
 ## Evaluation Plan
 

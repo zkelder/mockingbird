@@ -9,6 +9,10 @@ import httpx
 import pytest
 
 from mockingbird.api import main as api_main
+from mockingbird.api.schemas import (
+    SpeciesCandidatePackCreate,
+    StreamSpeciesCandidatePackSelectionUpdate,
+)
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.backup import (
@@ -440,3 +444,35 @@ def test_failed_repository_reopen_rolls_back_before_returning_error(
     assert (api_repository.media_root / "api-visit.jpg").read_bytes() == (
         b"current before failed restore"
     )
+
+
+def test_backup_restore_preserves_stream_candidate_pack_selection(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    pack = repository.create_species_candidate_pack(
+        SpeciesCandidatePackCreate(
+            display_name="Backup feeder pack",
+            taxonomy_label_ids=["tufted_titmouse", "carolina_chickadee"],
+        )
+    )
+    repository.set_stream_species_candidate_pack_selection(
+        "stream-backyard-feeder",
+        StreamSpeciesCandidatePackSelectionUpdate(candidate_pack_id=pack.id),
+    )
+    manager = _manager(repository, tmp_path)
+    backup = manager.create_backup()
+    repository.close()
+
+    transaction = manager.replace_live_files(manager.verify_backup(backup.backup.id))
+    restored_repository = _repository(tmp_path)
+    try:
+        selection = restored_repository.get_stream_species_candidate_pack_selection(
+            "stream-backyard-feeder"
+        )
+        assert selection is not None
+        assert selection.selected_pack_id == pack.id
+        assert selection.effective_pack.content_sha256 == pack.content_sha256
+        transaction.commit()
+    finally:
+        restored_repository.close()

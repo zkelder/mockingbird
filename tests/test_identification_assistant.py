@@ -130,6 +130,7 @@ async def test_completed_identical_input_returns_existing_assistant_run(
                 "evidence_mode": "primary_only",
                 "media_asset_ids": [media_asset_id],
                 "adapter_id": assistant["availability"]["adapter_id"],
+                "candidate_pack_sha256": assistant["availability"]["candidate_pack"]["content_sha256"],
             },
             sort_keys=True,
             separators=(",", ":"),

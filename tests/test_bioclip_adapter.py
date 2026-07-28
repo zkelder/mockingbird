@@ -182,6 +182,41 @@ def test_prepare_run_hashes_model_artifacts_for_completed_result_reuse(
         bioclip_adapter.prepare_bioclip_run(config)
 
 
+def test_candidate_subset_reuses_the_configured_local_embedding_bank(
+    tmp_path: Path,
+) -> None:
+    config, labels = _write_configured_artifacts(tmp_path)
+    assert config.model_dir is not None
+    assert config.labels_path is not None
+    assert config.embedding_cache_path is not None
+    selected = (labels[1], labels[0])
+    cache_before = config.embedding_cache_path.read_bytes()
+
+    selected_config = build_bioclip_config(
+        model_dir=config.model_dir,
+        labels_path=config.labels_path,
+        embedding_cache_path=config.embedding_cache_path,
+        candidate_labels=selected,
+    )
+    prepared = bioclip_adapter.prepare_bioclip_run(selected_config)
+
+    assert prepared.candidate_labels == selected
+    assert prepared.candidate_count == 2
+    assert prepared.candidate_set_sha256 == hashlib.sha256(
+        "\n".join(selected).encode("utf-8")
+    ).hexdigest()
+    assert config.embedding_cache_path.read_bytes() == cache_before
+
+    missing_label_config = build_bioclip_config(
+        model_dir=config.model_dir,
+        labels_path=config.labels_path,
+        embedding_cache_path=config.embedding_cache_path,
+        candidate_labels=(*selected, "not in the local candidate bank"),
+    )
+    with pytest.raises(BioClipConfigurationError, match="candidate selection"):
+        bioclip_adapter.prepare_bioclip_run(missing_label_config)
+
+
 def test_status_is_available_without_importing_or_loading_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

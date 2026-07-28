@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 24
+CURRENT_DATABASE_SCHEMA_VERSION = 25
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -540,6 +540,37 @@ def _migrate_to_product_alerts(connection: Connection) -> None:
     Base.metadata.tables["product_alerts"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_species_candidate_packs(connection: Connection) -> None:
+    """Add empty versioned candidate-pack storage without rewriting suggestion evidence."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Species candidate-pack migration requires local SQLite storage."
+        )
+    Base.metadata.tables["species_candidate_packs"].create(bind=connection, checkfirst=True)
+    Base.metadata.tables["species_candidate_pack_members"].create(
+        bind=connection,
+        checkfirst=True,
+    )
+    Base.metadata.tables["stream_species_candidate_pack_selections"].create(
+        bind=connection,
+        checkfirst=True,
+    )
+    attempt_columns = {
+        column["name"]
+        for column in inspect(connection).get_columns("bioclip_identification_attempts")
+    }
+    for column, definition in (
+        ("candidate_pack_id", "VARCHAR"),
+        ("candidate_pack_version", "INTEGER"),
+        ("candidate_pack_sha256", "VARCHAR"),
+    ):
+        if column not in attempt_columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE bioclip_identification_attempts ADD COLUMN {column} {definition}"
+            )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -564,6 +595,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     22: _migrate_to_camera_configuration_revisions,
     23: _migrate_to_camera_node_provider_contract,
     24: _migrate_to_high_resolution_activity_evidence,
+    25: _migrate_to_species_candidate_packs,
 }
 
 

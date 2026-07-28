@@ -200,6 +200,49 @@ export interface TaxonomyLabel {
   sort_order?: number | null;
 }
 
+export type SpeciesCandidatePackStatus = "active" | "archived";
+
+export interface SpeciesCandidatePackSummary {
+  id: string;
+  display_name: string;
+  version: number;
+  status: SpeciesCandidatePackStatus;
+  is_builtin: boolean;
+  candidate_count: number;
+  content_sha256: string;
+}
+
+export interface SpeciesCandidatePack extends SpeciesCandidatePackSummary {
+  description?: string | null;
+  members: TaxonomyLabel[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SpeciesCandidatePackCreate {
+  display_name: string;
+  taxonomy_label_ids: string[];
+  description?: string | null;
+}
+
+export type SpeciesCandidatePackUpdate = SpeciesCandidatePackCreate;
+
+export interface SpeciesCandidatePackCloneRequest {
+  display_name?: string | null;
+  description?: string | null;
+}
+
+export interface StreamSpeciesCandidatePackSelection {
+  stream_id: string;
+  selected_pack_id?: string | null;
+  effective_pack: SpeciesCandidatePackSummary;
+  warning?: string | null;
+}
+
+export interface StreamSpeciesCandidatePackSelectionUpdate {
+  candidate_pack_id: string;
+}
+
 export interface CameraSource {
   id: string;
   name: string;
@@ -2329,6 +2372,8 @@ export interface LiveMotionEvaluateResponse {
   suggestion_id?: string | null;
   suggestion_confidence?: number | null;
   suggestion_reason?: string | null;
+  candidate_pack?: SpeciesCandidatePackSummary | null;
+  candidate_pack_warning?: string | null;
   suggestion_creates_truth: boolean;
   created_evidence: MotionEvidence[];
   debug_cell_zones: MotionZoneInput[];
@@ -2611,6 +2656,8 @@ export interface ReviewIdentificationSummary {
   focus_crop_warnings: string[];
   creates_truth: boolean;
   creates_export: boolean;
+  candidate_pack?: SpeciesCandidatePackSummary | null;
+  candidate_pack_warning?: string | null;
 }
 
 export interface ReviewQueueItem {
@@ -2956,6 +3003,8 @@ export interface ReviewQueueSpeciesSuggestionBatchPrepareResult {
   status: ReviewQueueSpeciesSuggestionBatchPrepareStatus;
   message: string;
   media_asset_id?: string | null;
+  candidate_pack?: SpeciesCandidatePackSummary | null;
+  candidate_pack_warning?: string | null;
 }
 
 export interface ReviewQueueSpeciesSuggestionBatchPrepareResponse {

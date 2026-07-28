@@ -56,6 +56,17 @@ export function IdentificationAssistant({
             <strong>{selectedFrame ? "One saved image" : "No saved image"}</strong>
             <small>High-resolution crop first, then full still, then the best monitoring evidence. No camera or live-stream access.</small>
           </div>
+          {availability.candidate_pack ? (
+            <div className="data-row">
+              <span>Candidate pack</span>
+              <strong>
+                Compared against {availability.candidate_pack.candidate_count} species from {availability.candidate_pack.display_name} v{availability.candidate_pack.version}
+              </strong>
+              <small>
+                {availability.candidate_pack_warning ?? "The selected Stream pack applies only to this explicit evidence-only request."}
+              </small>
+            </div>
+          ) : null}
           <div className="data-row">
             <span>Truth boundary</span>
             <strong>Evidence only</strong>

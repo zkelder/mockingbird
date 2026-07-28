@@ -227,6 +227,7 @@ class BioClipAdapterConfig:
     labels_path: Path | None
     embedding_cache_path: Path | None
     device: str = "cpu"
+    candidate_labels: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -339,6 +340,9 @@ class _ValidatedConfig:
     embedding_cache_path: Path
     labels: tuple[str, ...]
     labels_sha256: str
+    cache_labels: tuple[str, ...]
+    cache_labels_sha256: str
+    candidate_embedding_indexes: tuple[int, ...]
     embedding_cache_sha256: str | None
     model_config_sha256: str
     expected_model_weights_sha256: str
@@ -397,6 +401,7 @@ def build_bioclip_config(
     labels_path: str | Path | None,
     embedding_cache_path: str | Path | None,
     device: str = "cpu",
+    candidate_labels: tuple[str, ...] | None = None,
 ) -> BioClipAdapterConfig:
     """Build configuration without importing a runtime or touching the filesystem."""
 
@@ -405,6 +410,7 @@ def build_bioclip_config(
         labels_path=_optional_path(labels_path),
         embedding_cache_path=_optional_path(embedding_cache_path),
         device=device.strip().lower() if isinstance(device, str) else str(device),
+        candidate_labels=_optional_candidate_labels(candidate_labels),
     )
 
 
@@ -1472,13 +1478,18 @@ def _validate_config_files(
     _validate_model_config(model_config_path)
     _validate_cache_container(embedding_cache_path)
 
-    labels = _read_labels(labels_path)
+    cache_labels = _read_labels(labels_path)
+    cache_labels_sha256 = _label_sha256(cache_labels)
+    labels, candidate_embedding_indexes = _selected_candidate_labels(
+        config.candidate_labels,
+        cache_labels,
+    )
     labels_sha256 = _label_sha256(labels)
     model_config_sha256 = _file_sha256(model_config_path)
     cache_metadata = _read_cache_metadata(embedding_cache_path)
     _validate_cached_digest(
         name="labels",
-        expected=labels_sha256,
+        expected=cache_labels_sha256,
         cached=cache_metadata["label_sha256"],
     )
     _validate_cached_digest(
@@ -1510,7 +1521,9 @@ def _validate_config_files(
         _file_identity(model_weights_path),
         model_weights_sha256 or "weights_not_hashed",
         str(labels_path),
+        cache_labels_sha256,
         labels_sha256,
+        candidate_embedding_indexes,
         str(embedding_cache_path),
         _file_identity(embedding_cache_path),
         embedding_cache_sha256 or _file_identity(embedding_cache_path),
@@ -1523,6 +1536,9 @@ def _validate_config_files(
         embedding_cache_path=embedding_cache_path,
         labels=labels,
         labels_sha256=labels_sha256,
+        cache_labels=cache_labels,
+        cache_labels_sha256=cache_labels_sha256,
+        candidate_embedding_indexes=candidate_embedding_indexes,
         embedding_cache_sha256=embedding_cache_sha256,
         model_config_sha256=model_config_sha256,
         expected_model_weights_sha256=expected_model_weights_sha256,
@@ -1740,6 +1756,49 @@ def _read_labels(path: Path) -> tuple[str, ...]:
     return labels
 
 
+def _optional_candidate_labels(
+    value: tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, tuple):
+        raise BioClipConfigurationError("BioCLIP candidate labels must be an ordered tuple.")
+    labels = tuple(
+        item.strip() if isinstance(item, str) else ""
+        for item in value
+    )
+    if not labels or any(not item for item in labels):
+        raise BioClipConfigurationError("BioCLIP candidate labels must be non-empty text.")
+    return labels
+
+
+def _selected_candidate_labels(
+    requested_labels: tuple[str, ...] | None,
+    cache_labels: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[int, ...]]:
+    if requested_labels is None:
+        return cache_labels, tuple(range(len(cache_labels)))
+    if len(requested_labels) > BIOCLIP_MAX_LABEL_COUNT:
+        raise BioClipConfigurationError("BioCLIP candidate selection exceeds the bounded label count.")
+    cache_positions = {label.casefold(): index for index, label in enumerate(cache_labels)}
+    selected_labels: list[str] = []
+    selected_indexes: list[int] = []
+    seen: set[str] = set()
+    for requested in requested_labels:
+        normalized = requested.casefold()
+        if normalized in seen:
+            raise BioClipConfigurationError("BioCLIP candidate selection contains duplicate labels.")
+        index = cache_positions.get(normalized)
+        if index is None:
+            raise BioClipConfigurationError(
+                "BioCLIP candidate selection is not present in the configured local candidate bank."
+            )
+        seen.add(normalized)
+        selected_labels.append(cache_labels[index])
+        selected_indexes.append(index)
+    return tuple(selected_labels), tuple(selected_indexes)
+
+
 def _read_bounded_utf8(
     path: Path,
     *,
@@ -1782,7 +1841,7 @@ def _load_embedding_cache(
                 )
             cache_label_sha256 = _cache_digest_value(cache["label_sha256"])
             _validate_cached_label_sha256(
-                expected=validated.labels_sha256,
+                expected=validated.cache_labels_sha256,
                 cached=cache_label_sha256,
             )
             _validate_cached_digest(
@@ -1803,7 +1862,7 @@ def _load_embedding_cache(
             embeddings = numpy.asarray(cache["embeddings"])
             if (
                 embeddings.ndim != 2
-                or embeddings.shape[0] != len(validated.labels)
+                or embeddings.shape[0] != len(validated.cache_labels)
                 or embeddings.shape[1] != BIOCLIP_EMBEDDING_DIMENSION
             ):
                 raise BioClipConfigurationError(
@@ -1818,6 +1877,11 @@ def _load_embedding_cache(
                     "BioCLIP embedding cache contains non-finite vectors."
                 )
             embeddings = numpy.array(embeddings, dtype=numpy.float32, copy=True)
+            embeddings = numpy.array(
+                embeddings[list(validated.candidate_embedding_indexes)],
+                dtype=numpy.float32,
+                copy=True,
+            )
     except BioClipConfigurationError:
         raise
     except (OSError, ValueError, KeyError, TypeError) as error:

@@ -12,6 +12,7 @@ import type {
   ReviewQueueBulkCorrectionTargetType,
   ReviewQueueItem,
   ReviewQueueSpeciesSuggestionBatchPrepareResponse,
+  SpeciesCandidatePackSummary,
   TaxonomyLabel,
   VisitIdentificationAssistantResponse,
   VisitTagSummary,
@@ -147,6 +148,8 @@ interface SpeciesSuggestionBatchOutcome {
   mediaAssetId: string | null;
   topSuggestion: string | null;
   wasScheduled: boolean;
+  candidatePackLabel?: string | null;
+  candidatePackWarning?: string | null;
 }
 
 interface SpeciesSuggestionBatchState {
@@ -173,6 +176,12 @@ function assistantRunStatus(response: VisitIdentificationAssistantResponse): str
   return typeof status === "string" ? status : null;
 }
 
+function candidatePackLabel(pack: SpeciesCandidatePackSummary | null | undefined): string | null {
+  return pack
+    ? `Compared against ${pack.candidate_count} species from ${pack.display_name} v${pack.version}`
+    : null;
+}
+
 function batchOutcomeFromAssistant(
   item: ReviewQueueItem,
   response: VisitIdentificationAssistantResponse,
@@ -195,6 +204,8 @@ function batchOutcomeFromAssistant(
     mediaAssetId,
     topSuggestion,
     wasScheduled: true,
+    candidatePackLabel: candidatePackLabel(response.availability.candidate_pack),
+    candidatePackWarning: response.availability.candidate_pack_warning,
   };
   if (reusedCompletedInput) {
     return { ...base, status: "reused" };
@@ -2059,6 +2070,8 @@ export function ReviewQueuePage({
           mediaAssetId: result.media_asset_id ?? null,
           topSuggestion: null,
           wasScheduled: false,
+          candidatePackLabel: candidatePackLabel(result.candidate_pack),
+          candidatePackWarning: result.candidate_pack_warning,
         };
       });
     const queued = prepared.results.filter((result) => result.status === "queued");
@@ -2721,7 +2734,7 @@ export function ReviewQueuePage({
             </span>
           ) : null}
           <span className="field-helper">
-            Uses the configured 14-species local candidate scope. Scores are uncalibrated and relative; no suggestion is selected automatically.
+            Each Visit independently resolves its Stream's active pack. Scores are uncalibrated and relative; no suggestion is selected automatically.
           </span>
           {speciesSuggestionBatch && speciesSuggestionBatchCountsValue ? (
             <div aria-live="polite" className="notice-panel review-bulk-result">
@@ -2740,7 +2753,12 @@ export function ReviewQueuePage({
                   <div className="review-diagnostic-grid">
                     {speciesSuggestionBatch.outcomes.map((outcome) => (
                       <span key={outcome.visitId}>
-                        {outcome.visitId}: {formatLabel(outcome.status)}{outcome.mediaAssetId ? ` · ${outcome.mediaAssetId}` : ""}{outcome.topSuggestion ? ` · ${displayTaxonomyLabel(outcome.topSuggestion, taxonomyLabels)}` : ""}. {outcome.message}
+                        {outcome.visitId}: {formatLabel(outcome.status)}
+                        {outcome.mediaAssetId ? ` - ${outcome.mediaAssetId}` : ""}
+                        {outcome.topSuggestion ? ` - ${displayTaxonomyLabel(outcome.topSuggestion, taxonomyLabels)}` : ""}
+                        {outcome.candidatePackLabel ? ` - ${outcome.candidatePackLabel}` : ""}.
+                        {" "}{outcome.message}
+                        {outcome.candidatePackWarning ? ` Warning: ${outcome.candidatePackWarning}` : ""}
                       </span>
                     ))}
                   </div>
@@ -4226,6 +4244,17 @@ function IdentificationAssistPanel({
                 : "Unavailable"}
           </small>
         </div>
+        {identification.candidate_pack ? (
+          <div className="data-row">
+            <span>Candidate pack</span>
+            <strong>
+              Compared against {identification.candidate_pack.candidate_count} species from {identification.candidate_pack.display_name} v{identification.candidate_pack.version}
+            </strong>
+            <small>
+              {identification.candidate_pack_warning ?? "This Stream pack is resolved before each explicit suggestion."}
+            </small>
+          </div>
+        ) : null}
         <div className="data-row">
           <span>Best frame</span>
           <strong>{identification.media_asset_id ?? "No best frame"}</strong>

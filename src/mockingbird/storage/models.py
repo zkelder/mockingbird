@@ -53,6 +53,56 @@ class StreamModel(Base):
     is_live: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
 
+class SpeciesCandidatePackModel(Base):
+    """Immutable candidate-bank version referenced by suggestion evidence."""
+
+    __tablename__ = "species_candidate_packs"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'archived')", name="ck_species_candidate_pack_status"),
+        CheckConstraint("version >= 1", name="ck_species_candidate_pack_version"),
+        CheckConstraint("candidate_count BETWEEN 2 AND 200", name="ck_species_candidate_pack_candidate_count"),
+        CheckConstraint("length(content_sha256) = 64", name="ck_species_candidate_pack_content_sha256"),
+        UniqueConstraint("display_name", "version", name="uq_species_candidate_pack_name_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_sha256: Mapped[str] = mapped_column(String, nullable=False)
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SpeciesCandidatePackMemberModel(Base):
+    """Ordered taxonomy members; completed suggestion evidence never rewrites them."""
+
+    __tablename__ = "species_candidate_pack_members"
+    __table_args__ = (
+        CheckConstraint("position >= 0", name="ck_species_candidate_pack_member_position"),
+        UniqueConstraint("pack_id", "taxonomy_label_id", name="uq_species_candidate_pack_member_taxonomy"),
+    )
+
+    pack_id: Mapped[str] = mapped_column(ForeignKey("species_candidate_packs.id"), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    taxonomy_label_id: Mapped[str] = mapped_column(ForeignKey("taxonomy_labels.id"), nullable=False)
+
+
+class StreamSpeciesCandidatePackSelectionModel(Base):
+    """Per-Stream candidate-pack intent; missing rows resolve to the built-in pack."""
+
+    __tablename__ = "stream_species_candidate_pack_selections"
+
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), primary_key=True)
+    # Deliberately no FK: a partially restored or archived identifier must fall back
+    # safely instead of preventing the Stream from opening.
+    candidate_pack_id: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class StreamMonitoringPolicyModel(Base):
     """Durable user intent for Stream monitoring; it never proves runtime activity."""
 
@@ -856,6 +906,9 @@ class BioClipIdentificationAttemptModel(Base):
     candidate_set_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     candidate_set_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
     candidate_set_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    candidate_pack_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    candidate_pack_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    candidate_pack_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
     candidate_manifest_complete: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

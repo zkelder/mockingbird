@@ -337,6 +337,14 @@ from mockingbird.api.schemas import (
     SpeciesSuggestionResponse,
     SpeciesSuggestionStatus,
     SpeciesSuggestionStatusUpdateRequest,
+    SpeciesCandidatePack,
+    SpeciesCandidatePackCloneRequest,
+    SpeciesCandidatePackCreate,
+    SpeciesCandidatePackStatus,
+    SpeciesCandidatePackSummary,
+    SpeciesCandidatePackUpdate,
+    StreamSpeciesCandidatePackSelection,
+    StreamSpeciesCandidatePackSelectionUpdate,
     SourceKind,
     SourceProviderKind,
     SourceStatus,
@@ -463,6 +471,9 @@ from mockingbird.storage.models import (
     StorageCleanupBatchModel,
     StorageCleanupItemModel,
     StorageRetentionSettingsModel,
+    SpeciesCandidatePackMemberModel,
+    SpeciesCandidatePackModel,
+    StreamSpeciesCandidatePackSelectionModel,
     TaxonomyLabelModel,
     VisitCurationHistoryModel,
     VisitEvidenceLinkModel,
@@ -637,6 +648,28 @@ BIOCLIP_SETUP_HINT = (
     "The first bounded Review Queue integration is CPU-only, requires a precomputed "
     "embedding cache, and never downloads or generates model artifacts."
 )
+
+BUILTIN_SPECIES_CANDIDATE_PACK_ID = "backyard-core"
+BUILTIN_SPECIES_CANDIDATE_PACK_NAME = "Backyard Core"
+BUILTIN_SPECIES_CANDIDATE_PACK_VERSION = 1
+BUILTIN_SPECIES_CANDIDATE_TAXONOMY_IDS = (
+    "northern_mockingbird",
+    "carolina_wren",
+    "mourning_dove",
+    "american_robin",
+    "northern_cardinal",
+    "blue_jay",
+    "tufted_titmouse",
+    "carolina_chickadee",
+    "house_finch",
+    "eastern_bluebird",
+    "red_bellied_woodpecker",
+    "downy_woodpecker",
+    "brown_thrasher",
+    "gray_catbird",
+)
+SPECIES_CANDIDATE_PACK_MIN_MEMBERS = 2
+SPECIES_CANDIDATE_PACK_MAX_MEMBERS = 200
 
 _BIOCLIP_ATTEMPT_ERROR_FIELDS: dict[
     str,
@@ -1449,6 +1482,7 @@ class _ReviewSpeciesRunContext:
     motion_evidence_id: str | None
     zone_id: str | None
     crop: _ReviewSpeciesCropContext
+    candidate_pack: SpeciesCandidatePack
 
 
 @dataclass(frozen=True)
@@ -1463,6 +1497,7 @@ class _BioClipAttemptContext:
     media_asset_id: str
     motion_evidence_id: str | None
     crop: _ReviewSpeciesCropContext | None
+    candidate_pack: SpeciesCandidatePack
 
 
 @dataclass(frozen=True)
@@ -1708,6 +1743,7 @@ class ProductRepository:
         with self.session_factory() as session:
             with session.begin():
                 self._seed_taxonomy_labels(session)
+                self._ensure_builtin_species_candidate_pack(session)
                 source_count = session.scalar(select(func.count(CameraSourceModel.id))) or 0
                 if source_count > 0:
                     return
@@ -2342,6 +2378,391 @@ class ProductRepository:
 
                 suggestions.append(taxonomy_label)
             return suggestions
+
+    def _ensure_builtin_species_candidate_pack(self, session: Session) -> None:
+        """Seed the legacy candidate scope once without rewriting historic evidence."""
+
+        # Taxonomy seeding uses a no-autoflush session; flush it before validating
+        # the immutable built-in membership on a fresh local database.
+        session.flush()
+        existing = session.get(
+            SpeciesCandidatePackModel,
+            BUILTIN_SPECIES_CANDIDATE_PACK_ID,
+        )
+        if existing is not None:
+            return
+        member_ids = self._validated_species_candidate_pack_members(
+            session,
+            BUILTIN_SPECIES_CANDIDATE_TAXONOMY_IDS,
+        )
+        timestamp = datetime.now(UTC)
+        pack = SpeciesCandidatePackModel(
+            id=BUILTIN_SPECIES_CANDIDATE_PACK_ID,
+            display_name=BUILTIN_SPECIES_CANDIDATE_PACK_NAME,
+            version=BUILTIN_SPECIES_CANDIDATE_PACK_VERSION,
+            status=SpeciesCandidatePackStatus.active.value,
+            is_builtin=True,
+            description="The established local backyard bird candidate scope.",
+            content_sha256=_species_candidate_pack_content_sha256(member_ids),
+            candidate_count=len(member_ids),
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        session.add(pack)
+        session.add_all(
+            [
+                SpeciesCandidatePackMemberModel(
+                    pack_id=pack.id,
+                    position=position,
+                    taxonomy_label_id=taxonomy_label_id,
+                )
+                for position, taxonomy_label_id in enumerate(member_ids)
+            ]
+        )
+
+    def _validated_species_candidate_pack_members(
+        self,
+        session: Session,
+        taxonomy_label_ids: Iterable[str],
+    ) -> tuple[str, ...]:
+        member_ids = tuple(
+            value.strip()
+            for value in taxonomy_label_ids
+            if isinstance(value, str) and value.strip()
+        )
+        if not (
+            SPECIES_CANDIDATE_PACK_MIN_MEMBERS
+            <= len(member_ids)
+            <= SPECIES_CANDIDATE_PACK_MAX_MEMBERS
+        ):
+            raise ValueError("candidate_pack_member_count_invalid")
+        if len(set(member_ids)) != len(member_ids):
+            raise ValueError("candidate_pack_duplicate_member")
+        labels = {
+            label.id: label
+            for label in session.scalars(
+                select(TaxonomyLabelModel).where(TaxonomyLabelModel.id.in_(member_ids))
+            ).all()
+        }
+        if len(labels) != len(member_ids):
+            raise ValueError("candidate_pack_unknown_taxonomy")
+        if any(
+            label.category != LabelCategory.bird.value or not label.is_species
+            for label in labels.values()
+        ):
+            raise ValueError("candidate_pack_members_must_be_bird_species")
+        return member_ids
+
+    def _species_candidate_pack_from_model(
+        self,
+        session: Session,
+        pack: SpeciesCandidatePackModel,
+    ) -> SpeciesCandidatePack:
+        rows = session.execute(
+            select(SpeciesCandidatePackMemberModel, TaxonomyLabelModel)
+            .join(
+                TaxonomyLabelModel,
+                TaxonomyLabelModel.id
+                == SpeciesCandidatePackMemberModel.taxonomy_label_id,
+            )
+            .where(SpeciesCandidatePackMemberModel.pack_id == pack.id)
+            .order_by(SpeciesCandidatePackMemberModel.position)
+        ).all()
+        members = [_taxonomy_label_from_model(label) for _, label in rows]
+        if len(members) != pack.candidate_count:
+            raise RuntimeError("Species candidate-pack members are incomplete.")
+        return SpeciesCandidatePack(
+            id=pack.id,
+            display_name=pack.display_name,
+            version=pack.version,
+            status=SpeciesCandidatePackStatus(pack.status),
+            is_builtin=pack.is_builtin,
+            candidate_count=pack.candidate_count,
+            content_sha256=pack.content_sha256,
+            description=pack.description,
+            members=members,
+            created_at=_as_utc(pack.created_at),
+            updated_at=_as_utc(pack.updated_at),
+        )
+
+    def _species_candidate_pack_summary_from_model(
+        self,
+        pack: SpeciesCandidatePackModel,
+    ) -> SpeciesCandidatePackSummary:
+        return SpeciesCandidatePackSummary(
+            id=pack.id,
+            display_name=pack.display_name,
+            version=pack.version,
+            status=SpeciesCandidatePackStatus(pack.status),
+            is_builtin=pack.is_builtin,
+            candidate_count=pack.candidate_count,
+            content_sha256=pack.content_sha256,
+        )
+
+    def _effective_species_candidate_pack_for_stream(
+        self,
+        session: Session,
+        stream_id: str,
+    ) -> tuple[SpeciesCandidatePackModel, str | None, str | None]:
+        selection = session.get(StreamSpeciesCandidatePackSelectionModel, stream_id)
+        selected_pack_id = selection.candidate_pack_id if selection is not None else None
+        selected = (
+            session.get(SpeciesCandidatePackModel, selected_pack_id)
+            if selected_pack_id is not None
+            else None
+        )
+        if selected is not None and selected.status == SpeciesCandidatePackStatus.active.value:
+            return selected, None, selected_pack_id
+        builtin = session.get(
+            SpeciesCandidatePackModel,
+            BUILTIN_SPECIES_CANDIDATE_PACK_ID,
+        )
+        if builtin is None:
+            raise RuntimeError("Built-in species candidate pack is unavailable.")
+        if selected_pack_id is None:
+            return builtin, None, None
+        warning = (
+            "The selected candidate pack is archived; using Backyard Core v1 instead."
+            if selected is not None
+            else "The selected candidate pack is missing; using Backyard Core v1 instead."
+        )
+        return builtin, warning, selected_pack_id
+
+    def list_species_candidate_packs(
+        self,
+        *,
+        include_archived: bool = True,
+    ) -> list[SpeciesCandidatePack]:
+        with self.session_factory() as session:
+            query = select(SpeciesCandidatePackModel).order_by(
+                SpeciesCandidatePackModel.display_name.collate("NOCASE"),
+                SpeciesCandidatePackModel.version.desc(),
+                SpeciesCandidatePackModel.id,
+            )
+            if not include_archived:
+                query = query.where(
+                    SpeciesCandidatePackModel.status == SpeciesCandidatePackStatus.active.value
+                )
+            return [
+                self._species_candidate_pack_from_model(session, pack)
+                for pack in session.scalars(query).all()
+            ]
+
+    def get_species_candidate_pack(
+        self,
+        pack_id: str,
+    ) -> SpeciesCandidatePack | None:
+        with self.session_factory() as session:
+            pack = session.get(SpeciesCandidatePackModel, pack_id)
+            return (
+                self._species_candidate_pack_from_model(session, pack)
+                if pack is not None
+                else None
+            )
+
+    def _create_species_candidate_pack_in_session(
+        self,
+        session: Session,
+        *,
+        display_name: str,
+        taxonomy_label_ids: Iterable[str],
+        description: str | None,
+        version: int,
+        is_builtin: bool = False,
+    ) -> SpeciesCandidatePackModel:
+        normalized_name = _normalized_species_candidate_pack_name(display_name)
+        if session.scalar(
+            select(SpeciesCandidatePackModel.id).where(
+                func.lower(SpeciesCandidatePackModel.display_name)
+                == normalized_name.casefold(),
+                SpeciesCandidatePackModel.version == version,
+            )
+        ) is not None:
+            raise ValueError("candidate_pack_name_version_exists")
+        member_ids = self._validated_species_candidate_pack_members(
+            session,
+            taxonomy_label_ids,
+        )
+        timestamp = datetime.now(UTC)
+        pack = SpeciesCandidatePackModel(
+            id=f"species-candidate-pack-{uuid.uuid4().hex}",
+            display_name=normalized_name,
+            version=version,
+            status=SpeciesCandidatePackStatus.active.value,
+            is_builtin=is_builtin,
+            description=_clean_optional_text(description),
+            content_sha256=_species_candidate_pack_content_sha256(member_ids),
+            candidate_count=len(member_ids),
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        session.add(pack)
+        session.add_all(
+            [
+                SpeciesCandidatePackMemberModel(
+                    pack_id=pack.id,
+                    position=position,
+                    taxonomy_label_id=taxonomy_label_id,
+                )
+                for position, taxonomy_label_id in enumerate(member_ids)
+            ]
+        )
+        session.flush()
+        return pack
+
+    def create_species_candidate_pack(
+        self,
+        payload: SpeciesCandidatePackCreate,
+    ) -> SpeciesCandidatePack:
+        with self.session_factory() as session:
+            with session.begin():
+                pack = self._create_species_candidate_pack_in_session(
+                    session,
+                    display_name=payload.display_name,
+                    taxonomy_label_ids=payload.taxonomy_label_ids,
+                    description=payload.description,
+                    version=1,
+                )
+                return self._species_candidate_pack_from_model(session, pack)
+
+    def clone_species_candidate_pack(
+        self,
+        pack_id: str,
+        payload: SpeciesCandidatePackCloneRequest,
+    ) -> SpeciesCandidatePack:
+        with self.session_factory() as session:
+            with session.begin():
+                source = session.get(SpeciesCandidatePackModel, pack_id)
+                if source is None:
+                    raise ValueError("candidate_pack_missing")
+                members = session.scalars(
+                    select(SpeciesCandidatePackMemberModel.taxonomy_label_id)
+                    .where(SpeciesCandidatePackMemberModel.pack_id == source.id)
+                    .order_by(SpeciesCandidatePackMemberModel.position)
+                ).all()
+                default_name = f"{source.display_name} copy"
+                name = payload.display_name or default_name
+                if payload.display_name is None:
+                    suffix = 2
+                    while session.scalar(
+                        select(SpeciesCandidatePackModel.id).where(
+                            func.lower(SpeciesCandidatePackModel.display_name)
+                            == name.casefold(),
+                            SpeciesCandidatePackModel.version == 1,
+                        )
+                    ) is not None:
+                        name = f"{default_name} {suffix}"
+                        suffix += 1
+                pack = self._create_species_candidate_pack_in_session(
+                    session,
+                    display_name=name,
+                    taxonomy_label_ids=members,
+                    description=(
+                        payload.description
+                        if payload.description is not None
+                        else source.description
+                    ),
+                    version=1,
+                )
+                return self._species_candidate_pack_from_model(session, pack)
+
+    def update_species_candidate_pack(
+        self,
+        pack_id: str,
+        payload: SpeciesCandidatePackUpdate,
+    ) -> SpeciesCandidatePack:
+        with self.session_factory() as session:
+            with session.begin():
+                previous = session.get(SpeciesCandidatePackModel, pack_id)
+                if previous is None:
+                    raise ValueError("candidate_pack_missing")
+                if previous.is_builtin:
+                    raise ValueError("candidate_pack_builtin_immutable")
+                if previous.status != SpeciesCandidatePackStatus.active.value:
+                    raise ValueError("candidate_pack_not_active")
+                successor = self._create_species_candidate_pack_in_session(
+                    session,
+                    display_name=payload.display_name,
+                    taxonomy_label_ids=payload.taxonomy_label_ids,
+                    description=payload.description,
+                    version=previous.version + 1,
+                )
+                previous.status = SpeciesCandidatePackStatus.archived.value
+                previous.updated_at = datetime.now(UTC)
+                for selection in session.scalars(
+                    select(StreamSpeciesCandidatePackSelectionModel).where(
+                        StreamSpeciesCandidatePackSelectionModel.candidate_pack_id
+                        == previous.id
+                    )
+                ).all():
+                    selection.candidate_pack_id = successor.id
+                    selection.updated_at = datetime.now(UTC)
+                return self._species_candidate_pack_from_model(session, successor)
+
+    def archive_species_candidate_pack(self, pack_id: str) -> SpeciesCandidatePack:
+        with self.session_factory() as session:
+            with session.begin():
+                pack = session.get(SpeciesCandidatePackModel, pack_id)
+                if pack is None:
+                    raise ValueError("candidate_pack_missing")
+                if pack.is_builtin:
+                    raise ValueError("candidate_pack_builtin_immutable")
+                pack.status = SpeciesCandidatePackStatus.archived.value
+                pack.updated_at = datetime.now(UTC)
+                return self._species_candidate_pack_from_model(session, pack)
+
+    def get_stream_species_candidate_pack_selection(
+        self,
+        stream_id: str,
+    ) -> StreamSpeciesCandidatePackSelection | None:
+        with self.session_factory() as session:
+            if session.get(StreamModel, stream_id) is None:
+                return None
+            pack, warning, selected_pack_id = self._effective_species_candidate_pack_for_stream(
+                session,
+                stream_id,
+            )
+            return StreamSpeciesCandidatePackSelection(
+                stream_id=stream_id,
+                selected_pack_id=selected_pack_id,
+                effective_pack=self._species_candidate_pack_summary_from_model(pack),
+                warning=warning,
+            )
+
+    def set_stream_species_candidate_pack_selection(
+        self,
+        stream_id: str,
+        payload: StreamSpeciesCandidatePackSelectionUpdate,
+    ) -> StreamSpeciesCandidatePackSelection:
+        with self.session_factory() as session:
+            with session.begin():
+                if session.get(StreamModel, stream_id) is None:
+                    raise ValueError("stream_missing")
+                pack = session.get(SpeciesCandidatePackModel, payload.candidate_pack_id)
+                if pack is None:
+                    raise ValueError("candidate_pack_missing")
+                if pack.status != SpeciesCandidatePackStatus.active.value:
+                    raise ValueError("candidate_pack_not_active")
+                selection = session.get(
+                    StreamSpeciesCandidatePackSelectionModel,
+                    stream_id,
+                )
+                if selection is None:
+                    selection = StreamSpeciesCandidatePackSelectionModel(
+                        stream_id=stream_id,
+                        candidate_pack_id=pack.id,
+                        updated_at=datetime.now(UTC),
+                    )
+                    session.add(selection)
+                else:
+                    selection.candidate_pack_id = pack.id
+                    selection.updated_at = datetime.now(UTC)
+                return StreamSpeciesCandidatePackSelection(
+                    stream_id=stream_id,
+                    selected_pack_id=pack.id,
+                    effective_pack=self._species_candidate_pack_summary_from_model(pack),
+                    warning=None,
+                )
 
     def list_sources(self) -> list[CameraSource]:
         with self.session_factory() as session:
@@ -14205,7 +14626,7 @@ class ProductRepository:
                         run_context = None
                     if run_context is not None:
                         legacy_reuse_available = (
-                            self._reusable_legacy_bioclip_full_frame_suggestion(
+                            self._reusable_legacy_bioclip_suggestion(
                                 session,
                                 run_context=run_context,
                             )
@@ -14218,6 +14639,8 @@ class ProductRepository:
                                 status=ReviewQueueSpeciesSuggestionBatchPrepareStatus.setup_required,
                                 message="Local species suggestion setup is required for this Visit.",
                                 media_asset_id=frames[0].media_asset_id,
+                                candidate_pack=summary.candidate_pack,
+                                candidate_pack_warning=summary.candidate_pack_warning,
                             )
                         )
                         continue
@@ -14227,6 +14650,8 @@ class ProductRepository:
                         status=ReviewQueueSpeciesSuggestionBatchPrepareStatus.queued,
                         message="Visit is queued for one explicit local species suggestion.",
                         media_asset_id=frames[0].media_asset_id,
+                        candidate_pack=summary.candidate_pack,
+                        candidate_pack_warning=summary.candidate_pack_warning,
                     )
                 )
         return ReviewQueueSpeciesSuggestionBatchPrepareResponse(
@@ -14315,6 +14740,24 @@ class ProductRepository:
                     item,
                     media_asset_id=(frames[0].media_asset_id if frames else None),
                 )
+                selected_ids = [frame.media_asset_id for frame in frames]
+                input_hash = hashlib.sha256(
+                    json.dumps(
+                        {
+                            "visit_id": visit_id,
+                            "evidence_mode": payload.evidence_mode.value,
+                            "media_asset_ids": selected_ids,
+                            "adapter_id": summary.adapter_id,
+                            "candidate_pack_sha256": (
+                                summary.candidate_pack.content_sha256
+                                if summary.candidate_pack is not None
+                                else None
+                            ),
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
                 existing = session.scalar(
                     select(ReviewIdentificationAssistantRunModel).where(
                         ReviewIdentificationAssistantRunModel.idempotency_key
@@ -14325,6 +14768,7 @@ class ProductRepository:
                     if (
                         existing.visit_id != visit_id
                         or existing.evidence_mode != payload.evidence_mode.value
+                        or existing.input_configuration_sha256 != input_hash
                     ):
                         raise ValueError("identification_idempotency_conflict")
                     return self._visit_identification_assistant_response(
@@ -14354,19 +14798,6 @@ class ProductRepository:
                         message="Identification is already running for this Visit.",
                     )
 
-                selected_ids = [frame.media_asset_id for frame in frames]
-                input_hash = hashlib.sha256(
-                    json.dumps(
-                        {
-                            "visit_id": visit_id,
-                            "evidence_mode": payload.evidence_mode.value,
-                            "media_asset_ids": selected_ids,
-                            "adapter_id": summary.adapter_id,
-                        },
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest()
                 prior_completed_input = session.scalar(
                     select(ReviewIdentificationAssistantRunModel)
                     .where(
@@ -14416,14 +14847,20 @@ class ProductRepository:
                         )
                     if not reusable and reusable_context is not None:
                         try:
-                            prepare_bioclip_run(_bioclip_config())
+                            prepare_bioclip_run(
+                                _bioclip_config(
+                                    _species_candidate_pack_prompt_labels(
+                                        reusable_context.candidate_pack
+                                    )
+                                )
+                            )
                         except BioClipConfigurationError:
                             # Older suggestion records predate durable Assistant runs.
                             # If the current runtime cannot prepare, reuse only an
-                            # exact verified full-frame record instead of logging a
+                            # exact verified legacy record instead of logging a
                             # futile unavailable attempt.
                             reusable = (
-                                self._reusable_legacy_bioclip_full_frame_suggestion(
+                                self._reusable_legacy_bioclip_suggestion(
                                     session,
                                     run_context=reusable_context,
                                 )
@@ -15393,6 +15830,8 @@ class ProductRepository:
                     BioClipIdentificationAttemptModel.media_asset_id
                     == run_context.media_asset_id,
                     BioClipIdentificationAttemptModel.adapter_id == BIOCLIP_ADAPTER_ID,
+                    BioClipIdentificationAttemptModel.candidate_pack_sha256
+                    == run_context.candidate_pack.content_sha256,
                     BioClipIdentificationAttemptModel.outcome == "succeeded",
                     BioClipIdentificationAttemptModel.resulting_species_suggestion_id.is_not(None),
                 )
@@ -15449,7 +15888,11 @@ class ProductRepository:
         if not isinstance(input_sha256, str) or len(input_sha256) != 64:
             return None
         try:
-            prepared_run = prepare_bioclip_run(_bioclip_config())
+            prepared_run = prepare_bioclip_run(
+                _bioclip_config(
+                    _species_candidate_pack_prompt_labels(run_context.candidate_pack)
+                )
+            )
         except BioClipConfigurationError:
             return None
         for suggestion, crop_provenance, model_provenance in candidates:
@@ -15458,29 +15901,33 @@ class ProductRepository:
                 and _bioclip_provenance_matches_prepared_run(
                     model_provenance,
                     prepared_run,
+                    candidate_pack_sha256=run_context.candidate_pack.content_sha256,
                 )
             ):
                 return suggestion
         return None
 
 
-    def _reusable_legacy_bioclip_full_frame_suggestion(
+    def _reusable_legacy_bioclip_suggestion(
         self,
         session: Session,
         *,
         run_context: _ReviewSpeciesRunContext,
     ) -> SpeciesSuggestion | None:
-        """Reuse legacy full-frame evidence only when the saved bytes still match."""
+        """Reuse legacy built-in evidence only when the exact prepared input still matches."""
 
-        crop = run_context.crop
         if (
-            crop.source != "full_frame"
-            or crop.box_normalized.x != 0
-            or crop.box_normalized.y != 0
-            or crop.box_normalized.width != 1
-            or crop.box_normalized.height != 1
+            run_context.candidate_pack.id != BUILTIN_SPECIES_CANDIDATE_PACK_ID
+            or run_context.candidate_pack.content_sha256
+            != _species_candidate_pack_content_sha256(
+                BUILTIN_SPECIES_CANDIDATE_TAXONOMY_IDS
+            )
         ):
             return None
+        # A legacy suggestion has no durable pack record.  Its exact regenerated
+        # crop hash still binds reuse to the same saved media and geometry, so it
+        # is safe only for the unchanged built-in candidate scope above.
+        crop = run_context.crop
         observation = _initial_bioclip_crop_provenance(crop)
         image: Any | None = None
         try:
@@ -15530,6 +15977,10 @@ class ProductRepository:
                 and isinstance(provenance, dict)
                 and provenance.get("adapter_id") == BIOCLIP_ADAPTER_ID
                 and provenance.get("model_weights_verified") is True
+                and provenance.get("labels_sha256")
+                == _candidate_bank_sha256(
+                    _species_candidate_pack_prompt_labels(run_context.candidate_pack)
+                )
             ):
                 return _species_suggestion_from_model(candidate)
         return None
@@ -15599,7 +16050,9 @@ class ProductRepository:
         try:
             prediction = run_bioclip_from_image_loader(
                 load_input_image,
-                _bioclip_config(),
+                _bioclip_config(
+                    _species_candidate_pack_prompt_labels(run_context.candidate_pack)
+                ),
                 top_k=BIOCLIP_REVIEW_TOP_K,
                 on_prepared=retain_prepared_run,
             )
@@ -15861,6 +16314,11 @@ class ProductRepository:
         ):
             raise ValueError("identification_zone_suppressed")
 
+        pack_model, _pack_warning, _selected_pack_id = (
+            self._effective_species_candidate_pack_for_stream(session, item.stream_id)
+        )
+        candidate_pack = self._species_candidate_pack_from_model(session, pack_model)
+
         return _ReviewSpeciesRunContext(
             target_type=target_type,
             target_id=target_id,
@@ -15880,6 +16338,7 @@ class ProductRepository:
                 or (evidence.zone_id if evidence is not None else None)
             ),
             crop=crop,
+            candidate_pack=candidate_pack,
         )
 
     def _review_bioclip_attempt_context(
@@ -15904,6 +16363,7 @@ class ProductRepository:
                 media_asset_id=run_context.media_asset_id,
                 motion_evidence_id=run_context.motion_evidence_id,
                 crop=run_context.crop,
+                candidate_pack=run_context.candidate_pack,
             )
 
         media_asset = session.get(MediaAssetModel, media_asset_id)
@@ -15930,6 +16390,11 @@ class ProductRepository:
                 item,
                 media_asset_id=media_asset_id,
             )
+        pack_model, _pack_warning, _selected_pack_id = (
+            self._effective_species_candidate_pack_for_stream(session, item.stream_id)
+        )
+        candidate_pack = self._species_candidate_pack_from_model(session, pack_model)
+
         return _BioClipAttemptContext(
             target_type=target_type,
             target_id=target_id,
@@ -15945,6 +16410,7 @@ class ProductRepository:
             media_asset_id=media_asset_id,
             motion_evidence_id=evidence.id if evidence is not None else None,
             crop=crop,
+            candidate_pack=candidate_pack,
         )
 
     def _create_bioclip_identification_attempt(
@@ -15954,7 +16420,9 @@ class ProductRepository:
         """Persist the one durable start record before optional runtime work begins."""
 
         attempt_id = f"bioclip-attempt-{uuid.uuid4().hex}"
-        config = _bioclip_config()
+        config = _bioclip_config(
+            _species_candidate_pack_prompt_labels(attempt_context.candidate_pack)
+        )
         with self.session_factory() as session:
             with session.begin():
                 session.add(
@@ -16008,6 +16476,9 @@ class ProductRepository:
                                     else "unvalidated"
                                 ),
                                 "prepared": False,
+                                "candidate_pack": _species_candidate_pack_provenance(
+                                    attempt_context.candidate_pack
+                                ),
                             },
                         ),
                         preprocessing_json=None,
@@ -16015,6 +16486,9 @@ class ProductRepository:
                         candidate_set_count=None,
                         candidate_set_sha256=None,
                         candidate_set_version=None,
+                        candidate_pack_id=attempt_context.candidate_pack.id,
+                        candidate_pack_version=attempt_context.candidate_pack.version,
+                        candidate_pack_sha256=attempt_context.candidate_pack.content_sha256,
                         candidate_manifest_complete=False,
                         error_code=None,
                         error_stage=None,
@@ -16071,6 +16545,7 @@ class ProductRepository:
         artifacts = _bioclip_attempt_artifacts(
             prepared_run=prepared_run,
             prediction=None,
+            candidate_pack=attempt_context.candidate_pack,
         )
         with self.session_factory() as session:
             with session.begin():
@@ -16100,6 +16575,9 @@ class ProductRepository:
                 attempt.candidate_set_count = artifacts["candidate_set_count"]
                 attempt.candidate_set_sha256 = artifacts["candidate_set_sha256"]
                 attempt.candidate_set_version = artifacts["candidate_set_version"]
+                attempt.candidate_pack_id = attempt_context.candidate_pack.id
+                attempt.candidate_pack_version = attempt_context.candidate_pack.version
+                attempt.candidate_pack_sha256 = attempt_context.candidate_pack.content_sha256
                 attempt.candidate_manifest_complete = artifacts[
                     "candidate_manifest_complete"
                 ]
@@ -16186,10 +16664,11 @@ class ProductRepository:
         attempt.crop_provenance_json = (
             _bioclip_attempt_json(effective_crop) if effective_crop else None
         )
-        if prediction is not None or not attempt.candidate_manifest_complete:
+        if prediction is not None or prepared_run is not None:
             artifacts = _bioclip_attempt_artifacts(
                 prepared_run=prepared_run,
                 prediction=prediction,
+                candidate_pack=attempt_context.candidate_pack,
             )
             attempt.model_provenance_json = (
                 _bioclip_attempt_json(artifacts["model_provenance"])
@@ -16447,6 +16926,11 @@ class ProductRepository:
         if media_asset_model is None:
             normalized_media_asset_id = None
 
+        pack_model, candidate_pack_warning, _selected_pack_id = (
+            self._effective_species_candidate_pack_for_stream(session, item.stream_id)
+        )
+        candidate_pack = self._species_candidate_pack_from_model(session, pack_model)
+
         suggestion_models = self._review_identification_suggestion_models(
             session,
             item,
@@ -16525,6 +17009,14 @@ class ProductRepository:
         )
         supported_media_types = list(adapter.supported_media_types) if adapter is not None else []
         unavailable_reason: str | None = None
+        candidate_pack_setup_status: BioClipAdapterStatus | None = None
+        if adapter is not None and adapter.id == BIOCLIP_ADAPTER_ID:
+            candidate_pack_setup_status = get_bioclip_status(
+                _bioclip_config(_species_candidate_pack_prompt_labels(candidate_pack))
+            )
+            if candidate_pack_setup_status.status != "available":
+                can_run = False
+        unavailable_reason: str | None = None
         analysis_input_blocked = False
         if can_run and adapter is not None and normalized_media_asset_id is not None:
             crop: _ReviewSpeciesCropContext | None = None
@@ -16585,6 +17077,20 @@ class ProductRepository:
                 f"{adapter.name} does not support this candidate media type. "
                 "No evidence or truth was created."
             )
+        elif (
+            candidate_pack_setup_status is not None
+            and candidate_pack_setup_status.status != "available"
+        ):
+            status = (
+                ReviewIdentificationStatus.setup_required
+                if candidate_pack_setup_status.status == "not_configured"
+                else ReviewIdentificationStatus.unavailable
+            )
+            unavailable_reason = candidate_pack_setup_status.detail
+            message = (
+                f"{adapter.name} needs configured local candidate embeddings for "
+                f"{candidate_pack.display_name} v{candidate_pack.version}."
+            )
         elif can_run:
             status = ReviewIdentificationStatus.configured_available
             message = (
@@ -16642,6 +17148,8 @@ class ProductRepository:
             ),
             creates_truth=False,
             creates_export=False,
+            candidate_pack=self._species_candidate_pack_summary_from_model(candidate_pack),
+            candidate_pack_warning=candidate_pack_warning,
         )
 
     def _review_identification_suggestion_models(
@@ -22545,12 +23053,15 @@ def _bioclip_adapter() -> ModelAdapter:
     )
 
 
-def _bioclip_config() -> BioClipAdapterConfig:
+def _bioclip_config(
+    candidate_labels: tuple[str, ...] | None = None,
+) -> BioClipAdapterConfig:
     return build_bioclip_config(
         model_dir=os.getenv(BIOCLIP_MODEL_PATH_ENV),
         labels_path=os.getenv(BIOCLIP_LABELS_PATH_ENV),
         embedding_cache_path=os.getenv(BIOCLIP_EMBEDDING_CACHE_PATH_ENV),
         device=os.getenv(BIOCLIP_DEVICE_ENV, "cpu"),
+        candidate_labels=candidate_labels,
     )
 
 
@@ -23388,6 +23899,49 @@ def _initial_bioclip_crop_provenance(
     return value
 
 
+def _normalized_species_candidate_pack_name(value: str) -> str:
+    name = value.strip() if isinstance(value, str) else ""
+    if not name:
+        raise ValueError("candidate_pack_name_invalid")
+    if len(name) > 80:
+        raise ValueError("candidate_pack_name_invalid")
+    return name
+
+
+def _species_candidate_pack_content_sha256(
+    taxonomy_label_ids: Iterable[str],
+) -> str:
+    """Hash ordered taxonomy IDs, not model labels, for stable pack provenance."""
+
+    return hashlib.sha256(
+        "\n".join(taxonomy_label_ids).encode("utf-8")
+    ).hexdigest()
+
+
+def _species_candidate_pack_prompt_labels(
+    pack: SpeciesCandidatePack,
+) -> tuple[str, ...]:
+    return tuple(
+        f"{member.display_name} ({member.scientific_name})"
+        if member.scientific_name
+        else member.display_name
+        for member in pack.members
+    )
+
+
+def _species_candidate_pack_provenance(
+    pack: SpeciesCandidatePack,
+) -> dict[str, Any]:
+    return {
+        "id": pack.id,
+        "display_name": pack.display_name,
+        "version": pack.version,
+        "content_sha256": pack.content_sha256,
+        "candidate_count": pack.candidate_count,
+        "taxonomy_label_ids": [member.id for member in pack.members],
+    }
+
+
 def _candidate_bank_sha256(labels: tuple[str, ...]) -> str:
     return hashlib.sha256("\n".join(labels).encode("utf-8")).hexdigest()
 
@@ -23518,6 +24072,8 @@ def _safe_json_object(value: str | None) -> dict[str, Any]:
 def _bioclip_provenance_matches_prepared_run(
     provenance: dict[str, Any],
     prepared_run: BioClipPreparedRun,
+    *,
+    candidate_pack_sha256: str | None = None,
 ) -> bool:
     expected = {
         "adapter_id": prepared_run.adapter_id,
@@ -23536,13 +24092,22 @@ def _bioclip_provenance_matches_prepared_run(
         "preprocessing_id": prepared_run.preprocessing_id,
         "preprocessing_sha256": prepared_run.preprocessing_sha256,
     }
-    return all(provenance.get(key) == value for key, value in expected.items())
+    if not all(provenance.get(key) == value for key, value in expected.items()):
+        return False
+    if candidate_pack_sha256 is None:
+        return True
+    pack = provenance.get("candidate_pack")
+    return (
+        isinstance(pack, dict)
+        and pack.get("content_sha256") == candidate_pack_sha256
+    )
 
 
 def _bioclip_attempt_artifacts(
     *,
     prepared_run: BioClipPreparedRun | None,
     prediction: BioClipPrediction | None,
+    candidate_pack: SpeciesCandidatePack,
 ) -> dict[str, Any]:
     prepared_value = asdict(prepared_run) if prepared_run is not None else {}
     prepared_labels = tuple(prepared_value.pop("candidate_labels", ()))
@@ -23551,6 +24116,9 @@ def _bioclip_attempt_artifacts(
         None,
     )
     model_provenance = dict(prepared_value)
+    model_provenance["candidate_pack"] = _species_candidate_pack_provenance(
+        candidate_pack
+    )
     if prepared_run is not None:
         model_provenance["prepared"] = True
     if prediction is not None:
@@ -23703,6 +24271,9 @@ def _bioclip_attempt_record(
         "candidate_set_count": attempt.candidate_set_count,
         "candidate_set_sha256": attempt.candidate_set_sha256,
         "candidate_set_version": attempt.candidate_set_version,
+        "candidate_pack_id": attempt.candidate_pack_id,
+        "candidate_pack_version": attempt.candidate_pack_version,
+        "candidate_pack_sha256": attempt.candidate_pack_sha256,
         "candidate_manifest_complete": attempt.candidate_manifest_complete,
         "error_code": attempt.error_code,
         "error_stage": attempt.error_stage,
@@ -23906,12 +24477,16 @@ def _bioclip_species_suggestion_payload(
         )
     ]
     provenance = asdict(prediction.provenance)
+    candidate_pack_provenance = _species_candidate_pack_provenance(
+        run_context.candidate_pack
+    )
     evidence_region: dict[str, Any] = {
         "source": run_context.crop.source,
         "coordinate_space": "full_frame_normalized",
         "score_semantics": primary["score_kind"],
         "calibrated": False,
         "model_provenance": provenance,
+        "candidate_pack": candidate_pack_provenance,
         **run_context.crop.box_normalized.model_dump(),
     }
     input_sha256 = crop_provenance.get("input_sha256")
@@ -23925,6 +24500,7 @@ def _bioclip_species_suggestion_payload(
         "BioCLIP 2 Review Queue shadow suggestion; scores are candidate-relative "
         "and uncalibrated, not reviewed truth or calibrated probability. "
         f"crop_source={run_context.crop.source}; "
+        f"candidate_pack_sha256={run_context.candidate_pack.content_sha256}; "
         f"provenance={json.dumps(provenance, sort_keys=True)}"
     )
     return SpeciesSuggestionCreateRequest(

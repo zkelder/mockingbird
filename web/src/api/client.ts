@@ -164,6 +164,10 @@ import type {
   SpeciesSuggestionListResponse,
   SpeciesSuggestionStatus,
   SpeciesSuggestionStatusUpdateRequest,
+  SpeciesCandidatePack,
+  SpeciesCandidatePackCloneRequest,
+  SpeciesCandidatePackCreate,
+  SpeciesCandidatePackUpdate,
   SourceConnectionStatus,
   SourceMonitorStartRequest,
   SourceMonitorStatusResponse,
@@ -172,6 +176,8 @@ import type {
   SourceProviderDefinition,
   SourceSetupReviewResponse,
   Stream,
+  StreamSpeciesCandidatePackSelection,
+  StreamSpeciesCandidatePackSelectionUpdate,
   StreamMonitoringMutationResponse,
   StreamMonitoringPolicy,
   StreamMonitoringPolicyUpdate,
@@ -348,6 +354,37 @@ export const apiClient = {
     const query = searchParams.toString();
     return request<TaxonomyLabel[]>(`/api/taxonomy/suggestions${query ? `?${query}` : ""}`);
   },
+  listSpeciesCandidatePacks: (includeArchived = true) =>
+    request<SpeciesCandidatePack[]>(
+      `/api/species-candidate-packs?include_archived=${String(includeArchived)}`,
+    ),
+  getSpeciesCandidatePack: (packId: string) =>
+    request<SpeciesCandidatePack>(
+      `/api/species-candidate-packs/${encodeURIComponent(packId)}`,
+    ),
+  createSpeciesCandidatePack: (payload: SpeciesCandidatePackCreate) =>
+    request<SpeciesCandidatePack>("/api/species-candidate-packs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  cloneSpeciesCandidatePack: (
+    packId: string,
+    payload: SpeciesCandidatePackCloneRequest = {},
+  ) =>
+    request<SpeciesCandidatePack>(
+      `/api/species-candidate-packs/${encodeURIComponent(packId)}/clone`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  updateSpeciesCandidatePack: (packId: string, payload: SpeciesCandidatePackUpdate) =>
+    request<SpeciesCandidatePack>(
+      `/api/species-candidate-packs/${encodeURIComponent(packId)}`,
+      { method: "PUT", body: JSON.stringify(payload) },
+    ),
+  archiveSpeciesCandidatePack: (packId: string) =>
+    request<SpeciesCandidatePack>(
+      `/api/species-candidate-packs/${encodeURIComponent(packId)}/archive`,
+      { method: "POST" },
+    ),
   getSources: () => request<CameraSource[]>("/api/sources"),
   getCameraSetupOptions: () => request<CameraSetupOptionsResponse>("/api/camera-setup/options"),
   pairCameraNode: (payload: CameraNodePairRequest) =>
@@ -485,6 +522,18 @@ export const apiClient = {
     ),
   getZones: () => request<Zone[]>("/api/zones"),
   getStream: (streamId: string) => request<Stream>(`/api/streams/${streamId}`),
+  getStreamSpeciesCandidatePackSelection: (streamId: string) =>
+    request<StreamSpeciesCandidatePackSelection>(
+      `/api/streams/${encodeURIComponent(streamId)}/species-candidate-pack`,
+    ),
+  setStreamSpeciesCandidatePackSelection: (
+    streamId: string,
+    payload: StreamSpeciesCandidatePackSelectionUpdate,
+  ) =>
+    request<StreamSpeciesCandidatePackSelection>(
+      `/api/streams/${encodeURIComponent(streamId)}/species-candidate-pack`,
+      { method: "PUT", body: JSON.stringify(payload) },
+    ),
   getStreamPlaybackStatus: (streamId: string) =>
     request<StreamPlaybackStatus>(`/api/streams/${streamId}/playback`),
   getStreamMonitoringPolicy: (streamId: string) =>

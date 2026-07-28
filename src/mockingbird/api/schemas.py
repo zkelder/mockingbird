@@ -380,6 +380,60 @@ class TaxonomyLabel(BaseModel):
     sort_order: int | None = None
 
 
+class SpeciesCandidatePackStatus(str, Enum):
+    active = "active"
+    archived = "archived"
+
+
+class SpeciesCandidatePackSummary(BaseModel):
+    id: str
+    display_name: str
+    version: int = Field(ge=1)
+    status: SpeciesCandidatePackStatus
+    is_builtin: bool
+    candidate_count: int = Field(ge=2, le=200)
+    content_sha256: str
+
+
+class SpeciesCandidatePack(SpeciesCandidatePackSummary):
+    description: str | None = None
+    members: list[TaxonomyLabel] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class SpeciesCandidatePackCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=80)
+    taxonomy_label_ids: list[str] = Field(min_length=2, max_length=200)
+    description: str | None = Field(default=None, max_length=280)
+
+
+class SpeciesCandidatePackUpdate(SpeciesCandidatePackCreate):
+    """Editing creates an immutable successor version and preserves prior evidence."""
+
+
+class SpeciesCandidatePackCloneRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, max_length=80)
+    description: str | None = Field(default=None, max_length=280)
+
+
+class StreamSpeciesCandidatePackSelection(BaseModel):
+    stream_id: str
+    selected_pack_id: str | None = None
+    effective_pack: SpeciesCandidatePackSummary
+    warning: str | None = None
+
+
+class StreamSpeciesCandidatePackSelectionUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_pack_id: str = Field(min_length=1, max_length=120)
+
+
 class CameraSource(BaseModel):
     # Source adapters normalize into product streams and events later.
     id: str
@@ -2798,6 +2852,8 @@ class LiveMotionEvaluateResponse(BaseModel):
     suggestion_id: str | None = None
     suggestion_confidence: float | None = Field(default=None, ge=0, le=1)
     suggestion_reason: str | None = None
+    candidate_pack: SpeciesCandidatePackSummary | None = None
+    candidate_pack_warning: str | None = None
     suggestion_creates_truth: bool = False
     created_evidence: list[MotionEvidenceResponse] = Field(default_factory=list)
     debug_cell_zones: list[MotionZoneInput] = Field(default_factory=list)
@@ -3027,6 +3083,8 @@ class ReviewIdentificationSummary(BaseModel):
     focus_crop_warnings: list[str] = Field(default_factory=list)
     creates_truth: bool = False
     creates_export: bool = False
+    candidate_pack: SpeciesCandidatePackSummary | None = None
+    candidate_pack_warning: str | None = None
 
 
 class ReviewIdentificationRequest(BaseModel):
@@ -3247,6 +3305,8 @@ class ReviewQueueSpeciesSuggestionBatchPrepareResult(BaseModel):
     status: ReviewQueueSpeciesSuggestionBatchPrepareStatus
     message: str
     media_asset_id: str | None = None
+    candidate_pack: SpeciesCandidatePackSummary | None = None
+    candidate_pack_warning: str | None = None
 
 
 class ReviewQueueSpeciesSuggestionBatchPrepareResponse(BaseModel):

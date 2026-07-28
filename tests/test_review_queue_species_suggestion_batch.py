@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from mockingbird.api.main import app, configure_repository
+from mockingbird.api.schemas import CameraSourceCreate
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import EventModel, VisitModel
 
@@ -310,3 +311,60 @@ async def test_species_suggestion_batch_preflight_rejects_arbitrary_input(
 
     assert response.status_code == 422
     assert await product_snapshot(client) == before
+
+
+async def test_species_suggestion_batch_resolves_each_visits_stream_pack(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    first = await import_review_visit(client, title="First Stream candidate-pack Visit")
+    second_stream = isolated_repository.create_camera_source(
+        CameraSourceCreate(name="Second Stream candidate-pack camera")
+    ).stream
+    second_response = await client.post(
+        "/api/media/import",
+        data={
+            "stream_id": second_stream.id,
+            "title": "Second Stream candidate-pack Visit",
+            "subject_label": "unknown_bird",
+            "species_guess": "unknown_bird",
+        },
+        files={"file": ("second-stream.png", b"second stream evidence", "image/png")},
+    )
+    assert second_response.status_code == 201
+    second = second_response.json()
+    pack_response = await client.post(
+        "/api/species-candidate-packs",
+        json={
+            "display_name": "First Stream narrow pack",
+            "taxonomy_label_ids": ["tufted_titmouse", "carolina_chickadee"],
+        },
+    )
+    assert pack_response.status_code == 200
+    pack_id = pack_response.json()["id"]
+    assert (
+        await client.put(
+            f"/api/streams/{STREAM_ID}/species-candidate-pack",
+            json={"candidate_pack_id": pack_id},
+        )
+    ).status_code == 200
+
+    response = await client.post(
+        "/api/review-queue/species-suggestions/prepare",
+        json={"visit_ids": [first["visit"]["id"], second["visit"]["id"]]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [result["status"] for result in body["results"]] == [
+        "setup_required",
+        "setup_required",
+    ]
+    assert [result["candidate_pack"]["id"] for result in body["results"]] == [
+        pack_id,
+        "backyard-core",
+    ]
+    assert body["results"][0]["candidate_pack_warning"] is None
+    assert body["results"][1]["candidate_pack_warning"] is None
+    assert body["creates_truth"] is False
+    assert body["creates_export"] is False

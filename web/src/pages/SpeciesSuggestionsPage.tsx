@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
   MediaAsset,
+  SpeciesCandidatePack,
   SpeciesSuggestion,
   SpeciesSuggestionCreateRequest,
   SpeciesSuggestionStatus,
+  TaxonomyLabel,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EvidenceBadge } from "../components/EvidenceBadge";
@@ -82,6 +84,14 @@ export function SpeciesSuggestionsPage({
   const [actionId, setActionId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [candidatePacks, setCandidatePacks] = useState<SpeciesCandidatePack[]>([]);
+  const [candidatePackSearch, setCandidatePackSearch] = useState("");
+  const [candidateTaxonomyMatches, setCandidateTaxonomyMatches] = useState<TaxonomyLabel[]>([]);
+  const [candidatePackName, setCandidatePackName] = useState("");
+  const [candidatePackDescription, setCandidatePackDescription] = useState("");
+  const [candidatePackMemberIds, setCandidatePackMemberIds] = useState<string[]>([]);
+  const [editingCandidatePackId, setEditingCandidatePackId] = useState<string | null>(null);
+  const [isSavingCandidatePack, setIsSavingCandidatePack] = useState(false);
 
   const mediaById = useMemo(
     () => new Map(mediaAssets.map((asset) => [asset.id, asset])),
@@ -101,6 +111,14 @@ export function SpeciesSuggestionsPage({
     visitIdFilter.trim().length > 0 ||
     eventIdFilter.trim().length > 0 ||
     mediaAssetIdFilter.trim().length > 0;
+  const editingCandidatePack =
+    candidatePacks.find((pack) => pack.id === editingCandidatePackId) ?? null;
+  const candidatePackMemberLabels = candidatePackMemberIds.map((memberId) => {
+    const member =
+      editingCandidatePack?.members.find((label) => label.id === memberId) ??
+      candidateTaxonomyMatches.find((label) => label.id === memberId);
+    return { id: memberId, label: member?.display_name ?? memberId };
+  });
 
   function currentFilters(): SpeciesSuggestionFilters {
     return {
@@ -160,9 +178,132 @@ export function SpeciesSuggestionsPage({
     }
   }
 
+  async function loadCandidatePacks(): Promise<SpeciesCandidatePack[]> {
+    try {
+      const packs = await apiClient.listSpeciesCandidatePacks(true);
+      setCandidatePacks(packs);
+      return packs;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not load candidate packs.");
+      return [];
+    }
+  }
+
   useEffect(() => {
     void loadSuggestions();
+    void loadCandidatePacks();
   }, []);
+
+  function startNewCandidatePack() {
+    setEditingCandidatePackId(null);
+    setCandidatePackName("");
+    setCandidatePackDescription("");
+    setCandidatePackMemberIds([]);
+    setCandidatePackSearch("");
+    setCandidateTaxonomyMatches([]);
+  }
+
+  function editCandidatePack(pack: SpeciesCandidatePack) {
+    setEditingCandidatePackId(pack.id);
+    setCandidatePackName(pack.display_name);
+    setCandidatePackDescription(pack.description ?? "");
+    setCandidatePackMemberIds(pack.members.map((member) => member.id));
+    setCandidatePackSearch("");
+    setCandidateTaxonomyMatches([]);
+  }
+
+  async function searchCandidateTaxonomy() {
+    const query = candidatePackSearch.trim();
+    if (!query) {
+      setCandidateTaxonomyMatches([]);
+      return;
+    }
+    try {
+      const matches = await apiClient.getTaxonomySuggestions({ category: "bird", query });
+      setCandidateTaxonomyMatches(matches.filter((label) => label.is_species));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not search the bird taxonomy.");
+    }
+  }
+
+  function addCandidatePackMember(label: TaxonomyLabel) {
+    setCandidatePackMemberIds((current) =>
+      current.includes(label.id) ? current : [...current, label.id],
+    );
+  }
+
+  async function saveCandidatePack(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (candidatePackMemberIds.length < 2 || candidatePackMemberIds.length > 200) {
+      setError("A candidate pack needs between 2 and 200 bird species.");
+      return;
+    }
+    if (editingCandidatePack?.is_builtin) {
+      setError("Clone Backyard Core before editing it.");
+      return;
+    }
+    setIsSavingCandidatePack(true);
+    setError(null);
+    try {
+      const payload = {
+        display_name: candidatePackName.trim(),
+        description: candidatePackDescription.trim() || undefined,
+        taxonomy_label_ids: candidatePackMemberIds,
+      };
+      const saved = editingCandidatePack
+        ? await apiClient.updateSpeciesCandidatePack(editingCandidatePack.id, payload)
+        : await apiClient.createSpeciesCandidatePack(payload);
+      await loadCandidatePacks();
+      editCandidatePack(saved);
+      setMessage(
+        editingCandidatePack
+          ? `${saved.display_name} v${saved.version} created as the immutable successor. Existing evidence was preserved.`
+          : `${saved.display_name} v${saved.version} created with ${saved.candidate_count} bird candidates.`,
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not save the candidate pack.");
+    } finally {
+      setIsSavingCandidatePack(false);
+    }
+  }
+
+  async function cloneCandidatePack(pack: SpeciesCandidatePack) {
+    setIsSavingCandidatePack(true);
+    setError(null);
+    try {
+      const cloned = await apiClient.cloneSpeciesCandidatePack(pack.id);
+      await loadCandidatePacks();
+      editCandidatePack(cloned);
+      setMessage(`${cloned.display_name} v${cloned.version} cloned. Edit its ordered bird members, then save a successor.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not clone the candidate pack.");
+    } finally {
+      setIsSavingCandidatePack(false);
+    }
+  }
+
+  async function archiveCandidatePack(pack: SpeciesCandidatePack) {
+    if (pack.is_builtin) {
+      return;
+    }
+    setIsSavingCandidatePack(true);
+    setError(null);
+    try {
+      await apiClient.archiveSpeciesCandidatePack(pack.id);
+      const packs = await loadCandidatePacks();
+      if (editingCandidatePackId === pack.id) {
+        const refreshed = packs.find((candidate) => candidate.id === pack.id);
+        if (refreshed) {
+          editCandidatePack(refreshed);
+        }
+      }
+      setMessage(`${pack.display_name} v${pack.version} archived. Streams safely fall back if it was selected.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not archive the candidate pack.");
+    } finally {
+      setIsSavingCandidatePack(false);
+    }
+  }
 
   async function applyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -298,6 +439,176 @@ export function SpeciesSuggestionsPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">Stream-scoped model context</span>
+            <h2>Species candidate packs</h2>
+            <span className="meta-text">
+              Ordered existing bird taxonomy only - 2-200 candidates - edits create an immutable successor.
+            </span>
+          </div>
+          <button className="secondary-action" onClick={startNewCandidatePack} type="button">
+            New pack
+          </button>
+        </div>
+
+        <div className="review-identification-grid">
+          {candidatePacks.map((pack) => (
+            <div className="data-row" key={pack.id}>
+              <span>{pack.status === "active" ? "Active" : "Archived"}</span>
+              <strong>{pack.display_name} v{pack.version}</strong>
+              <small>
+                {pack.candidate_count} bird species - {pack.is_builtin ? "Built-in and immutable" : "User pack"}
+              </small>
+              <div className="detail-actions">
+                <button className="text-action" onClick={() => editCandidatePack(pack)} type="button">
+                  Inspect
+                </button>
+                {pack.is_builtin ? (
+                  <button
+                    className="text-action"
+                    disabled={isSavingCandidatePack}
+                    onClick={() => void cloneCandidatePack(pack)}
+                    type="button"
+                  >
+                    Clone
+                  </button>
+                ) : pack.status === "active" ? (
+                  <>
+                    <button className="text-action" onClick={() => editCandidatePack(pack)} type="button">
+                      Edit
+                    </button>
+                    <button
+                      className="text-action"
+                      disabled={isSavingCandidatePack}
+                      onClick={() => void archiveCandidatePack(pack)}
+                      type="button"
+                    >
+                      Archive
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {editingCandidatePack?.is_builtin ? (
+          <div className="notice-panel">
+            <strong>{editingCandidatePack.display_name} v{editingCandidatePack.version}</strong>
+            <span>
+              This immutable built-in pack preserves the legacy candidate scope. Clone it to change
+              its ordered bird members.
+            </span>
+          </div>
+        ) : (
+          <form className="species-suggestion-form" onSubmit={saveCandidatePack}>
+            <div className="section-heading">
+              <div>
+                <h3>{editingCandidatePack ? "Edit user pack" : "Create user pack"}</h3>
+                <span className="meta-text">
+                  {editingCandidatePack
+                    ? `Saving creates v${editingCandidatePack.version + 1} and archives this active version.`
+                    : "New packs are active immediately and can then be selected per Stream."}
+                </span>
+              </div>
+              {editingCandidatePack ? (
+                <span className="meta-text">{editingCandidatePack.status}</span>
+              ) : null}
+            </div>
+            <div className="species-suggestion-form-grid">
+              <label>
+                Pack name
+                <input
+                  maxLength={80}
+                  onChange={(event) => setCandidatePackName(event.target.value)}
+                  required
+                  value={candidatePackName}
+                />
+              </label>
+              <label>
+                Short description
+                <input
+                  maxLength={280}
+                  onChange={(event) => setCandidatePackDescription(event.target.value)}
+                  value={candidatePackDescription}
+                />
+              </label>
+            </div>
+            <div className="review-bulk-actions">
+              <label>
+                Search bird taxonomy
+                <input
+                  onChange={(event) => setCandidatePackSearch(event.target.value)}
+                  placeholder="e.g. titmouse"
+                  value={candidatePackSearch}
+                />
+              </label>
+              <button
+                className="secondary-action"
+                onClick={() => void searchCandidateTaxonomy()}
+                type="button"
+              >
+                Search
+              </button>
+            </div>
+            {candidateTaxonomyMatches.length > 0 ? (
+              <div className="label-helper-chips">
+                {candidateTaxonomyMatches.map((label) => (
+                  <button
+                    disabled={candidatePackMemberIds.includes(label.id)}
+                    key={label.id}
+                    onClick={() => addCandidatePackMember(label)}
+                    type="button"
+                  >
+                    Add {label.display_name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div className="data-row">
+              <span>Ordered members</span>
+              <strong>{candidatePackMemberIds.length} / 2-200</strong>
+              <div className="label-helper-chips">
+                {candidatePackMemberLabels.map((member) => (
+                  <button
+                    key={member.id}
+                    onClick={() =>
+                      setCandidatePackMemberIds((current) =>
+                        current.filter((candidateId) => candidateId !== member.id),
+                      )
+                    }
+                    type="button"
+                  >
+                    Remove {member.label}
+                  </button>
+                ))}
+              </div>
+              <small>Order is preserved as shown; no free-text labels are accepted.</small>
+            </div>
+            <div className="detail-actions">
+              <button
+                className="primary-action"
+                disabled={isSavingCandidatePack || editingCandidatePack?.status === "archived"}
+                type="submit"
+              >
+                {isSavingCandidatePack
+                  ? "Saving..."
+                  : editingCandidatePack
+                    ? "Create successor"
+                    : "Create pack"}
+              </button>
+              {editingCandidatePack ? (
+                <button className="text-action" onClick={startNewCandidatePack} type="button">
+                  Cancel edit
+                </button>
+              ) : null}
+            </div>
+          </form>
+        )}
+      </section>
 
       <section className="panel species-suggestion-create-panel">
         <div className="section-heading">

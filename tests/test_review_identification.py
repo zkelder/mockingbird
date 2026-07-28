@@ -1447,6 +1447,117 @@ async def test_assistant_reuses_completed_bioclip_evidence_without_a_prior_assis
     assert await truth_snapshot(client) == before_truth
 
 
+async def test_review_identification_bioclip_pack_change_forces_new_evidence(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    imported = await import_review_image(client, title="BioCLIP candidate-pack change image")
+    visit_id, _evidence_id = await create_activity_review_item(
+        client,
+        media_asset_id=imported["media_asset"]["id"],
+    )
+    mark_bioclip_available(monkeypatch, tmp_path)
+    first_prediction = bioclip_prediction(
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.62),
+        ("blue jay (Cyanocitta cristata)", None, None, 0.22),
+    )
+    second_prediction = bioclip_prediction(
+        ("blue jay (Cyanocitta cristata)", None, None, 0.71),
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.19),
+    )
+    prepared_prediction = [first_prediction]
+    monkeypatch.setattr(
+        product_repository,
+        "prepare_bioclip_run",
+        lambda _config: bioclip_prepared_run(prepared_prediction[0]),
+    )
+    mock_bioclip_run(monkeypatch, first_prediction)
+    before_truth = await truth_snapshot(client)
+
+    first = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+    assert first.status_code == 200
+    first_suggestion_id = first.json()["species_suggestion"]["id"]
+    assert first.json()["identification"]["candidate_pack"]["id"] == "backyard-core"
+
+    accepted = await client.post(
+        "/api/species-suggestions",
+        json={
+            "source_id": SOURCE_ID,
+            "stream_id": STREAM_ID,
+            "visit_id": visit_id,
+            "adapter_id": "manual-pack-history",
+            "adapter_name": "Manual pack history",
+            "suggested_label": "northern_cardinal",
+        },
+    )
+    rejected = await client.post(
+        "/api/species-suggestions",
+        json={
+            "source_id": SOURCE_ID,
+            "stream_id": STREAM_ID,
+            "visit_id": visit_id,
+            "adapter_id": "manual-pack-history",
+            "adapter_name": "Manual pack history",
+            "suggested_label": "blue_jay",
+        },
+    )
+    assert accepted.status_code == 201
+    assert rejected.status_code == 201
+    assert (
+        await client.post(
+            f"/api/species-suggestions/{accepted.json()['id']}/status",
+            json={"status": "accepted"},
+        )
+    ).status_code == 200
+    assert (
+        await client.post(
+            f"/api/species-suggestions/{rejected.json()['id']}/status",
+            json={"status": "rejected"},
+        )
+    ).status_code == 200
+
+    pack = await client.post(
+        "/api/species-candidate-packs",
+        json={
+            "display_name": "Two bird review pack",
+            "taxonomy_label_ids": ["blue_jay", "northern_cardinal"],
+        },
+    )
+    assert pack.status_code == 200
+    assert (
+        await client.put(
+            f"/api/streams/{STREAM_ID}/species-candidate-pack",
+            json={"candidate_pack_id": pack.json()["id"]},
+        )
+    ).status_code == 200
+
+    prepared_prediction[0] = second_prediction
+    mock_bioclip_run(monkeypatch, second_prediction)
+    second = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+
+    assert second.status_code == 200
+    assert second.json()["species_suggestion"]["id"] != first_suggestion_id
+    assert second.json()["identification"]["candidate_pack"]["id"] == pack.json()["id"]
+    suggestions = (
+        await client.get("/api/species-suggestions", params={"visit_id": visit_id})
+    ).json()["species_suggestions"]
+    by_id = {suggestion["id"]: suggestion for suggestion in suggestions}
+    assert by_id[first_suggestion_id]["status"] == "superseded"
+    assert by_id[accepted.json()["id"]]["status"] == "accepted"
+    assert by_id[rejected.json()["id"]]["status"] == "rejected"
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 2
+    assert attempts[0]["candidate_pack_id"] == "backyard-core"
+    assert attempts[1]["candidate_pack_id"] == pack.json()["id"]
+    assert attempts[0]["candidate_pack_sha256"] != attempts[1]["candidate_pack_sha256"]
+    assert await truth_snapshot(client) == before_truth
+
+
 async def test_review_identification_bioclip_supersedes_when_model_artifact_changes(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

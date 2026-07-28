@@ -201,6 +201,12 @@ from mockingbird.api.schemas import (
     SpeciesSuggestionResponse,
     SpeciesSuggestionStatus,
     SpeciesSuggestionStatusUpdateRequest,
+    SpeciesCandidatePack,
+    SpeciesCandidatePackCloneRequest,
+    SpeciesCandidatePackCreate,
+    SpeciesCandidatePackUpdate,
+    StreamSpeciesCandidatePackSelection,
+    StreamSpeciesCandidatePackSelectionUpdate,
     SourceConnectionStatus,
     SourceConnectionStatusResponse,
     CameraSetupCompleteRequest,
@@ -1930,6 +1936,29 @@ def _species_suggestion_error(error: ValueError) -> HTTPException:
         )
     return HTTPException(
         status_code=400, detail="SpeciesSuggestion could not be processed."
+    )
+
+
+def _species_candidate_pack_error(error: ValueError) -> HTTPException:
+    reason = str(error)
+    if reason in {"candidate_pack_missing", "stream_missing"}:
+        return HTTPException(
+            status_code=404,
+            detail="Species candidate pack or Stream was not found.",
+        )
+    messages = {
+        "candidate_pack_name_invalid": "Enter a candidate-pack name up to 80 characters.",
+        "candidate_pack_name_version_exists": "That candidate-pack name and version already exist.",
+        "candidate_pack_member_count_invalid": "A candidate pack must contain between 2 and 200 bird species.",
+        "candidate_pack_duplicate_member": "A candidate pack cannot contain the same bird twice.",
+        "candidate_pack_unknown_taxonomy": "Choose bird species from the existing taxonomy.",
+        "candidate_pack_members_must_be_bird_species": "Candidate packs may contain only existing bird species taxonomy labels.",
+        "candidate_pack_builtin_immutable": "The built-in Backyard Core pack is immutable; clone it to customize it.",
+        "candidate_pack_not_active": "Only active candidate packs can be edited or selected.",
+    }
+    return HTTPException(
+        status_code=400,
+        detail=messages.get(reason, "Species candidate pack could not be processed."),
     )
 
 
@@ -8122,6 +8151,69 @@ async def list_taxonomy_labels() -> list[TaxonomyLabel]:
     return get_repository().list_taxonomy_labels()
 
 
+@app.get("/api/species-candidate-packs", response_model=list[SpeciesCandidatePack])
+async def list_species_candidate_packs(
+    include_archived: bool = True,
+) -> list[SpeciesCandidatePack]:
+    return get_repository().list_species_candidate_packs(
+        include_archived=include_archived,
+    )
+
+
+@app.post("/api/species-candidate-packs", response_model=SpeciesCandidatePack)
+async def create_species_candidate_pack(
+    payload: SpeciesCandidatePackCreate,
+) -> SpeciesCandidatePack:
+    try:
+        return get_repository().create_species_candidate_pack(payload)
+    except ValueError as error:
+        raise _species_candidate_pack_error(error) from error
+
+
+@app.get("/api/species-candidate-packs/{pack_id}", response_model=SpeciesCandidatePack)
+async def get_species_candidate_pack(pack_id: str) -> SpeciesCandidatePack:
+    pack = get_repository().get_species_candidate_pack(pack_id)
+    if pack is None:
+        raise _not_found("Species candidate pack", pack_id)
+    return pack
+
+
+@app.post(
+    "/api/species-candidate-packs/{pack_id}/clone",
+    response_model=SpeciesCandidatePack,
+)
+async def clone_species_candidate_pack(
+    pack_id: str,
+    payload: SpeciesCandidatePackCloneRequest,
+) -> SpeciesCandidatePack:
+    try:
+        return get_repository().clone_species_candidate_pack(pack_id, payload)
+    except ValueError as error:
+        raise _species_candidate_pack_error(error) from error
+
+
+@app.put("/api/species-candidate-packs/{pack_id}", response_model=SpeciesCandidatePack)
+async def update_species_candidate_pack(
+    pack_id: str,
+    payload: SpeciesCandidatePackUpdate,
+) -> SpeciesCandidatePack:
+    try:
+        return get_repository().update_species_candidate_pack(pack_id, payload)
+    except ValueError as error:
+        raise _species_candidate_pack_error(error) from error
+
+
+@app.post(
+    "/api/species-candidate-packs/{pack_id}/archive",
+    response_model=SpeciesCandidatePack,
+)
+async def archive_species_candidate_pack(pack_id: str) -> SpeciesCandidatePack:
+    try:
+        return get_repository().archive_species_candidate_pack(pack_id)
+    except ValueError as error:
+        raise _species_candidate_pack_error(error) from error
+
+
 @app.get("/api/taxonomy/suggestions", response_model=list[TaxonomyLabel])
 async def taxonomy_suggestions(
     query: str | None = None,
@@ -9195,6 +9287,36 @@ async def list_source_streams(source_id: str) -> list[Stream]:
 @app.get("/api/streams", response_model=list[Stream])
 async def list_streams() -> list[Stream]:
     return get_repository().list_streams()
+
+
+@app.get(
+    "/api/streams/{stream_id}/species-candidate-pack",
+    response_model=StreamSpeciesCandidatePackSelection,
+)
+async def get_stream_species_candidate_pack_selection(
+    stream_id: str,
+) -> StreamSpeciesCandidatePackSelection:
+    selection = get_repository().get_stream_species_candidate_pack_selection(stream_id)
+    if selection is None:
+        raise _not_found("Stream", stream_id)
+    return selection
+
+
+@app.put(
+    "/api/streams/{stream_id}/species-candidate-pack",
+    response_model=StreamSpeciesCandidatePackSelection,
+)
+async def set_stream_species_candidate_pack_selection(
+    stream_id: str,
+    payload: StreamSpeciesCandidatePackSelectionUpdate,
+) -> StreamSpeciesCandidatePackSelection:
+    try:
+        return get_repository().set_stream_species_candidate_pack_selection(
+            stream_id,
+            payload,
+        )
+    except ValueError as error:
+        raise _species_candidate_pack_error(error) from error
 
 
 @app.get(
