@@ -9,6 +9,7 @@ run, and every runtime artifact must already exist at an explicit local path.
 from __future__ import annotations
 
 import ast
+import atexit
 import base64
 import binascii
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ from pathlib import Path
 import re
 import struct
 import threading
+import time
 from types import ModuleType
 from typing import Any, Callable, Literal
 import zipfile
@@ -148,14 +150,14 @@ class BioClipRuntimeUnavailableError(BioClipError):
 
 
 class BioClipBusyError(BioClipRuntimeUnavailableError):
-    """Raised when another one-shot BioCLIP request already owns the runtime."""
+    """Raised when another local BioCLIP request already owns the runtime."""
 
     error_code = "bioclip_busy"
     error_stage = "process_startup"
 
 
 class BioClipTimeoutError(BioClipRuntimeUnavailableError):
-    """Raised when a one-shot model worker exceeds its hard time limit."""
+    """Raised when the local model worker exceeds its hard time limit."""
 
     error_code = "bioclip_timed_out"
     error_stage = "inference"
@@ -211,7 +213,7 @@ _WORKER_ERROR_DETAILS: dict[str, tuple[str, str]] = {
         "output_parsing",
     ),
     "unexpected": (
-        "BioCLIP one-shot worker failed safely.",
+        "BioCLIP local worker failed safely.",
         "inference",
     ),
 }
@@ -282,6 +284,9 @@ class BioClipProvenance:
     pillow_version: str | None = None
     numpy_version: str | None = None
     model_weights_verified: bool = True
+    model_reused: bool = False
+    model_load_ms: int = 0
+    inference_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -373,7 +378,17 @@ class _SharedImagePayload:
     byte_count: int
 
 
+@dataclass
+class _PersistentWorker:
+    """One local-only subprocess retained only for sequential explicit runs."""
+
+    process: Any
+    connection: Connection
+
+
 _RUN_LOCK = threading.Lock()
+_LOADED_RUNTIME: _LoadedRuntime | None = None
+_PERSISTENT_WORKER: _PersistentWorker | None = None
 
 
 def build_bioclip_config(
@@ -462,6 +477,19 @@ def get_bioclip_status(
     )
 
 
+def prepare_bioclip_run(
+    config: BioClipAdapterConfig | None,
+) -> BioClipPreparedRun:
+    """Hash and bind local artifacts for exact completed-run reuse checks."""
+
+    validated_config = _validate_run_request(config, 1)
+    validated = _validate_config_files(
+        validated_config,
+        hash_model_weights=True,
+    )
+    return _prepared_run_from_validated(validated)
+
+
 def run_bioclip_on_image(
     image: Any,
     config: BioClipAdapterConfig | None,
@@ -533,7 +561,7 @@ def _validate_run_request(
 
 def _acquire_run_lock() -> None:
     # A second request must fail fast instead of consuming another API thread
-    # or decoding another large image while the one-shot CPU worker owns the
+    # or decoding another large image while the local worker owns the
     # runtime boundary.
     if not _RUN_LOCK.acquire(blocking=False):
         raise BioClipBusyError(
@@ -608,7 +636,7 @@ def _run_bioclip_in_process(
     config: BioClipAdapterConfig,
     top_k: int,
 ) -> BioClipPrediction:
-    """Execute inside the disposable worker process only."""
+    """Execute inside the isolated local worker process."""
 
     validated = _validate_config_files(config, hash_model_weights=True)
     runtime_modules = _load_optional_runtime()
@@ -625,7 +653,17 @@ def _run_bioclip_in_process(
         raise BioClipConfigurationError(
             "BioCLIP model-weight provenance could not be established."
         )
-    runtime = _load_runtime(validated, runtime_modules, embeddings)
+    load_started_ns = time.monotonic_ns()
+    runtime, model_reused = _load_or_reuse_runtime(
+        validated,
+        runtime_modules,
+        embeddings,
+    )
+    model_load_ms = (
+        0
+        if model_reused
+        else max(0, (time.monotonic_ns() - load_started_ns) // 1_000_000)
+    )
     open_clip_version = _runtime_package_version(
         runtime_modules.open_clip,
         package_name="OpenCLIP",
@@ -646,7 +684,9 @@ def _run_bioclip_in_process(
         runtime_modules.numpy,
         distribution_name="numpy",
     )
+    inference_started_ns = time.monotonic_ns()
     scores = _infer_scores(runtime, prepared_image)
+    inference_ms = max(0, (time.monotonic_ns() - inference_started_ns) // 1_000_000)
     suggestions = _rank_suggestions(
         validated.labels,
         scores,
@@ -678,6 +718,9 @@ def _run_bioclip_in_process(
             pillow_version=pillow_version,
             numpy_version=numpy_version,
             model_weights_verified=True,
+            model_reused=model_reused,
+            model_load_ms=model_load_ms,
+            inference_ms=inference_ms,
         ),
         candidate_labels=validated.labels,
         candidate_scores=tuple(scores),
@@ -691,61 +734,37 @@ def _run_worker_subprocess(
     *,
     validated: _ValidatedConfig,
 ) -> BioClipPrediction:
-    shared_payload, shared_buffer = _share_image_payload(image_payload)
-    receive_connection: Connection | None = None
-    send_connection: Connection | None = None
-    process: Any | None = None
-    started = False
-    try:
-        context = multiprocessing.get_context("spawn")
-        receive_connection, send_connection = context.Pipe(duplex=False)
-        process = context.Process(
-            target=_bioclip_worker,
-            args=(send_connection, shared_payload, config, top_k),
-            name="mockingbird-bioclip-once",
-            daemon=True,
-        )
-        try:
-            process.start()
-            started = True
-        except (OSError, RuntimeError) as error:
-            raise BioClipRuntimeUnavailableError(
-                "BioCLIP one-shot worker could not start safely."
-            ) from error
-        finally:
-            _close_connection(send_connection)
+    """Send one bounded image to the lazily started local worker."""
 
+    shared_payload, shared_buffer = _share_image_payload(image_payload)
+    try:
+        worker = _persistent_bioclip_worker()
         try:
-            ready = receive_connection.poll(BIOCLIP_RUN_TIMEOUT_SECONDS)
-        except (OSError, EOFError) as error:
+            worker.connection.send((shared_payload, config, top_k))
+            ready = worker.connection.poll(BIOCLIP_RUN_TIMEOUT_SECONDS)
+        except (EOFError, OSError, ValueError) as error:
+            _discard_persistent_bioclip_worker()
             raise BioClipRuntimeUnavailableError(
-                "BioCLIP one-shot worker connection failed."
+                "BioCLIP local worker connection failed."
             ) from error
         if not ready:
-            _stop_worker(process)
+            _discard_persistent_bioclip_worker()
             raise BioClipTimeoutError(
-                "BioCLIP one-shot worker exceeded the local inference timeout."
+                "BioCLIP local worker exceeded the local inference timeout."
             )
-
         try:
-            result_bytes = receive_connection.recv_bytes(
+            result_bytes = worker.connection.recv_bytes(
                 maxlength=BIOCLIP_MAX_RESULT_BYTES
             )
         except (EOFError, OSError) as error:
-            _join_worker(process)
+            _discard_persistent_bioclip_worker()
             raise BioClipRuntimeUnavailableError(
-                "BioCLIP one-shot worker exited without a valid result."
+                "BioCLIP local worker exited without a valid result."
             ) from error
-
-        _join_worker(process)
-        if process.is_alive():
-            _stop_worker(process)
-            raise BioClipTimeoutError(
-                "BioCLIP one-shot worker did not stop after inference."
-            )
-        if process.exitcode != 0:
+        if not worker.process.is_alive():
+            _discard_persistent_bioclip_worker()
             raise BioClipRuntimeUnavailableError(
-                "BioCLIP one-shot worker exited unexpectedly."
+                "BioCLIP local worker exited unexpectedly."
             )
         return _decode_worker_result(
             result_bytes,
@@ -753,26 +772,107 @@ def _run_worker_subprocess(
             top_k=top_k,
         )
     finally:
-        _close_connection(receive_connection)
-        _close_connection(send_connection)
-        if started and process.is_alive():
+        _release_shared_image_buffer(shared_buffer)
+
+
+def _persistent_bioclip_worker() -> _PersistentWorker:
+    global _PERSISTENT_WORKER
+    if _PERSISTENT_WORKER is not None and _PERSISTENT_WORKER.process.is_alive():
+        return _PERSISTENT_WORKER
+    _discard_persistent_bioclip_worker()
+
+    parent_connection: Connection | None = None
+    worker_connection: Connection | None = None
+    process: Any | None = None
+    try:
+        context = multiprocessing.get_context("spawn")
+        parent_connection, worker_connection = context.Pipe(duplex=True)
+        process = context.Process(
+            target=_bioclip_worker_loop,
+            args=(worker_connection,),
+            name="mockingbird-bioclip-local",
+            daemon=True,
+        )
+        try:
+            process.start()
+        except (OSError, RuntimeError) as error:
+            raise BioClipRuntimeUnavailableError(
+                "BioCLIP local worker could not start safely."
+            ) from error
+        finally:
+            _close_connection(worker_connection)
+            worker_connection = None
+        _PERSISTENT_WORKER = _PersistentWorker(
+            process=process,
+            connection=parent_connection,
+        )
+        parent_connection = None
+        return _PERSISTENT_WORKER
+    except Exception:
+        _close_connection(parent_connection)
+        _close_connection(worker_connection)
+        if process is not None:
             _stop_worker(process)
-        if started and not process.is_alive():
             try:
                 process.close()
             except (OSError, ValueError):
                 pass
-        _release_shared_image_buffer(shared_buffer)
+        raise
 
 
-def _bioclip_worker(
-    send_connection: Connection,
+def _discard_persistent_bioclip_worker() -> None:
+    global _PERSISTENT_WORKER
+    worker = _PERSISTENT_WORKER
+    _PERSISTENT_WORKER = None
+    if worker is None:
+        return
+    _close_connection(worker.connection)
+    _stop_worker(worker.process)
+    if not worker.process.is_alive():
+        try:
+            worker.process.close()
+        except (OSError, ValueError):
+            pass
+
+
+def _shutdown_persistent_bioclip_worker() -> None:
+    """Release the retained local worker when its owning app process exits."""
+
+    _discard_persistent_bioclip_worker()
+
+
+atexit.register(_shutdown_persistent_bioclip_worker)
+
+
+def _bioclip_worker_loop(receive_connection: Connection) -> None:
+    _enforce_worker_offline_environment()
+    try:
+        while True:
+            try:
+                request = receive_connection.recv()
+            except (EOFError, OSError):
+                return
+            if not (
+                isinstance(request, tuple)
+                and len(request) == 3
+                and isinstance(request[0], _SharedImagePayload)
+                and isinstance(request[1], BioClipAdapterConfig)
+                and isinstance(request[2], int)
+            ):
+                payload = _worker_error("unexpected")
+            else:
+                payload = _bioclip_worker_payload(*request)
+            _send_worker_payload(receive_connection, payload)
+    finally:
+        _close_connection(receive_connection)
+
+
+def _bioclip_worker_payload(
     shared_payload: _SharedImagePayload,
     config: BioClipAdapterConfig,
     top_k: int,
-) -> None:
+) -> dict[str, Any]:
     try:
-        _enforce_worker_offline_environment()
         image_payload = _read_shared_image_payload(shared_payload)
         image_module = _load_pillow_runtime()
         image = image_module.frombytes(
@@ -781,20 +881,22 @@ def _bioclip_worker(
             image_payload.rgb_bytes,
         )
         prediction = _run_bioclip_in_process(image, config, top_k)
-        payload = _prediction_to_worker_payload(prediction)
+        return _prediction_to_worker_payload(prediction)
     except BioClipConfigurationError:
-        payload = _worker_error("configuration")
+        return _worker_error("configuration")
     except BioClipRuntimeUnavailableError:
-        payload = _worker_error("runtime_unavailable")
+        return _worker_error("runtime_unavailable")
     except BioClipUnsupportedImageError:
-        payload = _worker_error("unsupported_image")
+        return _worker_error("unsupported_image")
     except BioClipNoResultError:
-        payload = _worker_error("no_result")
+        return _worker_error("no_result")
     except BioClipOutputError:
-        payload = _worker_error("output")
+        return _worker_error("output")
     except Exception:
-        payload = _worker_error("unexpected")
+        return _worker_error("unexpected")
 
+
+def _send_worker_payload(connection: Connection, payload: dict[str, Any]) -> None:
     try:
         encoded = json.dumps(
             payload,
@@ -806,9 +908,25 @@ def _bioclip_worker(
                 _worker_error("output"),
                 separators=(",", ":"),
             ).encode("utf-8")
-        send_connection.send_bytes(encoded)
+        connection.send_bytes(encoded)
     except (BrokenPipeError, EOFError, OSError):
         pass
+
+
+def _bioclip_worker(
+    send_connection: Connection,
+    shared_payload: _SharedImagePayload,
+    config: BioClipAdapterConfig,
+    top_k: int,
+) -> None:
+    """Compatibility entry point for the isolated-worker test."""
+
+    _enforce_worker_offline_environment()
+    try:
+        _send_worker_payload(
+            send_connection,
+            _bioclip_worker_payload(shared_payload, config, top_k),
+        )
     finally:
         _close_connection(send_connection)
 
@@ -864,6 +982,9 @@ def _prediction_to_worker_payload(prediction: BioClipPrediction) -> dict[str, An
             "pillow_version": prediction.provenance.pillow_version,
             "numpy_version": prediction.provenance.numpy_version,
             "model_weights_verified": (prediction.provenance.model_weights_verified),
+            "model_reused": prediction.provenance.model_reused,
+            "model_load_ms": prediction.provenance.model_load_ms,
+            "inference_ms": prediction.provenance.inference_ms,
         },
     }
 
@@ -1094,8 +1215,19 @@ def _provenance_from_worker_value(
         raise BioClipOutputError(
             "BioCLIP worker returned invalid runtime-version provenance."
         )
+    model_reused = value.get("model_reused")
+    model_load_ms = value.get("model_load_ms")
+    inference_ms = value.get("inference_ms")
     if (
-        isinstance(value.get("adapter_contract_version"), bool)
+        not isinstance(model_reused, bool)
+        or isinstance(model_load_ms, bool)
+        or not isinstance(model_load_ms, int)
+        or model_load_ms < 0
+        or isinstance(inference_ms, bool)
+        or not isinstance(inference_ms, int)
+        or inference_ms < 0
+        or (model_reused and model_load_ms != 0)
+        or isinstance(value.get("adapter_contract_version"), bool)
         or value.get("adapter_contract_version") != BIOCLIP_ADAPTER_CONTRACT_VERSION
         or value.get("model_weights_verified") is not True
     ):
@@ -1126,6 +1258,9 @@ def _provenance_from_worker_value(
         "pillow_version": pillow_version,
         "numpy_version": numpy_version,
         "model_weights_verified": True,
+        "model_reused": model_reused,
+        "model_load_ms": model_load_ms,
+        "inference_ms": inference_ms,
     }
     if any(
         value.get(key) != expected_value for key, expected_value in expected.items()
@@ -1634,7 +1769,7 @@ def _load_embedding_cache(
 ) -> Any:
     if validated.model_weights_sha256 is None:
         raise BioClipConfigurationError(
-            "BioCLIP model weights must be hashed inside the one-shot worker."
+            "BioCLIP model weights must be hashed inside the local worker."
         )
     try:
         with numpy.load(validated.embedding_cache_path, allow_pickle=False) as cache:
@@ -1826,6 +1961,22 @@ def _copy_rgb_image(image: Any, image_module: ModuleType) -> Any:
         raise BioClipUnsupportedImageError(
             "BioCLIP could not prepare the in-memory image."
         ) from error
+
+
+def _load_or_reuse_runtime(
+    validated: _ValidatedConfig,
+    modules: _OptionalRuntime,
+    embeddings: Any,
+) -> tuple[_LoadedRuntime, bool]:
+    global _LOADED_RUNTIME
+    if (
+        _LOADED_RUNTIME is not None
+        and _LOADED_RUNTIME.runtime_key == validated.runtime_key
+    ):
+        return _LOADED_RUNTIME, True
+    _LOADED_RUNTIME = None
+    _LOADED_RUNTIME = _load_runtime(validated, modules, embeddings)
+    return _LOADED_RUNTIME, False
 
 
 def _load_runtime(

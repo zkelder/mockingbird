@@ -44,8 +44,9 @@ MockingBird currently provides:
 - explicit manual media, external still-image, folder/trail-cam, and
   metadata-only webhook evidence workflows under the same review model
 - optional local analyzer evidence, including a user-supplied MDv5 path and a
-  one-item-at-a-time BioCLIP 2 evaluation shadow with a default-off automatic
-  post-activity assist; no model weights are bundled or downloaded automatically
+  one-item-at-a-time BioCLIP 2 local species-suggestion action with a
+  default-off automatic post-activity assist; no model weights are bundled or
+  downloaded automatically
 - verified local database-and-managed-media backup, import, download, and
   rollback-safe restore
 - Storage & Retention controls that default off, preview policy-selected media,
@@ -135,11 +136,11 @@ are transient and monitoring stays off until explicitly enabled. There is no
 automatic LAN discovery, service installer, remote shell, cloud relay, audio,
 or recording. See [Camera Node boundary](docs/camera-node-boundary-design.md).
 
-### Optional local species shadow
+### Optional local species suggestions
 
-The current BioCLIP 2 path is an evaluation aid inside the existing Review
-Queue, not an automatically enabled production classifier. Install its optional
-runtime with:
+The current BioCLIP 2 path is a local reviewer-assistance action inside the
+existing Review Queue, not an automatically enabled production classifier.
+Install its optional runtime with:
 
 ```sh
 python -m pip install -e ".[classifier-bioclip]"
@@ -151,6 +152,36 @@ Configure these paths in the environment that launches MockingBird:
 - `MOCKINGBIRD_BIOCLIP_LABELS_PATH`: frozen local/seasonal candidate labels
 - `MOCKINGBIRD_BIOCLIP_EMBEDDING_CACHE_PATH`: matching precomputed text
   embeddings
+
+For the supported desktop-local baseline, use the official Imageomics
+[`imageomics/bioclip-2`](https://huggingface.co/imageomics/bioclip-2) artifact
+version `1.0.0`, pinned to revision
+`2957b322090f9cb17ae72c71981c7218a28d81e0`. Its
+`open_clip_model.safetensors` SHA-256 is
+`b7b2bf6fbc95799e42630e394cf95803892ab447c1a8ab629dbc82fbeaf7dfef`;
+the model card licenses it under MIT. Obtain that single artifact manually from
+the official model source into an ignored local cache, verify the digest before
+configuration, and keep its accompanying `open_clip_config.json` beside it.
+
+Build the frozen cache only after choosing the bounded existing MockingBird bird
+taxonomy. This explicit setup command accepts local artifacts only, sets offline
+mode before loading OpenCLIP, and neither downloads anything nor runs from a
+review request:
+
+```sh
+python scripts/prepare_bioclip_candidate_cache.py \
+  --model-dir data/models/bioclip-2 \
+  --labels-path data/models/bioclip-2/mockingbird-bird-candidates.txt \
+  --embedding-cache-path data/models/bioclip-2/mockingbird-bird-candidates.npz \
+  --model-weights-sha256 b7b2bf6fbc95799e42630e394cf95803892ab447c1a8ab629dbc82fbeaf7dfef
+```
+
+The labels file contains the selected application taxonomy display names, with
+scientific names retained when they exist in that taxonomy. Updating labels or
+the model requires an explicit rebuilt cache and produces new pending evidence;
+all of these local files remain ignored. Configure the three environment
+variables in the environment that launches MockingBird, never in a frontend or
+API request.
 
 The optional extra stays on the tested OpenCLIP 3.3 runtime line. The app never
 downloads artifacts or generates embeddings during a review request. A manual

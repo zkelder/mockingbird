@@ -1,4 +1,5 @@
 import hashlib
+from dataclasses import replace
 import math
 from pathlib import Path
 from types import SimpleNamespace
@@ -541,6 +542,9 @@ def mock_bioclip_run(
                         "height": bottom - top,
                     },
                     "used_for_inference": True,
+                    "input_sha256": hashlib.sha256(
+                        repr((crop.source, crop.box_normalized.model_dump())).encode()
+                    ).hexdigest(),
                 }
             )
         return object()
@@ -1335,6 +1339,108 @@ async def test_review_identification_bioclip_activity_crop_supersedes_only_prior
     assert attempts[0]["candidate_set_sha256"] != attempts[1]["candidate_set_sha256"]
     assert await detector_counts(client) == before_detection
     assert await truth_snapshot(client) == before_truth
+
+
+async def test_review_identification_bioclip_reuses_completed_exact_input(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    imported = await import_review_image(client, title="BioCLIP exact reuse image")
+    visit_id, _evidence_id = await create_activity_review_item(
+        client,
+        media_asset_id=imported["media_asset"]["id"],
+    )
+    mark_bioclip_available(monkeypatch, tmp_path)
+    prediction = bioclip_prediction(
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.62),
+        ("blue jay (Cyanocitta cristata)", None, None, 0.22),
+    )
+    monkeypatch.setattr(
+        product_repository,
+        "prepare_bioclip_run",
+        lambda _config: bioclip_prepared_run(prediction),
+    )
+    mock_bioclip_run(monkeypatch, prediction)
+    before_truth = await truth_snapshot(client)
+
+    first = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+    second = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["species_suggestion"]["id"] == second.json()["species_suggestion"]["id"]
+    assert second.json()["created_suggestion_ids"] == []
+    assert second.json()["identification"]["status"] == "suggestion_present"
+    assert "reused the completed result" in second.json()["identification"]["message"]
+    suggestions = (
+        await client.get("/api/species-suggestions", params={"visit_id": visit_id})
+    ).json()["species_suggestions"]
+    assert [item["status"] for item in suggestions if item["adapter_id"] == BIOCLIP_ADAPTER_ID] == ["pending"]
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 1
+    assert await truth_snapshot(client) == before_truth
+
+
+async def test_review_identification_bioclip_supersedes_when_model_artifact_changes(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    imported = await import_review_image(client, title="BioCLIP changed artifact image")
+    visit_id, _evidence_id = await create_activity_review_item(
+        client,
+        media_asset_id=imported["media_asset"]["id"],
+    )
+    mark_bioclip_available(monkeypatch, tmp_path)
+    first_prediction = bioclip_prediction(
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.64),
+        ("blue jay (Cyanocitta cristata)", None, None, 0.24),
+    )
+    second_base = bioclip_prediction(
+        ("blue jay (Cyanocitta cristata)", None, None, 0.66),
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.21),
+    )
+    second_prediction = BioClipPrediction(
+        suggestions=second_base.suggestions,
+        provenance=replace(
+            second_base.provenance,
+            model_weights_sha256="e" * 64,
+        ),
+        candidate_labels=second_base.candidate_labels,
+        candidate_scores=second_base.candidate_scores,
+    )
+    current_prepared = bioclip_prepared_run(first_prediction)
+    monkeypatch.setattr(
+        product_repository,
+        "prepare_bioclip_run",
+        lambda _config: current_prepared,
+    )
+    mock_bioclip_run(monkeypatch, first_prediction)
+
+    first = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+    assert first.status_code == 200
+    current_prepared = bioclip_prepared_run(second_prediction)
+    mock_bioclip_run(monkeypatch, second_prediction)
+    second = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+
+    assert second.status_code == 200
+    assert second.json()["species_suggestion"]["suggested_label"] == "blue_jay"
+    suggestions = (
+        await client.get("/api/species-suggestions", params={"visit_id": visit_id})
+    ).json()["species_suggestions"]
+    bioclip = [item for item in suggestions if item["adapter_id"] == BIOCLIP_ADAPTER_ID]
+    assert [item["status"] for item in bioclip] == ["superseded", "pending"]
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 2
 
 
 async def test_review_identification_bioclip_preserves_exact_event_target(

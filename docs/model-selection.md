@@ -256,6 +256,27 @@ The BioCLIP evaluation shadow uses `MOCKINGBIRD_BIOCLIP_MODEL_PATH`,
 `MOCKINGBIRD_BIOCLIP_LABELS_PATH`, and
 `MOCKINGBIRD_BIOCLIP_EMBEDDING_CACHE_PATH`; the first runtime is CPU-only.
 
+
+### Supported local BioCLIP 2 artifact
+
+The supported desktop baseline is Imageomics
+[`imageomics/bioclip-2`](https://huggingface.co/imageomics/bioclip-2), model-card
+version `1.0.0`, immutable revision `2957b322090f9cb17ae72c71981c7218a28d81e0`, under the model card’s MIT
+license. Use only the official `open_clip_model.safetensors` artifact with
+SHA-256 `b7b2bf6fbc95799e42630e394cf95803892ab447c1a8ab629dbc82fbeaf7dfef`
+and its matching official `open_clip_config.json`. Both live in an ignored
+local cache; no artifact URL, filesystem path, or credential is exposed by the
+application API.
+
+The three configuration variables name existing local model, labels, and cache
+artifacts in the desktop process environment. The explicit
+`scripts/prepare_bioclip_candidate_cache.py` setup command can generate the
+matching cache from a bounded frozen file of existing MockingBird bird taxonomy
+labels and a pinned expected weight digest. It forces the model libraries
+offline, cannot download an artifact, and never runs during review. Rebuilding
+that cache is an explicit configuration operation whenever the candidate scope
+or model artifact changes.
+
 ## Supported Media Scope
 
 The first candidate is limited to imported image media:
@@ -316,13 +337,17 @@ The visual classifier evaluation also starts one saved media item at a time and
 records its actual cost. Automatic post-activity inference is allowed only after
 selection, with one bounded attempt per eligible Visit, explicit concurrency and
 timeout limits, and failure behavior that leaves capture and review available.
-The shadow serializes model loads and deliberately releases the large model
-after each request instead of retaining it in the local app process. Its
-single-flight slot is reserved before image decode so concurrent requests
-cannot multiply full-image decode memory. Side-effect-free status rejects an
+The local BioCLIP action reserves one single-flight slot before image decode so
+concurrent requests cannot multiply full-image decode memory. Its lazy,
+local-only worker loads the verified model only after the first explicit request,
+reuses it for sequential requests, and is terminated and recreated after a
+timeout, crash, or parent shutdown. Side-effect-free status rejects an
 unsupported OpenCLIP runtime line before execution, and Windows worker startup
 passes a bounded shared-memory descriptor instead of pickling full RGB bytes
-into spawn arguments.
+into spawn arguments. A completed pending suggestion is reused only when both
+the exact input SHA-256 and verified model/cache configuration match; a changed
+input or artifact creates a new pending set and supersedes only prior pending
+BioCLIP evidence.
 
 ## Evaluation Plan
 

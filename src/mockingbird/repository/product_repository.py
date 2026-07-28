@@ -78,6 +78,7 @@ from mockingbird.species.bioclip_adapter import (
     BioClipWorkerFailureError,
     build_bioclip_config,
     get_bioclip_status,
+    prepare_bioclip_run,
     run_bioclip_from_image_loader,
 )
 from mockingbird.source_providers.camera_node import (
@@ -14918,6 +14919,40 @@ class ProductRepository:
                 else None
             )
 
+        if (
+            summary.can_run
+            and summary.adapter_id == BIOCLIP_ADAPTER_ID
+            and species_run_context is not None
+        ):
+            reused_suggestion = self._reusable_bioclip_suggestion(
+                run_context=species_run_context,
+            )
+            if reused_suggestion is not None:
+                reused_summary = summary.model_copy(
+                    update={
+                        "status": ReviewIdentificationStatus.suggestion_present,
+                        "message": (
+                            "BioCLIP reused the completed result for this exact "
+                            "saved input and local model configuration. No new "
+                            "suggestion evidence was created."
+                        ),
+                        "suggestion": reused_suggestion,
+                        "suggestion_count": max(summary.suggestion_count, 1),
+                        "created_suggestion_ids": [],
+                        "created_proposal_ids": [],
+                        **_review_species_focus_fields(
+                            species_run_context.crop,
+                            queue_item,
+                        ),
+                    }
+                )
+                return self._review_identification_response(
+                    target_type=normalized_target_type,
+                    target_id=normalized_target_id,
+                    identification=reused_summary,
+                    review_queue_item=queue_item,
+                )
+
         bioclip_attempt_id: str | None = None
         if bioclip_attempt_context is not None:
             bioclip_attempt_id = self._create_bioclip_identification_attempt(
@@ -15126,6 +15161,95 @@ class ProductRepository:
             proposals=run_result.proposals,
             review_queue_item=refreshed_item,
         )
+
+    def _reusable_bioclip_suggestion(
+        self,
+        *,
+        run_context: _ReviewSpeciesRunContext,
+    ) -> SpeciesSuggestion | None:
+        """Return pending evidence only when its exact input and artifacts match."""
+
+        with self.session_factory() as session:
+            attempts = session.scalars(
+                select(BioClipIdentificationAttemptModel)
+                .where(
+                    BioClipIdentificationAttemptModel.target_type
+                    == run_context.target_type,
+                    BioClipIdentificationAttemptModel.target_id
+                    == run_context.target_id,
+                    BioClipIdentificationAttemptModel.media_asset_id
+                    == run_context.media_asset_id,
+                    BioClipIdentificationAttemptModel.adapter_id == BIOCLIP_ADAPTER_ID,
+                    BioClipIdentificationAttemptModel.outcome == "succeeded",
+                    BioClipIdentificationAttemptModel.resulting_species_suggestion_id.is_not(None),
+                )
+                .order_by(
+                    BioClipIdentificationAttemptModel.completed_at.desc(),
+                    BioClipIdentificationAttemptModel.id.desc(),
+                )
+            ).all()
+            candidates = []
+            for attempt in attempts:
+                suggestion = session.get(
+                    SpeciesSuggestionModel,
+                    attempt.resulting_species_suggestion_id,
+                )
+                if (
+                    suggestion is not None
+                    and suggestion.status == SpeciesSuggestionStatus.pending.value
+                ):
+                    candidates.append(
+                        (
+                            _species_suggestion_from_model(suggestion),
+                            _safe_json_object(attempt.crop_provenance_json),
+                            _safe_json_object(attempt.model_provenance_json),
+                        )
+                    )
+        if not candidates:
+            return None
+
+        observation = _initial_bioclip_crop_provenance(run_context.crop)
+        image: Any | None = None
+        try:
+            image = _load_bioclip_input_image(
+                local_path=run_context.local_path,
+                expected_size_bytes=run_context.media_file_size_bytes,
+                expected_mtime_ns=run_context.media_file_mtime_ns,
+                content_type=run_context.content_type,
+                crop=run_context.crop,
+                observation=observation,
+            )
+        except (
+            BioClipRuntimeUnavailableError,
+            BioClipUnsupportedImageError,
+            OSError,
+            ValueError,
+        ):
+            return None
+        finally:
+            if image is not None:
+                try:
+                    image.close()
+                except Exception:
+                    pass
+        input_sha256 = observation.get("input_sha256")
+        if not isinstance(input_sha256, str) or len(input_sha256) != 64:
+            return None
+        try:
+            prepared_run = prepare_bioclip_run(_bioclip_config())
+        except BioClipConfigurationError:
+            return None
+        for suggestion, crop_provenance, model_provenance in candidates:
+            if (
+                crop_provenance.get("input_sha256") == input_sha256
+                and _bioclip_provenance_matches_prepared_run(
+                    model_provenance,
+                    prepared_run,
+                )
+            ):
+                return suggestion
+        return None
+
 
     def _identify_review_queue_with_bioclip(
         self,
@@ -23105,6 +23229,30 @@ def _safe_json_object(value: str | None) -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         return {}
     return decoded if isinstance(decoded, dict) else {}
+
+
+def _bioclip_provenance_matches_prepared_run(
+    provenance: dict[str, Any],
+    prepared_run: BioClipPreparedRun,
+) -> bool:
+    expected = {
+        "adapter_id": prepared_run.adapter_id,
+        "adapter_name": prepared_run.adapter_name,
+        "adapter_contract_version": prepared_run.adapter_contract_version,
+        "model_name": prepared_run.model_name,
+        "architecture_id": prepared_run.architecture_id,
+        "device": prepared_run.device,
+        "labels_sha256": prepared_run.candidate_set_sha256,
+        "embedding_cache_sha256": prepared_run.embedding_cache_sha256,
+        "model_config_sha256": prepared_run.model_config_sha256,
+        "model_weights_sha256": prepared_run.model_weights_sha256,
+        "model_weights_name": prepared_run.model_weights_name,
+        "prompt_recipe_id": prepared_run.prompt_recipe_id,
+        "prompt_recipe_sha256": prepared_run.prompt_recipe_sha256,
+        "preprocessing_id": prepared_run.preprocessing_id,
+        "preprocessing_sha256": prepared_run.preprocessing_sha256,
+    }
+    return all(provenance.get(key) == value for key, value in expected.items())
 
 
 def _bioclip_attempt_artifacts(

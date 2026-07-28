@@ -41,6 +41,14 @@ from mockingbird.species.bioclip_adapter import (
 )
 
 
+@pytest.fixture(autouse=True)
+def reset_bioclip_worker_state() -> None:
+    bioclip_adapter._discard_persistent_bioclip_worker()
+    bioclip_adapter._LOADED_RUNTIME = None
+    yield
+    bioclip_adapter._discard_persistent_bioclip_worker()
+    bioclip_adapter._LOADED_RUNTIME = None
+
 def _npy_unicode_scalar(value: str) -> bytes:
     assert len(value) <= 64
     header_text = "{'descr': '<U64', 'fortran_order': False, 'shape': (), }"
@@ -153,6 +161,25 @@ def test_config_builder_is_pure_and_missing_paths_are_not_configured() -> None:
     assert status.configured is False
     assert status.runtime_available is False
     assert "downloaded or generated" in status.detail
+
+
+def test_prepare_run_hashes_model_artifacts_for_completed_result_reuse(
+    tmp_path: Path,
+) -> None:
+    config, labels = _write_configured_artifacts(tmp_path)
+
+    prepared = bioclip_adapter.prepare_bioclip_run(config)
+
+    assert prepared.candidate_labels == labels
+    assert prepared.candidate_set_sha256 == hashlib.sha256(
+        "\n".join(labels).encode("utf-8")
+    ).hexdigest()
+    assert prepared.model_weights_sha256 == hashlib.sha256(
+        config.model_dir.joinpath("open_clip_model.safetensors").read_bytes()  # type: ignore[union-attr]
+    ).hexdigest()
+    config.model_dir.joinpath("open_clip_model.safetensors").write_bytes(b"changed")  # type: ignore[union-attr]
+    with pytest.raises(BioClipConfigurationError, match="model weights"):
+        bioclip_adapter.prepare_bioclip_run(config)
 
 
 def test_status_is_available_without_importing_or_loading_runtime(
@@ -631,7 +658,7 @@ def test_ranked_output_rejects_score_label_mismatch() -> None:
         bioclip_adapter._rank_suggestions(("bird", "vehicle"), [1.0], top_k=1)
 
 
-def test_in_process_worker_uses_precomputed_cache_and_loads_model_per_request(
+def test_in_process_worker_uses_precomputed_cache_and_reuses_loaded_model(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -642,7 +669,7 @@ def test_in_process_worker_uses_precomputed_cache_and_loads_model_per_request(
     )
     image = object()
     load_calls: list[object] = []
-    runtime = SimpleNamespace()
+    runtime = SimpleNamespace(runtime_key=validated.runtime_key)
     modules = SimpleNamespace(
         numpy=object(),
         image_module=object(),
@@ -686,9 +713,16 @@ def test_in_process_worker_uses_precomputed_cache_and_loads_model_per_request(
     second = bioclip_adapter._run_bioclip_in_process(image, config, top_k=2)
 
     assert isinstance(first, BioClipPrediction)
-    assert first == second
+    assert first.suggestions == second.suggestions
+    assert first.candidate_scores == second.candidate_scores
     assert [item.label for item in first.suggestions] == [labels[1], labels[0]]
-    assert len(load_calls) == 2
+    assert len(load_calls) == 1
+    assert first.provenance.model_reused is False
+    assert second.provenance.model_reused is True
+    assert first.provenance.model_load_ms >= 0
+    assert second.provenance.model_load_ms == 0
+    assert first.provenance.inference_ms >= 0
+    assert second.provenance.inference_ms >= 0
     assert first.provenance.adapter_id == BIOCLIP_ADAPTER_ID
     assert first.provenance.adapter_name == BIOCLIP_ADAPTER_NAME
     assert first.provenance.score_kind == BIOCLIP_SCORE_KIND
@@ -711,10 +745,14 @@ class _FakeReceiveConnection:
         self.closed = False
         self.poll_timeout: float | None = None
         self.maxlength: int | None = None
+        self.sent: list[object] = []
 
     def poll(self, timeout: float) -> bool:
         self.poll_timeout = timeout
         return self.ready
+
+    def send(self, value: object) -> None:
+        self.sent.append(value)
 
     def recv_bytes(self, *, maxlength: int) -> bytes:
         self.maxlength = maxlength
@@ -737,7 +775,7 @@ class _FakeProcess:
         self,
         *,
         exitcode: int = 0,
-        alive: bool = False,
+        alive: bool = True,
         survive_terminate: bool = False,
     ) -> None:
         self.exitcode = exitcode
@@ -786,7 +824,7 @@ class _FakeSpawnContext:
         self.process_request: dict[str, Any] | None = None
 
     def Pipe(self, *, duplex: bool):
-        assert duplex is False
+        assert duplex is True
         return self.receive, self.send
 
     def Process(self, **kwargs):
@@ -942,25 +980,24 @@ def test_worker_subprocess_success_uses_spawn_and_bounded_json(
     assert result == prediction
     assert requested_contexts == ["spawn"]
     assert process.started is True
-    assert process.closed is True
+    assert process.closed is False
     assert send.closed is True
-    assert receive.closed is True
+    assert receive.closed is False
     assert receive.poll_timeout == bioclip_adapter.BIOCLIP_RUN_TIMEOUT_SECONDS
     assert receive.maxlength == bioclip_adapter.BIOCLIP_MAX_RESULT_BYTES
     assert context.process_request is not None
-    assert context.process_request["target"] is bioclip_adapter._bioclip_worker
+    assert context.process_request["target"] is bioclip_adapter._bioclip_worker_loop
     assert context.process_request["daemon"] is True
-    worker_args = context.process_request["args"]
-    assert worker_args[0] is send
-    assert worker_args[2:] == (config, 2)
-    assert worker_args[1].width == image_payload.width
-    assert worker_args[1].height == image_payload.height
-    assert worker_args[1].byte_count == len(image_payload.rgb_bytes)
-    assert isinstance(
-        worker_args[1],
-        bioclip_adapter._SharedImagePayload,
-    )
-    assert not hasattr(worker_args[1], "rgb_bytes")
+    assert context.process_request["args"] == (send,)
+    assert len(receive.sent) == 1
+    shared_payload, request_config, request_top_k = receive.sent[0]
+    assert request_config == config
+    assert request_top_k == 2
+    assert shared_payload.width == image_payload.width
+    assert shared_payload.height == image_payload.height
+    assert shared_payload.byte_count == len(image_payload.rgb_bytes)
+    assert isinstance(shared_payload, bioclip_adapter._SharedImagePayload)
+    assert not hasattr(shared_payload, "rgb_bytes")
     assert {
         name: bioclip_adapter.os.environ[name]
         for name in (
@@ -1128,7 +1165,7 @@ def test_worker_subprocess_maps_nonzero_exit_and_closes_resources(
     prediction = _prediction_fixture(validated)
     receive = _FakeReceiveConnection(_worker_bytes(prediction))
     send = _FakeSendConnection()
-    process = _FakeProcess(exitcode=7)
+    process = _FakeProcess(exitcode=7, alive=False)
     context = _FakeSpawnContext(receive, send, process)
     monkeypatch.setattr(
         bioclip_adapter.multiprocessing,
