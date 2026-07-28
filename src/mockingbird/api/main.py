@@ -286,6 +286,8 @@ from mockingbird.api.schemas import (
     YardMapZonePlacementUpdate,
     WildlifeInsightsRequest,
     WildlifeInsightsSummary,
+    ZoneInsightsRequest,
+    ZoneInsightsSummary,
     WildlifeJournalHistoryRequest,
     WildlifeJournalHistoryResponse,
     WildlifeJournalGalleryOrder,
@@ -12030,6 +12032,15 @@ async def create_classifier_training_manifest_export(
 @app.get("/api/analytics/summary", response_model=AnalyticsSummary)
 async def get_analytics_summary() -> AnalyticsSummary:
     return get_repository().analytics_summary()
+
+
+@app.post("/api/analytics/zone-insights", response_model=ZoneInsightsSummary)
+async def get_zone_insights(
+    payload: ZoneInsightsRequest,
+) -> ZoneInsightsSummary:
+    """Return bounded read-only feeder and Zone comparisons from reviewed truth."""
+
+    return get_repository().zone_insights(payload)
 
 
 @app.post("/api/analytics/wildlife-insights", response_model=WildlifeInsightsSummary)

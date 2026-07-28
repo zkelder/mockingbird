@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import Enum
 from typing import Any, Literal
 
@@ -2029,6 +2029,7 @@ class ActivityLibraryReviewFilter(str, Enum):
     confirmed_wildlife = "confirmed_wildlife"
     non_bird = "non_bird"
     blank_false = "blank_false"
+    blank = "blank"
     ambiguous_unknown = "ambiguous_unknown"
 
 
@@ -3856,6 +3857,124 @@ class WildlifeInsightsSummary(BaseModel):
     review_context: WildlifeInsightsReviewContext
     confirmed_activity_drilldown: WildlifeInsightsDrilldown
     unresolved_activity_drilldown: WildlifeInsightsDrilldown
+
+
+class ZoneInsightsQualityStatus(str, Enum):
+    sufficient = "sufficient"
+    limited_monitoring = "limited_monitoring"
+    limited_review_coverage = "limited_review_coverage"
+    no_confirmed_activity = "no_confirmed_activity"
+    unavailable_exposure = "unavailable_exposure"
+    unavailable = "unavailable"
+
+
+class ZoneInsightsRequest(BaseModel):
+    """Strict bounded filters for read-only Zone and feeder comparisons."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    stream_id: str | None = Field(default=None, min_length=1, max_length=256)
+    source_id: str | None = Field(default=None, min_length=1, max_length=256)
+    zone_type: ZoneType | None = None
+    confirmed_taxonomy_id: str | None = Field(default=None, min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "ZoneInsightsRequest":
+        if (self.start_at is None) != (self.end_at is None):
+            raise ValueError("zone_insights_range_requires_start_and_end")
+        if self.start_at is not None and self.end_at is not None:
+            if self.end_at <= self.start_at:
+                raise ValueError("zone_insights_end_must_follow_start")
+            if self.end_at - self.start_at > timedelta(days=366):
+                raise ValueError("zone_insights_range_must_not_exceed_366_days")
+        return self
+
+
+class ZoneInsightsAppliedFilters(BaseModel):
+    start_at: datetime
+    end_at: datetime
+    stream_id: str | None = None
+    source_id: str | None = None
+    zone_type: ZoneType | None = None
+    confirmed_taxonomy_id: str | None = None
+
+
+class ZoneInsightsDrilldown(BaseModel):
+    """An explicit existing Activity Library filter set for aggregate evidence."""
+
+    filters: ActivityLibraryFilters
+
+
+class ZoneInsightsSpeciesComposition(BaseModel):
+    taxonomy_id: str
+    label: str
+    display_name: str
+    visit_count: int = Field(ge=1)
+    percentage: float = Field(ge=0, le=100)
+    drilldown: ZoneInsightsDrilldown
+
+
+class ZoneInsightsMetrics(BaseModel):
+    healthy_monitored_hours: float | None = Field(default=None, ge=0)
+    confirmed_bird_visit_count: int = Field(ge=0)
+    confirmed_bird_visits_per_monitored_hour: float | None = Field(default=None, ge=0)
+    total_confirmed_bird_dwell_seconds: float = Field(ge=0)
+    median_confirmed_bird_duration_seconds: float | None = Field(default=None, ge=0)
+    confirmed_species_richness: int = Field(ge=0)
+    unresolved_visit_count: int = Field(ge=0)
+    reviewed_visit_count: int = Field(ge=0)
+    reviewed_blank_count: int = Field(ge=0)
+    reviewed_non_bird_count: int = Field(ge=0)
+    reviewed_false_positive_count: int = Field(ge=0)
+    review_coverage_percentage: float | None = Field(default=None, ge=0, le=100)
+    reviewed_false_positive_percentage: float | None = Field(default=None, ge=0, le=100)
+    evidence_success_percentage: float | None = Field(default=None, ge=0, le=100)
+    first_confirmed_activity_at: datetime | None = None
+    last_confirmed_activity_at: datetime | None = None
+    data_quality_status: ZoneInsightsQualityStatus
+    warnings: list[str] = Field(default_factory=list, max_length=12)
+
+
+class ZoneInsightsZone(BaseModel):
+    zone_id: str
+    zone_name: str
+    zone_type: ZoneType
+    stream_id: str
+    stream_name: str
+    source_id: str
+    source_name: str
+    metrics: ZoneInsightsMetrics
+    species_composition: list[ZoneInsightsSpeciesComposition] = Field(default_factory=list, max_length=30)
+    confirmed_activity_drilldown: ZoneInsightsDrilldown
+    unresolved_activity_drilldown: ZoneInsightsDrilldown
+    reviewed_blank_drilldown: ZoneInsightsDrilldown
+    reviewed_non_bird_drilldown: ZoneInsightsDrilldown
+
+
+class ZoneInsightsDailyBucket(BaseModel):
+    local_date: date
+    confirmed_bird_visit_count: int = Field(ge=0)
+    drilldown: ZoneInsightsDrilldown
+
+
+class ZoneInsightsHourBucket(BaseModel):
+    hour: int = Field(ge=0, le=23)
+    confirmed_bird_visit_count: int = Field(ge=0)
+    drilldown: ZoneInsightsDrilldown
+
+
+class ZoneInsightsSummary(BaseModel):
+    generated_at: datetime
+    applied_filters: ZoneInsightsAppliedFilters
+    aggregate: ZoneInsightsMetrics
+    zone_count: int = Field(ge=0, le=50)
+    zones: list[ZoneInsightsZone] = Field(default_factory=list, max_length=50)
+    daily_trend: list[ZoneInsightsDailyBucket] = Field(default_factory=list, max_length=366)
+    activity_by_hour: list[ZoneInsightsHourBucket] = Field(default_factory=list, max_length=24)
+    busiest_supported_hour: int | None = Field(default=None, ge=0, le=23)
+    warnings: list[str] = Field(default_factory=list, max_length=16)
 
 
 class WildlifeJournalOrder(str, Enum):

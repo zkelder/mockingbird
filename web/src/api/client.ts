@@ -209,6 +209,8 @@ import type {
   WorkerStatusResponse,
     WildlifeInsightsRequest,
     WildlifeInsightsSummary,
+    ZoneInsightsRequest,
+    ZoneInsightsSummary,
     WildlifeJournalHistoryRequest,
     WildlifeJournalHistoryResponse,
     WildlifeJournalOrder,
@@ -1087,6 +1089,11 @@ export const apiClient = {
   getAnalyticsSummary: () => request<AnalyticsSummary>("/api/analytics/summary"),
   getWildlifeInsights: (payload: WildlifeInsightsRequest) =>
     request<WildlifeInsightsSummary>("/api/analytics/wildlife-insights", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getZoneInsights: (payload: ZoneInsightsRequest) =>
+    request<ZoneInsightsSummary>("/api/analytics/zone-insights", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

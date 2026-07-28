@@ -24,6 +24,15 @@ from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy import Engine, and_, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from mockingbird.analytics.zone_insights import (
+    TimeInterval,
+    bounded_healthy_runtime_interval,
+    interval_seconds,
+    median_duration_seconds,
+    quality_status,
+    subtract_intervals,
+)
+
 from mockingbird.api import demo_data
 from mockingbird.detectors.local_image_detector import (
     LOCAL_IMAGE_DETECTOR_ID,
@@ -436,6 +445,16 @@ from mockingbird.api.schemas import (
     ZoneCreate,
     ZoneMonitoringPolicy,
     ZoneMonitoringPolicyUpdate,
+    ZoneInsightsAppliedFilters,
+    ZoneInsightsDailyBucket,
+    ZoneInsightsDrilldown,
+    ZoneInsightsHourBucket,
+    ZoneInsightsMetrics,
+    ZoneInsightsQualityStatus,
+    ZoneInsightsRequest,
+    ZoneInsightsSpeciesComposition,
+    ZoneInsightsSummary,
+    ZoneInsightsZone,
     ZoneType,
     ZoneUpdate,
 )
@@ -7536,6 +7555,10 @@ class ProductRepository:
                         TaxonomyLabelModel.category == LabelCategory.false_positive.value,
                     )
                 )
+            elif payload.review_filter == ActivityLibraryReviewFilter.blank:
+                query = query.where(VisitModel.review_status == ReviewStatus.reviewed.value).where(
+                    review_label_key.in_(blank_keys)
+                )
             elif payload.review_filter == ActivityLibraryReviewFilter.ambiguous_unknown:
                 query = query.where(VisitModel.review_status == ReviewStatus.reviewed.value).where(
                     review_label_key.in_(ambiguous_keys)
@@ -7667,6 +7690,8 @@ class ProductRepository:
                 VisitReviewOutcome.blank,
                 VisitReviewOutcome.false_positive,
             }
+        if review_filter == ActivityLibraryReviewFilter.blank:
+            return summary.review_outcome == VisitReviewOutcome.blank
         return summary.review_outcome == VisitReviewOutcome.ambiguous
 
     def list_activity_library_saved_views(self) -> list[ActivityLibrarySavedView]:
@@ -18040,6 +18065,485 @@ class ProductRepository:
 
     def build_analytics_summary(self) -> AnalyticsSummary:
         return self.analytics_summary()
+
+
+    def zone_insights(
+        self,
+        payload: ZoneInsightsRequest,
+        *,
+        now: datetime | None = None,
+    ) -> ZoneInsightsSummary:
+        """Return bounded, auditable Zone metrics without mutating product state."""
+
+        generated_at = _as_utc(now or datetime.now(UTC))
+        if payload.start_at is None:
+            start_at = generated_at - timedelta(days=7)
+            end_at = generated_at
+        else:
+            start_at = _as_utc(payload.start_at)
+            end_at = _as_utc(payload.end_at)
+        local_timezone = (now or datetime.now().astimezone()).astimezone().tzinfo
+        applied = ZoneInsightsAppliedFilters(
+            start_at=start_at,
+            end_at=end_at,
+            stream_id=payload.stream_id,
+            source_id=payload.source_id,
+            zone_type=payload.zone_type,
+            confirmed_taxonomy_id=payload.confirmed_taxonomy_id,
+        )
+
+        with self.session_factory() as session:
+            taxonomy_filter = (
+                session.get(TaxonomyLabelModel, payload.confirmed_taxonomy_id)
+                if payload.confirmed_taxonomy_id is not None
+                else None
+            )
+            zone_query = (
+                select(ZoneModel, StreamModel, CameraSourceModel)
+                .join(StreamModel, ZoneModel.stream_id == StreamModel.id)
+                .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                .where(
+                    ZoneModel.is_active.is_(True),
+                    CameraSourceModel.status != SourceStatus.archived.value,
+                    ZoneModel.zone_type.not_in({ZoneType.privacy.value, ZoneType.ignore.value}),
+                )
+                .order_by(CameraSourceModel.name.collate("NOCASE"), StreamModel.name.collate("NOCASE"), ZoneModel.name.collate("NOCASE"), ZoneModel.id)
+            )
+            if payload.stream_id is not None:
+                zone_query = zone_query.where(StreamModel.id == payload.stream_id)
+            if payload.source_id is not None:
+                zone_query = zone_query.where(CameraSourceModel.id == payload.source_id)
+            if payload.zone_type is not None:
+                zone_query = zone_query.where(ZoneModel.zone_type == payload.zone_type.value)
+            zone_rows = session.execute(zone_query.limit(51)).all()
+            truncated_zones = len(zone_rows) > 50
+            zone_rows = zone_rows[:50]
+            zone_ids = {zone.id for zone, _stream, _source in zone_rows}
+            records_by_zone: dict[str, list[dict[str, Any]]] = {zone.id: [] for zone, _stream, _source in zone_rows}
+            if zone_ids:
+                effective_zone_id = func.coalesce(VisitModel.zone_id, EventModel.primary_zone_id)
+                visit_rows = session.execute(
+                    select(VisitModel, EventModel, StreamModel, CameraSourceModel)
+                    .join(EventModel, VisitModel.event_id == EventModel.id)
+                    .join(StreamModel, EventModel.stream_id == StreamModel.id)
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    .where(
+                        VisitModel.is_superseded.is_(False),
+                        CameraSourceModel.status != SourceStatus.archived.value,
+                        effective_zone_id.in_(zone_ids),
+                        EventModel.started_at >= start_at,
+                        EventModel.started_at < end_at,
+                    )
+                    .order_by(EventModel.started_at, EventModel.id, VisitModel.id)
+                ).all()
+                for visit, event, stream, source in visit_rows:
+                    summary = self._stream_visit_summary_from_models(session, visit, event)
+                    if summary.zone_id not in records_by_zone:
+                        continue
+                    taxonomy = (
+                        self._taxonomy_label_model_for_input(session, summary.reviewed_label)
+                        if summary.reviewed_label
+                        else None
+                    )
+                    records_by_zone[summary.zone_id].append(
+                        {
+                            "summary": summary,
+                            "observed_at": _as_utc(summary.activity_started_at),
+                            "taxonomy": taxonomy,
+                            "stream_id": stream.id,
+                            "source_id": source.id,
+                        }
+                    )
+
+            exposure_by_stream = {
+                stream.id: self._zone_insights_exposure_seconds(
+                    session,
+                    stream_id=stream.id,
+                    start_at=start_at,
+                    end_at=end_at,
+                )
+                for _zone, stream, _source in zone_rows
+            }
+            results: list[ZoneInsightsZone] = []
+            aggregate_records: list[dict[str, Any]] = []
+            for zone, stream, source in zone_rows:
+                records = records_by_zone[zone.id]
+                aggregate_records.extend(records)
+                confirmed = self._zone_insight_confirmed_records(records, taxonomy_filter)
+                metrics = self._zone_insight_metrics(
+                    records=records,
+                    confirmed_records=confirmed,
+                    healthy_seconds=exposure_by_stream.get(stream.id),
+                )
+                results.append(
+                    ZoneInsightsZone(
+                        zone_id=zone.id,
+                        zone_name=zone.name,
+                        zone_type=ZoneType(zone.zone_type),
+                        stream_id=stream.id,
+                        stream_name=stream.name,
+                        source_id=source.id,
+                        source_name=source.name,
+                        metrics=metrics,
+                        species_composition=self._zone_insight_species_composition(
+                            confirmed,
+                            start_at=start_at,
+                            end_at=end_at,
+                            stream_id=stream.id,
+                            source_id=source.id,
+                            zone_id=zone.id,
+                        ),
+                        confirmed_activity_drilldown=self._zone_insight_drilldown(
+                            start_at=start_at,
+                            end_at=end_at,
+                            stream_id=stream.id,
+                            source_id=source.id,
+                            zone_id=zone.id,
+                            review_filter=ActivityLibraryReviewFilter.confirmed_wildlife,
+                            confirmed_label=taxonomy_filter.label if taxonomy_filter is not None else None,
+                        ),
+                        unresolved_activity_drilldown=self._zone_insight_drilldown(
+                            start_at=start_at,
+                            end_at=end_at,
+                            stream_id=stream.id,
+                            source_id=source.id,
+                            zone_id=zone.id,
+                            review_filter=ActivityLibraryReviewFilter.needs_review,
+                        ),
+                        reviewed_blank_drilldown=self._zone_insight_drilldown(
+                            start_at=start_at,
+                            end_at=end_at,
+                            stream_id=stream.id,
+                            source_id=source.id,
+                            zone_id=zone.id,
+                            review_filter=ActivityLibraryReviewFilter.blank,
+                        ),
+                        reviewed_non_bird_drilldown=self._zone_insight_drilldown(
+                            start_at=start_at,
+                            end_at=end_at,
+                            stream_id=stream.id,
+                            source_id=source.id,
+                            zone_id=zone.id,
+                            review_filter=ActivityLibraryReviewFilter.non_bird,
+                        ),
+                    )
+                )
+
+            aggregate_confirmed = self._zone_insight_confirmed_records(
+                aggregate_records,
+                taxonomy_filter,
+            )
+            aggregate_exposure_seconds = sum(
+                seconds
+                for seconds in exposure_by_stream.values()
+                if seconds is not None
+            )
+            aggregate = self._zone_insight_metrics(
+                records=aggregate_records,
+                confirmed_records=aggregate_confirmed,
+                healthy_seconds=(
+                    aggregate_exposure_seconds if any(
+                        seconds is not None for seconds in exposure_by_stream.values()
+                    ) else None
+                ),
+            )
+            aggregate_drilldown = self._zone_insight_drilldown(
+                start_at=start_at,
+                end_at=end_at,
+                stream_id=payload.stream_id,
+                source_id=payload.source_id,
+                review_filter=ActivityLibraryReviewFilter.confirmed_wildlife,
+                confirmed_label=taxonomy_filter.label if taxonomy_filter is not None else None,
+            )
+            daily_counts = Counter(
+                record["observed_at"].astimezone(local_timezone).date()
+                for record in aggregate_confirmed
+            )
+            hour_counts = Counter(
+                record["observed_at"].astimezone(local_timezone).hour
+                for record in aggregate_confirmed
+            )
+            period_days = max(1, (end_at.astimezone(local_timezone).date() - start_at.astimezone(local_timezone).date()).days + 1)
+            first_day = start_at.astimezone(local_timezone).date()
+            daily_trend = [
+                ZoneInsightsDailyBucket(
+                    local_date=first_day + timedelta(days=offset),
+                    confirmed_bird_visit_count=daily_counts[first_day + timedelta(days=offset)],
+                    drilldown=self._zone_insight_drilldown(
+                        start_at=_as_utc(datetime.combine(first_day + timedelta(days=offset), datetime.min.time(), local_timezone)),
+                        end_at=_as_utc(datetime.combine(first_day + timedelta(days=offset) + timedelta(days=1), datetime.min.time(), local_timezone)),
+                        stream_id=payload.stream_id,
+                        source_id=payload.source_id,
+                        review_filter=ActivityLibraryReviewFilter.confirmed_wildlife,
+                        confirmed_label=taxonomy_filter.label if taxonomy_filter is not None else None,
+                    ),
+                )
+                for offset in range(min(period_days, 366))
+            ]
+            activity_by_hour = [
+                ZoneInsightsHourBucket(
+                    hour=hour,
+                    confirmed_bird_visit_count=hour_counts[hour],
+                    drilldown=aggregate_drilldown,
+                )
+                for hour in range(24)
+            ]
+            warnings = [
+                "Healthy monitored time is a bounded runtime estimate from the latest saved monitoring generation, not all historical camera uptime.",
+                "Visits are activity sessions, not estimates of unique birds. A bird may create more than one Visit if it leaves and returns. Visit totals do not represent unique individuals.",
+            ]
+            if taxonomy_filter is None and payload.confirmed_taxonomy_id is not None:
+                warnings.append("The selected confirmed taxonomy is unavailable, so no confirmed species matches were counted.")
+            if truncated_zones:
+                warnings.append("Showing the first 50 matching Zones.")
+            if not results:
+                warnings.append("No active feeder, birdbath, perch, ground, yard, or driveway Zones match these filters.")
+            return ZoneInsightsSummary(
+                generated_at=generated_at,
+                applied_filters=applied,
+                aggregate=aggregate,
+                zone_count=len(results),
+                zones=sorted(
+                    results,
+                    key=lambda item: (
+                        0
+                        if item.metrics.data_quality_status == ZoneInsightsQualityStatus.sufficient
+                        and item.metrics.confirmed_bird_visits_per_monitored_hour is not None
+                        else 1,
+                        -(
+                            item.metrics.confirmed_bird_visits_per_monitored_hour
+                            if item.metrics.confirmed_bird_visits_per_monitored_hour is not None
+                            and item.metrics.data_quality_status == ZoneInsightsQualityStatus.sufficient
+                            else item.metrics.confirmed_bird_visit_count
+                        ),
+                        item.zone_name.lower(),
+                        item.zone_id,
+                    ),
+                ),
+                daily_trend=daily_trend,
+                activity_by_hour=activity_by_hour,
+                busiest_supported_hour=(
+                    max(hour_counts, key=lambda hour: (hour_counts[hour], -hour))
+                    if len(aggregate_confirmed) >= 5 and hour_counts
+                    else None
+                ),
+                warnings=warnings,
+            )
+
+    def _zone_insights_exposure_seconds(
+        self,
+        session: Session,
+        *,
+        stream_id: str,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> float | None:
+        checkpoint = session.get(StreamRuntimeCheckpointModel, stream_id)
+        if checkpoint is None:
+            return None
+        interval = bounded_healthy_runtime_interval(
+            range_start_at=start_at,
+            range_end_at=end_at,
+            actual_state=checkpoint.actual_state,
+            last_start_attempt_at=normalize_optional_utc(checkpoint.last_start_attempt_at),
+            last_healthy_frame_at=normalize_optional_utc(checkpoint.last_healthy_frame_at),
+            last_clean_stop_at=normalize_optional_utc(checkpoint.last_clean_stop_at),
+            last_failure_at=normalize_optional_utc(checkpoint.last_failure_at),
+            freshness_limit=CAMERA_HEALTH_RECENT_FRAME,
+        )
+        if interval is None:
+            return None
+        unhealthy = [
+            TimeInterval(
+                max(start_at, _as_utc(incident.started_at)),
+                min(end_at, _as_utc(incident.resolved_at) if incident.resolved_at is not None else end_at),
+            )
+            for incident in session.scalars(
+                select(CameraHealthIncidentModel)
+                .where(
+                    CameraHealthIncidentModel.stream_id == stream_id,
+                    CameraHealthIncidentModel.started_at < end_at,
+                    or_(
+                        CameraHealthIncidentModel.resolved_at.is_(None),
+                        CameraHealthIncidentModel.resolved_at > start_at,
+                    ),
+                )
+            ).all()
+        ]
+        seconds = interval_seconds(subtract_intervals([interval], unhealthy))
+        return seconds if seconds > 0 else None
+
+    @staticmethod
+    def _zone_insight_confirmed_records(
+        records: list[dict[str, Any]],
+        taxonomy_filter: TaxonomyLabelModel | None,
+    ) -> list[dict[str, Any]]:
+        return [
+            record
+            for record in records
+            if record["summary"].review_outcome == VisitReviewOutcome.confirmed_bird
+            and (
+                taxonomy_filter is None
+                or (
+                    record["taxonomy"] is not None
+                    and record["taxonomy"].id == taxonomy_filter.id
+                )
+            )
+        ]
+
+    def _zone_insight_metrics(
+        self,
+        *,
+        records: list[dict[str, Any]],
+        confirmed_records: list[dict[str, Any]],
+        healthy_seconds: float | None,
+    ) -> ZoneInsightsMetrics:
+        reviewed_records = [
+            record
+            for record in records
+            if record["summary"].review_status == ReviewStatus.reviewed
+        ]
+        blank_count = sum(
+            record["summary"].review_outcome == VisitReviewOutcome.blank
+            for record in reviewed_records
+        )
+        non_bird_count = sum(
+            record["summary"].review_outcome == VisitReviewOutcome.non_bird
+            for record in reviewed_records
+        )
+        false_positive_count = sum(
+            record["summary"].review_outcome == VisitReviewOutcome.false_positive
+            for record in reviewed_records
+        )
+        healthy_hours = healthy_seconds / 3600 if healthy_seconds is not None else None
+        quality, warnings = quality_status(
+            healthy_monitored_seconds=healthy_seconds,
+            reviewed_visit_count=len(reviewed_records),
+            active_visit_count=len(records),
+            confirmed_bird_visit_count=len(confirmed_records),
+        )
+        warnings.append(
+            "Evidence success percentage is unavailable because durable capture-attempt history is not retained."
+        )
+        ordered_confirmed = sorted(
+            confirmed_records,
+            key=lambda record: (record["observed_at"], record["summary"].id),
+        )
+        species_ids = {
+            record["taxonomy"].id
+            for record in confirmed_records
+            if record["taxonomy"] is not None and record["taxonomy"].is_species
+        }
+        return ZoneInsightsMetrics(
+            healthy_monitored_hours=round(healthy_hours, 4) if healthy_hours is not None else None,
+            confirmed_bird_visit_count=len(confirmed_records),
+            confirmed_bird_visits_per_monitored_hour=(
+                round(len(confirmed_records) / healthy_hours, 4)
+                if healthy_hours is not None and healthy_hours >= 2
+                else None
+            ),
+            total_confirmed_bird_dwell_seconds=round(
+                sum(record["summary"].duration_seconds for record in confirmed_records),
+                4,
+            ),
+            median_confirmed_bird_duration_seconds=median_duration_seconds(
+                record["summary"].duration_seconds for record in confirmed_records
+            ),
+            confirmed_species_richness=len(species_ids),
+            unresolved_visit_count=sum(
+                record["summary"].review_outcome == VisitReviewOutcome.needs_review
+                for record in records
+            ),
+            reviewed_visit_count=len(reviewed_records),
+            reviewed_blank_count=blank_count,
+            reviewed_non_bird_count=non_bird_count,
+            reviewed_false_positive_count=false_positive_count,
+            review_coverage_percentage=(
+                round(len(reviewed_records) / len(records) * 100, 2)
+                if records
+                else None
+            ),
+            reviewed_false_positive_percentage=(
+                round(false_positive_count / len(reviewed_records) * 100, 2)
+                if reviewed_records
+                else None
+            ),
+            evidence_success_percentage=None,
+            first_confirmed_activity_at=(
+                ordered_confirmed[0]["observed_at"] if ordered_confirmed else None
+            ),
+            last_confirmed_activity_at=(
+                ordered_confirmed[-1]["observed_at"] if ordered_confirmed else None
+            ),
+            data_quality_status=ZoneInsightsQualityStatus(quality),
+            warnings=warnings,
+        )
+
+    @staticmethod
+    def _zone_insight_drilldown(
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        review_filter: ActivityLibraryReviewFilter,
+        stream_id: str | None = None,
+        source_id: str | None = None,
+        zone_id: str | None = None,
+        confirmed_label: str | None = None,
+    ) -> ZoneInsightsDrilldown:
+        return ZoneInsightsDrilldown(
+            filters=ActivityLibraryFilters(
+                review_filter=review_filter,
+                stream_id=stream_id,
+                source_id=source_id,
+                zone_id=zone_id,
+                confirmed_label=confirmed_label,
+                start_at=start_at,
+                # Zone Insights queries [start_at, end_at); the Activity
+                # Library treats its end as inclusive, so preserve the same
+                # auditable set for click-throughs.
+                end_at=end_at - timedelta(microseconds=1),
+            )
+        )
+
+    def _zone_insight_species_composition(
+        self,
+        confirmed_records: list[dict[str, Any]],
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        stream_id: str,
+        source_id: str,
+        zone_id: str,
+    ) -> list[ZoneInsightsSpeciesComposition]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for record in confirmed_records:
+            taxonomy = record["taxonomy"]
+            if taxonomy is None or not taxonomy.is_species:
+                continue
+            grouped.setdefault(taxonomy.id, []).append(record)
+        total = sum(len(records) for records in grouped.values())
+        return [
+            ZoneInsightsSpeciesComposition(
+                taxonomy_id=taxonomy_id,
+                label=records[0]["taxonomy"].label,
+                display_name=records[0]["taxonomy"].display_name,
+                visit_count=len(records),
+                percentage=round(len(records) / total * 100, 2),
+                drilldown=self._zone_insight_drilldown(
+                    start_at=start_at,
+                    end_at=end_at,
+                    stream_id=stream_id,
+                    source_id=source_id,
+                    zone_id=zone_id,
+                    review_filter=ActivityLibraryReviewFilter.confirmed_wildlife,
+                    confirmed_label=records[0]["taxonomy"].label,
+                ),
+            )
+            for taxonomy_id, records in sorted(
+                grouped.items(),
+                key=lambda item: (-len(item[1]), item[1][0]["taxonomy"].display_name.lower(), item[0]),
+            )
+        ]
 
     def wildlife_insights(
         self,

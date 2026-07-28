@@ -29,6 +29,7 @@ const reviewFilterOptions: Array<{ value: ActivityLibraryReviewFilter; label: st
   { value: "confirmed_wildlife", label: "Confirmed wildlife" },
   { value: "non_bird", label: "Non-bird activity" },
   { value: "blank_false", label: "Blank / false activity" },
+  { value: "blank", label: "Blank activity" },
   { value: "ambiguous_unknown", label: "Ambiguous / unknown" },
 ];
 

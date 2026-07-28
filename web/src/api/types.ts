@@ -1480,6 +1480,7 @@ export type ActivityLibraryReviewFilter =
   | "confirmed_wildlife"
   | "non_bird"
   | "blank_false"
+  | "blank"
   | "ambiguous_unknown";
 
 export interface ActivityLibraryFilters {
@@ -3573,6 +3574,107 @@ export interface WildlifeInsightsSummary {
   review_context: WildlifeInsightsReviewContext;
   confirmed_activity_drilldown: WildlifeInsightsDrilldown;
   unresolved_activity_drilldown: WildlifeInsightsDrilldown;
+}
+
+
+export type ZoneInsightsQualityStatus =
+  | "sufficient"
+  | "limited_monitoring"
+  | "limited_review_coverage"
+  | "no_confirmed_activity"
+  | "unavailable_exposure"
+  | "unavailable";
+
+export interface ZoneInsightsRequest {
+  start_at?: string | null;
+  end_at?: string | null;
+  stream_id?: string | null;
+  source_id?: string | null;
+  zone_type?: ZoneType | null;
+  confirmed_taxonomy_id?: string | null;
+}
+
+export interface ZoneInsightsAppliedFilters {
+  start_at: string;
+  end_at: string;
+  stream_id?: string | null;
+  source_id?: string | null;
+  zone_type?: ZoneType | null;
+  confirmed_taxonomy_id?: string | null;
+}
+
+export interface ZoneInsightsDrilldown {
+  filters: ActivityLibraryFilters;
+}
+
+export interface ZoneInsightsSpeciesComposition {
+  taxonomy_id: string;
+  label: string;
+  display_name: string;
+  visit_count: number;
+  percentage: number;
+  drilldown: ZoneInsightsDrilldown;
+}
+
+export interface ZoneInsightsMetrics {
+  healthy_monitored_hours?: number | null;
+  confirmed_bird_visit_count: number;
+  confirmed_bird_visits_per_monitored_hour?: number | null;
+  total_confirmed_bird_dwell_seconds: number;
+  median_confirmed_bird_duration_seconds?: number | null;
+  confirmed_species_richness: number;
+  unresolved_visit_count: number;
+  reviewed_visit_count: number;
+  reviewed_blank_count: number;
+  reviewed_non_bird_count: number;
+  reviewed_false_positive_count: number;
+  review_coverage_percentage?: number | null;
+  reviewed_false_positive_percentage?: number | null;
+  evidence_success_percentage?: number | null;
+  first_confirmed_activity_at?: string | null;
+  last_confirmed_activity_at?: string | null;
+  data_quality_status: ZoneInsightsQualityStatus;
+  warnings: string[];
+}
+
+export interface ZoneInsightsZone {
+  zone_id: string;
+  zone_name: string;
+  zone_type: ZoneType;
+  stream_id: string;
+  stream_name: string;
+  source_id: string;
+  source_name: string;
+  metrics: ZoneInsightsMetrics;
+  species_composition: ZoneInsightsSpeciesComposition[];
+  confirmed_activity_drilldown: ZoneInsightsDrilldown;
+  unresolved_activity_drilldown: ZoneInsightsDrilldown;
+  reviewed_blank_drilldown: ZoneInsightsDrilldown;
+  reviewed_non_bird_drilldown: ZoneInsightsDrilldown;
+}
+
+export interface ZoneInsightsDailyBucket {
+  local_date: string;
+  confirmed_bird_visit_count: number;
+  drilldown: ZoneInsightsDrilldown;
+}
+
+export interface ZoneInsightsHourBucket {
+  hour: number;
+  confirmed_bird_visit_count: number;
+  drilldown: ZoneInsightsDrilldown;
+}
+
+export interface ZoneInsightsSummary {
+  generated_at: string;
+  applied_filters: ZoneInsightsAppliedFilters;
+  aggregate: ZoneInsightsMetrics;
+  zone_count: number;
+  zones: ZoneInsightsZone[];
+  daily_trend: ZoneInsightsDailyBucket[];
+  activity_by_hour: ZoneInsightsHourBucket[];
+  busiest_supported_hour?: number | null;
+  warnings: string[];
 }
 
 export type WildlifeJournalOrder =

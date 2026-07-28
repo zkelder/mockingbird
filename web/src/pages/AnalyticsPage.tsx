@@ -3,6 +3,8 @@ import type {
   AnalyticsSummary,
   DatasetCoverageSummary,
   DatasetQualitySummary,
+  CameraSource,
+  Stream,
 } from "../api/types";
 import { DatasetCoveragePanel } from "../components/DatasetCoveragePanel";
 import { DatasetQualityPanel } from "../components/DatasetQualityPanel";
@@ -11,10 +13,13 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { WildlifeInsightsPanel } from "../components/WildlifeInsightsPanel";
+import { ZoneInsightsPanel } from "../components/ZoneInsightsPanel";
 import { formatLabel, sortedEntries } from "../utils";
 
 interface AnalyticsPageProps {
   analytics: AnalyticsSummary | null;
+  sources: CameraSource[];
+  streams: Stream[];
   datasetCoverage: DatasetCoverageSummary | null;
   datasetQuality: DatasetQualitySummary | null;
   onOpenExports: () => void;
@@ -29,6 +34,8 @@ interface AnalyticsPageProps {
 
 export function AnalyticsPage({
   analytics,
+  sources,
+  streams,
   datasetCoverage,
   datasetQuality,
   onOpenExports,
@@ -88,6 +95,11 @@ export function AnalyticsPage({
         onOpenStream={(streamId) => onOpenStream?.(streamId)}
         onOpenStreams={() => onOpenStream?.()}
         onOpenVisit={onOpenVisit}
+      />
+      <ZoneInsightsPanel
+        sources={sources}
+        streams={streams}
+        onOpenActivityLibrary={onOpenActivityLibrary}
       />
       <section className="metric-grid">
         <MetricCard label="Events" value={analytics.event_count} detail="outdoor activity" />

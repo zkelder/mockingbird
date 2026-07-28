@@ -759,6 +759,8 @@ export default function App() {
       return (
         <AnalyticsPage
           analytics={data.analytics}
+          sources={data.sources}
+          streams={data.streams}
           datasetCoverage={data.datasetCoverage}
           datasetQuality={data.datasetQuality}
           onOpenExports={() => setPage("exports")}
