@@ -182,6 +182,8 @@ from mockingbird.api.schemas import (
     ReviewQueueBulkCorrectionRequest,
     ReviewQueueBulkCorrectionResponse,
     ReviewQueueItem,
+    ReviewQueueSpeciesSuggestionBatchPrepareRequest,
+    ReviewQueueSpeciesSuggestionBatchPrepareResponse,
     SavedMediaBulkMotionEvidenceRequest,
     SavedMediaBulkMotionEvidenceResponse,
     SavedMediaFrameSummary,
@@ -11684,6 +11686,18 @@ async def undo_fast_review_correction(
         if str(error) == "missing_visit":
             raise _not_found("Visit", payload.review_label_id) from error
         raise HTTPException(status_code=400, detail="Fast Review undo could not be completed.") from error
+
+
+@app.post(
+    "/api/review-queue/species-suggestions/prepare",
+    response_model=ReviewQueueSpeciesSuggestionBatchPrepareResponse,
+)
+async def prepare_review_queue_species_suggestions(
+    payload: ReviewQueueSpeciesSuggestionBatchPrepareRequest,
+) -> ReviewQueueSpeciesSuggestionBatchPrepareResponse:
+    # Preflight is deliberately bounded and read-only. The browser invokes the
+    # established single-Visit operation one at a time after this response.
+    return get_repository().prepare_review_queue_species_suggestions(payload)
 
 
 @app.post(

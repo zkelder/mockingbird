@@ -194,6 +194,16 @@ attempt record with its outcome, duration, exact crop, complete ordered
 candidate bank and scores when returned, and sanitized failure context. The
 assist never backfills history, retries an existing attempt, or creates truth.
 
+### Batch Review Queue species suggestions
+
+Review Queue can select up to 25 visible unresolved bird Visits for a local batch.
+The browser validates those Visit IDs, then calls the established single-Visit
+BioCLIP assistant sequentially, so the already-loaded local runtime is reused
+without a general scheduler or one long-running batch request. Cancellation stops
+scheduling additional Visits after the current one completes. Each result retains
+its own crop-first MediaAsset provenance and remains suggestion evidence; only an
+explicit correction writes reviewed truth.
+
 Evaluate already-stored BioCLIP suggestions against final ReviewLabel
 corrections without running a model or writing product state:
 

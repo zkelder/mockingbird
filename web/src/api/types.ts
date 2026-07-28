@@ -2941,6 +2941,34 @@ export interface ProductAlertUnreadResponse {
 export type ReviewQueueBulkCorrectionTargetType = "event" | "visit";
 export type ReviewQueueBulkCorrectionResultStatus = "succeeded" | "skipped" | "failed";
 
+
+export type ReviewQueueSpeciesSuggestionBatchPrepareStatus =
+  | "queued"
+  | "skipped"
+  | "setup_required";
+
+export interface ReviewQueueSpeciesSuggestionBatchPrepareRequest {
+  visit_ids: string[];
+}
+
+export interface ReviewQueueSpeciesSuggestionBatchPrepareResult {
+  visit_id: string;
+  status: ReviewQueueSpeciesSuggestionBatchPrepareStatus;
+  message: string;
+  media_asset_id?: string | null;
+}
+
+export interface ReviewQueueSpeciesSuggestionBatchPrepareResponse {
+  requested_count: number;
+  queued_count: number;
+  skipped_count: number;
+  setup_required_count: number;
+  results: ReviewQueueSpeciesSuggestionBatchPrepareResult[];
+  creates_truth: boolean;
+  creates_export: boolean;
+}
+
+
 export interface ReviewIdentificationRequest {
   adapter_id?: string | null;
   media_asset_id?: string | null;

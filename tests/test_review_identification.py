@@ -1386,6 +1386,67 @@ async def test_review_identification_bioclip_reuses_completed_exact_input(
     assert await truth_snapshot(client) == before_truth
 
 
+async def test_assistant_reuses_completed_bioclip_evidence_without_a_prior_assistant_run(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    imported = await import_review_image(client, title="Assistant compatibility reuse image")
+    visit_id, _evidence_id = await create_activity_review_item(
+        client,
+        media_asset_id=imported["media_asset"]["id"],
+    )
+    mark_bioclip_available(monkeypatch, tmp_path)
+    prediction = bioclip_prediction(
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.62),
+        ("blue jay (Cyanocitta cristata)", None, None, 0.22),
+    )
+    monkeypatch.setattr(
+        product_repository,
+        "prepare_bioclip_run",
+        lambda _config: bioclip_prepared_run(prediction),
+    )
+    mock_bioclip_run(monkeypatch, prediction)
+    before_truth = await truth_snapshot(client)
+
+    created = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+    assert created.status_code == 200
+    before_attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(before_attempts) == 1
+
+    monkeypatch.delenv("MOCKINGBIRD_BIOCLIP_MODEL_PATH")
+    monkeypatch.delenv("MOCKINGBIRD_BIOCLIP_LABELS_PATH")
+    monkeypatch.delenv("MOCKINGBIRD_BIOCLIP_EMBEDDING_CACHE_PATH")
+
+    reused = await client.post(
+        f"/api/visits/{visit_id}/identification-assistant",
+        json={
+            "evidence_mode": "primary_only",
+            "idempotency_key": "assistant-compatibility-reuse",
+        },
+    )
+
+    assert reused.status_code == 200
+    body = reused.json()
+    assert body["run"] is None
+    assert body["message"] == "This exact saved input already has identification evidence."
+    assert {item["suggestion_id"] for item in body["suggestions"]} == {
+        created.json()["species_suggestion"]["id"]
+    }
+    after_attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert [attempt["id"] for attempt in after_attempts] == [
+        attempt["id"] for attempt in before_attempts
+    ]
+    assert await truth_snapshot(client) == before_truth
+
+
 async def test_review_identification_bioclip_supersedes_when_model_artifact_changes(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

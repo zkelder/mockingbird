@@ -147,6 +147,8 @@ import type {
   ReviewQueueBulkCorrectionRequest,
   ReviewQueueBulkCorrectionResponse,
   ReviewQueueItem,
+  ReviewQueueSpeciesSuggestionBatchPrepareRequest,
+  ReviewQueueSpeciesSuggestionBatchPrepareResponse,
   SavedMediaBulkMotionEvidenceRequest,
   SavedMediaBulkMotionEvidenceResponse,
   SavedMediaCleanupDryRunRequest,
@@ -1163,6 +1165,13 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  prepareReviewQueueSpeciesSuggestionBatch: (
+    payload: ReviewQueueSpeciesSuggestionBatchPrepareRequest,
+  ) =>
+    request<ReviewQueueSpeciesSuggestionBatchPrepareResponse>(
+      "/api/review-queue/species-suggestions/prepare",
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
   identifyReviewQueueItem: (
     targetType: "event" | "visit",
     targetId: string,

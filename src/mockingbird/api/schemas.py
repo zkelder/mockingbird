@@ -240,6 +240,13 @@ class ReviewQueueBulkCorrectionResultStatus(str, Enum):
     failed = "failed"
 
 
+
+class ReviewQueueSpeciesSuggestionBatchPrepareStatus(str, Enum):
+    queued = "queued"
+    skipped = "skipped"
+    setup_required = "setup_required"
+
+
 class FastReviewNavigationDirection(str, Enum):
     next = "next"
     previous = "previous"
@@ -3224,6 +3231,33 @@ class ReviewQueueBulkCorrectionResponse(BaseModel):
     skipped_count: int = Field(ge=0)
     failed_count: int = Field(ge=0)
     results: list[ReviewQueueBulkCorrectionResult]
+
+
+
+class ReviewQueueSpeciesSuggestionBatchPrepareRequest(BaseModel):
+    """Validate up to 25 unresolved Visit targets before client-side sequencing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    visit_ids: list[str] = Field(min_length=1, max_length=25)
+
+
+class ReviewQueueSpeciesSuggestionBatchPrepareResult(BaseModel):
+    visit_id: str
+    status: ReviewQueueSpeciesSuggestionBatchPrepareStatus
+    message: str
+    media_asset_id: str | None = None
+
+
+class ReviewQueueSpeciesSuggestionBatchPrepareResponse(BaseModel):
+    # This preflight selects no model and creates no product or truth records.
+    requested_count: int = Field(ge=0, le=25)
+    queued_count: int = Field(ge=0, le=25)
+    skipped_count: int = Field(ge=0, le=25)
+    setup_required_count: int = Field(ge=0, le=25)
+    results: list[ReviewQueueSpeciesSuggestionBatchPrepareResult]
+    creates_truth: bool = False
+    creates_export: bool = False
 
 
 class ReviewIdentificationResponse(BaseModel):

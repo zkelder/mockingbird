@@ -297,6 +297,10 @@ from mockingbird.api.schemas import (
     ReviewQueueBulkCorrectionResultStatus,
     ReviewQueueBulkCorrectionTargetType,
     ReviewQueueItem,
+    ReviewQueueSpeciesSuggestionBatchPrepareRequest,
+    ReviewQueueSpeciesSuggestionBatchPrepareResponse,
+    ReviewQueueSpeciesSuggestionBatchPrepareResult,
+    ReviewQueueSpeciesSuggestionBatchPrepareStatus,
     ReviewStatus,
     SavedMediaBulkMotionEvidenceRequest,
     SavedMediaBulkMotionEvidenceResponse,
@@ -14082,6 +14086,171 @@ class ProductRepository:
             results=results,
         )
 
+
+    def prepare_review_queue_species_suggestions(
+        self,
+        payload: ReviewQueueSpeciesSuggestionBatchPrepareRequest,
+    ) -> ReviewQueueSpeciesSuggestionBatchPrepareResponse:
+        """Validate bounded unresolved Visits before client-side serial analysis."""
+
+        results: list[ReviewQueueSpeciesSuggestionBatchPrepareResult] = []
+        seen_visit_ids: set[str] = set()
+        with self.session_factory() as session:
+            for raw_visit_id in payload.visit_ids:
+                visit_id = raw_visit_id.strip()
+                if not visit_id:
+                    results.append(
+                        ReviewQueueSpeciesSuggestionBatchPrepareResult(
+                            visit_id=visit_id,
+                            status=ReviewQueueSpeciesSuggestionBatchPrepareStatus.skipped,
+                            message="Visit id is required.",
+                        )
+                    )
+                    continue
+                if visit_id in seen_visit_ids:
+                    results.append(
+                        ReviewQueueSpeciesSuggestionBatchPrepareResult(
+                            visit_id=visit_id,
+                            status=ReviewQueueSpeciesSuggestionBatchPrepareStatus.skipped,
+                            message="Duplicate Visit id was skipped.",
+                        )
+                    )
+                    continue
+                seen_visit_ids.add(visit_id)
+                visit = session.get(VisitModel, visit_id)
+                if visit is None or visit.is_superseded:
+                    results.append(
+                        ReviewQueueSpeciesSuggestionBatchPrepareResult(
+                            visit_id=visit_id,
+                            status=ReviewQueueSpeciesSuggestionBatchPrepareStatus.skipped,
+                            message="Visit is unavailable for species suggestions.",
+                        )
+                    )
+                    continue
+                if visit.review_status != ReviewStatus.needs_review.value:
+                    results.append(
+                        ReviewQueueSpeciesSuggestionBatchPrepareResult(
+                            visit_id=visit_id,
+                            status=ReviewQueueSpeciesSuggestionBatchPrepareStatus.skipped,
+                            message="Visit is no longer unresolved and was skipped.",
+                        )
+                    )
+                    continue
+                try:
+                    item = self._review_identification_item_for_visit(session, visit_id)
+                except ValueError:
+                    results.append(
+                        ReviewQueueSpeciesSuggestionBatchPrepareResult(
+                            visit_id=visit_id,
+                            status=ReviewQueueSpeciesSuggestionBatchPrepareStatus.skipped,
+                            message="Visit review evidence is unavailable and was skipped.",
+                        )
+                    )
+                    continue
+                frames = self._review_identification_assistant_frames(
+                    item.evidence_frames,
+                    VisitIdentificationEvidenceMode.primary_only,
+                )
+                candidate_label = (
+                    item.suggested_label
+                    or visit.species_guess
+                    or visit.subject_label
+                    or ""
+                )
+                candidate_taxonomy = self._taxonomy_label_model_for_input(
+                    session,
+                    candidate_label,
+                )
+                is_bird_candidate = (
+                    _taxonomy_key(candidate_label) in {"bird", "unknown_bird"}
+                    or (
+                        candidate_taxonomy is not None
+                        and candidate_taxonomy.category == LabelCategory.bird
+                    )
+                )
+                if not is_bird_candidate:
+                    results.append(
+                        ReviewQueueSpeciesSuggestionBatchPrepareResult(
+                            visit_id=visit_id,
+                            status=ReviewQueueSpeciesSuggestionBatchPrepareStatus.skipped,
+                            message="Visit is not currently a bird-review candidate and was skipped.",
+                        )
+                    )
+                    continue
+                if not frames:
+                    results.append(
+                        ReviewQueueSpeciesSuggestionBatchPrepareResult(
+                            visit_id=visit_id,
+                            status=ReviewQueueSpeciesSuggestionBatchPrepareStatus.skipped,
+                            message="No usable saved image is available for this Visit.",
+                        )
+                    )
+                    continue
+                summary = self._review_identification_summary_for_item(
+                    session,
+                    item,
+                    media_asset_id=frames[0].media_asset_id,
+                )
+                legacy_reuse_available = False
+                if not summary.can_run:
+                    try:
+                        run_context = self._review_species_run_context(
+                            session,
+                            item,
+                            target_type="visit",
+                            target_id=visit_id,
+                            media_asset_id=frames[0].media_asset_id,
+                        )
+                    except ValueError:
+                        run_context = None
+                    if run_context is not None:
+                        legacy_reuse_available = (
+                            self._reusable_legacy_bioclip_full_frame_suggestion(
+                                session,
+                                run_context=run_context,
+                            )
+                            is not None
+                        )
+                    if not legacy_reuse_available:
+                        results.append(
+                            ReviewQueueSpeciesSuggestionBatchPrepareResult(
+                                visit_id=visit_id,
+                                status=ReviewQueueSpeciesSuggestionBatchPrepareStatus.setup_required,
+                                message="Local species suggestion setup is required for this Visit.",
+                                media_asset_id=frames[0].media_asset_id,
+                            )
+                        )
+                        continue
+                results.append(
+                    ReviewQueueSpeciesSuggestionBatchPrepareResult(
+                        visit_id=visit_id,
+                        status=ReviewQueueSpeciesSuggestionBatchPrepareStatus.queued,
+                        message="Visit is queued for one explicit local species suggestion.",
+                        media_asset_id=frames[0].media_asset_id,
+                    )
+                )
+        return ReviewQueueSpeciesSuggestionBatchPrepareResponse(
+            requested_count=len(payload.visit_ids),
+            queued_count=sum(
+                1
+                for result in results
+                if result.status == ReviewQueueSpeciesSuggestionBatchPrepareStatus.queued
+            ),
+            skipped_count=sum(
+                1
+                for result in results
+                if result.status == ReviewQueueSpeciesSuggestionBatchPrepareStatus.skipped
+            ),
+            setup_required_count=sum(
+                1
+                for result in results
+                if result.status
+                == ReviewQueueSpeciesSuggestionBatchPrepareStatus.setup_required
+            ),
+            results=results,
+        )
+
+
     def review_queue_items(self) -> list[ReviewQueueItem]:
         with self.session_factory() as session:
             return self._review_queue_items(session)
@@ -14226,6 +14395,50 @@ class ProductRepository:
                         ),
                     )
 
+                if frames and summary.adapter_id == BIOCLIP_ADAPTER_ID:
+                    try:
+                        reusable_context = self._review_species_run_context(
+                            session,
+                            item,
+                            target_type="visit",
+                            target_id=visit_id,
+                            media_asset_id=frames[0].media_asset_id,
+                        )
+                    except ValueError:
+                        reusable_context = None
+                    reusable = False
+                    if reusable_context is not None and summary.can_run:
+                        reusable = (
+                            self._reusable_bioclip_suggestion(
+                                run_context=reusable_context
+                            )
+                            is not None
+                        )
+                    if not reusable and reusable_context is not None:
+                        try:
+                            prepare_bioclip_run(_bioclip_config())
+                        except BioClipConfigurationError:
+                            # Older suggestion records predate durable Assistant runs.
+                            # If the current runtime cannot prepare, reuse only an
+                            # exact verified full-frame record instead of logging a
+                            # futile unavailable attempt.
+                            reusable = (
+                                self._reusable_legacy_bioclip_full_frame_suggestion(
+                                    session,
+                                    run_context=reusable_context,
+                                )
+                                is not None
+                            )
+                    if reusable:
+                        return self._visit_identification_assistant_response(
+                            session,
+                            item=item,
+                            summary=summary,
+                            evidence_mode=payload.evidence_mode,
+                            selected_frames=frames,
+                            run=None,
+                            message="This exact saved input already has identification evidence.",
+                        )
                 run = ReviewIdentificationAssistantRunModel(
                     id=f"review-identification-assistant-{uuid.uuid4().hex}",
                     visit_id=visit_id,
@@ -15248,6 +15461,77 @@ class ProductRepository:
                 )
             ):
                 return suggestion
+        return None
+
+
+    def _reusable_legacy_bioclip_full_frame_suggestion(
+        self,
+        session: Session,
+        *,
+        run_context: _ReviewSpeciesRunContext,
+    ) -> SpeciesSuggestion | None:
+        """Reuse legacy full-frame evidence only when the saved bytes still match."""
+
+        crop = run_context.crop
+        if (
+            crop.source != "full_frame"
+            or crop.box_normalized.x != 0
+            or crop.box_normalized.y != 0
+            or crop.box_normalized.width != 1
+            or crop.box_normalized.height != 1
+        ):
+            return None
+        observation = _initial_bioclip_crop_provenance(crop)
+        image: Any | None = None
+        try:
+            image = _load_bioclip_input_image(
+                local_path=run_context.local_path,
+                expected_size_bytes=run_context.media_file_size_bytes,
+                expected_mtime_ns=run_context.media_file_mtime_ns,
+                content_type=run_context.content_type,
+                crop=crop,
+                observation=observation,
+            )
+        except (
+            BioClipRuntimeUnavailableError,
+            BioClipUnsupportedImageError,
+            OSError,
+            ValueError,
+        ):
+            return None
+        finally:
+            if image is not None:
+                try:
+                    image.close()
+                except Exception:
+                    pass
+        input_sha256 = observation.get("input_sha256")
+        if not isinstance(input_sha256, str) or len(input_sha256) != 64:
+            return None
+        candidates = session.scalars(
+            select(SpeciesSuggestionModel)
+            .where(
+                SpeciesSuggestionModel.visit_id == run_context.visit_id,
+                SpeciesSuggestionModel.media_asset_id == run_context.media_asset_id,
+                SpeciesSuggestionModel.adapter_id == BIOCLIP_ADAPTER_ID,
+                SpeciesSuggestionModel.status == SpeciesSuggestionStatus.pending.value,
+            )
+            .order_by(
+                SpeciesSuggestionModel.created_at.desc(),
+                SpeciesSuggestionModel.rank,
+                SpeciesSuggestionModel.id.desc(),
+            )
+        ).all()
+        for candidate in candidates:
+            evidence_region = _safe_json_object(candidate.evidence_region_json)
+            provenance = evidence_region.get("model_provenance")
+            if (
+                evidence_region.get("input_sha256") == input_sha256
+                and isinstance(provenance, dict)
+                and provenance.get("adapter_id") == BIOCLIP_ADAPTER_ID
+                and provenance.get("model_weights_verified") is True
+            ):
+                return _species_suggestion_from_model(candidate)
         return None
 
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { apiClient } from "../api/client";
 import type {
   BoundingBox,
@@ -11,6 +11,7 @@ import type {
   ReviewQueueBulkCorrectionResponse,
   ReviewQueueBulkCorrectionTargetType,
   ReviewQueueItem,
+  ReviewQueueSpeciesSuggestionBatchPrepareResponse,
   TaxonomyLabel,
   VisitIdentificationAssistantResponse,
   VisitTagSummary,
@@ -124,6 +125,118 @@ interface ActiveFilterChip {
   key: string;
   label: string;
   onClear: () => void;
+}
+
+
+const MAX_SPECIES_SUGGESTION_BATCH_VISITS = 25;
+
+type SpeciesSuggestionBatchOutcomeStatus =
+  | "new_evidence"
+  | "reused"
+  | "skipped"
+  | "setup_required"
+  | "failed";
+
+type SpeciesSuggestionBatchPhase = "running" | "completed" | "canceled";
+
+interface SpeciesSuggestionBatchOutcome {
+  visitId: string;
+  title: string;
+  status: SpeciesSuggestionBatchOutcomeStatus;
+  message: string;
+  mediaAssetId: string | null;
+  topSuggestion: string | null;
+  wasScheduled: boolean;
+}
+
+interface SpeciesSuggestionBatchState {
+  phase: SpeciesSuggestionBatchPhase;
+  selectedTotal: number;
+  scheduledTotal: number;
+  currentVisitId: string | null;
+  outcomes: SpeciesSuggestionBatchOutcome[];
+}
+
+function isSpeciesSuggestionBatchEligible(
+  item: ReviewQueueItem,
+  taxonomyLabels: TaxonomyLabel[],
+): boolean {
+  return (
+    item.target_type === "visit" &&
+    item.review_status === "needs_review" &&
+    isBirdReviewLabel(item.suggested_label, taxonomyLabels)
+  );
+}
+
+function assistantRunStatus(response: VisitIdentificationAssistantResponse): string | null {
+  const status = response.run?.status;
+  return typeof status === "string" ? status : null;
+}
+
+function batchOutcomeFromAssistant(
+  item: ReviewQueueItem,
+  response: VisitIdentificationAssistantResponse,
+): SpeciesSuggestionBatchOutcome {
+  const mediaAssetId = response.selected_evidence_frames[0]?.media_asset_id ?? null;
+  const topSuggestion = response.suggestions[0]?.label ?? null;
+  const reusedCompletedInput =
+    response.message.includes("exact saved input already has identification evidence") ||
+    response.message.includes("already recorded") ||
+    response.availability.message.includes("reused the completed result");
+  const createdEvidence = response.suggestions.some(
+    (suggestion) => suggestion.origin === "user_triggered_review_assistance",
+  );
+  const status = response.availability.status;
+  const runStatus = assistantRunStatus(response);
+  const base = {
+    visitId: reviewQueueTargetId(item),
+    title: item.title,
+    message: response.message,
+    mediaAssetId,
+    topSuggestion,
+    wasScheduled: true,
+  };
+  if (reusedCompletedInput) {
+    return { ...base, status: "reused" };
+  }
+  if (createdEvidence) {
+    return { ...base, status: "new_evidence" };
+  }
+  if (status === "suggestion_present" || response.suggestions.length > 0) {
+    return { ...base, status: "reused" };
+  }
+  if (status === "setup_required") {
+    return { ...base, status: "setup_required" };
+  }
+  if (status === "failed" || runStatus === "failed") {
+    return { ...base, status: "failed" };
+  }
+  return { ...base, status: "skipped" };
+}
+
+function speciesSuggestionBatchCounts(state: SpeciesSuggestionBatchState) {
+  const count = (status: SpeciesSuggestionBatchOutcomeStatus) =>
+    state.outcomes.filter((outcome) => outcome.status === status).length;
+  const finishedScheduled = state.outcomes.filter(
+    (outcome) => outcome.wasScheduled,
+  ).length;
+  const queued = Math.max(
+    0,
+    state.scheduledTotal - finishedScheduled - (state.currentVisitId ? 1 : 0),
+  );
+  const canceled =
+    state.phase === "canceled"
+      ? Math.max(0, state.selectedTotal - state.outcomes.length - (state.currentVisitId ? 1 : 0))
+      : 0;
+  return {
+    canceled,
+    completedWithNewEvidence: count("new_evidence"),
+    failed: count("failed"),
+    queued,
+    reused: count("reused"),
+    setupRequired: count("setup_required"),
+    skipped: count("skipped"),
+  };
 }
 
 type LastCorrectionSummary =
@@ -1238,6 +1351,12 @@ export function ReviewQueuePage({
   const [lastCorrectionSummary, setLastCorrectionSummary] =
     useState<LastCorrectionSummary | null>(null);
   const [selectedTargetIds, setSelectedTargetIds] = useState<string[]>([]);
+  const [selectedSpeciesSuggestionVisitIds, setSelectedSpeciesSuggestionVisitIds] =
+    useState<string[]>([]);
+  const [speciesSuggestionBatch, setSpeciesSuggestionBatch] =
+    useState<SpeciesSuggestionBatchState | null>(null);
+  const speciesSuggestionBatchCancelRef = useRef(false);
+  const speciesSuggestionBatchMountedRef = useRef(true);
   const [detectionProposals, setDetectionProposals] = useState<DetectionProposal[]>([]);
   const [detectionRuns, setDetectionRuns] = useState<DetectionRun[]>([]);
   const [motionEvidence, setMotionEvidence] = useState<MotionEvidence[]>([]);
@@ -1423,6 +1542,30 @@ export function ReviewQueuePage({
     [filteredItems],
   );
 
+
+
+  const visibleSpeciesSuggestionItems = useMemo(
+    () =>
+      filteredItems.filter((item) => isSpeciesSuggestionBatchEligible(item, taxonomyLabels)),
+    [filteredItems, taxonomyLabels],
+  );
+
+  const selectedSpeciesSuggestionItems = useMemo(
+    () =>
+      filteredItems.filter(
+        (item) =>
+          isSpeciesSuggestionBatchEligible(item, taxonomyLabels) &&
+          selectedSpeciesSuggestionVisitIds.includes(reviewQueueTargetId(item)),
+      ),
+    [filteredItems, selectedSpeciesSuggestionVisitIds, taxonomyLabels],
+  );
+
+  const isSpeciesSuggestionBatchRunning = speciesSuggestionBatch?.phase === "running";
+  const speciesSuggestionBatchCountsValue = speciesSuggestionBatch
+    ? speciesSuggestionBatchCounts(speciesSuggestionBatch)
+    : null;
+
+
   const activeFilterChips = useMemo<ActiveFilterChip[]>(() => {
     const chips: ActiveFilterChip[] = [];
     if (textSearch.trim()) {
@@ -1582,7 +1725,11 @@ export function ReviewQueuePage({
       );
     }
     setSelectedTargetIds([]);
+    setSelectedSpeciesSuggestionVisitIds([]);
     setBulkResult(null);
+    setSpeciesSuggestionBatch((current) =>
+      current?.phase === "running" ? current : null,
+    );
     setReadinessHandoffLabel(
       initialContext.source === "classifier-readiness" ? nextSourceLabel : null,
     );
@@ -1608,9 +1755,14 @@ export function ReviewQueuePage({
 
   useEffect(() => {
     setSelectedTargetIds([]);
+    setSelectedSpeciesSuggestionVisitIds([]);
     setBulkResult(null);
+    if (!isSpeciesSuggestionBatchRunning) {
+      setSpeciesSuggestionBatch(null);
+    }
   }, [
     evidenceFilter,
+    isSpeciesSuggestionBatchRunning,
     reviewFilter,
     reviewStatusFilter,
     sourceStreamFilter,
@@ -1639,6 +1791,26 @@ export function ReviewQueuePage({
       current.filter((targetId) => visibleEligibleTargetIds.has(targetId)),
     );
   }, [visibleEligibleItems]);
+
+
+
+  useEffect(() => {
+    const visibleVisitIds = new Set(
+      visibleSpeciesSuggestionItems.map(reviewQueueTargetId),
+    );
+    setSelectedSpeciesSuggestionVisitIds((current) =>
+      current.filter((visitId) => visibleVisitIds.has(visitId)),
+    );
+  }, [visibleSpeciesSuggestionItems]);
+
+  useEffect(() => {
+    speciesSuggestionBatchMountedRef.current = true;
+    return () => {
+      speciesSuggestionBatchMountedRef.current = false;
+      speciesSuggestionBatchCancelRef.current = true;
+    };
+  }, []);
+
 
   useEffect(() => {
     let isMounted = true;
@@ -1776,11 +1948,215 @@ export function ReviewQueuePage({
     setBulkResult(null);
   }
 
+
+
+  function toggleSpeciesSuggestionBatchSelection(
+    item: ReviewQueueItem,
+    selected: boolean,
+  ) {
+    if (!isSpeciesSuggestionBatchEligible(item, taxonomyLabels)) {
+      return;
+    }
+    const visitId = reviewQueueTargetId(item);
+    setSelectedSpeciesSuggestionVisitIds((current) => {
+      if (!selected) {
+        return current.filter((selectedVisitId) => selectedVisitId !== visitId);
+      }
+      if (current.includes(visitId) || current.length >= MAX_SPECIES_SUGGESTION_BATCH_VISITS) {
+        return current;
+      }
+      return [...current, visitId];
+    });
+  }
+
+  function selectVisibleSpeciesSuggestionVisits() {
+    setSelectedSpeciesSuggestionVisitIds(
+      visibleSpeciesSuggestionItems
+        .slice(0, MAX_SPECIES_SUGGESTION_BATCH_VISITS)
+        .map(reviewQueueTargetId),
+    );
+    if (!isSpeciesSuggestionBatchRunning) {
+      setSpeciesSuggestionBatch(null);
+    }
+  }
+
+  function clearSpeciesSuggestionBatchSelection() {
+    if (isSpeciesSuggestionBatchRunning) {
+      return;
+    }
+    setSelectedSpeciesSuggestionVisitIds([]);
+    setSpeciesSuggestionBatch(null);
+  }
+
+  function cancelSpeciesSuggestionBatch() {
+    if (!isSpeciesSuggestionBatchRunning) {
+      return;
+    }
+    speciesSuggestionBatchCancelRef.current = true;
+    setMessage("Cancellation requested. The current Visit may finish safely.");
+  }
+
+  async function runSpeciesSuggestionBatch() {
+    if (isSpeciesSuggestionBatchRunning) {
+      return;
+    }
+    const selected = selectedSpeciesSuggestionItems.slice(
+      0,
+      MAX_SPECIES_SUGGESTION_BATCH_VISITS,
+    );
+    if (selected.length === 0) {
+      setMessage("Select unresolved Visits before running species suggestions.");
+      return;
+    }
+
+    speciesSuggestionBatchCancelRef.current = false;
+    setMessage(null);
+    setSpeciesSuggestionBatch({
+      phase: "running",
+      selectedTotal: selected.length,
+      scheduledTotal: 0,
+      currentVisitId: null,
+      outcomes: [],
+    });
+
+    let prepared: ReviewQueueSpeciesSuggestionBatchPrepareResponse;
+    try {
+      prepared = await apiClient.prepareReviewQueueSpeciesSuggestionBatch({
+        visit_ids: selected.map(reviewQueueTargetId),
+      });
+    } catch {
+      if (speciesSuggestionBatchMountedRef.current) {
+        setSpeciesSuggestionBatch({
+          phase: "completed",
+          selectedTotal: selected.length,
+          scheduledTotal: 0,
+          currentVisitId: null,
+          outcomes: selected.map((item) => ({
+            visitId: reviewQueueTargetId(item),
+            title: item.title,
+            status: "failed",
+            message: "Selection validation could not be completed safely.",
+            mediaAssetId: null,
+            topSuggestion: null,
+            wasScheduled: false,
+          })),
+        });
+        setMessage("Species suggestion selection validation failed safely.");
+      }
+      return;
+    }
+
+    const itemsByVisitId = new Map(selected.map((item) => [reviewQueueTargetId(item), item]));
+    const preflightOutcomes: SpeciesSuggestionBatchOutcome[] = prepared.results
+      .filter((result) => result.status !== "queued")
+      .map((result) => {
+        const item = itemsByVisitId.get(result.visit_id);
+        return {
+          visitId: result.visit_id,
+          title: item?.title ?? "Selected Visit",
+          status: result.status === "setup_required" ? "setup_required" : "skipped",
+          message: result.message,
+          mediaAssetId: result.media_asset_id ?? null,
+          topSuggestion: null,
+          wasScheduled: false,
+        };
+      });
+    const queued = prepared.results.filter((result) => result.status === "queued");
+    if (!speciesSuggestionBatchMountedRef.current) {
+      return;
+    }
+    setSpeciesSuggestionBatch({
+      phase: speciesSuggestionBatchCancelRef.current ? "canceled" : "running",
+      selectedTotal: selected.length,
+      scheduledTotal: queued.length,
+      currentVisitId: null,
+      outcomes: preflightOutcomes,
+    });
+
+    for (const preparedItem of queued) {
+      if (speciesSuggestionBatchCancelRef.current) {
+        break;
+      }
+      const item = itemsByVisitId.get(preparedItem.visit_id);
+      if (!item) {
+        continue;
+      }
+      if (!speciesSuggestionBatchMountedRef.current) {
+        return;
+      }
+      setSpeciesSuggestionBatch((current) =>
+        current
+          ? { ...current, currentVisitId: preparedItem.visit_id }
+          : current,
+      );
+
+      let outcome: SpeciesSuggestionBatchOutcome;
+      try {
+        const response = await apiClient.startVisitIdentificationAssistant(
+          preparedItem.visit_id,
+          {
+            evidence_mode: "primary_only",
+            idempotency_key: createFastReviewKey("batch-species-suggestion"),
+          },
+        );
+        outcome = batchOutcomeFromAssistant(item, response);
+      } catch {
+        outcome = {
+          visitId: preparedItem.visit_id,
+          title: item.title,
+          status: "failed",
+          message: "Species suggestion failed safely for this Visit.",
+          mediaAssetId: preparedItem.media_asset_id ?? null,
+          topSuggestion: null,
+          wasScheduled: true,
+        };
+      }
+      if (!speciesSuggestionBatchMountedRef.current) {
+        return;
+      }
+      setSpeciesSuggestionBatch((current) =>
+        current
+          ? {
+              ...current,
+              currentVisitId: null,
+              outcomes: [...current.outcomes, outcome],
+            }
+          : current,
+      );
+    }
+
+    if (!speciesSuggestionBatchMountedRef.current) {
+      return;
+    }
+    const canceled = speciesSuggestionBatchCancelRef.current;
+    setSpeciesSuggestionBatch((current) =>
+      current
+        ? { ...current, currentVisitId: null, phase: canceled ? "canceled" : "completed" }
+        : current,
+    );
+    try {
+      setQueueItems(await apiClient.getReviewQueue());
+    } catch {
+      // Completed evidence stays durable; a manual refresh can restore this view.
+    }
+    setSelectedSpeciesSuggestionVisitIds([]);
+    setMessage(
+      canceled
+        ? "Species suggestion batch canceled after the current Visit finished."
+        : "Species suggestion batch completed. Suggestions remain evidence only.",
+    );
+  }
+
+
   function clearReadinessSearch() {
     setTextSearch("");
     setReadinessHandoffLabel(null);
     setSelectedTargetIds([]);
+    setSelectedSpeciesSuggestionVisitIds([]);
     setBulkResult(null);
+    if (!isSpeciesSuggestionBatchRunning) {
+      setSpeciesSuggestionBatch(null);
+    }
   }
 
   function resetReviewFilters() {
@@ -1793,7 +2169,11 @@ export function ReviewQueuePage({
     setReviewStatusFilter("all");
     setReadinessHandoffLabel(null);
     setSelectedTargetIds([]);
+    setSelectedSpeciesSuggestionVisitIds([]);
     setBulkResult(null);
+    if (!isSpeciesSuggestionBatchRunning) {
+      setSpeciesSuggestionBatch(null);
+    }
   }
 
   async function saveBulkCorrection() {
@@ -2276,6 +2656,101 @@ export function ReviewQueuePage({
           ) : null}
         </details>
       ) : null}
+
+      {queueItems.length > 0 ? (
+        <details
+          className="panel review-bulk-panel review-secondary-details"
+          open={isSpeciesSuggestionBatchRunning}
+        >
+          <summary>
+            <span>Batch species suggestions</span>
+            <strong>
+              {selectedSpeciesSuggestionVisitIds.length} selected / {visibleSpeciesSuggestionItems.length} visible unresolved Visits
+            </strong>
+          </summary>
+          <span className="meta-text">
+            The current filtered result set only. At most {MAX_SPECIES_SUGGESTION_BATCH_VISITS} Visits run sequentially; suggestions stay evidence only.
+          </span>
+          <div className="review-bulk-actions">
+            <button
+              className="secondary-action"
+              disabled={
+                visibleSpeciesSuggestionItems.length === 0 ||
+                isSpeciesSuggestionBatchRunning
+              }
+              onClick={selectVisibleSpeciesSuggestionVisits}
+              type="button"
+            >
+              Select visible Visits (up to {MAX_SPECIES_SUGGESTION_BATCH_VISITS})
+            </button>
+            <button
+              className="secondary-action"
+              disabled={
+                selectedSpeciesSuggestionVisitIds.length === 0 ||
+                isSpeciesSuggestionBatchRunning
+              }
+              onClick={clearSpeciesSuggestionBatchSelection}
+              type="button"
+            >
+              Clear selection
+            </button>
+            <button
+              className="primary-action"
+              disabled={
+                selectedSpeciesSuggestionItems.length === 0 ||
+                isSpeciesSuggestionBatchRunning
+              }
+              onClick={() => void runSpeciesSuggestionBatch()}
+              type="button"
+            >
+              Suggest species for selected
+            </button>
+            {isSpeciesSuggestionBatchRunning ? (
+              <button
+                className="secondary-action"
+                onClick={cancelSpeciesSuggestionBatch}
+                type="button"
+              >
+                Cancel after current Visit
+              </button>
+            ) : null}
+          </div>
+          {visibleSpeciesSuggestionItems.length > MAX_SPECIES_SUGGESTION_BATCH_VISITS ? (
+            <span className="field-helper">
+              Select visible chooses the first {MAX_SPECIES_SUGGESTION_BATCH_VISITS} Visits in this filtered order.
+            </span>
+          ) : null}
+          <span className="field-helper">
+            Uses the configured 14-species local candidate scope. Scores are uncalibrated and relative; no suggestion is selected automatically.
+          </span>
+          {speciesSuggestionBatch && speciesSuggestionBatchCountsValue ? (
+            <div aria-live="polite" className="notice-panel review-bulk-result">
+              <strong>
+                {formatLabel(speciesSuggestionBatch.phase)} batch: {speciesSuggestionBatch.selectedTotal} selected
+              </strong>
+              <span>
+                {speciesSuggestionBatchCountsValue.queued} queued · {speciesSuggestionBatch.currentVisitId ? `analyzing ${speciesSuggestionBatch.currentVisitId}` : "no Visit currently analyzing"} · {speciesSuggestionBatchCountsValue.completedWithNewEvidence} new evidence · {speciesSuggestionBatchCountsValue.reused} reused · {speciesSuggestionBatchCountsValue.skipped} skipped · {speciesSuggestionBatchCountsValue.setupRequired} setup required · {speciesSuggestionBatchCountsValue.failed} failed · {speciesSuggestionBatchCountsValue.canceled} canceled
+              </span>
+              <span>
+                Summary: {speciesSuggestionBatchCountsValue.completedWithNewEvidence} analyzed with new evidence, {speciesSuggestionBatchCountsValue.reused} existing result{speciesSuggestionBatchCountsValue.reused === 1 ? "" : "s"} reused, {speciesSuggestionBatchCountsValue.skipped} skipped, {speciesSuggestionBatchCountsValue.failed} failed.
+              </span>
+              {speciesSuggestionBatch.outcomes.length > 0 ? (
+                <details className="review-diagnostic-details">
+                  <summary>Per-Visit batch results</summary>
+                  <div className="review-diagnostic-grid">
+                    {speciesSuggestionBatch.outcomes.map((outcome) => (
+                      <span key={outcome.visitId}>
+                        {outcome.visitId}: {formatLabel(outcome.status)}{outcome.mediaAssetId ? ` · ${outcome.mediaAssetId}` : ""}{outcome.topSuggestion ? ` · ${displayTaxonomyLabel(outcome.topSuggestion, taxonomyLabels)}` : ""}. {outcome.message}
+                      </span>
+                    ))}
+                  </div>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+        </details>
+      ) : null}
+
       <FastReviewPanel
         items={filteredItems.filter(
           (item) => item.target_type === "visit" && item.review_status === "needs_review",
@@ -2307,6 +2782,11 @@ export function ReviewQueuePage({
           const targetId = reviewQueueTargetId(item);
           const isSelected = selectedTargetIds.includes(targetId);
           const isSelectable = canSelectForBulk(item);
+          const isSpeciesSuggestionSelected = selectedSpeciesSuggestionVisitIds.includes(targetId);
+          const isSpeciesSuggestionEligible = isSpeciesSuggestionBatchEligible(item, taxonomyLabels);
+          const speciesSuggestionSelectionAtLimit =
+            !isSpeciesSuggestionSelected &&
+            selectedSpeciesSuggestionVisitIds.length >= MAX_SPECIES_SUGGESTION_BATCH_VISITS;
           const identification = item.identification ?? null;
           const identificationSuggestion = identification?.suggestion ?? null;
           const linkedSpeciesSuggestion =
@@ -2436,6 +2916,30 @@ export function ReviewQueuePage({
                       : selectedTargetType
                         ? `Bulk selection currently expects ${selectedTargetType} items`
                         : "Bulk selection is unavailable for this item"}
+                </label>
+              </details>
+              <details className="review-bulk-selection-details">
+                <summary>Batch species selection</summary>
+                <label className="checkbox-row review-bulk-select">
+                  <input
+                    checked={isSpeciesSuggestionSelected}
+                    disabled={
+                      !isSpeciesSuggestionEligible ||
+                      isSpeciesSuggestionBatchRunning ||
+                      speciesSuggestionSelectionAtLimit
+                    }
+                    onChange={(event) =>
+                      toggleSpeciesSuggestionBatchSelection(item, event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  {isSpeciesSuggestionEligible
+                    ? isSpeciesSuggestionBatchRunning
+                      ? "Batch species suggestion is currently running"
+                      : speciesSuggestionSelectionAtLimit
+                        ? `Batch limit of ${MAX_SPECIES_SUGGESTION_BATCH_VISITS} Visits reached`
+                        : "Select for species suggestions"
+                    : "Only unresolved bird Visits are eligible for species suggestions"}
                 </label>
               </details>
               <p>
