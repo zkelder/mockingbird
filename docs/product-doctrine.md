@@ -1,6 +1,8 @@
 # MockingBird Product Doctrine
 
-MockingBird is a local-first outdoor video intelligence platform.
+MockingBird is a local-first, hardware-agnostic nature observatory. Its
+emotional purpose is to help people notice, understand, and remember wildlife
+around a place.
 
 The product starts with video streams. A user should think:
 
@@ -8,7 +10,11 @@ The product starts with video streams. A user should think:
 
 ## Core flow
 
-Connect source → view stream → draw zones → analyze outdoor activity → review visits/events → correct labels/species → export datasets and analytics.
+Observe → Discover → Understand → Confirm → Remember → Improve.
+
+Sources, Streams, and Zones support this user-facing loop: observe activity,
+discover evidence-backed moments, understand local patterns, explicitly confirm
+truth, remember it in Bird Log and local history, then improve future review.
 
 ## Product promise
 

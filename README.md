@@ -1,6 +1,7 @@
 # MockingBird
 
-MockingBird is a local-first outdoor video intelligence platform.
+MockingBird is a local-first, hardware-agnostic nature observatory that helps
+people notice, understand, and remember wildlife around a place.
 
 Users connect outdoor camera or media Sources, view Streams, draw meaningful
 Zones, monitor outdoor activity, review Events/Visits, correct labels or
@@ -23,8 +24,11 @@ feeders, birdbaths, driveways, Privacy Zones, and Ignore Zones.
 
 Core flow:
 
-connect Source -> view Stream -> draw Zones -> analyze outdoor activity ->
-review Events/Visits -> correct labels/species -> export datasets and analytics.
+Observe → Discover → Understand → Confirm → Remember → Improve.
+
+This user-facing loop is supported by Sources and Streams, Zone-aware activity,
+reviewed corrections, Bird Log, local exports, and analytics. Detector and
+SpeciesSuggestion output remain evidence, never a claimed observation.
 
 ## Current product checkpoint
 
@@ -60,10 +64,10 @@ MockingBird currently provides:
 - an optional local-LAN MockingBird Camera Node package for paired bounded
   snapshots from an edge camera, with no cloud relay, discovery, remote shell,
   recording, audio, or automatic monitoring
-- a shared Dashboard and Cameras/Streams Live Camera Overview that defaults to
-  the latest safe Visit evidence, opens at most four user-selected live tiles
-  per browser session, and shows view-only Stream Zones without changing
-  monitoring or creating evidence
+- a shared Dashboard centered on Today in Your Yard: detector-qualified animal
+  Visits, reviewed discoveries, best evidence-backed moments, Zone/hour context,
+  bounded confirmation work, and compact observation health; it remains
+  read-only and never changes monitoring or creates evidence
 
 Monitoring remains local and explicitly Stream-scoped. Every Stream starts
 disabled; when a user enables supported backend-owned live monitoring, the one

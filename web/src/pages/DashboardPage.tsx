@@ -234,7 +234,7 @@ export function DashboardPage({
     );
   }
 
-  const { headline } = summary;
+  const { headline, today } = summary;
   return (
     <div className="page-stack dashboard-operations-page">
       <section className="dashboard-hero dashboard-operations-hero">
@@ -243,9 +243,9 @@ export function DashboardPage({
             label={health?.status === "ok" ? "Local app connected" : "Local status unavailable"}
             tone={health?.status === "ok" ? "good" : "review"}
           />
-          <h1>Today’s outdoor operations</h1>
+          <h1>Today in Your Yard</h1>
           <p>
-            Monitor Streams, review activity, and see only reviewed observations from {summary.local_day}.
+            Notice detector-qualified wildlife, reviewed discoveries, and the few Visits that need your help on {summary.local_day}.
           </p>
         </div>
         <div className="hero-actions">
@@ -284,6 +284,88 @@ export function DashboardPage({
         </div>
       ) : null}
 
+      <section aria-label="Today in Your Yard" className="page-stack">
+        <section className="dashboard-operations-metrics">
+          <div className="dashboard-operation-card">
+            <span>Animal Visits today</span>
+            <strong>{today.detector_qualified_animal_visit_count}</strong>
+            <small>Detector-qualified activity</small>
+          </div>
+          <button className="dashboard-operation-card" onClick={onOpenBirdLog} type="button">
+            <span>Confirmed birds</span>
+            <strong>{today.confirmed_bird_visit_count}</strong>
+            <small>{today.confirmed_species_count} confirmed species</small>
+          </button>
+          <button className="dashboard-operation-card" onClick={() => onOpenReview()} type="button">
+            <span>Needs your help</span>
+            <strong>{today.unresolved_animal_visit_count}</strong>
+            <small>{today.unresolved_animal_visit_count === 0 ? "All clear for now" : `MockingBird needs help with ${today.unresolved_animal_visit_count} visits`}</small>
+          </button>
+        </section>
+
+        <section className="panel">
+          <div className="section-heading">
+            <div>
+              <h2>Best moments</h2>
+              <span className="meta-text">Evidence-backed animal Visits, with reviewed wildlife first</span>
+            </div>
+          </div>
+          {today.best_moments.length > 0 ? (
+            <div className="dashboard-visit-list">
+              {today.best_moments.map((visit) => (
+                <article className="dashboard-visit-row" key={visit.id}>
+                  <VisitPreview visit={visit} />
+                  <div>
+                    <strong>{visit.reviewed_label ? formatLabel(visit.reviewed_label) : "Animal detected — species not confirmed"}</strong>
+                    <VisitContext visit={visit} />
+                    <span className="meta-text">{formatDateTime(visit.captured_at)}</span>
+                  </div>
+                  <button className="text-action" onClick={() => onOpenVisit(visit.id)} type="button">View</button>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="No animal Visits yet today" description="New evidence-backed animal activity will appear here." />
+          )}
+        </section>
+
+        <section className="dashboard-observation-grid">
+          <section className="panel">
+            <div className="section-heading"><div><h2>New today</h2><span className="meta-text">First confirmed here today</span></div></div>
+            {today.new_today.length > 0 ? today.new_today.map((species) => (
+              <article className="dashboard-observation-row" key={species.label}>
+                <VisitPreview visit={species.latest_visit} /><div><strong>{species.display_name}</strong><span>First confirmed here today</span></div>
+                <button className="text-action" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">View</button>
+              </article>
+            )) : <EmptyState title="No new confirmed species today" description="Species appear here only after a reviewed correction." />}
+          </section>
+          <section className="panel">
+            <div className="section-heading"><div><h2>Recent regulars</h2><span className="meta-text">Reviewed species active on at least 3 of the last 14 days</span></div></div>
+            {today.recent_regulars.length > 0 ? today.recent_regulars.map((species) => (
+              <article className="dashboard-observation-row" key={species.label}>
+                <VisitPreview visit={species.latest_visit} /><div><strong>{species.display_name}</strong><span>Seen on {species.distinct_days_seen} of the last 14 days</span></div>
+                <button className="text-action" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">View</button>
+              </article>
+            )) : <EmptyState title="No regular species yet" description="Regulars appear after reviewed occurrences on three different local days." />}
+          </section>
+        </section>
+
+        <section className="dashboard-observation-grid">
+          <section className="panel"><div className="section-heading"><div><h2>Activity by Zone</h2><span className="meta-text">Detector-qualified animal Visits</span></div><button className="text-action" onClick={onOpenInsights} type="button">Zone Insights</button></div>
+            {today.activity_by_zone.length > 0 ? <div className="dashboard-observation-list">{today.activity_by_zone.map((zone) => <div className="dashboard-observation-row" key={zone.zone_id ?? zone.zone_name}><strong>{zone.zone_name}</strong><span>{zone.animal_visit_count} animal Visit{zone.animal_visit_count === 1 ? "" : "s"}</span></div>)}</div> : <EmptyState title="No Zone activity yet" description="Activity will be grouped by its existing Zone context." />}
+          </section>
+          <section className="panel"><div className="section-heading"><div><h2>Activity by hour</h2><span className="meta-text">Today’s detector-qualified animal Visits</span></div></div>
+            <div className="dashboard-observation-list">{today.activity_by_hour.filter((hour) => hour.animal_visit_count > 0).map((hour) => <div className="dashboard-observation-row" key={hour.hour}><strong>{hour.hour === 0 ? "12 AM" : hour.hour < 12 ? `${hour.hour} AM` : hour.hour === 12 ? "12 PM" : `${hour.hour - 12} PM`}</strong><span>{hour.animal_visit_count} animal Visit{hour.animal_visit_count === 1 ? "" : "s"}</span></div>)}</div>
+            {today.activity_by_hour.every((hour) => hour.animal_visit_count === 0) ? <EmptyState title="No animal activity by hour yet" description="Today’s activity pattern will appear as Visits arrive." /> : null}
+          </section>
+        </section>
+
+        <section className="panel dashboard-needs-review">
+          <div className="section-heading"><div><h2>Needs your help</h2><span className="meta-text">The newest animal Visits without a reviewed correction</span></div><button className="secondary-action" onClick={() => onOpenReview()} type="button">Open Review Queue</button></div>
+          {today.needs_help.length > 0 ? <div className="dashboard-visit-list">{today.needs_help.map((visit) => <article className="dashboard-visit-row" key={visit.id}><VisitPreview visit={visit} /><div><strong>Animal detected — species not confirmed</strong><VisitContext visit={visit} /><span className="meta-text">{formatDateTime(visit.captured_at)}</span></div><button className="primary-action" onClick={() => openVisitReview(visit)} type="button">Confirm</button></article>)}</div> : <EmptyState title="No animal Visits need confirmation" description="Reviewed corrections stay separate from detector and suggestion evidence." />}
+        </section>
+      </section>
+
       <section aria-label="Current operations" className="dashboard-operations-metrics">
         <button className="dashboard-operation-card" onClick={onOpenStreams} type="button">
           <span>Configured Streams</span>
@@ -318,17 +400,17 @@ export function DashboardPage({
       </section>
 
       {monitorActionError ? <div className="dashboard-action-error" role="alert">{monitorActionError}</div> : null}
-      {summary.camera_attention.length > 0 ? (
+      {today.observation_health.length > 0 ? (
         <section className="panel dashboard-camera-attention" aria-label="Cameras needing attention">
           <div className="section-heading">
             <div>
               <h2>Cameras needing attention</h2>
-              <span className="meta-text">Only enabled Streams with a meaningful current camera-health concern</span>
+              <span className="meta-text">Compact observation-health facts from enabled Streams</span>
             </div>
-            <StatusPill label={`${summary.camera_attention.length} needs attention`} tone="review" />
+            <StatusPill label={`${today.observation_health.length} needs attention`} tone="review" />
           </div>
           <div className="dashboard-visit-list">
-            {summary.camera_attention.map((camera) => (
+            {today.observation_health.map((camera) => (
               <article className="dashboard-visit-row" key={camera.stream_id}>
                 <div>
                   <StatusPill label={cameraHealthLabel(camera.state)} tone={cameraHealthTone(camera.state)} />

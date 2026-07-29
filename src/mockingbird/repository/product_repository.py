@@ -178,6 +178,10 @@ from mockingbird.api.schemas import (
     DashboardStreamRuntimeStatus,
     DashboardStreamSummary,
     DashboardSummary,
+    DashboardTodayHourActivity,
+    DashboardTodaySpecies,
+    DashboardTodaySummary,
+    DashboardTodayZoneActivity,
     DashboardVisitSummary,
     DashboardZoneOverlay,
     DemoDetectionRunCreate,
@@ -8327,12 +8331,18 @@ class ProductRepository:
         runtime_by_stream: dict[str, DashboardStreamRuntimeStatus] | None = None,
         *,
         now: datetime | None = None,
+        local_date: date | None = None,
     ) -> DashboardSummary:
         """Build the bounded landing-page view from product state, never suggestions."""
 
         runtime_by_stream = runtime_by_stream or {}
         local_now = (now or datetime.now().astimezone()).astimezone()
-        local_day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        selected_local_day = local_date or local_now.date()
+        local_day_start = datetime.combine(
+            selected_local_day,
+            datetime.min.time(),
+            local_now.tzinfo,
+        )
         next_local_day_start = local_day_start + timedelta(days=1)
         day_start = _as_utc(local_day_start)
         day_end = _as_utc(next_local_day_start)
@@ -8595,6 +8605,13 @@ class ProductRepository:
                 item.product_category == "legacy_activity"
                 for item in product_review_items
             )
+            today = self._dashboard_today_summary(
+                session,
+                day_start=day_start,
+                day_end=day_end,
+                local_timezone=local_now.tzinfo,
+                camera_attention=camera_attention,
+            )
 
             return DashboardSummary(
                 local_day=local_day_start.date().isoformat(),
@@ -8615,6 +8632,7 @@ class ProductRepository:
                         observation.observation_count for observation in bird_observations
                     ),
                 ),
+                today=today,
                 streams=stream_summaries,
                 needs_review_visits=needs_review_visits,
                 actionable_animal_visits=actionable_animal_visits,
@@ -8624,6 +8642,309 @@ class ProductRepository:
                 camera_attention=camera_attention[:12],
                 warnings=warnings[:12],
             )
+
+    def _dashboard_today_summary(
+        self,
+        session: Session,
+        *,
+        day_start: datetime,
+        day_end: datetime,
+        local_timezone: Any,
+        camera_attention: list[CameraHealthSummary],
+    ) -> DashboardTodaySummary:
+        """Build one bounded local-day nature story without treating suggestions as truth."""
+
+        rows = session.execute(
+            select(VisitModel, EventModel, StreamModel, CameraSourceModel)
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .join(StreamModel, EventModel.stream_id == StreamModel.id)
+            .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+            .where(
+                VisitModel.is_superseded.is_(False),
+                CameraSourceModel.status != SourceStatus.archived.value,
+                EventModel.started_at >= day_start,
+                EventModel.started_at < day_end,
+            )
+            .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+            .limit(501)
+        ).all()
+        truncated = len(rows) > 500
+        qualified: list[DashboardVisitSummary] = []
+        confirmed_species: dict[str, list[DashboardVisitSummary]] = {}
+        zone_counts: Counter[tuple[str | None, str]] = Counter()
+        hour_counts: Counter[int] = Counter()
+        unresolved: list[DashboardVisitSummary] = []
+        for visit, event, _stream, _source in rows[:500]:
+            if not self._dashboard_today_is_nature_event(event.event_type):
+                continue
+            summary = self._dashboard_visit_summary_from_models(session, visit, event)
+            evidence = self._motion_evidence_for_review_queue_item(
+                session,
+                event_id=event.id,
+                visit_id=visit.id,
+                media_asset_id=None,
+            )
+            context = _review_queue_product_context(
+                session=session,
+                stream_id=event.stream_id,
+                evidence=evidence,
+                review_status=ReviewStatus(visit.review_status),
+                media_asset=self._media_asset_for_path_from_session(
+                    session, visit.representative_media_path
+                ),
+                evidence_frames=self._visit_evidence_frames_from_visit(session, visit, event),
+                fallback_captured_at=event.started_at,
+            )
+            if context["is_demo_source"] or context["detector_class"] != "animal":
+                continue
+            if not self._dashboard_today_is_countable_animal_visit(summary):
+                continue
+            if not self._dashboard_today_is_nature_visit(summary):
+                continue
+            qualified.append(summary)
+            zone_counts[(summary.zone_id, summary.zone_name or "No Zone")] += 1
+            hour_counts[summary.activity_started_at.astimezone(local_timezone).hour] += 1
+            if summary.review_status == ReviewStatus.needs_review:
+                unresolved.append(summary)
+            if self._dashboard_today_is_confirmed_species(session, summary):
+                assert summary.reviewed_label is not None
+                confirmed_species.setdefault(
+                    self._normalize_label_from_session(session, summary.reviewed_label), []
+                ).append(summary)
+
+        detector_qualified_animal_visit_count = 0
+        detector_count_rows = session.execute(
+            select(VisitModel, EventModel, StreamModel, CameraSourceModel)
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .join(StreamModel, EventModel.stream_id == StreamModel.id)
+            .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+            .where(
+                VisitModel.is_superseded.is_(False),
+                CameraSourceModel.status != SourceStatus.archived.value,
+                EventModel.started_at < day_end,
+                or_(EventModel.ended_at.is_(None), EventModel.ended_at > day_start),
+            )
+            .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+            .limit(501)
+        ).all()
+        detector_count_truncated = len(detector_count_rows) > 500
+        for visit, event, _stream, _source in detector_count_rows[:500]:
+            if not self._dashboard_today_is_nature_event(event.event_type):
+                continue
+            summary = self._dashboard_visit_summary_from_models(session, visit, event)
+            if not self._dashboard_today_is_countable_animal_visit(summary):
+                continue
+            evidence = self._motion_evidence_for_review_queue_item(
+                session,
+                event_id=event.id,
+                visit_id=visit.id,
+                media_asset_id=None,
+            )
+            context = _review_queue_product_context(
+                session=session,
+                stream_id=event.stream_id,
+                evidence=evidence,
+                review_status=ReviewStatus(visit.review_status),
+                media_asset=self._media_asset_for_path_from_session(
+                    session, visit.representative_media_path
+                ),
+                evidence_frames=self._visit_evidence_frames_from_visit(session, visit, event),
+                fallback_captured_at=event.started_at,
+            )
+            if not context["is_demo_source"] and context["detector_class"] == "animal":
+                detector_qualified_animal_visit_count += 1
+
+        history_rows = session.execute(
+            select(VisitModel, EventModel, StreamModel, CameraSourceModel)
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .join(StreamModel, EventModel.stream_id == StreamModel.id)
+            .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+            .where(
+                VisitModel.is_superseded.is_(False),
+                VisitModel.review_status == ReviewStatus.reviewed.value,
+                CameraSourceModel.status != SourceStatus.archived.value,
+                EventModel.started_at >= day_start - timedelta(days=14),
+                EventModel.started_at < day_end,
+            )
+            .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+            .limit(2001)
+        ).all()
+        history_truncated = len(history_rows) > 2000
+        species_history: dict[str, list[DashboardVisitSummary]] = {}
+        for visit, event, _stream, _source in history_rows[:2000]:
+            if not self._dashboard_today_is_nature_event(event.event_type):
+                continue
+            summary = self._dashboard_visit_summary_from_models(session, visit, event)
+            if not (
+                self._dashboard_today_is_nature_visit(summary)
+                and self._dashboard_today_is_confirmed_species(session, summary)
+            ):
+                continue
+            assert summary.reviewed_label is not None
+            species_history.setdefault(
+                self._normalize_label_from_session(session, summary.reviewed_label), []
+            ).append(summary)
+
+        previous_rows = session.execute(
+            select(VisitModel, EventModel, StreamModel, CameraSourceModel)
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .join(StreamModel, EventModel.stream_id == StreamModel.id)
+            .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+            .where(
+                VisitModel.is_superseded.is_(False),
+                VisitModel.review_status == ReviewStatus.reviewed.value,
+                CameraSourceModel.status != SourceStatus.archived.value,
+                EventModel.started_at < day_start,
+            )
+            .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+            .limit(5001)
+        ).all()
+        previous_history_truncated = len(previous_rows) > 5000
+        previous_labels = {
+            self._normalize_label_from_session(session, summary.reviewed_label)
+            for visit, event, _stream, _source in previous_rows[:5000]
+            if self._dashboard_today_is_nature_event(event.event_type)
+            for summary in [self._dashboard_visit_summary_from_models(session, visit, event)]
+            if self._dashboard_today_is_nature_visit(summary)
+            and self._dashboard_today_is_confirmed_species(session, summary)
+            and summary.reviewed_label is not None
+        }
+        new_today = [
+            self._dashboard_today_species(session, label, summaries, distinct_days=1)
+            for label, summaries in confirmed_species.items()
+            if label not in previous_labels
+        ]
+        regulars = [
+            self._dashboard_today_species(
+                session,
+                label,
+                summaries,
+                distinct_days=len(
+                    {
+                        item.activity_started_at.astimezone(local_timezone).date()
+                        for item in summaries
+                    }
+                ),
+            )
+            for label, summaries in species_history.items()
+            if len(
+                {
+                    item.activity_started_at.astimezone(local_timezone).date()
+                    for item in summaries
+                }
+            ) >= 3
+        ]
+        order = lambda item: (item.latest_visit.activity_started_at, item.label)
+        best_moments = sorted(
+            qualified,
+            key=lambda item: (
+                item.review_status == ReviewStatus.reviewed and item.primary_evidence is not None,
+                item.activity_started_at,
+                item.id,
+            ),
+            reverse=True,
+        )[:6]
+        warnings = []
+        if truncated or detector_count_truncated or history_truncated or previous_history_truncated:
+            warnings.append("Today is showing a bounded recent set of Visits.")
+        return DashboardTodaySummary(
+            detector_qualified_animal_visit_count=detector_qualified_animal_visit_count,
+            confirmed_bird_visit_count=sum(
+                item.review_outcome == VisitReviewOutcome.confirmed_bird for item in qualified
+            ),
+            confirmed_species_count=len(confirmed_species),
+            unresolved_animal_visit_count=len(unresolved),
+            best_moments=best_moments,
+            new_today=sorted(new_today, key=order, reverse=True)[:12],
+            recent_regulars=sorted(regulars, key=order, reverse=True)[:12],
+            activity_by_zone=[
+                DashboardTodayZoneActivity(
+                    zone_id=zone_id,
+                    zone_name=zone_name,
+                    animal_visit_count=count,
+                )
+                for (zone_id, zone_name), count in sorted(
+                    zone_counts.items(),
+                    key=lambda item: (-item[1], item[0][1], item[0][0] or ""),
+                )[:50]
+            ],
+            activity_by_hour=[
+                DashboardTodayHourActivity(hour=hour, animal_visit_count=hour_counts[hour])
+                for hour in range(24)
+            ],
+            needs_help=sorted(
+                unresolved,
+                key=lambda item: (item.activity_started_at, item.id),
+                reverse=True,
+            )[:3],
+            observation_health=camera_attention[:12],
+            warnings=warnings,
+        )
+
+    @staticmethod
+    def _dashboard_today_is_nature_event(event_type: str) -> bool:
+        lowered = event_type.lower()
+        return not any(marker in lowered for marker in ("demo", "test", "legacy"))
+
+    @staticmethod
+    def _dashboard_today_is_countable_animal_visit(summary: DashboardVisitSummary) -> bool:
+        return summary.review_status != ReviewStatus.rejected and (
+            summary.reviewed_label is None
+            or _taxonomy_key(summary.reviewed_label)
+            not in {
+                "blank",
+                "empty",
+                "no_activity",
+                "no_animal",
+                "false_positive",
+            }
+        )
+
+    @staticmethod
+    def _dashboard_today_is_nature_visit(summary: DashboardVisitSummary) -> bool:
+        if summary.review_status == ReviewStatus.rejected:
+            return False
+        if summary.reviewed_label is None:
+            return True
+        return _taxonomy_key(summary.reviewed_label) not in {
+            "person",
+            "vehicle",
+            "demo",
+            "test",
+            "legacy",
+            "blank",
+            "empty",
+            "no_activity",
+            "no_animal",
+            "false_positive",
+        }
+
+    def _dashboard_today_is_confirmed_species(
+        self,
+        session: Session,
+        summary: DashboardVisitSummary,
+    ) -> bool:
+        if summary.review_outcome != VisitReviewOutcome.confirmed_bird or not summary.reviewed_label:
+            return False
+        taxonomy = self._taxonomy_label_model_for_input(session, summary.reviewed_label)
+        return bool(taxonomy is not None and taxonomy.is_species)
+
+    def _dashboard_today_species(
+        self,
+        session: Session,
+        label: str,
+        summaries: list[DashboardVisitSummary],
+        *,
+        distinct_days: int,
+    ) -> DashboardTodaySpecies:
+        taxonomy = self._taxonomy_label_model_for_input(session, label)
+        latest = max(summaries, key=lambda item: (item.activity_started_at, item.id))
+        return DashboardTodaySpecies(
+            label=label,
+            display_name=taxonomy.display_name if taxonomy is not None else label,
+            distinct_days_seen=distinct_days,
+            latest_visit=latest,
+        )
 
     @staticmethod
     def _dashboard_live_preview(

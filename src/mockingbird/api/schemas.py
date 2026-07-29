@@ -2184,11 +2184,49 @@ class DashboardHeadline(BaseModel):
     reviewed_observation_count_today: int = Field(ge=0)
 
 
+class DashboardTodaySpecies(BaseModel):
+    """A reviewed species occurrence grouped for the selected local day."""
+
+    label: str
+    display_name: str
+    distinct_days_seen: int = Field(default=1, ge=1, le=14)
+    latest_visit: DashboardVisitSummary
+
+
+class DashboardTodayZoneActivity(BaseModel):
+    zone_id: str | None = None
+    zone_name: str = "No Zone"
+    animal_visit_count: int = Field(ge=1)
+
+
+class DashboardTodayHourActivity(BaseModel):
+    hour: int = Field(ge=0, le=23)
+    animal_visit_count: int = Field(ge=0)
+
+
+class DashboardTodaySummary(BaseModel):
+    """Bounded, read-only nature discovery facts for one selected local day."""
+
+    detector_qualified_animal_visit_count: int = Field(ge=0)
+    confirmed_bird_visit_count: int = Field(ge=0)
+    confirmed_species_count: int = Field(ge=0)
+    unresolved_animal_visit_count: int = Field(ge=0)
+    best_moments: list[DashboardVisitSummary] = Field(default_factory=list, max_length=6)
+    new_today: list[DashboardTodaySpecies] = Field(default_factory=list, max_length=12)
+    recent_regulars: list[DashboardTodaySpecies] = Field(default_factory=list, max_length=12)
+    activity_by_zone: list[DashboardTodayZoneActivity] = Field(default_factory=list, max_length=50)
+    activity_by_hour: list[DashboardTodayHourActivity] = Field(default_factory=list, max_length=24)
+    needs_help: list[DashboardVisitSummary] = Field(default_factory=list, max_length=3)
+    observation_health: list[CameraHealthSummary] = Field(default_factory=list, max_length=12)
+    warnings: list[str] = Field(default_factory=list, max_length=4)
+
+
 class DashboardSummary(BaseModel):
     # Bounded daily operations surface; never a full Visit-detail payload.
     local_day: str
     generated_at: datetime
     headline: DashboardHeadline
+    today: DashboardTodaySummary
     streams: list[DashboardStreamSummary] = Field(default_factory=list, max_length=50)
     needs_review_visits: list[DashboardVisitSummary] = Field(
         default_factory=list,

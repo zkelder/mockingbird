@@ -105,6 +105,14 @@ A read-only UI prompt that sends the user to an explicit workflow such as
 Streams, Import Media, Motion Evidence, Retention, or Review. It does not run
 providers, create evidence, or create reviewed truth.
 
+## Today in Your Yard
+
+The bounded, read-only daily Dashboard projection for detector-qualified animal
+Visits, reviewed birds and species, evidence-backed best moments, first
+confirmed species, recent regulars, Zone/hour activity, confirmation work, and
+compact observation health. Detector and SpeciesSuggestion evidence can guide a
+Visit into this surface, but only explicit correction counts as confirmed truth.
+
 ## MVP Readiness Overview
 
 A read-only Dashboard summary of current provider workflows, support level, next

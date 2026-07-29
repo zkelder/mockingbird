@@ -1589,10 +1589,44 @@ export interface DashboardHeadline {
   reviewed_observation_count_today: number;
 }
 
+export interface DashboardTodaySpecies {
+  label: string;
+  display_name: string;
+  distinct_days_seen: number;
+  latest_visit: DashboardVisitSummary;
+}
+
+export interface DashboardTodayZoneActivity {
+  zone_id?: string | null;
+  zone_name: string;
+  animal_visit_count: number;
+}
+
+export interface DashboardTodayHourActivity {
+  hour: number;
+  animal_visit_count: number;
+}
+
+export interface DashboardTodaySummary {
+  detector_qualified_animal_visit_count: number;
+  confirmed_bird_visit_count: number;
+  confirmed_species_count: number;
+  unresolved_animal_visit_count: number;
+  best_moments: DashboardVisitSummary[];
+  new_today: DashboardTodaySpecies[];
+  recent_regulars: DashboardTodaySpecies[];
+  activity_by_zone: DashboardTodayZoneActivity[];
+  activity_by_hour: DashboardTodayHourActivity[];
+  needs_help: DashboardVisitSummary[];
+  observation_health: CameraHealthSummary[];
+  warnings: string[];
+}
+
 export interface DashboardSummary {
   local_day: string;
   generated_at: string;
   headline: DashboardHeadline;
+  today: DashboardTodaySummary;
   streams: DashboardStreamSummary[];
   needs_review_visits: DashboardVisitSummary[];
   actionable_animal_visits: DashboardVisitSummary[];

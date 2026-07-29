@@ -6,24 +6,20 @@ foundations briefly and keeps detailed historical phase narration in
 
 ## Product outcome
 
-MockingBird is moving toward one dependable local field product:
+MockingBird is a local-first, hardware-agnostic nature observatory that helps
+people notice, understand, and remember wildlife around a place.
 
-connect Source -> view Stream -> draw Zones -> monitor outdoor activity ->
-review Events/Visits -> correct labels/species -> build Bird Log, datasets,
-exports, and analytics.
+The current milestone is **Reliable Daily Observatory v1**: Today in Your Yard
+makes detector-qualified activity, reviewed discoveries, evidence-backed
+moments, Zone/hour context, bounded confirmation work, and observation health
+the everyday Dashboard experience. The next gate is bounded multi-day field
+acceptance using the existing correction flow; it does not require a camera,
+provider, or model to start during normal validation.
 
-The current checkpoint is **Phase 24D complete**. Every Stream has default-off
-monitoring policy and runtime-checkpoint records, read-only lifecycle status,
-verified local backup/recovery, and one same-origin local application runtime.
-No camera or monitor starts automatically.
-
-The main missing product capability is validated automatic species
-identification. MegaDetector can add animal/person/vehicle proposal evidence,
-and the first BioCLIP 2 boundary can now create explicitly triggered ranked
-`SpeciesSuggestion` evidence on one saved Review Queue item at a time. That
-shadow path is a truth-building aid, not a selected production classifier or
-automatic post-activity runtime; current `unknown_bird` suggestions remain
-placeholders until replaced by real model evidence or explicit correction.
+The user-facing loop is **Observe → Discover → Understand → Confirm → Remember
+→ Improve**. The internal evidence/truth architecture remains unchanged:
+detectors and SpeciesSuggestions are evidence, while explicit correction is the
+only reviewed truth used for confirmed species, Bird Log, exports, and history.
 
 ## WSL activation checkpoint
 
@@ -67,7 +63,7 @@ setup rather than a product blocker.
 
 See [roadmap-history.md](roadmap-history.md) for the concise phase record.
 
-## Current priority 1: real visual species identification
+## Current priority 2: real visual species identification
 
 Goal: deliver the shortest complete identification loop:
 
