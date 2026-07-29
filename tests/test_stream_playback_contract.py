@@ -395,7 +395,7 @@ async def test_stream_recent_visit_history_is_scoped_bounded_and_safe(
     evidence_frames = detail.json()["evidence_frames"]
     assert len(evidence_frames) == 1
     assert evidence_frames[0]["is_primary"] is True
-    assert evidence_frames[0]["preview_url"] == "/api/media/media-visit-history-confirmed/file"
+    assert evidence_frames[0]["preview_url"] == "/api/media/media-visit-history-confirmed/preview"
     assert str(tmp_path) not in str(detail.json())
 
 
