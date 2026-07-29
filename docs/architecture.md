@@ -33,7 +33,10 @@ raw model/provider output.
 
 The primary navigation flow is Cameras/Streams -> Review Queue -> Bird Log ->
 Exports. Advanced evidence, provider diagnostics, and optional analyzers support
-that flow without becoming the product center.
+that flow without becoming the product center. Product Mode makes current
+detector-qualified animal Visits the compact default review task while keeping
+legacy activity and developer provenance secondary; see
+[review-product-mode-contract.md](review-product-mode-contract.md).
 
 ### Product API
 

@@ -1043,7 +1043,10 @@ export const apiClient = {
     request<ZoneMutationResult>(`/api/zones/${zoneId}`, {
       method: "DELETE",
     }),
-  getReviewQueue: () => request<ReviewQueueItem[]>("/api/review-queue"),
+  getReviewQueue: (options: { includeReviewed?: boolean } = {}) =>
+    request<ReviewQueueItem[]>(
+      `/api/review-queue${options.includeReviewed ? "?include_reviewed=true" : ""}`,
+    ),
   getReviewLabels: () => request<ReviewLabel[]>("/api/review-labels"),
   searchActivityLibrary: (payload: ActivityLibrarySearchRequest) =>
     request<ActivityLibrarySearchResponse>("/api/activity-library/search", {

@@ -8569,6 +8569,32 @@ class ProductRepository:
                 session,
                 reviewed_today_rows,
             )
+            product_review_items = self._review_queue_items(session)
+            actionable_animal_visits: list[DashboardVisitSummary] = []
+            for item in product_review_items:
+                if item.product_category != "animal" or item.visit_id is None:
+                    continue
+                visit_model = session.get(VisitModel, item.visit_id)
+                event_model = (
+                    session.get(EventModel, visit_model.event_id)
+                    if visit_model is not None
+                    else None
+                )
+                if visit_model is None or event_model is None:
+                    continue
+                actionable_animal_visits.append(
+                    self._dashboard_visit_summary_from_models(
+                        session,
+                        visit_model,
+                        event_model,
+                    )
+                )
+                if len(actionable_animal_visits) == 12:
+                    break
+            legacy_activity_count = sum(
+                item.product_category == "legacy_activity"
+                for item in product_review_items
+            )
 
             return DashboardSummary(
                 local_day=local_day_start.date().isoformat(),
@@ -8583,12 +8609,15 @@ class ProductRepository:
                         for summary in stream_summaries
                     ),
                     needs_review_visit_count=needs_review_visit_count,
+                    actionable_animal_visit_count=len(actionable_animal_visits),
+                    legacy_activity_count=legacy_activity_count,
                     reviewed_observation_count_today=sum(
                         observation.observation_count for observation in bird_observations
                     ),
                 ),
                 streams=stream_summaries,
                 needs_review_visits=needs_review_visits,
+                actionable_animal_visits=actionable_animal_visits,
                 today_observations=bird_observations,
                 reviewed_non_bird_activity=non_bird_activity,
                 recent_activity=recent_activity,
@@ -15403,9 +15432,13 @@ class ProductRepository:
         )
 
 
-    def review_queue_items(self) -> list[ReviewQueueItem]:
+    def review_queue_items(
+        self,
+        *,
+        include_reviewed: bool = False,
+    ) -> list[ReviewQueueItem]:
         with self.session_factory() as session:
-            return self._review_queue_items(session)
+            return self._review_queue_items(session, include_reviewed=include_reviewed)
 
     def get_visit_identification_assistant(
         self,
@@ -20931,13 +20964,20 @@ class ProductRepository:
             generated_at=datetime.now(UTC),
         )
 
-    def _review_queue_items(self, session: Session) -> list[ReviewQueueItem]:
+    def _review_queue_items(
+        self,
+        session: Session,
+        *,
+        include_reviewed: bool = False,
+    ) -> list[ReviewQueueItem]:
         queue: list[ReviewQueueItem] = []
         recency_by_item_id: dict[str, float] = {}
         visits = self._visits_for_eventless_query(session)
 
         for visit in visits:
-            if visit.review_status != ReviewStatus.needs_review:
+            if visit.review_status != ReviewStatus.needs_review and not (
+                include_reviewed and visit.review_status == ReviewStatus.reviewed
+            ):
                 continue
 
             event_model = session.get(EventModel, visit.event_id)
@@ -21044,6 +21084,15 @@ class ProductRepository:
                 review_status=visit.review_status,
                 review_state_token=self._review_state_token(session, "visit", visit.id),
                 reason="Confirm or correct the suggested species label.",
+                **_review_queue_product_context(
+                    session=session,
+                    stream_id=event.stream_id,
+                    evidence=evidence,
+                    review_status=visit.review_status,
+                    media_asset=media_asset,
+                    evidence_frames=evidence_frames,
+                    fallback_captured_at=event.started_at,
+                ),
             )
             queue_item.identification = self._review_identification_summary_for_item(
                 session,
@@ -21060,7 +21109,12 @@ class ProductRepository:
         for event_model in event_models:
             event = self._event_from_model(session, event_model)
             if (
-                event.review_status != ReviewStatus.needs_review
+                (
+                    event.review_status != ReviewStatus.needs_review
+                    and not (
+                        include_reviewed and event.review_status == ReviewStatus.reviewed
+                    )
+                )
                 or event.id in visit_event_ids
                 or event.id in event_ids_with_historical_visits
             ):
@@ -21123,6 +21177,15 @@ class ProductRepository:
                 review_status=event.review_status,
                 review_state_token=self._review_state_token(session, "event", event.id),
                 reason="Review detected outdoor activity and correct the event meaning.",
+                **_review_queue_product_context(
+                    session=session,
+                    stream_id=event.stream_id,
+                    evidence=evidence,
+                    review_status=event.review_status,
+                    media_asset=media_asset,
+                    evidence_frames=[],
+                    fallback_captured_at=event.started_at,
+                ),
             )
             queue_item.identification = self._review_identification_summary_for_item(
                 session,
@@ -24900,6 +24963,119 @@ def _review_queue_bulk_correction_failure_message(reason: str) -> str:
     if reason == "unsupported_target":
         return "Review target type is not supported."
     return "Review Queue item could not be corrected."
+
+
+def _review_queue_product_context(
+    *,
+    session: Session,
+    stream_id: str,
+    evidence: MotionEvidenceModel | None,
+    review_status: ReviewStatus,
+    media_asset: MediaAsset | None,
+    evidence_frames: list[VisitEvidenceFrame],
+    fallback_captured_at: datetime,
+) -> dict[str, Any]:
+    """Classify durable review provenance without turning evidence into truth."""
+
+    stream = session.get(StreamModel, stream_id)
+    source = session.get(CameraSourceModel, stream.source_id) if stream else None
+    provider = (
+        session.get(SourceProviderConfigurationModel, source.id)
+        if source is not None
+        else None
+    )
+    provider_key = provider.provider_key.lower() if provider is not None else ""
+    is_demo_source = bool(
+        (source is not None and source.kind == SourceKind.demo.value)
+        or provider_key == "demo"
+    )
+
+    scoring_config: dict[str, Any] = {}
+    if evidence is not None:
+        try:
+            parsed = json.loads(evidence.scoring_config_json)
+        except (TypeError, json.JSONDecodeError):
+            parsed = {}
+        if isinstance(parsed, dict):
+            scoring_config = parsed
+    detector_evidence = scoring_config.get("detector_evidence")
+    if isinstance(detector_evidence, str):
+        try:
+            detector_evidence = json.loads(detector_evidence)
+        except (TypeError, json.JSONDecodeError):
+            detector_evidence = None
+    detector_evidence = (
+        detector_evidence if isinstance(detector_evidence, dict) else {}
+    )
+    current_track = detector_evidence.get("current_track")
+    object_detector = detector_evidence.get("object_detector")
+    object_detector = object_detector if isinstance(object_detector, dict) else {}
+    candidate = current_track if isinstance(current_track, dict) else None
+    if candidate is None:
+        for values in (
+            object_detector.get("triggers"),
+            object_detector.get("detections"),
+            object_detector.get("tracks"),
+        ):
+            if isinstance(values, list):
+                candidate = next(
+                    (entry for entry in values if isinstance(entry, dict)),
+                    None,
+                )
+            if candidate is not None:
+                break
+
+    detector_class = (
+        _optional_string(candidate.get("class") or candidate.get("label"))
+        if candidate is not None
+        else None
+    )
+    if detector_class not in {"animal", "person", "vehicle"}:
+        detector_class = None
+    score = _optional_float(candidate.get("score")) if candidate is not None else None
+    detector_score = score if score is not None and 0 <= score <= 1 else None
+    track_generation_id = (
+        _optional_string(candidate.get("track_generation_id"))
+        if candidate is not None
+        else None
+    )
+
+    if review_status == ReviewStatus.reviewed:
+        category = "reviewed"
+    elif is_demo_source:
+        category = "legacy_activity"
+    elif detector_class == "animal":
+        category = "animal"
+    elif detector_class in {"person", "vehicle"}:
+        category = "other_activity"
+    elif evidence is not None:
+        category = "legacy_activity"
+    else:
+        category = "unchecked"
+
+    primary_frame = next(
+        (frame for frame in evidence_frames if frame.is_primary),
+        evidence_frames[0] if evidence_frames else None,
+    )
+    captured_at = (
+        media_asset.captured_at
+        if media_asset is not None and media_asset.captured_at is not None
+        else primary_frame.captured_at
+        if primary_frame is not None
+        else fallback_captured_at
+    )
+    evidence_count = len(evidence_frames) or int(media_asset is not None)
+    return {
+        "product_category": category,
+        "detector_class": detector_class,
+        "detector_score": detector_score,
+        "track_generation_id": track_generation_id,
+        "captured_at": captured_at,
+        "detector_provenance": detector_evidence or None,
+        "evidence_count": evidence_count,
+        "is_demo_source": is_demo_source,
+        "is_legacy_activity": category == "legacy_activity" or is_demo_source,
+    }
 
 
 def _review_queue_timestamp(value: datetime) -> float:

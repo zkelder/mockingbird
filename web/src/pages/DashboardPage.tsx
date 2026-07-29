@@ -301,9 +301,9 @@ export function DashboardPage({
           <small>Zone activity still in progress</small>
         </button>
         <button className="dashboard-operation-card" onClick={() => onOpenReview()} type="button">
-          <span>Visits needing review</span>
-          <strong>{headline.needs_review_visit_count}</strong>
-          <small>Open Review Queue</small>
+          <span>Animal candidates</span>
+          <strong>{headline.actionable_animal_visit_count}</strong>
+          <small>{headline.legacy_activity_count > 0 ? `${headline.legacy_activity_count} legacy activity items are secondary` : "Open Product Mode"}</small>
         </button>
         <button className="dashboard-operation-card" onClick={onOpenBirdLog} type="button">
           <span>Reviewed observations today</span>
@@ -371,16 +371,16 @@ export function DashboardPage({
       <section className="panel dashboard-needs-review">
         <div className="section-heading">
           <div>
-            <h2>Needs Review</h2>
-            <span className="meta-text">Newest unresolved Visits across Streams</span>
+            <h2>Current animal candidates</h2>
+            <span className="meta-text">Detector-qualified animal Visits · legacy activity remains secondary</span>
           </div>
           <button className="secondary-action" onClick={() => onOpenReview()} type="button">
             Open Review Queue
           </button>
         </div>
-        {summary.needs_review_visits.length > 0 ? (
+        {summary.actionable_animal_visits.length > 0 ? (
           <div className="dashboard-visit-list">
-            {summary.needs_review_visits.map((visit) => (
+            {summary.actionable_animal_visits.map((visit) => (
               <article className="dashboard-visit-row" key={visit.id}>
                 <VisitPreview visit={visit} />
                 <div>
@@ -399,8 +399,8 @@ export function DashboardPage({
           </div>
         ) : (
           <EmptyState
-            title="No Visits need review"
-            description="New reviewable activity will appear here when it is created."
+            title="No detector-qualified animal Visits need review"
+            description="New detector-qualified animal activity appears here; legacy activity stays in its secondary Review Queue tab."
             action={<button className="secondary-action" onClick={() => onOpenReview()} type="button">Open Review Queue</button>}
           />
         )}

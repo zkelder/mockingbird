@@ -56,6 +56,53 @@ type ReviewEvidenceFilter =
   | "no_proposal_evidence";
 export type ReviewStatusFilter = "unreviewed" | "reviewed" | "all";
 type LabelValidationStatus = "empty" | "suggested" | "recent" | "taxonomy" | "custom";
+type ProductReviewTab =
+  | "animals"
+  | "other_activity"
+  | "unchecked"
+  | "legacy_activity"
+  | "reviewed";
+
+const PRODUCT_REVIEW_PAGE_SIZE = 25;
+
+function matchesProductReviewTab(
+  item: ReviewQueueItem,
+  tab: ProductReviewTab,
+  showLegacyAndTestActivity: boolean,
+): boolean {
+  if (tab === "reviewed") {
+    return item.product_category === "reviewed";
+  }
+  if (tab === "legacy_activity") {
+    return showLegacyAndTestActivity && item.product_category === "legacy_activity";
+  }
+  if (item.review_status !== "needs_review") {
+    return false;
+  }
+  if (tab === "animals") {
+    return item.target_type === "visit" && item.product_category === "animal";
+  }
+  if (tab === "other_activity") {
+    return item.product_category === "other_activity";
+  }
+  return item.product_category === "unchecked";
+}
+
+function productReviewTitle(item: ReviewQueueItem): string {
+  if (item.product_category === "animal") {
+    return "Animal detected — species not confirmed";
+  }
+  if (item.product_category === "other_activity") {
+    return "Other detector-qualified activity";
+  }
+  if (item.product_category === "unchecked") {
+    return "Activity needs evidence review";
+  }
+  if (item.product_category === "reviewed") {
+    return "Reviewed activity";
+  }
+  return "Legacy or test activity";
+}
 
 export interface ReviewQueueInitialContext {
   source?: "activity-library" | "classifier-readiness" | "live-motion";
@@ -1375,6 +1422,11 @@ export function ReviewQueuePage({
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [reviewLabels, setReviewLabels] = useState<ReviewLabel[]>([]);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
+  const [productTab, setProductTab] = useState<ProductReviewTab>("animals");
+  const [showLegacyAndTestActivity, setShowLegacyAndTestActivity] = useState(false);
+  const [skippedTargetIds, setSkippedTargetIds] = useState<Set<string>>(() => new Set());
+  const [reviewPage, setReviewPage] = useState(0);
+  const productMode = true;
   const [reviewSort, setReviewSort] = useState<ReviewSort>("newest");
   const [textSearch, setTextSearch] = useState("");
   const [targetTypeFilter, setTargetTypeFilter] = useState<ReviewTargetFilter>("all");
@@ -1456,6 +1508,49 @@ export function ReviewQueuePage({
     { value: "not_analyzed", label: "Not checked", count: queueCounts.not_analyzed },
     { value: "false_positives", label: "False positives", count: queueCounts.false_positives },
   ];
+  const productQueueCounts = useMemo(
+    () =>
+      queueItems.reduce<Record<ProductReviewTab, number>>(
+        (counts, item) => {
+          if (item.target_type === "visit" && item.product_category === "animal") {
+            counts.animals += 1;
+          } else if (item.product_category === "other_activity") {
+            counts.other_activity += 1;
+          } else if (item.product_category === "unchecked") {
+            counts.unchecked += 1;
+          } else if (item.product_category === "legacy_activity") {
+            counts.legacy_activity += 1;
+          } else {
+            counts.reviewed += 1;
+          }
+          return counts;
+        },
+        {
+          animals: 0,
+          other_activity: 0,
+          unchecked: 0,
+          legacy_activity: 0,
+          reviewed: 0,
+        },
+      ),
+    [queueItems],
+  );
+
+  const productReviewFilters: ReviewFilterOption<ProductReviewTab>[] = [
+    { value: "animals", label: "Animals", count: productQueueCounts.animals },
+    {
+      value: "other_activity",
+      label: "Other activity",
+      count: productQueueCounts.other_activity,
+    },
+    { value: "unchecked", label: "Unchecked", count: productQueueCounts.unchecked },
+    {
+      value: "legacy_activity",
+      label: "Legacy activity",
+      count: productQueueCounts.legacy_activity,
+    },
+    { value: "reviewed", label: "Reviewed", count: productQueueCounts.reviewed },
+  ];
 
   const sourceStreamOptions = useMemo(
     () => sourceStreamFilterOptions(filterMetadataByItemId),
@@ -1467,6 +1562,12 @@ export function ReviewQueuePage({
       const normalizedSearch = textSearch.trim().toLowerCase();
 
       const matchingItems = queueItems.filter((item) => {
+        if (skippedTargetIds.has(reviewQueueTargetId(item))) {
+          return false;
+        }
+        if (!matchesProductReviewTab(item, productTab, showLegacyAndTestActivity)) {
+          return false;
+        }
         if (scopedVisitIds && !scopedVisitIds.has(reviewQueueTargetId(item))) {
           return false;
         }
@@ -1521,6 +1622,9 @@ export function ReviewQueuePage({
       evidenceFilter,
       filterMetadataByItemId,
       queueItems,
+      productTab,
+      showLegacyAndTestActivity,
+      skippedTargetIds,
       reviewFilter,
       reviewSort,
       reviewStatusFilter,
@@ -1529,6 +1633,18 @@ export function ReviewQueuePage({
       targetTypeFilter,
       textSearch,
     ],
+  );
+  const reviewPageCount = Math.max(
+    1,
+    Math.ceil(filteredItems.length / PRODUCT_REVIEW_PAGE_SIZE),
+  );
+  const pagedItems = useMemo(
+    () =>
+      filteredItems.slice(
+        reviewPage * PRODUCT_REVIEW_PAGE_SIZE,
+        (reviewPage + 1) * PRODUCT_REVIEW_PAGE_SIZE,
+      ),
+    [filteredItems, reviewPage],
   );
 
   const selectedItems = useMemo(
@@ -1762,8 +1878,34 @@ export function ReviewQueuePage({
   }, [filteredItems, shouldOpenFocusedFastReview]);
 
   useEffect(() => {
-    setQueueItems(items);
+    let isMounted = true;
+    void apiClient
+      .getReviewQueue({ includeReviewed: true })
+      .then((nextItems) => {
+        if (isMounted) {
+          setQueueItems(nextItems);
+        }
+      })
+      .catch(() => {
+        // Keep the initial unresolved snapshot if reviewed-history loading is unavailable.
+      });
+    return () => {
+      isMounted = false;
+    };
   }, [items]);
+
+  useEffect(() => {
+    setReviewPage(0);
+  }, [
+    evidenceFilter,
+    productTab,
+    reviewFilter,
+    reviewStatusFilter,
+    showLegacyAndTestActivity,
+    sourceStreamFilter,
+    targetTypeFilter,
+    textSearch,
+  ]);
 
   useEffect(() => {
     setSelectedTargetIds([]);
@@ -2149,7 +2291,7 @@ export function ReviewQueuePage({
         : current,
     );
     try {
-      setQueueItems(await apiClient.getReviewQueue());
+      setQueueItems(await apiClient.getReviewQueue({ includeReviewed: true }));
     } catch {
       // Completed evidence stays durable; a manual refresh can restore this view.
     }
@@ -2220,7 +2362,7 @@ export function ReviewQueuePage({
         label: trimmedLabel,
         notes: bulkDraft.notes.trim() || undefined,
       });
-      const refreshedQueue = await apiClient.getReviewQueue();
+      const refreshedQueue = await apiClient.getReviewQueue({ includeReviewed: true });
       setQueueItems(refreshedQueue);
       if (result.succeeded_count > 0) {
         setSelectedTargetIds([]);
@@ -2341,7 +2483,7 @@ export function ReviewQueuePage({
                 media_asset_id: mediaAssetId ?? undefined,
               })
             ).identification.message;
-      const refreshedQueue = await apiClient.getReviewQueue();
+      const refreshedQueue = await apiClient.getReviewQueue({ includeReviewed: true });
       setQueueItems(refreshedQueue);
       await refreshDetectionEvidence();
       setMessage(message);
@@ -2366,7 +2508,7 @@ export function ReviewQueuePage({
     setMessage(null);
     try {
       await apiClient.updateSpeciesSuggestionStatus(suggestionId, "rejected");
-      const refreshedQueue = await apiClient.getReviewQueue();
+      const refreshedQueue = await apiClient.getReviewQueue({ includeReviewed: true });
       setQueueItems(refreshedQueue);
       setMessage("Suggestion rejected as evidence. No review truth was created.");
     } catch (caught) {
@@ -2391,7 +2533,7 @@ export function ReviewQueuePage({
         decision: "reject",
         notes: "Rejected from Review Queue identification assist.",
       });
-      const refreshedQueue = await apiClient.getReviewQueue();
+      const refreshedQueue = await apiClient.getReviewQueue({ includeReviewed: true });
       setQueueItems(refreshedQueue);
       await refreshDetectionEvidence();
       setMessage("Suggestion evidence rejected. No review truth was created.");
@@ -2451,30 +2593,47 @@ export function ReviewQueuePage({
         />
       ) : null}
       {queueItems.length > 0 ? (
-        <section className="review-triage-bar" aria-label="Review evidence triage">
+        <section className="review-triage-bar" aria-label="Product Mode review queue">
           <div className="review-triage-copy">
-            <strong>Review by analyzer evidence</strong>
+            <strong>Product Mode</strong>
             <span>
-              Separate likely wildlife from vehicles, people, unchecked frames, and clear
-              misses. These groups are evidence only; correction still creates truth.
+              Current detector-qualified animal Visits are shown first. Detector evidence
+              is not a species result; a correction is still the only truth action.
             </span>
           </div>
           <ReviewFilterTabs
-            activeFilter={reviewFilter}
-            filters={reviewFilters}
-            label="Review evidence groups"
-            onChange={setReviewFilter}
+            activeFilter={productTab}
+            filters={productReviewFilters}
+            label="Product review groups"
+            onChange={setProductTab}
           />
           <label className="review-triage-order">
-            Review order
-            <select
-              onChange={(event) => setReviewSort(event.target.value as ReviewSort)}
-              value={reviewSort}
-            >
-              <option value="newest">Newest first</option>
-              <option value="animals_first">Animal evidence first</option>
-            </select>
+            <input
+              checked={showLegacyAndTestActivity}
+              onChange={(event) => setShowLegacyAndTestActivity(event.target.checked)}
+              type="checkbox"
+            />
+            Show legacy and test activity
           </label>
+          <details className="review-diagnostic-details">
+            <summary>Developer evidence filters</summary>
+            <ReviewFilterTabs
+              activeFilter={reviewFilter}
+              filters={reviewFilters}
+              label="Developer review evidence groups"
+              onChange={setReviewFilter}
+            />
+            <label className="review-triage-order">
+              Review order
+              <select
+                onChange={(event) => setReviewSort(event.target.value as ReviewSort)}
+                value={reviewSort}
+              >
+                <option value="newest">Newest first</option>
+                <option value="animals_first">Analyzer evidence first</option>
+              </select>
+            </label>
+          </details>
         </section>
       ) : null}
       {queueItems.length > 0 ? (
@@ -2789,7 +2948,35 @@ export function ReviewQueuePage({
         taxonomyLabels={taxonomyLabels}
       />
       <div className="queue-list">
-        {filteredItems.map((item) => {
+        {pagedItems.map((item) => {
+          if (productMode) {
+            return (
+              <ProductReviewCard
+                item={item}
+                key={item.id}
+                onFalsePositive={() =>
+                  void saveCorrectionWithLabel(
+                    item,
+                    "false_positive",
+                    "Marked false positive from Product Mode.",
+                  )
+                }
+                onOpenReview={() =>
+                  item.visit_id
+                    ? onOpenVisit(item.visit_id)
+                    : onOpenEvent(item.event_id ?? reviewQueueTargetId(item))
+                }
+                onSkip={() => {
+                  setSkippedTargetIds(
+                    (current) => new Set([...current, reviewQueueTargetId(item)]),
+                  );
+                  setMessage("Skipped for this browser session. No review state changed.");
+                }}
+                onStartFastReview={() => setFastReviewRequest(item)}
+                taxonomyLabels={taxonomyLabels}
+              />
+            );
+          }
           const fromDetectionEvidence =
             item.event_id?.startsWith("event-detection") || item.visit_id?.startsWith("visit-detection");
           const draft = drafts[item.id] ?? {
@@ -3423,6 +3610,31 @@ export function ReviewQueuePage({
             </article>
           );
         })}
+        {filteredItems.length > PRODUCT_REVIEW_PAGE_SIZE ? (
+          <div className="detail-actions review-page-controls">
+            <span className="meta-text">
+              Page {reviewPage + 1} of {reviewPageCount} · {filteredItems.length} matching Visits
+            </span>
+            <button
+              className="secondary-action"
+              disabled={reviewPage === 0}
+              onClick={() => setReviewPage((current) => Math.max(0, current - 1))}
+              type="button"
+            >
+              Previous
+            </button>
+            <button
+              className="secondary-action"
+              disabled={reviewPage + 1 >= reviewPageCount}
+              onClick={() =>
+                setReviewPage((current) => Math.min(reviewPageCount - 1, current + 1))
+              }
+              type="button"
+            >
+              Next
+            </button>
+          </div>
+        ) : null}
         {queueItems.length > 0 && filteredItems.length === 0 ? (
           <EmptyState
             title={
@@ -3448,6 +3660,126 @@ export function ReviewQueuePage({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function ProductReviewCard({
+  item,
+  onFalsePositive,
+  onOpenReview,
+  onSkip,
+  onStartFastReview,
+  taxonomyLabels,
+}: {
+  item: ReviewQueueItem;
+  onFalsePositive: () => void;
+  onOpenReview: () => void;
+  onSkip: () => void;
+  onStartFastReview: () => void;
+  taxonomyLabels: TaxonomyLabel[];
+}) {
+  const explicitSuggestion =
+    item.suggestion_id && item.identification?.suggestion?.id === item.suggestion_id
+      ? item.identification.suggestion
+      : null;
+  const capturedAt = item.captured_at ?? item.activity_started_at ?? null;
+  const location = [item.stream_name ?? item.stream_id, item.zone_name ?? "No Zone"].join(" · ");
+  const evidenceClass = item.detector_class
+    ? `${formatLabel(item.detector_class)} detector evidence`
+    : item.product_category === "unchecked"
+      ? "No detector qualification recorded"
+      : "Legacy activity evidence";
+
+  return (
+    <article className="queue-card review-product-card">
+      {item.media_asset ? (
+        <MediaAssetPreview asset={item.media_asset} compact />
+      ) : (
+        <div className="review-product-image-unavailable">
+          Primary evidence unavailable
+        </div>
+      )}
+      <div className="review-product-card-copy">
+        <div className="queue-card-heading">
+          <div>
+            <strong>{productReviewTitle(item)}</strong>
+            <span className="meta-text">
+              {capturedAt ? formatDateTime(capturedAt) : "Capture time unavailable"} · {location}
+            </span>
+          </div>
+          <EvidenceBadge
+            label={item.product_category === "animal" ? "Animal evidence" : formatLabel(item.product_category)}
+            tone={item.product_category === "animal" ? "review" : "quiet"}
+          />
+        </div>
+        <div className="review-product-facts">
+          <span>{evidenceClass}</span>
+          {item.detector_score != null ? <span>Score {item.detector_score.toFixed(3)}</span> : null}
+          <span>
+            {item.evidence_count === 1 ? "1 evidence item" : `${item.evidence_count} evidence items`}
+          </span>
+        </div>
+        {explicitSuggestion ? (
+          <div className="review-product-suggestion">
+            <strong>Species suggestions</strong>
+            <span>
+              {displayTaxonomyLabel(explicitSuggestion.suggested_label, taxonomyLabels)}
+              {explicitSuggestion.confidence != null
+                ? ` · relative score ${explicitSuggestion.confidence.toFixed(3)}`
+                : ""}
+              {" · evidence only"}
+            </span>
+            <span>
+              {item.identification?.candidate_pack
+                ? `Candidate pack ${item.identification.candidate_pack.display_name} v${item.identification.candidate_pack.version}`
+                : "Open the Visit for full suggestion evidence."}
+            </span>
+            <button className="text-action" onClick={onOpenReview} type="button">
+              View all suggestions
+            </button>
+          </div>
+        ) : null}
+        <div className="detail-actions">
+          <button className="primary-action" onClick={onOpenReview} type="button">
+            Review
+          </button>
+          {item.target_type === "visit" && item.review_status === "needs_review" ? (
+            <button className="secondary-action" onClick={onStartFastReview} type="button">
+              Fast Review
+            </button>
+          ) : null}
+          {item.review_status === "needs_review" ? (
+            <>
+              <button className="secondary-action" onClick={onFalsePositive} type="button">
+                False positive
+              </button>
+              <button className="text-action" onClick={onSkip} type="button">
+                Skip
+              </button>
+            </>
+          ) : null}
+        </div>
+        <details className="review-diagnostic-details">
+          <summary>Developer evidence</summary>
+          <div className="review-diagnostic-grid">
+            <span>Queue item: {item.id}</span>
+            <span>Track generation: {item.track_generation_id ?? "not recorded"}</span>
+            <span>Detector: {item.detector_class ?? "not recorded"}</span>
+            <span>
+              Evidence IDs: {item.evidence_frames.map((frame) => frame.media_asset_id).join(", ") || item.media_asset?.id || "none"}
+            </span>
+            <span>Review status: {formatLabel(item.review_status)}</span>
+          </div>
+          {item.detector_provenance ? (
+            <pre className="review-product-provenance">
+              {JSON.stringify(item.detector_provenance, null, 2)}
+            </pre>
+          ) : (
+            <span className="meta-text">Raw detector provenance was not recorded.</span>
+          )}
+        </details>
+      </div>
+    </article>
   );
 }
 
@@ -3556,9 +3888,7 @@ function FastReviewPanel({
   const suggestedLabels = useMemo(
     () =>
       uniqueLabelValues(
-        activeItem
-          ? [activeItem.suggested_label, reviewIdentificationLabel(activeItem)]
-          : [],
+        activeItem?.suggestion_id ? [activeItem.suggested_label] : [],
       ),
     [activeItem],
   );
@@ -3600,7 +3930,7 @@ function FastReviewPanel({
 
   function selectItem(item: ReviewQueueItem) {
     setActiveItem(item);
-    setDraftLabel(item.suggested_label ?? "");
+    setDraftLabel("");
     setDraftNotes("");
     setAssistantPrefillSuggestionId(null);
     setMessage(null);
@@ -3619,7 +3949,7 @@ function FastReviewPanel({
   }, [items, onRequestedItemConsumed, requestedItem]);
 
   async function refreshProductState(): Promise<ReviewQueueItem[]> {
-    const refreshed = await apiClient.getReviewQueue();
+    const refreshed = await apiClient.getReviewQueue({ includeReviewed: true });
     onQueueItemsChange(refreshed);
     await onReviewChanged();
     return refreshed;
@@ -3647,7 +3977,7 @@ function FastReviewPanel({
         return;
       }
       setActiveItem(response.item);
-      setDraftLabel(response.item.suggested_label ?? "");
+      setDraftLabel("");
       setDraftNotes("");
       setAssistantPrefillSuggestionId(null);
       setMessage(
@@ -3727,7 +4057,7 @@ function FastReviewPanel({
       );
       if (restored) {
         setActiveItem(restored);
-        setDraftLabel(restored.suggested_label ?? "");
+        setDraftLabel("");
         setDraftNotes("");
       }
       setUndoState(null);
@@ -3826,7 +4156,7 @@ function FastReviewPanel({
       );
       setIdentificationAssistant(result);
       setMessage(result.message);
-      const refreshed = await apiClient.getReviewQueue();
+      const refreshed = await apiClient.getReviewQueue({ includeReviewed: true });
       onQueueItemsChange(refreshed);
       const refreshedActive = refreshed.find(
         (item) => reviewQueueTargetId(item) === reviewQueueTargetId(activeItem),

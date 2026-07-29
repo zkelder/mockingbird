@@ -1584,6 +1584,8 @@ export interface DashboardHeadline {
   monitored_stream_count: number;
   open_activity_session_count: number;
   needs_review_visit_count: number;
+  actionable_animal_visit_count: number;
+  legacy_activity_count: number;
   reviewed_observation_count_today: number;
 }
 
@@ -1593,6 +1595,7 @@ export interface DashboardSummary {
   headline: DashboardHeadline;
   streams: DashboardStreamSummary[];
   needs_review_visits: DashboardVisitSummary[];
+  actionable_animal_visits: DashboardVisitSummary[];
   today_observations: DashboardReviewedObservation[];
   reviewed_non_bird_activity: DashboardReviewedObservation[];
   recent_activity: DashboardVisitSummary[];
@@ -2739,6 +2742,15 @@ export interface ReviewQueueItem {
   review_status: ReviewStatus;
   review_state_token: string;
   reason: string;
+  product_category: "animal" | "other_activity" | "unchecked" | "legacy_activity" | "reviewed";
+  detector_class?: "animal" | "person" | "vehicle" | null;
+  detector_score?: number | null;
+  track_generation_id?: string | null;
+  detector_provenance?: Record<string, unknown> | null;
+  captured_at?: string | null;
+  evidence_count: number;
+  is_demo_source: boolean;
+  is_legacy_activity: boolean;
 }
 
 export interface ReviewLabel {

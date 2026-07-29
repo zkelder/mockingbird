@@ -2179,6 +2179,8 @@ class DashboardHeadline(BaseModel):
     monitored_stream_count: int = Field(ge=0)
     open_activity_session_count: int = Field(ge=0)
     needs_review_visit_count: int = Field(ge=0)
+    actionable_animal_visit_count: int = Field(default=0, ge=0)
+    legacy_activity_count: int = Field(default=0, ge=0)
     reviewed_observation_count_today: int = Field(ge=0)
 
 
@@ -2189,6 +2191,10 @@ class DashboardSummary(BaseModel):
     headline: DashboardHeadline
     streams: list[DashboardStreamSummary] = Field(default_factory=list, max_length=50)
     needs_review_visits: list[DashboardVisitSummary] = Field(
+        default_factory=list,
+        max_length=12,
+    )
+    actionable_animal_visits: list[DashboardVisitSummary] = Field(
         default_factory=list,
         max_length=12,
     )
@@ -3243,6 +3249,23 @@ class ReviewQueueItem(BaseModel):
     review_status: ReviewStatus
     review_state_token: str = ""
     reason: str
+    # Product Mode is derived from durable source and detector provenance. It is
+    # presentation metadata only: none of these fields can create review truth.
+    product_category: Literal[
+        "animal",
+        "other_activity",
+        "unchecked",
+        "legacy_activity",
+        "reviewed",
+    ] = "unchecked"
+    detector_class: Literal["animal", "person", "vehicle"] | None = None
+    detector_score: float | None = Field(default=None, ge=0, le=1)
+    track_generation_id: str | None = None
+    detector_provenance: dict[str, Any] | None = None
+    captured_at: datetime | None = None
+    evidence_count: int = Field(default=0, ge=0)
+    is_demo_source: bool = False
+    is_legacy_activity: bool = False
 
 
 class ReviewLabel(BaseModel):

@@ -12131,8 +12131,12 @@ async def decide_detection_proposal(
 
 
 @app.get("/api/review-queue", response_model=list[ReviewQueueItem])
-async def list_review_queue() -> list[ReviewQueueItem]:
-    return get_repository().review_queue_items()
+async def list_review_queue(
+    include_reviewed: bool = Query(default=False),
+) -> list[ReviewQueueItem]:
+    """Read compact review work; reviewed history is opt-in for Product Mode."""
+
+    return get_repository().review_queue_items(include_reviewed=include_reviewed)
 
 
 @app.post(

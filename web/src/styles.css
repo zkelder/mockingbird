@@ -2636,6 +2636,66 @@ a.secondary-action {
   color: #18231d;
 }
 
+.review-product-card {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px;
+}
+
+.review-product-card .media-preview {
+  align-self: start;
+}
+
+.review-product-card-copy,
+.review-product-facts,
+.review-product-suggestion {
+  display: grid;
+  gap: 8px;
+}
+
+.review-product-facts {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  color: #4f5f55;
+  font-size: 0.88rem;
+}
+
+.review-product-suggestion {
+  border-left: 3px solid #78976e;
+  padding-left: 10px;
+  color: #405145;
+  font-size: 0.9rem;
+}
+
+.review-product-image-unavailable {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  border: 1px dashed #aebcac;
+  border-radius: 8px;
+  background: #f7faf5;
+  color: #526252;
+  padding: 12px;
+  text-align: center;
+}
+
+.review-product-provenance {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.review-page-controls {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+@media (max-width: 760px) {
+  .review-product-card {
+    grid-template-columns: 1fr;
+  }
+}
+
 .review-item-triage {
   display: flex;
   align-items: center;
