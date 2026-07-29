@@ -12,9 +12,14 @@ people notice, understand, and remember wildlife around a place.
 The current milestone is **Reliable Daily Observatory v1**: Today in Your Yard
 makes detector-qualified activity, reviewed discoveries, evidence-backed
 moments, Zone/hour context, bounded confirmation work, and observation health
-the everyday Dashboard experience. The next gate is bounded multi-day field
-acceptance using the existing correction flow; it does not require a camera,
-provider, or model to start during normal validation.
+the everyday Dashboard experience. The first bounded field acceptance closed
+as a measured failure at detector-qualified animal Visit admission precision:
+10 of 23 reviewed Visits were false positives and useful evidence was 56.5%.
+Evidence/crop lineage, explicit correction truth, Dashboard/durable-truth
+consistency, duplicate and incorrect-merge control, and controlled restart
+recovery passed. **Animal Visit Admission Precision v1** is the next milestone;
+species ranking, crop-quality improvements, and resource efficiency remain
+separate work.
 
 The user-facing loop is **Observe → Discover → Understand → Confirm → Remember
 → Improve**. The internal evidence/truth architecture remains unchanged:
@@ -63,7 +68,7 @@ setup rather than a product blocker.
 
 See [roadmap-history.md](roadmap-history.md) for the concise phase record.
 
-## Current priority 2: real visual species identification
+## Subsequent separate priority: real visual species identification
 
 Goal: deliver the shortest complete identification loop:
 

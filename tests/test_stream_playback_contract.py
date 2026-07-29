@@ -2492,6 +2492,83 @@ async def test_camera_node_motion_without_megadetector_stays_transient(
     assert await product_counts(client) == before
 
 
+async def test_single_frame_animal_evidence_creates_no_durable_artifacts(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unadmitted detector observation stops before media and review writes."""
+
+    stream_id = add_stream_without_zones(
+        isolated_repository, stream_id="stream-single-animal-evidence"
+    )
+    frames = [
+        b"\xff\xd8single-animal-0\xff\xd9",
+        b"\xff\xd8single-animal-1\xff\xd9",
+    ]
+    patch_camera_processes_to_fail(monkeypatch)
+    patch_live_motion_decoder(
+        monkeypatch,
+        {frame: blank_frame(width=100, height=100) for frame in frames},
+    )
+    captured_at = datetime.now(UTC)
+    for index, frame in enumerate(frames):
+        live_frame_cache.store_latest_frame(
+            stream_id,
+            frame,
+            captured_at=captured_at + timedelta(milliseconds=index * 200),
+        )
+    observation = api_main.ObjectDetection(
+        label="animal",
+        score=0.91,
+        left=0.60,
+        top=0.28,
+        right=0.72,
+        bottom=0.44,
+        zone_id="whole-stream",
+        frame_identity=sha1(frames[-1]).hexdigest()[:20],
+        captured_at=captured_at + timedelta(milliseconds=200),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_live_object_detector_result",
+        lambda **_kwargs: (
+            api_main.ObjectDetectorSnapshot(
+                detections=(observation,),
+                runtime_state="ready",
+                model_configuration_state="configured",
+                model_loaded=True,
+            ),
+            {
+                "zone_id": "whole-stream",
+                "source_width": 100,
+                "source_height": 100,
+                "input_width": 100,
+                "input_height": 100,
+            },
+        ),
+    )
+    before = await product_counts(client)
+
+    response = await client.post(
+        f"/api/streams/{stream_id}/live-motion/evaluate",
+        json={"create_review_activity": True, "detector_preset": "high_sensitivity"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["object_detector_detections"][0]["class"] == "animal"
+    assert result["object_detector_triggers"] == []
+    assert result["event_id"] is None
+    assert result["visit_id"] is None
+    assert result["motion_evidence_id"] is None
+    assert result["best_media_asset_id"] is None
+    assert result["created_evidence"] == []
+    assert result["review_activity_created"] is False
+    assert result["creates_truth"] is False
+    assert await product_counts(client) == before
+
+
 async def test_megadetector_animal_promotion_creates_one_review_visit(
     client: httpx.AsyncClient,
     isolated_repository: ProductRepository,

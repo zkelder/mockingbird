@@ -36,6 +36,8 @@ MAX_OBJECT_TRACKS_PER_STREAM = 24
 MAX_TRACK_MISSES = 15
 STRONG_OBJECT_SCORE = 0.50
 WEAK_OBJECT_SCORE = 0.20
+# A detector score is evidence, not durable animal admission by itself.
+MIN_ANIMAL_ADMISSION_OBSERVATIONS = 2
 INFERENCE_TIMEOUT_SECONDS = 20.0
 INITIAL_RUNTIME_LOAD_TIMEOUT_SECONDS = 60.0
 RUNTIME_RECOVERY_BACKOFF_SECONDS = 0.25
@@ -191,8 +193,17 @@ class _TrackState:
     missed_count: int = 0
     triggered: bool = False
     state: Literal["active", "stationary", "disappeared"] = "active"
+    _seen_frame_identities: set[str] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        self._seen_frame_identities.add(self.detection.frame_identity)
 
     def observe(self, detection: ObjectDetection) -> None:
+        # A cached frame may be evaluated again before the camera advances.
+        # Replaying it is not fresh temporal confirmation.
+        if detection.frame_identity in self._seen_frame_identities:
+            return
+        self._seen_frame_identities.add(detection.frame_identity)
         self.detection = detection
         self.last_seen_at = detection.captured_at
         self.hit_count += 1
@@ -815,9 +826,15 @@ class LiveObjectDetectorManager:
             if track.triggered or track.state != "active":
                 continue
             detection = track.detection
-            if detection.score >= STRONG_OBJECT_SCORE or (
-                detection.score >= WEAK_OBJECT_SCORE and track.hit_count >= 2
-            ):
+            if detection.label == "animal":
+                admission_ready = (
+                    track.hit_count >= MIN_ANIMAL_ADMISSION_OBSERVATIONS
+                )
+            else:
+                admission_ready = detection.score >= STRONG_OBJECT_SCORE or (
+                    detection.score >= WEAK_OBJECT_SCORE and track.hit_count >= 2
+                )
+            if admission_ready:
                 track.triggered = True
                 triggers.append(
                     ObjectTrackTrigger(

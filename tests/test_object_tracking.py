@@ -47,12 +47,13 @@ def _submit(
     zone_type: str = "feeder",
     captured_at: datetime = STARTED_AT,
     image: bytes = b"bounded-zone-jpeg",
+    frame_identity: str | None = None,
 ) -> None:
     manager.submit(
         stream_id="stream-yard",
         zone_id=zone_id,
         zone_type=zone_type,
-        frame_identity=f"frame-{sequence}",
+        frame_identity=frame_identity or f"frame-{sequence}",
         sequence=sequence,
         captured_at=captured_at,
         coordinate_box=(0.2, 0.25, 0.8, 0.9),
@@ -60,46 +61,72 @@ def _submit(
     )
 
 
-def _completed(manager: LiveObjectDetectorManager, sequence: int = 1):
+def _completed(
+    manager: LiveObjectDetectorManager,
+    sequence: int = 1,
+    frame_identity: str | None = None,
+):
+    expected_frame_identity = frame_identity or f"frame-{sequence}"
     for _ in range(100):
         snapshot = manager.poll("stream-yard")
-        if snapshot.completed_frame_identity == f"frame-{sequence}":
+        if snapshot.completed_frame_identity == expected_frame_identity:
             return snapshot
         sleep(0.01)
     raise AssertionError("object inference did not complete")
 
 
-def test_feeder_animal_track_triggers_without_any_motion_input() -> None:
-    manager = LiveObjectDetectorManager(runner=lambda _image, _box: [_proposal()])
+def test_feeder_animal_track_requires_two_distinct_frames_without_motion_input() -> None:
+    current = [STARTED_AT]
+    manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: [_proposal()], now=lambda: current[0]
+    )
     try:
-        _submit(manager, sequence=1)
-        snapshot = _completed(manager)
+        _submit(manager, sequence=1, captured_at=current[0])
+        first = _completed(manager)
 
-        assert len(snapshot.detections) == 1
-        assert snapshot.detections[0].label == "animal"
-        assert snapshot.detections[0].box == (0.3, 0.4, 0.4, 0.5)
-        assert len(snapshot.triggers) == 1
-        assert snapshot.triggers[0].track_id == "object-track-0001"
-        assert snapshot.triggers[0].label == "animal"
-        assert snapshot.triggers[0].score == 0.8
+        assert len(first.detections) == 1
+        assert first.detections[0].label == "animal"
+        assert first.detections[0].box == (0.3, 0.4, 0.4, 0.5)
+        assert not first.triggers
+
+        current[0] += timedelta(seconds=1)
+        _submit(manager, sequence=2, captured_at=current[0])
+        second = _completed(manager, 2)
+        assert second.triggers[0].track_id == "object-track-0001"
+        assert second.triggers[0].label == "animal"
+        assert second.triggers[0].score == 0.8
     finally:
         manager.shutdown()
 
 
 def test_whole_stream_animal_track_triggers_without_zone_or_motion_crop() -> None:
-    manager = LiveObjectDetectorManager(runner=lambda _image, _box: [_proposal()])
+    current = [STARTED_AT]
+    manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: [_proposal()], now=lambda: current[0]
+    )
     try:
         _submit(
             manager,
             sequence=1,
             zone_id="whole-stream",
             zone_type="whole_stream",
+            captured_at=current[0],
             image=b"masked-1920x1440-monitoring-frame",
         )
-        snapshot = _completed(manager)
+        first = _completed(manager)
+        current[0] += timedelta(seconds=2)
+        _submit(
+            manager,
+            sequence=2,
+            zone_id="whole-stream",
+            zone_type="whole_stream",
+            captured_at=current[0],
+            image=b"masked-1920x1440-monitoring-frame-2",
+        )
+        snapshot = _completed(manager, 2)
 
         assert snapshot.cadence_seconds == 1.5
-        assert snapshot.detections[0].label == "animal"
+        assert first.detections[0].label == "animal"
         assert snapshot.detections[0].zone_id == "whole-stream"
         assert snapshot.triggers[0].zone_id == "whole-stream"
     finally:
@@ -132,6 +159,137 @@ def test_two_weak_animal_observations_trigger_and_then_remain_stationary() -> No
         stationary = _completed(manager, 3)
         assert stationary.tracks[0].state == "stationary"
         assert stationary.tracks[0].triggered is True
+    finally:
+        manager.shutdown()
+
+
+
+def test_repeated_cached_frame_does_not_count_as_animal_confirmation() -> None:
+    current = [STARTED_AT]
+    manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: [_proposal(score=0.91)], now=lambda: current[0]
+    )
+    try:
+        _submit(
+            manager,
+            sequence=1,
+            captured_at=current[0],
+            frame_identity="same-monitoring-frame",
+        )
+        first = _completed(manager, frame_identity="same-monitoring-frame")
+        assert not first.triggers
+
+        current[0] += timedelta(seconds=1)
+        _submit(
+            manager,
+            sequence=2,
+            captured_at=current[0],
+            frame_identity="same-monitoring-frame",
+        )
+        repeated = _completed(manager, 2, frame_identity="same-monitoring-frame")
+        assert not repeated.triggers
+        assert repeated.tracks[0].hit_count == 1
+    finally:
+        manager.shutdown()
+
+
+def test_spatially_incoherent_animal_observations_do_not_form_one_admitted_track() -> None:
+    current = [STARTED_AT]
+    answers = [
+        [_proposal(box=MegaDetectorBox(0.10, 0.10, 0.05, 0.05))],
+        [_proposal(box=MegaDetectorBox(0.75, 0.75, 0.05, 0.05))],
+    ]
+    manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: answers.pop(0), now=lambda: current[0]
+    )
+    try:
+        _submit(manager, sequence=1, captured_at=current[0])
+        assert not _completed(manager).triggers
+        current[0] += timedelta(seconds=1)
+        _submit(manager, sequence=2, captured_at=current[0])
+        second = _completed(manager, 2)
+        assert not second.triggers
+        assert sorted(track.hit_count for track in second.tracks) == [1, 1]
+    finally:
+        manager.shutdown()
+
+
+def test_brief_fast_small_bird_is_admitted_with_two_coherent_fresh_frames() -> None:
+    current = [STARTED_AT]
+    answers = [
+        [_proposal(score=0.22, box=MegaDetectorBox(0.30, 0.40, 0.03, 0.03))],
+        [_proposal(score=0.24, box=MegaDetectorBox(0.38, 0.41, 0.03, 0.03))],
+    ]
+    manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: answers.pop(0), now=lambda: current[0]
+    )
+    try:
+        _submit(manager, sequence=1, captured_at=current[0])
+        assert not _completed(manager).triggers
+        current[0] += timedelta(seconds=1)
+        _submit(manager, sequence=2, captured_at=current[0])
+        admitted = _completed(manager, 2)
+        assert admitted.triggers[0].label == "animal"
+        assert admitted.triggers[0].score == 0.24
+        assert admitted.tracks[0].hit_count == 2
+    finally:
+        manager.shutdown()
+
+
+def test_admission_target_replay_rejects_single_frame_false_positives() -> None:
+    """Exercise the field gate shape without placing field media in the repo."""
+
+    current = [STARTED_AT]
+    visible_scores = [0.208, 0.255, 0.317, 0.385, 0.457, 0.513, 0.56, 0.585,
+                      0.588, 0.612, 0.631, 0.672, 0.744]
+    false_positive_scores = [0.297, 0.597, 0.598, 0.643, 0.662,
+                             0.673, 0.691, 0.72, 0.763, 0.805]
+    answers = iter(
+        [
+            _proposal(score=score, box=MegaDetectorBox(0.30, 0.40, 0.04, 0.04))
+            for score in visible_scores
+            for _ in range(2)
+        ]
+        + [
+            _proposal(score=score, box=MegaDetectorBox(0.70, 0.70, 0.04, 0.04))
+            for score in false_positive_scores
+        ]
+    )
+    manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: [next(answers)], now=lambda: current[0]
+    )
+    admitted_visible = 0
+    admitted_false_positives = 0
+    try:
+        sequence = 0
+        for index in range(len(visible_scores)):
+            zone_id = f"replay-visible-{index}"
+            sequence += 1
+            _submit(manager, sequence=sequence, zone_id=zone_id, captured_at=current[0])
+            assert not _completed(manager, sequence).triggers
+            current[0] += timedelta(seconds=1)
+            sequence += 1
+            _submit(manager, sequence=sequence, zone_id=zone_id, captured_at=current[0])
+            admitted_visible += len(_completed(manager, sequence).triggers)
+            current[0] += timedelta(seconds=1)
+
+        for index in range(len(false_positive_scores)):
+            sequence += 1
+            _submit(
+                manager,
+                sequence=sequence,
+                zone_id=f"replay-false-positive-{index}",
+                captured_at=current[0],
+            )
+            admitted_false_positives += len(_completed(manager, sequence).triggers)
+            current[0] += timedelta(seconds=1)
+
+        retained_visible = admitted_visible
+        rejected_false_positives = len(false_positive_scores) - admitted_false_positives
+        precision = retained_visible / (retained_visible + admitted_false_positives)
+        assert retained_visible >= 12
+        assert rejected_false_positives >= 8
+        assert precision >= 0.85
     finally:
         manager.shutdown()
 
@@ -232,7 +390,7 @@ def test_timed_out_native_runtime_drops_the_late_result_and_recovers_fresh_work(
         assert timed_out.last_safe_error_category == "inference_timeout"
         assert timed_out.recovery_count == 1
 
-        _submit(manager, sequence=2, image=b"fresh-crop")
+        _submit(manager, sequence=2, zone_id="zone-fresh", image=b"fresh-crop")
         recovered = None
         for _ in range(300):
             snapshot = manager.poll("stream-yard")
@@ -391,16 +549,26 @@ def test_normalized_detector_box_stays_in_full_frame_coordinates() -> None:
 def test_reused_numeric_track_id_has_a_distinct_generation_identity() -> None:
     """A restarted detector must not let an old capture satisfy a new track."""
 
-    manager = LiveObjectDetectorManager(runner=lambda _image, _box: [_proposal()])
+    current = [STARTED_AT]
+    manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: [_proposal()], now=lambda: current[0]
+    )
     try:
-        _submit(manager, sequence=1)
-        first = _completed(manager, 1).triggers[0]
+        _submit(manager, sequence=1, captured_at=current[0])
+        _completed(manager, 1)
+        current[0] += timedelta(seconds=1)
+        _submit(manager, sequence=2, captured_at=current[0])
+        first = _completed(manager, 2).triggers[0]
 
         # A monitor/session reset intentionally restarts the human-readable
         # counter. Capture ownership must still distinguish the two lifetimes.
         manager.reset("stream-yard")
-        _submit(manager, sequence=1)
-        second = _completed(manager, 1).triggers[0]
+        current[0] += timedelta(seconds=1)
+        _submit(manager, sequence=1, captured_at=current[0])
+        _completed(manager, 1)
+        current[0] += timedelta(seconds=1)
+        _submit(manager, sequence=2, captured_at=current[0])
+        second = _completed(manager, 2).triggers[0]
 
         assert first.track_id == second.track_id == "object-track-0001"
         assert first.track_generation_id != second.track_generation_id
@@ -410,17 +578,29 @@ def test_reused_numeric_track_id_has_a_distinct_generation_identity() -> None:
 
 
 def test_process_restart_generates_a_new_capture_ownership_identity() -> None:
-    first_manager = LiveObjectDetectorManager(runner=lambda _image, _box: [_proposal()])
+    current = [STARTED_AT]
+    first_manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: [_proposal()], now=lambda: current[0]
+    )
     try:
-        _submit(first_manager, sequence=1)
-        first = _completed(first_manager, 1).triggers[0]
+        _submit(first_manager, sequence=1, captured_at=current[0])
+        _completed(first_manager, 1)
+        current[0] += timedelta(seconds=1)
+        _submit(first_manager, sequence=2, captured_at=current[0])
+        first = _completed(first_manager, 2).triggers[0]
     finally:
         first_manager.shutdown()
 
-    second_manager = LiveObjectDetectorManager(runner=lambda _image, _box: [_proposal()])
+    second_manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: [_proposal()], now=lambda: current[0]
+    )
     try:
-        _submit(second_manager, sequence=1)
-        second = _completed(second_manager, 1).triggers[0]
+        current[0] += timedelta(seconds=1)
+        _submit(second_manager, sequence=1, captured_at=current[0])
+        _completed(second_manager, 1)
+        current[0] += timedelta(seconds=1)
+        _submit(second_manager, sequence=2, captured_at=current[0])
+        second = _completed(second_manager, 2).triggers[0]
 
         assert first.track_id == second.track_id == "object-track-0001"
         assert first.track_generation_id != second.track_generation_id

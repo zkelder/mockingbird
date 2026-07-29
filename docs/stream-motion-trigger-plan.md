@@ -312,9 +312,11 @@ enabling automatic identification or creating reviewed truth.
 MegaDetector continuously consumes the latest bounded, aspect-preserving
 monitoring frame through its existing one-active/one-pending worker queue. Privacy
 and Ignore pixels are masked before inference; ordinary Zone association happens
-only after an object is detected. A coherent animal track is the only durable
-Review Queue admission signal. Motion remains live movement indication and bounded
-pre-trigger context, and cannot create a MediaAsset, Event, Visit, or candidate.
+only after an object is detected. A coherent animal track needs two distinct,
+fresh monitoring-frame observations before it is the durable Review Queue
+admission signal; a single detector score is evidence only. Motion remains live
+movement indication and bounded pre-trigger context, and cannot create a
+MediaAsset, Event, Visit, or candidate.
 Animal activity outside an ordinary Zone is general animal activity; it does not
 create a duplicate Zone Visit. Person and vehicle observations remain safe
 monitoring context and never enter species review. High-resolution stills are never
