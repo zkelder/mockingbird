@@ -45,6 +45,45 @@ RUNTIME_WORKER_START_TIMEOUT_SECONDS = 10.0
 MAX_RUNTIME_RECOVERY_BACKOFF_SECONDS = 4.0
 RUNTIME_STOP_GRACE_SECONDS = 1.0
 
+# Admission diagnostics are operational evidence only. They intentionally retain
+# no bytes and rotate with the in-memory detector generation.
+MAX_ADMISSION_RECENT_OUTCOMES = 50
+MAX_ADMISSION_FRAME_IDENTITIES_PER_CANDIDATE = 2
+MAX_ADMISSION_DIAGNOSTIC_LENGTH = 96
+MAX_ADMISSION_COUNTER = 1_000_000
+
+AdmissionReason = Literal[
+    "no_animal_detection",
+    "duplicate_frame_ignored",
+    "first_distinct_frame_recorded",
+    "single_frame_candidate_expired",
+    "spatial_coherence_rejected",
+    "stale_generation_ignored",
+    "detector_reset_interrupted",
+    "admission_satisfied",
+    "promotion_failed",
+    "visit_promoted",
+]
+
+ADMISSION_COUNTER_KEYS = (
+    "frames_submitted",
+    "inferences_completed",
+    "inferences_with_animal",
+    "inferences_without_animal",
+    "duplicate_frame_identities_ignored",
+    "stale_generation_results_ignored",
+    "candidate_tracks_started",
+    "first_distinct_support_frames",
+    "valid_second_distinct_frames",
+    "spatial_coherence_rejected",
+    "single_frame_candidates_expired",
+    "reset_interrupted_candidates",
+    "admissions_satisfied",
+    "durable_promotion_attempts",
+    "successful_visit_promotions",
+    "failed_promotion_attempts",
+)
+
 
 def detector_interval_seconds(zone_type: str) -> float:
     """Return the initial local cadence; queue pressure still wins over cadence."""
@@ -138,6 +177,71 @@ class ObjectTrackTrigger:
 
 
 @dataclass(frozen=True)
+class AdmissionOutcome:
+    occurred_at: datetime
+    reason: AdmissionReason
+    runtime_generation: int
+    detector_generation: int
+    track_generation_id: str | None = None
+    frame_identities: tuple[str, ...] = ()
+    label: Literal["animal", "person", "vehicle"] | None = None
+    score: float | None = None
+    box: tuple[float, float, float, float] | None = None
+    zone_id: str | None = None
+    distinct_support_frame_count: int = 0
+    spatial_coherence: bool | None = None
+    promotion_attempted: bool = False
+    event_id: str | None = None
+    visit_id: str | None = None
+    error_category: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "occurred_at": self.occurred_at,
+            "reason": self.reason,
+            "runtime_generation": self.runtime_generation,
+            "detector_generation": self.detector_generation,
+            "track_generation_id": self.track_generation_id,
+            "frame_identities": list(self.frame_identities),
+            "class": self.label,
+            "score": self.score,
+            "zone_id": self.zone_id,
+            "distinct_support_frame_count": self.distinct_support_frame_count,
+            "spatial_coherence": self.spatial_coherence,
+            "promotion_attempted": self.promotion_attempted,
+            "event_id": self.event_id,
+            "visit_id": self.visit_id,
+            "error_category": self.error_category,
+        }
+        if self.box is not None:
+            payload.update(
+                {
+                    "left": self.box[0],
+                    "top": self.box[1],
+                    "right": self.box[2],
+                    "bottom": self.box[3],
+                }
+            )
+        return payload
+
+
+@dataclass
+class _AdmissionTelemetry:
+    detector_generation: int = 0
+    counters: dict[str, int] = field(
+        default_factory=lambda: {key: 0 for key in ADMISSION_COUNTER_KEYS}
+    )
+    recent_outcomes: deque[AdmissionOutcome] = field(
+        default_factory=lambda: deque(maxlen=MAX_ADMISSION_RECENT_OUTCOMES)
+    )
+    last_decision_at: datetime | None = None
+    last_successful_promotion_at: datetime | None = None
+
+    def increment(self, key: str) -> None:
+        self.counters[key] = min(MAX_ADMISSION_COUNTER, self.counters[key] + 1)
+
+
+@dataclass(frozen=True)
 class ObjectDetectorSnapshot:
     detections: tuple[ObjectDetection, ...] = ()
     tracks: tuple[ObjectTrack, ...] = ()
@@ -167,6 +271,13 @@ class ObjectDetectorSnapshot:
     runtime_generation: int = 0
     unavailable_reason: str | None = None
     completed_frame_identity: str | None = None
+    admission_observability_available: bool = False
+    admission_runtime_generation: int = 0
+    admission_counters: dict[str, int] = field(default_factory=dict)
+    current_admission_candidates: tuple[dict[str, object], ...] = ()
+    recent_admission_outcomes: tuple[dict[str, object], ...] = ()
+    last_admission_decision_at: datetime | None = None
+    last_successful_promotion_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -194,21 +305,34 @@ class _TrackState:
     triggered: bool = False
     state: Literal["active", "stationary", "disappeared"] = "active"
     _seen_frame_identities: set[str] = field(default_factory=set)
+    _seen_frame_order: deque[str] = field(default_factory=deque)
 
     def __post_init__(self) -> None:
-        self._seen_frame_identities.add(self.detection.frame_identity)
+        self._remember_frame_identity(self.detection.frame_identity)
 
-    def observe(self, detection: ObjectDetection) -> None:
+    def _remember_frame_identity(self, frame_identity: str) -> None:
+        self._seen_frame_identities.add(frame_identity)
+        self._seen_frame_order.append(frame_identity)
+        while len(self._seen_frame_order) > MAX_ADMISSION_FRAME_IDENTITIES_PER_CANDIDATE:
+            expired = self._seen_frame_order.popleft()
+            self._seen_frame_identities.discard(expired)
+
+    def observe(self, detection: ObjectDetection) -> bool:
         # A cached frame may be evaluated again before the camera advances.
         # Replaying it is not fresh temporal confirmation.
         if detection.frame_identity in self._seen_frame_identities:
-            return
-        self._seen_frame_identities.add(detection.frame_identity)
+            return False
+        self._remember_frame_identity(detection.frame_identity)
         self.detection = detection
         self.last_seen_at = detection.captured_at
         self.hit_count += 1
         self.missed_count = 0
         self.state = "active"
+        return True
+
+    @property
+    def frame_identities(self) -> tuple[str, ...]:
+        return tuple(self._seen_frame_order)
 
     def snapshot(self) -> ObjectTrack:
         detection = self.detection
@@ -236,6 +360,7 @@ class _StreamState:
     last_submitted_at: dict[str, datetime] = field(default_factory=dict)
     last_sequence: dict[str, int] = field(default_factory=dict)
     latest: ObjectDetectorSnapshot = field(default_factory=ObjectDetectorSnapshot)
+    admission: _AdmissionTelemetry = field(default_factory=_AdmissionTelemetry)
 
 
 class _RuntimeInferenceTimeout(Exception):
@@ -351,6 +476,131 @@ class LiveObjectDetectorManager:
         )
         self._worker.start()
 
+    def _record_admission_outcome_locked(
+        self,
+        state: _StreamState,
+        reason: AdmissionReason,
+        *,
+        detection: ObjectDetection | None = None,
+        track: _TrackState | None = None,
+        frame_identities: tuple[str, ...] = (),
+        spatial_coherence: bool | None = None,
+        promotion_attempted: bool = False,
+        event_id: str | None = None,
+        visit_id: str | None = None,
+        error_category: str | None = None,
+    ) -> None:
+        if track is not None and not frame_identities:
+            frame_identities = track.frame_identities
+        if detection is not None and not frame_identities:
+            frame_identities = (detection.frame_identity,)
+        diagnostic = _safe_admission_diagnostic(error_category)
+        occurred_at = (
+            detection.captured_at
+            if detection is not None
+            else track.last_seen_at
+            if track is not None
+            else self._now()
+        )
+        state.admission.recent_outcomes.append(
+            AdmissionOutcome(
+                occurred_at=occurred_at,
+                reason=reason,
+                runtime_generation=state.admission.detector_generation,
+                detector_generation=self._runtime_generation,
+                track_generation_id=(
+                    track.track_generation_id if track is not None else None
+                ),
+                frame_identities=frame_identities[:MAX_ADMISSION_FRAME_IDENTITIES_PER_CANDIDATE],
+                label=(detection.label if detection is not None else track.detection.label if track else None),
+                score=(detection.score if detection is not None else track.detection.score if track else None),
+                box=(detection.box if detection is not None else track.detection.box if track else None),
+                zone_id=(detection.zone_id if detection is not None else track.detection.zone_id if track else None),
+                distinct_support_frame_count=(track.hit_count if track is not None else 0),
+                spatial_coherence=spatial_coherence,
+                promotion_attempted=promotion_attempted,
+                event_id=event_id,
+                visit_id=visit_id,
+                error_category=diagnostic,
+            )
+        )
+        state.admission.last_decision_at = occurred_at
+
+    def _rotate_admission_generation_locked(
+        self, state: _StreamState, generation: int
+    ) -> None:
+        previous_generation = state.admission.detector_generation
+        if previous_generation == generation:
+            return
+        if previous_generation == 0:
+            # The first worker launch adopts submissions already accepted while
+            # the lazy runtime was starting; it is not a reset.
+            state.admission.detector_generation = generation
+            return
+        interrupted = [
+            track
+            for track in state.tracks.values()
+            if track.detection.label == "animal" and not track.triggered
+        ]
+        state.admission = _AdmissionTelemetry(detector_generation=generation)
+        for track in interrupted:
+            state.admission.increment("reset_interrupted_candidates")
+            self._record_admission_outcome_locked(
+                state, "detector_reset_interrupted", track=track
+            )
+        state.tracks.clear()
+
+    def _record_reset_for_all_streams_locked(self, generation: int) -> None:
+        for state in self._states.values():
+            self._rotate_admission_generation_locked(state, generation)
+
+    def record_admission_promotion(
+        self,
+        *,
+        stream_id: str,
+        track_generation_id: str | None,
+        event_id: str | None = None,
+        visit_id: str | None = None,
+        error_category: str | None = None,
+    ) -> None:
+        """Record a completed durable handoff without creating product state."""
+
+        if track_generation_id is None:
+            return
+        with self._condition:
+            state = self._states.get(stream_id)
+            if state is None:
+                return
+            track = next(
+                (
+                    item
+                    for item in state.tracks.values()
+                    if item.track_generation_id == track_generation_id
+                ),
+                None,
+            )
+            state.admission.increment("durable_promotion_attempts")
+            if visit_id is not None:
+                state.admission.increment("successful_visit_promotions")
+                self._record_admission_outcome_locked(
+                    state,
+                    "visit_promoted",
+                    track=track,
+                    promotion_attempted=True,
+                    event_id=event_id,
+                    visit_id=visit_id,
+                )
+                state.admission.last_successful_promotion_at = self._now()
+            else:
+                state.admission.increment("failed_promotion_attempts")
+                self._record_admission_outcome_locked(
+                    state,
+                    "promotion_failed",
+                    track=track,
+                    promotion_attempted=True,
+                    error_category=error_category or "promotion_failed",
+                )
+
     def submit(
         self,
         *,
@@ -396,6 +646,7 @@ class LiveObjectDetectorManager:
                 self._dropped_frame_count += 1
                 self._queue_replacement_count += 1
             self._queue.append(job)
+            state.admission.increment("frames_submitted")
             self._condition.notify()
             return self._snapshot_locked(state, zone_type=zone_type)
 
@@ -453,6 +704,9 @@ class LiveObjectDetectorManager:
             self._queue.clear()
             self._completed.clear()
             self._expired_jobs.clear()
+            # Application shutdown is a lifecycle boundary, not a diagnostic
+            # archive. Release every candidate and bounded outcome ring.
+            self._states.clear()
 
     def _ensure_isolated_runtime_locked(self) -> None:
         process = self._runtime_process
@@ -478,6 +732,7 @@ class LiveObjectDetectorManager:
         self._runtime_process = process
         self._runtime_connection = parent_connection
         self._runtime_generation += 1
+        self._record_reset_for_all_streams_locked(self._runtime_generation)
         self._runtime_model_loaded = False
         self._runtime_state = "loading"
 
@@ -514,6 +769,9 @@ class LiveObjectDetectorManager:
         error_category: str = "inference_timeout",
         counts_as_timeout: bool = True,
     ) -> None:
+        # A replaced worker cannot safely continue an incomplete animal candidate.
+        # Rotate that bounded evidence immediately, before a late result can arrive.
+        self._record_reset_for_all_streams_locked(self._runtime_generation + 1)
         self._stop_isolated_runtime_locked()
         self._runtime_recovery_count += 1
         self._runtime_worker_reset_count += 1
@@ -725,6 +983,13 @@ class LiveObjectDetectorManager:
                 )
                 continue
             if failure is not None or proposals is None:
+                if failure == "stale_generation":
+                    state.admission.increment("stale_generation_results_ignored")
+                    self._record_admission_outcome_locked(
+                        state,
+                        "stale_generation_ignored",
+                        frame_identities=(job.frame_identity,),
+                    )
                 state.latest = ObjectDetectorSnapshot(
                     tracks=tuple(track.snapshot() for track in state.tracks.values()),
                     cadence_seconds=detector_interval_seconds(job.zone_type),
@@ -739,6 +1004,16 @@ class LiveObjectDetectorManager:
                 continue
             try:
                 detections = tuple(_observations_for_job(job, proposals))
+                state.admission.increment("inferences_completed")
+                if any(item.label == "animal" for item in detections):
+                    state.admission.increment("inferences_with_animal")
+                else:
+                    state.admission.increment("inferences_without_animal")
+                    self._record_admission_outcome_locked(
+                        state,
+                        "no_animal_detection",
+                        frame_identities=(job.frame_identity,),
+                    )
                 triggers = self._update_tracks(state, detections)
             except Exception:
                 self._runtime_state = "unavailable"
@@ -811,20 +1086,62 @@ class LiveObjectDetectorManager:
         self, state: _StreamState, detections: tuple[ObjectDetection, ...]
     ) -> list[ObjectTrackTrigger]:
         unmatched = set(range(len(detections)))
-        for track in state.tracks.values():
+        for track in tuple(state.tracks.values()):
             if track.state == "disappeared":
                 continue
             match_index = _best_match(track, detections, unmatched)
             if match_index is None:
-                track.missed_count += 1
-                track.state = (
-                    "stationary"
-                    if track.triggered and track.missed_count <= MAX_TRACK_MISSES
-                    else "disappeared"
-                )
+                if (
+                    track.detection.label == "animal"
+                    and not track.triggered
+                    and track.hit_count == 1
+                ):
+                    for index in unmatched:
+                        detection = detections[index]
+                        if _is_spatially_incoherent(track, detection):
+                            state.admission.increment("spatial_coherence_rejected")
+                            self._record_admission_outcome_locked(
+                                state,
+                                "spatial_coherence_rejected",
+                                detection=detection,
+                                track=track,
+                                frame_identities=(
+                                    track.detection.frame_identity,
+                                    detection.frame_identity,
+                                ),
+                                spatial_coherence=False,
+                            )
+                            break
+                    state.admission.increment("single_frame_candidates_expired")
+                    self._record_admission_outcome_locked(
+                        state, "single_frame_candidate_expired", track=track
+                    )
+                    track._seen_frame_identities.clear()
+                    track._seen_frame_order.clear()
+                    track.state = "disappeared"
+                else:
+                    track.missed_count += 1
+                    track.state = (
+                        "stationary"
+                        if track.triggered and track.missed_count <= MAX_TRACK_MISSES
+                        else "disappeared"
+                    )
                 continue
             unmatched.remove(match_index)
-            track.observe(detections[match_index])
+            detection = detections[match_index]
+            fresh_observation = track.observe(detection)
+            if track.detection.label != "animal":
+                continue
+            if not fresh_observation:
+                state.admission.increment("duplicate_frame_identities_ignored")
+                self._record_admission_outcome_locked(
+                    state,
+                    "duplicate_frame_ignored",
+                    detection=detection,
+                    track=track,
+                )
+            elif track.hit_count == MIN_ANIMAL_ADMISSION_OBSERVATIONS:
+                state.admission.increment("valid_second_distinct_frames")
 
         for index in sorted(unmatched):
             detection = detections[index]
@@ -836,13 +1153,20 @@ class LiveObjectDetectorManager:
                 f"{self._next_track_generation:08d}"
             )
             self._next_track_generation += 1
-            state.tracks[track_id] = _TrackState(
+            track = _TrackState(
                 track_id=track_id,
                 track_generation_id=track_generation_id,
                 detection=detection,
                 first_seen_at=detection.captured_at,
                 last_seen_at=detection.captured_at,
             )
+            state.tracks[track_id] = track
+            if detection.label == "animal":
+                state.admission.increment("candidate_tracks_started")
+                state.admission.increment("first_distinct_support_frames")
+                self._record_admission_outcome_locked(
+                    state, "first_distinct_frame_recorded", detection=detection, track=track
+                )
 
         triggers: list[ObjectTrackTrigger] = []
         for track in state.tracks.values():
@@ -858,6 +1182,15 @@ class LiveObjectDetectorManager:
                     detection.score >= WEAK_OBJECT_SCORE and track.hit_count >= 2
                 )
             if admission_ready:
+                if detection.label == "animal":
+                    state.admission.increment("admissions_satisfied")
+                    self._record_admission_outcome_locked(
+                        state,
+                        "admission_satisfied",
+                        detection=detection,
+                        track=track,
+                        spatial_coherence=True,
+                    )
                 track.triggered = True
                 triggers.append(
                     ObjectTrackTrigger(
@@ -956,7 +1289,47 @@ class LiveObjectDetectorManager:
             runtime_generation=self._runtime_generation,
             unavailable_reason=latest.unavailable_reason,
             completed_frame_identity=latest.completed_frame_identity,
+            admission_observability_available=not self._shutdown,
+            admission_runtime_generation=state.admission.detector_generation,
+            admission_counters=dict(state.admission.counters),
+            current_admission_candidates=tuple(
+                _admission_candidate_summary(track)
+                for track in state.tracks.values()
+                if track.detection.label == "animal"
+                and not track.triggered
+                and track.state == "active"
+            )[:MAX_OBJECT_TRACKS_PER_STREAM],
+            recent_admission_outcomes=tuple(
+                outcome.as_dict() for outcome in state.admission.recent_outcomes
+            ),
+            last_admission_decision_at=state.admission.last_decision_at,
+            last_successful_promotion_at=state.admission.last_successful_promotion_at,
         )
+
+
+def _admission_candidate_summary(track: _TrackState) -> dict[str, object]:
+    return {
+        "track_generation_id": track.track_generation_id,
+        "class": track.detection.label,
+        "score": track.detection.score,
+        "zone_id": track.detection.zone_id,
+        "frame_identities": list(track.frame_identities),
+        "distinct_support_frame_count": track.hit_count,
+        "left": track.detection.left,
+        "top": track.detection.top,
+        "right": track.detection.right,
+        "bottom": track.detection.bottom,
+    }
+
+
+def _safe_admission_diagnostic(value: str | None) -> str | None:
+    if not value:
+        return None
+    sanitized = "".join(
+        character if character.isalnum() or character in {"_", "-", ":"} else "_"
+        for character in value
+    )
+    return sanitized[:MAX_ADMISSION_DIAGNOSTIC_LENGTH]
 
 
 def _observations_for_job(
@@ -1009,15 +1382,36 @@ def _best_match(
         current = track.detection
         if detection.zone_id != current.zone_id or detection.label != current.label:
             continue
-        overlap = _iou(current.box, detection.box)
-        distance = hypot(
-            (current.left + current.right) / 2 - (detection.left + detection.right) / 2,
-            (current.top + current.bottom) / 2 - (detection.top + detection.bottom) / 2,
-        )
+        overlap, distance = _spatial_match_metrics(current, detection)
         if overlap < 0.10 and distance > 0.12:
             continue
         candidates.append((overlap - distance, index))
     return max(candidates, default=(0.0, None))[1]
+
+
+def _is_spatially_incoherent(track: _TrackState, detection: ObjectDetection) -> bool:
+    current = track.detection
+    if (
+        current.label != "animal"
+        or detection.label != "animal"
+        or current.zone_id != detection.zone_id
+        or detection.frame_identity == current.frame_identity
+    ):
+        return False
+    overlap, distance = _spatial_match_metrics(current, detection)
+    return overlap < 0.10 and distance > 0.12
+
+
+def _spatial_match_metrics(
+    current: ObjectDetection, detection: ObjectDetection
+) -> tuple[float, float]:
+    return (
+        _iou(current.box, detection.box),
+        hypot(
+            (current.left + current.right) / 2 - (detection.left + detection.right) / 2,
+            (current.top + current.bottom) / 2 - (detection.top + detection.bottom) / 2,
+        ),
+    )
 
 
 def _iou(

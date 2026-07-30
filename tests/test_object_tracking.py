@@ -75,6 +75,23 @@ def _completed(
     raise AssertionError("object inference did not complete")
 
 
+def test_admission_observability_records_no_animal_and_bounds_recent_outcomes() -> None:
+    current = [STARTED_AT]
+    manager = LiveObjectDetectorManager(runner=lambda _image, _box: [], now=lambda: current[0])
+    try:
+        _submit(manager, sequence=1, captured_at=current[0])
+        snapshot = _completed(manager)
+
+        assert snapshot.admission_counters["inferences_completed"] == 1
+        assert snapshot.admission_counters["inferences_without_animal"] == 1
+        assert [outcome["reason"] for outcome in snapshot.recent_admission_outcomes] == [
+            "no_animal_detection"
+        ]
+        assert snapshot.admission_observability_available is True
+    finally:
+        manager.shutdown()
+
+
 def test_feeder_animal_track_requires_two_distinct_frames_without_motion_input() -> None:
     current = [STARTED_AT]
     manager = LiveObjectDetectorManager(
@@ -254,10 +271,14 @@ def test_admission_target_replay_rejects_single_frame_false_positives() -> None:
             _proposal(score=score, box=MegaDetectorBox(0.70, 0.70, 0.04, 0.04))
             for score in false_positive_scores
         ]
+        + [None]
     )
-    manager = LiveObjectDetectorManager(
-        runner=lambda _image, _box: [next(answers)], now=lambda: current[0]
-    )
+
+    def replay_runner(_image, _box):
+        proposal = next(answers)
+        return [] if proposal is None else [proposal]
+
+    manager = LiveObjectDetectorManager(runner=replay_runner, now=lambda: current[0])
     admitted_visible = 0
     admitted_false_positives = 0
     try:
@@ -284,12 +305,29 @@ def test_admission_target_replay_rejects_single_frame_false_positives() -> None:
             admitted_false_positives += len(_completed(manager, sequence).triggers)
             current[0] += timedelta(seconds=1)
 
+        # One completed empty inference closes the final one-frame modeled false
+        # candidate without creating a product record.
+        sequence += 1
+        _submit(
+            manager,
+            sequence=sequence,
+            zone_id="replay-empty",
+            captured_at=current[0],
+        )
+        replay = _completed(manager, sequence)
+
         retained_visible = admitted_visible
         rejected_false_positives = len(false_positive_scores) - admitted_false_positives
         precision = retained_visible / (retained_visible + admitted_false_positives)
-        assert retained_visible >= 12
-        assert rejected_false_positives >= 8
-        assert precision >= 0.85
+        reasons = [item["reason"] for item in replay.recent_admission_outcomes]
+        assert retained_visible == 13
+        assert rejected_false_positives == 10
+        assert precision == 1.0
+        assert replay.admission_counters["admissions_satisfied"] == 13
+        assert replay.admission_counters["single_frame_candidates_expired"] == 10
+        assert reasons.count("admission_satisfied") == 13
+        assert reasons.count("single_frame_candidate_expired") == 10
+        assert not replay.current_admission_candidates
     finally:
         manager.shutdown()
 
@@ -430,6 +468,7 @@ def test_shutdown_releases_active_generation_work_before_returning(monkeypatch) 
     assert not manager._queue
     assert not manager._completed
     assert not manager._expired_jobs
+    assert not manager._states
     assert not manager._worker.is_alive()
 
 
@@ -679,4 +718,184 @@ def test_old_generation_success_cannot_update_a_replacement_runtime() -> None:
     finally:
         manager._runtime_process = None
         manager._runtime_connection = None
+        manager.shutdown()
+
+
+def test_admission_observability_labels_duplicate_spatial_expiry_and_success() -> None:
+    current = [STARTED_AT]
+    answers = [
+        [_proposal()],
+        [_proposal()],
+        [_proposal(box=MegaDetectorBox(0.10, 0.10, 0.05, 0.05))],
+        [_proposal(box=MegaDetectorBox(0.75, 0.75, 0.05, 0.05))],
+        [_proposal()],
+        [_proposal()],
+        [],
+    ]
+    manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: answers.pop(0), now=lambda: current[0]
+    )
+    try:
+        _submit(manager, sequence=1, zone_id="zone-admit", captured_at=current[0])
+        _completed(manager, 1)
+        current[0] += timedelta(seconds=1)
+        _submit(manager, sequence=2, zone_id="zone-admit", captured_at=current[0])
+        admitted = _completed(manager, 2)
+        assert admitted.admission_counters["valid_second_distinct_frames"] == 1
+        assert admitted.admission_counters["admissions_satisfied"] == 1
+        assert "admission_satisfied" in {
+            item["reason"] for item in admitted.recent_admission_outcomes
+        }
+
+        current[0] += timedelta(seconds=1)
+        _submit(manager, sequence=3, zone_id="zone-far", captured_at=current[0])
+        _completed(manager, 3)
+        current[0] += timedelta(seconds=1)
+        _submit(manager, sequence=4, zone_id="zone-far", captured_at=current[0])
+        rejected = _completed(manager, 4)
+        assert rejected.admission_counters["spatial_coherence_rejected"] == 1
+        assert "spatial_coherence_rejected" in {
+            item["reason"] for item in rejected.recent_admission_outcomes
+        }
+
+        current[0] += timedelta(seconds=1)
+        _submit(
+            manager,
+            sequence=5,
+            zone_id="zone-duplicate",
+            captured_at=current[0],
+            frame_identity="cached-frame",
+        )
+        _completed(manager, 5, frame_identity="cached-frame")
+        current[0] += timedelta(seconds=1)
+        _submit(
+            manager,
+            sequence=6,
+            zone_id="zone-duplicate",
+            captured_at=current[0],
+            frame_identity="cached-frame",
+        )
+        expired = None
+        for _ in range(100):
+            snapshot = manager.poll("stream-yard")
+            if snapshot.admission_counters["duplicate_frame_identities_ignored"] == 1:
+                expired = snapshot
+                break
+            sleep(0.01)
+        assert expired is not None
+        reasons = [item["reason"] for item in expired.recent_admission_outcomes]
+        assert expired.admission_counters["duplicate_frame_identities_ignored"] == 1
+        assert "duplicate_frame_ignored" in reasons
+
+        current[0] += timedelta(seconds=1)
+        _submit(manager, sequence=7, zone_id="zone-empty", captured_at=current[0])
+        expired = _completed(manager, 7)
+        reasons = [item["reason"] for item in expired.recent_admission_outcomes]
+        assert "single_frame_candidate_expired" in reasons
+        assert not expired.current_admission_candidates
+    finally:
+        manager.shutdown()
+
+
+def test_admission_observability_records_durable_promotion_outcomes() -> None:
+    current = [STARTED_AT]
+    manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: [_proposal()], now=lambda: current[0]
+    )
+    try:
+        _submit(manager, sequence=1, captured_at=current[0])
+        _completed(manager, 1)
+        current[0] += timedelta(seconds=1)
+        _submit(manager, sequence=2, captured_at=current[0])
+        admitted = _completed(manager, 2)
+        generation = admitted.triggers[0].track_generation_id
+
+        manager.record_admission_promotion(
+            stream_id="stream-yard",
+            track_generation_id=generation,
+            event_id="event-observable",
+            visit_id="visit-observable",
+        )
+        manager.record_admission_promotion(
+            stream_id="stream-yard",
+            track_generation_id=generation,
+            error_category="database_conflict with private path /tmp/secret",
+        )
+        snapshot = manager.poll("stream-yard")
+        reasons = [item["reason"] for item in snapshot.recent_admission_outcomes]
+        assert snapshot.admission_counters["durable_promotion_attempts"] == 2
+        assert snapshot.admission_counters["successful_visit_promotions"] == 1
+        assert snapshot.admission_counters["failed_promotion_attempts"] == 1
+        assert reasons[-2:] == ["visit_promoted", "promotion_failed"]
+        assert snapshot.last_successful_promotion_at is not None
+        assert snapshot.recent_admission_outcomes[-1]["error_category"] == (
+            "database_conflict_with_private_path__tmp_secret"
+        )
+    finally:
+        manager.shutdown()
+
+
+def test_admission_observability_records_stale_generation_and_reset_cleanup() -> None:
+    current = [STARTED_AT]
+    manager = LiveObjectDetectorManager(
+        runner=lambda _image, _box: [_proposal()], now=lambda: current[0]
+    )
+    try:
+        _submit(manager, sequence=1, captured_at=current[0])
+        _completed(manager, 1)
+        state = manager._states["stream-yard"]
+        state.admission.detector_generation = 1
+        manager._runtime_generation = 1
+        with manager._condition:
+            manager._recover_isolated_runtime_locked(counts_as_timeout=False)
+        reset = manager.poll("stream-yard")
+        assert reset.admission_counters["reset_interrupted_candidates"] == 1
+        assert [item["reason"] for item in reset.recent_admission_outcomes] == [
+            "detector_reset_interrupted"
+        ]
+        assert not reset.current_admission_candidates
+
+        job = object_tracking._InferenceJob(
+            stream_id="stream-yard",
+            zone_id="zone-feeder",
+            zone_type="feeder",
+            frame_identity="old-generation-frame",
+            sequence=99,
+            captured_at=current[0],
+            submitted_at=current[0],
+            coordinate_box=(0.2, 0.25, 0.8, 0.9),
+            image=b"no-retained-bytes",
+        )
+        with manager._condition:
+            manager._completed.append((job, None, 0, "stale_generation"))
+        stale = manager.poll("stream-yard")
+        assert stale.admission_counters["stale_generation_results_ignored"] == 1
+        assert stale.recent_admission_outcomes[-1]["reason"] == "stale_generation_ignored"
+    finally:
+        manager.shutdown()
+
+
+def test_admission_observability_ring_and_counter_bounds() -> None:
+    current = [STARTED_AT]
+    manager = LiveObjectDetectorManager(runner=lambda _image, _box: [], now=lambda: current[0])
+    try:
+        for sequence in range(1, object_tracking.MAX_ADMISSION_RECENT_OUTCOMES + 8):
+            _submit(
+                manager,
+                sequence=sequence,
+                zone_id=f"zone-{sequence}",
+                captured_at=current[0],
+            )
+            _completed(manager, sequence)
+            current[0] += timedelta(seconds=2)
+        snapshot = manager.poll("stream-yard")
+        assert len(snapshot.recent_admission_outcomes) == object_tracking.MAX_ADMISSION_RECENT_OUTCOMES
+        assert snapshot.admission_counters["inferences_without_animal"] == (
+            object_tracking.MAX_ADMISSION_RECENT_OUTCOMES + 7
+        )
+        assert all(
+            value <= object_tracking.MAX_ADMISSION_COUNTER
+            for value in snapshot.admission_counters.values()
+        )
+    finally:
         manager.shutdown()

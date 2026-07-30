@@ -17,12 +17,15 @@ as a measured failure at detector-qualified animal Visit admission precision:
 10 of 23 reviewed Visits were false positives and useful evidence was 56.5%.
 Evidence/crop lineage, explicit correction truth, Dashboard/durable-truth
 consistency, duplicate and incorrect-merge control, and controlled restart
-recovery passed. **Runtime Integrity v1** is the active blocker before further
-Animal Visit Admission evaluation: truthful shutdown persistence and stable,
-bounded detector recovery must be demonstrated first. Animal Visit Admission
-Precision v1 remains unproven in live use; do not weaken the two-distinct-frame
-or spatial-coherence rules without attributed live evidence. A further field
-cohort requires the runtime-integrity smoke before it starts. Species ranking,
+recovery passed. **Runtime Integrity v1 passed real launcher validation**:
+truthful shutdown persistence, loaded-worker inference, stable generation, and
+bounded recovery were demonstrated; its 14m27s smoke window was a minor
+protocol deviation, not a rerun blocker. **Admission Rejection Observability
+v1** is now the active milestone before further Animal Visit Admission
+evaluation. Animal Visit Admission Precision v1 remains unproven in live use;
+do not weaken the two-distinct-frame or spatial-coherence rules until a live
+cohort attributes missed wildlife to detector absence, single-frame support,
+spatial rejection, reset interruption, or promotion failure. Species ranking,
 crop-quality improvements, and resource efficiency remain separate work.
 
 The user-facing loop is **Observe → Discover → Understand → Confirm → Remember

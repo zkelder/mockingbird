@@ -2417,6 +2417,18 @@ def _associate_object_detector_zones(
     def zone_id_for(box: tuple[float, float, float, float]) -> str:
         return _object_detection_zone_id(box, zones_by_id=zones_by_id)
 
+    def associate_admission_item(item: dict[str, object]) -> dict[str, object]:
+        values = dict(item)
+        box = (
+            values.get("left"),
+            values.get("top"),
+            values.get("right"),
+            values.get("bottom"),
+        )
+        if all(isinstance(value, (int, float)) for value in box):
+            values["zone_id"] = zone_id_for(box)  # type: ignore[arg-type]
+        return values
+
     return replace(
         snapshot,
         detections=tuple(
@@ -2430,6 +2442,12 @@ def _associate_object_detector_zones(
         triggers=tuple(
             replace(trigger, zone_id=zone_id_for(trigger.box))
             for trigger in snapshot.triggers
+        ),
+        current_admission_candidates=tuple(
+            associate_admission_item(item) for item in snapshot.current_admission_candidates
+        ),
+        recent_admission_outcomes=tuple(
+            associate_admission_item(item) for item in snapshot.recent_admission_outcomes
         ),
     )
 
@@ -6673,6 +6691,20 @@ def _evaluate_live_stream_motion(
         else None
     )
 
+    def record_object_admission_promotion(
+        *,
+        event_id: str | None = None,
+        visit_id: str | None = None,
+        error_category: str | None = None,
+    ) -> None:
+        get_live_object_detector_manager().record_admission_promotion(
+            stream_id=stream.id,
+            track_generation_id=object_track_generation_id,
+            event_id=event_id,
+            visit_id=visit_id,
+            error_category=error_category,
+        )
+
     def live_motion_promotion_payload() -> MotionEvidencePromoteRequest:
         area_label = strongest_activity_area.label if strongest_activity_area else None
         event_title = (
@@ -6732,8 +6764,18 @@ def _evaluate_live_stream_motion(
                     live_motion_promotion_payload(),
                 )
             except ValueError as error:
+                record_object_admission_promotion(
+                    error_category="durable_promotion_failed"
+                )
                 raise _motion_evidence_error(error) from error
-            if promoted is not None:
+            if promoted is None:
+                record_object_admission_promotion(
+                    error_category="durable_promotion_unavailable"
+                )
+            else:
+                record_object_admission_promotion(
+                    event_id=promoted.event_id, visit_id=promoted.visit_id
+                )
                 review_motion_evidence = promoted.evidence
                 review_event_id = promoted.event_id
                 review_visit_id = promoted.visit_id
@@ -6902,11 +6944,24 @@ def _evaluate_live_stream_motion(
                     or "Live stream motion monitor created pending review evidence.",
                 )
             )
-            promoted = repository.promote_motion_evidence(
-                pending_evidence.id,
-                live_motion_promotion_payload(),
-            )
-            if promoted is not None:
+            try:
+                promoted = repository.promote_motion_evidence(
+                    pending_evidence.id,
+                    live_motion_promotion_payload(),
+                )
+            except ValueError:
+                record_object_admission_promotion(
+                    error_category="durable_promotion_failed"
+                )
+                raise
+            if promoted is None:
+                record_object_admission_promotion(
+                    error_category="durable_promotion_unavailable"
+                )
+            else:
+                record_object_admission_promotion(
+                    event_id=promoted.event_id, visit_id=promoted.visit_id
+                )
                 review_motion_evidence = promoted.evidence
                 review_event_id = promoted.event_id
                 review_visit_id = promoted.visit_id
@@ -7209,6 +7264,25 @@ def _evaluate_live_stream_motion(
         object_detector_execution_device=object_detector.execution_device,
         object_detector_last_safe_error_category=object_detector.last_safe_error_category,
         object_detector_runtime_generation=object_detector.runtime_generation,
+        object_detector_admission_observability_available=(
+            object_detector.admission_observability_available
+        ),
+        object_detector_admission_runtime_generation=(
+            object_detector.admission_runtime_generation
+        ),
+        object_detector_admission_counters=object_detector.admission_counters,
+        object_detector_current_admission_candidates=[
+            dict(item) for item in object_detector.current_admission_candidates
+        ],
+        object_detector_recent_admission_outcomes=[
+            dict(item) for item in object_detector.recent_admission_outcomes
+        ],
+        object_detector_last_admission_decision_at=(
+            object_detector.last_admission_decision_at
+        ),
+        object_detector_last_successful_promotion_at=(
+            object_detector.last_successful_promotion_at
+        ),
         activity_trigger_source=(
             "object_verified"
             if object_trigger is not None
@@ -7822,6 +7896,7 @@ def _create_live_stream_motion_review_activity(
     best_media_asset_id = preferred_media_asset_id
 
     zone_name = activity.get("zone_name")
+    promotion_attempted = False
     try:
         pending_evidence = repository.create_motion_evidence(
             MotionEvidenceCreateRequest(
@@ -7914,6 +7989,7 @@ def _create_live_stream_motion_review_activity(
                 ),
             )
         )
+        promotion_attempted = True
         promoted = repository.promote_motion_evidence(
             pending_evidence.id,
             MotionEvidencePromoteRequest(
@@ -7943,11 +8019,36 @@ def _create_live_stream_motion_review_activity(
             ),
         )
     except ValueError as error:
+        if promotion_attempted:
+            get_live_object_detector_manager().record_admission_promotion(
+                stream_id=stream_id,
+                track_generation_id=activity.get("track_generation_id"),
+                error_category="durable_promotion_failed",
+            )
         raise _motion_evidence_error(error) from error
 
     if promoted is None:
+        if promotion_attempted:
+            get_live_object_detector_manager().record_admission_promotion(
+                stream_id=stream_id,
+                track_generation_id=activity.get("track_generation_id"),
+                error_category="durable_promotion_unavailable",
+            )
         raise HTTPException(
             status_code=409, detail="Live review activity could not be created."
+        )
+
+    if promotion_attempted:
+        get_live_object_detector_manager().record_admission_promotion(
+            stream_id=stream_id,
+            track_generation_id=activity.get("track_generation_id"),
+            event_id=promoted.event_id,
+            visit_id=promoted.visit_id,
+            error_category=(
+                "durable_promotion_missing_visit"
+                if promoted.visit_id is None
+                else None
+            ),
         )
 
     if promoted.visit_id and visit_evidence_frames:

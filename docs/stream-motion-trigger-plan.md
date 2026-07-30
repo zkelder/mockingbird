@@ -47,6 +47,14 @@ dataset, or export truth. It accepts one active inference and one replaceable
 waiting crop, rejects stale/late results, and fails without interrupting frame
 acquisition or monitoring.
 
+Admission Rejection Observability v1 keeps only current-generation operational
+evidence: capped aggregate counters, incomplete animal candidate summaries, and
+a 50-entry recent-outcome ring. It distinguishes no-animal inference, duplicate
+frames, first support, spatial rejection, one-frame expiry, generation reset,
+admission, and durable promotion outcome without persisting rejected candidates
+or changing the two-distinct-frame or spatial-coherence rules. The next bounded
+live cohort must use these facts before any admission tuning is considered.
+
 ## High-resolution evidence handoff
 
 For a Camera Node whose advertised monitoring and evidence profiles prove a

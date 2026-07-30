@@ -894,7 +894,19 @@ def test_live_detector_uses_full_monitoring_frame_and_post_detection_zone_attrib
                 frame_identity="detector-frame",
                 captured_at=timestamp,
             ),
-        )
+        ),
+        current_admission_candidates=(
+            {"left": 0.58, "top": 0.35, "right": 0.68, "bottom": 0.52},
+        ),
+        recent_admission_outcomes=(
+            {
+                "reason": "first_distinct_frame_recorded",
+                "left": 0.58,
+                "top": 0.35,
+                "right": 0.68,
+                "bottom": 0.52,
+            },
+        ),
     )
     associated = api_main._associate_object_detector_zones(
         snapshot,
@@ -902,6 +914,8 @@ def test_live_detector_uses_full_monitoring_frame_and_post_detection_zone_attrib
     )
 
     assert associated.triggers[0].zone_id == feeder.id
+    assert associated.current_admission_candidates[0]["zone_id"] == feeder.id
+    assert associated.recent_admission_outcomes[0]["zone_id"] == feeder.id
 
 
 def test_promoted_high_resolution_metadata_uses_utc_json_timestamps() -> None:

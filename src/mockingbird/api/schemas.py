@@ -2832,6 +2832,13 @@ class LiveMotionEvaluateResponse(BaseModel):
     object_detector_execution_device: str | None = None
     object_detector_last_safe_error_category: str | None = None
     object_detector_runtime_generation: int = Field(default=0, ge=0)
+    object_detector_admission_observability_available: bool = False
+    object_detector_admission_runtime_generation: int = Field(default=0, ge=0)
+    object_detector_admission_counters: dict[str, int] = Field(default_factory=dict)
+    object_detector_current_admission_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    object_detector_recent_admission_outcomes: list[dict[str, Any]] = Field(default_factory=list)
+    object_detector_last_admission_decision_at: datetime | None = None
+    object_detector_last_successful_promotion_at: datetime | None = None
     activity_trigger_source: Literal["object_verified", "motion_fallback"] | None = None
     selected_evidence_profile_id: str | None = None
     high_resolution_capture_status: str | None = None
