@@ -289,3 +289,20 @@ def test_supervisor_marks_overflow_waiting_until_capacity_is_released() -> None:
     del store.candidates["stream-a"]
     supervisor.reconcile_once(now=now + timedelta(seconds=1))
     assert camera.start_calls == ["stream-a", "stream-b"]
+
+
+def test_shutdown_drains_detector_after_reconciliation_before_persisting_stopped() -> None:
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    store = FakeStore([_candidate("stream-one")])
+    camera = FakeCamera()
+    supervisor = _supervisor(store, camera)
+    supervisor.reconcile_once(now=now)
+    supervisor.shutdown(
+        reason="api_shutdown",
+        before_persist_stop=lambda: store.events.append(("detector_drained", "")),
+    )
+
+    assert store.events.index(("detector_drained", "")) < store.events.index(
+        ("stopped", "stream-one")
+    )
+    assert store.candidates["stream-one"].actual_state == "stopped"

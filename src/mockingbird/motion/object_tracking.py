@@ -434,13 +434,25 @@ class LiveObjectDetectorManager:
             }
 
     def shutdown(self) -> None:
+        """Release the current generation before the application reports shutdown."""
+
         with self._condition:
             self._shutdown = True
+            self._active = None
             self._queue.clear()
+            self._completed.clear()
+            self._expired_jobs.clear()
             self._stop_isolated_runtime_locked()
             self._condition.notify_all()
-        self._worker.join(timeout=1.0)
-
+        self._worker.join(timeout=RUNTIME_STOP_GRACE_SECONDS)
+        with self._condition:
+            # The isolated worker may have reported its connection failure while
+            # shutdown was joining it. Never retain that crop or result after the
+            # application has begun teardown.
+            self._active = None
+            self._queue.clear()
+            self._completed.clear()
+            self._expired_jobs.clear()
 
     def _ensure_isolated_runtime_locked(self) -> None:
         process = self._runtime_process
@@ -527,6 +539,7 @@ class LiveObjectDetectorManager:
         with self._condition:
             self._ensure_isolated_runtime_locked()
             connection = self._runtime_connection
+            generation = self._runtime_generation
             timeout_seconds = (
                 INITIAL_RUNTIME_LOAD_TIMEOUT_SECONDS
                 if not self._runtime_model_loaded
@@ -598,6 +611,12 @@ class LiveObjectDetectorManager:
             proposals = result[1]
             if isinstance(proposals, list):
                 with self._condition:
+                    if (
+                        self._shutdown
+                        or connection is not self._runtime_connection
+                        or generation != self._runtime_generation
+                    ):
+                        raise _RuntimeInferenceFailure("stale_generation")
                     self._runtime_model_loaded = True
                     self._runtime_last_error_category = None
                     if len(result) == 3 and (result[2] is None or isinstance(result[2], str)):
@@ -658,6 +677,10 @@ class LiveObjectDetectorManager:
             latency_ms = max(0, int((completed_at - effective_started_at).total_seconds() * 1000))
             with self._condition:
                 self._active = None
+                if self._shutdown:
+                    # Do not leave a late worker failure/result retaining the
+                    # current crop after shutdown has already detached it.
+                    return
                 job_key = (job.stream_id, job.zone_id, job.sequence)
                 if failure == "inference_timeout" or (
                     not self._uses_isolated_runtime

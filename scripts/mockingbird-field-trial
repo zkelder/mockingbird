@@ -9,6 +9,7 @@ CONFIG_FILE=${MOCKINGBIRD_FIELD_TRIAL_CONFIG:-"$ROOT_DIR/data/field-trial.env"}
 PYTHON_BIN=${MOCKINGBIRD_FIELD_TRIAL_PYTHON:-"$ROOT_DIR/.venv/bin/python"}
 BACKEND_URL=${MOCKINGBIRD_FIELD_TRIAL_BACKEND_URL:-http://127.0.0.1:8000}
 FRONTEND_URL=${MOCKINGBIRD_FIELD_TRIAL_FRONTEND_URL:-http://127.0.0.1:5173}
+FIELD_TRIAL_STOP_GRACE_SECONDS=${MOCKINGBIRD_FIELD_TRIAL_STOP_GRACE_SECONDS:-12}
 
 fail() {
   printf "%s\n" "$*" >&2
@@ -92,17 +93,40 @@ start_trial() {
   printf "Field trial is healthy at %s (session %s).\n" "$FRONTEND_URL" "$SESSION_NAME"
 }
 
+wait_for_backend_shutdown() {
+  local backend_pid=$1
+  local attempt max_attempts
+  max_attempts=$((FIELD_TRIAL_STOP_GRACE_SECONDS * 10))
+  for attempt in $(seq 1 "$max_attempts"); do
+    if ! session_exists || ! kill -0 "$backend_pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 stop_trial() {
+  local backend_pid
   if ! session_exists; then
     printf "No mockingbird-field-trial session is running.\n"
     return 0
   fi
+  backend_pid=$(tmux list-panes -t "$SESSION_NAME:backend" -F "#{pane_pid}" 2>/dev/null | head -n 1 || true)
+  if [ -z "$backend_pid" ]; then
+    fail "Field trial backend pane is unavailable; durable clean shutdown is unconfirmed."
+  fi
   # Ctrl-C lets the backend lifespan close durable exposure intervals before tmux exits.
   tmux send-keys -t "$SESSION_NAME:backend" C-c
   tmux send-keys -t "$SESSION_NAME:frontend" C-c
-  sleep 1
+  if wait_for_backend_shutdown "$backend_pid"; then
+    tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+    printf "Field trial stopped through the application shutdown path.\n"
+    return 0
+  fi
+  printf "Field trial backend did not exit within %ss; forcing tmux teardown; durable clean shutdown is unconfirmed.\n" "$FIELD_TRIAL_STOP_GRACE_SECONDS" >&2
   tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
-  printf "Field trial stopped through the application shutdown path.\n"
+  return 1
 }
 
 status_trial() {

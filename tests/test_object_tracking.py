@@ -411,6 +411,28 @@ def test_timed_out_native_runtime_drops_the_late_result_and_recovers_fresh_work(
 
 
 
+def test_shutdown_releases_active_generation_work_before_returning(monkeypatch) -> None:
+    monkeypatch.setattr(object_tracking, "INFERENCE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(object_tracking, "INITIAL_RUNTIME_LOAD_TIMEOUT_SECONDS", 0.05)
+    manager = LiveObjectDetectorManager(isolated_runner=_isolated_timeout_runner)
+    _submit(manager, sequence=1, image=b"hung-crop")
+    for _ in range(200):
+        if manager._active is not None:
+            break
+        sleep(0.01)
+    assert manager._active is not None
+
+    manager.shutdown()
+
+    assert manager._runtime_process is None
+    assert manager._runtime_connection is None
+    assert manager._active is None
+    assert not manager._queue
+    assert not manager._completed
+    assert not manager._expired_jobs
+    assert not manager._worker.is_alive()
+
+
 def test_initial_model_load_allowance_is_separate_from_steady_inference_deadline(
     monkeypatch,
 ) -> None:
@@ -606,3 +628,55 @@ def test_process_restart_generates_a_new_capture_ownership_identity() -> None:
         assert first.track_generation_id != second.track_generation_id
     finally:
         second_manager.shutdown()
+
+
+def test_old_generation_success_cannot_update_a_replacement_runtime() -> None:
+    class ProcessStub:
+        def is_alive(self) -> bool:
+            return True
+
+    class ConnectionStub:
+        def __init__(self, manager) -> None:
+            self.manager = manager
+            self.received = 0
+
+        def send(self, _message) -> None:
+            return None
+
+        def poll(self, _timeout) -> bool:
+            return True
+
+        def recv(self):
+            self.received += 1
+            if self.received == 1:
+                return ("started",)
+            self.manager._runtime_generation += 1
+            self.manager._runtime_connection = object()
+            return ("success", [_proposal()], "cpu")
+
+    manager = LiveObjectDetectorManager(isolated_runner=_isolated_timing_runner)
+    try:
+        connection = ConnectionStub(manager)
+        manager._runtime_process = ProcessStub()
+        manager._runtime_connection = connection
+        manager._runtime_generation = 1
+        job = object_tracking._InferenceJob(
+            stream_id="stream-yard", zone_id="zone-feeder", zone_type="feeder",
+            frame_identity="old-frame", sequence=1, captured_at=STARTED_AT,
+            submitted_at=STARTED_AT, coordinate_box=(0.2, 0.25, 0.8, 0.9),
+            image=b"old-crop",
+        )
+
+        try:
+            manager._run_isolated_runtime(job, lambda: None)
+        except object_tracking._RuntimeInferenceFailure:
+            pass
+        else:
+            raise AssertionError("stale generation result was accepted")
+
+        assert manager._runtime_model_loaded is False
+        assert manager._runtime_execution_device is None
+    finally:
+        manager._runtime_process = None
+        manager._runtime_connection = None
+        manager.shutdown()

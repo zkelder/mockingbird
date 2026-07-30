@@ -24,3 +24,13 @@ def test_field_trial_launcher_refuses_to_start_without_its_ignored_configuration
     assert "field-trial.env" in text
     assert "MegaDetector is not ready" in text
     assert "duplicate" in text.lower()
+
+
+def test_field_trial_launcher_stop_waits_for_backend_cleanup_and_reports_forced_fallback() -> None:
+    launcher = ROOT / "scripts" / "mockingbird-field-trial"
+    text = launcher.read_text()
+
+    assert "FIELD_TRIAL_STOP_GRACE_SECONDS" in text
+    assert "kill -0" in text
+    assert "durable clean shutdown is unconfirmed" in text
+    assert "monitoring-policy" not in text

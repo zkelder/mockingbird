@@ -17,9 +17,13 @@ as a measured failure at detector-qualified animal Visit admission precision:
 10 of 23 reviewed Visits were false positives and useful evidence was 56.5%.
 Evidence/crop lineage, explicit correction truth, Dashboard/durable-truth
 consistency, duplicate and incorrect-merge control, and controlled restart
-recovery passed. **Animal Visit Admission Precision v1** is the next milestone;
-species ranking, crop-quality improvements, and resource efficiency remain
-separate work.
+recovery passed. **Runtime Integrity v1** is the active blocker before further
+Animal Visit Admission evaluation: truthful shutdown persistence and stable,
+bounded detector recovery must be demonstrated first. Animal Visit Admission
+Precision v1 remains unproven in live use; do not weaken the two-distinct-frame
+or spatial-coherence rules without attributed live evidence. A further field
+cohort requires the runtime-integrity smoke before it starts. Species ranking,
+crop-quality improvements, and resource efficiency remain separate work.
 
 The user-facing loop is **Observe → Discover → Understand → Confirm → Remember
 → Improve**. The internal evidence/truth architecture remains unchanged:

@@ -229,3 +229,19 @@ def test_app_shutdown_stops_process_owned_runtime_activity(
 
     assert source_monitor.cancelled is True
     assert camera_session.stopped_reason == "api_shutdown"
+
+
+def test_repository_reconfiguration_stops_the_live_detector_generation(monkeypatch) -> None:
+    class DetectorStub:
+        stopped = False
+
+        def shutdown(self) -> None:
+            self.stopped = True
+
+    detector = DetectorStub()
+    monkeypatch.setattr(api_main, "_live_object_detector_manager", detector)
+
+    api_main._stop_runtime_activity(reason="repository_reconfigured")
+
+    assert detector.stopped is True
+    assert api_main._live_object_detector_manager is None

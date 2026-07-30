@@ -426,6 +426,7 @@ from mockingbird.web_app import frontend_response
 async def _app_lifespan(_app: FastAPI):
     """Validate local data, restore explicit monitoring intent, and stop safely."""
 
+    global _live_object_detector_manager
     repository = get_repository()
     get_durable_monitoring_supervisor().start()
     if repository.storage_retention_settings().automatic_cleanup_enabled:
@@ -433,18 +434,30 @@ async def _app_lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        detector_drained = False
+
+        def drain_live_detector() -> None:
+            nonlocal detector_drained
+            if _live_object_detector_manager is not None and not detector_drained:
+                _live_object_detector_manager.shutdown()
+                detector_drained = True
+
         if _local_storage_retention_service is not None:
             _local_storage_retention_service.shutdown()
         if _durable_monitoring_supervisor is not None:
-            _durable_monitoring_supervisor.shutdown(reason="api_shutdown")
+            _durable_monitoring_supervisor.shutdown(
+                reason="api_shutdown", before_persist_stop=drain_live_detector
+            )
+        else:
+            drain_live_detector()
         if _source_monitor_manager is not None:
             _source_monitor_manager.cancel_all()
         if _live_preview_lease_manager is not None:
             _live_preview_lease_manager.shutdown()
         if _live_camera_session_manager is not None:
             _live_camera_session_manager.stop_all(reason="api_shutdown")
-        if _live_object_detector_manager is not None:
-            _live_object_detector_manager.shutdown()
+        if detector_drained:
+            _live_object_detector_manager = None
         if _automatic_review_identification_assist is not None:
             _automatic_review_identification_assist.shutdown()
 
@@ -1106,10 +1119,22 @@ def _stop_runtime_activity(*, reason: str) -> None:
     global _automatic_review_identification_assist
     global _durable_monitoring_supervisor, _local_storage_retention_service
     global _source_monitor_manager, _live_camera_session_manager, _live_preview_lease_manager
-    global _tracked_activity_detector_manager
+    global _live_object_detector_manager, _tracked_activity_detector_manager
+    detector_drained = False
+
+    def drain_live_detector() -> None:
+        nonlocal detector_drained
+        if _live_object_detector_manager is not None and not detector_drained:
+            _live_object_detector_manager.shutdown()
+            detector_drained = True
+
     if _durable_monitoring_supervisor is not None:
-        _durable_monitoring_supervisor.shutdown(reason=reason)
+        _durable_monitoring_supervisor.shutdown(
+            reason=reason, before_persist_stop=drain_live_detector
+        )
         _durable_monitoring_supervisor = None
+    else:
+        drain_live_detector()
     if _local_storage_retention_service is not None:
         _local_storage_retention_service.shutdown()
         _local_storage_retention_service = None
@@ -1122,6 +1147,10 @@ def _stop_runtime_activity(*, reason: str) -> None:
     if _live_camera_session_manager is not None:
         _live_camera_session_manager.stop_all(reason=reason)
         _live_camera_session_manager = None
+    if _live_object_detector_manager is not None:
+        # The manager was drained before durable stop persistence; release its
+        # owner reference only after the rest of process-owned cleanup finishes.
+        _live_object_detector_manager = None
     if _automatic_review_identification_assist is not None:
         _automatic_review_identification_assist.shutdown()
         _automatic_review_identification_assist = None

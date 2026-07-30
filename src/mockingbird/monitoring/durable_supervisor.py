@@ -205,14 +205,21 @@ class DurableMonitoringSupervisor:
             last_healthy_at=last_healthy_at,
         )
 
-    def shutdown(self, *, reason: str) -> None:
-        """Stop active runtime without changing the user's durable enabled intent."""
+    def shutdown(
+        self,
+        *,
+        reason: str,
+        before_persist_stop: Callable[[], None] | None = None,
+    ) -> None:
+        """Quiesce evaluation, then persist a clean stop without changing intent."""
 
         self._stop_event.set()
         self._wake_event.set()
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=3)
+        if before_persist_stop is not None:
+            before_persist_stop()
 
         now = normalize_utc(self._clock())
         with self._reconcile_lock:
