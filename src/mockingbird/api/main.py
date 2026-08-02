@@ -11466,6 +11466,7 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
             else None
         ),
         evidence_frames=repository.visit_evidence_frames(visit.id),
+        effective_primary=repository.effective_primary_preview(visit.id),
         crop_history=repository.visit_crop_history(visit.id),
         stale_species_suggestions=repository.visit_has_stale_species_suggestions(visit.id),
         detection_proposals=detection_proposals,

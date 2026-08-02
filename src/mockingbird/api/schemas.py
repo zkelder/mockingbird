@@ -1864,6 +1864,21 @@ class VisitEvidenceFrame(BaseModel):
     evidence_role: str = "monitoring_frame"
     normalized_crop_box: list[float] | None = None
 
+class EffectivePrimaryEvidence(BaseModel):
+    selected_media_asset_id: str | None = None
+    persisted_primary_media_asset_id: str | None = None
+    recommended_effective_primary_media_asset_id: str | None = None
+    evidence_role: str | None = None
+    selection_reason: str
+    is_useful: bool
+    is_user_controlled: bool = False
+    temporally_supported: bool | None = None
+    containment_status: bool | None = None
+    edge_clipped: bool | None = None
+    candidate_count: int = Field(ge=0, le=4)
+    historical_preview_only: bool = False
+    would_change_automatically: bool = False
+
 
 class VisitCurationHistoryEntry(BaseModel):
     """Plain-language structural history; API IDs are navigation data, never copy."""
@@ -4816,6 +4831,7 @@ class VisitDetail(BaseModel):
     motion_evidence: MotionEvidenceResponse | None = None
     media_asset: MediaAsset | None = None
     evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
+    effective_primary: EffectivePrimaryEvidence | None = None
     crop_history: list[VisitCropHistoryEntry] = Field(default_factory=list)
     stale_species_suggestions: bool = False
     detection_proposals: list[DetectionProposal] = Field(default_factory=list)

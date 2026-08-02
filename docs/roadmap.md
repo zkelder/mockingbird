@@ -25,9 +25,10 @@ Observability cohort passed Animal Visit Admission Precision: 10/10 promoted
 Visits were real birds, durable promotion/lineage/useful Visit evidence were
 10/10, while primary crop usefulness was 6/10 and recall remains insufficient.
 
-The immediate milestone is **Temporal Evidence Alignment and Primary Selection
-v1**: choose the most useful retained evidence without treating lineage
-alignment as temporal subject alignment or changing reviewed truth. Then begin
+**Temporal Evidence Alignment and Primary Selection v1** is implemented for new
+Visits: bounded deterministic selection distinguishes lineage from subject
+suitability, preserves one primary link and all evidence, and never silently
+rewrites historical primary selections or reviewed truth. Then begin
 **Observation Engine v2**, a contained observation-subsystem rework using a
 strangler migration: keep the MockingBird product; replace its observation
 engine through a modular migration. `SnapshotObservationProvider` names the

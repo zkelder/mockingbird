@@ -104,6 +104,7 @@ from mockingbird.motion.high_resolution_evidence import (
     crop_jpeg,
     validate_refined_crop_box,
 )
+from mockingbird.motion.effective_primary import EvidenceCandidate, select_effective_primary
 from mockingbird.api.schemas import (
     AdapterEvaluationItem,
     AdapterEvaluationOutcome,
@@ -12235,6 +12236,26 @@ class ProductRepository:
                 return []
             return self._visit_evidence_frames_from_visit(session, visit, event)
 
+    def effective_primary_preview(self, visit_id: str) -> dict[str, Any] | None:
+        """Read-only recommendation; never rewrites historical evidence links."""
+        with self.session_factory() as session:
+            visit = session.get(VisitModel, visit_id)
+            if visit is None: return None
+            event = session.get(EventModel, visit.event_id)
+            if event is None: return None
+            links = self._visit_evidence_link_models(session, visit.id)[:4]
+            if not links: return None
+            items=[]; persisted=None
+            for link in links:
+                asset=session.get(MediaAssetModel, link.media_asset_id)
+                if asset is None: continue
+                if link.is_primary: persisted=asset.id
+                items.append(EvidenceCandidate(asset.id, link.evidence_role or asset.evidence_role or 'monitoring_frame', _as_utc(link.captured_at), asset.image_width, asset.image_height, _normalized_box_from_json(asset.normalized_track_box_json), _normalized_box_from_json(asset.normalized_padded_crop_box_json), asset.alignment_status))
+            choice=select_effective_primary(items)
+            selected=choice.media_asset_id or persisted
+            role=next((x.role for x in items if x.media_asset_id==selected),None)
+            return {'selected_media_asset_id':selected,'persisted_primary_media_asset_id':persisted,'recommended_effective_primary_media_asset_id':choice.media_asset_id,'evidence_role':role,'selection_reason':choice.reason,'is_useful':choice.media_asset_id is not None and choice.reason!='no_useful_primary_evidence','is_user_controlled':False,'temporally_supported':choice.temporally_supported,'containment_status':choice.contained,'edge_clipped':choice.edge_clipped,'candidate_count':len(items),'historical_preview_only':choice.media_asset_id != persisted,'would_change_automatically':choice.media_asset_id is not None and choice.media_asset_id != persisted}
+
     def attach_visit_evidence_media_assets(
         self,
         visit_id: str,
@@ -12293,6 +12314,28 @@ class ProductRepository:
                     )
                 if primary_count != 1:
                     raise ValueError("invalid_visit_evidence_selection")
+
+                # Initial primary choice is evidence presentation, not truth or
+                # curation. Existing links are never revisited here; reviewers
+                # retain the established explicit primary-selection flow.
+                support_times = [asset.trigger_started_at for asset, *_ in parsed if asset.trigger_started_at]
+                selection = select_effective_primary(
+                    [EvidenceCandidate(
+                        media_asset_id=asset.id,
+                        role=role,
+                        captured_at=captured_at,
+                        width=asset.image_width,
+                        height=asset.image_height,
+                        track_box=_normalized_box_from_json(asset.normalized_track_box_json),
+                        crop_box=_normalized_box_from_json(asset.normalized_padded_crop_box_json),
+                        alignment_status=asset.alignment_status,
+                        user_refined=role == "user_refined_crop",
+                    ) for asset, captured_at, _sequence, role, _is_primary in parsed],
+                    support_start=min(support_times) if support_times else None,
+                    support_end=max(support_times) if support_times else None,
+                )
+                if selection.media_asset_id is not None:
+                    parsed = [(*entry[:-1], entry[0].id == selection.media_asset_id) for entry in parsed]
 
                 created_at = datetime.now(UTC)
                 primary_asset: MediaAssetModel | None = None
