@@ -220,6 +220,9 @@ from mockingbird.api.schemas import (
     SourceFolderImportResponse,
     SourceMonitorStartRequest,
     SourceMonitorStatusResponse,
+    ObservationEngineStatusResponse,
+    ObservationProviderCapabilitiesResponse,
+    ObservationProviderHealthResponse,
     SourceFolderImportPreviewRequest,
     SourceFolderImportPreviewResponse,
     SourceProviderConfiguration,
@@ -362,6 +365,10 @@ from mockingbird.monitoring import (
     SourceMonitorManager,
     SourceMonitorOptions,
     SourceMonitorState,
+)
+from mockingbird.observation import (
+    ObservationEngineRegistry,
+    SnapshotObservationProvider,
 )
 from mockingbird.playback import (
     live_camera_session,
@@ -571,7 +578,7 @@ def _patch_testclient_for_pytest() -> None:
 _patch_testclient_for_pytest()
 
 _repository: ProductRepository | None = None
-_source_monitor_manager: SourceMonitorManager | None = None
+_source_monitor_manager: SnapshotObservationProvider | None = None
 _live_camera_session_manager: live_camera_session.LiveCameraSessionManager | None = None
 _live_preview_lease_manager: live_preview_leases.LivePreviewLeaseManager | None = None
 _durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
@@ -1289,15 +1296,23 @@ def _open_product_repository(
         raise
 
 
-def get_source_monitor_manager() -> SourceMonitorManager:
+def get_source_monitor_manager() -> SnapshotObservationProvider:
     global _source_monitor_manager
     if _source_monitor_manager is None:
-        _source_monitor_manager = SourceMonitorManager(
-            capture_snapshot=_monitor_capture_snapshot,
-            list_saved_images=_monitor_saved_image_ids,
-            evaluate_saved_media=_monitor_evaluate_saved_media,
+        _source_monitor_manager = SnapshotObservationProvider(
+            SourceMonitorManager(
+                capture_snapshot=_monitor_capture_snapshot,
+                list_saved_images=_monitor_saved_image_ids,
+                evaluate_saved_media=_monitor_evaluate_saved_media,
+            )
         )
     return _source_monitor_manager
+
+
+def get_observation_engine_registry() -> ObservationEngineRegistry:
+    """Expose the active compatibility provider without starting monitoring."""
+
+    return ObservationEngineRegistry([get_source_monitor_manager()])
 
 
 def get_live_camera_session_manager() -> live_camera_session.LiveCameraSessionManager:
@@ -5299,7 +5314,7 @@ async def evaluate_saved_media_motion(
     activity_region_key = _live_activity_region_key(
         region_kind=session_region_kind,
         region_id=session_region_id,
-        focus_zone_id=focus_zone.id if focus_zone else None,
+        focus_zone_id=None,
     )
     existing_session_references = _motion_evidence_session_references(
         repository.list_motion_evidence(stream_id=stream.id)
@@ -9424,6 +9439,7 @@ def _monitor_crop_plan_response_from_state(
 
 def _monitor_status_response(state: SourceMonitorState) -> SourceMonitorStatusResponse:
     return SourceMonitorStatusResponse(
+        observation_provider_id=get_source_monitor_manager().provider_id,
         monitor_id=state.monitor_id,
         source_id=state.source_id,
         stream_id=state.stream_id,
@@ -9493,6 +9509,28 @@ def _validate_monitor_source(
             detail="Add an external URL before starting monitoring.",
         )
 
+
+@app.get(
+    "/api/observation-engine/status",
+    response_model=ObservationEngineStatusResponse,
+)
+async def get_observation_engine_status(
+    stream_id: str | None = None,
+) -> ObservationEngineStatusResponse:
+    """Report the active provider without probing cameras, workers, or models."""
+
+    status = await get_observation_engine_registry().status(stream_id=stream_id)
+    provider = status.provider
+    return ObservationEngineStatusResponse(
+        active_provider_id=status.active_provider_id,
+        provider_id=provider.provider_id,
+        provider_name=provider.display_name,
+        capabilities=ObservationProviderCapabilitiesResponse(
+            **provider.capabilities.__dict__,
+        ),
+        health=ObservationProviderHealthResponse(**provider.health.__dict__),
+        creates_truth=status.creates_truth,
+    )
 
 @app.post(
     "/api/streams/{stream_id}/monitor/start",

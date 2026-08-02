@@ -1294,8 +1294,35 @@ class SourceMonitorStartRequest(BaseModel):
     create_review_activity: bool = False
 
 
+class ObservationProviderCapabilitiesResponse(BaseModel):
+    timer_driven: bool
+    emits_frame_packets: bool
+    emits_detection_observations: bool
+    emits_track_updates: bool
+    emits_evidence_candidates: bool
+    emits_visit_proposals: bool
+
+
+class ObservationProviderHealthResponse(BaseModel):
+    state: Literal["idle", "running", "stopped", "degraded"]
+    healthy: bool
+    message: str
+    observed_at: datetime | None = None
+
+
+class ObservationEngineStatusResponse(BaseModel):
+    active_provider_id: str
+    provider_id: str
+    provider_name: str
+    capabilities: ObservationProviderCapabilitiesResponse
+    health: ObservationProviderHealthResponse
+    creates_truth: bool = False
+    persistent: bool = False
+
+
 class SourceMonitorStatusResponse(BaseModel):
     # Monitor state is in-memory and evidence-only; correction remains truth.
+    observation_provider_id: str = "snapshot"
     monitor_id: str
     source_id: str
     stream_id: str
