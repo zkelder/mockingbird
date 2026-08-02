@@ -20,13 +20,30 @@ consistency, duplicate and incorrect-merge control, and controlled restart
 recovery passed. **Runtime Integrity v1 passed real launcher validation**:
 truthful shutdown persistence, loaded-worker inference, stable generation, and
 bounded recovery were demonstrated; its 14m27s smoke window was a minor
-protocol deviation, not a rerun blocker. **Admission Rejection Observability
-v1** is now the active milestone before further Animal Visit Admission
-evaluation. Animal Visit Admission Precision v1 remains unproven in live use;
-do not weaken the two-distinct-frame or spatial-coherence rules until a live
-cohort attributes missed wildlife to detector absence, single-frame support,
-spatial rejection, reset interruption, or promotion failure. Species ranking,
-crop-quality improvements, and resource efficiency remain separate work.
+protocol deviation, not a rerun blocker. The valid July 30 Admission Rejection
+Observability cohort passed Animal Visit Admission Precision: 10/10 promoted
+Visits were real birds, durable promotion/lineage/useful Visit evidence were
+10/10, while primary crop usefulness was 6/10 and recall remains insufficient.
+
+The immediate milestone is **Temporal Evidence Alignment and Primary Selection
+v1**: choose the most useful retained evidence without treating lineage
+alignment as temporal subject alignment or changing reviewed truth. Then begin
+**Observation Engine v2**, a contained observation-subsystem rework using a
+strangler migration: keep the MockingBird product; replace its observation
+engine through a modular migration. `SnapshotObservationProvider` names the
+current timer-driven path and remains a compatibility, fallback, and deterministic
+comparison provider rather than the long-term golden path.
+
+Observation Engine v2 sequence: (1) provider-neutral frame/detection/track/
+evidence/Visit-proposal capability contracts; (2) deterministic recorded-media
+replay benchmarks; (3) RTX 4070 ONNX Runtime CUDA shadow provider with no durable
+writes; (4) frame-driven detector/tracker pipeline; (5) provider-neutral Camera
+Node analysis-stream/evidence-burst capabilities; (6) multi-frame evidence
+scoring and old/new shadow comparison; (7) controlled proposal-authority
+migration only after measured success; and (8) multi-frame interpretation after
+Visit/evidence reliability. CPU remains functional and vendor-neutral; CUDA is
+planned, TensorRT is only a later optimization. Privacy/Ignore masking, lineage,
+side-effect-free reads, bounded recovery, and correction-as-truth are preserved.
 
 The user-facing loop is **Observe → Discover → Understand → Confirm → Remember
 → Improve**. The internal evidence/truth architecture remains unchanged:

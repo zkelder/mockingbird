@@ -29,6 +29,15 @@ The visual identification path is:
 saved activity -> best frame -> animal/activity-centered crop -> ranked species
 suggestions -> Review Queue -> explicit correction -> Bird Log
 
+## Observation-engine direction
+
+Keep the MockingBird product. Replace its observation engine through a modular
+migration. Where capabilities allow, continuous observation and multi-frame
+evidence are preferred over periodic snapshots: detection discovers a potential
+subject, tracking proves temporal continuity, evidence capture begins
+immediately, and interpretation happens after Visit assembly. This does not
+weaken the evidence-versus-truth boundary; explicit correction remains truth.
+
 Zones provide semantic, privacy, and ignore context. They are not required crop
 boundaries. Detection or measured activity bounds should focus identification,
 while the original frame remains available as evidence context.

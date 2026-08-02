@@ -90,6 +90,27 @@ Motion and analyzer output are evidence. Optional analyzers are lazy, local,
 user-configured, and unavailable-safe. No model file or runtime download is
 required for the core product.
 
+### Observation Engine v2 boundary (planned)
+
+The Stream-to-proposed-Visit subsystem will be reworked through a strangler
+migration, not a product rewrite. A provider-neutral Observation Engine consumes
+Stream capabilities and emits only evidence-side `FramePacket`,
+`DetectionObservation`, `TrackUpdate`, `EvidenceCandidate`, and `VisitProposal`
+facts plus bounded capability/health state. Media pipeline providers own decode,
+timestamps, identities, rolling buffers, and high-resolution requests; inference
+providers own model execution only; MockingBird tracking and Visit assembly own
+temporal continuity, evidence scoring, and proposal semantics. Interpretation is
+downstream of assembled Visits; correction remains the first truth write.
+
+`SnapshotObservationProvider` names the current timer-driven path. It remains a
+privacy-preserving compatibility provider for lower-capability hardware,
+deterministic comparison, and fallback. Future CPU, ONNX Runtime CUDA, and other
+accelerated providers must conform to the same contract. A completely functional
+CPU path and the provider contract remain open and vendor-neutral. Proprietary
+acceleration may improve performance but cannot define MockingBird data, truth,
+or product behavior. The Raspberry Pi validates one Camera Node provider path;
+it does not define the product architecture.
+
 The first visual species-classifier seam is request-bound to one saved Review
 Queue image. It chooses a padded credible animal-detection box, then measured
 activity bounds, then a full-frame fallback only when no active Privacy/Ignore
