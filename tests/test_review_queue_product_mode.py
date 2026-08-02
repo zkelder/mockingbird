@@ -11,7 +11,14 @@ from mockingbird.repository.product_repository import (
     ProductRepository,
     SourceProviderConfigurationModel,
 )
-from mockingbird.storage.models import CameraSourceModel, EventModel, StreamModel, VisitModel
+from mockingbird.storage.models import (
+    CameraSourceModel,
+    EventModel,
+    MediaAssetModel,
+    StreamModel,
+    VisitEvidenceLinkModel,
+    VisitModel,
+)
 
 
 def test_review_queue_product_categories_are_durable_and_reviewed_is_opt_in(tmp_path) -> None:
@@ -91,6 +98,40 @@ def test_review_queue_product_categories_are_durable_and_reviewed_is_opt_in(tmp_
                         is_superseded=False,
                     )
                 )
+                if name == "animal":
+                    session.add(
+                        MediaAssetModel(
+                            id="media-animal",
+                            source_id=source_id,
+                            stream_id=stream_id,
+                            filename="animal.jpg",
+                            content_type="image/jpeg",
+                            media_type="image",
+                            local_path="fixture/animal.jpg",
+                            original_filename="animal.jpg",
+                            file_size_bytes=12,
+                            created_at=now,
+                            notes="Product Mode effective-primary fixture.",
+                            evidence_role="activity_crop",
+                            image_width=300,
+                            image_height=300,
+                            normalized_track_box_json=json.dumps([0.4, 0.4, 0.5, 0.5]),
+                            normalized_padded_crop_box_json=json.dumps([0.3, 0.3, 0.7, 0.7]),
+                        )
+                    )
+                    session.add(
+                        VisitEvidenceLinkModel(
+                            id="link-animal",
+                            visit_id=visit_id,
+                            media_asset_id="media-animal",
+                            captured_at=now,
+                            frame_sequence=0,
+                            sort_order=0,
+                            is_primary=True,
+                            evidence_role="activity_crop",
+                            created_at=now,
+                        )
+                    )
                 if detector == "no_evidence":
                     continue
                 detector_evidence = (
@@ -151,6 +192,20 @@ def test_review_queue_product_categories_are_durable_and_reviewed_is_opt_in(tmp_
     assert unresolved["visit-animal"].detector_provenance["object_detector"]["triggers"][0]["class"] == "animal"
     assert unresolved["visit-animal"].track_generation_id == "generation-animal"
     assert unresolved["visit-animal"].is_demo_source is False
+    effective_primary = unresolved["visit-animal"].effective_primary
+    assert effective_primary is not None
+    assert effective_primary.selected_media_asset_id == "media-animal"
+    assert effective_primary.persisted_primary_media_asset_id == "media-animal"
+    assert effective_primary.recommended_effective_primary_media_asset_id == "media-animal"
+    assert effective_primary.selection_reason == "no_useful_primary_evidence"
+    assert effective_primary.is_useful is False
+    assert effective_primary.is_user_controlled is False
+    assert effective_primary.temporally_supported is None
+    assert effective_primary.containment_status is True
+    assert effective_primary.edge_clipped is False
+    assert effective_primary.candidate_count == 1
+    assert effective_primary.historical_preview_only is False
+    assert effective_primary.would_change_automatically is False
     assert sum(item.visit_id == "visit-animal" for item in unresolved.values()) == 1
     assert unresolved["visit-vehicle"].product_category == "other_activity"
     assert unresolved["visit-ambiguous"].product_category == "legacy_activity"

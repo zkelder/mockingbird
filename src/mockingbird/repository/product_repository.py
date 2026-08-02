@@ -12240,21 +12240,66 @@ class ProductRepository:
         """Read-only recommendation; never rewrites historical evidence links."""
         with self.session_factory() as session:
             visit = session.get(VisitModel, visit_id)
-            if visit is None: return None
+            if visit is None:
+                return None
             event = session.get(EventModel, visit.event_id)
-            if event is None: return None
-            links = self._visit_evidence_link_models(session, visit.id)[:4]
-            if not links: return None
-            items=[]; persisted=None
-            for link in links:
-                asset=session.get(MediaAssetModel, link.media_asset_id)
-                if asset is None: continue
-                if link.is_primary: persisted=asset.id
-                items.append(EvidenceCandidate(asset.id, link.evidence_role or asset.evidence_role or 'monitoring_frame', _as_utc(link.captured_at), asset.image_width, asset.image_height, _normalized_box_from_json(asset.normalized_track_box_json), _normalized_box_from_json(asset.normalized_padded_crop_box_json), asset.alignment_status))
-            choice=select_effective_primary(items)
-            selected=choice.media_asset_id or persisted
-            role=next((x.role for x in items if x.media_asset_id==selected),None)
-            return {'selected_media_asset_id':selected,'persisted_primary_media_asset_id':persisted,'recommended_effective_primary_media_asset_id':choice.media_asset_id,'evidence_role':role,'selection_reason':choice.reason,'is_useful':choice.media_asset_id is not None and choice.reason!='no_useful_primary_evidence','is_user_controlled':False,'temporally_supported':choice.temporally_supported,'containment_status':choice.contained,'edge_clipped':choice.edge_clipped,'candidate_count':len(items),'historical_preview_only':choice.media_asset_id != persisted,'would_change_automatically':choice.media_asset_id is not None and choice.media_asset_id != persisted}
+            if event is None:
+                return None
+            return self._effective_primary_preview_from_visit(session, visit)
+
+    def _effective_primary_preview_from_visit(
+        self,
+        session: Session,
+        visit: VisitModel,
+    ) -> dict[str, Any] | None:
+        """Build a bounded presentation preview inside an existing read session."""
+
+        links = self._visit_evidence_link_models(session, visit.id)[:4]
+        if not links:
+            return None
+        items: list[EvidenceCandidate] = []
+        persisted: str | None = None
+        for link in links:
+            asset = session.get(MediaAssetModel, link.media_asset_id)
+            if asset is None:
+                continue
+            if link.is_primary:
+                persisted = asset.id
+            items.append(
+                EvidenceCandidate(
+                    asset.id,
+                    link.evidence_role or asset.evidence_role or "monitoring_frame",
+                    _as_utc(link.captured_at),
+                    asset.image_width,
+                    asset.image_height,
+                    _normalized_box_from_json(asset.normalized_track_box_json),
+                    _normalized_box_from_json(asset.normalized_padded_crop_box_json),
+                    asset.alignment_status,
+                )
+            )
+        choice = select_effective_primary(items)
+        selected = choice.media_asset_id or persisted
+        role = next((item.role for item in items if item.media_asset_id == selected), None)
+        return {
+            "selected_media_asset_id": selected,
+            "persisted_primary_media_asset_id": persisted,
+            "recommended_effective_primary_media_asset_id": choice.media_asset_id,
+            "evidence_role": role,
+            "selection_reason": choice.reason,
+            "is_useful": (
+                choice.media_asset_id is not None
+                and choice.reason != "no_useful_primary_evidence"
+            ),
+            "is_user_controlled": False,
+            "temporally_supported": choice.temporally_supported,
+            "containment_status": choice.contained,
+            "edge_clipped": choice.edge_clipped,
+            "candidate_count": len(items),
+            "historical_preview_only": choice.media_asset_id != persisted,
+            "would_change_automatically": (
+                choice.media_asset_id is not None and choice.media_asset_id != persisted
+            ),
+        }
 
     def attach_visit_evidence_media_assets(
         self,
@@ -16254,6 +16299,7 @@ class ProductRepository:
             **_review_focus_crop_fields(focus_crop_context),
             media_asset=_media_asset_from_model(media_asset) if media_asset is not None else None,
             evidence_frames=evidence_frames,
+            effective_primary=self._effective_primary_preview_from_visit(session, visit),
             stale_species_suggestions=self._visit_has_stale_species_suggestions(
                 session,
                 visit_id=visit.id,
@@ -21440,6 +21486,7 @@ class ProductRepository:
                 **_review_focus_crop_fields(focus_crop_context),
                 media_asset=media_asset,
                 evidence_frames=evidence_frames,
+                effective_primary=self._effective_primary_preview_from_visit(session, visit_model),
                 stale_species_suggestions=self._visit_has_stale_species_suggestions(
                     session,
                     visit_id=visit.id,

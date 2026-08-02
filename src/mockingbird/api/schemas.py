@@ -3305,6 +3305,9 @@ class ReviewQueueItem(BaseModel):
     identification: ReviewIdentificationSummary | None = None
     media_asset: MediaAsset | None = None
     evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
+    # Read-only presentation guidance. It never changes a Visit's persisted
+    # primary link, evidence, review state, or dataset-grade correction.
+    effective_primary: EffectivePrimaryEvidence | None = None
     stale_species_suggestions: bool = False
     review_status: ReviewStatus
     review_state_token: str = ""
