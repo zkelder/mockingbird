@@ -1873,8 +1873,11 @@ class EffectivePrimaryEvidence(BaseModel):
     is_useful: bool
     is_user_controlled: bool = False
     temporally_supported: bool | None = None
+    temporal_status: Literal["supported", "uncertain", "rejected"] = "uncertain"
     containment_status: bool | None = None
     edge_clipped: bool | None = None
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
     candidate_count: int = Field(ge=0, le=4)
     historical_preview_only: bool = False
     would_change_automatically: bool = False

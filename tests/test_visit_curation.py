@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
@@ -190,6 +190,49 @@ async def test_evidence_curation_changes_primary_everywhere_and_unlinks_only(
         json={**payload, "idempotency_key": "evidence-stale"},
     )
     assert stale.status_code == 409
+
+
+async def test_effective_primary_preview_is_identical_in_detail_and_queue_and_is_read_only(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    add_visit(
+        isolated_repository,
+        visit_id="visit-effective-primary-preview",
+        event_id="event-effective-primary-preview",
+    )
+    with isolated_repository.session_factory() as session:
+        before = (
+            session.scalar(select(func.count(VisitModel.id))),
+            session.scalar(select(func.count(VisitEvidenceLinkModel.id))),
+            session.scalar(select(func.count(MediaAssetModel.id))),
+            session.scalar(select(func.count(ReviewLabelModel.id))),
+        )
+
+    detail = await visit_detail(client, "visit-effective-primary-preview")
+    queue = await client.get("/api/review-queue")
+    assert queue.status_code == 200
+    queue_item = next(
+        item
+        for item in queue.json()
+        if item.get("visit_id") == "visit-effective-primary-preview"
+    )
+    assert detail["effective_primary"] == queue_item["effective_primary"]
+    assert set(detail["effective_primary"]) >= {
+        "temporally_supported",
+        "temporal_status",
+        "width",
+        "height",
+    }
+
+    with isolated_repository.session_factory() as session:
+        after = (
+            session.scalar(select(func.count(VisitModel.id))),
+            session.scalar(select(func.count(VisitEvidenceLinkModel.id))),
+            session.scalar(select(func.count(MediaAssetModel.id))),
+            session.scalar(select(func.count(ReviewLabelModel.id))),
+        )
+    assert after == before
 
 
 async def test_split_supersedes_reviewed_truth_and_returns_two_active_review_visits(

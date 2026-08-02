@@ -12257,6 +12257,7 @@ class ProductRepository:
         links = self._visit_evidence_link_models(session, visit.id)[:4]
         if not links:
             return None
+        dimensions = self._visit_evidence_dimensions_from_motion_evidence(session, visit.id)
         items: list[EvidenceCandidate] = []
         persisted: str | None = None
         for link in links:
@@ -12265,21 +12266,36 @@ class ProductRepository:
                 continue
             if link.is_primary:
                 persisted = asset.id
+            width, height = dimensions.get(
+                asset.id,
+                (asset.image_width, asset.image_height),
+            )
             items.append(
                 EvidenceCandidate(
                     asset.id,
                     link.evidence_role or asset.evidence_role or "monitoring_frame",
                     _as_utc(link.captured_at),
-                    asset.image_width,
-                    asset.image_height,
+                    width,
+                    height,
                     _normalized_box_from_json(asset.normalized_track_box_json),
                     _normalized_box_from_json(asset.normalized_padded_crop_box_json),
                     asset.alignment_status,
+                    available=Path(asset.local_path).is_file(),
+                    track_supported=(link.evidence_role == "tracked_best_frame"),
+                    lineage_valid=(
+                        asset.parent_media_asset_id is not None
+                        if link.evidence_role == "activity_crop"
+                        else None
+                    ),
                 )
             )
         choice = select_effective_primary(items)
         selected = choice.media_asset_id or persisted
-        role = next((item.role for item in items if item.media_asset_id == selected), None)
+        selected_item = next(
+            (item for item in items if item.media_asset_id == selected),
+            None,
+        )
+        role = selected_item.role if selected_item is not None else None
         return {
             "selected_media_asset_id": selected,
             "persisted_primary_media_asset_id": persisted,
@@ -12290,16 +12306,56 @@ class ProductRepository:
                 choice.media_asset_id is not None
                 and choice.reason != "no_useful_primary_evidence"
             ),
-            "is_user_controlled": False,
+            "is_user_controlled": choice.reason in {
+                "user_selected_primary",
+                "user_refined_primary",
+            },
             "temporally_supported": choice.temporally_supported,
+            "temporal_status": (
+                "supported"
+                if choice.temporally_supported is True
+                else "rejected"
+                if choice.temporally_supported is False
+                else "uncertain"
+            ),
             "containment_status": choice.contained,
             "edge_clipped": choice.edge_clipped,
+            "width": selected_item.width if selected_item is not None else None,
+            "height": selected_item.height if selected_item is not None else None,
             "candidate_count": len(items),
             "historical_preview_only": choice.media_asset_id != persisted,
             "would_change_automatically": (
                 choice.media_asset_id is not None and choice.media_asset_id != persisted
             ),
         }
+
+    def _visit_evidence_dimensions_from_motion_evidence(
+        self,
+        session: Session,
+        visit_id: str,
+    ) -> dict[str, tuple[int | None, int | None]]:
+        """Reuse retained activity-frame dimensions without reading media files."""
+
+        evidence = self._motion_evidence_model_for_visit(session, visit_id)
+        if evidence is None:
+            return {}
+        try:
+            frames = json.loads(evidence.scoring_config_json).get("visit_evidence_frames", [])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        if not isinstance(frames, list):
+            return {}
+        dimensions: dict[str, tuple[int | None, int | None]] = {}
+        for frame in frames:
+            if not isinstance(frame, dict) or not isinstance(frame.get("media_asset_id"), str):
+                continue
+            width = frame.get("width")
+            height = frame.get("height")
+            dimensions[frame["media_asset_id"]] = (
+                width if isinstance(width, int) and width > 0 else None,
+                height if isinstance(height, int) and height > 0 else None,
+            )
+        return dimensions
 
     def attach_visit_evidence_media_assets(
         self,
@@ -12363,7 +12419,11 @@ class ProductRepository:
                 # Initial primary choice is evidence presentation, not truth or
                 # curation. Existing links are never revisited here; reviewers
                 # retain the established explicit primary-selection flow.
-                support_times = [asset.trigger_started_at for asset, *_ in parsed if asset.trigger_started_at]
+                support_times = [
+                    asset.trigger_started_at
+                    for asset, *_ in parsed
+                    if asset.trigger_started_at is not None
+                ]
                 selection = select_effective_primary(
                     [EvidenceCandidate(
                         media_asset_id=asset.id,

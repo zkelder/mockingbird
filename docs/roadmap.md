@@ -25,15 +25,19 @@ Observability cohort passed Animal Visit Admission Precision: 10/10 promoted
 Visits were real birds, durable promotion/lineage/useful Visit evidence were
 10/10, while primary crop usefulness was 6/10 and recall remains insufficient.
 
-**Temporal Evidence Alignment and Primary Selection v1** is implemented for new
-Visits: bounded deterministic selection distinguishes lineage from subject
-suitability, preserves one primary link and all evidence, and never silently
-rewrites historical primary selections or reviewed truth. Then begin
-**Observation Engine v2**, a contained observation-subsystem rework using a
-strangler migration: keep the MockingBird product; replace its observation
-engine through a modular migration. `SnapshotObservationProvider` names the
-current timer-driven path and remains a compatibility, fallback, and deterministic
-comparison provider rather than the long-term golden path.
+**Temporal Evidence Alignment and Primary Selection v1** is implemented as
+conservative temporally proven primary selection. Bounded deterministic review
+guidance preserves one primary link and all evidence, distinguishes high-resolution
+lineage from subject presence, and never silently rewrites historical selections
+or reviewed truth. A delayed high-resolution crop remains retained secondary
+evidence unless durable facts affirm subject continuity at capture time. Optimal
+multi-frame visual evidence ranking moves to Observation Engine v2 Stage 6;
+**Observation Engine v2 Stage 1** is next. This remains a contained
+observation-subsystem rework using a strangler migration: keep the MockingBird
+product; replace its observation engine through a modular migration.
+`SnapshotObservationProvider` names the current timer-driven path and remains a
+compatibility, fallback, and deterministic comparison provider rather than the
+long-term golden path.
 
 Observation Engine v2 sequence: (1) provider-neutral frame/detection/track/
 evidence/Visit-proposal capability contracts; (2) deterministic recorded-media
