@@ -30,7 +30,7 @@ def test_versioned_report_separates_semantic_and_execution_contracts(tmp_path: P
     )
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert report_path == output / "replay-report.json"
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["benchmark"]["id"] == "benchmark"
     assert payload["benchmark"]["manifest_fingerprint"] == manifest.fingerprint
     assert payload["replay"]["input_fingerprint"] == replay.fingerprint

@@ -8,7 +8,8 @@ shadow-only, deterministic, and cannot create product records or reviewed truth.
 
 The versioned JSON manifest names relative frame paths, strictly increasing
 source offsets, decoded dimensions, optional content hashes, expected appearances
-and Visits, and optional thresholds. Absolute paths, traversal, symlinks,
+and Visits, optional frame-indexed broad-class boxes, and optional thresholds.
+Absolute paths, traversal, symlinks,
 unsupported extensions, missing or undecodable files, duplicate frame entries,
 hash mismatches, dimension mismatches, and bounded-manifest violations are rejected.
 
@@ -27,12 +28,20 @@ Every metric carries `evaluated`, `not_evaluated`, or `insufficient_truth` state
 Thresholds produce `pass`, `fail`, or `unscorable`; an unscorable required
 threshold makes the profile unsuccessful. Snapshot replay honestly reports no
 continuous detector, tracker, rolling buffer, GPU acceleration, or proposal authority.
+Detection-capable providers additionally report animal-positive frames, frame recall,
+false-positive frames, one-to-one box precision/recall at IoU 0.5, broad-class
+agreement, and observations per frame. Truth-dependent values are
+`insufficient_truth` when annotations are absent. A detection-only provider marks all
+Visit/admission metrics `not_evaluated`; empty proposal output is not treated as a
+successful Visit evaluation.
 
 ## Report and command
 
 `python -m mockingbird replay-benchmark --provider snapshot --frames FRAMES
 --manifest MANIFEST.json --output OUTPUT_DIRECTORY` writes one atomic
-`replay-report.json` into a new or empty directory. Output is allowed outside the
+`replay-report.json` into a new or empty directory. The explicit accelerated
+form adds `--provider onnx-cuda --provider-config MODEL_BUNDLE.json`; it never
+selects CPU inference as a fallback. Output is allowed outside the
 repository or below ignored `data/`; tracked source, docs, tests, and the repository
 root are refused.
 

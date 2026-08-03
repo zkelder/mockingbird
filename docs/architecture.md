@@ -95,7 +95,13 @@ required for the core product.
 Stage 1 is implemented: provider-neutral evidence contracts, an explicit active-provider registry, and a read-only health/capability surface wrap the established timer-driven observer as `SnapshotObservationProvider`. The compatibility provider delegates to the existing bounded snapshot monitor; it creates no parallel runtime, detector, or truth path.
 Stage 2 adds the deterministic, shadow-only ordered-frame replay host described in
 [observation-replay-benchmark-contract.md](observation-replay-benchmark-contract.md).
-It performs no durable product or truth writes.
+It performs no durable product or truth writes. Stage 3 adds the optional
+`onnx-cuda` replay provider described in
+[onnx-cuda-shadow-provider-contract.md](onnx-cuda-shadow-provider-contract.md).
+It performs explicit local-model GPU detection only: no live video, tracking,
+evidence selection, Visit proposals, or proposal authority. CUDA runtime and model
+types remain behind the provider boundary; product records still contain only
+provider-neutral evidence and correction-derived truth.
 
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
@@ -109,8 +115,9 @@ downstream of assembled Visits; correction remains the first truth write.
 
 `SnapshotObservationProvider` names the current timer-driven path. It remains a
 privacy-preserving compatibility provider for lower-capability hardware,
-deterministic comparison, and fallback. Future CPU, ONNX Runtime CUDA, and other
-accelerated providers must conform to the same contract. A completely functional
+deterministic comparison, and fallback. Future CPU and other accelerated
+providers must conform to the same contract; the implemented ONNX Runtime CUDA
+provider is replay-only and shadow-only. A completely functional
 CPU path and the provider contract remain open and vendor-neutral. Proprietary
 acceleration may improve performance but cannot define MockingBird data, truth,
 or product behavior. The Raspberry Pi validates one Camera Node provider path;

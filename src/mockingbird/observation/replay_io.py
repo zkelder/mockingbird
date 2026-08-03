@@ -12,7 +12,7 @@ from typing import Any
 from mockingbird.web_app import find_workspace_root
 from mockingbird.observation.replay import (
     FRAME_IDENTITY_VERSION, MATCHER_VERSION, REPORT_SCHEMA_VERSION,
-    BenchmarkManifest, ExpectedAppearance, ExpectedVisit, ReplayFrame,
+    BenchmarkManifest, ExpectedAppearance, ExpectedDetection, ExpectedVisit, ReplayFrame,
     ReplayInput, ReplayReport, ReplayValidationError, semantic_fingerprint,
 )
 
@@ -50,13 +50,14 @@ def load_replay_bundle(frames_directory: Path, manifest_path: Path) -> ReplayBun
         declared_hash = item.get("content_hash")
         if declared_hash is not None and declared_hash != content_hash:
             raise ReplayValidationError("frame_hash_mismatch")
-        frames.append(ReplayFrame(index, _require_int(item, "source_offset_ms", minimum=0), content_hash))
+        frames.append(ReplayFrame(index, _require_int(item, "source_offset_ms", minimum=0), content_hash, str(candidate)))
     replay = ReplayInput(_require_string(document, "input_id"), _require_string(document, "stream_id"),
                          width, height, _require_number(document, "nominal_fps", minimum=0.000001), tuple(frames))
     manifest = BenchmarkManifest(
         version, _require_string(document, "benchmark_id"), _require_string(document, "input_fingerprint"),
         tuple(_appearance(item) for item in _require_list(document, "appearances")),
         tuple(_visit(item) for item in _require_list(document, "visits")),
+        tuple(_detection(item) for item in _optional_list(document, "detections")),
     )
     manifest.validate(replay)
     return ReplayBundle(replay, manifest, _thresholds(document.get("thresholds", {})))
@@ -78,6 +79,10 @@ def write_replay_report(output_directory: Path, report: ReplayReport, *, replay:
         "provider": provider,
         "limitations": sorted(limitations),
         "expected_visits": [asdict(item) for item in sorted(manifest.visits, key=lambda item: item.visit_id)],
+        "expected_detections": [
+            asdict(item) for item in sorted(manifest.detections, key=lambda item: (item.frame_index, item.annotation_id))
+        ],
+        "detections": [asdict(item) for item in report.detections],
         "proposals": [asdict(item) for item in sorted(report.proposals, key=lambda item: item.proposal_key)],
         "matches": [asdict(item) for item in report.matches],
         "metrics": report.metrics,
@@ -177,6 +182,23 @@ def _visit(value: object) -> ExpectedVisit:
                          _optional_string(value, "zone_id"), _optional_bool(value, "ambiguous"))
 
 
+def _detection(value: object) -> ExpectedDetection:
+    if not isinstance(value, dict):
+        raise ReplayValidationError("invalid_detection_annotation")
+    box = value.get("bounding_box")
+    if (
+        not isinstance(box, list) or len(box) != 4
+        or not all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in box)
+    ):
+        raise ReplayValidationError("invalid_detection_annotation")
+    return ExpectedDetection(
+        _require_string(value, "annotation_id"),
+        _require_int(value, "frame_index", minimum=0),
+        _require_string(value, "broad_class"),
+        tuple(float(item) for item in box),
+    )
+
+
 def _thresholds(value: object) -> dict[str, float]:
     if not isinstance(value, dict): raise ReplayValidationError("invalid_thresholds")
     result: dict[str, float] = {}
@@ -219,5 +241,11 @@ def _require_number(value: dict[str, Any], key: str, *, minimum: float) -> float
 
 def _require_list(value: dict[str, Any], key: str) -> list[Any]:
     result = value.get(key)
+    if not isinstance(result, list): raise ReplayValidationError(f"invalid_{key}")
+    return result
+
+
+def _optional_list(value: dict[str, Any], key: str) -> list[Any]:
+    result = value.get(key, [])
     if not isinstance(result, list): raise ReplayValidationError(f"invalid_{key}")
     return result

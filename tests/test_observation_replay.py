@@ -109,3 +109,11 @@ def test_matcher_records_every_shadow_diagnostic_deterministically() -> None:
         return VisitProposal(key, "source", "stream", ("media",), reason, start, end)
     matches = _match(expected, (proposal("a", 0, 30), proposal("b", 0, 30), proposal("c", 0, 30, "different"), proposal("merge", 20, 30), proposal("false", 70, 80)))
     assert {item.status for item in matches} >= {"matched", "missed", "false", "duplicate", "fragmented", "incorrectly_merged", "ambiguous"}
+
+
+def test_onnx_cuda_provider_import_is_optional_and_probe_is_side_effect_free() -> None:
+    from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider
+    provider = OnnxCudaObservationProvider.unconfigured()
+    assert provider.provider_id == "onnx-cuda"
+    assert provider.capabilities.emits_detection_observations is True
+    assert provider.session_loaded is False

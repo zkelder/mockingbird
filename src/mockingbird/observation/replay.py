@@ -6,12 +6,12 @@ from hashlib import sha256
 import json
 from typing import Protocol
 
-from mockingbird.observation.contracts import FramePacket, ObservationResult, VisitProposal
+from mockingbird.observation.contracts import DetectionObservation, FramePacket, ObservationResult, VisitProposal
 
 MANIFEST_VERSION = 1
 FRAME_IDENTITY_VERSION = "ordered-frame-v1"
 MATCHER_VERSION = "temporal-zone-v1"
-REPORT_SCHEMA_VERSION = 1
+REPORT_SCHEMA_VERSION = 2
 PROVIDER_ERROR_LIMIT = 25
 MAX_FRAMES = 10_000
 MAX_APPEARANCES = 1_000
@@ -33,6 +33,7 @@ class ReplayFrame:
     index: int
     source_offset_ms: int
     content_hash: str
+    source_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,10 @@ class ReplayInput:
 
     @property
     def fingerprint(self) -> str:
-        return semantic_fingerprint({"version": MANIFEST_VERSION, **asdict(self)})
+        return semantic_fingerprint({"version": MANIFEST_VERSION, "input_id": self.input_id,
+            "stream_id": self.stream_id, "width": self.width, "height": self.height,
+            "nominal_fps": self.nominal_fps,
+            "frames": [{"index": item.index, "source_offset_ms": item.source_offset_ms, "content_hash": item.content_hash} for item in self.frames]})
 
     def packets(self) -> tuple[FramePacket, ...]:
         root = self.fingerprint
@@ -70,6 +74,7 @@ class ReplayInput:
             source_offset_ms=frame.source_offset_ms,
             width=self.width,
             height=self.height,
+            source_path=frame.source_path,
         ) for frame in self.frames)
 
 
@@ -94,12 +99,21 @@ class ExpectedVisit:
 
 
 @dataclass(frozen=True)
+class ExpectedDetection:
+    annotation_id: str
+    frame_index: int
+    broad_class: str
+    bounding_box: tuple[float, float, float, float]
+
+
+@dataclass(frozen=True)
 class BenchmarkManifest:
     version: int
     benchmark_id: str
     input_fingerprint: str
     appearances: tuple[ExpectedAppearance, ...]
     visits: tuple[ExpectedVisit, ...]
+    detections: tuple[ExpectedDetection, ...] = ()
 
     def validate(self, replay: ReplayInput) -> None:
         if self.version != MANIFEST_VERSION:
@@ -126,6 +140,14 @@ class BenchmarkManifest:
                 raise ReplayValidationError("invalid_visit_membership")
             if item.start_offset_ms > item.end_offset_ms or item.start_offset_ms < 0 or item.end_offset_ms > duration:
                 raise ReplayValidationError("visit_time_order")
+        annotation_ids = [item.annotation_id for item in self.detections]
+        if len(annotation_ids) != len(set(annotation_ids)):
+            raise ReplayValidationError("duplicate_detection_annotation_id")
+        for item in self.detections:
+            if item.frame_index < 0 or item.frame_index >= len(replay.frames) or not item.broad_class:
+                raise ReplayValidationError("invalid_detection_annotation")
+            if not _valid_box(item.bounding_box):
+                raise ReplayValidationError("invalid_detection_annotation")
 
     @property
     def fingerprint(self) -> str:
@@ -154,6 +176,7 @@ class ReplayReport:
     semantic_fingerprint: str
     threshold_results: tuple[dict[str, object], ...] = ()
     errors: tuple[str, ...] = ()
+    detections: tuple[DetectionObservation, ...] = ()
     creates_truth: bool = False
 
 
@@ -174,18 +197,39 @@ class ReplayRunner:
             raise
         except Exception as error:
             raise ReplayValidationError("provider_failure") from error
+        detections = tuple(sorted(
+            (item for result in results for item in result.detection_observations),
+            key=lambda item: (
+                item.frame_id or "", -(item.confidence or 0), item.label,
+                item.bounding_box or (), item.observation_id or "",
+            ),
+        ))
         if any(result.creates_truth for result in results):
             raise ReplayValidationError("production_authority")
-        proposals = tuple(sorted((proposal for result in results for proposal in result.visit_proposals), key=lambda item: item.proposal_key))
+        proposals = tuple(sorted(
+            (proposal for result in results for proposal in result.visit_proposals),
+            key=lambda item: item.proposal_key,
+        ))
+        capabilities = getattr(provider, "capabilities", None)
+        visit_supported = bool(capabilities and capabilities.emits_visit_proposals)
+        detection_supported = bool(capabilities and capabilities.emits_detection_observations)
+        track_supported = bool(capabilities and capabilities.emits_track_updates)
         if len(proposals) > MAX_PROPOSALS or any(not proposal.shadow_only for proposal in proposals):
             raise ReplayValidationError("production_authority")
-        matches = _match(manifest.visits, proposals)
-        metrics = _metrics(manifest, proposals, matches, frames, results)
+        if not visit_supported and proposals:
+            raise ReplayValidationError("production_authority")
+        matches = _match(manifest.visits, proposals) if visit_supported else ()
+        metrics = _metrics(
+            manifest, proposals, matches, frames, results,
+            visit_supported=visit_supported, detection_supported=detection_supported,
+            track_supported=track_supported,
+        )
         threshold_results = _threshold_results(metrics, thresholds or {})
         semantic = {
             "schema_version": REPORT_SCHEMA_VERSION,
             "input_fingerprint": replay.fingerprint,
             "manifest_fingerprint": manifest.fingerprint,
+            "detections": [asdict(item) for item in detections],
             "provider_key": provider_key,
             "frame_ids": [frame.frame_id for frame in frames],
             "proposals": [asdict(item) for item in proposals],
@@ -193,7 +237,7 @@ class ReplayRunner:
             "metrics": metrics,
             "threshold_results": threshold_results,
         }
-        return ReplayReport(frames, proposals, matches, metrics, semantic_fingerprint(semantic), tuple(threshold_results))
+        return ReplayReport(frames, proposals, matches, metrics, semantic_fingerprint(semantic), tuple(threshold_results), (), detections)
 
 
 def _overlap_ms(visit: ExpectedVisit, proposal: VisitProposal) -> int:
@@ -246,49 +290,201 @@ def _metric(value: object, state: str) -> dict[str, object]:
     return {"state": state, "value": value}
 
 
-def _metrics(manifest: BenchmarkManifest, proposals: tuple[VisitProposal, ...], matches: tuple[Match, ...],
-             frames: tuple[FramePacket, ...], results: tuple[ObservationResult, ...]) -> dict[str, object]:
+def _metrics(
+    manifest: BenchmarkManifest,
+    proposals: tuple[VisitProposal, ...],
+    matches: tuple[Match, ...],
+    frames: tuple[FramePacket, ...],
+    results: tuple[ObservationResult, ...],
+    *,
+    visit_supported: bool,
+    detection_supported: bool,
+    track_supported: bool,
+) -> dict[str, object]:
     matched_ids = {item.expected_visit_id for item in matches if item.status == "matched"}
-    captured = {appearance for visit in manifest.visits if visit.visit_id in matched_ids for appearance in visit.appearance_ids}
-    counts = {status: sum(item.status == status for item in matches) for status in ("matched", "missed", "false", "duplicate", "fragmented", "incorrectly_merged", "ambiguous")}
+    captured = {
+        appearance
+        for visit in manifest.visits
+        if visit.visit_id in matched_ids
+        for appearance in visit.appearance_ids
+    }
+    counts = {
+        status: sum(item.status == status for item in matches)
+        for status in (
+            "matched", "missed", "false", "duplicate", "fragmented",
+            "incorrectly_merged", "ambiguous",
+        )
+    }
     expected_count = len(manifest.visits)
     proposal_count = len(proposals)
-    appearance_state = "evaluated" if manifest.appearances else "insufficient_truth"
-    precision_state = "evaluated" if proposals else "not_evaluated"
+    if visit_supported:
+        appearance_state = "evaluated" if manifest.appearances else "insufficient_truth"
+        precision_state = "evaluated" if proposals else "not_evaluated"
+        visit_count_state = "evaluated"
+    else:
+        appearance_state = precision_state = visit_count_state = "not_evaluated"
     metrics: dict[str, object] = {
         "expected_appearance_count": _metric(len(manifest.appearances), "evaluated"),
-        "captured_appearance_count": _metric(len(captured), appearance_state),
-        "appearance_recall": _metric(len(captured) / len(manifest.appearances) if manifest.appearances else None, appearance_state),
+        "captured_appearance_count": _metric(len(captured) if visit_supported else None, appearance_state),
+        "appearance_recall": _metric(
+            len(captured) / len(manifest.appearances)
+            if visit_supported and manifest.appearances else None,
+            appearance_state,
+        ),
         "expected_visit_count": _metric(expected_count, "evaluated"),
-        "proposed_visit_count": _metric(proposal_count, "evaluated"),
-        "matched_visit_count": _metric(counts["matched"], "evaluated"),
-        "proposal_precision": _metric(counts["matched"] / proposal_count if proposal_count else None, precision_state),
-        "false_proposal_count": _metric(counts["false"], "evaluated"),
-        "missed_visit_count": _metric(counts["missed"], "evaluated"),
-        "duplicate_count": _metric(counts["duplicate"], "evaluated"),
-        "duplicate_rate": _metric(counts["duplicate"] / proposal_count if proposal_count else None, precision_state),
-        "fragmentation_count": _metric(counts["fragmented"], "evaluated"),
-        "fragmentation_rate": _metric(counts["fragmented"] / expected_count if expected_count else None, "evaluated" if expected_count else "insufficient_truth"),
-        "incorrect_merge_count": _metric(counts["incorrectly_merged"], "evaluated"),
-        "incorrect_merge_rate": _metric(counts["incorrectly_merged"] / proposal_count if proposal_count else None, precision_state),
-        "zone_attribution_accuracy": _metric(None, "insufficient_truth"),
-        "evidence_candidate_coverage": _metric(sum(bool(item.evidence_media_asset_ids) for item in proposals) / proposal_count if proposal_count else None, precision_state),
-        "useful_evidence_coverage": _metric(None, "insufficient_truth"),
-        "primary_evidence_usefulness": _metric(None, "insufficient_truth"),
+        "proposed_visit_count": _metric(proposal_count if visit_supported else None, visit_count_state),
+        "matched_visit_count": _metric(counts["matched"] if visit_supported else None, visit_count_state),
+        "proposal_precision": _metric(
+            counts["matched"] / proposal_count if visit_supported and proposal_count else None,
+            precision_state,
+        ),
+        "false_proposal_count": _metric(counts["false"] if visit_supported else None, visit_count_state),
+        "missed_visit_count": _metric(counts["missed"] if visit_supported else None, visit_count_state),
+        "duplicate_count": _metric(counts["duplicate"] if visit_supported else None, visit_count_state),
+        "duplicate_rate": _metric(
+            counts["duplicate"] / proposal_count if visit_supported and proposal_count else None,
+            precision_state,
+        ),
+        "fragmentation_count": _metric(counts["fragmented"] if visit_supported else None, visit_count_state),
+        "fragmentation_rate": _metric(
+            counts["fragmented"] / expected_count if visit_supported and expected_count else None,
+            "evaluated" if visit_supported and expected_count else appearance_state,
+        ),
+        "incorrect_merge_count": _metric(counts["incorrectly_merged"] if visit_supported else None, visit_count_state),
+        "incorrect_merge_rate": _metric(
+            counts["incorrectly_merged"] / proposal_count if visit_supported and proposal_count else None,
+            precision_state,
+        ),
+        "zone_attribution_accuracy": _metric(None, "insufficient_truth" if visit_supported else "not_evaluated"),
+        "evidence_candidate_coverage": _metric(
+            sum(bool(item.evidence_media_asset_ids) for item in proposals) / proposal_count
+            if visit_supported and proposal_count else None,
+            precision_state,
+        ),
+        "useful_evidence_coverage": _metric(None, "insufficient_truth" if visit_supported else "not_evaluated"),
+        "primary_evidence_usefulness": _metric(None, "insufficient_truth" if visit_supported else "not_evaluated"),
         "frames_supplied": _metric(len(frames), "evaluated"),
         "frames_processed": _metric(sum(len(result.frame_packets) for result in results), "evaluated"),
-        "detector_observation_count": _metric(sum(len(result.detection_observations) for result in results), "not_evaluated"),
-        "track_update_count": _metric(sum(len(result.track_updates) for result in results), "not_evaluated"),
-        "proposal_count": _metric(proposal_count, "evaluated"),
+        "track_update_count": _metric(
+            sum(len(result.track_updates) for result in results) if track_supported else None,
+            "evaluated" if track_supported else "not_evaluated",
+        ),
+        "proposal_count": _metric(proposal_count if visit_supported else None, visit_count_state),
         "provider_error_count": _metric(0, "evaluated"),
     }
-    # Compatibility aliases remain additive during the Stage 1 strangler migration.
-    metrics.update({"expected_appearances": len(manifest.appearances), "captured_appearances": len(captured),
-                    "appearance_recall_state": appearance_state,
-                    "appearance_recall_value": metrics["appearance_recall"]["value"],
-                    "proposal_precision_state": precision_state,
-                    "proposal_precision_value": metrics["proposal_precision"]["value"]})
+    metrics.update(_detection_metrics(manifest, frames, results, detection_supported=detection_supported))
+    # Compatibility aliases remain additive during the Observation Engine strangler migration.
+    metrics.update({
+        "expected_appearances": len(manifest.appearances),
+        "captured_appearances": len(captured) if visit_supported else None,
+        "appearance_recall_state": appearance_state,
+        "appearance_recall_value": metrics["appearance_recall"]["value"],
+        "proposal_precision_state": precision_state,
+        "proposal_precision_value": metrics["proposal_precision"]["value"],
+    })
     return dict(sorted(metrics.items()))
+
+
+DETECTION_IOU_THRESHOLD = 0.5
+
+
+def _detection_metrics(
+    manifest: BenchmarkManifest,
+    frames: tuple[FramePacket, ...],
+    results: tuple[ObservationResult, ...],
+    *,
+    detection_supported: bool,
+) -> dict[str, object]:
+    detections = tuple(item for result in results for item in result.detection_observations)
+    animal_detections = tuple(item for item in detections if item.is_animal is True)
+    if not detection_supported:
+        return {
+            name: _metric(None, "not_evaluated")
+            for name in (
+                "detector_observation_count", "animal_detector_observation_count",
+                "detector_observations_per_frame",
+                "annotated_animal_frame_count", "animal_positive_inference_frame_count",
+                "frame_level_animal_recall", "false_animal_positive_frame_count",
+                "matched_annotated_box_count", "missed_annotated_box_count",
+                "box_precision", "box_recall", "broad_class_agreement",
+            )
+        } | {"detection_iou_threshold": _metric(DETECTION_IOU_THRESHOLD, "not_evaluated")}
+
+    frame_index_by_id = {frame.frame_id: index for index, frame in enumerate(frames)}
+    predicted_by_frame: dict[int, list[DetectionObservation]] = {}
+    for detection in animal_detections:
+        frame_index = frame_index_by_id.get(detection.frame_id)
+        if frame_index is not None:
+            predicted_by_frame.setdefault(frame_index, []).append(detection)
+    positive_frames = set(predicted_by_frame)
+    base = {
+        "detector_observation_count": _metric(len(detections), "evaluated"),
+        "animal_detector_observation_count": _metric(len(animal_detections), "evaluated"),
+        "detector_observations_per_frame": _metric(len(detections) / len(frames) if frames else None, "evaluated"),
+        "animal_positive_inference_frame_count": _metric(len(positive_frames), "evaluated"),
+        "detection_iou_threshold": _metric(DETECTION_IOU_THRESHOLD, "evaluated"),
+    }
+    if not manifest.detections:
+        return base | {
+            name: _metric(None, "insufficient_truth")
+            for name in (
+                "annotated_animal_frame_count", "frame_level_animal_recall",
+                "false_animal_positive_frame_count", "matched_annotated_box_count",
+                "missed_annotated_box_count", "box_precision", "box_recall",
+                "broad_class_agreement",
+            )
+        }
+
+    truth_frames = {item.frame_index for item in manifest.detections}
+    remaining_predictions = {
+        frame_index: set(range(len(items))) for frame_index, items in predicted_by_frame.items()
+    }
+    matched = 0
+    class_matches = 0
+    for truth in sorted(manifest.detections, key=lambda item: (item.frame_index, item.annotation_id)):
+        candidates = []
+        for index in remaining_predictions.get(truth.frame_index, set()):
+            prediction = predicted_by_frame[truth.frame_index][index]
+            if prediction.bounding_box is None:
+                continue
+            overlap = _iou(truth.bounding_box, prediction.bounding_box)
+            if overlap >= DETECTION_IOU_THRESHOLD:
+                candidates.append((-overlap, prediction.label, prediction.observation_id or "", index))
+        if not candidates:
+            continue
+        _, _, _, selected = min(candidates)
+        remaining_predictions[truth.frame_index].remove(selected)
+        matched += 1
+        if predicted_by_frame[truth.frame_index][selected].label == truth.broad_class:
+            class_matches += 1
+    predicted_boxes = sum(item.bounding_box is not None for item in animal_detections)
+    truth_count = len(manifest.detections)
+    return base | {
+        "annotated_animal_frame_count": _metric(len(truth_frames), "evaluated"),
+        "frame_level_animal_recall": _metric(len(truth_frames & positive_frames) / len(truth_frames), "evaluated"),
+        "false_animal_positive_frame_count": _metric(len(positive_frames - truth_frames), "evaluated"),
+        "matched_annotated_box_count": _metric(matched, "evaluated"),
+        "missed_annotated_box_count": _metric(truth_count - matched, "evaluated"),
+        "box_precision": _metric(matched / predicted_boxes if predicted_boxes else None,
+                                  "evaluated" if predicted_boxes else "not_evaluated"),
+        "box_recall": _metric(matched / truth_count, "evaluated"),
+        "broad_class_agreement": _metric(class_matches / matched if matched else None,
+                                           "evaluated" if matched else "not_evaluated"),
+    }
+
+
+def _valid_box(box: tuple[float, float, float, float]) -> bool:
+    return len(box) == 4 and all(0.0 <= value <= 1.0 for value in box) and box[0] < box[2] and box[1] < box[3]
+
+
+def _iou(first: tuple[float, float, float, float], second: tuple[float, float, float, float]) -> float:
+    left, top = max(first[0], second[0]), max(first[1], second[1])
+    right, bottom = min(first[2], second[2]), min(first[3], second[3])
+    intersection = max(0.0, right - left) * max(0.0, bottom - top)
+    first_area = (first[2] - first[0]) * (first[3] - first[1])
+    second_area = (second[2] - second[0]) * (second[3] - second[1])
+    union = first_area + second_area - intersection
+    return intersection / union if union > 0 else 0.0
 
 
 _THRESHOLD_RULES = {
@@ -299,6 +495,11 @@ _THRESHOLD_RULES = {
     "maximum_incorrect_merge_rate": ("incorrect_merge_rate", "maximum"),
     "minimum_evidence_coverage": ("evidence_candidate_coverage", "minimum"),
     "minimum_primary_evidence_usefulness": ("primary_evidence_usefulness", "minimum"),
+    "minimum_frame_level_animal_recall": ("frame_level_animal_recall", "minimum"),
+    "maximum_false_animal_positive_frames": ("false_animal_positive_frame_count", "maximum"),
+    "minimum_box_precision": ("box_precision", "minimum"),
+    "minimum_box_recall": ("box_recall", "minimum"),
+    "minimum_broad_class_agreement": ("broad_class_agreement", "minimum"),
 }
 
 

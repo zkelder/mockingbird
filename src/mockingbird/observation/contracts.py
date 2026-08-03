@@ -22,16 +22,25 @@ class FramePacket:
     source_offset_ms: int | None = None
     width: int | None = None
     height: int | None = None
+    source_path: str | None = None
 
 
 @dataclass(frozen=True)
 class DetectionObservation:
-    """Untrusted detector evidence emitted by a future inference-capable provider."""
+    """Untrusted, provider-neutral detector evidence; never reviewed truth."""
 
     detector_id: str
     label: str
     confidence: float | None
     captured_at: datetime
+    observation_id: str | None = None
+    frame_id: str | None = None
+    provider_id: str | None = None
+    model_key: str | None = None
+    generation_id: str | None = None
+    bounding_box: tuple[float, float, float, float] | None = None
+    class_source_label: str | None = None
+    is_animal: bool | None = None
 
 
 @dataclass(frozen=True)

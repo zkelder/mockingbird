@@ -140,6 +140,33 @@ are transient and monitoring stays off until explicitly enabled. There is no
 automatic LAN discovery, service installer, remote shell, cloud relay, audio,
 or recording. See [Camera Node boundary](docs/camera-node-boundary-design.md).
 
+### Optional ONNX Runtime CUDA replay
+
+The Stage 3 accelerated provider is an offline, shadow-only benchmark path. Core
+MockingBird and the Snapshot provider do not require ONNX Runtime. On a compatible
+NVIDIA/CUDA development host, install only the GPU extra:
+
+```sh
+python -m pip install -e ".[observation-onnx-cuda]"
+```
+
+Supply an existing local ONNX file through its versioned model-bundle JSON; the
+application never downloads a model. Then run:
+
+```sh
+python -m mockingbird replay-benchmark \
+  --provider onnx-cuda \
+  --frames data/replay/frames \
+  --manifest data/replay/benchmark.json \
+  --provider-config data/models/detector/model-bundle.json \
+  --output data/replay/output
+```
+
+`CUDAExecutionProvider` is mandatory and CPU fallback is rejected. This provider
+emits detector evidence only; it does not start cameras or monitoring, track
+animals, create Visits, or write product truth. See the
+[ONNX CUDA shadow-provider contract](docs/onnx-cuda-shadow-provider-contract.md).
+
 ### Optional local species suggestions
 
 The current BioCLIP 2 path is a local reviewer-assistance action inside the

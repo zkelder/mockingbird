@@ -13,6 +13,7 @@ from mockingbird.observation.contracts import (
     TrackUpdate,
     VisitProposal,
 )
+from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, OnnxModelBundle
 from mockingbird.observation.registry import ObservationEngineRegistry
 from mockingbird.observation.snapshot_provider import SnapshotObservationProvider
 
@@ -27,6 +28,8 @@ __all__ = [
     "ObservationProviderHealth",
     "ObservationProvider",
     "ObservationResult",
+    "OnnxCudaObservationProvider",
+    "OnnxModelBundle",
     "SnapshotObservationProvider",
     "TrackUpdate",
     "VisitProposal",

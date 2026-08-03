@@ -44,6 +44,22 @@ def test_loader_validates_regular_images_and_constructs_stable_input(tmp_path: P
     assert [frame.source_offset_ms for frame in bundle.replay.frames] == [0, 1000]
     assert bundle.manifest.input_fingerprint == bundle.replay.fingerprint
     assert bundle.thresholds == {}
+    assert all(frame.source_path and frame.source_path.endswith(".png") for frame in bundle.replay.frames)
+
+
+def test_loader_accepts_bounded_frame_detection_annotations(tmp_path: Path) -> None:
+    frames, manifest = _bundle_files(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["detections"] = [{
+        "annotation_id": "bird-1",
+        "frame_index": 0,
+        "broad_class": "bird",
+        "bounding_box": [0.1, 0.2, 0.8, 0.9],
+    }]
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    bundle = load_replay_bundle(frames, manifest)
+    assert bundle.manifest.detections[0].broad_class == "bird"
+    assert bundle.manifest.detections[0].bounding_box == (0.1, 0.2, 0.8, 0.9)
 
 
 def test_loader_rejects_parent_path_before_reading_a_frame(tmp_path: Path) -> None:
@@ -62,7 +78,9 @@ def test_report_is_atomic_immutable_and_contains_no_source_path(tmp_path: Path) 
     report = ReplayReport((), (), (), {}, "semantic")
     report_path = write_replay_report(output, report, replay=bundle.replay, manifest=bundle.manifest,
         provider={"provider_id": "snapshot"}, limitations=("offline",), execution={})
-    assert json.loads(report_path.read_text(encoding="utf-8"))["schema_version"] == 1
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 2
+    assert str(frames.resolve()) not in json.dumps(payload["semantic"])
     with pytest.raises(ReplayValidationError, match="nonempty_output_directory"):
         write_replay_report(output, report, replay=bundle.replay, manifest=bundle.manifest,
             provider={}, limitations=(), execution={})
