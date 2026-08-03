@@ -28,7 +28,17 @@ class ObservationEngineRegistry:
         if active_id not in by_id:
             raise ValueError(f"Unknown Observation Engine provider: {active_id}")
         self._providers = by_id
+
         self._active_provider_id = active_id
+
+    @property
+    def active_provider_id(self) -> str:
+        return self._active_provider_id
+
+    def provider_for(self, provider_id: str) -> ObservationProvider:
+        if provider_id not in self._providers:
+            raise ValueError(f"Unknown Observation Engine provider: {provider_id}")
+        return self._providers[provider_id]
 
     @property
     def active_provider(self) -> ObservationProvider:

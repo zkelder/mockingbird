@@ -92,6 +92,26 @@ class SnapshotObservationProvider:
             raise ValueError(f"No snapshot monitor is active for Stream {stream_id}.")
         return self._result_from_state(state)
 
+    async def replay_frames(
+        self,
+        frames: tuple[FramePacket, ...],
+    ) -> tuple[ObservationResult, ...]:
+        """Replay retained packets without starting the timer-driven monitor.
+
+        Snapshot compatibility replay deliberately does not claim continuous tracking,
+        detection, or field-equivalent proposal authority.
+        """
+
+        if not frames:
+            return ()
+        return (ObservationResult(
+            provider_id=self.provider_id,
+            source_id="replay",
+            stream_id=frames[0].stream_id,
+            observed_at=None,
+            frame_packets=frames,
+        ),)
+
     async def health(self, *, stream_id: str | None = None) -> ObservationProviderHealth:
         """Read in-memory state only; status never captures or starts monitoring."""
 

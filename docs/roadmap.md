@@ -32,7 +32,7 @@ lineage from subject presence, and never silently rewrites historical selections
 or reviewed truth. A delayed high-resolution crop remains retained secondary
 evidence unless durable facts affirm subject continuity at capture time. Optimal
 multi-frame visual evidence ranking moves to Observation Engine v2 Stage 6;
-**Observation Engine v2 Stage 1** is complete: provider-neutral contracts, an honest status surface, and `SnapshotObservationProvider` now wrap the established bounded timer-driven observer without changing its evidence or truth behavior. **Observation Engine v2 Stage 2** deterministic recorded-media replay benchmarks are next. This remains a contained
+**Observation Engine v2 Stages 1-2** are complete: provider-neutral contracts wrap the established observer, and deterministic shadow-only ordered-frame replay now provides safe reproducible benchmark reports. Video-file decoding remains later; Stage 3 RTX 4070 ONNX Runtime CUDA shadow inference is next. This remains a contained
 observation-subsystem rework using a strangler migration: keep the MockingBird
 product; replace its observation engine through a modular migration.
 `SnapshotObservationProvider` names the current timer-driven path and remains a

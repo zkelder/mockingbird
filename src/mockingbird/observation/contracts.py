@@ -18,6 +18,10 @@ class FramePacket:
     stream_id: str
     media_asset_id: str
     captured_at: datetime | None
+    frame_id: str | None = None
+    source_offset_ms: int | None = None
+    width: int | None = None
+    height: int | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,10 @@ class VisitProposal:
     stream_id: str
     evidence_media_asset_ids: tuple[str, ...]
     reason: str
+    start_offset_ms: int | None = None
+    end_offset_ms: int | None = None
+    zone_id: str | None = None
+    shadow_only: bool = True
 
 
 @dataclass(frozen=True)

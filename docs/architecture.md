@@ -93,6 +93,9 @@ required for the core product.
 ### Observation Engine v2 boundary
 
 Stage 1 is implemented: provider-neutral evidence contracts, an explicit active-provider registry, and a read-only health/capability surface wrap the established timer-driven observer as `SnapshotObservationProvider`. The compatibility provider delegates to the existing bounded snapshot monitor; it creates no parallel runtime, detector, or truth path.
+Stage 2 adds the deterministic, shadow-only ordered-frame replay host described in
+[observation-replay-benchmark-contract.md](observation-replay-benchmark-contract.md).
+It performs no durable product or truth writes.
 
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
