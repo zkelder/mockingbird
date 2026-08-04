@@ -15,11 +15,17 @@ execution providers, CUDA and model-bundle status, device/accelerator, shadow mo
 and unsupported capabilities. It does not load a model, touch a camera, start a
 worker, or write state.
 
-`CUDAExecutionProvider` is mandatory. Session creation requests only that provider,
-sets bounded thread counts, disables CPU execution-provider fallback, and verifies
-the selected provider contract. Missing packages, missing CUDA support, load errors,
-and inference errors produce bounded error codes. There is no automatic package
-installation, model download, network request, or ONNX CPU fallback.
+`CUDAExecutionProvider` is mandatory and must be registered first. Session creation
+requests CUDA, sets bounded thread counts, and sets
+`session.disable_cpu_ep_fallback=1`. A registered `CPUExecutionProvider` is not by
+itself evidence of fallback. Bounded ONNX Runtime profiling classifies actual model
+node execution as `cuda_only_verified`, `mixed_cuda_cpu_execution`, or
+`cuda_execution_verification_insufficient`; activation accepts only the first, with
+at least one CUDA node and zero CPU or unattributed model nodes. Raw profile paths and
+traces stay temporary and non-semantic. Missing CUDA support, load errors, inference
+errors, mixed execution, and insufficient assignment evidence produce bounded error
+codes. There is no automatic package installation, model download, network request,
+or ONNX CPU fallback.
 
 ## Portable model bundle
 
@@ -39,12 +45,26 @@ unsupported schema/format/decoder values, unsafe dimensions, and malformed field
 are rejected. Model paths never enter the semantic report. Model weights and GPU
 caches are not committed.
 
-The first decoder contract is `xyxy-score-class-v1`: the first named output is a
-bounded `N x 6` tensor containing input-space `x1,y1,x2,y2,score,class_index`.
-Coordinates are mapped through the declared resize transform to quantized,
-normalized source-space boxes. Non-finite/malformed values, invalid classes, invalid
-boxes, and oversized output are rejected. Stable output order is frame sequence,
-descending quantized score, broad class, normalized box, then stable observation ID.
+The compatibility decoder contract remains `xyxy-score-class-v1`: the first named
+output is a bounded `N x 6` tensor containing input-space
+`x1,y1,x2,y2,score,class_index`.
+
+The model-specific `megadetector_v5_yolov5_raw_v1` decoder consumes one bounded
+`[1,N,8]` MDv5/YOLOv5 tensor whose sigmoid probabilities have already been applied.
+Columns are center `x,y,width,height`, objectness, and animal/person/vehicle class
+probabilities. It uses strict objectness and final-confidence thresholds, computes
+`objectness * best_class_probability`, applies class-aware NMS at the bundle's IoU
+threshold, and bounds final detections. The bundle fixes raw output shape, source and
+ONNX fingerprints, the `animal, person, vehicle` class order, animal subset, score
+threshold, NMS threshold, and candidate/detection limits. Coordinates are reversed
+through the declared classic letterbox transform, clipped and rounded in source
+pixels, then converted to normalized boxes with MDv5's four-decimal coordinate and
+three-decimal confidence truncation.
+
+Both decoders reject non-finite or malformed values, invalid classes/boxes, and
+oversized output. Stable output order is frame sequence, descending quantized score,
+broad class, normalized box, then stable observation ID. Neither decoder emits
+species truth or product writes.
 
 ## Replay and report boundary
 

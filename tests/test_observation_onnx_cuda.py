@@ -46,6 +46,14 @@ class FakeSession:
             raise self.outputs
         return self.outputs
 
+    def execution_assignment(self) -> dict[str, object]:
+        return {
+            "classification": "cuda_only_verified",
+            "cuda_executed_nodes": max(1, len(self.calls)),
+            "cpu_executed_nodes": 0,
+            "unknown_executed_nodes": 0,
+        }
+
     def close(self) -> None:
         self.closed = True
 
@@ -159,7 +167,7 @@ def test_model_bundle_validation_is_versioned_hashed_and_decoder_specific(tmp_pa
             OnnxModelBundle.load(manifest)
 
 
-def test_load_requires_cuda_and_never_accepts_cpu_fallback(tmp_path: Path) -> None:
+def test_load_requires_cuda_and_accepts_registered_cpu_when_cuda_is_first(tmp_path: Path) -> None:
     _, bundle = _bundle(tmp_path)
     cpu_runtime = FakeRuntime(FakeSession([], ("CPUExecutionProvider",)), ("CPUExecutionProvider",))
     with pytest.raises(ReplayValidationError, match="onnx_cuda_unavailable"):
@@ -168,8 +176,11 @@ def test_load_requires_cuda_and_never_accepts_cpu_fallback(tmp_path: Path) -> No
 
     mixed = FakeSession([], ("CUDAExecutionProvider", "CPUExecutionProvider"))
     provider = OnnxCudaObservationProvider(runtime=FakeRuntime(mixed), bundle=bundle)
-    with pytest.raises(ReplayValidationError, match="onnx_cuda_no_fallback"):
-        provider.load()
+    provider.load()
+    assert provider.execution_facts()["selected_execution_providers"] == [
+        "CUDAExecutionProvider", "CPUExecutionProvider"
+    ]
+    provider.close()
     assert mixed.closed is True
 
 

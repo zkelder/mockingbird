@@ -144,6 +144,8 @@ def run(argv: list[str] | None = None) -> int:
             "onnx_cuda_no_fallback": 10,
             "onnx_cuda_session_load_failed": 11,
             "onnx_cuda_inference_failed": 12,
+            "onnx_cuda_mixed_execution": 13,
+            "onnx_cuda_verification_insufficient": 14,
         }.get(str(error), 2)
 
 

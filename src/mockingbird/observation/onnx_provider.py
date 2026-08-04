@@ -8,6 +8,7 @@ from importlib import import_module, util
 import json
 import math
 from pathlib import Path
+import tempfile
 from time import perf_counter
 from typing import Any, Protocol
 
@@ -16,16 +17,23 @@ from mockingbird.observation.contracts import (
     ObservationProviderDescriptor, ObservationProviderHealth, ObservationResult,
 )
 from mockingbird.observation.replay import ReplayValidationError, semantic_fingerprint
+from mockingbird.observation.mdv5_decoder import (
+    MDV5_DECODER_KEY,
+    MAX_MDV5_RAW_CANDIDATES,
+    decode_md_v5_raw,
+)
 
 BUNDLE_SCHEMA_VERSION = 1
 PROVIDER_VERSION = "onnx-cuda-shadow-v1"
 PREPROCESS_VERSION = "image-letterbox-v1"
-POSTPROCESS_VERSION = "xyxy-score-class-v1"
 DECODER_KEY = "xyxy-score-class-v1"
 MAX_OBSERVATIONS_PER_FRAME = 500
 MAX_INPUT_PIXELS = 16_777_216
 MAX_DECODE_ROWS = 10_000
 MAX_REPLAY_OBSERVATIONS = 100_000
+CUDA_EXECUTION_VERIFIED = "cuda_only_verified"
+CUDA_EXECUTION_MIXED = "mixed_cuda_cpu_execution"
+CUDA_EXECUTION_UNVERIFIABLE = "cuda_execution_verification_insufficient"
 
 
 class CudaRuntime(Protocol):
@@ -61,9 +69,89 @@ class OptionalOrtCudaRuntime:
             options.intra_op_num_threads = 1
             options.inter_op_num_threads = 1
             options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
-            return runtime.InferenceSession(str(model_path), sess_options=options, providers=["CUDAExecutionProvider"])
+            profile_root = tempfile.TemporaryDirectory(prefix="mockingbird-onnx-profile-")
+            options.enable_profiling = True
+            options.profile_file_prefix = str(Path(profile_root.name) / "onnxruntime")
+            try:
+                session = runtime.InferenceSession(
+                    str(model_path), sess_options=options, providers=["CUDAExecutionProvider"]
+                )
+            except Exception:
+                profile_root.cleanup()
+                raise
+            return _ProfiledOrtSession(session, profile_root)
         except Exception as error:
             raise ReplayValidationError("onnx_cuda_session_load_failed") from error
+
+
+class _ProfiledOrtSession:
+    """Own an ORT session and classify actual node execution from its profile."""
+
+    def __init__(self, session: Any, profile_root: tempfile.TemporaryDirectory[str]) -> None:
+        self._session = session
+        self._profile_root = profile_root
+        self._profile_path: Path | None = None
+        self._assignment: dict[str, object] | None = None
+
+    def get_providers(self) -> list[str]:
+        return list(self._session.get_providers())
+
+    def run(self, output_names: list[str], inputs: dict[str, Any]) -> Any:
+        return self._session.run(output_names, inputs)
+
+    def execution_assignment(self) -> dict[str, object]:
+        if self._assignment is not None:
+            return dict(self._assignment)
+        try:
+            if self._profile_path is None:
+                self._profile_path = Path(self._session.end_profiling())
+            events = json.loads(self._profile_path.read_text(encoding="utf-8"))
+            counts = {"CUDAExecutionProvider": 0, "CPUExecutionProvider": 0, "unknown": 0}
+            for event in events:
+                if not isinstance(event, dict) or event.get("cat") != "Node":
+                    continue
+                args = event.get("args")
+                if not isinstance(args, dict) or not args.get("op_name"):
+                    continue
+                provider = args.get("provider")
+                if provider in counts:
+                    counts[provider] += 1
+                else:
+                    counts["unknown"] += 1
+            cuda_nodes = counts["CUDAExecutionProvider"]
+            cpu_nodes = counts["CPUExecutionProvider"]
+            unknown_nodes = counts["unknown"]
+            if cpu_nodes:
+                classification = CUDA_EXECUTION_MIXED
+            elif cuda_nodes and not unknown_nodes:
+                classification = CUDA_EXECUTION_VERIFIED
+            else:
+                classification = CUDA_EXECUTION_UNVERIFIABLE
+            self._assignment = {
+                "classification": classification,
+                "cuda_executed_nodes": cuda_nodes,
+                "cpu_executed_nodes": cpu_nodes,
+                "unknown_executed_nodes": unknown_nodes,
+            }
+            return dict(self._assignment)
+        except Exception as error:
+            self._assignment = {
+                "classification": CUDA_EXECUTION_UNVERIFIABLE,
+                "cuda_executed_nodes": 0,
+                "cpu_executed_nodes": 0,
+                "unknown_executed_nodes": 0,
+                "error_type": type(error).__name__,
+            }
+            return dict(self._assignment)
+        finally:
+            if self._profile_path is not None:
+                self._profile_path.unlink(missing_ok=True)
+
+    def close(self) -> None:
+        if self._assignment is None:
+            self.execution_assignment()
+        self._session = None
+        self._profile_root.cleanup()
 
 
 @dataclass(frozen=True)
@@ -97,6 +185,11 @@ class OnnxModelBundle:
     limitations: tuple[str, ...]
     score_threshold: float = 0.25
     max_observations_per_frame: int = 100
+    source_model_fingerprint: str | None = None
+    nms_iou_threshold: float = 0.45
+    nms_max_detections: int = 300
+    max_decode_candidates: int = MAX_MDV5_RAW_CANDIDATES
+    raw_output_shape: tuple[int, int, int] | None = None
 
     @property
     def fingerprint(self) -> str:
@@ -130,7 +223,7 @@ class OnnxModelBundle:
         if data.get("model_format") != "ONNX":
             raise ReplayValidationError("unsupported_model_format")
         decoder = data.get("decoder_key")
-        if decoder != DECODER_KEY:
+        if decoder not in {DECODER_KEY, MDV5_DECODER_KEY}:
             raise ReplayValidationError("unsupported_decoder")
         try:
             bundle = cls(
@@ -156,6 +249,11 @@ class OnnxModelBundle:
                 limitations=tuple(_string_list(data, "limitations")),
                 score_threshold=float(data.get("score_threshold", 0.25)),
                 max_observations_per_frame=int(data.get("max_observations_per_frame", 100)),
+                source_model_fingerprint=_optional_sha256(data, "source_model_fingerprint"),
+                nms_iou_threshold=float(data.get("nms_iou_threshold", 0.45)),
+                nms_max_detections=int(data.get("nms_max_detections", 300)),
+                max_decode_candidates=int(data.get("max_decode_candidates", MAX_MDV5_RAW_CANDIDATES)),
+                raw_output_shape=_optional_shape(data, "raw_output_shape"),
             )
         except (KeyError, TypeError, ValueError) as error:
             raise ReplayValidationError("invalid_model_bundle") from error
@@ -167,6 +265,21 @@ class OnnxModelBundle:
             or not set(bundle.animal_classes) <= set(bundle.broad_classes)
             or not math.isfinite(bundle.input_scale)
             or not 0 < bundle.input_scale <= 1
+            or not math.isfinite(bundle.nms_iou_threshold)
+            or not 0 < bundle.nms_iou_threshold < 1
+            or not 1 <= bundle.nms_max_detections <= MAX_OBSERVATIONS_PER_FRAME
+            or not 1 <= bundle.max_decode_candidates <= MAX_MDV5_RAW_CANDIDATES
+        ):
+            raise ReplayValidationError("invalid_model_bundle")
+        if bundle.decoder_key == MDV5_DECODER_KEY and (
+            bundle.broad_classes != ("animal", "person", "vehicle")
+            or bundle.animal_classes != ("animal",)
+            or len(bundle.output_names) != 1
+            or bundle.source_model_fingerprint is None
+            or bundle.raw_output_shape is None
+            or bundle.raw_output_shape[0] != 1
+            or bundle.raw_output_shape[2] != 8
+            or not 1 <= bundle.raw_output_shape[1] <= bundle.max_decode_candidates
         ):
             raise ReplayValidationError("invalid_model_bundle")
         return bundle
@@ -193,6 +306,7 @@ class OnnxCudaObservationProvider:
         self._session: Any | None = None
         self._selected_providers: tuple[str, ...] = ()
         self._latencies_ms: list[float] = []
+        self._cuda_execution_verification: dict[str, object] | None = None
 
     @classmethod
     def unconfigured(cls, *, runtime: CudaRuntime | None = None) -> "OnnxCudaObservationProvider":
@@ -258,7 +372,7 @@ class OnnxCudaObservationProvider:
         except Exception as error:
             self.close()
             raise ReplayValidationError("onnx_cuda_session_load_failed") from error
-        if selected != ("CUDAExecutionProvider",):
+        if not selected or selected[0] != "CUDAExecutionProvider":
             self.close()
             raise ReplayValidationError("onnx_cuda_no_fallback")
         self._selected_providers = selected
@@ -266,6 +380,7 @@ class OnnxCudaObservationProvider:
     def close(self) -> None:
         session, self._session = self._session, None
         self._selected_providers = ()
+        self._cuda_execution_verification = None
         if session is not None and hasattr(session, "close"):
             session.close()
 
@@ -275,20 +390,29 @@ class OnnxCudaObservationProvider:
             **self.probe(), "selected_execution_providers": list(self._selected_providers),
             "model": None if bundle is None else {"key": bundle.model_key, "version": bundle.model_version,
                 "fingerprint": bundle.model_fingerprint, "bundle_fingerprint": bundle.fingerprint,
+                "source_model_fingerprint": bundle.source_model_fingerprint,
                 "format": bundle.model_format, "license": bundle.license_name,
                 "redistribution": bundle.redistribution, "taxonomy": bundle.taxonomy,
                 "broad_classes": list(bundle.broad_classes),
                 "animal_classes": list(bundle.animal_classes),
                 "provenance": bundle.provenance, "decoder": bundle.decoder_key,
+                "raw_output_shape": None if bundle.raw_output_shape is None else list(bundle.raw_output_shape),
+                "score_threshold": bundle.score_threshold,
+                "nms_iou_threshold": bundle.nms_iou_threshold,
+                "nms_max_detections": bundle.nms_max_detections,
+                "max_decode_candidates": bundle.max_decode_candidates,
                 "preprocessing_version": PREPROCESS_VERSION,
-                "postprocessing_version": POSTPROCESS_VERSION},
+                "postprocessing_version": bundle.decoder_key},
             "limitations": list(bundle.limitations if bundle else ("provider configuration required",)),
         }
 
     def execution_facts(self) -> dict[str, object]:
         values = sorted(self._latencies_ms)
         return {"inference_count": len(values), "latency_ms_median": _percentile(values, 0.5),
-                "latency_ms_p95": _percentile(values, 0.95), "selected_execution_providers": list(self._selected_providers)}
+                "latency_ms_p90": _percentile(values, 0.90),
+                "latency_ms_p95": _percentile(values, 0.95),
+                "selected_execution_providers": list(self._selected_providers),
+                "cuda_execution_verification": self._cuda_execution_verification}
 
     async def replay_frames(self, frames: tuple[FramePacket, ...]) -> tuple[ObservationResult, ...]:
         if self._session is None or self._bundle is None:
@@ -309,7 +433,30 @@ class OnnxCudaObservationProvider:
                 raise ReplayValidationError("detector_output_limit")
             results.append(ObservationResult(self.provider_id, "replay", frame.stream_id,
                 _captured_at(frame), frame_packets=(frame,), detection_observations=detections))
+        self._verify_cuda_execution()
         return tuple(results)
+
+    def _verify_cuda_execution(self) -> None:
+        if self._session is None:
+            raise ReplayValidationError("provider_not_loaded")
+        reader = getattr(self._session, "execution_assignment", None)
+        evidence = reader() if callable(reader) else None
+        if not isinstance(evidence, dict):
+            evidence = {"classification": CUDA_EXECUTION_UNVERIFIABLE}
+        self._cuda_execution_verification = dict(evidence)
+        cuda_nodes = evidence.get("cuda_executed_nodes")
+        cpu_nodes = evidence.get("cpu_executed_nodes")
+        unknown_nodes = evidence.get("unknown_executed_nodes")
+        if isinstance(cpu_nodes, int) and not isinstance(cpu_nodes, bool) and cpu_nodes > 0:
+            self._cuda_execution_verification["classification"] = CUDA_EXECUTION_MIXED
+            raise ReplayValidationError("onnx_cuda_mixed_execution")
+        verified_counts = (
+            isinstance(cuda_nodes, int) and not isinstance(cuda_nodes, bool) and cuda_nodes > 0
+            and cpu_nodes == 0 and unknown_nodes == 0
+        )
+        if evidence.get("classification") != CUDA_EXECUTION_VERIFIED or not verified_counts:
+            self._cuda_execution_verification["classification"] = CUDA_EXECUTION_UNVERIFIABLE
+            raise ReplayValidationError("onnx_cuda_verification_insufficient")
 
 
 def _preprocess(frame: FramePacket, bundle: OnnxModelBundle) -> tuple[Any, _Transform]:
@@ -353,6 +500,27 @@ def _preprocess(frame: FramePacket, bundle: OnnxModelBundle) -> tuple[Any, _Tran
 
 
 def _decode(outputs: Any, frame: FramePacket, bundle: OnnxModelBundle, transform: _Transform) -> tuple[DetectionObservation, ...]:
+    if bundle.decoder_key == MDV5_DECODER_KEY:
+        decoded = decode_md_v5_raw(
+            outputs,
+            score_threshold=bundle.score_threshold,
+            nms_iou_threshold=bundle.nms_iou_threshold,
+            nms_max_detections=bundle.nms_max_detections,
+            max_decode_candidates=bundle.max_decode_candidates,
+            raw_output_shape=bundle.raw_output_shape,
+            transform=transform,
+        )
+        candidates = tuple(
+            _observation(
+                frame,
+                bundle,
+                class_index=item.class_index,
+                score=item.confidence,
+                box=item.bounding_box,
+            )
+            for item in decoded
+        )
+        return tuple(sorted(candidates, key=_observation_order)[:bundle.max_observations_per_frame])
     try:
         if not isinstance(outputs, (list, tuple)) or not outputs:
             raise ReplayValidationError("malformed_detector_output")
@@ -373,25 +541,54 @@ def _decode(outputs: Any, frame: FramePacket, bundle: OnnxModelBundle, transform
                 raise ReplayValidationError("malformed_detector_output")
             class_index = int(class_id)
             if class_index < 0 or class_index >= len(bundle.broad_classes): raise ReplayValidationError("malformed_detector_output")
-            box = _source_box((x1, y1, x2, y2), transform)
-            score = round(score, 6); box = tuple(round(value, 6) for value in box)
+            box = tuple(round(value, 6) for value in _source_box((x1, y1, x2, y2), transform))
+            score = round(score, 6)
             if box[0] >= box[2] or box[1] >= box[3]:
                 raise ReplayValidationError("malformed_detector_output")
-            key = semantic_fingerprint((frame.frame_id, bundle.model_key, bundle.model_version, class_index, score, box))
-            candidates.append(DetectionObservation(
-                detector_id=f"{bundle.model_key}:{bundle.model_version}", label=bundle.broad_classes[class_index],
-                confidence=score, captured_at=_captured_at(frame), observation_id=key, frame_id=frame.frame_id,
-                provider_id="onnx-cuda", model_key=bundle.model_key, generation_id=bundle.fingerprint,
-                bounding_box=box, class_source_label=str(class_index),
-                is_animal=bundle.broad_classes[class_index] in bundle.animal_classes,
-            ))
-        candidates.sort(key=lambda item: (-float(item.confidence or 0), item.label, item.bounding_box or (), item.observation_id or ""))
+            candidates.append(_observation(frame, bundle, class_index=class_index, score=score, box=box))
+        candidates.sort(key=_observation_order)
         return tuple(candidates[:bundle.max_observations_per_frame])
     except ReplayValidationError:
         raise
     except Exception as error:
         raise ReplayValidationError("malformed_detector_output") from error
 
+
+def _observation(
+    frame: FramePacket,
+    bundle: OnnxModelBundle,
+    *,
+    class_index: int,
+    score: float,
+    box: tuple[float, float, float, float],
+) -> DetectionObservation:
+    key = semantic_fingerprint(
+        (frame.frame_id, bundle.model_key, bundle.model_version, class_index, score, box)
+    )
+    label = bundle.broad_classes[class_index]
+    return DetectionObservation(
+        detector_id=f"{bundle.model_key}:{bundle.model_version}",
+        label=label,
+        confidence=score,
+        captured_at=_captured_at(frame),
+        observation_id=key,
+        frame_id=frame.frame_id,
+        provider_id="onnx-cuda",
+        model_key=bundle.model_key,
+        generation_id=bundle.fingerprint,
+        bounding_box=box,
+        class_source_label=str(class_index),
+        is_animal=label in bundle.animal_classes,
+    )
+
+
+def _observation_order(item: DetectionObservation) -> tuple[object, ...]:
+    return (
+        -float(item.confidence or 0),
+        item.label,
+        item.bounding_box or (),
+        item.observation_id or "",
+    )
 
 def _source_box(box: tuple[float, float, float, float], transform: _Transform) -> tuple[float, float, float, float]:
     x1, y1, x2, y2 = box
@@ -462,6 +659,35 @@ def _string_list(data: dict[str, Any], key: str) -> list[str]:
     return value
 
 
+def _optional_sha256(data: dict[str, Any], key: str) -> str | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        raise ReplayValidationError("invalid_model_bundle")
+    return value
+
+
+def _optional_shape(data: dict[str, Any], key: str) -> tuple[int, int, int] | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if (
+        not isinstance(value, list)
+        or len(value) != 3
+        or not all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in value)
+    ):
+        raise ReplayValidationError("invalid_model_bundle")
+    return tuple(value)
+
+
 def _percentile(values: list[float], fraction: float) -> float | None:
-    if not values: return None
-    return round(values[min(len(values) - 1, int((len(values) - 1) * fraction))], 3)
+    if not values:
+        return None
+    position = (len(values) - 1) * fraction
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return round(values[lower], 3)
+    interpolated = values[lower] + (values[upper] - values[lower]) * (position - lower)
+    return round(interpolated, 3)
