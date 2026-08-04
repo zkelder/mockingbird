@@ -32,25 +32,28 @@ lineage from subject presence, and never silently rewrites historical selections
 or reviewed truth. A delayed high-resolution crop remains retained secondary
 evidence unless durable facts affirm subject continuity at capture time. Optimal
 multi-frame visual evidence ranking moves to Observation Engine v2 Stage 6;
-**Observation Engine v2 Stages 1-3** are complete at the hardware-free contract
-gate: provider-neutral contracts wrap the established observer, deterministic
-shadow-only ordered-frame replay provides reproducible reports, and the optional
-ONNX Runtime CUDA provider performs replay-only DetectionObservation inference with
-an explicit local model bundle and no CPU fallback. Local RTX 4070 activation remains
-a separate pending validation until a compatible local ONNX bundle is supplied.
-Stage 4, the continuous frame-driven detector/tracker pipeline, is next. This
-remains a contained
-observation-subsystem rework using a strangler migration: keep the MockingBird
-product; replace its observation engine through a modular migration.
+**Observation Engine v2 Stages 1-4** are complete: provider-neutral contracts
+wrap the established observer, deterministic shadow-only ordered-frame replay
+provides reproducible reports, the optional ONNX Runtime CUDA provider performs
+local-model detection with verified no-CPU fallback, and the distinct
+`frame-driven-onnx-cuda` provider now schedules detection from source time,
+tracks intervening analysis frames, retains bounded evidence candidates, and
+emits idempotent shadow-only Visit proposals. Stage 3 was activated on the local
+RTX 4060 Ti with 886 CUDA-executed and zero CPU-executed model nodes. Stage 4
+remains replay-first and has neither live-stream input nor production proposal
+authority. Stage 5, the provider-neutral Camera Node analysis-stream and evidence-
+burst capability boundary, is next. This remains a contained observation-
+subsystem strangler migration: keep the MockingBird product; replace its
+observation engine through a modular migration.
 `SnapshotObservationProvider` names the current timer-driven path and remains a
 compatibility, fallback, and deterministic comparison provider rather than the
 long-term golden path.
 
 Observation Engine v2 sequence: (1) provider-neutral frame/detection/track/
 evidence/Visit-proposal capability contracts; (2) deterministic recorded-media
-replay benchmarks; (3) RTX 4070 ONNX Runtime CUDA shadow provider with no durable
-writes (hardware-free contract complete; local RTX activation pending); (4)
-frame-driven detector/tracker pipeline; (5) provider-neutral Camera
+replay benchmarks; (3) ONNX Runtime CUDA shadow provider with verified local RTX 4060 Ti
+activation and no durable writes; (4) replay-first frame-driven detector/tracker
+shadow pipeline; (5) provider-neutral Camera
 Node analysis-stream/evidence-burst capabilities; (6) multi-frame evidence
 scoring and old/new shadow comparison; (7) controlled proposal-authority
 migration only after measured success; and (8) multi-frame interpretation after

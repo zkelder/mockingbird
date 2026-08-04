@@ -13,6 +13,12 @@ from mockingbird.observation.contracts import (
     TrackUpdate,
     VisitProposal,
 )
+from mockingbird.observation.frame_driven_provider import (
+    FrameDrivenObservationProvider,
+    FrameDrivenProviderConfiguration,
+    FrameDrivenSettings,
+)
+from mockingbird.observation.frame_tracker import ProviderNeutralFrameTracker, TrackerConfiguration
 from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, OnnxModelBundle
 from mockingbird.observation.registry import ObservationEngineRegistry
 from mockingbird.observation.snapshot_provider import SnapshotObservationProvider
@@ -20,6 +26,9 @@ from mockingbird.observation.snapshot_provider import SnapshotObservationProvide
 __all__ = [
     "DetectionObservation",
     "EvidenceCandidate",
+    "FrameDrivenObservationProvider",
+    "FrameDrivenProviderConfiguration",
+    "FrameDrivenSettings",
     "FramePacket",
     "ObservationEngineRegistry",
     "ObservationEngineStatus",
@@ -29,8 +38,10 @@ __all__ = [
     "ObservationProvider",
     "ObservationResult",
     "OnnxCudaObservationProvider",
+    "ProviderNeutralFrameTracker",
     "OnnxModelBundle",
     "SnapshotObservationProvider",
     "TrackUpdate",
+    "TrackerConfiguration",
     "VisitProposal",
 ]

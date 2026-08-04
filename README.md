@@ -167,6 +167,23 @@ emits detector evidence only; it does not start cameras or monitoring, track
 animals, create Visits, or write product truth. See the
 [ONNX CUDA shadow-provider contract](docs/onnx-cuda-shadow-provider-contract.md).
 
+Stage 4 uses a separate portable provider configuration that names the model
+bundle and bounded source-time detector/tracker settings:
+
+```sh
+python -m mockingbird replay-benchmark \
+  --provider frame-driven-onnx-cuda \
+  --frames data/replay/frames \
+  --manifest data/replay/benchmark.json \
+  --provider-config data/models/observation-frame-driven/provider-config.json \
+  --output data/replay/frame-driven-output
+```
+
+This path adds continuous analysis-frame tracking and shadow-only Visit proposals
+inside deterministic replay. It still starts no camera, live monitor, Camera Node,
+or production Visit handoff. See the
+[frame-driven shadow-provider contract](docs/frame-driven-shadow-provider-contract.md).
+
 ### Optional local species suggestions
 
 The current BioCLIP 2 path is a local reviewer-assistance action inside the

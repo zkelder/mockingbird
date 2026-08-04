@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    "stationary_feeder_bird",
+    "brief_fast_bird",
+    "bird_with_short_detector_miss",
+    "two_separate_bird_visits",
+    "two_simultaneous_birds",
+    "crossing_tracks",
+    "blank_noise_sequence",
+    "false_animal_like_detection",
+    "fragmented_baseline",
+    "incorrect_merge_baseline",
+    "privacy_ignore_region",
+    "end_of_replay_closure"
+  ]
+}

@@ -50,7 +50,13 @@ def load_replay_bundle(frames_directory: Path, manifest_path: Path) -> ReplayBun
         declared_hash = item.get("content_hash")
         if declared_hash is not None and declared_hash != content_hash:
             raise ReplayValidationError("frame_hash_mismatch")
-        frames.append(ReplayFrame(index, _require_int(item, "source_offset_ms", minimum=0), content_hash, str(candidate)))
+        frames.append(ReplayFrame(
+            index,
+            _require_int(item, "source_offset_ms", minimum=0),
+            content_hash,
+            str(candidate),
+            _excluded_regions(item.get("analysis_excluded_regions", [])),
+        ))
     replay = ReplayInput(_require_string(document, "input_id"), _require_string(document, "stream_id"),
                          width, height, _require_number(document, "nominal_fps", minimum=0.000001), tuple(frames))
     manifest = BenchmarkManifest(
@@ -83,6 +89,9 @@ def write_replay_report(output_directory: Path, report: ReplayReport, *, replay:
             asdict(item) for item in sorted(manifest.detections, key=lambda item: (item.frame_index, item.annotation_id))
         ],
         "detections": [asdict(item) for item in report.detections],
+        "track_updates": [asdict(item) for item in report.track_updates],
+        "evidence_candidates": [asdict(item) for item in report.evidence_candidates],
+        "pipeline_facts": dict(sorted((report.pipeline_facts or {}).items())),
         "proposals": [asdict(item) for item in sorted(report.proposals, key=lambda item: item.proposal_key)],
         "matches": [asdict(item) for item in report.matches],
         "metrics": report.metrics,
@@ -197,6 +206,24 @@ def _detection(value: object) -> ExpectedDetection:
         _require_string(value, "broad_class"),
         tuple(float(item) for item in box),
     )
+
+
+def _excluded_regions(value: object) -> tuple[tuple[float, float, float, float], ...]:
+    if not isinstance(value, list) or len(value) > 32:
+        raise ReplayValidationError("invalid_analysis_excluded_regions")
+    regions: list[tuple[float, float, float, float]] = []
+    for box in value:
+        if (
+            not isinstance(box, list)
+            or len(box) != 4
+            or not all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in box)
+        ):
+            raise ReplayValidationError("invalid_analysis_excluded_regions")
+        normalized = tuple(float(item) for item in box)
+        if not all(0.0 <= item <= 1.0 for item in normalized) or normalized[0] >= normalized[2] or normalized[1] >= normalized[3]:
+            raise ReplayValidationError("invalid_analysis_excluded_regions")
+        regions.append(normalized)
+    return tuple(regions)
 
 
 def _thresholds(value: object) -> dict[str, float]:

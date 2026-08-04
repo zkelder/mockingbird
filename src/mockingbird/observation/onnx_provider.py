@@ -414,26 +414,45 @@ class OnnxCudaObservationProvider:
                 "selected_execution_providers": list(self._selected_providers),
                 "cuda_execution_verification": self._cuda_execution_verification}
 
-    async def replay_frames(self, frames: tuple[FramePacket, ...]) -> tuple[ObservationResult, ...]:
+    async def infer_frame(self, frame: FramePacket) -> tuple[DetectionObservation, ...]:
+        """Run one ordered replay frame without finalizing execution profiling."""
+
         if self._session is None or self._bundle is None:
             raise ReplayValidationError("provider_not_loaded")
+        tensor, transform = _preprocess(frame, self._bundle)
+        started = perf_counter()
+        try:
+            outputs = self._session.run(
+                list(self._bundle.output_names),
+                {self._bundle.input_name: tensor},
+            )
+        except Exception as error:
+            raise ReplayValidationError("onnx_cuda_inference_failed") from error
+        self._latencies_ms.append((perf_counter() - started) * 1000)
+        return _decode(outputs, frame, self._bundle, transform)
+
+    def finalize_replay(self) -> None:
+        """Prove CUDA-only execution after the final scheduled inference."""
+
+        self._verify_cuda_execution()
+
+    async def replay_frames(self, frames: tuple[FramePacket, ...]) -> tuple[ObservationResult, ...]:
         results: list[ObservationResult] = []
         observation_count = 0
         for frame in frames:
-            tensor, transform = _preprocess(frame, self._bundle)
-            started = perf_counter()
-            try:
-                outputs = self._session.run(list(self._bundle.output_names), {self._bundle.input_name: tensor})
-            except Exception as error:
-                raise ReplayValidationError("onnx_cuda_inference_failed") from error
-            self._latencies_ms.append((perf_counter() - started) * 1000)
-            detections = _decode(outputs, frame, self._bundle, transform)
+            detections = await self.infer_frame(frame)
             observation_count += len(detections)
             if observation_count > MAX_REPLAY_OBSERVATIONS:
                 raise ReplayValidationError("detector_output_limit")
-            results.append(ObservationResult(self.provider_id, "replay", frame.stream_id,
-                _captured_at(frame), frame_packets=(frame,), detection_observations=detections))
-        self._verify_cuda_execution()
+            results.append(ObservationResult(
+                self.provider_id,
+                "replay",
+                frame.stream_id,
+                _captured_at(frame),
+                frame_packets=(frame,),
+                detection_observations=detections,
+            ))
+        self.finalize_replay()
         return tuple(results)
 
     def _verify_cuda_execution(self) -> None:
@@ -469,6 +488,18 @@ def _preprocess(frame: FramePacket, bundle: OnnxModelBundle) -> tuple[Any, _Tran
             source_format = source.format
             source.load(); image = source.convert("RGB")
             source_width, source_height = image.size
+            if frame.analysis_excluded_regions:
+                draw_module = import_module("PIL.ImageDraw")
+                image = image.copy()
+                draw = draw_module.Draw(image)
+                for left, top, right, bottom in frame.analysis_excluded_regions:
+                    draw.rectangle(
+                        (
+                            round(left * source_width), round(top * source_height),
+                            round(right * source_width), round(bottom * source_height),
+                        ),
+                        fill=(0, 0, 0),
+                    )
             if source_format not in {"JPEG", "PNG"}:
                 raise ReplayValidationError("unsupported_frame_content_type")
             if (frame.width is not None and frame.width != source_width) or (

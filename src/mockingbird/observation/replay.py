@@ -6,7 +6,9 @@ from hashlib import sha256
 import json
 from typing import Protocol
 
-from mockingbird.observation.contracts import DetectionObservation, FramePacket, ObservationResult, VisitProposal
+from mockingbird.observation.contracts import (
+    DetectionObservation, EvidenceCandidate, FramePacket, ObservationResult, TrackUpdate, VisitProposal,
+)
 
 MANIFEST_VERSION = 1
 FRAME_IDENTITY_VERSION = "ordered-frame-v1"
@@ -34,6 +36,7 @@ class ReplayFrame:
     source_offset_ms: int
     content_hash: str
     source_path: str | None = None
+    analysis_excluded_regions: tuple[tuple[float, float, float, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -52,17 +55,32 @@ class ReplayInput:
             raise ReplayValidationError("invalid_source_metadata")
         if any(frame.index != index for index, frame in enumerate(self.frames)):
             raise ReplayValidationError("frame_indices")
-        if any(not frame.content_hash or frame.source_offset_ms < 0 for frame in self.frames):
+        if any(
+            not frame.content_hash
+            or frame.source_offset_ms < 0
+            or any(not _valid_box(box) for box in frame.analysis_excluded_regions)
+            for frame in self.frames
+        ):
             raise ReplayValidationError("invalid_frame")
         if any(a.source_offset_ms >= b.source_offset_ms for a, b in zip(self.frames, self.frames[1:])):
             raise ReplayValidationError("ordered_timestamps")
 
     @property
     def fingerprint(self) -> str:
+        frames = []
+        for item in self.frames:
+            frame = {
+                "index": item.index,
+                "source_offset_ms": item.source_offset_ms,
+                "content_hash": item.content_hash,
+            }
+            if item.analysis_excluded_regions:
+                frame["analysis_excluded_regions"] = [list(box) for box in item.analysis_excluded_regions]
+            frames.append(frame)
         return semantic_fingerprint({"version": MANIFEST_VERSION, "input_id": self.input_id,
             "stream_id": self.stream_id, "width": self.width, "height": self.height,
             "nominal_fps": self.nominal_fps,
-            "frames": [{"index": item.index, "source_offset_ms": item.source_offset_ms, "content_hash": item.content_hash} for item in self.frames]})
+            "frames": frames})
 
     def packets(self) -> tuple[FramePacket, ...]:
         root = self.fingerprint
@@ -75,6 +93,7 @@ class ReplayInput:
             width=self.width,
             height=self.height,
             source_path=frame.source_path,
+            analysis_excluded_regions=frame.analysis_excluded_regions,
         ) for frame in self.frames)
 
 
@@ -177,6 +196,9 @@ class ReplayReport:
     threshold_results: tuple[dict[str, object], ...] = ()
     errors: tuple[str, ...] = ()
     detections: tuple[DetectionObservation, ...] = ()
+    track_updates: tuple[TrackUpdate, ...] = ()
+    evidence_candidates: tuple[EvidenceCandidate, ...] = ()
+    pipeline_facts: dict[str, object] | None = None
     creates_truth: bool = False
 
 
@@ -204,6 +226,25 @@ class ReplayRunner:
                 item.bounding_box or (), item.observation_id or "",
             ),
         ))
+        track_updates = tuple(sorted(
+            (item for result in results for item in result.track_updates),
+            key=lambda item: (
+                item.source_offset_ms if item.source_offset_ms is not None else 2**63,
+                item.generation_id, item.status, item.lifecycle_state, item.frame_id or "",
+            ),
+        ))
+        evidence_candidates = tuple(sorted(
+            (item for result in results for item in result.evidence_candidates),
+            key=lambda item: (
+                item.source_offset_ms if item.source_offset_ms is not None else 2**63,
+                item.track_generation_id or "", item.role, item.frame_id or "",
+            ),
+        ))
+        facts_reader = getattr(provider, "replay_semantic_facts", None)
+        pipeline_facts = facts_reader() if callable(facts_reader) else {}
+        if not isinstance(pipeline_facts, dict):
+            raise ReplayValidationError("provider_failure")
+        pipeline_facts = dict(sorted(pipeline_facts.items()))
         if any(result.creates_truth for result in results):
             raise ReplayValidationError("production_authority")
         proposals = tuple(sorted(
@@ -224,12 +265,20 @@ class ReplayRunner:
             visit_supported=visit_supported, detection_supported=detection_supported,
             track_supported=track_supported,
         )
+        metrics.update(_pipeline_metrics(
+            frames, proposals, track_updates, evidence_candidates, pipeline_facts,
+            track_supported=track_supported, visit_supported=visit_supported,
+        ))
+        metrics = dict(sorted(metrics.items()))
         threshold_results = _threshold_results(metrics, thresholds or {})
         semantic = {
             "schema_version": REPORT_SCHEMA_VERSION,
             "input_fingerprint": replay.fingerprint,
             "manifest_fingerprint": manifest.fingerprint,
             "detections": [asdict(item) for item in detections],
+            "track_updates": [asdict(item) for item in track_updates],
+            "evidence_candidates": [asdict(item) for item in evidence_candidates],
+            "pipeline_facts": pipeline_facts,
             "provider_key": provider_key,
             "frame_ids": [frame.frame_id for frame in frames],
             "proposals": [asdict(item) for item in proposals],
@@ -237,7 +286,109 @@ class ReplayRunner:
             "metrics": metrics,
             "threshold_results": threshold_results,
         }
-        return ReplayReport(frames, proposals, matches, metrics, semantic_fingerprint(semantic), tuple(threshold_results), (), detections)
+        return ReplayReport(
+            frames, proposals, matches, metrics, semantic_fingerprint(semantic),
+            tuple(threshold_results), (), detections, track_updates,
+            evidence_candidates, pipeline_facts,
+        )
+
+
+def _pipeline_metrics(
+    frames: tuple[FramePacket, ...],
+    proposals: tuple[VisitProposal, ...],
+    track_updates: tuple[TrackUpdate, ...],
+    evidence: tuple[EvidenceCandidate, ...],
+    facts: dict[str, object],
+    *,
+    track_supported: bool,
+    visit_supported: bool,
+) -> dict[str, object]:
+    if not track_supported:
+        unavailable = {
+            name: _metric(None, "not_evaluated")
+            for name in (
+                "frames_inferred", "detector_inference_cadence", "tracks_started",
+                "tracks_confirmed", "tracks_lost_or_rejected",
+                "average_tracker_support_frames", "average_detector_confirmations_per_track",
+                "ambiguous_association_count",
+            )
+        }
+    else:
+        terminal = [item for item in track_updates if item.status == "ended"]
+        confirmed_generations = {
+            item.generation_id for item in track_updates if item.lifecycle_state == "confirmed"
+        }
+        inferred = facts.get("frames_inferred")
+        inferred_value = inferred if isinstance(inferred, int) and not isinstance(inferred, bool) else None
+        unavailable = {
+            "frames_inferred": _metric(inferred_value, "evaluated" if inferred_value is not None else "not_evaluated"),
+            "detector_inference_cadence": _metric(
+                inferred_value / len(frames) if inferred_value is not None and frames else None,
+                "evaluated" if inferred_value is not None and frames else "not_evaluated",
+            ),
+            "tracks_started": _metric(sum(item.status == "started" for item in track_updates), "evaluated"),
+            "tracks_confirmed": _metric(len(confirmed_generations), "evaluated"),
+            "tracks_lost_or_rejected": _metric(
+                sum(item.lifecycle_state == "rejected" or item.terminal_reason == "tracker_lost" for item in terminal),
+                "evaluated",
+            ),
+            "average_tracker_support_frames": _metric(
+                sum(item.tracker_support_count for item in terminal) / len(terminal) if terminal else None,
+                "evaluated" if terminal else "not_evaluated",
+            ),
+            "average_detector_confirmations_per_track": _metric(
+                sum(item.detector_confirmation_count for item in terminal) / len(terminal) if terminal else None,
+                "evaluated" if terminal else "not_evaluated",
+            ),
+            "ambiguous_association_count": _metric(facts.get("ambiguous_associations", 0), "evaluated"),
+        }
+    proposal_generations = {item.track_generation_id for item in proposals if item.track_generation_id}
+    evidence_generations = {item.track_generation_id for item in evidence if item.track_generation_id}
+    evidence_state = "evaluated" if visit_supported else "not_evaluated"
+    return unavailable | {
+        "evidence_candidate_count": _metric(len(evidence) if visit_supported else None, evidence_state),
+        "proposals_with_evidence": _metric(
+            len(proposal_generations & evidence_generations) if visit_supported else None, evidence_state,
+        ),
+        "evidence_subject_containment": _metric(None, "insufficient_truth" if visit_supported else "not_evaluated"),
+        "evidence_temporal_offset_ms": _metric(None, "insufficient_truth" if visit_supported else "not_evaluated"),
+        "track_duration_error_ms": _metric(None, "insufficient_truth" if track_supported else "not_evaluated"),
+    }
+
+
+_COMPARISON_METRICS = (
+    "appearance_recall", "proposal_precision", "fragmentation_rate",
+    "duplicate_rate", "incorrect_merge_rate", "evidence_candidate_coverage",
+    "frames_inferred",
+)
+
+
+def compare_replay_reports(left: ReplayReport, right: ReplayReport) -> dict[str, object]:
+    """Return a deterministic semantic comparison without inventing unavailable values."""
+
+    comparisons: list[dict[str, object]] = []
+    for name in _COMPARISON_METRICS:
+        left_metric = left.metrics.get(name)
+        right_metric = right.metrics.get(name)
+        left_state = left_metric.get("state") if isinstance(left_metric, dict) else "not_evaluated"
+        right_state = right_metric.get("state") if isinstance(right_metric, dict) else "not_evaluated"
+        left_value = left_metric.get("value") if isinstance(left_metric, dict) else None
+        right_value = right_metric.get("value") if isinstance(right_metric, dict) else None
+        difference = (
+            right_value - left_value
+            if left_state == right_state == "evaluated"
+            and isinstance(left_value, (int, float))
+            and isinstance(right_value, (int, float))
+            else None
+        )
+        comparisons.append({
+            "metric": name,
+            "left": {"state": left_state, "value": left_value},
+            "right": {"state": right_state, "value": right_value},
+            "difference": difference,
+        })
+    semantic = {"comparison_version": "observation-provider-comparison-v1", "metrics": comparisons}
+    return {**semantic, "semantic_fingerprint": semantic_fingerprint(semantic)}
 
 
 def _overlap_ms(visit: ExpectedVisit, proposal: VisitProposal) -> int:

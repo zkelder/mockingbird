@@ -99,8 +99,15 @@ It performs no durable product or truth writes. Stage 3 adds the optional
 `onnx-cuda` replay provider described in
 [onnx-cuda-shadow-provider-contract.md](onnx-cuda-shadow-provider-contract.md).
 It performs explicit local-model GPU detection only: no live video, tracking,
-evidence selection, Visit proposals, or proposal authority. CUDA runtime and model
-types remain behind the provider boundary; product records still contain only
+evidence selection, Visit proposals, or proposal authority. Stage 4 adds the
+distinct replay-first `frame-driven-onnx-cuda` provider described in
+[frame-driven-shadow-provider-contract.md](frame-driven-shadow-provider-contract.md).
+It schedules that detector from source-relative timestamps, updates a provider-
+neutral bounded tracker on each analysis frame, retains portable evidence
+candidates, and emits idempotent shadow-only Visit proposals. It still has no
+live-stream input, Camera Node analysis stream, high-resolution burst, product
+repository dependency, or production proposal authority. CUDA and tracker runtime
+types remain behind provider boundaries; product records still contain only
 provider-neutral evidence and correction-derived truth.
 
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler

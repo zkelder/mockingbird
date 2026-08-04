@@ -11,6 +11,11 @@ import json
 import sys
 
 from mockingbird.monitoring.source_monitor import SourceMonitorManager
+from mockingbird.observation.frame_driven_provider import (
+    FRAME_DRIVEN_PROVIDER_VERSION,
+    FrameDrivenObservationProvider,
+    FrameDrivenProviderConfiguration,
+)
 from mockingbird.observation.onnx_provider import (
     PROVIDER_VERSION as ONNX_CUDA_PROVIDER_VERSION,
     OnnxCudaObservationProvider,
@@ -25,6 +30,11 @@ SNAPSHOT_LIMITATIONS = (
     "offline ordered-frame replay only",
     "snapshot compatibility provider emits evidence but no replay visit proposals",
     "no cameras, Camera Node, workers, models, durable product objects, or truth are started or written",
+)
+FRAME_DRIVEN_LIMITATIONS = (
+    "offline ordered-frame replay only",
+    "tracking and Visit proposals are shadow-only with no production authority",
+    "no live stream, Camera Node analysis stream, high-resolution burst, or product writes",
 )
 ONNX_CUDA_LIMITATIONS = (
     "offline ordered-frame replay detection inference only",
@@ -65,6 +75,16 @@ def _configured_provider(args: argparse.Namespace) -> tuple[Any, tuple[str, ...]
             list_saved_images=_unused_images,
             evaluate_saved_media=_unused_motion,
         )), SNAPSHOT_LIMITATIONS
+    if args.provider == "frame-driven-onnx-cuda":
+        if args.provider_config is None:
+            raise ReplayValidationError("provider_configuration_required")
+        configuration = FrameDrivenProviderConfiguration.load(args.provider_config)
+        bundle = OnnxModelBundle.load(configuration.model_bundle_path)
+        detector = OnnxCudaObservationProvider(bundle=bundle)
+        return FrameDrivenObservationProvider(
+            detector=detector,
+            settings=configuration.settings,
+        ), FRAME_DRIVEN_LIMITATIONS
     if args.provider == "onnx-cuda":
         if args.provider_config is None:
             raise ReplayValidationError("provider_configuration_required")
@@ -78,8 +98,13 @@ async def _run(args: argparse.Namespace) -> int:
     provider, limitations = _configured_provider(args)
     close = getattr(provider, "close", None)
     try:
-        if isinstance(provider, OnnxCudaObservationProvider):
+        if isinstance(provider, (OnnxCudaObservationProvider, FrameDrivenObservationProvider)):
             provider.load()
+        if (
+            isinstance(provider, FrameDrivenObservationProvider)
+            and abs(provider.settings.source_nominal_fps - bundle.replay.nominal_fps) > 1e-9
+        ):
+            raise ReplayValidationError("source_fps_mismatch")
         registry = ObservationEngineRegistry([provider], active_provider_id=provider.provider_id)
         descriptor = await registry.status(stream_id=bundle.replay.stream_id)
         started = perf_counter()
@@ -89,7 +114,20 @@ async def _run(args: argparse.Namespace) -> int:
         duration_ms = round((perf_counter() - started) * 1000, 3)
         provider_contract = asdict(descriptor.provider)
         execution: dict[str, object] = {"mode": "offline", "total_execution_duration_ms": duration_ms}
-        if isinstance(provider, OnnxCudaObservationProvider):
+        if isinstance(provider, FrameDrivenObservationProvider):
+            metadata = provider.report_metadata()
+            provider_contract.update({
+                "provider_key": metadata["provider_key"],
+                "version": FRAME_DRIVEN_PROVIDER_VERSION,
+                "settings": metadata["settings"],
+                "tracker": metadata["tracker"],
+                "detector": metadata["detector"],
+                "limitations": metadata["limitations"],
+                "shadow_mode": True,
+                "production_proposal_authority": False,
+            })
+            execution.update(provider.execution_facts())
+        elif isinstance(provider, OnnxCudaObservationProvider):
             metadata = provider.report_metadata()
             provider_contract.update({
                 "provider_key": metadata["provider_key"],
@@ -146,6 +184,8 @@ def run(argv: list[str] | None = None) -> int:
             "onnx_cuda_inference_failed": 12,
             "onnx_cuda_mixed_execution": 13,
             "onnx_cuda_verification_insufficient": 14,
+            "invalid_frame_driven_configuration": 15,
+            "source_fps_mismatch": 16,
         }.get(str(error), 2)
 
 
