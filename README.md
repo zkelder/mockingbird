@@ -184,6 +184,15 @@ inside deterministic replay. It still starts no camera, live monitor, Camera Nod
 or production Visit handoff. See the
 [frame-driven shadow-provider contract](docs/frame-driven-shadow-provider-contract.md).
 
+Stage 5 adds a separate live-shadow adapter for an already paired Camera Node. It
+uses one authenticated, frame-bounded multipart-JPEG analysis stream and a
+profile-bound one-frame evidence burst. The PC keeps at most the newest bounded
+work, applies Privacy/Ignore masking before ONNX CUDA inference, tracks source-time
+frames, and emits temporary shadow evidence only. It does not start through the
+normal application launcher, replace Snapshot monitoring, or create product
+records. See the
+[Camera Node live-shadow contract](docs/camera-node-live-shadow-contract.md).
+
 ### Optional local species suggestions
 
 The current BioCLIP 2 path is a local reviewer-assistance action inside the

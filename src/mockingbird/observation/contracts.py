@@ -13,7 +13,7 @@ from typing import Literal, Protocol
 
 @dataclass(frozen=True)
 class FramePacket:
-    """A retained frame reference; providers never need to expose frame bytes here."""
+    """A bounded path/reference or transient payload with provider-neutral identity."""
 
     stream_id: str
     media_asset_id: str
@@ -24,6 +24,13 @@ class FramePacket:
     height: int | None = None
     source_path: str | None = None
     analysis_excluded_regions: tuple[tuple[float, float, float, float], ...] = ()
+    payload: bytes | None = None
+    frame_sequence: int | None = None
+    node_session_id: str | None = None
+    source_monotonic_ns: int | None = None
+    received_at: datetime | None = None
+    provider_generation: str | None = None
+    timing_facts: tuple[tuple[str, str | int | float | bool | None], ...] = ()
 
 
 @dataclass(frozen=True)

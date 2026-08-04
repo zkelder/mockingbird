@@ -19,6 +19,7 @@ from mockingbird.observation.replay import (
     ReplayFrame,
     ReplayInput,
     ReplayRunner,
+    ReplayValidationError,
     compare_replay_reports,
     semantic_fingerprint,
 )
@@ -130,10 +131,31 @@ async def test_capabilities_and_health_are_side_effect_free_and_honest() -> None
     assert provider.capabilities.tracking is True
     assert provider.capabilities.shadow_visit_proposals is True
     assert provider.capabilities.production_proposal_authority is False
-    assert provider.capabilities.continuous_live_stream_input is False
-    assert provider.capabilities.camera_node_analysis_stream is False
+    assert provider.capabilities.continuous_live_stream_input is True
+    assert provider.capabilities.camera_node_analysis_stream is True
+    assert provider.capabilities.high_resolution_burst is True
     assert health.healthy is True
     assert detector.loaded is False
+
+
+async def test_live_lifecycle_processes_frames_and_clears_transient_state() -> None:
+    frames = _frames(2)
+    detector = FakeDetector({frames[0].frame_id or "": (_animal(frames[0], (0.2, 0.2, 0.4, 0.4)),)})
+    provider = FrameDrivenObservationProvider(
+        detector=detector, settings=_settings(), tracker_support=lambda frame, track: track.bounding_box
+    )
+    provider.load()
+    provider.start_live("stream")
+    first = await provider.observe_live_frame(frames[0])
+    second = await provider.observe_live_frame(frames[1])
+    assert first.source_id == "live_shadow"
+    assert second.source_id == "live_shadow"
+    assert provider.active_track_count == 1
+    final = provider.stop_live()
+    assert final
+    assert provider.active_track_count == 0
+    with pytest.raises(ReplayValidationError, match="live_stream_not_started"):
+        await provider.observe_live_frame(frames[1])
 
 
 async def test_idle_schedule_accelerates_for_candidate_and_tracks_every_frame() -> None:

@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from importlib import import_module, util
+from io import BytesIO
 import json
 import math
 from pathlib import Path
@@ -479,12 +480,13 @@ class OnnxCudaObservationProvider:
 
 
 def _preprocess(frame: FramePacket, bundle: OnnxModelBundle) -> tuple[Any, _Transform]:
-    if frame.source_path is None:
+    if (frame.source_path is None) == (frame.payload is None):
         raise ReplayValidationError("replay_frame_path_unavailable")
     try:
         image_module = import_module("PIL.Image")
         numpy = import_module("numpy")
-        with image_module.open(frame.source_path) as source:
+        source_input = BytesIO(frame.payload) if frame.payload is not None else frame.source_path
+        with image_module.open(source_input) as source:
             source_format = source.format
             source.load(); image = source.convert("RGB")
             source_width, source_height = image.size

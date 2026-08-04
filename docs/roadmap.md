@@ -32,17 +32,18 @@ lineage from subject presence, and never silently rewrites historical selections
 or reviewed truth. A delayed high-resolution crop remains retained secondary
 evidence unless durable facts affirm subject continuity at capture time. Optimal
 multi-frame visual evidence ranking moves to Observation Engine v2 Stage 6;
-**Observation Engine v2 Stages 1-4** are complete: provider-neutral contracts
+**Observation Engine v2 Stages 1-5** are complete: provider-neutral contracts
 wrap the established observer, deterministic shadow-only ordered-frame replay
 provides reproducible reports, the optional ONNX Runtime CUDA provider performs
 local-model detection with verified no-CPU fallback, and the distinct
-`frame-driven-onnx-cuda` provider now schedules detection from source time,
-tracks intervening analysis frames, retains bounded evidence candidates, and
-emits idempotent shadow-only Visit proposals. Stage 3 was activated on the local
-RTX 4060 Ti with 886 CUDA-executed and zero CPU-executed model nodes. Stage 4
-remains replay-first and has neither live-stream input nor production proposal
-authority. Stage 5, the provider-neutral Camera Node analysis-stream and evidence-
-burst capability boundary, is next. This remains a contained observation-
+`frame-driven-onnx-cuda` provider schedules detection from source time, tracks
+intervening analysis frames, retains bounded evidence candidates, and emits
+idempotent shadow-only Visit proposals. Stage 3 was activated on the local RTX
+4060 Ti with 886 CUDA-executed and zero CPU-executed model nodes. Stage 5 adds one
+authenticated bounded Camera Node multipart-JPEG analysis stream, live host
+backpressure/generation handling, and immediate one-frame high-resolution burst
+evidence. It remains shadow-only with no production proposal authority. Stage 6,
+multi-frame evidence scoring and old/new shadow comparison, is next. This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.
 `SnapshotObservationProvider` names the current timer-driven path and remains a

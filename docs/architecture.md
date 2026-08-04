@@ -104,11 +104,16 @@ distinct replay-first `frame-driven-onnx-cuda` provider described in
 [frame-driven-shadow-provider-contract.md](frame-driven-shadow-provider-contract.md).
 It schedules that detector from source-relative timestamps, updates a provider-
 neutral bounded tracker on each analysis frame, retains portable evidence
-candidates, and emits idempotent shadow-only Visit proposals. It still has no
-live-stream input, Camera Node analysis stream, high-resolution burst, product
-repository dependency, or production proposal authority. CUDA and tracker runtime
-types remain behind provider boundaries; product records still contain only
-provider-neutral evidence and correction-derived truth.
+candidates, and emits idempotent shadow-only Visit proposals. Stage 5 adds the
+paired, authenticated, bounded multipart-JPEG analysis stream and one-frame
+high-resolution evidence burst described in
+[camera-node-live-shadow-contract.md](camera-node-live-shadow-contract.md). The PC
+source validates sequence, generation, timing, dimensions, and hashes; applies
+Privacy/Ignore masking before inference; coalesces to newest work under bounded
+backpressure; and attaches only generation-correct temporary burst evidence. CUDA
+and tracker runtime types remain behind provider boundaries. The live path has no
+product repository dependency or production proposal authority; product records
+still contain only provider-neutral evidence and correction-derived truth.
 
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes

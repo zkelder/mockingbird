@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from importlib import import_module
+from io import BytesIO
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Protocol
@@ -175,12 +176,13 @@ class _PortablePatchSupport:
         return box if difference <= 0.18 else None
 
     def _patch(self, frame: FramePacket, box: tuple[float, float, float, float]) -> Any | None:
-        if frame.source_path is None:
+        if frame.source_path is None and frame.payload is None:
             return None
         try:
             image_module = import_module("PIL.Image")
             numpy = import_module("numpy")
-            with image_module.open(frame.source_path) as source:
+            source_input = BytesIO(frame.payload) if frame.payload is not None else frame.source_path
+            with image_module.open(source_input) as source:
                 source.load()
                 gray = source.convert("L")
                 width, height = gray.size
@@ -211,10 +213,10 @@ class FrameDrivenObservationProvider:
         tracking=True,
         shadow_visit_proposals=True,
         production_proposal_authority=False,
-        continuous_live_stream_input=False,
-        camera_node_analysis_stream=False,
+        continuous_live_stream_input=True,
+        camera_node_analysis_stream=True,
         rolling_live_encoded_buffer=False,
-        high_resolution_burst=False,
+        high_resolution_burst=True,
         species_interpretation=False,
     )
 
@@ -231,6 +233,7 @@ class FrameDrivenObservationProvider:
         self._support = tracker_support or self._patch_support
         self._tracker: ProviderNeutralFrameTracker | None = None
         self._stream_id: str | None = None
+        self._mode = "replay"
         self._loaded = False
         self._last_detector_offset_ms: int | None = None
         self._pretrigger: deque[FramePacket] = deque(maxlen=max(1, self.settings.pretrigger_frame_count))
@@ -293,6 +296,7 @@ class FrameDrivenObservationProvider:
             raise ReplayValidationError("provider_not_loaded")
         self.reset()
         self._reset_facts()
+        self._mode = "replay"
         if not frames:
             self.detector.finalize_replay()
             return ()
@@ -308,6 +312,54 @@ class FrameDrivenObservationProvider:
         self.finalize_replay()
         results.extend(self.drain_final_results())
         return tuple(results)
+
+    def start_live(self, stream_id: str) -> None:
+        """Start one bounded transient live-shadow generation."""
+        if not self._loaded:
+            raise ReplayValidationError("provider_not_loaded")
+        if not stream_id:
+            raise ReplayValidationError("frame_tracking_metadata_required")
+        self.reset()
+        self._reset_facts()
+        self._mode = "live_shadow"
+        self._stream_id = stream_id
+        self._tracker = ProviderNeutralFrameTracker(
+            stream_id,
+            self.settings.tracker_configuration(),
+            support_resolver=self._support,
+        )
+
+    async def observe_live_frame(self, frame: FramePacket) -> ObservationResult:
+        if self._mode != "live_shadow" or self._stream_id != frame.stream_id:
+            raise ReplayValidationError("live_stream_not_started")
+        return await self._process_frame(frame)
+
+    def restart_live_generation(self, stream_id: str, reason: str = "provider_reset") -> None:
+        """Replace transient track state while retaining one loaded detector session."""
+        if self._mode != "live_shadow":
+            raise ReplayValidationError("live_stream_not_started")
+        self._finalize_tracking(reason)
+        self.drain_final_results()
+        self.reset()
+        self._mode = "live_shadow"
+        self._stream_id = stream_id
+        self._tracker = ProviderNeutralFrameTracker(
+            stream_id,
+            self.settings.tracker_configuration(),
+            support_resolver=self._support,
+        )
+
+    def stop_live(self, reason: str = "provider_reset") -> tuple[ObservationResult, ...]:
+        """Finalize and clear transient live state without durable side effects."""
+        if self._mode != "live_shadow":
+            return ()
+        self._finalize_tracking(reason)
+        results = self.drain_final_results()
+        try:
+            self.detector.finalize_replay()
+        finally:
+            self.reset()
+        return results
 
     async def _process_frame(self, frame: FramePacket) -> ObservationResult:
         if self._tracker is None or self._stream_id is None:
@@ -360,7 +412,7 @@ class FrameDrivenObservationProvider:
         self._pretrigger.append(frame)
         return ObservationResult(
             self.provider_id,
-            "replay",
+            self._mode,
             frame.stream_id,
             frame.captured_at,
             frame_packets=(frame,),
@@ -371,9 +423,13 @@ class FrameDrivenObservationProvider:
         )
 
     def finalize_replay(self) -> None:
+        self._finalize_tracking("end_of_replay")
+        self.detector.finalize_replay()
+
+    def _finalize_tracking(self, reason: str) -> None:
         if self._tracker is None or self._stream_id is None:
             return
-        step = self._tracker.finalize("end_of_replay")
+        step = self._tracker.finalize(reason)
         evidence: list[EvidenceCandidate] = []
         proposals: list[VisitProposal] = []
         for terminal in step.terminals:
@@ -385,14 +441,13 @@ class FrameDrivenObservationProvider:
             observed_at = step.updates[-1].captured_at if step.updates else None
             self._pending_final_results.append(ObservationResult(
                 self.provider_id,
-                "replay",
+                self._mode,
                 self._stream_id,
                 observed_at,
                 track_updates=step.updates,
                 evidence_candidates=tuple(evidence),
                 visit_proposals=tuple(proposals),
             ))
-        self.detector.finalize_replay()
 
     def drain_final_results(self) -> tuple[ObservationResult, ...]:
         values = tuple(self._pending_final_results)
@@ -410,9 +465,9 @@ class FrameDrivenObservationProvider:
             "shadow_mode": True,
             "production_proposal_authority": False,
             "limitations": [
-                "offline ordered-frame replay only",
+                "live input is shadow-only and uses bounded latest-frame coalescing",
                 "portable spatial patch tracking is bounded and not species interpretation",
-                "no live stream, Camera Node analysis stream, high-resolution burst, or product writes",
+                "no production proposal authority, species interpretation, or product writes",
             ],
         }
 
@@ -509,7 +564,7 @@ class FrameDrivenObservationProvider:
         evidence_ids = tuple(dict.fromkeys(item.media_asset_id for item in ordered))
         proposal = VisitProposal(
             proposal_key,
-            "replay",
+            self._mode,
             self._stream_id or "",
             evidence_ids,
             "confirmed_visit",

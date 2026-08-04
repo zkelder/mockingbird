@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
@@ -10,8 +12,10 @@ import os
 from pathlib import Path
 import secrets
 import threading
+import time
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import CameraNodeConfig
@@ -27,6 +31,10 @@ from .providers import (
 NODE_API_VERSION = "v1"
 _MAX_PAIR_ATTEMPTS = 5
 _RECOMMENDED_SNAPSHOT_TIMEOUT_SECONDS = 8.0
+_ANALYSIS_BOUNDARY = "mockingbird-analysis-frame"
+_ANALYSIS_NOMINAL_FPS = 2.0
+_ANALYSIS_MAX_FRAMES = 1200
+_ANALYSIS_MAX_CONNECTIONS = 2
 
 
 class PairRequest(BaseModel):
@@ -47,6 +55,15 @@ class CaptureRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     profile_id: str = Field(min_length=1, max_length=120)
+
+
+class EvidenceBurstNodeRequest(BaseModel):
+    """One bounded engineering/shadow evidence still, never product media."""
+
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_.:-]+$")
+    profile_id: str = Field(min_length=1, max_length=120)
+    frame_count: int = Field(default=1, ge=1, le=1)
 
 
 class _PairingState:
@@ -261,6 +278,10 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
     )
     node_id = f"node-{hashlib.sha256(config.display_name.encode()).hexdigest()[:16]}"
     app = FastAPI(title="MockingBird Camera Node", version=NODE_API_VERSION)
+    provider_generation = secrets.token_hex(16)
+    analysis_connections = threading.BoundedSemaphore(
+        min(_ANALYSIS_MAX_CONNECTIONS, max(1, config.max_preview_viewers))
+    )
 
     def camera_payload(camera: NodeCamera) -> dict[str, object]:
         profiles = _provider_capture_profiles(provider, camera.camera_id)
@@ -347,6 +368,75 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
             headers=headers,
         )
 
+    def analysis_profile(camera_id: str) -> NodeCaptureProfile | None:
+        profiles = _provider_capture_profiles(provider, camera_id)
+        return next((item for item in profiles if "monitoring" in item.purposes), None)
+
+    def capture_analysis_frame(camera_id: str) -> tuple[bytes, int, int]:
+        profile = analysis_profile(camera_id)
+        if profile is None:
+            raise ValueError("analysis_profile_unavailable")
+        result = provider.snapshot(camera_id, profile_id=profile.profile_id)
+        image = result.image if isinstance(result, NodeCaptureResult) else result
+        dimensions = _jpeg_dimensions(image)
+        maximum_bytes = profile.max_expected_bytes
+        maximum_width = profile.width
+        maximum_height = profile.height
+        if (
+            dimensions is None
+            or len(image) > maximum_bytes
+            or dimensions[0] > maximum_width
+            or dimensions[1] > maximum_height
+        ):
+            raise ValueError("camera_unusable_frame")
+        return image, dimensions[0], dimensions[1]
+
+    async def analysis_parts(
+        camera_id: str,
+        *,
+        maximum_frames: int,
+        session_id: str,
+        is_disconnected: Callable[[], Awaitable[bool]],
+    ):
+        try:
+            for sequence in range(1, maximum_frames + 1):
+                if await is_disconnected():
+                    break
+                image, width, height = await asyncio.to_thread(
+                    capture_analysis_frame, camera_id
+                )
+                if await is_disconnected():
+                    break
+                captured_at = datetime.now(UTC)
+                monotonic_ns = time.monotonic_ns()
+                content_hash = hashlib.sha256(image).hexdigest()
+                frame_id = hashlib.sha256(
+                    f"{node_id}|{provider_generation}|{session_id}|{sequence}|"
+                    f"{captured_at.isoformat()}|{content_hash}".encode("utf-8")
+                ).hexdigest()
+                headers = (
+                    f"--{_ANALYSIS_BOUNDARY}\r\n"
+                    "Content-Type: image/jpeg\r\n"
+                    f"Content-Length: {len(image)}\r\n"
+                    f"X-MockingBird-Sequence: {sequence}\r\n"
+                    f"X-MockingBird-Frame-Id: {frame_id}\r\n"
+                    f"X-MockingBird-Captured-At: {captured_at.isoformat()}\r\n"
+                    f"X-MockingBird-Source-Monotonic-Ns: {monotonic_ns}\r\n"
+                    f"X-MockingBird-Width: {width}\r\n"
+                    f"X-MockingBird-Height: {height}\r\n"
+                    f"X-MockingBird-Provider-Generation: {provider_generation}\r\n"
+                    f"X-MockingBird-Node-Session: {session_id}\r\n"
+                    f"X-MockingBird-Content-Sha256: {content_hash}\r\n\r\n"
+                ).encode("ascii")
+                yield headers + image + b"\r\n"
+                if sequence < maximum_frames:
+                    await asyncio.sleep(1.0 / _ANALYSIS_NOMINAL_FPS)
+            yield f"--{_ANALYSIS_BOUNDARY}--\r\n".encode("ascii")
+        except (GeneratorExit, asyncio.CancelledError, BrokenPipeError, ConnectionError):
+            return
+        finally:
+            analysis_connections.release()
+
     def require_pairing(request: Request) -> str:
         prefix, _, credential = request.headers.get("authorization", "").partition(" ")
         if prefix.lower() != "bearer" or not credential or not pairing.authenticated(credential):
@@ -369,6 +459,15 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
 
     @app.get("/node/v1/capabilities")
     def capabilities(_: str = Depends(require_pairing)) -> dict[str, object]:
+        available_cameras = [
+            camera for camera in provider.cameras()
+            if camera.status == "available" and camera.snapshot_supported
+        ]
+        analysis_available = any(analysis_profile(camera.camera_id) for camera in available_cameras)
+        evidence_available = any(
+            any("evidence" in profile.purposes for profile in _provider_capture_profiles(provider, camera.camera_id))
+            for camera in available_cameras
+        )
         return {
             "node_id": node_id,
             "api_version": NODE_API_VERSION,
@@ -384,11 +483,83 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
             "max_preview_viewers": config.max_preview_viewers,
             # Optional v1 metadata: the desktop clamps this to its own hard limit.
             "recommended_snapshot_timeout_seconds": _RECOMMENDED_SNAPSHOT_TIMEOUT_SECONDS,
+            "analysis_stream": {
+                "transport_key": "camera-node-multipart-jpeg-v1",
+                "stream_mode": "bounded_continuous",
+                "content_type": "image/jpeg",
+                "maximum_width": config.max_image_width,
+                "maximum_height": config.max_image_height,
+                "nominal_fps": _ANALYSIS_NOMINAL_FPS,
+                "maximum_fps": _ANALYSIS_NOMINAL_FPS,
+                "sequence_supported": True,
+                "capture_timestamp_supported": True,
+                "monotonic_timestamp_supported": True,
+                "timestamp_precision": "microsecond",
+                "hardware_encoding_available": False,
+                "simultaneous_evidence_capture": "provider_dependent",
+                "availability": "available" if analysis_available else "unavailable",
+                "maximum_connections": min(_ANALYSIS_MAX_CONNECTIONS, max(1, config.max_preview_viewers)),
+                "limitations": ["multipart JPEG is the first provider implementation", "capture timing varies by camera provider"],
+            },
+            "evidence_burst": {
+                "availability": "available" if evidence_available else "unavailable",
+                "maximum_frames_per_burst": 1,
+                "minimum_interval_ms": 1000,
+                "expected_latency_ms": [0, 10000],
+                "analysis_continues": "provider_dependent",
+                "exposure_may_change": True,
+                "focus_may_change": True,
+                "source_provenance_supported": True,
+                "limitations": ["one authenticated JPEG per request", "profile-specific availability is camera-scoped"],
+            },
         }
 
     @app.get("/node/v1/cameras")
     def cameras(_: str = Depends(require_pairing)) -> dict[str, object]:
         return {"items": [camera_payload(camera) for camera in provider.cameras()]}
+
+    @app.get("/node/v1/cameras/{camera_id}/analysis-stream")
+    async def analysis_stream(
+        camera_id: str,
+        request: Request,
+        x_mockingbird_max_frames: str | None = Header(default=None),
+        _: str = Depends(require_pairing),
+    ) -> StreamingResponse:
+        camera = {item.camera_id: item for item in provider.cameras()}.get(camera_id)
+        if camera is None or camera.status != "available" or not camera.snapshot_supported:
+            raise HTTPException(status_code=409, detail="Camera setup is required.")
+        if analysis_profile(camera_id) is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Camera analysis profile is unavailable.",
+                headers={"X-MockingBird-Node-Error": "analysis_profile_unavailable"},
+            )
+        try:
+            maximum_frames = int(
+                x_mockingbird_max_frames
+                or (2 if config.testing else _ANALYSIS_MAX_FRAMES)
+            )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid analysis stream bound.") from None
+        if not 1 <= maximum_frames <= _ANALYSIS_MAX_FRAMES:
+            raise HTTPException(status_code=400, detail="Invalid analysis stream bound.")
+        if not analysis_connections.acquire(blocking=False):
+            raise HTTPException(status_code=429, detail="Analysis stream capacity is reached.")
+        session_id = f"node-analysis-{secrets.token_hex(12)}"
+        return StreamingResponse(
+            analysis_parts(
+                camera_id,
+                maximum_frames=maximum_frames,
+                session_id=session_id,
+                is_disconnected=request.is_disconnected,
+            ),
+            media_type=f"multipart/x-mixed-replace; boundary={_ANALYSIS_BOUNDARY}",
+            headers={
+                "Cache-Control": "no-store",
+                "X-MockingBird-Provider-Generation": provider_generation,
+                "X-MockingBird-Node-Session": session_id,
+            },
+        )
 
     @app.get("/node/v1/cameras/{camera_id}/snapshot")
     def snapshot(camera_id: str, _: str = Depends(require_pairing)) -> Response:
@@ -428,6 +599,20 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
     ) -> Response:
         return capture_response(camera_id, payload.profile_id)
 
+    @app.post("/node/v1/cameras/{camera_id}/evidence-burst")
+    def evidence_burst(
+        camera_id: str,
+        payload: EvidenceBurstNodeRequest,
+        _: str = Depends(require_pairing),
+    ) -> Response:
+        response = capture_response(camera_id, payload.profile_id)
+        response.headers["X-MockingBird-Burst-Request"] = payload.request_id
+        response.headers["X-MockingBird-Burst-Sequence"] = "1"
+        response.headers["X-MockingBird-Provider-Generation"] = provider_generation
+        response.headers["X-MockingBird-Content-Sha256"] = hashlib.sha256(response.body).hexdigest()
+        response.headers["X-MockingBird-Shadow-Only"] = "true"
+        return response
+
     @app.post("/node/v1/pair/revoke", status_code=204)
     def revoke(credential: str = Depends(require_pairing)) -> Response:
         pairing.revoke(credential)
@@ -437,6 +622,7 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
     def shutdown_provider() -> None:
         provider.close()
 
+    app.state.analysis_parts_for_test = analysis_parts  # local contract test only; never an HTTP response
     app.state.pairing_code = pairing.code  # local launcher display/test only, never an HTTP response
     app.state.pairing_expires_at = pairing.expires_at
     return app

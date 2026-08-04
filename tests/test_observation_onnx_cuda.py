@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+from io import BytesIO
 import json
 from pathlib import Path
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
@@ -215,6 +217,24 @@ async def test_deterministic_letterbox_normalization_order_bounds_and_close(tmp_
     provider.close()
     assert session.closed is True
     assert provider.session_loaded is False
+
+
+@pytest.mark.anyio
+async def test_live_payload_is_decoded_and_privacy_regions_are_masked(tmp_path: Path) -> None:
+    _, bundle = _bundle(tmp_path)
+    image = BytesIO()
+    Image.new("RGB", (4, 2), color="white").save(image, format="JPEG")
+    session = FakeSession([np.asarray([], dtype=np.float32).reshape((1, 0, 6))])
+    provider = OnnxCudaObservationProvider(runtime=FakeRuntime(session), bundle=bundle)
+    provider.load()
+    packet = FramePacket(
+        "stream", "shadow:frame", datetime(2026, 8, 4, tzinfo=UTC), "live-frame", 0, 4, 2,
+        analysis_excluded_regions=((0.0, 0.0, 0.5, 1.0),), payload=image.getvalue(),
+    )
+    await provider.infer_frame(packet)
+    tensor = session.calls[0][1]["images"]
+    assert float(tensor[0, :, 1, 0].max()) == 0.0
+    assert float(tensor[0, :, 1, 3].min()) > 0.5
 
 
 @pytest.mark.anyio
