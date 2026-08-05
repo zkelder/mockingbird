@@ -230,6 +230,37 @@ def test_precision_and_recall_move_correctly_across_thresholds() -> None:
     assert by_threshold[0.9].true_positives == 0
 
 
+def test_subject_size_breakdown_separates_small_and_typical_recall() -> None:
+    # A small ("far") subject the detector misses and a typical-sized subject
+    # it finds must not average into one misleading recall number.
+    far_frame = _frame(
+        "bird-far", animal_present="yes", boxes=(ReviewedBox((0.40, 0.40, 0.42, 0.42)),),
+        distance="far",
+    )
+    typical_frame = _frame(
+        "bird-typical", animal_present="yes", boxes=(ReviewedBox((0.40, 0.40, 0.60, 0.60)),),
+        distance="typical",
+    )
+    manifest = _manifest((far_frame, typical_frame))
+    detections = {
+        "bird-far": (),  # missed entirely
+        "bird-typical": (_det("bird-typical", (0.41, 0.41, 0.59, 0.59), 0.8),),
+    }
+
+    sweep = sweep_thresholds(manifest, detections, (0.5,), configured_threshold=0.5)
+    row = sweep[0]
+    by_bucket = {item.distance_bucket: item for item in row.subject_size_breakdown}
+
+    assert by_bucket["far"].scorable_positive_frames == 1
+    assert by_bucket["far"].recall == 0.0
+    assert by_bucket["typical"].scorable_positive_frames == 1
+    assert by_bucket["typical"].recall == 1.0
+    # The overall (unstratified) recall must not be silently derivable from
+    # only one bucket -- both buckets sum to the frame-level recall
+    # denominator.
+    assert by_bucket["far"].scorable_positive_frames + by_bucket["typical"].scorable_positive_frames == row.scorable_positive_frames
+
+
 def test_effective_threshold_grid_is_bounded_deduplicated_and_sorted() -> None:
     grid = effective_threshold_grid(0.1, (0.9, 0.5, 0.1, 1.5, -0.2, 0.0))
     assert grid == tuple(sorted(grid))

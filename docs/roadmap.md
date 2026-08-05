@@ -68,10 +68,24 @@ than a tracker or evidence-scoring defect. Stage 6.2 adds an offline,
 deterministic detector precision/recall calibration benchmark described in
 [detector-calibration-benchmark-contract.md](detector-calibration-benchmark-contract.md)
 to characterize that finding on a reviewed local cohort before any threshold
-or proposal-policy change; a representative field comparison remains a
-separate, not-yet-completed activation step, and Stage 7 controlled
-proposal-authority migration is next only after measured success on both.
-This remains a contained observation-
+or proposal-policy change. Stage 6.3 adds a deterministic, shadow-only
+detector-candidate comparison described in
+[detector-candidate-comparison-contract.md](detector-candidate-comparison-contract.md)
+that scores a replacement candidate against the MDv5 baseline on the
+identical reviewed cohort, keeping each model's own threshold grid and an
+explicit semantic/non-semantic runtime boundary rather than an opaque
+winner score; a two-root real-CUDA rerun produced byte-identical comparison
+fingerprints despite genuinely different measured latency between roots,
+confirming that boundary holds under real hardware jitter, not only
+synthetic fixtures. Its first real evaluation compared the MegaDetector
+v1000.0.0-spruce candidate (`spruce`) against MDv5 on the same 70-frame
+cohort: at spruce's currently un-tuned starting threshold it scored worse
+precision and recall than MDv5, its GPL-3.0 licensing classified
+restricted, and the tool's own verdict was `retain_mdv5_baseline` --
+`spruce` is not yet suitable for a live shadow trial on this evidence. A
+representative field comparison remains a separate, not-yet-completed
+activation step, and Stage 7 controlled proposal-authority migration is
+next only after measured success on both. This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.
 `SnapshotObservationProvider` names the current timer-driven path and remains a

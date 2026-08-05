@@ -21,7 +21,12 @@ from mockingbird.observation.contracts import DetectionObservation
 from mockingbird.observation.replay import semantic_fingerprint
 
 MANIFEST_VERSION = 1
-REPORT_SCHEMA_VERSION = 1
+# Stage 6.3 adds `subject_size_breakdown` to every threshold row (needed for
+# small-subject recall comparison); this changes the semantic report shape
+# and therefore every report's semantic fingerprint, so the schema version
+# is bumped. A Stage 6.2 report is not semantically comparable to a Stage 6.3
+# report; re-run the baseline rather than reusing an old report.
+REPORT_SCHEMA_VERSION = 2
 BENCHMARK_VERSION = "detector-calibration-v1"
 
 # One explicit IoU for all reviewed-box truth matching (shared with the
@@ -311,6 +316,7 @@ class FrameClassification:
     threshold: float
     scorable: bool
     animal_present: AnimalPresence
+    distance: str | None = None
     true_positive_count: int = 0
     false_positive_count: int = 0
     false_negative_below_threshold_count: int = 0
@@ -380,6 +386,7 @@ def classify_frame(
     if not frame.is_scorable:
         return FrameClassification(
             frame.frame_id, frame.scene_group, threshold, False, frame.animal_present,
+            distance=frame.distance,
         )
 
     eligible = _sorted_animal_detections(raw_detections, threshold=threshold)
@@ -407,6 +414,7 @@ def classify_frame(
                 classified.append(ClassifiedDetection(item.observation_id, item.confidence or 0.0, item.bounding_box, "false_positive"))
         return FrameClassification(
             frame.frame_id, frame.scene_group, threshold, True, frame.animal_present,
+            distance=frame.distance,
             false_positive_count=len(kept),
             duplicate_count=len(duplicates),
             privacy_excluded_count=len(privacy_excluded),
@@ -465,6 +473,7 @@ def classify_frame(
 
     return FrameClassification(
         frame.frame_id, frame.scene_group, threshold, True, frame.animal_present,
+        distance=frame.distance,
         true_positive_count=true_positive_count,
         false_positive_count=len(unmatched_predictions),
         false_negative_below_threshold_count=below_threshold,
@@ -539,6 +548,22 @@ class SceneGroupMetrics:
 
 
 @dataclass(frozen=True)
+class SubjectSizeMetrics:
+    """Recall broken out by the manifest's own reviewed `distance` proxy
+    ("far" == a small/distant subject, longest reviewed-box side <= 96 source
+    pixels -- the same bound the preserved small-bird-detection benchmark
+    uses; "typical" == larger; "unknown" == not assessed). Negative frames
+    have no reviewed subject to measure, so they are not bucketed here;
+    `scorable_positive_frames` is this bucket's own recall denominator."""
+
+    distance_bucket: str
+    scorable_positive_frames: int
+    true_positives: int
+    false_negatives: int
+    recall: float | None
+
+
+@dataclass(frozen=True)
 class ThresholdMetrics:
     threshold: float
     is_configured_threshold: bool
@@ -565,6 +590,15 @@ class ThresholdMetrics:
     true_positive_score_distribution: ScoreDistribution
     false_positive_score_distribution: ScoreDistribution
     scene_group_breakdown: tuple[SceneGroupMetrics, ...]
+    subject_size_breakdown: tuple[SubjectSizeMetrics, ...] = ()
+
+
+def _aggregate_size_metrics(bucket: str, classifications: list[FrameClassification]) -> SubjectSizeMetrics:
+    positive = [item for item in classifications if item.animal_present == "yes"]
+    tp = sum(item.true_positive_count for item in positive)
+    fn = sum(item.false_negative_below_threshold_count + item.false_negative_privacy_masked_count
+             + item.false_negative_true_miss_count for item in positive)
+    return SubjectSizeMetrics(bucket, len(positive), tp, fn, _ratio(tp, tp + fn))
 
 
 def _aggregate_scene_metrics(scene_group: str, classifications: list[FrameClassification]) -> SceneGroupMetrics:
@@ -625,6 +659,13 @@ def _threshold_metrics(classifications: list[FrameClassification], *, threshold:
         _aggregate_scene_metrics(scene, items) for scene, items in sorted(scenes.items())
     )
 
+    sizes: dict[str, list[FrameClassification]] = defaultdict(list)
+    for item in positive:
+        sizes[item.distance or "unknown"].append(item)
+    size_breakdown = tuple(
+        _aggregate_size_metrics(bucket, items) for bucket, items in sorted(sizes.items())
+    )
+
     return ThresholdMetrics(
         threshold=threshold,
         is_configured_threshold=is_configured,
@@ -651,6 +692,7 @@ def _threshold_metrics(classifications: list[FrameClassification], *, threshold:
         true_positive_score_distribution=_score_distribution(true_positive_scores),
         false_positive_score_distribution=_score_distribution(false_positive_scores),
         scene_group_breakdown=scene_breakdown,
+        subject_size_breakdown=size_breakdown,
     )
 
 
@@ -1436,6 +1478,7 @@ __all__ = [
     "ScoreDistribution",
     "StaticClusterReport",
     "StaticStructure",
+    "SubjectSizeMetrics",
     "TemporalPolicyResult",
     "ThresholdMetrics",
     "anchor_score_threshold",

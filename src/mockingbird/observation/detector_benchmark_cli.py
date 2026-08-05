@@ -18,6 +18,7 @@ import argparse
 import asyncio
 from dataclasses import replace
 from pathlib import Path
+import subprocess
 from time import perf_counter
 from typing import Any
 import sys
@@ -83,6 +84,20 @@ def _frame_packet(frame: Any, root: Path) -> FramePacket:
     )
 
 
+def _gpu_memory_used_mib() -> float | None:
+    """Best-effort, side-effect-free `nvidia-smi` read; a resource fact only
+    (never semantic). Returns None rather than raising when unavailable."""
+
+    try:
+        output = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5, check=True,
+        )
+        return float(output.stdout.strip().splitlines()[0])
+    except Exception:
+        return None
+
+
 async def _detect(bundle: OnnxModelBundle, frames: tuple[FramePacket, ...]) -> tuple[dict[str, tuple[Any, ...]], OnnxCudaObservationProvider]:
     provider = OnnxCudaObservationProvider(bundle=bundle)
     provider.load()
@@ -113,9 +128,11 @@ async def _run(args: argparse.Namespace) -> int:
     frame_packets = tuple(_frame_packet(frame, root) for frame in sorted(manifest.frames, key=lambda item: item.frame_id))
 
     anchor_bundle = replace(bundle, score_threshold=anchor)
+    gpu_memory_before_mib = _gpu_memory_used_mib()
     started = perf_counter()
     detections_by_frame, provider = await _detect(anchor_bundle, frame_packets)
     primary_duration_ms = round((perf_counter() - started) * 1000, 3)
+    gpu_memory_after_mib = _gpu_memory_used_mib()
     primary_execution_facts = provider.execution_facts()
     provider.close()
 
@@ -163,10 +180,17 @@ async def _run(args: argparse.Namespace) -> int:
         "model": {
             "key": bundle.model_key, "version": bundle.model_version,
             "fingerprint": bundle.model_fingerprint, "bundle_fingerprint": bundle.fingerprint,
+            "source_model_fingerprint": bundle.source_model_fingerprint,
+            "model_format": bundle.model_format,
             "decoder": bundle.decoder_key, "broad_classes": list(bundle.broad_classes),
             "animal_classes": list(bundle.animal_classes),
             "input_width": bundle.input_width, "input_height": bundle.input_height,
             "primary_resize_mode": bundle.resize_mode,
+            "license": bundle.license_name,
+            "redistribution": bundle.redistribution,
+            "taxonomy": bundle.taxonomy,
+            "provenance": bundle.provenance,
+            "bundle_limitations": list(bundle.limitations),
         },
         "anchor_score_threshold": anchor,
         "limitations": list(LIMITATIONS),
@@ -185,6 +209,13 @@ async def _run(args: argparse.Namespace) -> int:
         "alternative_preprocessing_pass_duration_ms": alternative_duration_ms,
         "primary_execution_facts": primary_execution_facts,
         "alternative_preprocessing_execution_facts": alternative_execution_facts,
+        "model_size_bytes": bundle.model_path.stat().st_size,
+        "gpu_memory_before_mib": gpu_memory_before_mib,
+        "gpu_memory_after_mib": gpu_memory_after_mib,
+        "gpu_memory_delta_mib": (
+            gpu_memory_after_mib - gpu_memory_before_mib
+            if gpu_memory_before_mib is not None and gpu_memory_after_mib is not None else None
+        ),
     }
     report_path = write_detector_benchmark_report(args.output, semantic, execution=execution)
     print(f"Detector benchmark report written to {report_path}; semantic fingerprint {semantic['semantic_fingerprint']}.")

@@ -93,7 +93,11 @@ the Stage 2 replay's own box metrics) and separates outcomes into:
 negative frame counts, TP/FP/FN/duplicate/privacy-excluded counts, precision,
 recall, F1 (descriptive only -- never a selection input), false positives per
 negative frame, positive-frame recall, true/false score distributions, a
-scene-group breakdown, and a 95% Wilson-score confidence interval for
+scene-group breakdown, a subject-size breakdown keyed by the manifest's own
+reviewed `distance` field (`far` == longest reviewed-box side <= 96 source
+pixels, `typical` == larger, `unknown` == not assessed; added in Stage 6.3
+for small-subject recall comparison across detector candidates, bumping
+`REPORT_SCHEMA_VERSION` to 2), and a 95% Wilson-score confidence interval for
 precision/recall that is withheld (`None`) below
 `MIN_CONFIDENCE_INTERVAL_SAMPLE` rather than reported misleadingly narrow or
 wide.

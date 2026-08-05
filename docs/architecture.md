@@ -143,7 +143,23 @@ false-positive geometry, simulates bounded temporal confirmation policies
 over recorded detections only, and classifies candidate follow-up actions
 with no aggregate winner score. It opens no product database, changes no
 runtime threshold, Ignore region, or tracker configuration, and grants no
-production authority.
+production authority. Stage 6.3 adds a deterministic, shadow-only
+detector-candidate comparison described in
+[detector-candidate-comparison-contract.md](detector-candidate-comparison-contract.md).
+It compares one or more replacement candidates against the MDv5 baseline
+using already-produced Stage 6.2 reports scored on the identical reviewed
+cohort, preserving each model's own threshold grid, score distribution, and
+operating-point interpretation rather than comparing raw confidence values
+across models. Runtime and resource facts -- including the
+acceptable/degraded/unacceptable classification derived from them -- are
+reported only in a separate non-semantic section and never influence the
+comparison's semantic fingerprint or its deterministic recommendation, which
+a two-root real-CUDA run confirmed by reproducing byte-identical comparison
+fingerprints despite genuinely different measured latency between roots. It
+opens no product database and grants no production authority; a
+`candidate_ready_for_live_shadow_trial` classification characterizes
+accuracy, static-scene, temporal, and licensing evidence only and does not
+by itself authorize a live shadow trial.
 
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes

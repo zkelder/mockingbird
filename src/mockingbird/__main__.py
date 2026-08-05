@@ -12,5 +12,8 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "detector-benchmark":
         from mockingbird.observation.detector_benchmark_cli import run as detector_benchmark_run
         raise SystemExit(detector_benchmark_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "detector-comparison":
+        from mockingbird.observation.detector_comparison_cli import run as detector_comparison_run
+        raise SystemExit(detector_comparison_run(sys.argv[2:]))
     else:
         main()
