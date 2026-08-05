@@ -398,12 +398,48 @@ def _pipeline_metrics(
     evidence_generations = {item.track_generation_id for item in evidence if item.track_generation_id}
     evidence_state = "evaluated" if visit_supported else "not_evaluated"
     evidence_metrics = _evidence_metrics(manifest, evidence, evidence_selections, visit_supported=visit_supported)
-    return unavailable | evidence_metrics | {
+    boundary_metrics = _boundary_metrics(track_updates, facts, track_supported=track_supported)
+    return unavailable | evidence_metrics | boundary_metrics | {
         "evidence_candidate_count": _metric(len(evidence) if visit_supported else None, evidence_state),
         "proposals_with_evidence": _metric(
             len(proposal_generations & evidence_generations) if visit_supported else None, evidence_state,
         ),
         "track_duration_error_ms": _metric(None, "insufficient_truth" if track_supported else "not_evaluated"),
+    }
+
+
+_CONFIDENT_EPISODE_SPLIT_REASONS = {"maximum_unsupported_duration", "negative_interval_reentry"}
+_BOUNDARY_METRICS = (
+    "episode_temporary_loss_count", "episode_rejected_count", "episode_confirmed_split_count",
+    "episode_ambiguous_reentry_count", "boundary_reason_distribution",
+)
+
+
+def _boundary_metrics(
+    track_updates: tuple[TrackUpdate, ...],
+    facts: dict[str, object],
+    *,
+    track_supported: bool,
+) -> dict[str, object]:
+    """Deterministic episode-boundary counts derived only from already-emitted
+    ``TrackUpdate`` facts; no new provider contract fields are required."""
+    if not track_supported:
+        return {name: _metric(None, "not_evaluated") for name in _BOUNDARY_METRICS}
+    terminal = [item for item in track_updates if item.status == "ended"]
+    reasons: dict[str, int] = {}
+    for item in terminal:
+        reason = item.terminal_reason or "unknown"
+        reasons[reason] = reasons.get(reason, 0) + 1
+    confident_splits = sum(reasons.get(reason, 0) for reason in _CONFIDENT_EPISODE_SPLIT_REASONS)
+    rejected = sum(item.lifecycle_state == "rejected" for item in terminal)
+    return {
+        "episode_temporary_loss_count": _metric(
+            sum(item.lifecycle_state == "temporarily_lost" for item in track_updates), "evaluated",
+        ),
+        "episode_rejected_count": _metric(rejected, "evaluated"),
+        "episode_confirmed_split_count": _metric(confident_splits, "evaluated"),
+        "episode_ambiguous_reentry_count": _metric(facts.get("ambiguous_reentries", 0), "evaluated"),
+        "boundary_reason_distribution": _metric(dict(sorted(reasons.items())), "evaluated"),
     }
 
 
@@ -486,6 +522,8 @@ _COMPARISON_METRICS = (
     "high_resolution_availability", "evidence_candidate_count", "evidence_candidates_eligible",
     "selected_identification_role_distribution", "frames_supplied", "frames_processed",
     "frames_inferred", "track_update_count", "provider_error_count",
+    "episode_temporary_loss_count", "episode_rejected_count", "episode_confirmed_split_count",
+    "episode_ambiguous_reentry_count", "boundary_reason_distribution",
 )
 
 

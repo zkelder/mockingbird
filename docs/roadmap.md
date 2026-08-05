@@ -47,10 +47,21 @@ adds bounded, deterministic multi-frame evidence scoring described in
 [multi-frame-evidence-scoring-contract.md](multi-frame-evidence-scoring-contract.md)
 and Snapshot-versus-frame-driven shadow comparison; a two-root native RTX 4060 Ti
 replay produced identical semantic fingerprints with CUDA-only model execution.
-Stage 6 remains shadow-only with no production proposal authority; a daylight
-Camera Node hardware smoke is a separate, not-yet-completed activation step, and
-Stage 7 controlled proposal-authority migration is next only after measured
-success. This remains a contained observation-
+Stage 6 remains shadow-only with no production proposal authority. Stage 6.1
+adds a provider-neutral shadow track episode boundary: genuine detector
+support and bounded tracker-support are tracked separately so an episode ends
+on positive evidence of discontinuity (elapsed time or explicit
+animal-negative detector frames) instead of surviving indefinitely on
+tracker-support alone, while brief misses, occlusion, and ordinary cadence
+gaps still stay one coherent episode. On the same reviewed-evidence replay
+this closes the confirmed episode on principled grounds instead of an
+unbounded span, but does not by itself raise appearance recall on that
+dataset: the second expected appearance received no positive detector
+evidence at all in that image set, which is a detection-recall fact outside
+this boundary fix's scope. A daylight Camera Node hardware smoke and a
+representative field comparison are separate, not-yet-completed activation
+steps, and Stage 7 controlled proposal-authority migration is next only after
+measured success. This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.
 `SnapshotObservationProvider` names the current timer-driven path and remains a

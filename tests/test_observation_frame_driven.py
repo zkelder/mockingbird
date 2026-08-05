@@ -287,6 +287,103 @@ async def test_replay_fingerprint_and_report_comparison_are_deterministic() -> N
     assert compare_replay_reports(first, second) == compare_replay_reports(first, second)
 
 
+async def test_two_separate_bird_visits_create_two_shadow_proposals_with_isolated_evidence() -> None:
+    """Catalog scenario "two_separate_bird_visits": animal A is confirmed, leaves
+    for a meaningful gap, and animal B arrives later in the same broad class and
+    a similar position.  The episode boundary must close A's episode and start a
+    distinct generation for B rather than continuing one merged episode."""
+    frames = _frames(10, step_ms=1000)
+    box = (0.2, 0.2, 0.5, 0.5)
+    detector = FakeDetector({
+        frames[0].frame_id or "": (_animal(frames[0], box),),
+        frames[1].frame_id or "": (_animal(frames[1], box),),
+        frames[8].frame_id or "": (_animal(frames[8], box),),
+        frames[9].frame_id or "": (_animal(frames[9], box),),
+    })
+    provider = FrameDrivenObservationProvider(
+        detector=detector,
+        settings=_settings(
+            source_nominal_fps=1.0, baseline_detector_fps=1.0, candidate_detector_fps=1.0,
+            maximum_unsupported_detector_ms=3000, maximum_frame_gap_ms=6000, tracker_expiry_ms=6000,
+        ),
+        tracker_support=lambda frame, track: track.bounding_box,
+    )
+    provider.load()
+    results = await provider.replay_frames(frames)
+    proposals = [item for result in results for item in result.visit_proposals]
+    assert len(proposals) == 2
+    assert len({item.track_generation_id for item in proposals}) == 2
+    first_ids = set(proposals[0].evidence_media_asset_ids)
+    second_ids = set(proposals[1].evidence_media_asset_ids)
+    assert first_ids and second_ids
+    assert not (first_ids & second_ids)
+
+
+async def test_boundary_metrics_report_the_confident_split_and_reason_distribution() -> None:
+    box = (0.2, 0.2, 0.5, 0.5)
+    replay = ReplayInput("input", "stream", 100, 100, 1.0, tuple(
+        ReplayFrame(index, index * 1000, str(index)) for index in range(10)
+    ))
+    packets = replay.packets()
+    detector = FakeDetector({
+        packets[index].frame_id or "": (_animal(packets[index], box),) for index in (0, 1, 8, 9)
+    })
+    provider = FrameDrivenObservationProvider(
+        detector=detector,
+        settings=_settings(
+            source_nominal_fps=1.0, baseline_detector_fps=1.0, candidate_detector_fps=1.0,
+            maximum_unsupported_detector_ms=3000, maximum_frame_gap_ms=6000, tracker_expiry_ms=6000,
+        ),
+        tracker_support=lambda frame, track: track.bounding_box,
+    )
+    provider.load()
+    manifest = BenchmarkManifest(1, "boundary", replay.fingerprint, (), ())
+    report = await ReplayRunner({provider.provider_id: provider}).run(replay, manifest, provider_key=provider.provider_id)
+    assert report.metrics["episode_confirmed_split_count"] == {"state": "evaluated", "value": 1}
+    assert report.metrics["boundary_reason_distribution"] == {
+        "state": "evaluated",
+        "value": {"end_of_replay": 1, "maximum_unsupported_duration": 1},
+    }
+    assert report.metrics["episode_ambiguous_reentry_count"] == {"state": "evaluated", "value": 0}
+    assert report.metrics["tracks_confirmed"] == {"state": "evaluated", "value": 2}
+
+
+async def test_replay_and_evidence_ordering_remain_deterministic_across_an_episode_split() -> None:
+    frames = _frames(10, step_ms=1000)
+    box = (0.2, 0.2, 0.5, 0.5)
+
+    def build_provider() -> FrameDrivenObservationProvider:
+        detector = FakeDetector({
+            f"frame-{index}": (_animal(frames[index], box),) for index in (0, 1, 8, 9)
+        })
+        instance = FrameDrivenObservationProvider(
+            detector=detector,
+            settings=_settings(
+                source_nominal_fps=1.0, baseline_detector_fps=1.0, candidate_detector_fps=1.0,
+                maximum_unsupported_detector_ms=3000, maximum_frame_gap_ms=6000, tracker_expiry_ms=6000,
+            ),
+            tracker_support=lambda frame, track: track.bounding_box,
+        )
+        instance.load()
+        return instance
+
+    first_provider = build_provider()
+    second_provider = build_provider()
+    first_results = await first_provider.replay_frames(frames)
+    second_results = await second_provider.replay_frames(frames)
+    first_proposals = tuple(sorted(
+        (item for result in first_results for item in result.visit_proposals), key=lambda item: item.proposal_key,
+    ))
+    second_proposals = tuple(sorted(
+        (item for result in second_results for item in result.visit_proposals), key=lambda item: item.proposal_key,
+    ))
+    assert first_proposals == second_proposals
+    assert len(first_proposals) == 2
+    first_updates = tuple(item for result in first_results for item in result.track_updates)
+    second_updates = tuple(item for result in second_results for item in result.track_updates)
+    assert first_updates == second_updates
+
+
 def test_committed_scenario_catalog_and_structural_no_write_boundary() -> None:
     catalog = json.loads(Path("tests/fixtures/observation_stage4/scenarios.json").read_text(encoding="utf-8"))
     assert len(catalog["scenarios"]) == 12

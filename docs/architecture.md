@@ -124,7 +124,15 @@ no-useful-evidence state when nothing is eligible; it never uses species identit
 or species-model inference. Snapshot-versus-frame-driven replay comparison
 classifies each metric as equivalent, better for one side, insufficient truth, or
 unsupported for one provider rather than producing an aggregate score. Stage 6
-remains shadow-only with no production proposal authority.
+remains shadow-only with no production proposal authority. Stage 6.1 clarifies
+the provider-neutral episode boundary inside the frame-driven tracker: a
+generation's own genuine detector support and bounded tracker-support are
+tracked separately, so an episode closes on positive evidence of
+discontinuity rather than surviving indefinitely on tracker-support alone,
+while brief misses, occlusion, and ordinary cadence gaps remain one coherent
+episode. See
+[frame-driven-shadow-provider-contract.md](frame-driven-shadow-provider-contract.md)
+for the bounded decision inputs, settings, and stable reason codes.
 
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes

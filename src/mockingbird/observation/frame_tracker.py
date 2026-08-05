@@ -6,11 +6,12 @@ has no model, camera, repository, media, or product-write dependency.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import sha256
 from math import hypot
-from typing import Callable, Literal, Protocol
+from typing import Literal, NamedTuple, Protocol
 
 from mockingbird.observation.contracts import DetectionObservation, FramePacket, TrackUpdate
 
@@ -31,6 +32,9 @@ class TrackerConfiguration:
     minimum_iou: float = 0.05
     maximum_centroid_distance: float = 0.22
     ambiguity_margin: float = 0.01
+    maximum_unsupported_detector_ms: int = 5000
+    negative_detector_frames_to_end: int = 2
+    ambiguous_reentry_window_ms: int = 1500
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.strong_detection_threshold <= 1.0:
@@ -43,6 +47,9 @@ class TrackerConfiguration:
             self.tracker_expiry_ms,
             self.maximum_track_duration_ms,
             self.maximum_active_tracks,
+            self.maximum_unsupported_detector_ms,
+            self.negative_detector_frames_to_end,
+            self.ambiguous_reentry_window_ms,
         ) < 1:
             raise ValueError("invalid_tracker_bound")
 
@@ -77,11 +84,23 @@ class TerminalTrack:
     confirmed: bool
 
 
+class _RecentEnding(NamedTuple):
+    """A small bounded record of one just-ended generation, kept only to detect
+    and honestly report an ambiguous reentry.  It never revives a generation."""
+
+    generation_id: str
+    broad_class: str
+    bounding_box: tuple[float, float, float, float]
+    ended_offset_ms: int
+    confident_split: bool
+
+
 @dataclass(frozen=True)
 class TrackerStep:
     updates: tuple[TrackUpdate, ...] = ()
     terminals: tuple[TerminalTrack, ...] = ()
     ambiguous_associations: int = 0
+    ambiguous_reentries: int = 0
 
 
 @dataclass
@@ -98,9 +117,11 @@ class _Track:
     tracker_support_count: int
     confidence: float | None
     detector_provenance: str | None
+    last_detector_offset_ms: int
     lifecycle_state: Literal["tentative", "confirmed", "temporarily_lost"] = "tentative"
     confirmed: bool = False
     missed_frames: int = 0
+    consecutive_negative_detector_frames: int = 0
     velocity: tuple[float, float] = (0.0, 0.0)
     supporting_frame_ids: list[str] = field(default_factory=list)
     seen_frame_ids: set[str] = field(default_factory=set)
@@ -138,6 +159,7 @@ class ProviderNeutralFrameTracker:
         self._next_track = 1
         self._seen_frames: set[str] = set()
         self._last_frame_offset_ms: int | None = None
+        self._recent_endings: deque[_RecentEnding] = deque(maxlen=8)
 
     @property
     def active_count(self) -> int:
@@ -148,13 +170,26 @@ class ProviderNeutralFrameTracker:
         self._tracks.clear()
         self._seen_frames.clear()
         self._last_frame_offset_ms = None
+        self._recent_endings.clear()
         return step
 
     def observe(
         self,
         frame: FramePacket,
         detections: tuple[DetectionObservation, ...],
+        *,
+        detector_ran: bool = False,
     ) -> TrackerStep:
+        """Advance the episode boundary by one analysis frame.
+
+        ``detector_ran`` distinguishes an explicit animal-negative detector pass
+        (the detector executed and found nothing usable for a track) from an
+        idle-cadence frame the detector never inspected.  Only the former counts
+        toward ``negative_detector_frames_to_end``; tracker-support alone (for
+        example a bounded local patch match) can bridge a brief loss but can
+        never by itself keep an episode "genuinely supported" indefinitely --
+        ``maximum_unsupported_detector_ms`` bounds that regardless of cadence.
+        """
         frame_id = frame.frame_id
         offset = frame.source_offset_ms
         captured_at = frame.captured_at
@@ -172,6 +207,10 @@ class ProviderNeutralFrameTracker:
         for track in tuple(self._tracks.values()):
             if offset - track.first_offset_ms >= self.configuration.maximum_track_duration_ms:
                 terminals.append(self._terminate(track, "maximum_duration", captured_at, frame))
+            elif track.consecutive_negative_detector_frames >= self.configuration.negative_detector_frames_to_end:
+                terminals.append(self._terminate(track, "negative_interval_reentry", captured_at, frame))
+            elif offset - track.last_detector_offset_ms > self.configuration.maximum_unsupported_detector_ms:
+                terminals.append(self._terminate(track, "maximum_unsupported_duration", captured_at, frame))
             elif offset - track.last_offset_ms > self.configuration.maximum_frame_gap_ms:
                 terminals.append(self._terminate(track, "tracker_lost", captured_at, frame))
 
@@ -195,9 +234,12 @@ class ProviderNeutralFrameTracker:
                 continue
             supported_box = self._support_resolver(frame, track.view())
             if supported_box is not None and _valid_box(supported_box):
+                track.consecutive_negative_detector_frames = 0
                 self._observe_tracker_support(track, supported_box, frame)
                 updates.append(self._update(track, captured_at, frame, "updated"))
                 continue
+            if detector_ran:
+                track.consecutive_negative_detector_frames += 1
             track.missed_frames += 1
             track.lifecycle_state = "temporarily_lost"
             if (
@@ -208,18 +250,21 @@ class ProviderNeutralFrameTracker:
             else:
                 updates.append(self._update(track, captured_at, frame, "updated"))
 
+        ambiguous_reentries = 0
         for index, detection in enumerate(animals):
             if index in matched_detections:
                 continue
             if len(self._tracks) >= self.configuration.maximum_active_tracks:
                 continue
-            track = self._start(detection, frame)
+            track, reentry_ambiguous = self._start(detection, frame)
+            if reentry_ambiguous:
+                ambiguous_reentries += 1
             updates.append(self._update(track, captured_at, frame, "started"))
 
         updates.extend(
             self._terminal_update(item, captured_at, frame) for item in terminals
         )
-        return TrackerStep(tuple(updates), tuple(terminals), ambiguous)
+        return TrackerStep(tuple(updates), tuple(terminals), ambiguous, ambiguous_reentries)
 
     def finalize(self, reason: str = "end_of_replay") -> TrackerStep:
         updates: list[TrackUpdate] = []
@@ -239,7 +284,7 @@ class ProviderNeutralFrameTracker:
             updates.append(self._terminal_update(terminal, captured_at, frame))
         return TrackerStep(tuple(updates), tuple(terminals))
 
-    def _start(self, detection: DetectionObservation, frame: FramePacket) -> _Track:
+    def _start(self, detection: DetectionObservation, frame: FramePacket) -> tuple[_Track, bool]:
         assert detection.bounding_box is not None and frame.source_offset_ms is not None and frame.captured_at is not None
         counter = self._next_track
         self._next_track += 1
@@ -248,6 +293,7 @@ class ProviderNeutralFrameTracker:
             f"{detection.label}|{detection.bounding_box}|{counter}"
         )
         generation = f"{self.stream_id}:frame-track:{sha256(seed.encode()).hexdigest()[:20]}"
+        ambiguous = self._is_ambiguous_reentry(detection, frame)
         track = _Track(
             f"frame-track-{counter:04d}",
             generation,
@@ -261,11 +307,31 @@ class ProviderNeutralFrameTracker:
             0,
             detection.confidence,
             detection.detector_id,
+            frame.source_offset_ms,
             supporting_frame_ids=[frame.frame_id or ""],
             seen_frame_ids={frame.frame_id or ""},
         )
         self._tracks[track.track_id] = track
-        return track
+        return track, ambiguous
+
+    def _is_ambiguous_reentry(self, detection: DetectionObservation, frame: FramePacket) -> bool:
+        """Report -- never revive -- a start that could plausibly be the same
+        subject as a recently, but not confidently, ended generation."""
+        assert detection.bounding_box is not None and frame.source_offset_ms is not None
+        for ending in self._recent_endings:
+            if ending.confident_split or ending.broad_class != detection.label:
+                continue
+            if frame.source_offset_ms - ending.ended_offset_ms > self.configuration.ambiguous_reentry_window_ms:
+                continue
+            distance = hypot(*(
+                left - right for left, right in zip(_center(ending.bounding_box), _center(detection.bounding_box))
+            ))
+            if (
+                _iou(ending.bounding_box, detection.bounding_box) >= self.configuration.minimum_iou
+                or distance <= self.configuration.maximum_centroid_distance
+            ):
+                return True
+        return False
 
     def _observe_detection(
         self,
@@ -280,7 +346,9 @@ class ProviderNeutralFrameTracker:
         track.bounding_box = detection.bounding_box
         track.last_captured_at = frame.captured_at
         track.last_offset_ms = frame.source_offset_ms
+        track.last_detector_offset_ms = frame.source_offset_ms
         track.missed_frames = 0
+        track.consecutive_negative_detector_frames = 0
         track.detector_confirmation_count += 1
         track.confidence = max(track.confidence or 0.0, detection.confidence or 0.0)
         self._remember(track, frame.frame_id or "")
@@ -370,7 +438,14 @@ class ProviderNeutralFrameTracker:
     ) -> TerminalTrack:
         self._tracks.pop(track.track_id, None)
         confirmed = track.confirmed
-        terminal_reason = reason if confirmed or reason not in {"tracker_lost", "end_of_replay"} else "insufficient_support"
+        uncertain_reasons = {
+            "tracker_lost", "end_of_replay", "maximum_unsupported_duration", "negative_interval_reentry",
+        }
+        terminal_reason = reason if confirmed or reason not in uncertain_reasons else "insufficient_support"
+        confident_split = reason in {"maximum_unsupported_duration", "negative_interval_reentry"}
+        self._recent_endings.append(_RecentEnding(
+            track.generation_id, track.broad_class, track.bounding_box, track.last_offset_ms, confident_split,
+        ))
         return TerminalTrack(track.view(), terminal_reason, confirmed)
 
     def _update(

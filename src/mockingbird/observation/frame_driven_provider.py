@@ -68,6 +68,9 @@ class FrameDrivenSettings:
     minimum_iou: float = 0.05
     maximum_centroid_distance: float = 0.22
     ambiguity_margin: float = 0.01
+    maximum_unsupported_detector_ms: int = 5000
+    negative_detector_frames_to_end: int = 2
+    ambiguous_reentry_window_ms: int = 1500
 
     def __post_init__(self) -> None:
         if (
@@ -78,22 +81,28 @@ class FrameDrivenSettings:
             or self.maximum_pending_detector_frames != 1
             or not 1 <= self.evidence_ring_size <= MAX_EVIDENCE_RING_SIZE
             or not 0 <= self.pretrigger_frame_count <= MAX_PRETRIGGER_FRAMES
+            or self.maximum_unsupported_detector_ms < 1
+            or self.negative_detector_frames_to_end < 1
+            or self.ambiguous_reentry_window_ms < 1
         ):
             raise ValueError("invalid_frame_driven_settings")
 
     def tracker_configuration(self) -> TrackerConfiguration:
         return TrackerConfiguration(
-            self.strong_detection_threshold,
-            self.minimum_detector_confirmations,
-            self.minimum_tracker_support_frames,
-            self.maximum_missed_frames,
-            self.maximum_frame_gap_ms,
-            self.tracker_expiry_ms,
-            self.maximum_track_duration_ms,
-            self.maximum_active_tracks,
-            self.minimum_iou,
-            self.maximum_centroid_distance,
-            self.ambiguity_margin,
+            strong_detection_threshold=self.strong_detection_threshold,
+            minimum_detector_confirmations=self.minimum_detector_confirmations,
+            minimum_tracker_support_frames=self.minimum_tracker_support_frames,
+            maximum_missed_frames=self.maximum_missed_frames,
+            maximum_frame_gap_ms=self.maximum_frame_gap_ms,
+            tracker_expiry_ms=self.tracker_expiry_ms,
+            maximum_track_duration_ms=self.maximum_track_duration_ms,
+            maximum_active_tracks=self.maximum_active_tracks,
+            minimum_iou=self.minimum_iou,
+            maximum_centroid_distance=self.maximum_centroid_distance,
+            ambiguity_margin=self.ambiguity_margin,
+            maximum_unsupported_detector_ms=self.maximum_unsupported_detector_ms,
+            negative_detector_frames_to_end=self.negative_detector_frames_to_end,
+            ambiguous_reentry_window_ms=self.ambiguous_reentry_window_ms,
         )
 
 
@@ -370,8 +379,9 @@ class FrameDrivenObservationProvider:
                 + timedelta(milliseconds=frame.source_offset_ms),
             )
         self._facts["frames_supplied"] += 1
+        detector_ran = self._should_infer(frame)
         detections: tuple[DetectionObservation, ...] = ()
-        if self._should_infer(frame):
+        if detector_ran:
             raw = await self.detector.infer_frame(frame)
             self._last_detector_offset_ms = frame.source_offset_ms
             self._facts["frames_inferred"] += 1
@@ -385,12 +395,13 @@ class FrameDrivenObservationProvider:
                 self._facts["animal_positive_inference_frames"] += 1
         started = perf_counter()
         try:
-            step = self._tracker.observe(frame, detections)
+            step = self._tracker.observe(frame, detections, detector_ran=detector_ran)
         except ValueError as error:
             raise ReplayValidationError(str(error)) from error
         self._tracker_latencies_ms.append((perf_counter() - started) * 1000)
         self._facts["tracker_updates"] += len(step.updates)
         self._facts["ambiguous_associations"] += step.ambiguous_associations
+        self._facts["ambiguous_reentries"] += step.ambiguous_reentries
         terminal_evidence: list[EvidenceCandidate] = []
         proposals: list[VisitProposal] = []
         for update in step.updates:
@@ -604,6 +615,7 @@ class FrameDrivenObservationProvider:
             "tracks_rejected_or_lost": 0,
             "confirmed_update_count": 0,
             "ambiguous_associations": 0,
+            "ambiguous_reentries": 0,
             "shadow_proposals": 0,
             "evidence_candidates": 0,
         }
