@@ -31,8 +31,8 @@ guidance preserves one primary link and all evidence, distinguishes high-resolut
 lineage from subject presence, and never silently rewrites historical selections
 or reviewed truth. A delayed high-resolution crop remains retained secondary
 evidence unless durable facts affirm subject continuity at capture time. Optimal
-multi-frame visual evidence ranking moves to Observation Engine v2 Stage 6;
-**Observation Engine v2 Stages 1-5** are complete: provider-neutral contracts
+multi-frame visual evidence ranking is implemented as Observation Engine v2 Stage 6;
+**Observation Engine v2 Stages 1-6** are complete: provider-neutral contracts
 wrap the established observer, deterministic shadow-only ordered-frame replay
 provides reproducible reports, the optional ONNX Runtime CUDA provider performs
 local-model detection with verified no-CPU fallback, and the distinct
@@ -42,8 +42,15 @@ idempotent shadow-only Visit proposals. Stage 3 was activated on the local RTX
 4060 Ti with 886 CUDA-executed and zero CPU-executed model nodes. Stage 5 adds one
 authenticated bounded Camera Node multipart-JPEG analysis stream, live host
 backpressure/generation handling, and immediate one-frame high-resolution burst
-evidence. It remains shadow-only with no production proposal authority. Stage 6,
-multi-frame evidence scoring and old/new shadow comparison, is next. This remains a contained observation-
+evidence. It remains shadow-only with no production proposal authority. Stage 6
+adds bounded, deterministic multi-frame evidence scoring described in
+[multi-frame-evidence-scoring-contract.md](multi-frame-evidence-scoring-contract.md)
+and Snapshot-versus-frame-driven shadow comparison; a two-root native RTX 4060 Ti
+replay produced identical semantic fingerprints with CUDA-only model execution.
+Stage 6 remains shadow-only with no production proposal authority; a daylight
+Camera Node hardware smoke is a separate, not-yet-completed activation step, and
+Stage 7 controlled proposal-authority migration is next only after measured
+success. This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.
 `SnapshotObservationProvider` names the current timer-driven path and remains a

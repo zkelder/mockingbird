@@ -79,7 +79,7 @@ def test_report_is_atomic_immutable_and_contains_no_source_path(tmp_path: Path) 
     report_path = write_replay_report(output, report, replay=bundle.replay, manifest=bundle.manifest,
         provider={"provider_id": "snapshot"}, limitations=("offline",), execution={})
     payload = json.loads(report_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert str(frames.resolve()) not in json.dumps(payload["semantic"])
     with pytest.raises(ReplayValidationError, match="nonempty_output_directory"):
         write_replay_report(output, report, replay=bundle.replay, manifest=bundle.manifest,

@@ -113,7 +113,18 @@ Privacy/Ignore masking before inference; coalesces to newest work under bounded
 backpressure; and attaches only generation-correct temporary burst evidence. CUDA
 and tracker runtime types remain behind provider boundaries. The live path has no
 product repository dependency or production proposal authority; product records
-still contain only provider-neutral evidence and correction-derived truth.
+still contain only provider-neutral evidence and correction-derived truth. Stage 6
+adds bounded, deterministic multi-frame evidence scoring and old/new shadow
+comparison described in
+[multi-frame-evidence-scoring-contract.md](multi-frame-evidence-scoring-contract.md).
+For each shadow track episode it ranks retained evidence candidates on
+provider-neutral signals only, choosing a best identification candidate and a best
+context candidate separately, a bounded alternate set, and an honest
+no-useful-evidence state when nothing is eligible; it never uses species identity
+or species-model inference. Snapshot-versus-frame-driven replay comparison
+classifies each metric as equivalent, better for one side, insufficient truth, or
+unsupported for one provider rather than producing an aggregate score. Stage 6
+remains shadow-only with no production proposal authority.
 
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes

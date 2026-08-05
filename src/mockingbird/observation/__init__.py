@@ -13,6 +13,13 @@ from mockingbird.observation.contracts import (
     TrackUpdate,
     VisitProposal,
 )
+from mockingbird.observation.evidence_scoring import (
+    EVIDENCE_SCORING_VERSION,
+    EvidenceCandidateScore,
+    EvidenceScoringBounds,
+    EvidenceSelection,
+    score_proposal_evidence,
+)
 from mockingbird.observation.frame_driven_provider import (
     FrameDrivenObservationProvider,
     FrameDrivenProviderConfiguration,
@@ -45,7 +52,11 @@ __all__ = [
     "EvidenceBurstCapability",
     "EvidenceBurstRequest",
     "EvidenceBurstResult",
+    "EVIDENCE_SCORING_VERSION",
     "EvidenceCandidate",
+    "EvidenceCandidateScore",
+    "EvidenceScoringBounds",
+    "EvidenceSelection",
     "FrameDrivenObservationProvider",
     "FrameDrivenProviderConfiguration",
     "FrameDrivenSettings",
@@ -66,4 +77,5 @@ __all__ = [
     "TrackUpdate",
     "TrackerConfiguration",
     "VisitProposal",
+    "score_proposal_evidence",
 ]

@@ -12,7 +12,7 @@ from typing import Any
 from mockingbird.web_app import find_workspace_root
 from mockingbird.observation.replay import (
     FRAME_IDENTITY_VERSION, MATCHER_VERSION, REPORT_SCHEMA_VERSION,
-    BenchmarkManifest, ExpectedAppearance, ExpectedDetection, ExpectedVisit, ReplayFrame,
+    BenchmarkManifest, ExpectedAppearance, ExpectedDetection, ExpectedEvidence, ExpectedVisit, ReplayFrame,
     ReplayInput, ReplayReport, ReplayValidationError, semantic_fingerprint,
 )
 
@@ -64,6 +64,7 @@ def load_replay_bundle(frames_directory: Path, manifest_path: Path) -> ReplayBun
         tuple(_appearance(item) for item in _require_list(document, "appearances")),
         tuple(_visit(item) for item in _require_list(document, "visits")),
         tuple(_detection(item) for item in _optional_list(document, "detections")),
+        tuple(_evidence(item) for item in _optional_list(document, "evidence")),
     )
     manifest.validate(replay)
     return ReplayBundle(replay, manifest, _thresholds(document.get("thresholds", {})))
@@ -88,9 +89,12 @@ def write_replay_report(output_directory: Path, report: ReplayReport, *, replay:
         "expected_detections": [
             asdict(item) for item in sorted(manifest.detections, key=lambda item: (item.frame_index, item.annotation_id))
         ],
+        "expected_evidence": [asdict(item) for item in sorted(manifest.evidence, key=lambda item: item.candidate_id)],
         "detections": [asdict(item) for item in report.detections],
         "track_updates": [asdict(item) for item in report.track_updates],
         "evidence_candidates": [asdict(item) for item in report.evidence_candidates],
+        "evidence_selections": [asdict(item) for item in report.evidence_selections],
+        "evidence_fingerprint": report.evidence_fingerprint,
         "pipeline_facts": dict(sorted((report.pipeline_facts or {}).items())),
         "proposals": [asdict(item) for item in sorted(report.proposals, key=lambda item: item.proposal_key)],
         "matches": [asdict(item) for item in report.matches],
@@ -208,6 +212,34 @@ def _detection(value: object) -> ExpectedDetection:
     )
 
 
+def _evidence(value: object) -> ExpectedEvidence:
+    if not isinstance(value, dict):
+        raise ReplayValidationError("invalid_evidence_annotation")
+    geometry_value = value.get("subject_geometry")
+    geometry = None
+    if geometry_value is not None:
+        if (
+            not isinstance(geometry_value, list) or len(geometry_value) != 4
+            or not all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in geometry_value)
+        ):
+            raise ReplayValidationError("invalid_evidence_annotation")
+        geometry = tuple(float(item) for item in geometry_value)
+    return ExpectedEvidence(
+        _require_string(value, "candidate_id"),
+        _optional_nullable_bool(value, "subject_visible"),
+        geometry,
+        _optional_nullable_bool(value, "useful_animal_confirmation"),
+        _optional_nullable_bool(value, "useful_identification"),
+        _optional_nullable_bool(value, "useful_context"),
+        _optional_nullable_bool(value, "preferred_context"),
+        _optional_bool(value, "ambiguous"),
+        _optional_nullable_bool(value, "obstruction"),
+        _optional_nullable_bool(value, "motion_blur"),
+        _optional_nullable_bool(value, "clipping"),
+        _optional_nullable_bool(value, "subject_absent"),
+    )
+
+
 def _excluded_regions(value: object) -> tuple[tuple[float, float, float, float], ...]:
     if not isinstance(value, list) or len(value) > 32:
         raise ReplayValidationError("invalid_analysis_excluded_regions")
@@ -251,6 +283,13 @@ def _optional_string(value: dict[str, Any], key: str) -> str | None:
 def _optional_bool(value: dict[str, Any], key: str) -> bool:
     result = value.get(key, False)
     if not isinstance(result, bool): raise ReplayValidationError(f"invalid_{key}")
+    return result
+
+
+def _optional_nullable_bool(value: dict[str, Any], key: str) -> bool | None:
+    result = value.get(key)
+    if result is not None and not isinstance(result, bool):
+        raise ReplayValidationError(f"invalid_{key}")
     return result
 
 

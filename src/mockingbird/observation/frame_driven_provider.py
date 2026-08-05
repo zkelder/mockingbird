@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
-from hashlib import sha256
 from importlib import import_module
 from io import BytesIO
 from pathlib import Path
@@ -530,7 +529,16 @@ class FrameDrivenObservationProvider:
             update.generation_id,
             update.detector_provenance,
             TRACKER_VERSION,
-            (("subject_area", round(area, 8)), ("detector_confidence", update.confidence)),
+            (
+                ("subject_area", round(area, 8)),
+                ("detector_confidence", update.confidence),
+                ("track_supported", True),
+                ("detector_support", update.detector_confirmation_count),
+                ("tracker_support", update.tracker_support_count),
+                ("supporting_frame_count", len(update.supporting_frame_ids)),
+                ("temporal_alignment", "uncertain" if role == "pretrigger" else "aligned"),
+                ("track_active_at_capture", role != "pretrigger"),
+            ),
             True,
             True,
         )

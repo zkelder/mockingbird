@@ -72,7 +72,8 @@ tracked best, final supported frame, and one bounded alternative. Candidates
 contain only portable frame identity/reference, timestamp, dimensions,
 normalized subject geometry, provenance, and deterministic subject-area/score
 facts. They are temporary shadow evidence and never create `MediaAsset`.
-Stage 6 remains responsible for optimal multi-frame evidence scoring.
+Stage 6 ranks these candidates; see
+[multi-frame-evidence-scoring-contract.md](multi-frame-evidence-scoring-contract.md).
 
 ## Replay, metrics, and execution facts
 

@@ -9,11 +9,12 @@ from typing import Protocol
 from mockingbird.observation.contracts import (
     DetectionObservation, EvidenceCandidate, FramePacket, ObservationResult, TrackUpdate, VisitProposal,
 )
+from mockingbird.observation.evidence_scoring import EvidenceSelection, score_proposal_evidence
 
 MANIFEST_VERSION = 1
 FRAME_IDENTITY_VERSION = "ordered-frame-v1"
 MATCHER_VERSION = "temporal-zone-v1"
-REPORT_SCHEMA_VERSION = 2
+REPORT_SCHEMA_VERSION = 3
 PROVIDER_ERROR_LIMIT = 25
 MAX_FRAMES = 10_000
 MAX_APPEARANCES = 1_000
@@ -126,6 +127,22 @@ class ExpectedDetection:
 
 
 @dataclass(frozen=True)
+class ExpectedEvidence:
+    candidate_id: str
+    subject_visible: bool | None = None
+    subject_geometry: tuple[float, float, float, float] | None = None
+    useful_animal_confirmation: bool | None = None
+    useful_identification: bool | None = None
+    useful_context: bool | None = None
+    preferred_context: bool | None = None
+    ambiguous: bool = False
+    obstruction: bool | None = None
+    motion_blur: bool | None = None
+    clipping: bool | None = None
+    subject_absent: bool | None = None
+
+
+@dataclass(frozen=True)
 class BenchmarkManifest:
     version: int
     benchmark_id: str
@@ -133,6 +150,7 @@ class BenchmarkManifest:
     appearances: tuple[ExpectedAppearance, ...]
     visits: tuple[ExpectedVisit, ...]
     detections: tuple[ExpectedDetection, ...] = ()
+    evidence: tuple[ExpectedEvidence, ...] = ()
 
     def validate(self, replay: ReplayInput) -> None:
         if self.version != MANIFEST_VERSION:
@@ -167,6 +185,12 @@ class BenchmarkManifest:
                 raise ReplayValidationError("invalid_detection_annotation")
             if not _valid_box(item.bounding_box):
                 raise ReplayValidationError("invalid_detection_annotation")
+        evidence_ids = [item.candidate_id for item in self.evidence]
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ReplayValidationError("duplicate_evidence_annotation_id")
+        for item in self.evidence:
+            if not item.candidate_id or (item.subject_geometry is not None and not _valid_box(item.subject_geometry)):
+                raise ReplayValidationError("invalid_evidence_annotation")
 
     @property
     def fingerprint(self) -> str:
@@ -200,6 +224,8 @@ class ReplayReport:
     evidence_candidates: tuple[EvidenceCandidate, ...] = ()
     pipeline_facts: dict[str, object] | None = None
     creates_truth: bool = False
+    evidence_selections: tuple[EvidenceSelection, ...] = ()
+    evidence_fingerprint: str | None = None
 
 
 class ReplayRunner:
@@ -260,13 +286,26 @@ class ReplayRunner:
         if not visit_supported and proposals:
             raise ReplayValidationError("production_authority")
         matches = _match(manifest.visits, proposals) if visit_supported else ()
+        media = {
+            frame.media_asset_id: source.source_path
+            for frame, source in zip(frames, replay.frames)
+            if source.source_path is not None
+        }
+        evidence_selections = tuple(
+            score_proposal_evidence(proposal, evidence_candidates, media=media)
+            for proposal in proposals
+        )
+        evidence_fingerprint = semantic_fingerprint([
+            item.semantic_fingerprint for item in evidence_selections
+        ])
         metrics = _metrics(
             manifest, proposals, matches, frames, results,
             visit_supported=visit_supported, detection_supported=detection_supported,
             track_supported=track_supported,
         )
         metrics.update(_pipeline_metrics(
-            frames, proposals, track_updates, evidence_candidates, pipeline_facts,
+            manifest, frames, proposals, track_updates, evidence_candidates,
+            evidence_selections, pipeline_facts,
             track_supported=track_supported, visit_supported=visit_supported,
         ))
         metrics = dict(sorted(metrics.items()))
@@ -278,6 +317,8 @@ class ReplayRunner:
             "detections": [asdict(item) for item in detections],
             "track_updates": [asdict(item) for item in track_updates],
             "evidence_candidates": [asdict(item) for item in evidence_candidates],
+            "evidence_selections": [asdict(item) for item in evidence_selections],
+            "evidence_fingerprint": evidence_fingerprint,
             "pipeline_facts": pipeline_facts,
             "provider_key": provider_key,
             "frame_ids": [frame.frame_id for frame in frames],
@@ -287,17 +328,28 @@ class ReplayRunner:
             "threshold_results": threshold_results,
         }
         return ReplayReport(
-            frames, proposals, matches, metrics, semantic_fingerprint(semantic),
-            tuple(threshold_results), (), detections, track_updates,
-            evidence_candidates, pipeline_facts,
+            frames=frames,
+            proposals=proposals,
+            matches=matches,
+            metrics=metrics,
+            semantic_fingerprint=semantic_fingerprint(semantic),
+            threshold_results=tuple(threshold_results),
+            detections=detections,
+            track_updates=track_updates,
+            evidence_candidates=evidence_candidates,
+            pipeline_facts=pipeline_facts,
+            evidence_selections=evidence_selections,
+            evidence_fingerprint=evidence_fingerprint,
         )
 
 
 def _pipeline_metrics(
+    manifest: BenchmarkManifest,
     frames: tuple[FramePacket, ...],
     proposals: tuple[VisitProposal, ...],
     track_updates: tuple[TrackUpdate, ...],
     evidence: tuple[EvidenceCandidate, ...],
+    evidence_selections: tuple[EvidenceSelection, ...],
     facts: dict[str, object],
     *,
     track_supported: bool,
@@ -345,21 +397,95 @@ def _pipeline_metrics(
     proposal_generations = {item.track_generation_id for item in proposals if item.track_generation_id}
     evidence_generations = {item.track_generation_id for item in evidence if item.track_generation_id}
     evidence_state = "evaluated" if visit_supported else "not_evaluated"
-    return unavailable | {
+    evidence_metrics = _evidence_metrics(manifest, evidence, evidence_selections, visit_supported=visit_supported)
+    return unavailable | evidence_metrics | {
         "evidence_candidate_count": _metric(len(evidence) if visit_supported else None, evidence_state),
         "proposals_with_evidence": _metric(
             len(proposal_generations & evidence_generations) if visit_supported else None, evidence_state,
         ),
-        "evidence_subject_containment": _metric(None, "insufficient_truth" if visit_supported else "not_evaluated"),
-        "evidence_temporal_offset_ms": _metric(None, "insufficient_truth" if visit_supported else "not_evaluated"),
         "track_duration_error_ms": _metric(None, "insufficient_truth" if track_supported else "not_evaluated"),
     }
 
 
+def _evidence_metrics(
+    manifest: BenchmarkManifest,
+    evidence: tuple[EvidenceCandidate, ...],
+    selections: tuple[EvidenceSelection, ...],
+    *,
+    visit_supported: bool,
+) -> dict[str, object]:
+    if not visit_supported:
+        return {name: _metric(None, "not_evaluated") for name in _EVIDENCE_METRICS}
+    scores = [score for selection in selections for score in selection.candidate_scores]
+    eligible = [score for score in scores if score.eligible]
+    selected_identification = [selection.identification_candidate_id for selection in selections]
+    selected_context = [selection.context_candidate_id for selection in selections]
+    annotations = {item.candidate_id: item for item in manifest.evidence}
+    if not annotations:
+        truth_state = "not_evaluated"
+    elif all(item.ambiguous for item in annotations.values()):
+        truth_state = "insufficient_truth"
+    else:
+        truth_state = "evaluated"
+    usable_truth = {key: item for key, item in annotations.items() if not item.ambiguous}
+    identification_truth = [usable_truth[item] for item in selected_identification if item in usable_truth]
+    context_truth = [usable_truth[item] for item in selected_context if item in usable_truth]
+    aligned = [score for score in scores if score.temporal_status == "aligned"]
+    clipped = [score for score in scores if score.edge_clipping_status == "edge_clipped"]
+    high_resolution = [score for score in scores if score.role == "high_resolution_burst"]
+    latencies = []
+    for candidate in evidence:
+        latency = dict(candidate.quality_facts).get("request_to_capture_ms")
+        if isinstance(latency, (int, float)) and not isinstance(latency, bool):
+            latencies.append(float(latency))
+    roles: dict[str, int] = {}
+    for selection in selections:
+        if selection.identification_candidate_id is None:
+            continue
+        selected = next(score for score in selection.candidate_scores if score.candidate_id == selection.identification_candidate_id)
+        roles[selected.role] = roles.get(selected.role, 0) + 1
+    evaluated_count = len(identification_truth)
+    useful_identification = sum(
+        item.useful_identification is True or item.useful_animal_confirmation is True
+        for item in identification_truth
+    )
+    useful_context = sum(item.useful_context is True or item.preferred_context is True for item in context_truth)
+    return {
+        "evidence_candidates_eligible": _metric(len(eligible), "evaluated"),
+        "useful_identification_evidence": _metric(useful_identification if truth_state == "evaluated" else None, truth_state),
+        "useful_context_evidence": _metric(useful_context if truth_state == "evaluated" else None, truth_state),
+        "useful_primary_rate": _metric(useful_identification / evaluated_count if truth_state == "evaluated" and evaluated_count else None,
+                                       truth_state if truth_state != "evaluated" or evaluated_count else "insufficient_truth"),
+        "evidence_subject_containment": _metric(sum(score.containment_status == "contained" for score in scores) / len(scores) if scores else None,
+                                                 "evaluated" if scores else "not_evaluated"),
+        "evidence_clipping_rate": _metric(len(clipped) / len(scores) if scores else None, "evaluated" if scores else "not_evaluated"),
+        "evidence_temporal_alignment_rate": _metric(len(aligned) / len(scores) if scores else None, "evaluated" if scores else "not_evaluated"),
+        "evidence_latency_ms": _metric(sum(latencies) / len(latencies) if latencies else None, "evaluated" if latencies else "not_evaluated"),
+        "high_resolution_availability": _metric(len(high_resolution) / len(selections) if selections else None,
+                                                 "evaluated" if selections else "not_evaluated"),
+        "selected_identification_role_distribution": _metric(dict(sorted(roles.items())), "evaluated" if selections else "not_evaluated"),
+    }
+
+
+_EVIDENCE_METRICS = (
+    "evidence_candidates_eligible", "useful_identification_evidence", "useful_context_evidence",
+    "useful_primary_rate", "evidence_subject_containment", "evidence_clipping_rate",
+    "evidence_temporal_alignment_rate", "evidence_latency_ms", "high_resolution_availability",
+    "selected_identification_role_distribution",
+)
+
+
 _COMPARISON_METRICS = (
-    "appearance_recall", "proposal_precision", "fragmentation_rate",
-    "duplicate_rate", "incorrect_merge_rate", "evidence_candidate_coverage",
-    "frames_inferred",
+    "expected_appearance_count", "captured_appearance_count", "missed_appearance_count",
+    "appearance_recall", "proposed_visit_count", "matched_visit_count", "proposal_precision",
+    "false_proposal_count", "duplicate_count", "duplicate_rate", "fragmentation_count",
+    "fragmentation_rate", "incorrect_merge_count", "incorrect_merge_rate",
+    "zone_attribution_accuracy", "proposals_with_evidence", "useful_identification_evidence",
+    "useful_context_evidence", "useful_primary_rate", "evidence_subject_containment",
+    "evidence_clipping_rate", "evidence_temporal_alignment_rate", "evidence_latency_ms",
+    "high_resolution_availability", "evidence_candidate_count", "evidence_candidates_eligible",
+    "selected_identification_role_distribution", "frames_supplied", "frames_processed",
+    "frames_inferred", "track_update_count", "provider_error_count",
 )
 
 
@@ -381,13 +507,29 @@ def compare_replay_reports(left: ReplayReport, right: ReplayReport) -> dict[str,
             and isinstance(right_value, (int, float))
             else None
         )
+        if left_state == "insufficient_truth" or right_state == "insufficient_truth":
+            classification = "insufficient truth"
+        elif left_state != "evaluated" or right_state != "evaluated":
+            classification = "unsupported for one provider"
+        elif left_value == right_value:
+            classification = "equivalent"
+        elif isinstance(left_value, (int, float)) and isinstance(right_value, (int, float)):
+            lower_is_better = name in {
+                "fragmentation_rate", "duplicate_rate", "incorrect_merge_rate",
+                "evidence_clipping_rate", "evidence_latency_ms", "frames_inferred",
+            }
+            right_better = right_value < left_value if lower_is_better else right_value > left_value
+            classification = "frame-driven better" if right_better else "snapshot better"
+        else:
+            classification = "unsupported for one provider"
         comparisons.append({
             "metric": name,
             "left": {"state": left_state, "value": left_value},
             "right": {"state": right_state, "value": right_value},
             "difference": difference,
+            "classification": classification,
         })
-    semantic = {"comparison_version": "observation-provider-comparison-v1", "metrics": comparisons}
+    semantic = {"comparison_version": "observation-provider-comparison-v2", "metrics": comparisons}
     return {**semantic, "semantic_fingerprint": semantic_fingerprint(semantic)}
 
 
@@ -477,6 +619,9 @@ def _metrics(
     metrics: dict[str, object] = {
         "expected_appearance_count": _metric(len(manifest.appearances), "evaluated"),
         "captured_appearance_count": _metric(len(captured) if visit_supported else None, appearance_state),
+        "missed_appearance_count": _metric(
+            len(manifest.appearances) - len(captured) if visit_supported else None, appearance_state,
+        ),
         "appearance_recall": _metric(
             len(captured) / len(manifest.appearances)
             if visit_supported and manifest.appearances else None,
