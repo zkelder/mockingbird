@@ -82,10 +82,30 @@ v1000.0.0-spruce candidate (`spruce`) against MDv5 on the same 70-frame
 cohort: at spruce's currently un-tuned starting threshold it scored worse
 precision and recall than MDv5, its GPL-3.0 licensing classified
 restricted, and the tool's own verdict was `retain_mdv5_baseline` --
-`spruce` is not yet suitable for a live shadow trial on this evidence. A
-representative field comparison remains a separate, not-yet-completed
-activation step, and Stage 7 controlled proposal-authority migration is
-next only after measured success on both. This remains a contained observation-
+`spruce` is not yet suitable for a live shadow trial on this evidence.
+Stage 6.4 adds a deterministic, provider-neutral multi-scale inference-
+strategy benchmark described in
+[multi-scale-detector-benchmark-contract.md](multi-scale-detector-benchmark-contract.md)
+to characterize whether tiling recovers small/distant subjects that MDv5's
+existing full-frame pass misses. Real CUDA results on the unchanged 70-frame
+cohort: adding a bounded uniform tile grid alongside the full-frame pass
+raised recall from 0.357 to 0.5 (4 true appearances found only by a tile),
+but precision collapsed from 0.270 to 0.035 (149 tile-introduced false
+positives) and recurring static false-positive clusters grew from 4 to 66,
+including reproducing the same shepherd's-hook hard negative; the one
+existing `far`-bucket example remained missed either way. A supplemental,
+ignored, local 12-frame small-subject cohort (built from real, previously
+unused, already product-reviewed frames -- see the contract doc) showed the
+same pattern at smaller scale and surfaced a second confirmed case of a
+Visit-level `false_positive` label not describing its own frame's whole-frame
+truth. The tool's own verdict on both cohorts was `continue_tiled_strategy_
+offline_evaluation` / `insufficient_reviewed_small_subject_data` -- tiling is
+not yet suitable for a live shadow trial; it shows genuine recall potential
+gated behind an unresolved precision cost that further threshold/NMS work
+would need to address before that changes. A representative field comparison
+remains a separate, not-yet-completed activation step, and Stage 7 controlled
+proposal-authority migration is next only after measured success on both.
+This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.
 `SnapshotObservationProvider` names the current timer-driven path and remains a

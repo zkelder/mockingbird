@@ -159,7 +159,22 @@ fingerprints despite genuinely different measured latency between roots. It
 opens no product database and grants no production authority; a
 `candidate_ready_for_live_shadow_trial` classification characterizes
 accuracy, static-scene, temporal, and licensing evidence only and does not
-by itself authorize a live shadow trial.
+by itself authorize a live shadow trial. Stage 6.4 adds a deterministic,
+provider-neutral multi-scale inference-window benchmark described in
+[multi-scale-detector-benchmark-contract.md](multi-scale-detector-benchmark-contract.md).
+It characterizes whether a bounded uniform-tile strategy alongside the
+existing full-frame pass recovers small/distant subjects, mapping each
+window's detections back into source-frame coordinates and running one
+deterministic, input-order-independent cross-window duplicate-suppression
+pass before reusing the unmodified Stage 6.2 precision/recall/clustering
+pipeline. On the unchanged 70-frame reviewed cohort, real CUDA results
+showed tiling measurably raises recall (0.357 to 0.5) at a real precision
+cost (0.270 to 0.035) and a large increase in recurring static
+false-positive clusters (4 to 66); the tool's own verdict was `continue_
+tiled_strategy_offline_evaluation`, not a live-shadow-trial recommendation.
+It opens no product database, changes no runtime threshold, Ignore region,
+tracker, or default-provider configuration, and grants no production
+authority.
 
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
