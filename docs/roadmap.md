@@ -58,10 +58,20 @@ this closes the confirmed episode on principled grounds instead of an
 unbounded span, but does not by itself raise appearance recall on that
 dataset: the second expected appearance received no positive detector
 evidence at all in that image set, which is a detection-recall fact outside
-this boundary fix's scope. A daylight Camera Node hardware smoke and a
-representative field comparison are separate, not-yet-completed activation
-steps, and Stage 7 controlled proposal-authority migration is next only after
-measured success. This remains a contained observation-
+this boundary fix's scope. The first bounded daylight Camera Node hardware
+smoke completed and closed as `STAGE_6_DAYLIGHT_INSUFFICIENT_WILDLIFE`:
+structural no-write proof, CUDA-only execution, and clean shutdown all
+passed, but independent reviewed-crop inspection of every animal-positive
+frame and both high-resolution bursts found no genuine wildlife, pointing at
+suspected detector false positives on static feeder-scene content rather
+than a tracker or evidence-scoring defect. Stage 6.2 adds an offline,
+deterministic detector precision/recall calibration benchmark described in
+[detector-calibration-benchmark-contract.md](detector-calibration-benchmark-contract.md)
+to characterize that finding on a reviewed local cohort before any threshold
+or proposal-policy change; a representative field comparison remains a
+separate, not-yet-completed activation step, and Stage 7 controlled
+proposal-authority migration is next only after measured success on both.
+This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.
 `SnapshotObservationProvider` names the current timer-driven path and remains a

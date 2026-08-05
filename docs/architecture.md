@@ -132,7 +132,18 @@ discontinuity rather than surviving indefinitely on tracker-support alone,
 while brief misses, occlusion, and ordinary cadence gaps remain one coherent
 episode. See
 [frame-driven-shadow-provider-contract.md](frame-driven-shadow-provider-contract.md)
-for the bounded decision inputs, settings, and stable reason codes.
+for the bounded decision inputs, settings, and stable reason codes. Stage 6.2
+adds an offline, deterministic detector precision/recall calibration
+benchmark described in
+[detector-calibration-benchmark-contract.md](detector-calibration-benchmark-contract.md).
+It scores the existing `onnx-cuda` provider's already-decoded observations
+against a reviewed local image cohort across a bounded score-threshold grid
+without re-running inference per threshold, clusters recurring static
+false-positive geometry, simulates bounded temporal confirmation policies
+over recorded detections only, and classifies candidate follow-up actions
+with no aggregate winner score. It opens no product database, changes no
+runtime threshold, Ignore region, or tracker configuration, and grants no
+production authority.
 
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
