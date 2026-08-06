@@ -204,6 +204,59 @@ positive or negative one. It opens no product database, changes no runtime
 threshold, Ignore region, tracker, or default-provider configuration, and
 grants no production authority; Stage 7 remains blocked.
 
+Stage 6.6 adds a reviewed temporal capture and active-learning dataset
+pipeline described in
+[temporal-review-capture-contract.md](temporal-review-capture-contract.md),
+split the same pure/io/cli way as every prior stage:
+`temporal_capture`/`temporal_annotation` hold dataclasses and pure
+functions only (no filesystem, CUDA, ONNX, OpenCV, or product-repository
+import -- structurally enforced by a parametrized source-grep test across
+all six new modules); `temporal_capture_io`/`temporal_review_io` do safe,
+atomic, bounded local filesystem work only; `temporal_capture_cli`/
+`temporal_review_cli` wire real Camera Node/provider/annotation objects
+together. It deliberately reuses two upstream capabilities unchanged rather
+than reimplementing them: Stage 5's `CameraNodeAnalysisSource`/
+`CameraNodeHttpTransport`/`LiveCameraNodeShadowSession` for the live
+connection, and Stage 6.5's `motion_proposal_strategy.generate_proposals`
+for live per-frame proposal generation -- this stage adds no new detector
+or proposal strategy. `temporal-capture`/`temporal-capture-mark` retain
+only bounded, triggered frames (detector events, shadow track events,
+high-resolution bursts, privacy-boundary interaction, recurring static
+geometry, generation/sequence discontinuity, periodic negative sampling,
+pretrigger/post-trigger context, and an engineering-only, five-kind
+operator marker that never asserts species or product truth) behind
+thirteen hard ceilings, writing a capture-session manifest whose semantic
+fingerprint carries no absolute path, hostname, credential, or bearer
+token (those stay in a separate, caller-only connection config).
+`temporal-review-build`/`-validate`/`-export` turn a capture directory into
+a self-contained review packet (contact sheet, per-detection crops, copied
+source frames, no OCR or remote service), a human whole-frame/box/
+temporal-appearance annotation contract with stable rejection/flag codes,
+and three export targets that reuse existing schemas without inventing
+fields: Stage 6.2's `CalibrationManifest`/`ReviewedBox` (detector-
+calibration and motion-proposal targets) and Stage 2's `replay.
+BenchmarkManifest` family (replay target, always with an empty `visits`
+list -- this stage never invents Visit grouping). A product Visit-level
+`false_positive` label is carried only as descriptive provenance
+(`product_review_label`, `whole_frame_independently_confirmed`) and a
+dedicated validation code rejects any annotation that lets it stand in for
+independently reviewed whole-frame negative truth. A bounded real Camera
+Node mechanics smoke surfaced a transport-boundary lesson applicable to any
+future live Camera Node consumer, not just this stage: on this Node, one
+`iter_analysis_frames` batch is one HTTP connection, and one HTTP
+connection is a hard discontinuity boundary -- its sequence header resets
+per connection even though `provider_generation` does not, so a
+long-lived, cross-batch `CameraNodeAnalysisSource`/provider live-tracker
+pair must be rebuilt/restarted at every batch boundary (not just treated
+as a rare reconnect), and any elapsed-time bookkeeping (periodic sampling,
+marker correlation) must key off the host receive clock rather than
+`source_offset_ms`, which that same rebuild re-zeroes. All three fixes are
+regression-tested with fakes and were then verified together on the real
+Node: a 60-second bounded capture retained 18 frames with zero credential/
+hostname/path leakage into the manifest and an identical structural
+no-write proof before and after. It creates no product record, database
+row, or reviewed truth of any kind, and authorizes no Stage 7 activity.
+
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
 Stream capabilities and emits only evidence-side `FramePacket`,

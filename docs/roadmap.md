@@ -132,7 +132,47 @@ confident negative or positive verdict. This is not yet a live shadow
 trial candidate, and no outcome of this stage authorizes production Visit
 proposals. Stage 7 controlled proposal-authority migration remains blocked
 on measured success across the tiled, adaptive, and field-comparison
-evaluations together.
+evaluations together. Stage 6.6 adds a reviewed temporal capture and
+active-learning dataset pipeline described in
+[temporal-review-capture-contract.md](temporal-review-capture-contract.md):
+`temporal-capture`/`temporal-capture-mark` acquire bounded, triggered live
+sequences from the paired Camera Node (reusing Stage 5's session/transport
+and Stage 6.5's motion-proposal strategy unchanged -- no new detector
+strategy), and `temporal-review-build`/`-validate`/`-export` turn them into
+human-reviewed whole-frame/box truth exported into the existing Stage 6.2
+calibration, Stage 6.5 motion-proposal, and Stage 2 replay manifest shapes
+without inventing new schemas. It creates no product record, truth, or
+proposal authority of any kind. A bounded real Camera Node mechanics smoke
+found and fixed three genuine live-transport/orchestration defects invisible
+to hardware-free tests, all now regression-tested: (1) the Node's
+per-connection sequence header restarts at 1 on every fresh HTTP connection
+while `provider_generation` stays unchanged, which the existing
+single-connection `CameraNodeAnalysisSource` contract correctly rejects --
+fixed by rebuilding the source and restarting the provider's live
+generation on reconnect, since a batch boundary is the *normal* case on
+this transport, not a rare failure; (2) periodic negative sampling was
+silently starved because it was keyed on `source_offset_ms`, which that
+same reconnect re-zeroes, so elapsed time rarely reached
+`periodic_negative_interval_seconds` within one connection's lifetime --
+fixed by keying it on the host receive clock instead; (3) operator-marker
+correlation could structurally never fire at all: marker discovery only
+happens right before fetching new frames, but a marker only ever matches
+frames received at-or-before its own timestamp, so a freshly discovered
+marker could never match anything still to come -- fixed with a bounded
+retroactive rescue buffer that wires up the previously-unused
+`adjacent_context_frame_count` bound to re-scan recently-processed,
+not-yet-retained frames whenever a new marker appears. With all three fixes
+verified together on the real Node (nighttime, no wildlife required or
+claimed), a 60-second bounded capture retained 18 frames -- one high-
+resolution validation burst, 3 periodic negative samples, 11 frames
+rescued by one real operator marker, and 3 post-trigger context frames --
+with zero credential/hostname/path leakage into the manifest and an
+identical structural no-write proof (product database hash and every
+tracked fingerprint unchanged) before and after. All three export targets
+correctly reported `sufficient: false` from this single nighttime session
+rather than overclaiming. Daylight collection with genuine wildlife
+remains a separate, not-yet-run step; this stage authorizes no Stage 7
+activity by itself.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

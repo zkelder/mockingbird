@@ -27,5 +27,20 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "motion-proposal-decision":
         from mockingbird.observation.motion_proposal_cli import run_decision as motion_proposal_decision_run
         raise SystemExit(motion_proposal_decision_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "temporal-capture":
+        from mockingbird.observation.temporal_capture_cli import run_capture as temporal_capture_run
+        raise SystemExit(temporal_capture_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "temporal-capture-mark":
+        from mockingbird.observation.temporal_capture_cli import run_mark as temporal_capture_mark_run
+        raise SystemExit(temporal_capture_mark_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "temporal-review-build":
+        from mockingbird.observation.temporal_review_cli import run_build as temporal_review_build_run
+        raise SystemExit(temporal_review_build_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "temporal-review-validate":
+        from mockingbird.observation.temporal_review_cli import run_validate as temporal_review_validate_run
+        raise SystemExit(temporal_review_validate_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "temporal-review-export":
+        from mockingbird.observation.temporal_review_cli import run_export as temporal_review_export_run
+        raise SystemExit(temporal_review_export_run(sys.argv[2:]))
     else:
         main()
