@@ -42,5 +42,8 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "temporal-review-export":
         from mockingbird.observation.temporal_review_cli import run_export as temporal_review_export_run
         raise SystemExit(temporal_review_export_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "burst-schedule-replay":
+        from mockingbird.observation.burst_scheduler_replay_cli import run as burst_schedule_replay_run
+        raise SystemExit(burst_schedule_replay_run(sys.argv[2:]))
     else:
         main()

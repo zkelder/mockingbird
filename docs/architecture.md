@@ -283,6 +283,44 @@ repeated-export fingerprints. It opens no product database and changes no
 detector, tracker confirmation policy, evidence scoring, burst policy, or
 monitoring policy; Stage 7 remains blocked.
 
+Stage 6.9 adds a provider-neutral, bounded, recurrence-aware burst scheduler
+described in
+[burst-scheduler-contract.md](burst-scheduler-contract.md). Session-02
+daylight collection showed most high-resolution bursts came from a small
+number of recurring static structures (a shepherd's-hook plant hanger, a
+red-glass hummingbird feeder, left-edge foliage) each re-detected as a
+brand-new, short-lived track generation -- 379 generations across 393
+retained frames produced 123 bursts, since Stage 5's own gate requests at
+most one burst per generation and a new generation alone is sufficient to
+pass it. `mockingbird.observation.burst_scheduler` sits between that
+"meaningful" `TrackUpdate` (a burst *opportunity*, carrying no authority of
+its own) and the existing evidence-burst request: `BurstScheduler.decide()`
+is the only place that decides to issue, suppress a duplicate recurrence,
+defer for an active request or per-generation cooldown, reject on a bounded
+session/rate budget, or allow an explicit operator/engineering override,
+using bounded, session-scoped recurrence groups (the same IoU/centroid
+convention as `RecurringGeometryTracker`/`cluster_static_false_positives`,
+extended with a box-size gate) and stable novelty signals (confidence/
+temporal-support materially above the group's own historic floor, motion/
+change evidence, a genuine time gap, an operator marker, an engineering
+request, or a bounded retry). `LiveCameraNodeShadowSession` now consults it
+before every burst request instead of only a generation-id-seen-before set;
+`temporal_capture_cli`'s `--validation-burst` engineering path routes through
+the same `decide()`/`record_result()` calls. A deterministic offline replay
+evaluator (`burst_scheduler_replay`, `python -m mockingbird
+burst-schedule-replay`) reconstructs opportunities from an already-captured
+manifest and replays them with no product-database or capture-artifact
+write; against the real Stage 6.7 sessions it measured a 59% high-resolution
+burst reduction on session-02 (123 to 50, 74 explicitly suppressed as
+recurring static geometry) while every reviewed genuine and
+reviewer-attributed operator-marked appearance retained burst eligibility, a
+result reproduced live in a bounded 90-second real Camera Node mechanics
+smoke (72 real track generations, 16 real bursts, one labeled engineering
+override, unchanged product database hash, clean shutdown). It changes no
+detector, tracker confirmation policy, saved Ignore region, evidence
+scoring, or monitoring policy, opens no product database, and authorizes no
+Stage 7 activity.
+
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
 Stream capabilities and emits only evidence-side `FramePacket`,

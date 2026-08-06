@@ -199,6 +199,39 @@ deduplication/cooldown -- session-02 alone produced 123 high-resolution
 frames and 379 track generations across 393 retained frames from
 recurring static structures repeatedly triggering fresh bursts -- is the
 next separate issue, deliberately not addressed by this stage.
+Stage 6.9 adds a provider-neutral, bounded, recurrence-aware burst scheduler
+described in
+[burst-scheduler-contract.md](burst-scheduler-contract.md):
+`mockingbird.observation.burst_scheduler` sits between a burst *opportunity*
+(a meaningful `TrackUpdate`) and the existing Stage 5 evidence-burst request,
+deciding to issue, suppress a duplicate recurrence, defer, reject on a
+session/rate budget, or allow an explicit operator/engineering override --
+a new track generation alone no longer guarantees a fresh burst. Recurrence
+groups use the same bounded IoU/centroid geometry convention as
+`RecurringGeometryTracker`/`cluster_static_false_positives`, extended with a
+box-size gate; novelty (materially stronger confidence relative to the
+group's own historic floor, meaningful motion/change evidence, stronger
+temporal support, a genuine time gap, an operator marker, an engineering
+request, or a bounded retry) can still issue a fresh burst despite a
+recurring match. A deterministic offline replay evaluator
+(`burst_scheduler_replay`, `python -m mockingbird burst-schedule-replay`)
+reconstructs opportunities from an already-captured Stage 6.6/6.8 manifest
+and replays them without opening the product database or rewriting the
+source capture. Replayed against the real Stage 6.7 sessions: session-02's
+123 historical high-resolution bursts (379 track generations) reduce to 50
+proposed bursts (74 explicitly suppressed as recurring static geometry, a
+59% reduction) while all 4 reviewed genuine appearances and all 3
+reviewer-attributed operator-marked appearances retain burst eligibility,
+with zero missed-useful-burst risk; session-01 (a short session the old
+system's own `max_high_resolution_frames` cap already truncated at 32) shows
+a roughly neutral 32-to-33 change with its 1 reviewed appearance retained
+and 44 recurring-geometry suppressions. A bounded 90-second real Camera Node
+mechanics smoke on a live daylight feeder scene reproduced the same pattern
+live -- 72 real track generations, only 16 real bursts plus one explicitly
+labeled engineering-override validation burst -- with an unchanged product
+database hash before and after and clean process/GPU shutdown. It changes no
+detector, tracker confirmation policy, saved Ignore region, or monitoring
+policy, and authorizes no Stage 7 activity.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

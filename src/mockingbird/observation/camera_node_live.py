@@ -12,6 +12,15 @@ import socket
 import threading
 from typing import Iterator, Protocol
 
+from mockingbird.observation.burst_scheduler import (
+    RESET_GENERATION_REPLACEMENT,
+    RESET_SESSION_STOP,
+    BurstOpportunity,
+    BurstScheduler,
+    BurstSchedulerConfig,
+    BurstSchedulerDiagnostics,
+    BurstSchedulerHealth,
+)
 from mockingbird.observation.contracts import EvidenceCandidate, FramePacket, ObservationResult
 from mockingbird.observation.frame_driven_provider import (
     FRAME_DRIVEN_PROVIDER_VERSION,
@@ -463,10 +472,18 @@ class LiveShadowStatus:
     pending_inference: int
     median_burst_latency_ms: float | None
     production_proposal_authority: bool = False
+    scheduler_diagnostics: BurstSchedulerDiagnostics | None = None
+    scheduler_health: BurstSchedulerHealth | None = None
 
 
 class LiveCameraNodeShadowSession:
-    """Orchestrate Node frames, CUDA tracking, and temporary burst evidence only."""
+    """Orchestrate Node frames, CUDA tracking, and temporary burst evidence only.
+
+    Burst *opportunities* (a meaningful `TrackUpdate`) are advisory to the
+    Stage 6.9 `BurstScheduler`, which decides whether to actually attempt a
+    burst -- a new track generation alone no longer guarantees one. See
+    docs/burst-scheduler-contract.md.
+    """
 
     def __init__(
         self,
@@ -477,6 +494,7 @@ class LiveCameraNodeShadowSession:
         evidence_profile_id: str,
         burst_deadline_ms: int = 10_000,
         minimum_burst_interval_ms: int = 1_000,
+        scheduler: BurstScheduler | None = None,
     ) -> None:
         if (
             not evidence_profile_id
@@ -490,11 +508,18 @@ class LiveCameraNodeShadowSession:
         self.evidence_profile_id = evidence_profile_id
         self.burst_deadline_ms = burst_deadline_ms
         self.minimum_burst_interval_ms = minimum_burst_interval_ms
+        # A caller may supply a pre-built scheduler (for example to share one
+        # explicit BurstSchedulerConfig across a whole capture run); absent
+        # that, default one from this session's own bounds so existing
+        # callers that only set minimum_burst_interval_ms keep the same
+        # effective per-generation cooldown as before this stage.
+        self.scheduler = scheduler or BurstScheduler(
+            session_id=f"live-shadow:{source.stream_id}",
+            config=BurstSchedulerConfig(minimum_burst_interval_ms=minimum_burst_interval_ms),
+        )
         self._generation: str | None = None
-        self._burst_generations: deque[str] = deque(maxlen=256)
         self._temporary_payloads: OrderedDict[str, bytes] = OrderedDict()
         self._burst_latencies_ms: deque[int] = deque(maxlen=128)
-        self._last_burst_trigger_at: datetime | None = None
         self._frames_processed = 0
         self._burst_requests = 0
         self._burst_captures = 0
@@ -526,8 +551,8 @@ class LiveCameraNodeShadowSession:
             self.provider.restart_live_generation(
                 self.source.stream_id, "provider_generation_changed"
             )
-            self._burst_generations.clear()
             self._temporary_payloads.clear()
+            self.scheduler.reset(RESET_GENERATION_REPLACEMENT)
         self._generation = generation
         self._pending_inference = 1
         try:
@@ -541,22 +566,35 @@ class LiveCameraNodeShadowSession:
                 update.confidence is not None
                 and update.confidence >= self.provider.settings.strong_detection_threshold
             )
-            if not meaningful or update.generation_id in self._burst_generations:
+            if not meaningful:
                 continue
-            trigger_at = frame.captured_at or datetime.now(UTC)
-            if (
-                self._last_burst_trigger_at is not None
-                and (trigger_at - self._last_burst_trigger_at).total_seconds() * 1000
-                < self.minimum_burst_interval_ms
-            ):
+            # A track generation is a burst *opportunity*, not authority: the
+            # scheduler -- not generation-id-seen-before bookkeeping -- decides
+            # whether this specific moment is issued, a suppressed duplicate of
+            # recent recurring geometry, deferred, or an override.
+            opportunity = BurstOpportunity(
+                opportunity_id=f"live-opportunity:{update.generation_id}:{frame.frame_id or frame.frame_sequence}",
+                stream_id=frame.stream_id,
+                session_id=self.scheduler.session_id,
+                track_generation_id=update.generation_id,
+                trigger_frame_id=frame.frame_id or "unknown",
+                source_offset_ms=frame.source_offset_ms or 0,
+                broad_class=update.broad_class or "animal",
+                node_session_id=frame.node_session_id,
+                provider_generation=generation,
+                subject_geometry=update.bounding_box,
+                detector_score=update.confidence,
+                detector_confirmation_count=update.detector_confirmation_count,
+                tracker_support_count=update.tracker_support_count,
+                trigger_reason="shadow_track_event",
+                requested_evidence_profile=self.evidence_profile_id,
+            )
+            decision = self.scheduler.decide(opportunity)
+            if not decision.should_issue:
                 continue
-            self._burst_generations.append(update.generation_id)
-            self._last_burst_trigger_at = trigger_at
             self._burst_requests += 1
             request = EvidenceBurstRequest(
-                request_id="shadow-burst:" + sha256(
-                    f"{generation}:{update.generation_id}".encode()
-                ).hexdigest()[:24],
+                request_id=decision.request_id,
                 stream_id=frame.stream_id,
                 node_session_id=frame.node_session_id or "unknown",
                 track_generation_id=update.generation_id,
@@ -572,6 +610,7 @@ class LiveCameraNodeShadowSession:
             burst = self.transport.request_evidence_burst(request)
             if burst.status != "captured":
                 self._burst_failures += 1
+                self.scheduler.record_result(decision.request_id, status="failed", failure_code=burst.failure_code)
                 continue
             item = burst.frames[0]
             if (
@@ -580,10 +619,15 @@ class LiveCameraNodeShadowSession:
                 or item.parent_frame_id != request.trigger_frame_id
             ):
                 self._stale_bursts += 1
+                self.scheduler.record_result(decision.request_id, status="stale")
                 continue
             self._burst_captures += 1
             if item.request_to_capture_ms is not None:
                 self._burst_latencies_ms.append(item.request_to_capture_ms)
+            self.scheduler.record_result(
+                decision.request_id, status="captured",
+                byte_size=len(item.payload), latency_ms=item.request_to_capture_ms,
+            )
             self._temporary_payloads[item.content_hash] = item.payload
             self._temporary_payloads.move_to_end(item.content_hash)
             while len(self._temporary_payloads) > 8:
@@ -687,6 +731,8 @@ class LiveCameraNodeShadowSession:
             cadence,
             self._pending_inference,
             median,
+            scheduler_diagnostics=self.scheduler.diagnostics(),
+            scheduler_health=self.scheduler.health(),
         )
 
     def stop(self) -> tuple[ObservationResult, ...]:
@@ -701,11 +747,10 @@ class LiveCameraNodeShadowSession:
             self.transport.close()
             self.source.stop()
             self._temporary_payloads.clear()
-            self._burst_generations.clear()
             self._burst_latencies_ms.clear()
             self._generation = None
             self._pending_inference = 0
-            self._last_burst_trigger_at = None
+            self.scheduler.reset(RESET_SESSION_STOP)
             self._running = False
         if failure is not None:
             raise failure

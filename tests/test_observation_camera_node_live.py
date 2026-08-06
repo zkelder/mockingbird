@@ -8,6 +8,14 @@ from io import BytesIO
 import pytest
 from fastapi import HTTPException
 
+from mockingbird.observation.burst_scheduler import (
+    DECISION_SUPPRESSED_SESSION_BUDGET,
+    RESET_GENERATION_REPLACEMENT,
+    RESET_REASONS,
+    RESET_SESSION_STOP,
+    BurstScheduler,
+    BurstSchedulerConfig,
+)
 from mockingbird.observation.camera_node_live import (
     CameraNodeAnalysisSource,
     LiveCameraNodeShadowSession,
@@ -444,3 +452,89 @@ def test_multipart_header_and_jpeg_parsers_use_wire_bytes() -> None:
     assert envelope.sequence == 1
     assert envelope.content_hash == digest
     assert _jpeg_dimensions(payload) == (32, 24)
+
+
+# --------------------------------------------------------------------------
+# Stage 6.9: recurrence-aware burst scheduler wiring
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_live_shadow_status_exposes_scheduler_diagnostics_and_health() -> None:
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024),
+        transport=_BurstTransport(), provider=_live_provider(), evidence_profile_id="evidence-large",
+    )
+    session.start()
+    await session.process_envelope(_frame(1), received_at=datetime(2026, 8, 4, tzinfo=UTC))
+    status = session.status()
+    assert status.scheduler_diagnostics is not None
+    assert status.scheduler_diagnostics.issued_count == 1
+    assert status.scheduler_health is not None
+    assert status.scheduler_health.burst_capability_available is True
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_live_shadow_scheduler_suppresses_once_session_budget_exhausted() -> None:
+    """A track generation is a burst opportunity, not authority: the
+    scheduler -- not generation-id-seen-before bookkeeping -- controls
+    whether a second, still-meaningful update actually reaches the
+    transport."""
+
+    transport = _BurstTransport()
+    scheduler = BurstScheduler(session_id="live-shadow-test", config=BurstSchedulerConfig(max_bursts_per_session=1))
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024),
+        transport=transport, provider=_live_provider(), evidence_profile_id="evidence-large",
+        scheduler=scheduler,
+    )
+    session.start()
+    received = datetime(2026, 8, 4, tzinfo=UTC)
+    first = await session.process_envelope(_frame(1), received_at=received)
+    second = await session.process_envelope(_frame(2), received_at=received + timedelta(milliseconds=200))
+    assert first is not None and second is not None
+    assert len(transport.requests) == 1
+    assert [item.role for item in second.evidence_candidates] == []
+    diagnostics = session.status().scheduler_diagnostics
+    assert diagnostics is not None
+    assert diagnostics.issued_count == 1
+    assert dict(diagnostics.suppression_reason_distribution).get(DECISION_SUPPRESSED_SESSION_BUDGET) == 1
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_provider_generation_change_resets_scheduler_state() -> None:
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024),
+        transport=_BurstTransport(), provider=_live_provider(), evidence_profile_id="evidence-large",
+    )
+    session.start()
+    received = datetime(2026, 8, 4, tzinfo=UTC)
+    await session.process_envelope(_frame(1), received_at=received)
+    assert session.status().scheduler_diagnostics.issued_count == 1
+
+    await session.process_envelope(_frame(1, generation="generation-b"), received_at=received + timedelta(seconds=1))
+    assert session.status().scheduler_diagnostics.issued_count == 1
+    assert session.status().scheduler_diagnostics.recurrence_group_count <= 1
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_stop_resets_scheduler_state() -> None:
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024),
+        transport=_BurstTransport(), provider=_live_provider(), evidence_profile_id="evidence-large",
+    )
+    session.start()
+    await session.process_envelope(_frame(1), received_at=datetime(2026, 8, 4, tzinfo=UTC))
+    assert session.scheduler.diagnostics().issued_count == 1
+    session.stop()
+    assert session.scheduler.diagnostics().issued_count == 0
+    assert session.scheduler.recurrence_groups() == ()
+
+
+def test_default_scheduler_reset_reasons_are_reachable() -> None:
+    # Documents which reset reasons the live wiring actually uses -- both
+    # are exercised end-to-end by the async tests above.
+    assert {RESET_GENERATION_REPLACEMENT, RESET_SESSION_STOP}.issubset(set(RESET_REASONS))

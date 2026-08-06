@@ -583,12 +583,30 @@ def _request_validation_burst(session: LiveCameraNodeShadowSession, loop: "_Capt
     (for example nighttime) scene where no genuine track ever confirms.
     Never represents wildlife -- the retained frame_id is prefixed
     `validation-burst-` and carries only the `high_resolution_burst`
-    trigger, exactly like any other burst capture."""
+    trigger, exactly like any other burst capture.
 
+    Routed through the same Stage 6.9 scheduler as every other burst
+    opportunity (as `engineering_validation_request=True`) so this explicit
+    engineering path is recorded in scheduler diagnostics/history rather than
+    bypassing it entirely; a fresh session's reserved override allowance
+    always has room for this one bounded request."""
+
+    from mockingbird.observation.burst_scheduler import BurstOpportunity
     from mockingbird.observation.media_contracts import EvidenceBurstRequest
-    from hashlib import sha256 as _sha256
 
-    request_id = "validation-burst:" + _sha256(f"{node_session_id_for(session)}:{started_wall.isoformat()}".encode()).hexdigest()[:24]
+    opportunity = BurstOpportunity(
+        opportunity_id=f"validation-burst-opportunity:{started_wall.isoformat()}",
+        stream_id=connection.stream_id, session_id=session.scheduler.session_id,
+        track_generation_id="validation-burst", trigger_frame_id="validation-burst-trigger",
+        source_offset_ms=0, broad_class="animal", provider_generation=None,
+        trigger_reason="engineering_validation", requested_evidence_profile=connection.evidence_profile_id,
+        engineering_validation_request=True,
+    )
+    decision = session.scheduler.decide(opportunity)
+    print(f"Validation burst opportunity {opportunity.opportunity_id}: scheduler outcome={decision.outcome}")
+    if not decision.should_issue:
+        return
+    request_id = decision.request_id
     request = EvidenceBurstRequest(
         request_id=request_id, stream_id=connection.stream_id, node_session_id="validation-burst-session",
         track_generation_id="validation-burst", trigger_frame_id="validation-burst-trigger",
@@ -598,7 +616,11 @@ def _request_validation_burst(session: LiveCameraNodeShadowSession, loop: "_Capt
     result = session.transport.request_evidence_burst(request)
     print(f"Validation burst request {request_id}: status={result.status} failure_code={result.failure_code}")
     if result.status != "captured" or not result.frames:
+        session.scheduler.record_result(request_id, status="failed" if result.status == "failed" else "stale", failure_code=result.failure_code)
         return
+    session.scheduler.record_result(
+        request_id, status="captured", byte_size=len(result.frames[0].payload), latency_ms=result.frames[0].request_to_capture_ms,
+    )
     frame = result.frames[0]
     frame_id = f"validation-burst-{frame.content_hash[:16]}"
     from mockingbird.observation.temporal_capture import TRIGGER_HIGH_RESOLUTION_BURST as _TRIGGER
@@ -617,10 +639,6 @@ def _request_validation_burst(session: LiveCameraNodeShadowSession, loop: "_Capt
         source_capture_timestamp=frame.captured_at.isoformat(),
         connection_segment_id="validation-burst",
     ))
-
-
-def node_session_id_for(session: LiveCameraNodeShadowSession) -> str:
-    return getattr(session.source, "stream_id", "unknown")
 
 
 async def _run_capture(args: argparse.Namespace) -> int:
