@@ -103,8 +103,36 @@ offline_evaluation` / `insufficient_reviewed_small_subject_data` -- tiling is
 not yet suitable for a live shadow trial; it shows genuine recall potential
 gated behind an unresolved precision cost that further threshold/NMS work
 would need to address before that changes. A representative field comparison
-remains a separate, not-yet-completed activation step, and Stage 7 controlled
-proposal-authority migration is next only after measured success on both.
+remains a separate, not-yet-completed activation step. Stage 6.5 adds a
+deterministic, provider-neutral adaptive motion-proposal strategy described
+in
+[adaptive-motion-proposal-benchmark-contract.md](adaptive-motion-proposal-benchmark-contract.md)
+that derives a small bounded number (at most 3 per frame) of temporal-
+change-guided high-resolution windows from ordered source-relative frame
+pairs, instead of a fixed uniform tile grid, asking whether selective
+proposals can retain some of tiling's recall benefit without its precision
+and resource collapse. Because the existing 70-frame cohort carries almost
+no real frame sequencing, a separate, ignored, local-only 38-frame reviewed
+temporal cohort was built from already-reviewed real local material only
+(two real front-yard camera sessions plus the existing daylight-smoke
+sequence; no new capture, no download, no changed truth in either existing
+cohort). Real CUDA results on both cohorts: `full_frame_plus_motion_
+proposals` matched `full_frame` almost exactly -- on the unchanged 70-frame
+cohort zero proposal windows ever fired (every raw pixel change on the only
+eligible real sequence was noise-sized); on the new temporal cohort exactly
+one proposal fired out of 9 temporally eligible real frame pairs, and that
+window did not overlap the reviewed animal box in either frame, so it
+neither recovered a true positive nor introduced a false positive. Both
+cohorts' `motion-proposal-decision` reports reached `insufficient_temporal_
+data` reproducibly (byte-identical fingerprints across two real-CUDA roots
+outside and inside the checkout) -- there is not yet enough reviewed
+temporal evidence to judge the adaptive strategy's recall/precision
+tradeoff either way, a materially different and more honest outcome than a
+confident negative or positive verdict. This is not yet a live shadow
+trial candidate, and no outcome of this stage authorizes production Visit
+proposals. Stage 7 controlled proposal-authority migration remains blocked
+on measured success across the tiled, adaptive, and field-comparison
+evaluations together.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

@@ -174,7 +174,35 @@ false-positive clusters (4 to 66); the tool's own verdict was `continue_
 tiled_strategy_offline_evaluation`, not a live-shadow-trial recommendation.
 It opens no product database, changes no runtime threshold, Ignore region,
 tracker, or default-provider configuration, and grants no production
-authority.
+authority. Stage 6.5 adds a deterministic, provider-neutral adaptive
+motion-proposal strategy described in
+[adaptive-motion-proposal-benchmark-contract.md](adaptive-motion-proposal-benchmark-contract.md).
+It derives a small bounded number of temporal-change-guided high-resolution
+windows (deterministic frame differencing over a fixed-size downsampled
+grayscale plane, bounded 8-connected region extraction and merge, padding,
+aspect-ratio normalization, and ranking -- no OpenCV, CUDA, or ONNX Runtime
+type anywhere in the strategy contract) from ordered source-relative frame
+pairs instead of a fixed uniform tile grid, with stable reason codes for
+every case temporal evidence cannot honestly support (no predecessor,
+sequence/generation boundary, duplicate frame, excessive time gap) and
+bounded rejection when a whole-frame brightness shift or broad camera
+motion is detected, so neither can produce a grid of proposal windows. A
+finalized proposal is geometrically a Stage 6.4 tile
+(`window_kind="tile"`), so cross-window duplicate suppression, coordinate
+mapping, and the reused Stage 6.2/6.4 report pipeline -- including the
+existing, unmodified strategy-comparison function -- apply unchanged. Real
+CUDA results across two absolute roots reproduced byte-identical semantic
+fingerprints for every strategy/cohort combination and every decision
+report; on both the unchanged 70-frame cohort and a new, separate,
+ignored, local-only 38-frame reviewed temporal cohort (built from
+already-reviewed real local material only), the adaptive strategy matched
+the full-frame baseline almost exactly -- proposal windows essentially
+never fired, and the one that did neither recovered nor introduced a
+detection. Both cohorts' decision reports reached `insufficient_temporal_
+data`, an honest evidence-insufficiency verdict rather than a confident
+positive or negative one. It opens no product database, changes no runtime
+threshold, Ignore region, tracker, or default-provider configuration, and
+grants no production authority; Stage 7 remains blocked.
 
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
