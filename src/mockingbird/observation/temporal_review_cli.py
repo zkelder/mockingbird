@@ -28,6 +28,7 @@ from mockingbird.observation.temporal_capture import TemporalCaptureError
 from mockingbird.observation.temporal_capture_io import FRAMES_DIRECTORY_NAME, HIGH_RESOLUTION_DIRECTORY_NAME
 from mockingbird.observation.temporal_review_io import (
     build_review_packet,
+    copy_replay_export_images,
     load_annotation_set,
     load_capture_manifest,
     safe_review_directory,
@@ -130,6 +131,12 @@ def run_export(argv: list[str] | None = None) -> int:
         path = write_export_manifest(args.output, payload_with_stats, filename=filename)
         print(f"Export written to {path}.")
         print(f"benchmark_sufficiency[{args.target.replace('-', '_')}]={statistics.benchmark_sufficiency.get(args.target.replace('-', '_'), statistics.benchmark_sufficiency)}")
+        if args.target == "replay":
+            # The manifest alone is not a runnable replay input: copy every
+            # source frame it references so `replay-benchmark --frames
+            # <output>` actually loads without a separate manual step.
+            copied = copy_replay_export_images(args.review, args.output, payload)
+            print(f"Copied {copied} replay source frame(s) to {args.output / 'images'}.")
         return 0
     except (TemporalCaptureError, TemporalAnnotationError) as error:
         print(f"Review-export rejected: {error}", file=sys.stderr)

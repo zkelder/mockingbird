@@ -173,6 +173,32 @@ correctly reported `sufficient: false` from this single nighttime session
 rather than overclaiming. Daylight collection with genuine wildlife
 remains a separate, not-yet-run step; this stage authorizes no Stage 7
 activity by itself.
+Daylight collection completed with two real Camera Node sessions (95 and
+393 retained frames, 13 and 53 reconnects) and found that the real Node
+resets its per-connection transport sequence and source-relative offset
+bookkeeping on every HTTP reconnection -- the normal case on this
+transport, roughly every ten seconds, not a rare failure -- while
+`provider_generation` stays unchanged. That broke cross-connection
+`AppearanceInterval` validation, review/export ordering, and full-session
+replay export (only a manually selected, connection-safe sub-window could
+be replayed). Stage 6.8 adds a reconnect-safe session timeline described in
+[session-timeline-contract.md](session-timeline-contract.md): a
+deterministic, monotonic, engineering-only per-frame coordinate, derived
+natively from real per-connection identity and host receive time for a
+Stage 6.8 capture or reconstructed deterministically from connection-local
+sequence numbers for an older manifest (explicitly classified native/
+derived/insufficient), while original source-local facts remain unchanged,
+separate provenance. Both real Stage 6.7 sessions now upgrade, validate,
+and replay end to end with no manually selected sub-window and
+byte-identical repeated-export fingerprints; the reconstructed connection-
+segment count matched each session's own recorded reconnect count exactly
+(14 and 54). It changes no detector, tracker confirmation policy, evidence
+scoring, burst policy, or monitoring policy, opens no product database, and
+authorizes no Stage 7 activity. Recurring-static-geometry burst
+deduplication/cooldown -- session-02 alone produced 123 high-resolution
+frames and 379 track generations across 393 retained frames from
+recurring static structures repeatedly triggering fresh bursts -- is the
+next separate issue, deliberately not addressed by this stage.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

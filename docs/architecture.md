@@ -256,6 +256,32 @@ Node: a 60-second bounded capture retained 18 frames with zero credential/
 hostname/path leakage into the manifest and an identical structural
 no-write proof before and after. It creates no product record, database
 row, or reviewed truth of any kind, and authorizes no Stage 7 activity.
+Daylight collection with two real Camera Node sessions (95 and 393 retained
+frames) found that the real Node resets its per-connection transport
+sequence and source-relative offset bookkeeping on every HTTP reconnection
+(13 and 53 times respectively) while `provider_generation` stays unchanged --
+the normal case on this transport, not a rare failure -- which broke
+cross-connection `AppearanceInterval` validation, review/export ordering,
+and full-session replay export. Stage 6.8 adds a reconnect-safe session
+timeline described in
+[session-timeline-contract.md](session-timeline-contract.md):
+`mockingbird.observation.session_timeline` derives a deterministic, monotonic,
+engineering-only `session_sequence`/`session_offset_ms` coordinate for every
+retained frame -- natively from real per-connection identity and host
+receive time for a Stage 6.8 capture, or reconstructed deterministically from
+connection-local sequence numbers for an older manifest, explicitly
+classified `native_session_timeline`/`derived_session_timeline`/
+`insufficient_temporal_provenance` -- while original source-local facts
+remain unchanged, separate provenance. `AppearanceInterval` validation,
+review-packet/export ordering, and `replay.ReplayInput`'s existing strict
+`ordered_timestamps` check (unmodified) all use this timeline; a
+`frame-driven-onnx-cuda` replay ends the current tracker generation at a
+reported reconnect boundary rather than silently continuing a track across
+it. Both real Stage 6.7 sessions upgrade, validate, and replay end to end
+with no manually selected connection-safe sub-window and byte-identical
+repeated-export fingerprints. It opens no product database and changes no
+detector, tracker confirmation policy, evidence scoring, burst policy, or
+monitoring policy; Stage 7 remains blocked.
 
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes

@@ -42,6 +42,7 @@ from mockingbird.observation.motion_proposal_strategy import (
 from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, OnnxModelBundle
 from mockingbird.source_providers.camera_node import CameraNodeClientError
 from mockingbird.observation.temporal_capture import (
+    CAPTURE_MANIFEST_SCHEMA_VERSION,
     STOP_ACTIVE_TRACK_LIMIT,
     STOP_BYTE_LIMIT,
     STOP_DURATION_ELAPSED,
@@ -66,7 +67,9 @@ from mockingbird.observation.temporal_capture import (
     RecurringGeometryTracker,
     RetainedFrameRecord,
     TemporalCaptureError,
+    attach_session_timeline,
     classify_detection_triggers,
+    correlate_markers_to_frames,
     has_track_event,
     markers_near,
 )
@@ -535,6 +538,17 @@ class _CaptureLoop:
             high_resolution=high_resolution, privacy_ignore_interaction=privacy_interaction,
             operator_marker_ids=marker_ids, detection_boxes=detection_boxes,
             motion_proposal_boxes=proposal_boxes, track_generation_ids=track_generation_ids,
+            # Stage 6.8 source-local provenance the reconnect-safe session
+            # timeline is derived from: the real per-connection Node session
+            # id (already flowing through on every analysis-stream frame,
+            # just never previously recorded here) and the host wall-clock
+            # instant this frame was actually received. `attach_session_
+            # timeline` fills in the derived session_*/connection_segment_*/
+            # temporal_* fields once, after the whole session finishes (see
+            # `_run_capture`).
+            host_received_at=frame.received_at.isoformat() if frame.received_at is not None else "",
+            source_capture_timestamp=frame.captured_at.isoformat() if frame.captured_at is not None else None,
+            connection_segment_id=frame.node_session_id or "",
         )
         self.retained.append(record)
 
@@ -595,6 +609,13 @@ def _request_validation_burst(session: LiveCameraNodeShadowSession, loop: "_Capt
         content_hash=frame.content_hash, byte_size=len(frame.payload), trigger_reasons=(_TRIGGER,),
         detector_observation_count=0, animal_detection_count=0, max_animal_score=None, active_track_count=0,
         motion_proposal_count=0, high_resolution=True,
+        # This one-off `/evidence-burst` request is not part of the main
+        # analysis-stream connection sequence, so it gets its own fixed,
+        # deterministic pseudo-segment rather than borrowing the first real
+        # connection's identity it has nothing genuinely in common with.
+        host_received_at=datetime.now(UTC).isoformat(),
+        source_capture_timestamp=frame.captured_at.isoformat(),
+        connection_segment_id="validation-burst",
     ))
 
 
@@ -642,15 +663,39 @@ async def _run_capture(args: argparse.Namespace) -> int:
     ended_wall = datetime.now(UTC)
 
     config = CaptureSessionConfig(
-        schema_version=1, capture_version="temporal-capture-session-v1", stream_id=connection.stream_id,
+        schema_version=CAPTURE_MANIFEST_SCHEMA_VERSION, capture_version="temporal-capture-session-v1", stream_id=connection.stream_id,
         transport_key="camera-node-http-multipart-jpeg", provider_key=provider.provider_id,
         analysis_width=loop.analysis_width, analysis_height=loop.analysis_height, nominal_fps=configuration.settings.source_nominal_fps,
         review_score_threshold=args.review_score_threshold, shadow_operating_point=args.shadow_operating_point,
         review_floor=args.review_floor, evidence_profile_id=connection.evidence_profile_id, bounds=bounds,
         privacy_ignore_regions=privacy_regions,
     )
+    session_id = f"temporal-capture-{started_wall.strftime('%Y%m%dT%H%M%SZ')}"
+
+    # Stage 6.8: derive the reconnect-safe session timeline once, over the
+    # complete retained-frame set, then run one final honest marker-
+    # correlation pass over the whole session (not just the bounded live
+    # rescue buffers `_CaptureLoop` used while capture was still running) --
+    # now that every frame carries a real host receive timestamp, a marker
+    # can backfill onto any already-retained frame regardless of which
+    # connection segment produced it.
+    timelined_frames, session_timeline = attach_session_timeline(tuple(loop.retained), session_id=session_id)
+    markers = tuple(loop.markers_seen.values())
+    if markers:
+        associations = correlate_markers_to_frames(
+            tuple(
+                {"frame_id": item.frame_id, "host_received_at": item.host_received_at, "operator_marker_ids": item.operator_marker_ids}
+                for item in timelined_frames
+            ),
+            markers,
+        )
+        timelined_frames = tuple(
+            replace(item, operator_marker_ids=associations.get(item.frame_id, item.operator_marker_ids))
+            for item in timelined_frames
+        )
+
     manifest = CaptureSessionManifest(
-        config=config, session_id=f"temporal-capture-{started_wall.strftime('%Y%m%dT%H%M%SZ')}",
+        config=config, session_id=session_id,
         node_session_id=node_session_id, start_host_time_iso=started_wall.isoformat(), end_host_time_iso=ended_wall.isoformat(),
         start_source_offset_ms=loop.retained[0].source_offset_ms if loop.retained else 0,
         end_source_offset_ms=loop.retained[-1].source_offset_ms if loop.retained else 0,
@@ -660,7 +705,9 @@ async def _run_capture(args: argparse.Namespace) -> int:
         generation_reset_count=loop.generation_reset_count, provider_generations=tuple(loop.provider_generations),
         model_fingerprint=bundle.fingerprint,
         tracker_proposal_config_fingerprint=_tracker_proposal_config_fingerprint(configuration),
-        frames=tuple(loop.retained), operator_markers=tuple(loop.markers_seen.values()), stop_condition=stop_condition,
+        frames=timelined_frames, operator_markers=markers, stop_condition=stop_condition,
+        session_timeline_classification=session_timeline.classification,
+        timeline_upgrade_provenance=session_timeline.upgrade_provenance,
     )
     semantic = manifest.to_semantic_dict()
     semantic["semantic_fingerprint"] = manifest.fingerprint

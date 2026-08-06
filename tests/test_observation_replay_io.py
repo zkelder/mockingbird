@@ -93,3 +93,50 @@ def test_snapshot_cli_runs_offline_and_writes_a_new_report(tmp_path: Path) -> No
     payload = json.loads((output / "replay-report.json").read_text(encoding="utf-8"))
     assert payload["creates_truth"] is False
     assert payload["provider"]["provider_id"] == "snapshot"
+
+
+def test_loader_reads_stage_6_8_reconnect_safe_provenance_when_present(tmp_path: Path) -> None:
+    frames, manifest = _bundle_files(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["frames"][1].update({
+        "captured_at_iso": "2026-08-06T12:00:01+00:00", "source_sequence": 1,
+        "original_source_offset_ms": 0, "connection_segment_id": "conn-b",
+        "connection_segment_ordinal": 1, "provider_generation": "gen-1",
+        "temporal_discontinuity": True, "temporal_uncertainty_ms": 50,
+    })
+    # The declared fingerprint must reflect the added timeline facts too,
+    # exactly matching what `ReplayInput.fingerprint` itself would compute.
+    replay = ReplayInput(
+        "fixture-input", "fixture-stream", 1, 1, 1.0,
+        (
+            ReplayFrame(0, 0, payload["frames"][0]["content_hash"]),
+            ReplayFrame(
+                1, 1000, payload["frames"][1]["content_hash"], connection_segment_id="conn-b",
+                connection_segment_ordinal=1, temporal_discontinuity=True, temporal_uncertainty_ms=50,
+                original_source_offset_ms=0, source_sequence=1, provider_generation="gen-1",
+                captured_at_iso="2026-08-06T12:00:01+00:00",
+            ),
+        ),
+    )
+    payload["input_fingerprint"] = replay.fingerprint
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    bundle = load_replay_bundle(frames, manifest)
+    boundary = bundle.replay.frames[1]
+    assert boundary.connection_segment_id == "conn-b"
+    assert boundary.temporal_discontinuity is True
+    assert boundary.temporal_uncertainty_ms == 50
+    assert boundary.original_source_offset_ms == 0
+    packet = bundle.replay.packets()[1]
+    assert dict(packet.timing_facts)["connection_segment_id"] == "conn-b"
+
+
+def test_loader_accepts_an_old_style_manifest_with_no_timeline_fields_at_all(tmp_path: Path) -> None:
+    """Backward compatibility: a pre-Stage-6.8 replay manifest (exactly what
+    `_bundle_files` writes) loads exactly as before -- every new field
+    defaults to absent/None/False."""
+
+    frames, manifest = _bundle_files(tmp_path)
+    bundle = load_replay_bundle(frames, manifest)
+    assert all(frame.connection_segment_id is None for frame in bundle.replay.frames)
+    assert all(frame.temporal_discontinuity is False for frame in bundle.replay.frames)

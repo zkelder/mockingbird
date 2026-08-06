@@ -1,15 +1,29 @@
 """Provider-neutral bounded temporal-capture contract and trigger logic.
 
-Observation Engine v2 Stage 6.6. This module is pure: no CUDA, ONNX Runtime,
-OpenCV, camera-provider, or filesystem type anywhere in its contract. It
-decides *which already-processed frames to retain* and assembles the
-versioned capture-session manifest; it never opens a network connection,
-decodes an image, or writes a file (see `temporal_capture_io.py`/
+Observation Engine v2 Stage 6.6, extended by Stage 6.8 with a reconnect-safe
+session timeline. This module is pure: no CUDA, ONNX Runtime, OpenCV,
+camera-provider, or filesystem type anywhere in its contract. It decides
+*which already-processed frames to retain* and assembles the versioned
+capture-session manifest; it never opens a network connection, decodes an
+image, or writes a file (see `temporal_capture_io.py`/
 `temporal_capture_cli.py`). Retention decisions consume only already-emitted
 provider-neutral facts (`DetectionObservation`, `TrackUpdate`,
 `EvidenceCandidate`) exactly the way `multi_scale_strategy`/
 `motion_proposal_strategy` consume already-decoded detections -- this module
 adds no new pixel-level or network-level behavior of its own.
+
+A real paired Camera Node resets its own per-connection transport sequence
+number and this codebase's source-relative offset bookkeeping on every HTTP
+reconnection while `provider_generation` (the camera/provider identity)
+stays unchanged -- reconnecting every few seconds is the *normal* case on
+this transport (see docs/temporal-review-capture-contract.md), not a rare
+failure. `RetainedFrameRecord` therefore carries both the original
+source-local facts a connection supplied (`sequence`, `source_offset_ms`,
+`provider_generation`, `source_capture_timestamp`) and a separate, derived
+session-timeline coordinate (`session_sequence`, `session_offset_ms`,
+`connection_segment_id`, ...) computed by
+`mockingbird.observation.session_timeline`. See
+docs/session-timeline-contract.md.
 
 See docs/temporal-review-capture-contract.md.
 """
@@ -19,8 +33,17 @@ from dataclasses import dataclass
 
 from mockingbird.observation.contracts import DetectionObservation, TrackUpdate
 from mockingbird.observation.replay import semantic_fingerprint
+from mockingbird.observation.session_timeline import (
+    INSUFFICIENT_TEMPORAL_PROVENANCE,
+    NATIVE_SESSION_TIMELINE,
+    SESSION_TIMELINE_CLASSIFICATIONS,
+    SessionTimeline,
+    SessionTimelineError,
+    SourceFrameFact,
+    derive_session_timeline,
+)
 
-CAPTURE_MANIFEST_SCHEMA_VERSION = 1
+CAPTURE_MANIFEST_SCHEMA_VERSION = 2
 CAPTURE_MANIFEST_VERSION = "temporal-capture-session-v1"
 
 # --------------------------------------------------------------------------
@@ -248,6 +271,44 @@ def _seconds(value: int):
     return timedelta(seconds=value)
 
 
+def correlate_markers_to_frames(
+    frames: tuple[dict[str, object], ...], markers: tuple[OperatorMarker, ...],
+) -> dict[str, tuple[str, ...]]:
+    """Post-hoc, reconnect-safe operator-marker correlation over an entire
+    retained-frame population -- not the bounded, memory-limited live rescue
+    buffers `temporal_capture_cli._CaptureLoop` uses during capture.
+
+    Every frame that carries a real host receive timestamp (`host_received_at`,
+    populated for a native Stage 6.8 capture; absent for an un-upgraded
+    legacy one) is checked against every marker's own bounded lookback via
+    `markers_near`, exactly the same rule the live path uses -- correlation
+    is host-time based, so it is unaffected by a connection-local `sequence`
+    reset and freely crosses a reconnect boundary when timing genuinely
+    supports it. This can run at review-build time, so a frame already
+    retained for an unrelated trigger, or one whose marker was written after
+    the live capture process's bounded rescue window already closed, can
+    still receive its marker association.
+
+    Returns each frame's complete, deterministically deduplicated
+    `operator_marker_ids` tuple (already-recorded associations are always
+    preserved and merged with, never replaced by, anything newly found), so
+    a caller can simply overwrite the field with the result -- this never
+    fabricates an association where timing does not support one, and a
+    frame lacking `host_received_at` entirely is returned unchanged.
+    """
+
+    associations: dict[str, tuple[str, ...]] = {}
+    for frame in frames:
+        frame_id = str(frame["frame_id"])
+        existing = tuple(frame.get("operator_marker_ids") or ())  # type: ignore[union-attr]
+        received_at = frame.get("host_received_at")
+        near: tuple[OperatorMarker, ...] = ()
+        if received_at and markers:
+            near = markers_near(markers, host_time_iso=str(received_at), default_lookback_seconds=20)
+        associations[frame_id] = tuple(dict.fromkeys((*existing, *(item.marker_id for item in near))))
+    return associations
+
+
 # --------------------------------------------------------------------------
 # Recurring static geometry (live, bounded clustering)
 # --------------------------------------------------------------------------
@@ -360,7 +421,21 @@ def has_track_event(track_updates: tuple[TrackUpdate, ...]) -> bool:
 class RetainedFrameRecord:
     """One retained analysis frame's manifest entry. Deliberately carries no
     absolute path -- the caller stores the JPEG under a stable relative name
-    derived from `frame_id` (see `temporal_capture_io`)."""
+    derived from `frame_id` (see `temporal_capture_io`).
+
+    `sequence`/`source_offset_ms`/`provider_generation` are source-local
+    facts supplied directly by one Camera Node transport connection --
+    `sequence` resets and `source_offset_ms` re-zeroes on every HTTP
+    reconnection, and this record never overwrites or "fixes" that. The
+    `session_*`/`connection_segment_*`/`temporal_*` fields below are a
+    *separate*, derived, reconnect-safe coordinate computed once per capture
+    session by `mockingbird.observation.session_timeline` -- see
+    docs/session-timeline-contract.md. They default to the first-frame-of-a-
+    single-segment shape so hand-built records (tests, the one-off
+    validation-burst frame) remain valid without every caller needing to
+    know about timeline derivation; `temporal_capture_cli`/`temporal_review_io`
+    are the only callers that compute real values for a multi-frame session.
+    """
 
     frame_id: str
     sequence: int
@@ -389,6 +464,26 @@ class RetainedFrameRecord:
     # Track generation ids with any support on this frame, for tracker-
     # failure/episode-boundary active-learning classification.
     track_generation_ids: tuple[str, ...] = ()
+    # Original per-frame provenance the live capture always has available
+    # but the pre-Stage-6.8 schema never persisted: the host wall-clock
+    # instant this frame was actually received (the anchor a reconnect-safe
+    # session timeline is derived from) and the original Node capture
+    # timestamp, both ISO 8601. Empty string means "not recorded" (a
+    # pre-Stage-6.8 record being read back), never "recorded as zero".
+    host_received_at: str = ""
+    source_capture_timestamp: str | None = None
+    # Derived, reconnect-safe session-timeline coordinate -- see the class
+    # docstring. `connection_segment_id` deterministically identifies one
+    # contiguous transport connection (the real per-connection Node session
+    # id for a native capture; a reconstructed synthetic id for an upgraded
+    # legacy one).
+    connection_segment_id: str = ""
+    connection_segment_ordinal: int = 0
+    session_sequence: int = 0
+    session_offset_ms: int = 0
+    previous_frame_identity: str | None = None
+    temporal_discontinuity: bool = False
+    temporal_uncertainty_ms: int = 0
 
     def __post_init__(self) -> None:
         if not self.frame_id or self.sequence < 0 or self.source_offset_ms < 0:
@@ -397,6 +492,179 @@ class RetainedFrameRecord:
             raise TemporalCaptureError("invalid_retained_frame_trigger")
         if len(self.detection_boxes) > 500 or len(self.motion_proposal_boxes) > 32:
             raise TemporalCaptureError("retained_frame_detection_limit")
+        if self.session_sequence < 0 or self.session_offset_ms < 0 or self.temporal_uncertainty_ms < 0:
+            raise TemporalCaptureError("invalid_session_timeline_fields")
+
+
+def attach_session_timeline(
+    frames: tuple[RetainedFrameRecord, ...], *, session_id: str,
+) -> tuple[tuple[RetainedFrameRecord, ...], SessionTimeline]:
+    """Compute the Stage 6.8 session timeline once, over a fully assembled
+    retained-frame set, and merge it back onto each record.
+
+    This is deliberately a single post-processing pass over the *complete*
+    session rather than incremental per-frame bookkeeping while capture is
+    still running: `_CaptureLoop` already tracks everything a connection
+    segment needs live (the real Node per-connection session id, host
+    receive time) for its own bounded, real-time purposes (marker rescue,
+    periodic sampling), but the *derived* monotonic coordinate only needs to
+    be correct once, deterministically, over the finished frame list -- and
+    computing it once here, instead of threading a running offset through
+    the live loop, keeps that loop's own retention logic unchanged.
+
+    Returns the frames with their `session_*`/`connection_segment_*`/
+    `temporal_*` fields populated (order unchanged from the input) alongside
+    the `SessionTimeline` used to populate them, so a caller can also record
+    its session-level classification/limitations/upgrade provenance on the
+    manifest. Source-local fields (`sequence`, `source_offset_ms`,
+    `provider_generation`, `host_received_at`, `source_capture_timestamp`)
+    are read, never modified.
+    """
+
+    from dataclasses import replace as _dataclasses_replace
+
+    facts = tuple(
+        SourceFrameFact(
+            frame_id=item.frame_id, source_sequence=item.sequence, source_offset_ms=item.source_offset_ms,
+            provider_generation=item.provider_generation,
+            connection_segment_hint=item.connection_segment_id or None,
+            host_received_at_iso=item.host_received_at or None,
+            source_capture_timestamp_iso=item.source_capture_timestamp,
+        )
+        for item in frames
+    )
+    timeline = derive_session_timeline(facts, session_id=session_id)
+    by_id = {item.frame_id: item for item in timeline.frames}
+    updated = tuple(
+        _dataclasses_replace(
+            record,
+            connection_segment_id=by_id[record.frame_id].connection_segment_id,
+            connection_segment_ordinal=by_id[record.frame_id].connection_segment_ordinal,
+            session_sequence=by_id[record.frame_id].session_sequence,
+            session_offset_ms=by_id[record.frame_id].session_offset_ms,
+            previous_frame_identity=by_id[record.frame_id].previous_frame_identity,
+            temporal_discontinuity=by_id[record.frame_id].temporal_discontinuity,
+            temporal_uncertainty_ms=by_id[record.frame_id].temporal_uncertainty_ms,
+        )
+        for record in frames
+    )
+    return updated, timeline
+
+
+_TIMELINE_FRAME_FIELDS = (
+    "connection_segment_id", "connection_segment_ordinal", "session_sequence", "session_offset_ms",
+    "previous_frame_identity", "temporal_discontinuity", "temporal_uncertainty_ms",
+)
+
+
+def upgrade_capture_manifest_timeline(manifest: dict[str, object]) -> dict[str, object]:
+    """Ensure a *loaded* capture-manifest dict (as `temporal_capture_io.
+    load_capture_manifest` returns it) carries Stage 6.8 session-timeline
+    fields on every frame.
+
+    An already-native manifest (a Stage 6.8 `temporal-capture` output) is
+    returned completely unchanged -- same object, same fingerprint, no
+    recomputation -- since deriving it again would be redundant work with a
+    real (if small) risk of an unstated precondition drifting the result.
+    A pre-Stage-6.8 manifest, or one otherwise missing the fields, is
+    upgraded via `session_timeline.derive_session_timeline` and returned as
+    a *new* dict with every frame's timeline fields populated, a top-level
+    `session_timeline_classification`, `timeline_upgrade_provenance`, and a
+    freshly recomputed `semantic_fingerprint` covering the added fields.
+    This never mutates its argument or touches a filesystem; the caller
+    (`temporal_review_io.build_review_packet`) decides whether/where to
+    persist the result, and the original capture directory's own manifest
+    file is never touched.
+
+    When even the minimum source-local provenance (`sequence`,
+    `source_offset_ms`) required to derive *anything* is missing or
+    malformed, this fails honestly rather than fabricating order: frames are
+    returned unchanged (no session_* fields invented) and the manifest is
+    classified `insufficient_temporal_provenance` so callers such as
+    `validate_annotations`/`build_replay_export` can refuse cleanly instead
+    of reading absent fields.
+    """
+
+    raw_frames = manifest.get("frames", [])
+    if not isinstance(raw_frames, list):
+        raise TemporalCaptureError("invalid_capture_manifest")
+    if _manifest_already_has_native_timeline(manifest, raw_frames):
+        return manifest
+
+    facts: list[SourceFrameFact] = []
+    try:
+        for item in raw_frames:
+            if not isinstance(item, dict):
+                raise TemporalCaptureError("invalid_capture_manifest")
+            facts.append(SourceFrameFact(
+                frame_id=str(item["frame_id"]), source_sequence=int(item["sequence"]),
+                source_offset_ms=int(item["source_offset_ms"]),
+                provider_generation=str(item.get("provider_generation") or "unknown"),
+                connection_segment_hint=str(item["connection_segment_id"]) if item.get("connection_segment_id") else None,
+                host_received_at_iso=str(item["host_received_at"]) if item.get("host_received_at") else None,
+                source_capture_timestamp_iso=(str(item["source_capture_timestamp"]) if item.get("source_capture_timestamp") else None),
+            ))
+    except (KeyError, TypeError, ValueError, SessionTimelineError) as error:
+        return _insufficient_provenance_manifest(manifest, reason=str(error))
+
+    session_id = str(manifest.get("session_id") or "unknown-session")
+    try:
+        timeline = derive_session_timeline(tuple(facts), session_id=session_id)
+    except SessionTimelineError as error:
+        return _insufficient_provenance_manifest(manifest, reason=str(error))
+
+    by_id = {item.frame_id: item for item in timeline.frames}
+    updated_frames = []
+    for item in raw_frames:
+        derived = by_id.get(str(item["frame_id"]))
+        updated = dict(item)
+        if derived is not None:
+            updated["connection_segment_id"] = derived.connection_segment_id
+            updated["connection_segment_ordinal"] = derived.connection_segment_ordinal
+            updated["session_sequence"] = derived.session_sequence
+            updated["session_offset_ms"] = derived.session_offset_ms
+            updated["previous_frame_identity"] = derived.previous_frame_identity
+            updated["temporal_discontinuity"] = derived.temporal_discontinuity
+            updated["temporal_uncertainty_ms"] = derived.temporal_uncertainty_ms
+        updated_frames.append(updated)
+    # Written in session order, not whatever order the legacy manifest's
+    # own (connection-local-sequence-sorted, cross-connection-scrambled)
+    # array happened to store them in -- mirrors
+    # CaptureSessionManifest.to_semantic_dict()'s own sort so a manifest
+    # this function upgrades is ordered identically to one a native Stage
+    # 6.8 capture wrote directly.
+    updated_frames.sort(key=lambda item: item["session_sequence"])
+
+    upgraded = {key: value for key, value in manifest.items() if key != "semantic_fingerprint"}
+    upgraded["frames"] = updated_frames
+    upgraded["session_timeline_classification"] = timeline.classification
+    upgraded["timeline_upgrade_provenance"] = timeline.upgrade_provenance
+    upgraded["semantic_fingerprint"] = semantic_fingerprint(upgraded)
+    return upgraded
+
+
+def _manifest_already_has_native_timeline(manifest: dict[str, object], frames: list) -> bool:
+    if manifest.get("session_timeline_classification") != NATIVE_SESSION_TIMELINE:
+        return False
+    if not frames:
+        return True
+    return all(
+        isinstance(item, dict) and item.get("connection_segment_id") and item.get("host_received_at")
+        and all(key in item for key in _TIMELINE_FRAME_FIELDS)
+        for item in frames
+    )
+
+
+def _insufficient_provenance_manifest(manifest: dict[str, object], *, reason: str) -> dict[str, object]:
+    upgraded = {key: value for key, value in manifest.items() if key != "semantic_fingerprint"}
+    upgraded["session_timeline_classification"] = INSUFFICIENT_TEMPORAL_PROVENANCE
+    upgraded["timeline_upgrade_provenance"] = {
+        "derivation_method": "none", "reason": reason,
+        "limitation": "source-local provenance was insufficient to derive any session timeline; "
+                      "frames are unchanged and carry no session_* fields",
+    }
+    upgraded["semantic_fingerprint"] = semantic_fingerprint(upgraded)
+    return upgraded
 
 
 @dataclass(frozen=True)
@@ -421,6 +689,13 @@ class CaptureSessionManifest:
     frames: tuple[RetainedFrameRecord, ...]
     operator_markers: tuple[OperatorMarker, ...]
     stop_condition: str
+    # Stage 6.8: which derivation produced the session-timeline fields above
+    # on `frames`, plus an honest record of how a legacy upgrade got there.
+    # Defaults to native because every field this class validates already
+    # assumes one capture run computed them directly; a review-build upgrade
+    # of an older manifest sets these explicitly (see temporal_review_io).
+    session_timeline_classification: str = NATIVE_SESSION_TIMELINE
+    timeline_upgrade_provenance: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         if not self.session_id or not self.node_session_id:
@@ -436,6 +711,8 @@ class CaptureSessionManifest:
             raise TemporalCaptureError("high_resolution_frame_limit_exceeded")
         if len(self.operator_markers) > self.config.bounds.max_operator_markers:
             raise TemporalCaptureError("operator_marker_limit_exceeded")
+        if self.session_timeline_classification not in SESSION_TIMELINE_CLASSIFICATIONS:
+            raise TemporalCaptureError("invalid_session_timeline_classification")
 
     def to_semantic_dict(self) -> dict[str, object]:
         """The versioned, fingerprintable manifest payload. Absolute paths,
@@ -465,9 +742,19 @@ class CaptureSessionManifest:
             "provider_generations": list(self.provider_generations),
             "model_fingerprint": self.model_fingerprint,
             "tracker_proposal_config_fingerprint": self.tracker_proposal_config_fingerprint,
-            "frames": [asdict(item) for item in sorted(self.frames, key=lambda item: item.sequence)],
+            # Ordered by the reconnect-safe session timeline, not the raw
+            # per-connection `sequence` -- that value resets on every HTTP
+            # reconnect, so sorting by it alone interleaves unrelated
+            # connections' frames instead of preserving session order. A
+            # manifest whose frames never went through timeline derivation
+            # (every `session_sequence` still at its 0 default) degrades to
+            # the tuple's own original order via Python's stable sort,
+            # unchanged from single-connection/no-reconnect behavior.
+            "frames": [asdict(item) for item in sorted(self.frames, key=lambda item: item.session_sequence)],
             "operator_markers": [asdict(item) for item in self.operator_markers],
             "stop_condition": self.stop_condition,
+            "session_timeline_classification": self.session_timeline_classification,
+            "timeline_upgrade_provenance": self.timeline_upgrade_provenance,
             "creates_truth": False,
             "shadow_only": True,
             "production_proposal_authority": False,
@@ -520,7 +807,10 @@ __all__ = [
     "RecurringGeometryTracker",
     "RetainedFrameRecord",
     "TemporalCaptureError",
+    "attach_session_timeline",
     "classify_detection_triggers",
+    "correlate_markers_to_frames",
     "has_track_event",
     "markers_near",
+    "upgrade_capture_manifest_timeline",
 ]

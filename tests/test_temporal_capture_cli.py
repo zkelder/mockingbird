@@ -272,6 +272,7 @@ def test_retained_frames_never_exceed_the_configured_analysis_frame_bound(tmp_pa
     "mockingbird.observation.temporal_annotation",
     "mockingbird.observation.temporal_review_io",
     "mockingbird.observation.temporal_review_cli",
+    "mockingbird.observation.session_timeline",  # Stage 6.8
 ])
 def test_stage_6_6_modules_never_reference_product_truth_tables(module_name: str) -> None:
     import importlib
@@ -559,6 +560,104 @@ def test_run_recovers_from_a_non_monotonic_tracking_frame_after_reconnect(tmp_pa
     # The pre-reconnect frame is not a valid motion-proposal predecessor for
     # whatever arrives after the gap.
     assert loop.last_frame_id is None
+
+
+class FakeTransportMultiConnection:
+    """Serves one pre-built list of envelopes per call to
+    `iter_analysis_frames`, exactly mirroring the real Camera Node contract
+    that one call opens one HTTP connection (see `CameraNodeHttpTransport.
+    iter_analysis_frames`): `FakeTransport` alone cannot exercise a real
+    reconnect end-to-end because it slices one long combined list, which
+    would only split at a connection boundary by coincidence."""
+
+    def __init__(self, connections: list[list]) -> None:
+        self._connections = list(connections)
+        self.closed = False
+
+    def iter_analysis_frames(self, *, maximum_frames: int):
+        if not self._connections:
+            return iter(())
+        batch = self._connections.pop(0)
+        return iter(batch[:maximum_frames])
+
+    def request_evidence_burst(self, request):
+        return EvidenceBurstResult(request.request_id, "failed", failure_code="fixture_no_burst")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _detecting_envelope(node_session_id: str, sequence: int, *, generation: str = "gen-a", captured_offset_ms: int = 0) -> AnalysisFrameEnvelope:
+    payload = _jpeg((10, 10, 10), box=(20, 20, 80, 80))
+    digest = hashlib.sha256(payload).hexdigest()
+    return AnalysisFrameEnvelope(
+        stream_id="stream-fixture", node_session_id=node_session_id, sequence=sequence,
+        frame_id=f"{node_session_id}:{sequence}:{digest[:8]}",
+        captured_at=datetime(2026, 8, 6, 12, 0, 0, tzinfo=UTC) + timedelta(milliseconds=captured_offset_ms),
+        source_monotonic_ns=None, width=320, height=240, content_type="image/jpeg",
+        provider_generation=generation, payload=payload, content_hash=digest,
+    )
+
+
+def test_run_capture_end_to_end_reconnect_produces_a_native_session_timeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full `run_capture` CLI flow across a real reconnect (real
+    `CameraNodeAnalysisSource`/`LiveCameraNodeShadowSession`, only the
+    transport faked): every retained frame across both connection segments
+    ends up with a unique, monotonic `session_sequence`, the boundary frame
+    is flagged `temporal_discontinuity`, and the manifest is classified
+    `native_session_timeline` since every frame carries a real per-
+    connection id and host receive time."""
+    import mockingbird.observation.onnx_provider as onnx_provider_module
+    import mockingbird.observation.temporal_capture_cli as cli_module
+
+    # A single strong "animal" detection (class index 0) on every inference
+    # call is enough to retain every supplied frame via
+    # TRIGGER_ANIMAL_ABOVE_OPERATING_POINT.
+    detecting_output = np.asarray([[[0.2, 0.2, 0.8, 0.8, 0.9, 0]]], dtype=np.float32)
+    monkeypatch.setattr(onnx_provider_module, "OptionalOrtCudaRuntime", lambda: FakeRuntime(lambda: FakeSession([detecting_output])))
+
+    config_dir = _bundle_dir(tmp_path)
+    camera_node_config = _camera_node_config(tmp_path)
+
+    # Connection 1 delivers sequence 0..2; connection 2's first attempt
+    # (still against the stale, not-yet-rebuilt source) always fails on the
+    # real Camera Node transport contract, so its frames never reach
+    # retention; connection 3 -- against the freshly rebuilt source -- is
+    # what genuinely becomes the second retained connection segment.
+    connection_one = [_detecting_envelope("node-session-one", seq, captured_offset_ms=seq * 500) for seq in range(3)]
+    connection_two_failed = [_detecting_envelope("node-session-two", seq, captured_offset_ms=seq * 500) for seq in range(2)]
+    connection_three = [_detecting_envelope("node-session-three", seq, captured_offset_ms=seq * 500) for seq in range(3)]
+    fake_transport = FakeTransportMultiConnection([connection_one, connection_two_failed, connection_three])
+    monkeypatch.setattr(cli_module, "CameraNodeHttpTransport", lambda **kwargs: fake_transport)
+
+    destination = tmp_path / "capture-out-reconnect"
+    exit_code = run_capture([
+        "--camera-node-config", str(camera_node_config), "--provider", "frame-driven-onnx-cuda",
+        "--provider-config", str(config_dir / "frame-driven-config.json"), "--output", str(destination),
+        "--duration", "5",
+    ])
+    assert exit_code == 0
+    manifest = json.loads((destination / "capture-session-manifest.json").read_text())
+    assert manifest["generation_reset_count"] == 1
+    assert manifest["session_timeline_classification"] == "native_session_timeline"
+    frames = manifest["frames"]
+    # Bounded latest-frame coalescing under host backpressure (an existing,
+    # deliberate Stage 5 behavior, unrelated to this fix) means not every
+    # supplied frame is guaranteed retained, but at least the newest frame
+    # of each connection always survives -- enough to prove both connection
+    # segments are represented and ordered correctly.
+    assert len(frames) >= 2
+    session_sequences = [item["session_sequence"] for item in frames]
+    assert session_sequences == sorted(session_sequences)
+    assert len(set(session_sequences)) == len(frames)
+    segment_ids = {item["connection_segment_id"] for item in frames}
+    assert segment_ids == {"node-session-one", "node-session-three"}
+    discontinuous = [item for item in frames if item["temporal_discontinuity"]]
+    assert len(discontinuous) == 1
+    assert discontinuous[0]["connection_segment_id"] == "node-session-three"
+    assert discontinuous[0]["connection_segment_ordinal"] == 1
 
 
 # --------------------------------------------------------------------------

@@ -334,6 +334,20 @@ Checklist:
       review, and export path under `data/` before considering the session
       complete -- none of it belongs in version control.
 
+Daylight collection completed with two real Camera Node sessions (session-01:
+95 retained frames, 13 reconnects in 2m37s; session-02: 393 retained frames,
+53 reconnects in 10m07s -- approximately 5-6 reconnects per minute). This
+exposed that the real Node resets its per-connection transport sequence and
+this codebase's source-relative offset bookkeeping on every HTTP
+reconnection while `provider_generation` stays unchanged, which broke
+cross-connection `AppearanceInterval` validation, review/export ordering, and
+full-session replay export (only a manually selected, connection-safe
+sub-window could be replayed). Stage 6.8 adds a reconnect-safe session
+timeline that fixes all three while preserving original source-local
+provenance unchanged -- see
+[session-timeline-contract.md](session-timeline-contract.md), which both
+real sessions' captures now upgrade and replay through end to end.
+
 ## Authority and limitations
 
 No command selects or applies a runtime threshold, creates or applies an

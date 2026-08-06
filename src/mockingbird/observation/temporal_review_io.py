@@ -154,6 +154,34 @@ def write_export_manifest(output_directory: Path, semantic: dict[str, Any], *, f
     return destination
 
 
+def copy_replay_export_images(review_directory: Path, output_directory: Path, replay_payload: dict[str, Any]) -> int:
+    """Copy every source frame a `build_replay_export` payload's `frames[].path`
+    references (always `images/<frame_id>.jpg`, always sourced from the
+    self-contained review directory's own `frames/` -- high-resolution
+    frames are already excluded from replay, so `high-resolution/` is never
+    read here) so the exported directory `replay-benchmark --frames` can
+    actually load, not just a manifest that references paths nothing wrote.
+    Returns the number of files copied."""
+
+    import shutil
+
+    directory = safe_capture_output_directory(output_directory, allow_existing=True)
+    images_directory = directory / "images"
+    images_directory.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for record in replay_payload.get("frames", []):
+        relative = str(record.get("path", ""))
+        if not relative.startswith("images/") or "/" in relative[len("images/"):]:
+            raise TemporalAnnotationError("invalid_replay_export_frame_path")
+        frame_file_name = relative[len("images/"):]
+        source_path = review_directory / FRAMES_DIRECTORY_NAME / frame_file_name
+        if source_path.is_symlink() or not source_path.is_file():
+            raise TemporalAnnotationError("missing_replay_export_source_frame")
+        shutil.copyfile(source_path, images_directory / frame_file_name)
+        copied += 1
+    return copied
+
+
 # --------------------------------------------------------------------------
 # Rendering
 # --------------------------------------------------------------------------
@@ -227,15 +255,29 @@ def build_review_packet(capture_directory: Path, review_directory: Path) -> dict
     and every original source frame are copied in -- so
     `temporal-review-validate`/`temporal-review-export` need only `--review`,
     matching the task's own command sketch, and content-hash validation
-    keeps working even if the original capture directory is later removed."""
+    keeps working even if the original capture directory is later removed.
 
+    Stage 6.8: the manifest copied in is not always byte-identical to the
+    original. `upgrade_capture_manifest_timeline` derives the reconnect-safe
+    session timeline (a no-op pass-through for an already-native Stage 6.8
+    capture; a deterministic reconstruction for an older one) and *that*
+    upgraded manifest -- never the original capture directory's own file --
+    is what gets written into the review directory, ordered, and validated/
+    exported against from here on. `capture-out/capture-session-manifest.json`
+    itself is only ever read, never opened for writing."""
+
+    from mockingbird.observation.temporal_capture import upgrade_capture_manifest_timeline
+    from mockingbird.observation.temporal_capture_io import write_capture_manifest
     import shutil
 
-    manifest = load_capture_manifest(capture_directory)
-    from mockingbird.observation.temporal_capture_io import CAPTURE_MANIFEST_FILENAME
-    shutil.copyfile(capture_directory / CAPTURE_MANIFEST_FILENAME, review_directory / CAPTURE_MANIFEST_FILENAME)
+    manifest = upgrade_capture_manifest_timeline(load_capture_manifest(capture_directory))
+    write_capture_manifest(review_directory, manifest)
 
-    frames = sorted(manifest.get("frames", []), key=lambda item: item["sequence"])
+    # Reconnect-safe session order, not the raw per-connection `sequence`:
+    # that value resets on every reconnect, so sorting by it alone
+    # interleaves unrelated connections' frames instead of true session
+    # order (see docs/session-timeline-contract.md).
+    frames = sorted(manifest.get("frames", []), key=lambda item: item["session_sequence"])
     crops_directory = review_directory / CROPS_DIRECTORY_NAME
     crops_directory.mkdir(parents=True, exist_ok=True)
 

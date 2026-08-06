@@ -315,11 +315,47 @@ class FrameDrivenObservationProvider:
             support_resolver=self._support,
         )
         results: list[ObservationResult] = []
+        previous_frame: FramePacket | None = None
         for frame in frames:
+            if previous_frame is not None and _replay_frame_is_discontinuous(previous_frame, frame):
+                # A reconnect-safe replay input's session-relative
+                # source_offset_ms stays strictly increasing across a
+                # reconnect (see docs/session-timeline-contract.md), so the
+                # tracker's own monotonicity check alone cannot detect the
+                # gap; a `provider_generation` change or an explicit
+                # `temporal_discontinuity` timing fact is the positive
+                # signal instead. Reuses the existing "provider_reset"
+                # provider-reset behavior (the same finalize/drain/fresh-
+                # generation shape `restart_live_generation` uses live)
+                # rather than silently letting a track continue across an
+                # unsupported gap; unlike the live path, the drained
+                # results are kept -- replay has no other place to report a
+                # generation that ended exactly at this boundary.
+                results.extend(self._reset_tracking_for_replay_discontinuity("provider_reset"))
             results.append(await self._process_frame(frame))
+            previous_frame = frame
         self.finalize_replay()
         results.extend(self.drain_final_results())
         return tuple(results)
+
+    def _reset_tracking_for_replay_discontinuity(self, reason: str) -> tuple[ObservationResult, ...]:
+        """Finalize the current tracker generation and start a fresh one
+        mid-replay, mirroring `restart_live_generation`'s reset shape
+        without touching that live-only method (kept independent so this
+        addition carries zero risk to the already-tested live reconnect
+        path)."""
+
+        self._finalize_tracking(reason)
+        drained = self.drain_final_results()
+        self._last_detector_offset_ms = None
+        self._pretrigger.clear()
+        self._evidence.clear()
+        if self._patch_support is not None:
+            self._patch_support.clear()
+        self._tracker = ProviderNeutralFrameTracker(
+            self._stream_id, self.settings.tracker_configuration(), support_resolver=self._support,
+        )
+        return drained
 
     def start_live(self, stream_id: str) -> None:
         """Start one bounded transient live-shadow generation."""
@@ -653,6 +689,30 @@ def _excluded(
         return False
     center = ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
     return any(left <= center[0] <= right and top <= center[1] <= bottom for left, top, right, bottom in exclusions)
+
+
+def _replay_frame_is_discontinuous(previous: FramePacket, current: FramePacket) -> bool:
+    """Whether the replay host should treat `current` as starting a fresh
+    tracking generation rather than a continuation of `previous`. Detects
+    exactly the two positive signals a reconnect-safe replay input can
+    carry (see docs/session-timeline-contract.md): a real
+    `provider_generation` change (the existing, established signal), or an
+    explicit `temporal_discontinuity` timing fact -- necessary because a
+    real Camera Node reconnect resets transport sequence/source-relative
+    offsets while leaving `provider_generation` unchanged, so the session-
+    relative `source_offset_ms` a reconnect-safe export feeds the tracker
+    stays monotonic straight through the boundary with no signal of its
+    own. Returns `False` whenever neither fact is present, which is every
+    replay input built before Stage 6.8 -- this never changes behavior for
+    one."""
+
+    if (
+        previous.provider_generation is not None
+        and current.provider_generation is not None
+        and previous.provider_generation != current.provider_generation
+    ):
+        return True
+    return bool(dict(current.timing_facts).get("temporal_discontinuity"))
 
 
 def _quality(candidate: EvidenceCandidate) -> tuple[float, float, int, str]:

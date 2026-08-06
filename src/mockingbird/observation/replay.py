@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from hashlib import sha256
 import json
 from typing import Protocol
@@ -31,6 +32,34 @@ def semantic_fingerprint(value: object) -> str:
     return sha256(encoded).hexdigest()
 
 
+def _replay_frame_timeline_facts(frame: "ReplayFrame") -> dict[str, object]:
+    """The Stage 6.8 reconnect-safe provenance fields present on one
+    `ReplayFrame`, keyed only when actually set. Shared by `ReplayInput.
+    fingerprint` (so the semantic fingerprint includes deterministic
+    timeline/discontinuity facts once they exist, per the session-timeline
+    contract) and kept in lockstep with `packets()`'s own reading of the
+    same fields."""
+
+    facts: dict[str, object] = {}
+    if frame.captured_at_iso is not None:
+        facts["captured_at_iso"] = frame.captured_at_iso
+    if frame.source_sequence is not None:
+        facts["source_sequence"] = frame.source_sequence
+    if frame.original_source_offset_ms is not None:
+        facts["original_source_offset_ms"] = frame.original_source_offset_ms
+    if frame.connection_segment_id is not None:
+        facts["connection_segment_id"] = frame.connection_segment_id
+    if frame.connection_segment_ordinal is not None:
+        facts["connection_segment_ordinal"] = frame.connection_segment_ordinal
+    if frame.provider_generation is not None:
+        facts["provider_generation"] = frame.provider_generation
+    if frame.temporal_discontinuity:
+        facts["temporal_discontinuity"] = True
+    if frame.temporal_uncertainty_ms is not None:
+        facts["temporal_uncertainty_ms"] = frame.temporal_uncertainty_ms
+    return facts
+
+
 @dataclass(frozen=True)
 class ReplayFrame:
     index: int
@@ -38,6 +67,22 @@ class ReplayFrame:
     content_hash: str
     source_path: str | None = None
     analysis_excluded_regions: tuple[tuple[float, float, float, float], ...] = ()
+    # Stage 6.8 reconnect-safe provenance, all optional and additive: an
+    # export built by the older Stage 6.6 pipeline (or any other caller that
+    # predates this) never sets them, and `source_offset_ms` above keeps its
+    # original meaning for that input. A reconnect-safe export instead feeds
+    # `source_offset_ms` the *session-relative* offset (see
+    # docs/session-timeline-contract.md) so the ordering/monotonicity check
+    # below passes on ordinary reconnect resets, and preserves the true
+    # original source-local facts here rather than discarding them.
+    captured_at_iso: str | None = None
+    source_sequence: int | None = None
+    original_source_offset_ms: int | None = None
+    connection_segment_id: str | None = None
+    connection_segment_ordinal: int | None = None
+    provider_generation: str | None = None
+    temporal_discontinuity: bool = False
+    temporal_uncertainty_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +122,15 @@ class ReplayInput:
             }
             if item.analysis_excluded_regions:
                 frame["analysis_excluded_regions"] = [list(box) for box in item.analysis_excluded_regions]
+            # Only present (and only affects the fingerprint) when a
+            # reconnect-safe export actually populated it, so an input
+            # built by any pre-Stage-6.8 caller keeps an identical
+            # fingerprint to before -- the deterministic timeline and
+            # discontinuity facts genuinely become part of the semantic
+            # fingerprint only once they exist at all.
+            timeline_facts = _replay_frame_timeline_facts(item)
+            if timeline_facts:
+                frame["timeline"] = timeline_facts
             frames.append(frame)
         return semantic_fingerprint({"version": MANIFEST_VERSION, "input_id": self.input_id,
             "stream_id": self.stream_id, "width": self.width, "height": self.height,
@@ -85,17 +139,40 @@ class ReplayInput:
 
     def packets(self) -> tuple[FramePacket, ...]:
         root = self.fingerprint
-        return tuple(FramePacket(
-            stream_id=self.stream_id,
-            media_asset_id=f"replay:{frame.index}",
-            captured_at=None,
-            frame_id=semantic_fingerprint((FRAME_IDENTITY_VERSION, root, frame.index, frame.source_offset_ms, frame.content_hash)),
-            source_offset_ms=frame.source_offset_ms,
-            width=self.width,
-            height=self.height,
-            source_path=frame.source_path,
-            analysis_excluded_regions=frame.analysis_excluded_regions,
-        ) for frame in self.frames)
+        packets = []
+        for frame in self.frames:
+            timing_facts: list[tuple[str, str | int | float | bool | None]] = []
+            if frame.original_source_offset_ms is not None:
+                timing_facts.append(("original_source_offset_ms", frame.original_source_offset_ms))
+            if frame.connection_segment_id is not None:
+                timing_facts.append(("connection_segment_id", frame.connection_segment_id))
+            if frame.connection_segment_ordinal is not None:
+                timing_facts.append(("connection_segment_ordinal", frame.connection_segment_ordinal))
+            if frame.temporal_discontinuity:
+                timing_facts.append(("temporal_discontinuity", True))
+            if frame.temporal_uncertainty_ms is not None:
+                timing_facts.append(("temporal_uncertainty_ms", frame.temporal_uncertainty_ms))
+            captured_at = None
+            if frame.captured_at_iso is not None:
+                try:
+                    captured_at = datetime.fromisoformat(frame.captured_at_iso)
+                except ValueError:
+                    captured_at = None
+            packets.append(FramePacket(
+                stream_id=self.stream_id,
+                media_asset_id=f"replay:{frame.index}",
+                captured_at=captured_at,
+                frame_id=semantic_fingerprint((FRAME_IDENTITY_VERSION, root, frame.index, frame.source_offset_ms, frame.content_hash)),
+                source_offset_ms=frame.source_offset_ms,
+                width=self.width,
+                height=self.height,
+                source_path=frame.source_path,
+                analysis_excluded_regions=frame.analysis_excluded_regions,
+                frame_sequence=frame.source_sequence,
+                provider_generation=frame.provider_generation,
+                timing_facts=tuple(timing_facts),
+            ))
+        return tuple(packets)
 
 
 @dataclass(frozen=True)

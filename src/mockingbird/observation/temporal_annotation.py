@@ -20,6 +20,7 @@ from dataclasses import asdict, dataclass
 from typing import Callable, Literal
 
 from mockingbird.observation.replay import semantic_fingerprint
+from mockingbird.observation.session_timeline import INSUFFICIENT_TEMPORAL_PROVENANCE
 from mockingbird.observation.temporal_capture import TRIGGER_RECURRING_STATIC_GEOMETRY
 
 ANNOTATION_SCHEMA_VERSION = 1
@@ -209,6 +210,9 @@ V_AMBIGUOUS_IN_SCORING_DENOMINATOR = "ambiguous_truth_in_scoring_denominator"
 V_UNKNOWN_FRAME_REFERENCE = "unknown_frame_reference"
 V_CAPTURE_FINGERPRINT_MISMATCH = "capture_manifest_fingerprint_mismatch"
 V_APPEARANCE_CONTINUITY_UNMARKED = "overlapping_appearance_continuity_unmarked"
+# Stage 6.8: reconnect-safe session-timeline checks.
+V_MISSING_SESSION_TIMELINE = "appearance_frame_missing_session_timeline"
+V_EXCESSIVE_DISCONTINUITY_UNMARKED = "excessive_discontinuity_requires_uncertainty"
 
 _REJECT_CODES = frozenset({
     V_SCORABLE_YES_REQUIRES_BOX, V_NEGATIVE_FRAME_HAS_POSITIVE_BOXES, V_BOX_OUTSIDE_IMAGE_BOUNDS,
@@ -216,12 +220,22 @@ _REJECT_CODES = frozenset({
     V_DUPLICATE_LOGICAL_IDENTITY, V_MISSING_SOURCE_MEDIA, V_CONTENT_HASH_MISMATCH,
     V_PRODUCT_FALSE_POSITIVE_AS_FRAME_NEGATIVE, V_STALE_GENERATION_EVIDENCE,
     V_PRIVACY_MASKED_MARKED_USABLE, V_UNKNOWN_FRAME_REFERENCE, V_CAPTURE_FINGERPRINT_MISMATCH,
+    V_MISSING_SESSION_TIMELINE, V_EXCESSIVE_DISCONTINUITY_UNMARKED,
 })
 # Flagged (surfaced, does not by itself fail validation): ambiguous-in-scoring
 # is enforced structurally by export (ambiguous frames are always excluded),
 # so a frame merely *carrying* ambiguous truth is a flag, not a rejection;
 # unmarked overlapping continuity is a reviewer prompt, not a hard failure.
 _FLAG_CODES = frozenset({V_AMBIGUOUS_IN_SCORING_DENOMINATOR, V_APPEARANCE_CONTINUITY_UNMARKED})
+
+# An appearance interval crossing one reconnect boundary is expected and
+# supported outright -- reconnects happen every few seconds on this
+# transport (see docs/temporal-review-capture-contract.md). Only a genuinely
+# long span across that boundary is asked to carry an explicit
+# `continuity_ambiguous` acknowledgment that a reviewer, not this validator,
+# decided real continuity could not be confirmed; a short span never
+# requires it merely for touching a segment boundary.
+MAX_CROSS_SEGMENT_SPAN_MS_WITHOUT_UNCERTAINTY = 10_000
 
 
 @dataclass(frozen=True)
@@ -305,7 +319,14 @@ def validate_annotations(
                     ))
                     break
 
-    duration_ms = int(capture_manifest.get("end_source_offset_ms", 0)) - int(capture_manifest.get("start_source_offset_ms", 0))
+    # Stage 6.8: appearance intervals are validated against the reconnect-
+    # safe session timeline (`session_offset_ms`), never the raw
+    # connection-local `source_offset_ms` -- that value resets on every
+    # reconnect, so two genuinely ordered frames from different connections
+    # can otherwise look reversed purely because their own connections
+    # restarted at different local offsets.
+    insufficient_timeline = capture_manifest.get("session_timeline_classification") == INSUFFICIENT_TEMPORAL_PROVENANCE
+    has_session_timeline = _session_bounds(capture_manifest) is not None
     appearance_ids: set[str] = set()
     sorted_appearances = list(annotations.appearances)
     for appearance in sorted_appearances:
@@ -317,13 +338,34 @@ def validate_annotations(
         if start_record is None or end_record is None:
             issues.append(ValidationIssue(V_UNKNOWN_FRAME_REFERENCE, "reject", None, f"appearance {appearance.appearance_id} references an unknown frame"))
             continue
-        start_offset, end_offset = int(start_record["source_offset_ms"]), int(end_record["source_offset_ms"])
+        start_offset, end_offset = _session_offset(start_record), _session_offset(end_record)
+        if insufficient_timeline or start_offset is None or end_offset is None or not has_session_timeline:
+            issues.append(ValidationIssue(
+                V_MISSING_SESSION_TIMELINE, "reject", None,
+                f"appearance {appearance.appearance_id} references a frame with no derived session timeline; "
+                "run temporal-review-build to upgrade this capture manifest first",
+            ))
+            continue
         if start_offset > end_offset:
             issues.append(ValidationIssue(V_APPEARANCE_INTERVAL_REVERSED, "reject", None, f"appearance {appearance.appearance_id} has reversed times"))
-        if start_offset < 0 or end_offset > duration_ms:
+        # A valid derived session coordinate never starts below zero --
+        # anything lower signals corrupted/impossible provenance on this
+        # specific frame. (An upper-bound check against the manifest's own
+        # frame set would be tautological: the referenced frame is, by
+        # construction, already a member of the set that bound comes from,
+        # so it could never legitimately exceed it.)
+        if start_offset < 0 or end_offset < 0:
             issues.append(ValidationIssue(V_TEMPORAL_INTERVAL_OUTSIDE_SEQUENCE_BOUNDS, "reject", None, f"appearance {appearance.appearance_id} falls outside the capture session's own duration"))
         if start_record.get("provider_generation") != end_record.get("provider_generation"):
             issues.append(ValidationIssue(V_STALE_GENERATION_EVIDENCE, "reject", None, f"appearance {appearance.appearance_id} spans a provider-generation reset"))
+        crosses_segment = start_record.get("connection_segment_id") != end_record.get("connection_segment_id")
+        span_ms = end_offset - start_offset
+        if crosses_segment and span_ms > MAX_CROSS_SEGMENT_SPAN_MS_WITHOUT_UNCERTAINTY and not appearance.continuity_ambiguous:
+            issues.append(ValidationIssue(
+                V_EXCESSIVE_DISCONTINUITY_UNMARKED, "reject", None,
+                f"appearance {appearance.appearance_id} spans {span_ms}ms across a reconnect boundary "
+                "without continuity_ambiguous set",
+            ))
 
     for i, first in enumerate(sorted_appearances):
         for second in sorted_appearances[i + 1:]:
@@ -350,12 +392,44 @@ def _centroid_in_any(box: tuple[float, float, float, float], regions: list) -> b
     return False
 
 
+def _session_offset(record: dict[str, object]) -> int | None:
+    """The Stage 6.8 reconnect-safe session-relative offset for one
+    already-retained frame record, or `None` when this manifest was never
+    upgraded through `temporal_capture.upgrade_capture_manifest_timeline`
+    (an un-upgraded pre-Stage-6.8 manifest, or one whose provenance was too
+    thin to derive anything honest -- see `INSUFFICIENT_TEMPORAL_PROVENANCE`).
+    Deliberately distinct from a merely-absent key defaulting to zero: a
+    frame that was never timelined must never be silently treated as if it
+    sits at the very start of the session."""
+
+    value = record.get("session_offset_ms")
+    if value is None:
+        return None
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _session_bounds(capture_manifest: dict[str, object]) -> tuple[int, int] | None:
+    offsets = [
+        offset for offset in (
+            _session_offset(item) for item in capture_manifest.get("frames", [])  # type: ignore[union-attr]
+        )
+        if offset is not None
+    ]
+    return (min(offsets), max(offsets)) if offsets else None
+
+
 def _appearance_overlaps(first: AppearanceInterval, second: AppearanceInterval, frames_by_id: dict) -> bool:
     def _bounds(item: AppearanceInterval) -> tuple[int, int] | None:
         start, end = frames_by_id.get(item.start_frame_id), frames_by_id.get(item.end_frame_id)
         if start is None or end is None:
             return None
-        return int(start["source_offset_ms"]), int(end["source_offset_ms"])
+        start_offset, end_offset = _session_offset(start), _session_offset(end)
+        if start_offset is None or end_offset is None:
+            return None
+        return start_offset, end_offset
 
     first_bounds, second_bounds = _bounds(first), _bounds(second)
     if first_bounds is None or second_bounds is None:
@@ -479,10 +553,13 @@ def classify_episode_boundary_failures(annotations: AnnotationSet, frames_by_id:
         start, end = frames_by_id.get(appearance.start_frame_id), frames_by_id.get(appearance.end_frame_id)
         if start is None or end is None:
             continue
+        start_offset, end_offset = _session_offset(start), _session_offset(end)
+        if start_offset is None or end_offset is None:
+            continue
         generations: set[str] = set()
         for frame in frames_by_id.values():
-            offset = int(frame["source_offset_ms"])  # type: ignore[index]
-            if int(start["source_offset_ms"]) <= offset <= int(end["source_offset_ms"]):  # type: ignore[index]
+            offset = _session_offset(frame)
+            if offset is not None and start_offset <= offset <= end_offset:
                 generations.update(frame.get("track_generation_ids", ()))  # type: ignore[union-attr]
         if len(generations) > 1:
             failures.append(appearance.appearance_id)
@@ -692,8 +769,20 @@ def _export_frame_dicts(
             "privacy_ignore_regions": session.get("config", {}).get("privacy_ignore_regions", []),  # type: ignore[union-attr]
             "scene_group": scene_group,
             "sequence_id": str(session.get("session_id")),
-            "sequence_order": record.get("sequence"),
-            "source_offset_ms": record.get("source_offset_ms"),
+            # Stage 6.8: ordered by the reconnect-safe session timeline, not
+            # the raw per-connection `sequence`/`source_offset_ms` -- those
+            # reset on every reconnect and are preserved below as separate,
+            # explicitly source-local provenance instead of being
+            # overwritten. Truth fields above (animal_present, boxes,
+            # scorable) are untouched by this -- only ordering/provenance.
+            "sequence_order": record.get("session_sequence", record.get("sequence")),
+            "source_offset_ms": record.get("session_offset_ms", record.get("source_offset_ms")),
+            "original_source_sequence": record.get("sequence"),
+            "original_source_offset_ms": record.get("source_offset_ms"),
+            "connection_segment_id": record.get("connection_segment_id"),
+            "connection_segment_ordinal": record.get("connection_segment_ordinal"),
+            "temporal_discontinuity": bool(record.get("temporal_discontinuity", False)),
+            "provider_generation": record.get("provider_generation"),
             "provenance": (
                 f"Stage 6.6 reviewed temporal capture session {session.get('session_id')}; "
                 f"reviewer={frame.provenance.reviewer if frame.provenance else 'unknown'}"
@@ -728,6 +817,12 @@ def build_motion_proposal_export(session: dict[str, object], annotations: Annota
     docs/adaptive-motion-proposal-benchmark-contract.md."""
 
     frames = _export_frame_dicts(session, annotations, scene_group=scene_group, cohort_prefix="temporal-review")
+    # Session order, not raw per-connection `sequence` -- see
+    # docs/session-timeline-contract.md. Because `frames`' own
+    # `sequence_order`/`source_offset_ms` already carry the session-relative
+    # values (see `_export_frame_dicts`), "consecutive in this ordered list"
+    # now honestly means "session-adjacent", including across a reconnect,
+    # rather than being scrambled by connection-local sequence resets.
     ordered = sorted(frames, key=lambda item: item["sequence_order"] or 0)
     present_intervals = []
     run: list[dict[str, object]] = []
@@ -740,20 +835,31 @@ def build_motion_proposal_export(session: dict[str, object], annotations: Annota
             run = []
     if run:
         present_intervals.append({"start_offset_ms": run[0]["source_offset_ms"], "end_offset_ms": run[-1]["source_offset_ms"]})
+    all_session_offsets = [
+        item.get("session_offset_ms") for item in session.get("frames", []) if item.get("session_offset_ms") is not None  # type: ignore[union-attr]
+    ]
+    segment_ids = list(dict.fromkeys(item["connection_segment_id"] for item in ordered if item.get("connection_segment_id")))
     return {
         "version": 1,
         "cohort_id": f"temporal-review-{session.get('session_id')}-motion-proposal",
-        "annotation_policy": "Human-reviewed truth from a Stage 6.6 reviewed temporal capture session, ordered by real source-relative capture time.",
+        "annotation_policy": "Human-reviewed truth from a Stage 6.6 reviewed temporal capture session, ordered by the reconnect-safe session timeline.",
         "frames": ordered,
         "scene_static_structures": {},
         "temporal_sequences": [{
             "sequence_id": str(session.get("session_id")),
             "scene_group": scene_group,
             "ordered_frame_ids": [item["frame_id"] for item in ordered],
-            "source_offset_ms_range": [session.get("start_source_offset_ms"), session.get("end_source_offset_ms")],
+            "source_offset_ms_range": [min(all_session_offsets), max(all_session_offsets)] if all_session_offsets else None,
             "animal_present_intervals": present_intervals,
             "sequence_gap_count": session.get("sequence_gap_count"),
             "generation_reset_count": session.get("generation_reset_count"),
+            # Honest connection-segment/predecessor boundaries for this
+            # exported cohort (Stage 6.8): how many distinct connections
+            # contributed the reviewed frames above, and which of them was
+            # native (real per-connection provenance) versus a best-effort
+            # reconstruction over an older, un-timelined capture.
+            "connection_segment_count": len(segment_ids),
+            "session_timeline_classification": session.get("session_timeline_classification"),
             "proposal_truth": "boxes above reflect reviewed truth only; proposal-generated windows are provenance, not truth",
         }],
     }
@@ -784,19 +890,49 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
     reference an undefined replay frame index -- are excluded from this
     export, mirroring the same high-resolution-is-not-analysis-resolution
     distinction the detector-calibration/motion-proposal exports make by
-    leaving `width`/`height` unset instead."""
+    leaving `width`/`height` unset instead. The exclusion is reported
+    explicitly (`high_resolution_exclusion`) rather than silently dropped.
 
-    frames_by_id = {item["frame_id"]: item for item in session.get("frames", [])}  # type: ignore[union-attr]
+    Stage 6.8: ordered by, and timestamped with, the reconnect-safe session
+    timeline (`session_sequence`/`session_offset_ms`), not the raw
+    per-connection `sequence`/`source_offset_ms` -- see
+    docs/session-timeline-contract.md. This is what lets a full multi-
+    reconnect session load as one ordered `ReplayInput` without manually
+    selecting a single connection-safe sub-window: `ReplayInput.__post_init__`
+    still requires strictly increasing `source_offset_ms`, unmodified (see
+    replay.py) -- this export normalizes what it feeds that check instead of
+    weakening it. Original source-local facts (`sequence`, `source_offset_ms`,
+    `provider_generation`, capture timestamp) and connection-segment/
+    discontinuity facts are preserved as additive per-frame provenance."""
+
+    if session.get("session_timeline_classification") == INSUFFICIENT_TEMPORAL_PROVENANCE:
+        raise TemporalAnnotationError("replay_export_requires_session_timeline")
+
+    all_frames = session.get("frames", [])  # type: ignore[assignment]
+    frames_by_id = {item["frame_id"]: item for item in all_frames}  # type: ignore[union-attr]
+    excluded_high_resolution = [item["frame_id"] for item in all_frames if item.get("high_resolution")]  # type: ignore[union-attr]
     ordered_records = [
-        item for item in sorted(session.get("frames", []), key=lambda item: item["sequence"])  # type: ignore[arg-type,union-attr]
+        item for item in sorted(all_frames, key=lambda item: item["session_sequence"])  # type: ignore[arg-type,union-attr]
         if not item.get("high_resolution")
     ]
+    if any(record.get("session_offset_ms") is None for record in ordered_records):
+        raise TemporalAnnotationError("replay_export_requires_session_timeline")
     privacy_ignore_regions = session.get("config", {}).get("privacy_ignore_regions", [])  # type: ignore[union-attr]
     replay_frames = [
         {
-            "index": index, "source_offset_ms": record["source_offset_ms"],
+            "index": index, "source_offset_ms": record["session_offset_ms"],
             "content_hash": record["content_hash"], "path": f"images/{record['frame_id']}.jpg",
             "analysis_excluded_regions": privacy_ignore_regions,
+            # Stage 6.8 reconnect-safe provenance, field names matching
+            # `replay.ReplayFrame` exactly (see `_replay_export_timeline_facts`).
+            "captured_at_iso": record.get("source_capture_timestamp"),
+            "source_sequence": record.get("sequence"),
+            "original_source_offset_ms": record.get("source_offset_ms"),
+            "connection_segment_id": record.get("connection_segment_id"),
+            "connection_segment_ordinal": record.get("connection_segment_ordinal"),
+            "provider_generation": record.get("provider_generation"),
+            "temporal_discontinuity": bool(record.get("temporal_discontinuity", False)),
+            "temporal_uncertainty_ms": record.get("temporal_uncertainty_ms"),
         }
         for index, record in enumerate(ordered_records)
     ]
@@ -809,7 +945,7 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
             continue
         appearances.append({
             "appearance_id": item.appearance_id,
-            "start_offset_ms": start["source_offset_ms"], "end_offset_ms": end["source_offset_ms"],
+            "start_offset_ms": start["session_offset_ms"], "end_offset_ms": end["session_offset_ms"],
             "outcome": None, "ambiguous": item.continuity_ambiguous,
         })
 
@@ -849,7 +985,9 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
     # Mirrors replay.ReplayInput.fingerprint exactly (a plain string field
     # this export writes, not a property computed by the real dataclass
     # this pure module never imports for that purpose) so
-    # BenchmarkManifest.validate's input_fingerprint cross-check passes.
+    # BenchmarkManifest.validate's input_fingerprint cross-check passes --
+    # including Stage 6.8's conditional `timeline` sub-object, kept in
+    # lockstep with replay._replay_frame_timeline_facts.
     fingerprint_frames = []
     for frame in replay_frames:
         entry: dict[str, object] = {
@@ -857,6 +995,9 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
         }
         if frame["analysis_excluded_regions"]:
             entry["analysis_excluded_regions"] = [list(box) for box in frame["analysis_excluded_regions"]]  # type: ignore[union-attr]
+        timeline_facts = _replay_export_timeline_facts(frame)
+        if timeline_facts:
+            entry["timeline"] = timeline_facts
         fingerprint_frames.append(entry)
     input_fingerprint = semantic_fingerprint({
         "version": 1, "input_id": input_id, "stream_id": stream_id, "width": width, "height": height,
@@ -877,7 +1018,43 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
         "visits": [],
         "detections": detections,
         "evidence": evidence,
+        # Explicit, honest reporting of the existing high-resolution
+        # exclusion rule (never silent) -- see the docstring above.
+        "high_resolution_exclusion": {
+            "excluded_frame_count": len(excluded_high_resolution),
+            "excluded_frame_ids": excluded_high_resolution,
+            "reason": "high_resolution_burst_frames_are_not_analysis_resolution",
+        },
     }
+
+
+def _replay_export_timeline_facts(frame: dict[str, object]) -> dict[str, object]:
+    """The Stage 6.8 reconnect-safe provenance fields on one exported replay
+    frame dict, present only when actually set -- field names and inclusion
+    rules matching `replay._replay_frame_timeline_facts` exactly (this pure
+    module never imports the real `ReplayFrame` dataclass for that
+    purpose), so `input_fingerprint` here always equals `ReplayInput.
+    fingerprint` once the exported JSON is loaded back through
+    `replay_io.load_replay_bundle`."""
+
+    facts: dict[str, object] = {}
+    if frame.get("captured_at_iso") is not None:
+        facts["captured_at_iso"] = frame["captured_at_iso"]
+    if frame.get("source_sequence") is not None:
+        facts["source_sequence"] = frame["source_sequence"]
+    if frame.get("original_source_offset_ms") is not None:
+        facts["original_source_offset_ms"] = frame["original_source_offset_ms"]
+    if frame.get("connection_segment_id") is not None:
+        facts["connection_segment_id"] = frame["connection_segment_id"]
+    if frame.get("connection_segment_ordinal") is not None:
+        facts["connection_segment_ordinal"] = frame["connection_segment_ordinal"]
+    if frame.get("provider_generation") is not None:
+        facts["provider_generation"] = frame["provider_generation"]
+    if frame.get("temporal_discontinuity"):
+        facts["temporal_discontinuity"] = True
+    if frame.get("temporal_uncertainty_ms") is not None:
+        facts["temporal_uncertainty_ms"] = frame["temporal_uncertainty_ms"]
+    return facts
 
 
 __all__ = [
@@ -911,6 +1088,7 @@ __all__ = [
     "ANNOTATION_CONTRACT_VERSION",
     "ANNOTATION_SCHEMA_VERSION",
     "MATCH_IOU_THRESHOLD",
+    "MAX_CROSS_SEGMENT_SPAN_MS_WITHOUT_UNCERTAINTY",
     "TRUTH_SOURCES",
     "V_AMBIGUOUS_IN_SCORING_DENOMINATOR",
     "V_APPEARANCE_CONTINUITY_UNMARKED",
@@ -919,6 +1097,8 @@ __all__ = [
     "V_CAPTURE_FINGERPRINT_MISMATCH",
     "V_CONTENT_HASH_MISMATCH",
     "V_DUPLICATE_LOGICAL_IDENTITY",
+    "V_EXCESSIVE_DISCONTINUITY_UNMARKED",
+    "V_MISSING_SESSION_TIMELINE",
     "V_MISSING_SOURCE_MEDIA",
     "V_NEGATIVE_FRAME_HAS_POSITIVE_BOXES",
     "V_PRIVACY_MASKED_MARKED_USABLE",

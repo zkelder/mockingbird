@@ -12,6 +12,7 @@ import pytest
 
 from mockingbird.observation.contracts import DetectionObservation
 from mockingbird.observation.temporal_capture import (
+    CAPTURE_MANIFEST_SCHEMA_VERSION,
     OPERATOR_MARKER_WILDLIFE_VISIBLE_NOW,
     STOP_DURATION_ELAPSED,
     TRIGGER_ANIMAL_ABOVE_OPERATING_POINT,
@@ -24,10 +25,14 @@ from mockingbird.observation.temporal_capture import (
     RecurringGeometryTracker,
     RetainedFrameRecord,
     TemporalCaptureError,
+    attach_session_timeline,
     classify_detection_triggers,
+    correlate_markers_to_frames,
     has_track_event,
     markers_near,
+    upgrade_capture_manifest_timeline,
 )
+from mockingbird.observation.session_timeline import DERIVED_SESSION_TIMELINE, NATIVE_SESSION_TIMELINE
 
 
 def _det(score: float, *, is_animal: bool = True) -> DetectionObservation:
@@ -38,7 +43,7 @@ def _det(score: float, *, is_animal: bool = True) -> DetectionObservation:
 
 def _config(**overrides) -> CaptureSessionConfig:
     defaults = dict(
-        schema_version=1, capture_version="temporal-capture-session-v1", stream_id="s1",
+        schema_version=CAPTURE_MANIFEST_SCHEMA_VERSION, capture_version="temporal-capture-session-v1", stream_id="s1",
         transport_key="camera-node-http-multipart-jpeg", provider_key="frame-driven-onnx-cuda",
         analysis_width=1920, analysis_height=1440, nominal_fps=2.0, review_score_threshold=0.02,
         shadow_operating_point=0.5, review_floor=0.1, evidence_profile_id="profile-1", bounds=CaptureBounds(),
@@ -191,6 +196,156 @@ def test_operator_marker_rejects_unknown_kind() -> None:
 
 
 # --------------------------------------------------------------------------
+# Stage 6.8: post-hoc, reconnect-safe operator-marker correlation
+# --------------------------------------------------------------------------
+
+
+def test_correlate_markers_backfills_an_already_retained_frame() -> None:
+    marker = OperatorMarker("m1", OPERATOR_MARKER_WILDLIFE_VISIBLE_NOW, "2026-08-05T20:00:30+00:00", lookback_seconds=20)
+    frames = ({"frame_id": "f1", "host_received_at": "2026-08-05T20:00:15+00:00", "operator_marker_ids": ()},)
+    associations = correlate_markers_to_frames(frames, (marker,))
+    assert associations == {"f1": ("m1",)}
+
+
+def test_correlate_markers_crosses_a_reconnect_boundary_when_timing_supports_it() -> None:
+    # Frame f1 (an earlier connection segment) and f2 (a later one, after a
+    # reconnect) both fall inside the marker's lookback -- correlation is
+    # purely host-time based and does not care that they belong to
+    # different connections.
+    marker = OperatorMarker("m1", OPERATOR_MARKER_WILDLIFE_VISIBLE_NOW, "2026-08-05T20:00:30+00:00", lookback_seconds=25)
+    frames = (
+        {"frame_id": "f1", "host_received_at": "2026-08-05T20:00:10+00:00", "operator_marker_ids": ()},
+        {"frame_id": "f2", "host_received_at": "2026-08-05T20:00:20+00:00", "operator_marker_ids": ()},
+    )
+    associations = correlate_markers_to_frames(frames, (marker,))
+    assert associations["f1"] == ("m1",)
+    assert associations["f2"] == ("m1",)
+
+
+def test_correlate_markers_does_not_attach_beyond_lookback() -> None:
+    marker = OperatorMarker("m1", OPERATOR_MARKER_WILDLIFE_VISIBLE_NOW, "2026-08-05T20:00:30+00:00", lookback_seconds=5)
+    frames = ({"frame_id": "f1", "host_received_at": "2026-08-05T20:00:00+00:00", "operator_marker_ids": ()},)
+    assert correlate_markers_to_frames(frames, (marker,)) == {"f1": ()}
+
+
+def test_correlate_markers_collapses_duplicate_association_deterministically() -> None:
+    marker = OperatorMarker("m1", OPERATOR_MARKER_WILDLIFE_VISIBLE_NOW, "2026-08-05T20:00:30+00:00", lookback_seconds=20)
+    # The frame already carries this marker id (e.g. from the live bounded
+    # rescue path); re-running post-hoc correlation must not duplicate it.
+    frames = ({"frame_id": "f1", "host_received_at": "2026-08-05T20:00:15+00:00", "operator_marker_ids": ("m1",)},)
+    assert correlate_markers_to_frames(frames, (marker,)) == {"f1": ("m1",)}
+
+
+def test_correlate_markers_preserves_existing_associations_when_no_new_marker_matches() -> None:
+    frames = ({"frame_id": "f1", "host_received_at": "2026-08-05T20:00:15+00:00", "operator_marker_ids": ("m-old",)},)
+    assert correlate_markers_to_frames(frames, ()) == {"f1": ("m-old",)}
+
+
+def test_correlate_markers_skips_a_frame_with_no_recorded_receive_time() -> None:
+    marker = OperatorMarker("m1", OPERATOR_MARKER_WILDLIFE_VISIBLE_NOW, "2026-08-05T20:00:30+00:00", lookback_seconds=20)
+    frames = ({"frame_id": "f1", "host_received_at": "", "operator_marker_ids": ()},)
+    assert correlate_markers_to_frames(frames, (marker,)) == {"f1": ()}
+
+
+# --------------------------------------------------------------------------
+# Stage 6.8: session-timeline attachment
+# --------------------------------------------------------------------------
+
+
+def test_attach_session_timeline_gives_every_frame_a_unique_monotonic_order() -> None:
+    frames = (
+        _frame_record("a1", 1, 0, provider_generation="gen-1", connection_segment_id="conn-a", host_received_at="2026-08-06T12:00:00+00:00"),
+        _frame_record("b1", 1, 0, provider_generation="gen-1", connection_segment_id="conn-b", host_received_at="2026-08-06T12:00:05+00:00"),
+        _frame_record("b2", 2, 500, provider_generation="gen-1", connection_segment_id="conn-b", host_received_at="2026-08-06T12:00:05.500000+00:00"),
+    )
+    updated, timeline = attach_session_timeline(frames, session_id="session-1")
+    assert timeline.classification == NATIVE_SESSION_TIMELINE
+    orders = sorted(item.session_sequence for item in updated)
+    assert orders == [0, 1, 2]
+    offsets = sorted(item.session_offset_ms for item in updated)
+    assert offsets == sorted(set(offsets))
+    by_id = {item.frame_id: item for item in updated}
+    assert by_id["b1"].temporal_discontinuity is True
+    assert by_id["b1"].connection_segment_id == "conn-b"
+    # Source-local facts are untouched.
+    assert by_id["b1"].sequence == 1
+    assert by_id["b1"].source_offset_ms == 0
+
+
+def test_attach_session_timeline_falls_back_to_derived_for_legacy_frames() -> None:
+    frames = (
+        _frame_record("a1", 1, 0), _frame_record("b1", 1, 0), _frame_record("a2", 2, 500),
+    )
+    updated, timeline = attach_session_timeline(frames, session_id="session-1")
+    assert timeline.classification == DERIVED_SESSION_TIMELINE
+    assert len({item.session_sequence for item in updated}) == 3
+
+
+# --------------------------------------------------------------------------
+# Stage 6.8: manifest-dict upgrade (temporal-review-build's own upgrade path)
+# --------------------------------------------------------------------------
+
+
+def _manifest_dict(frames: tuple[RetainedFrameRecord, ...], **overrides) -> dict:
+    manifest = _manifest(frames, **overrides)
+    semantic = manifest.to_semantic_dict()
+    semantic["semantic_fingerprint"] = manifest.fingerprint
+    return semantic
+
+
+def test_upgrade_capture_manifest_timeline_passes_through_an_already_native_manifest_unchanged() -> None:
+    frames = (
+        _frame_record(
+            "a1", 1, 0, connection_segment_id="conn-a", host_received_at="2026-08-06T12:00:00+00:00",
+            session_sequence=0, session_offset_ms=0,
+        ),
+    )
+    raw = _manifest_dict(frames, session_timeline_classification=NATIVE_SESSION_TIMELINE)
+    upgraded = upgrade_capture_manifest_timeline(raw)
+    assert upgraded is raw
+    assert upgraded["semantic_fingerprint"] == raw["semantic_fingerprint"]
+
+
+def test_upgrade_capture_manifest_timeline_derives_a_legacy_manifest() -> None:
+    frames = (_frame_record("a1", 1, 0), _frame_record("b1", 1, 0), _frame_record("a2", 2, 500))
+    raw = _manifest_dict(frames)
+    assert raw["session_timeline_classification"] == NATIVE_SESSION_TIMELINE  # default, not yet meaningful
+    upgraded = upgrade_capture_manifest_timeline(raw)
+    assert upgraded is not raw
+    assert upgraded["session_timeline_classification"] == DERIVED_SESSION_TIMELINE
+    assert upgraded["timeline_upgrade_provenance"]["reconstructed_segment_count"] == 2
+    # The written frames array itself is in session order (not merely "the
+    # right values exist somewhere in the list") -- mirrors what
+    # CaptureSessionManifest.to_semantic_dict() guarantees for a native
+    # capture, since every other consumer (review-packet ordering, replay
+    # export) reads this array's own order as session order.
+    session_sequences = [item["session_sequence"] for item in upgraded["frames"]]
+    assert session_sequences == [0, 1, 2]
+    # Greedy first-fit: a1(seq1) opens segment 0; b1(seq1) can't join it
+    # (still at seq1) so opens segment 1; a2(seq2) *can* extend segment 0.
+    # Concatenated by segment ordinal: [a1, a2] (segment 0) then [b1].
+    assert [item["frame_id"] for item in upgraded["frames"]] == ["a1", "a2", "b1"]
+    # The original capture manifest dict passed in is never mutated.
+    assert raw["session_timeline_classification"] == NATIVE_SESSION_TIMELINE
+    assert "session_sequence" not in raw["frames"][0] or raw["frames"][0]["session_sequence"] == 0
+    # Repeated upgrades of the same raw manifest are deterministic.
+    assert upgrade_capture_manifest_timeline(raw) == upgraded
+
+
+def test_upgrade_capture_manifest_timeline_fails_honestly_on_missing_sequence() -> None:
+    frames = (_frame_record("a1", 1, 0),)
+    raw = _manifest_dict(frames)
+    del raw["frames"][0]["sequence"]
+    original_frame = dict(raw["frames"][0])
+    upgraded = upgrade_capture_manifest_timeline(raw)
+    assert upgraded["session_timeline_classification"] == "insufficient_temporal_provenance"
+    assert upgraded["timeline_upgrade_provenance"]["derivation_method"] == "none"
+    # Frames are never rewritten with a fabricated order when provenance is
+    # insufficient to derive one honestly.
+    assert upgraded["frames"][0] == original_frame
+
+
+# --------------------------------------------------------------------------
 # 13. Recurring static geometry grouping
 # --------------------------------------------------------------------------
 
@@ -220,6 +375,15 @@ def test_privacy_ignore_regions_are_preserved_in_the_semantic_manifest() -> None
     manifest = _manifest((), config=_config(privacy_ignore_regions=regions))
     semantic = manifest.to_semantic_dict()
     assert semantic["config"]["privacy_ignore_regions"] == regions
+
+
+def test_privacy_ignore_regions_survive_a_legacy_timeline_upgrade() -> None:
+    regions = ((0.0, 0.0, 0.2, 0.2),)
+    frames = (_frame_record("a1", 1, 0), _frame_record("b1", 1, 0))
+    raw = _manifest_dict(frames, config=_config(privacy_ignore_regions=regions))
+    upgraded = upgrade_capture_manifest_timeline(raw)
+    assert upgraded["session_timeline_classification"] == DERIVED_SESSION_TIMELINE
+    assert upgraded["config"]["privacy_ignore_regions"] == regions
 
 
 # --------------------------------------------------------------------------

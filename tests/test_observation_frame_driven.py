@@ -241,6 +241,75 @@ async def test_evidence_ring_roles_bounds_proposal_idempotency_and_reset() -> No
     assert provider.active_track_count == 0
 
 
+def _frames_with_discontinuity_at(
+    count: int, boundary_index: int, *, generation_change: bool, step_ms: int = 200,
+) -> tuple[FramePacket, ...]:
+    """`count` frames at a constant nominal cadence, with a Stage 6.8
+    reconnect-safe discontinuity signal on the frame at `boundary_index`:
+    either a real `provider_generation` change (the pre-existing signal) or
+    an explicit `temporal_discontinuity` timing fact with the *same*
+    provider_generation -- exactly the case a real Camera Node reconnect
+    produces (see docs/session-timeline-contract.md), which a bare
+    generation-change check alone cannot detect."""
+
+    base = _frames(count, step_ms=step_ms)
+    frames = []
+    for index, frame in enumerate(base):
+        overrides: dict[str, object] = {"provider_generation": "gen-a"}
+        if index >= boundary_index:
+            overrides["provider_generation"] = "gen-b" if generation_change else "gen-a"
+        if index == boundary_index and not generation_change:
+            overrides["timing_facts"] = (("temporal_discontinuity", True),)
+        frames.append(FramePacket(**{**frame.__dict__, **overrides}))
+    return tuple(frames)
+
+
+@pytest.mark.parametrize("generation_change", [True, False], ids=["provider_generation_changed", "temporal_discontinuity_fact"])
+async def test_replay_discontinuity_ends_the_track_instead_of_silently_continuing_it(generation_change: bool) -> None:
+    frames = _frames_with_discontinuity_at(10, 5, generation_change=generation_change)
+    detector = FakeDetector({
+        frames[1].frame_id or "": (_animal(frames[1], (0.2, 0.2, 0.4, 0.4)),),
+        frames[6].frame_id or "": (_animal(frames[6], (0.2, 0.2, 0.4, 0.4)),),
+    })
+    # Coherent tracker-support alone would otherwise carry a track across
+    # the whole replay (see test_evidence_ring_roles_bounds_proposal_
+    # idempotency_and_reset for the same fake resolver's normal behavior).
+    provider = FrameDrivenObservationProvider(
+        detector=detector, settings=_settings(baseline_detector_fps=5.0), tracker_support=lambda frame, track: track.bounding_box,
+    )
+    provider.load()
+    results = await provider.replay_frames(frames)
+    updates = [item for result in results for item in result.track_updates]
+    proposals = [item for result in results for item in result.visit_proposals]
+
+    # The discontinuity produced a real second generation, not one track
+    # spanning the whole replay.
+    assert len({item.generation_id for item in updates}) == 2
+    assert len(proposals) == 2
+    assert len({item.track_generation_id for item in proposals}) == 2
+    reset_terminations = [item for item in updates if item.status == "ended" and item.terminal_reason == "provider_reset"]
+    assert len(reset_terminations) == 1
+
+
+async def test_replay_without_any_discontinuity_signal_keeps_one_continuous_track() -> None:
+    """Backward compatibility: a replay input that never sets
+    `provider_generation`/`temporal_discontinuity` (every pre-Stage-6.8
+    replay input) is completely unaffected by this addition."""
+
+    frames = _frames(10)
+    detector = FakeDetector({frames[1].frame_id or "": (_animal(frames[1], (0.2, 0.2, 0.4, 0.4)),)})
+    provider = FrameDrivenObservationProvider(
+        detector=detector, settings=_settings(baseline_detector_fps=5.0), tracker_support=lambda frame, track: track.bounding_box,
+    )
+    provider.load()
+    results = await provider.replay_frames(frames)
+    updates = [item for result in results for item in result.track_updates]
+    proposals = [item for result in results for item in result.visit_proposals]
+    assert len({item.generation_id for item in updates}) == 1
+    assert len(proposals) == 1
+    assert not any(item.terminal_reason == "provider_reset" for item in updates)
+
+
 async def test_privacy_ignore_exclusion_filters_detection_before_tracking() -> None:
     frame = FramePacket(**{**_frames(1)[0].__dict__, "analysis_excluded_regions": ((0.0, 0.0, 0.5, 0.5),)})
     detector = FakeDetector({frame.frame_id or "": (_animal(frame, (0.1, 0.1, 0.2, 0.2)),)})

@@ -18,6 +18,8 @@ from mockingbird.observation.temporal_annotation import (
     AL_USEFUL_TRAINING_POSITIVE,
     V_APPEARANCE_INTERVAL_REVERSED,
     V_CAPTURE_FINGERPRINT_MISMATCH,
+    V_EXCESSIVE_DISCONTINUITY_UNMARKED,
+    V_MISSING_SESSION_TIMELINE,
     V_NEGATIVE_FRAME_HAS_POSITIVE_BOXES,
     V_PRODUCT_FALSE_POSITIVE_AS_FRAME_NEGATIVE,
     V_SCORABLE_YES_REQUIRES_BOX,
@@ -38,6 +40,7 @@ from mockingbird.observation.temporal_annotation import (
     validate_annotations,
 )
 from mockingbird.observation.temporal_capture import (
+    CAPTURE_MANIFEST_SCHEMA_VERSION,
     TRIGGER_ANIMAL_ABOVE_OPERATING_POINT,
     CaptureBounds,
     CaptureSessionConfig,
@@ -49,7 +52,7 @@ from mockingbird.observation.temporal_capture import (
 
 def _config(**overrides) -> CaptureSessionConfig:
     defaults = dict(
-        schema_version=1, capture_version="temporal-capture-session-v1", stream_id="s1",
+        schema_version=CAPTURE_MANIFEST_SCHEMA_VERSION, capture_version="temporal-capture-session-v1", stream_id="s1",
         transport_key="camera-node-http-multipart-jpeg", provider_key="frame-driven-onnx-cuda",
         analysis_width=1000, analysis_height=1000, nominal_fps=2.0, review_score_threshold=0.02,
         shadow_operating_point=0.5, review_floor=0.1, evidence_profile_id="profile-1", bounds=CaptureBounds(),
@@ -64,6 +67,14 @@ def _record(frame_id, sequence, offset_ms, **overrides) -> RetainedFrameRecord:
         content_hash="h" * 64, byte_size=1000, trigger_reasons=(TRIGGER_ANIMAL_ABOVE_OPERATING_POINT,),
         detector_observation_count=0, animal_detection_count=0, max_animal_score=None,
         active_track_count=0, motion_proposal_count=0,
+        # Stage 6.8: `validate_annotations` reads the derived session
+        # timeline, not the raw source-local fields above. Most existing
+        # fixtures describe one single connection, so the sensible default
+        # mirrors `session_offset_ms` onto the same value as
+        # `source_offset_ms` and keeps every record in one shared segment;
+        # a test that specifically wants cross-reconnect behavior overrides
+        # `session_offset_ms`/`connection_segment_id` explicitly.
+        session_offset_ms=offset_ms, connection_segment_id="segment-1",
     )
     defaults.update(overrides)
     return RetainedFrameRecord(**defaults)
@@ -217,15 +228,104 @@ def test_product_false_positive_with_independent_confirmation_is_accepted() -> N
 
 
 def test_appearance_interval_outside_the_session_duration_is_rejected() -> None:
-    session = _session((_record("f1", 0, 0), _record("f2", 1, 1000)), end_source_offset_ms=1000)
+    session = _session((_record("f1", 0, 0), _record("f2", 1, 1000)))
     annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
         FrameAnnotation("f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
         FrameAnnotation("f2", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
     ), appearances=(AppearanceInterval("a1", "f1", "f2"),))
-    # Force an out-of-bounds appearance by referencing a frame beyond duration.
-    session["end_source_offset_ms"] = 500
+    # The session-timeline bound comes from every retained frame's own
+    # session_offset_ms, not a separately-settable top-level field (which
+    # would itself be another source-local-style fact, not authoritative) --
+    # simulate corrupted/impossible provenance directly on the referenced
+    # frame's own derived coordinate instead.
+    session["frames"][1]["session_offset_ms"] = -100
     report = validate_annotations(session, annotations)
     assert any(item.code == V_TEMPORAL_INTERVAL_OUTSIDE_SEQUENCE_BOUNDS for item in report.issues)
+
+
+# --------------------------------------------------------------------------
+# Stage 6.8: cross-reconnect appearance-interval validation
+# --------------------------------------------------------------------------
+
+
+def test_appearance_interval_reversed_by_a_reconnect_reset_alone_still_validates() -> None:
+    # f1 is the last, high-offset frame of connection segment A; f2 is the
+    # first, near-zero-offset frame of segment B, genuinely *later* in the
+    # session despite its lower connection-local source_offset_ms. Only the
+    # (correctly monotonic) session_offset_ms should decide ordering.
+    session = _session((
+        _record("f1", 12, 6825, connection_segment_id="segment-a", session_offset_ms=6825),
+        _record("f2", 1, 0, connection_segment_id="segment-b", session_offset_ms=6830),
+    ))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
+        FrameAnnotation("f2", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
+    ), appearances=(AppearanceInterval("a1", "f1", "f2"),))
+    report = validate_annotations(session, annotations)
+    assert report.ok is True
+    assert not any(item.code == V_APPEARANCE_INTERVAL_REVERSED for item in report.issues)
+
+
+def test_short_span_across_a_reconnect_boundary_validates_without_continuity_ambiguous() -> None:
+    session = _session((
+        _record("f1", 12, 6825, connection_segment_id="segment-a", session_offset_ms=6825),
+        _record("f2", 1, 0, connection_segment_id="segment-b", session_offset_ms=6900),
+    ))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
+        FrameAnnotation("f2", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
+    ), appearances=(AppearanceInterval("a1", "f1", "f2"),))
+    report = validate_annotations(session, annotations)
+    assert report.ok is True
+
+
+def test_excessive_span_across_a_reconnect_boundary_requires_continuity_ambiguous() -> None:
+    session = _session((
+        _record("f1", 12, 1000, connection_segment_id="segment-a", session_offset_ms=1000),
+        _record("f2", 1, 0, connection_segment_id="segment-b", session_offset_ms=60_000),
+    ))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
+        FrameAnnotation("f2", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
+    ), appearances=(AppearanceInterval("a1", "f1", "f2"),))
+    report = validate_annotations(session, annotations)
+    assert not report.ok
+    assert any(item.code == V_EXCESSIVE_DISCONTINUITY_UNMARKED for item in report.issues)
+
+
+def test_excessive_span_across_a_reconnect_boundary_validates_when_marked_continuity_ambiguous() -> None:
+    session = _session((
+        _record("f1", 12, 1000, connection_segment_id="segment-a", session_offset_ms=1000),
+        _record("f2", 1, 0, connection_segment_id="segment-b", session_offset_ms=60_000),
+    ))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
+        FrameAnnotation("f2", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
+    ), appearances=(AppearanceInterval("a1", "f1", "f2", continuity_ambiguous=True),))
+    report = validate_annotations(session, annotations)
+    assert report.ok is True
+    assert not any(item.code == V_EXCESSIVE_DISCONTINUITY_UNMARKED for item in report.issues)
+
+
+def test_instantaneous_appearance_within_one_segment_validates() -> None:
+    session = _session((_record("f1", 1, 0),))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
+    ), appearances=(AppearanceInterval("a1", "f1", "f1", instantaneous=True),))
+    report = validate_annotations(session, annotations)
+    assert report.ok is True
+
+
+def test_appearance_on_a_manifest_with_insufficient_temporal_provenance_is_rejected() -> None:
+    session = _session((_record("f1", 0, 0), _record("f2", 1, 1000)))
+    session["session_timeline_classification"] = "insufficient_temporal_provenance"
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
+        FrameAnnotation("f2", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),)),
+    ), appearances=(AppearanceInterval("a1", "f1", "f2"),))
+    report = validate_annotations(session, annotations)
+    assert not report.ok
+    assert any(item.code == V_MISSING_SESSION_TIMELINE for item in report.issues)
 
 
 def test_appearance_interval_with_reversed_times_is_rejected() -> None:
@@ -383,7 +483,11 @@ def test_motion_proposal_export_includes_real_sequencing() -> None:
     session, annotations = _reviewed_pair()
     export = build_motion_proposal_export(session, annotations, scene_group="scene-1")
     assert export["temporal_sequences"][0]["ordered_frame_ids"] == [item["frame_id"] for item in export["frames"]]
-    assert export["temporal_sequences"][0]["source_offset_ms_range"] == [0, 2000]
+    # Grounded in the two real retained frames' own session_offset_ms (0 and
+    # 1000), not an independently-settable top-level field that could
+    # (and, before Stage 6.8, silently did) disagree with actual frame data.
+    assert export["temporal_sequences"][0]["source_offset_ms_range"] == [0, 1000]
+    assert export["temporal_sequences"][0]["connection_segment_count"] == 1
 
 
 def test_replay_export_produces_frame_indices_and_evidence_facts() -> None:
@@ -420,9 +524,18 @@ def test_replay_export_matches_the_flat_top_level_schema_replay_io_actually_load
     replay_input = ReplayInput(
         export["input_id"], export["stream_id"], export["width"], export["height"], export["nominal_fps"],
         tuple(
+            # Mirrors exactly what replay_io.load_replay_bundle reads,
+            # including the Stage 6.8 reconnect-safe provenance fields.
             ReplayFrame(
                 item["index"], item["source_offset_ms"], item["content_hash"], item["path"],
                 tuple(tuple(box) for box in item.get("analysis_excluded_regions", ())),
+                captured_at_iso=item.get("captured_at_iso"), source_sequence=item.get("source_sequence"),
+                original_source_offset_ms=item.get("original_source_offset_ms"),
+                connection_segment_id=item.get("connection_segment_id"),
+                connection_segment_ordinal=item.get("connection_segment_ordinal"),
+                provider_generation=item.get("provider_generation"),
+                temporal_discontinuity=bool(item.get("temporal_discontinuity", False)),
+                temporal_uncertainty_ms=item.get("temporal_uncertainty_ms"),
             )
             for item in export["frames"]
         ),
@@ -459,6 +572,106 @@ def test_replay_export_excludes_high_resolution_frames_and_their_evidence() -> N
     assert [item["path"] for item in export["frames"]] == ["images/f1.jpg"]
     assert all(item["candidate_id"] != "f2" for item in export["evidence"])
     assert all(not item["annotation_id"].startswith("f2:") for item in export["detections"])
+    # Exclusion is explicit and reported, never silent.
+    assert export["high_resolution_exclusion"] == {
+        "excluded_frame_count": 1, "excluded_frame_ids": ["f2"],
+        "reason": "high_resolution_burst_frames_are_not_analysis_resolution",
+    }
+
+
+# --------------------------------------------------------------------------
+# Stage 6.8: full-session replay export across a reconnect
+# --------------------------------------------------------------------------
+
+
+def _reconnect_session_and_annotations():
+    """Two connection segments: segment-a ends at local sequence 12 /
+    source_offset_ms 6825 (mirrors the real session-01 Stage 6.7 capture's
+    own last frame), segment-b restarts at local sequence 1 / offset 0 --
+    exactly the pattern that broke the pre-Stage-6.8 export."""
+
+    session = _session((
+        _record(
+            "f1", 12, 6825, connection_segment_id="segment-a", connection_segment_ordinal=0,
+            session_sequence=0, session_offset_ms=0, provider_generation="gen-1",
+        ),
+        _record(
+            "f2", 1, 0, connection_segment_id="segment-b", connection_segment_ordinal=1,
+            session_sequence=1, session_offset_ms=6826, temporal_discontinuity=True,
+            temporal_uncertainty_ms=50, provider_generation="gen-1",
+        ),
+        _record(
+            "f3", 2, 500, connection_segment_id="segment-b", connection_segment_ordinal=1,
+            session_sequence=2, session_offset_ms=7326, provider_generation="gen-1",
+        ),
+    ), session_timeline_classification="native_session_timeline")
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),), provenance=_provenance()),
+        FrameAnnotation("f2", whole_frame_truth="no", provenance=_provenance()),
+        FrameAnnotation("f3", whole_frame_truth="yes", boxes=(BoxAnnotation((0.2, 0.2, 0.3, 0.3)),), provenance=_provenance()),
+    ))
+    return session, annotations
+
+
+def test_replay_export_orders_by_session_timeline_across_a_reconnect() -> None:
+    session, annotations = _reconnect_session_and_annotations()
+    export = build_replay_export(session, annotations)
+    assert [item["path"] for item in export["frames"]] == ["images/f1.jpg", "images/f2.jpg", "images/f3.jpg"]
+    offsets = [item["source_offset_ms"] for item in export["frames"]]
+    assert offsets == sorted(offsets) and len(set(offsets)) == 3
+
+
+def test_replay_export_full_session_loads_through_the_real_ordered_timestamps_check() -> None:
+    """The exact defect this task fixes: a full multi-reconnect session must
+    load as one ordered `ReplayInput` without `ordered_timestamps` failing
+    and without manually selecting a single connection-safe sub-window."""
+
+    from mockingbird.observation.replay import ReplayFrame, ReplayInput
+
+    session, annotations = _reconnect_session_and_annotations()
+    export = build_replay_export(session, annotations)
+    # ReplayInput.__post_init__ raises ReplayValidationError("ordered_timestamps")
+    # on any non-strictly-increasing source_offset_ms; constructing it here
+    # without that exception *is* the assertion.
+    replay_input = ReplayInput(
+        export["input_id"], export["stream_id"], export["width"], export["height"], export["nominal_fps"],
+        tuple(
+            ReplayFrame(
+                item["index"], item["source_offset_ms"], item["content_hash"], item["path"],
+                tuple(tuple(box) for box in item.get("analysis_excluded_regions", ())),
+                connection_segment_id=item.get("connection_segment_id"),
+                temporal_discontinuity=bool(item.get("temporal_discontinuity", False)),
+            )
+            for item in export["frames"]
+        ),
+    )
+    assert len(replay_input.frames) == 3
+
+
+def test_replay_export_preserves_original_source_local_provenance_across_a_reconnect() -> None:
+    session, annotations = _reconnect_session_and_annotations()
+    export = build_replay_export(session, annotations)
+    by_path = {item["path"]: item for item in export["frames"]}
+    boundary = by_path["images/f2.jpg"]
+    assert boundary["original_source_offset_ms"] == 0  # the real, reset, connection-local value
+    assert boundary["source_sequence"] == 1
+    assert boundary["connection_segment_id"] == "segment-b"
+    assert boundary["temporal_discontinuity"] is True
+
+
+def test_repeated_replay_export_produces_an_identical_fingerprint() -> None:
+    session, annotations = _reconnect_session_and_annotations()
+    first = build_replay_export(session, annotations)
+    second = build_replay_export(session, annotations)
+    assert first["input_fingerprint"] == second["input_fingerprint"]
+    assert first == second
+
+
+def test_replay_export_refuses_a_manifest_with_insufficient_temporal_provenance() -> None:
+    session, annotations = _reviewed_pair()
+    session["session_timeline_classification"] = "insufficient_temporal_provenance"
+    with pytest.raises(TemporalAnnotationError, match="replay_export_requires_session_timeline"):
+        build_replay_export(session, annotations)
 
 
 # --------------------------------------------------------------------------

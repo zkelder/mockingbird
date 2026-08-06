@@ -56,6 +56,16 @@ def load_replay_bundle(frames_directory: Path, manifest_path: Path) -> ReplayBun
             content_hash,
             str(candidate),
             _excluded_regions(item.get("analysis_excluded_regions", [])),
+            # Stage 6.8 reconnect-safe provenance: all optional, absent on
+            # any manifest written before this stage existed.
+            captured_at_iso=_optional_string(item, "captured_at_iso"),
+            source_sequence=_optional_int(item, "source_sequence"),
+            original_source_offset_ms=_optional_int(item, "original_source_offset_ms"),
+            connection_segment_id=_optional_string(item, "connection_segment_id"),
+            connection_segment_ordinal=_optional_int(item, "connection_segment_ordinal"),
+            provider_generation=_optional_string(item, "provider_generation"),
+            temporal_discontinuity=_optional_bool(item, "temporal_discontinuity"),
+            temporal_uncertainty_ms=_optional_int(item, "temporal_uncertainty_ms"),
         ))
     replay = ReplayInput(_require_string(document, "input_id"), _require_string(document, "stream_id"),
                          width, height, _require_number(document, "nominal_fps", minimum=0.000001), tuple(frames))
@@ -296,6 +306,12 @@ def _optional_nullable_bool(value: dict[str, Any], key: str) -> bool | None:
 def _require_int(value: dict[str, Any], key: str, *, minimum: int) -> int:
     result = value.get(key)
     if not isinstance(result, int) or isinstance(result, bool) or result < minimum: raise ReplayValidationError(f"invalid_{key}")
+    return result
+
+
+def _optional_int(value: dict[str, Any], key: str) -> int | None:
+    result = value.get(key)
+    if result is not None and (not isinstance(result, int) or isinstance(result, bool)): raise ReplayValidationError(f"invalid_{key}")
     return result
 
 
