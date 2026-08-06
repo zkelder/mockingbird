@@ -340,6 +340,45 @@ def test_detector_calibration_export_matches_the_existing_schema_fields() -> Non
     assert yes_frame["scene_group"] == "scene-1"
 
 
+def test_high_resolution_frame_export_omits_width_height_instead_of_declaring_the_wrong_analysis_dimensions() -> None:
+    """A `high_resolution=True` retained frame's real decoded pixel
+    dimensions come from the evidence-burst profile (typically larger than
+    the analysis stream -- e.g. a 4624x3472 burst frame against a 1920x1440
+    analysis stream), not `config.analysis_width`/`analysis_height`. Export
+    previously declared every frame's `width`/`height` as the analysis
+    dimensions unconditionally, including high-resolution ones: the very
+    next real consumer, `detector_benchmark_io.load_calibration_manifest`
+    (reused unchanged by detector-benchmark/multi-scale-benchmark/motion-
+    proposal-benchmark), decodes the real file and rejects the whole
+    manifest with `frame_dimensions_mismatch` the moment a declared
+    dimension disagrees with reality -- making any Stage 6.6 export
+    containing so much as one high-resolution frame unloadable by every
+    benchmark it is meant to feed. Declaring no width/height for a
+    high-resolution frame instead relies on that loader's own optional-
+    declared-dimension contract (see docs/detector-calibration-benchmark-
+    contract.md: "optional declared width/height/content_hash") to fall
+    back to the real decoded size -- exactly the behavior that contract
+    already promises, applied to the one case Stage 6.6 export skipped."""
+
+    session = _session((
+        _record("analysis-frame", 0, 0, high_resolution=False),
+        _record("burst-frame", 1, 1000, high_resolution=True),
+    ))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("analysis-frame", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),), provenance=_provenance()),
+        FrameAnnotation("burst-frame", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),), provenance=_provenance()),
+    ))
+
+    export = build_detector_calibration_export(session, annotations, scene_group="scene-1")
+
+    frames_by_id = {item["frame_id"]: item for item in export["frames"]}
+    analysis_frame = frames_by_id["temporal-review:analysis-frame"]
+    burst_frame = frames_by_id["temporal-review:burst-frame"]
+    assert (analysis_frame["width"], analysis_frame["height"]) == (1000, 1000)
+    assert burst_frame["width"] is None
+    assert burst_frame["height"] is None
+
+
 def test_motion_proposal_export_includes_real_sequencing() -> None:
     session, annotations = _reviewed_pair()
     export = build_motion_proposal_export(session, annotations, scene_group="scene-1")
@@ -350,10 +389,76 @@ def test_motion_proposal_export_includes_real_sequencing() -> None:
 def test_replay_export_produces_frame_indices_and_evidence_facts() -> None:
     session, annotations = _reviewed_pair()
     export = build_replay_export(session, annotations)
-    assert len(export["input"]["frames"]) == 2
+    assert len(export["frames"]) == 2
     assert export["appearances"] == [{"appearance_id": "a1", "start_offset_ms": 0, "end_offset_ms": 0, "outcome": None, "ambiguous": False}]
     assert export["detections"][0]["frame_index"] == 0
     assert export["visits"] == []  # no invented Visit grouping
+
+
+def test_replay_export_matches_the_flat_top_level_schema_replay_io_actually_loads() -> None:
+    """`replay_io.load_replay_bundle` reads `version`/`width`/`height`/
+    `input_id`/`stream_id`/`nominal_fps`/`frames`/`input_fingerprint` at the
+    JSON document's own top level (see the real fixture
+    data/observation-replay-stage2-smoke/root-a/manifest.json) and each
+    frame's image reference under the key `path` -- not nested under an
+    `input` object, and not under a `source_path` key. `build_replay_export`
+    previously nested those fields under `"input"` and omitted
+    `input_fingerprint` entirely, so a real `temporal-review-export --target
+    replay` output could never actually be loaded by `replay-benchmark`,
+    the one command this export exists to feed. This test proves interop
+    directly against the real Stage 2 `ReplayInput`/`BenchmarkManifest`
+    types (pure, no filesystem) rather than merely re-asserting dict shape."""
+
+    from mockingbird.observation.replay import BenchmarkManifest, ReplayFrame, ReplayInput
+
+    session, annotations = _reviewed_pair()
+    export = build_replay_export(session, annotations)
+
+    assert "input" not in export
+    assert all("path" in frame and "source_path" not in frame for frame in export["frames"])
+
+    replay_input = ReplayInput(
+        export["input_id"], export["stream_id"], export["width"], export["height"], export["nominal_fps"],
+        tuple(
+            ReplayFrame(
+                item["index"], item["source_offset_ms"], item["content_hash"], item["path"],
+                tuple(tuple(box) for box in item.get("analysis_excluded_regions", ())),
+            )
+            for item in export["frames"]
+        ),
+    )
+    manifest = BenchmarkManifest(
+        export["version"], export["benchmark_id"], export["input_fingerprint"],
+        appearances=(), visits=(), detections=(), evidence=(),
+    )
+    manifest.validate(replay_input)  # raises ReplayValidationError on any mismatch; must not raise
+
+
+def test_replay_export_excludes_high_resolution_frames_and_their_evidence() -> None:
+    """A `high_resolution=True` frame's real pixel size is the evidence-
+    burst profile's, not the session's single analysis resolution every
+    other retained frame shares, so `replay.ReplayInput` -- one ordered feed
+    at one consistent resolution -- cannot honestly include it alongside
+    them. `replay_io.load_replay_bundle` would hard-reject the whole export
+    the moment it decoded that one larger file (no optional-dimension
+    bypass exists for replay, unlike the calibration export). Excluding it
+    is the only honest option; its own box/evidence facts are excluded too
+    since they would otherwise reference an undefined replay frame index."""
+
+    session = _session((
+        _record("f1", 0, 0),
+        _record("f2", 1, 1000, high_resolution=True),
+    ))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),), provenance=_provenance()),
+        FrameAnnotation("f2", whole_frame_truth="yes", boxes=(BoxAnnotation((0.3, 0.3, 0.4, 0.4)),), provenance=_provenance()),
+    ))
+
+    export = build_replay_export(session, annotations)
+
+    assert [item["path"] for item in export["frames"]] == ["images/f1.jpg"]
+    assert all(item["candidate_id"] != "f2" for item in export["evidence"])
+    assert all(not item["annotation_id"].startswith("f2:") for item in export["detections"])
 
 
 # --------------------------------------------------------------------------

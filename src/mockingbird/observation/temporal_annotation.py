@@ -19,6 +19,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from typing import Callable, Literal
 
+from mockingbird.observation.replay import semantic_fingerprint
 from mockingbird.observation.temporal_capture import TRIGGER_RECURRING_STATIC_GEOMETRY
 
 ANNOTATION_SCHEMA_VERSION = 1
@@ -648,12 +649,34 @@ def _export_frame_dicts(
         record = frames_by_id.get(frame.frame_id)
         if record is None:
             continue
-        width, height = session["config"]["analysis_width"], session["config"]["analysis_height"]  # type: ignore[index]
+        analysis_width, analysis_height = session["config"]["analysis_width"], session["config"]["analysis_height"]  # type: ignore[index]
+        # A high_resolution retained frame's real decoded pixel dimensions
+        # come from the evidence-burst profile (typically larger than the
+        # analysis stream), not config.analysis_width/height, and this pure
+        # function never decodes image bytes to learn them. Declaring the
+        # analysis dimensions anyway would make detector_benchmark_io.
+        # load_calibration_manifest -- reused unchanged by every benchmark
+        # this export feeds -- reject the whole manifest the moment it
+        # decodes the real, larger file and finds a mismatch. Leaving
+        # width/height unset instead relies on that loader's own optional-
+        # declared-dimension contract to fall back to the real decoded size.
+        is_high_resolution = bool(record.get("high_resolution"))
+        width = None if is_high_resolution else analysis_width
+        height = None if is_high_resolution else analysis_height
         boxes = [
             {"box": list(box.box), "broad_class": box.broad_class}
             for box in frame.boxes
         ]
         primary = frame.boxes[0] if frame.boxes else None
+        distance = None
+        if primary is not None:
+            if primary.distance is not None:
+                distance = primary.distance
+            elif not is_high_resolution:
+                distance = _distance_bucket(primary, width=analysis_width, height=analysis_height)
+            # else: a high-resolution frame with no reviewer-declared distance
+            # has no analysis-resolution pixel size to derive one from --
+            # left None rather than computed from the wrong dimensions.
         records.append({
             "frame_id": f"{cohort_prefix}:{frame.frame_id}",
             "image": f"images/{frame.frame_id}.jpg",
@@ -665,7 +688,7 @@ def _export_frame_dicts(
             "occlusion": "occluded" if primary and primary.occluded else None,
             "blur": "blurred" if primary and primary.blurred else None,
             "clipped": bool(primary.edge_clipped) if primary else None,
-            "distance": _distance_bucket(primary, width=width, height=height) if primary else None,  # type: ignore[arg-type]
+            "distance": distance,
             "privacy_ignore_regions": session.get("config", {}).get("privacy_ignore_regions", []),  # type: ignore[union-attr]
             "scene_group": scene_group,
             "sequence_id": str(session.get("session_id")),
@@ -741,15 +764,39 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
     unchanged -- see docs/observation-replay-benchmark-contract.md. Visit-
     level grouping is left empty (`visits: []`) rather than invented: this
     annotation contract records appearance intervals, not reviewed Visit
-    boundaries."""
+    boundaries.
+
+    `replay_io.load_replay_bundle` reads `version`/`width`/`height`/
+    `input_id`/`stream_id`/`nominal_fps`/`frames`/`input_fingerprint` at the
+    JSON document's own top level and each frame's image reference under
+    `path` -- the exact `ReplayInput`/`BenchmarkManifest` shape, not a
+    `temporal_annotation`-specific nesting -- so this export matches that
+    shape exactly rather than approximating it, including the
+    `input_fingerprint` `BenchmarkManifest.validate` cross-checks against
+    `ReplayInput.fingerprint`.
+
+    A single `ReplayInput` is one ordered feed at one consistent resolution;
+    a `high_resolution` retained frame's real pixel size is the (typically
+    larger) evidence-burst profile's, not the session's analysis
+    resolution, so it cannot honestly join the same ordered-replay frame
+    list as the analysis-resolution frames it was retained beside. Such
+    frames -- and any of their boxes/evidence, which would otherwise
+    reference an undefined replay frame index -- are excluded from this
+    export, mirroring the same high-resolution-is-not-analysis-resolution
+    distinction the detector-calibration/motion-proposal exports make by
+    leaving `width`/`height` unset instead."""
 
     frames_by_id = {item["frame_id"]: item for item in session.get("frames", [])}  # type: ignore[union-attr]
-    ordered_records = sorted(session.get("frames", []), key=lambda item: item["sequence"])  # type: ignore[arg-type,union-attr]
+    ordered_records = [
+        item for item in sorted(session.get("frames", []), key=lambda item: item["sequence"])  # type: ignore[arg-type,union-attr]
+        if not item.get("high_resolution")
+    ]
+    privacy_ignore_regions = session.get("config", {}).get("privacy_ignore_regions", [])  # type: ignore[union-attr]
     replay_frames = [
         {
             "index": index, "source_offset_ms": record["source_offset_ms"],
-            "content_hash": record["content_hash"], "source_path": f"images/{record['frame_id']}.jpg",
-            "analysis_excluded_regions": session.get("config", {}).get("privacy_ignore_regions", []),  # type: ignore[union-attr]
+            "content_hash": record["content_hash"], "path": f"images/{record['frame_id']}.jpg",
+            "analysis_excluded_regions": privacy_ignore_regions,
         }
         for index, record in enumerate(ordered_records)
     ]
@@ -793,14 +840,39 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
             "subject_absent": usefulness.subject_absent if usefulness else (frame.whole_frame_truth == "no"),
         })
 
+    input_id = str(session.get("session_id"))
+    stream_id = session.get("config", {}).get("stream_id")  # type: ignore[union-attr]
+    width = session.get("config", {}).get("analysis_width")  # type: ignore[union-attr]
+    height = session.get("config", {}).get("analysis_height")  # type: ignore[union-attr]
+    nominal_fps = session.get("config", {}).get("nominal_fps")  # type: ignore[union-attr]
+
+    # Mirrors replay.ReplayInput.fingerprint exactly (a plain string field
+    # this export writes, not a property computed by the real dataclass
+    # this pure module never imports for that purpose) so
+    # BenchmarkManifest.validate's input_fingerprint cross-check passes.
+    fingerprint_frames = []
+    for frame in replay_frames:
+        entry: dict[str, object] = {
+            "index": frame["index"], "source_offset_ms": frame["source_offset_ms"], "content_hash": frame["content_hash"],
+        }
+        if frame["analysis_excluded_regions"]:
+            entry["analysis_excluded_regions"] = [list(box) for box in frame["analysis_excluded_regions"]]  # type: ignore[union-attr]
+        fingerprint_frames.append(entry)
+    input_fingerprint = semantic_fingerprint({
+        "version": 1, "input_id": input_id, "stream_id": stream_id, "width": width, "height": height,
+        "nominal_fps": nominal_fps, "frames": fingerprint_frames,
+    })
+
     return {
         "version": 1,
         "benchmark_id": f"temporal-review-{session.get('session_id')}-replay",
-        "input": {
-            "input_id": str(session.get("session_id")), "stream_id": session.get("config", {}).get("stream_id"),  # type: ignore[union-attr]
-            "width": session.get("config", {}).get("analysis_width"), "height": session.get("config", {}).get("analysis_height"),  # type: ignore[union-attr]
-            "nominal_fps": session.get("config", {}).get("nominal_fps"), "frames": replay_frames,  # type: ignore[union-attr]
-        },
+        "input_id": input_id,
+        "stream_id": stream_id,
+        "width": width,
+        "height": height,
+        "nominal_fps": nominal_fps,
+        "frames": replay_frames,
+        "input_fingerprint": input_fingerprint,
         "appearances": appearances,
         "visits": [],
         "detections": detections,
