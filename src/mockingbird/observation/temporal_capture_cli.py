@@ -209,6 +209,22 @@ class _CaptureLoop:
         # `adjacent_context_frame_count` ceiling; maxlen=0 (allowed by that
         # bound's own 0-16 range) simply disables rescue.
         self.recent_frames: deque = deque(maxlen=bounds.adjacent_context_frame_count)
+        # Companion bound for the opposite case: a frame that already
+        # qualified for retention through its own unrelated trigger (a real
+        # detection, recurring static geometry, a shadow-track event, ...)
+        # never enters `recent_frames` above, so a marker discovered on a
+        # later batch boundary that refers back to it would otherwise never
+        # be able to find it. Confirmed missing on real daylight hardware:
+        # a busy scene retains almost every frame for an unrelated reason,
+        # so the trigger-less rescue pool above stays near-empty and every
+        # operator marker's `operator_marker_ids` backfill silently no-ops.
+        # Holds only `(frame_id, received_at)` -- enough identity to find
+        # and replace the existing retained record in place, never enough
+        # to duplicate a `_retain` call (see `_refresh_markers`). Bounded by
+        # the same ceiling as `recent_frames` for the same reason: one
+        # batch's worth of frames is the worst-case depth needed between
+        # marker-discovery checkpoints.
+        self.recent_retained_identities: deque = deque(maxlen=bounds.adjacent_context_frame_count)
         self.last_frame_id: str | None = None
         self.last_source_offset_ms: int | None = None
         self.last_generation: str | None = None
@@ -271,6 +287,26 @@ class _CaptureLoop:
                 marker_ids=tuple(item.marker_id for item in near),
             )
             self.post_trigger_remaining = self.bounds.post_trigger_frame_count
+
+        # The mirror case: a frame that already retained itself for an
+        # unrelated trigger. `_retain` would silently no-op on its own
+        # frame_id-dedup guard (dropping the marker id on the floor), so
+        # backfill the existing record in place instead.
+        for frame_id, received_at in self.recent_retained_identities:
+            if received_at is None:
+                continue
+            near = markers_near(markers, host_time_iso=received_at.isoformat(), default_lookback_seconds=20)
+            if not near:
+                continue
+            for index, record in enumerate(self.retained):
+                if record.frame_id != frame_id:
+                    continue
+                merged_marker_ids = tuple(dict.fromkeys((*record.operator_marker_ids, *(item.marker_id for item in near))))
+                if merged_marker_ids == record.operator_marker_ids:
+                    break
+                merged_triggers = tuple(dict.fromkeys((*record.trigger_reasons, TRIGGER_OPERATOR_MARKER)))
+                self.retained[index] = replace(record, operator_marker_ids=merged_marker_ids, trigger_reasons=merged_triggers)
+                break
 
     async def run(self, *, started_wall: datetime, duration_seconds: int) -> str:
         consecutive_reconnects = 0
@@ -465,6 +501,8 @@ class _CaptureLoop:
                 proposal_boxes, marker_ids=marker_ids,
                 high_resolution=TRIGGER_HIGH_RESOLUTION_BURST in triggers, privacy_interaction=privacy_interaction,
             )
+            if frame.frame_id is not None and frame.received_at is not None:
+                self.recent_retained_identities.append((frame.frame_id, frame.received_at))
         else:
             self.pretrigger.append((frame, tuple(triggers)))
             # No trigger fired for this frame yet -- but an operator marker

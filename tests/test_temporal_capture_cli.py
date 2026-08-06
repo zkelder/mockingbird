@@ -691,3 +691,85 @@ def test_adjacent_context_frame_count_zero_disables_marker_rescue(tmp_path: Path
     write_operator_marker(tmp_path, OperatorMarker("marker-1", "uncertain_possible_wildlife", marker_time.isoformat(), lookback_seconds=20))
     loop._refresh_markers()
     assert loop.retained == []
+
+
+# --------------------------------------------------------------------------
+# Stage 6.7 real daylight finding: `_refresh_markers()`'s rescue scan only
+# ever rescans `recent_frames`, the trigger-less pool -- a frame that
+# already qualified for retention through its own unrelated trigger (a real
+# detection, `recurring_static_geometry`, a shadow-track event, ...) never
+# enters that pool, so a marker discovered afterward can never correlate to
+# it, even when the frame's own `received_at` plainly falls inside the
+# marker's lookback window. On a quiet scene this is invisible (almost every
+# frame is trigger-less and therefore rescue-eligible), but a real bounded
+# daylight session against the paired Camera Node showed nearly every frame
+# already carrying a `recurring_static_geometry`/`shadow_track_event`
+# trigger of its own, so all four real operator markers fired during that
+# session were discovered and logged (visible in the manifest's own
+# `operator_markers` list) but left every retained frame's
+# `operator_marker_ids` empty -- including frames independently confirmed by
+# an `animal_above_operating_point` detection seconds before the operator's
+# own report of the same sighting.
+# --------------------------------------------------------------------------
+
+
+def test_marker_discovered_after_an_already_retained_triggered_frame_still_correlates_to_it(tmp_path: Path) -> None:
+    from mockingbird.observation.temporal_capture import OperatorMarker
+
+    loop = _loop(tmp_path, max_periodic_negative_samples=0, pretrigger_frame_count=0)
+    blank = _jpeg((30, 30, 30))
+    frame_received_at = datetime(2026, 8, 5, 21, 0, 0, tzinfo=UTC)
+
+    # f0 retains itself immediately via a real animal detection -- unlike the
+    # rescue-buffer tests above, it never enters the trigger-less pool.
+    loop._process_result(_result(
+        _packet("f0", payload=blank, offset_ms=0, sequence=0, received_at=frame_received_at),
+        detections=(_det((0.1, 0.1, 0.2, 0.2), 0.9),),
+    ))
+    assert [item.frame_id for item in loop.retained] == ["f0"]
+    assert loop.retained[0].operator_marker_ids == ()
+    assert all(entry[0].frame_id != "f0" for entry in loop.recent_frames)
+
+    # The operator reports the same real sighting a few seconds later.
+    marker_time = frame_received_at + timedelta(seconds=5)
+    write_operator_marker(tmp_path, OperatorMarker("marker-1", "wildlife_visible_now", marker_time.isoformat(), lookback_seconds=20))
+    loop._refresh_markers()
+
+    assert [item.frame_id for item in loop.retained] == ["f0"]  # backfilled in place, never duplicated
+    assert "marker-1" in loop.retained[0].operator_marker_ids
+    assert TRIGGER_OPERATOR_MARKER in loop.retained[0].trigger_reasons
+    # The frame's own original evidence is preserved, not overwritten.
+    assert loop.retained[0].animal_detection_count == 1
+
+
+def test_marker_backfill_onto_an_already_retained_frame_respects_the_lookback_window(tmp_path: Path) -> None:
+    from mockingbird.observation.temporal_capture import OperatorMarker
+
+    loop = _loop(tmp_path, max_periodic_negative_samples=0, pretrigger_frame_count=0)
+    blank = _jpeg((30, 30, 30))
+    base = datetime(2026, 8, 5, 21, 0, 0, tzinfo=UTC)
+    loop._process_result(_result(
+        _packet("f0", payload=blank, offset_ms=0, sequence=0, received_at=base),
+        detections=(_det((0.1, 0.1, 0.2, 0.2), 0.9),),
+    ))
+
+    # Marker refers to a moment 60 real seconds after f0 -- well outside
+    # even a generous 20s lookback, so no backfill should occur.
+    marker_time = base + timedelta(seconds=60)
+    write_operator_marker(tmp_path, OperatorMarker("marker-1", "uncertain_possible_wildlife", marker_time.isoformat(), lookback_seconds=20))
+    loop._refresh_markers()
+
+    assert loop.retained[0].operator_marker_ids == ()
+
+
+def test_marker_backfill_pool_never_exceeds_its_bound(tmp_path: Path) -> None:
+    loop = _loop(tmp_path, adjacent_context_frame_count=3, max_periodic_negative_samples=0, pretrigger_frame_count=0)
+    blank = _jpeg((30, 30, 30))
+    base = datetime(2026, 8, 5, 21, 0, 0, tzinfo=UTC)
+    for index in range(10):
+        loop._process_result(_result(
+            _packet(f"f{index}", payload=blank, offset_ms=index * 500, sequence=index, received_at=base + timedelta(seconds=index)),
+            detections=(_det((0.1, 0.1, 0.2, 0.2), 0.9),),
+        ))
+    assert len(loop.recent_retained_identities) <= 3
+    assert [frame_id for frame_id, _ in loop.recent_retained_identities] == ["f7", "f8", "f9"]
