@@ -321,6 +321,65 @@ detector, tracker confirmation policy, saved Ignore region, evidence
 scoring, or monitoring policy, opens no product database, and authorizes no
 Stage 7 activity.
 
+A representative shadow-operations acceptance campaign (two new full-length
+real daylight sessions, session-03 and session-04, alongside the existing
+Stage 6.7 sessions) closed as a measured failure at tracker/Visit assembly:
+full-session frame-driven replay produced 129 and 78 tracker generations for
+only 2 and 3 reviewed genuine appearances respectively, with
+`boundary_reason_distribution` showing the confirmed episodes were being cut
+off by `provider_reset` almost every time. The root cause was architectural,
+not a detector or evidence defect: this Camera Node reconnects roughly every
+ten seconds under real load, and Stage 6.8's session timeline correctly
+flags every reconnect boundary as a `temporal_discontinuity` regardless of
+whether `provider_generation` (the durable camera/provider identity) changed
+-- but the frame-driven replay host treated any discontinuity signal as an
+unconditional source reset, mechanically shredding one continuous real
+appearance into many independently "confirmed" episodes at every benign HTTP
+reconnect. Stage 6.11 adds a reconnect-safe tracker-continuity decision
+described in
+[reconnect-continuity-contract.md](reconnect-continuity-contract.md):
+`mockingbird.observation.reconnect_continuity` distinguishes a benign
+transport reconnect (Stream/provider-generation/analysis-profile unchanged,
+a genuine new connection segment, a bounded source-relative gap and
+temporal uncertainty) from a confidently evidenced source-generation reset
+or insufficient bridge provenance, using only already-available Stage 6.8
+provenance and never species identity. `ProviderNeutralFrameTracker` gains a
+bounded per-track reconnect-bridge budget (`note_reconnect_boundary`):
+active tracks are marked temporarily lost, pending bounded reacquisition,
+rather than terminated outright; reconnect survival by itself never creates
+detector/tracker-support evidence; a track not reacquired within its own
+bounded window still terminates, with a distinct `reconnect_bridge_expired`
+reason. Replayed against the real session-03/04 data with the identical
+provider settings and unchanged human-reviewed truth, tracker generations
+started dropped from 129/78 to 81/57, confirmed proposals from 67/27 to
+46/28, `provider_reset` terminations dropped from 67/29 to zero in both, and
+50/29 tracks (38/23 confirmed proposals) now honestly span more than one
+transport connection segment (previously always exactly one, by
+construction) -- with zero incorrect merges in either session, before or
+after. `appearance_recall`/`proposal_precision` stay at their pre-existing
+0.0 in both sessions independent of tracker quality -- the temporal-review-
+capture replay export always emits an empty `ExpectedVisit` list by its own
+prior, documented design, so nothing can structurally ever match through
+this specific benchmark path; the fragmentation and cross-segment metrics
+above are the honest evidence of improvement. The existing Stage 6.7
+session-01/02 sessions predate Stage 6.8 and carry only reconstructed
+(`derived_session_timeline`) provenance with a fixed, deliberately
+conservative 30-second `temporal_uncertainty_ms` per reconnect boundary; run
+through the identical replay unchanged, every one of their reconnects
+correctly fails the bridge's uncertainty bound and still resets exactly as
+before this stage -- a clean, real-data confirmation that the new bridging
+capability activates only where native, Stage-6.8-quality timeline
+provenance actually supports it. Genuine source resets (provider-generation,
+camera, Stream, or analysis-profile changes; excessive gaps or uncertainty)
+are unaffected and still terminate tracking exactly as before. This stage
+changes no detector, detector threshold, burst-scheduler, or evidence-scoring
+behavior, opens no product database, and authorizes no Stage 7 activity; live
+Camera Node wiring
+(`CameraNodeAnalysisSource`/`LiveCameraNodeShadowSession`/
+`temporal_capture_cli`) is unchanged, and a separately identified
+burst-placement gap for late/sustained appearances remains a distinct,
+not-yet-addressed issue.
+
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
 Stream capabilities and emits only evidence-side `FramePacket`,

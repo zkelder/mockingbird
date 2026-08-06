@@ -97,6 +97,16 @@ confident-split reasons: they reflect positive evidence of discontinuity
 (elapsed time or explicit negative detector frames) rather than a bounded
 tolerance running out. An unconfirmed episode's terminal reason is always
 reported as `insufficient_support` regardless of which bound closed it.
+Stage 6.11 adds two more, specifically at a reconnect boundary:
+`reconnect_bridge_expired` (a bounded reconnect-bridge window closed without
+reacquisition -- same bounded-tolerance shape as `tracker_lost`, not a
+confident split) and reuses `provider_reset` for a confidently evidenced
+source-generation change at that boundary, now distinguished from a
+`"insufficient_reconnect_provenance"` safety reset when the boundary's own
+provenance cannot prove which case applies. See
+[reconnect-continuity-contract.md](reconnect-continuity-contract.md) for the
+full benign-reconnect-vs-source-reset decision this boundary now goes
+through before either reason can fire.
 
 When an episode ends without a confident-split reason (for example a plain
 `tracker_lost` or `maximum_duration`) and a new, class/geometry-compatible

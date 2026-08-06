@@ -30,6 +30,13 @@ from mockingbird.observation.frame_tracker import (
     TrackerConfiguration,
     TrackerSupportResolver,
 )
+from mockingbird.observation.reconnect_continuity import (
+    CONTINUE_ACROSS_TRANSPORT_RECONNECT,
+    RESET_SOURCE_GENERATION,
+    ReconnectBridgeConfig,
+    classify_frame_reconnect_boundary,
+    is_reconnect_boundary_signal,
+)
 from mockingbird.observation.replay import ReplayValidationError, semantic_fingerprint
 
 
@@ -234,9 +241,11 @@ class FrameDrivenObservationProvider:
         detector: FrameDetector,
         settings: FrameDrivenSettings | None = None,
         tracker_support: TrackerSupportResolver | None = None,
+        reconnect_bridge_config: ReconnectBridgeConfig | None = None,
     ) -> None:
         self.detector = detector
         self.settings = settings or FrameDrivenSettings()
+        self.reconnect_bridge_config = reconnect_bridge_config or ReconnectBridgeConfig()
         self._patch_support = _PortablePatchSupport() if tracker_support is None else None
         self._support = tracker_support or self._patch_support
         self._tracker: ProviderNeutralFrameTracker | None = None
@@ -313,26 +322,58 @@ class FrameDrivenObservationProvider:
             self._stream_id,
             self.settings.tracker_configuration(),
             support_resolver=self._support,
+            reconnect_bridge_config=self.reconnect_bridge_config,
         )
         results: list[ObservationResult] = []
         previous_frame: FramePacket | None = None
         for frame in frames:
-            if previous_frame is not None and _replay_frame_is_discontinuous(previous_frame, frame):
-                # A reconnect-safe replay input's session-relative
-                # source_offset_ms stays strictly increasing across a
-                # reconnect (see docs/session-timeline-contract.md), so the
-                # tracker's own monotonicity check alone cannot detect the
-                # gap; a `provider_generation` change or an explicit
-                # `temporal_discontinuity` timing fact is the positive
-                # signal instead. Reuses the existing "provider_reset"
-                # provider-reset behavior (the same finalize/drain/fresh-
-                # generation shape `restart_live_generation` uses live)
-                # rather than silently letting a track continue across an
-                # unsupported gap; unlike the live path, the drained
-                # results are kept -- replay has no other place to report a
-                # generation that ended exactly at this boundary.
-                results.extend(self._reset_tracking_for_replay_discontinuity("provider_reset"))
-            results.append(await self._process_frame(frame))
+            # A replay input built without `captured_at_iso` (every legacy,
+            # non-Stage-6.8 export) never sets `captured_at` at all;
+            # `_process_frame` already tolerates that with a deterministic
+            # fallback derived from `source_offset_ms`. Applying the same
+            # fallback here, before it, keeps `note_reconnect_boundary`
+            # (which needs a real timestamp) and `_process_frame` looking at
+            # one consistent frame -- calling it twice is a no-op once
+            # `captured_at` is set.
+            frame = _with_fallback_captured_at(frame)
+            boundary_updates: tuple[TrackUpdate, ...] = ()
+            if previous_frame is not None and is_reconnect_boundary_signal(previous_frame, frame):
+                # Stage 6.11: a discontinuity signal fired (see
+                # docs/session-timeline-contract.md for how a reconnect-safe
+                # replay input sets it), but that signal alone no longer
+                # forces a reset -- `classify_frame_reconnect_boundary`
+                # distinguishes a benign transport reconnect (bridged) from
+                # a genuine source discontinuity (reset). See
+                # docs/reconnect-continuity-contract.md for the full
+                # decision contract.
+                decision = classify_frame_reconnect_boundary(previous_frame, frame, self.reconnect_bridge_config)
+                self._facts["reconnect_boundaries"] += 1
+                if decision.decision == CONTINUE_ACROSS_TRANSPORT_RECONNECT:
+                    self._facts["reconnect_bridges_attempted"] += 1
+                    assert self._tracker is not None and frame.captured_at is not None
+                    step = self._tracker.note_reconnect_boundary(
+                        boundary_offset_ms=frame.source_offset_ms or 0, captured_at=frame.captured_at,
+                    )
+                    boundary_updates = step.updates
+                else:
+                    # Both remaining decisions reset tracking, distinguished
+                    # only by *why*, for honest reporting: a confidently
+                    # evidenced source-generation change reuses the existing
+                    # "provider_reset" reason `restart_live_generation`
+                    # already establishes; insufficient bridge provenance
+                    # gets its own distinct reason rather than being
+                    # conflated with a known generation change. Unlike the
+                    # live path, the drained results are kept -- replay has
+                    # no other place to report a generation that ended
+                    # exactly at this boundary.
+                    if decision.decision == RESET_SOURCE_GENERATION:
+                        self._facts["resets_true_source_change"] += 1
+                        reset_reason = "provider_reset"
+                    else:
+                        self._facts["resets_insufficient_provenance"] += 1
+                        reset_reason = "insufficient_reconnect_provenance"
+                    results.extend(self._reset_tracking_for_replay_discontinuity(reset_reason))
+            results.append(await self._process_frame(frame, extra_updates=boundary_updates))
             previous_frame = frame
         self.finalize_replay()
         results.extend(self.drain_final_results())
@@ -353,7 +394,8 @@ class FrameDrivenObservationProvider:
         if self._patch_support is not None:
             self._patch_support.clear()
         self._tracker = ProviderNeutralFrameTracker(
-            self._stream_id, self.settings.tracker_configuration(), support_resolver=self._support,
+            self._stream_id, self.settings.tracker_configuration(),
+            support_resolver=self._support, reconnect_bridge_config=self.reconnect_bridge_config,
         )
         return drained
 
@@ -371,6 +413,7 @@ class FrameDrivenObservationProvider:
             stream_id,
             self.settings.tracker_configuration(),
             support_resolver=self._support,
+            reconnect_bridge_config=self.reconnect_bridge_config,
         )
 
     async def observe_live_frame(self, frame: FramePacket) -> ObservationResult:
@@ -391,6 +434,7 @@ class FrameDrivenObservationProvider:
             stream_id,
             self.settings.tracker_configuration(),
             support_resolver=self._support,
+            reconnect_bridge_config=self.reconnect_bridge_config,
         )
 
     def stop_live(self, reason: str = "provider_reset") -> tuple[ObservationResult, ...]:
@@ -405,15 +449,12 @@ class FrameDrivenObservationProvider:
             self.reset()
         return results
 
-    async def _process_frame(self, frame: FramePacket) -> ObservationResult:
+    async def _process_frame(
+        self, frame: FramePacket, *, extra_updates: tuple[TrackUpdate, ...] = (),
+    ) -> ObservationResult:
         if self._tracker is None or self._stream_id is None:
             raise ReplayValidationError("provider_not_loaded")
-        if frame.captured_at is None and frame.source_offset_ms is not None:
-            frame = replace(
-                frame,
-                captured_at=datetime(1970, 1, 1, tzinfo=UTC)
-                + timedelta(milliseconds=frame.source_offset_ms),
-            )
+        frame = _with_fallback_captured_at(frame)
         self._facts["frames_supplied"] += 1
         detector_ran = self._should_infer(frame)
         detections: tuple[DetectionObservation, ...] = ()
@@ -435,12 +476,22 @@ class FrameDrivenObservationProvider:
         except ValueError as error:
             raise ReplayValidationError(str(error)) from error
         self._tracker_latencies_ms.append((perf_counter() - started) * 1000)
-        self._facts["tracker_updates"] += len(step.updates)
+        # `extra_updates` carries the "temporarily lost, pending
+        # reacquisition" transition `note_reconnect_boundary` produced for
+        # this exact frame's boundary (Stage 6.11), folded into this same
+        # frame's result rather than a separate phantom `ObservationResult`
+        # -- preserving "one `ObservationResult` per supplied frame" exactly
+        # as before this stage.
+        all_updates = extra_updates + step.updates
+        self._facts["tracker_updates"] += len(all_updates)
         self._facts["ambiguous_associations"] += step.ambiguous_associations
         self._facts["ambiguous_reentries"] += step.ambiguous_reentries
+        self._facts["reconnect_bridges_continued"] += step.reconnect_bridges_continued
+        self._facts["reconnect_bridges_expired"] += step.reconnect_bridges_expired
+        self._facts["reconnect_ambiguous_associations"] += step.reconnect_ambiguous_associations
         terminal_evidence: list[EvidenceCandidate] = []
         proposals: list[VisitProposal] = []
-        for update in step.updates:
+        for update in all_updates:
             if update.status == "started":
                 self._facts["tracks_started"] += 1
                 self._seed_evidence(frame, update)
@@ -463,7 +514,7 @@ class FrameDrivenObservationProvider:
             frame.captured_at,
             frame_packets=(frame,),
             detection_observations=detections,
-            track_updates=step.updates,
+            track_updates=all_updates,
             evidence_candidates=tuple(terminal_evidence),
             visit_proposals=tuple(proposals),
         )
@@ -507,6 +558,7 @@ class FrameDrivenObservationProvider:
             "provider_version": FRAME_DRIVEN_PROVIDER_VERSION,
             "settings": asdict(self.settings),
             "tracker": {"version": TRACKER_VERSION, "configuration": asdict(self.settings.tracker_configuration())},
+            "reconnect_bridge": asdict(self.reconnect_bridge_config),
             "detector": detector.get("model"),
             "shadow_mode": True,
             "production_proposal_authority": False,
@@ -654,6 +706,24 @@ class FrameDrivenObservationProvider:
             "ambiguous_reentries": 0,
             "shadow_proposals": 0,
             "evidence_candidates": 0,
+            # Stage 6.11 reconnect-continuity counters -- see
+            # docs/reconnect-continuity-contract.md and
+            # `replay._reconnect_metrics` for how these surface in a replay
+            # report. `reconnect_boundaries` is every recognized
+            # discontinuity signal; the four decision outcomes below always
+            # sum to it (`reconnect_bridges_attempted` +
+            # `resets_true_source_change` + `resets_insufficient_provenance`
+            # == `reconnect_boundaries`), and every attempted bridge itself
+            # resolves to exactly one of `reconnect_bridges_continued`
+            # (this specific track reacquired) or `_expired` (bridge window
+            # closed first) per pending track.
+            "reconnect_boundaries": 0,
+            "reconnect_bridges_attempted": 0,
+            "reconnect_bridges_continued": 0,
+            "reconnect_bridges_expired": 0,
+            "reconnect_ambiguous_associations": 0,
+            "resets_true_source_change": 0,
+            "resets_insufficient_provenance": 0,
         }
 
 
@@ -674,6 +744,21 @@ def _view_from_update(update: TrackUpdate) -> TrackView:
     )
 
 
+def _with_fallback_captured_at(frame: FramePacket) -> FramePacket:
+    """A replay input built without `captured_at_iso` (every legacy,
+    non-Stage-6.8 export -- see `ReplayFrame`) never sets `captured_at` at
+    all. Both ordinary per-frame processing and the Stage 6.11 reconnect-
+    boundary decision need a real timestamp; this deterministic fallback
+    (derived only from the frame's own `source_offset_ms`, never a
+    recomputed current-wall-clock value) is a no-op once `captured_at` is
+    already set."""
+    if frame.captured_at is None and frame.source_offset_ms is not None:
+        return replace(
+            frame, captured_at=datetime(1970, 1, 1, tzinfo=UTC) + timedelta(milliseconds=frame.source_offset_ms),
+        )
+    return frame
+
+
 def _shift_box(box: tuple[float, float, float, float], dx: float, dy: float) -> tuple[float, float, float, float]:
     width, height = box[2] - box[0], box[3] - box[1]
     left = max(0.0, min(1.0 - width, box[0] + dx))
@@ -689,30 +774,6 @@ def _excluded(
         return False
     center = ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
     return any(left <= center[0] <= right and top <= center[1] <= bottom for left, top, right, bottom in exclusions)
-
-
-def _replay_frame_is_discontinuous(previous: FramePacket, current: FramePacket) -> bool:
-    """Whether the replay host should treat `current` as starting a fresh
-    tracking generation rather than a continuation of `previous`. Detects
-    exactly the two positive signals a reconnect-safe replay input can
-    carry (see docs/session-timeline-contract.md): a real
-    `provider_generation` change (the existing, established signal), or an
-    explicit `temporal_discontinuity` timing fact -- necessary because a
-    real Camera Node reconnect resets transport sequence/source-relative
-    offsets while leaving `provider_generation` unchanged, so the session-
-    relative `source_offset_ms` a reconnect-safe export feeds the tracker
-    stays monotonic straight through the boundary with no signal of its
-    own. Returns `False` whenever neither fact is present, which is every
-    replay input built before Stage 6.8 -- this never changes behavior for
-    one."""
-
-    if (
-        previous.provider_generation is not None
-        and current.provider_generation is not None
-        and previous.provider_generation != current.provider_generation
-    ):
-        return True
-    return bool(dict(current.timing_facts).get("temporal_discontinuity"))
 
 
 def _quality(candidate: EvidenceCandidate) -> tuple[float, float, int, str]:

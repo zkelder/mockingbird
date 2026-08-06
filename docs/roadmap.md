@@ -232,6 +232,55 @@ labeled engineering-override validation burst -- with an unchanged product
 database hash before and after and clean process/GPU shutdown. It changes no
 detector, tracker confirmation policy, saved Ignore region, or monitoring
 policy, and authorizes no Stage 7 activity.
+A representative shadow-operations acceptance campaign (two new full-length
+real daylight sessions, session-03 and session-04) closed as a measured
+failure specifically at tracker/Visit assembly: full-session frame-driven
+replay produced 129 and 78 tracker generations for only 2 and 3 reviewed
+genuine appearances, with confirmed episodes cut off by `provider_reset`
+almost every time -- this Camera Node reconnects roughly every ten seconds
+under real load, and the replay host was treating every reconnect boundary
+as an unconditional source reset regardless of whether the underlying
+camera/provider identity actually changed. Detector precision/recall,
+incorrect-merge safety, burst-volume bounds, and resource stability all
+passed or passed with limitation on the same campaign; a separate
+burst-placement gap (a session-04 late/sustained appearance received zero
+live high-resolution bursts) was also identified. Stage 6.11 adds a
+reconnect-safe tracker-continuity decision described in
+[reconnect-continuity-contract.md](reconnect-continuity-contract.md):
+`mockingbird.observation.reconnect_continuity` distinguishes a benign
+transport reconnect -- Stream/provider-generation/analysis-profile
+unchanged, a genuine new connection segment, a bounded source-relative gap
+and temporal uncertainty -- from a confidently evidenced source-generation
+reset or insufficient bridge provenance, using only already-available
+Stage 6.8 provenance and never species identity. `ProviderNeutralFrameTracker`
+gains a bounded per-track reconnect-bridge budget: active tracks are marked
+temporarily lost, pending bounded reacquisition, rather than terminated
+outright; reconnect survival by itself never creates detector/tracker-support
+evidence, and a track not reacquired within its own bounded window still
+terminates. Replayed against the real session-03/04 data with the identical
+provider settings and unchanged human-reviewed truth, tracks started dropped
+from 129/78 to 81/57, confirmed proposals from 67/27 to 46/28,
+`provider_reset` terminations from 67/29 to zero in both, and 50/29 tracks
+(38/23 confirmed proposals) now honestly span more than one transport
+connection segment (previously always exactly one, by construction), with
+zero incorrect merges in either session, before or after. The existing Stage
+6.7 session-01/02 sessions predate Stage 6.8 and carry only reconstructed
+(`derived_session_timeline`) provenance with a fixed, deliberately
+conservative 30-second `temporal_uncertainty_ms` per reconnect boundary; run
+through the identical replay unchanged, every reconnect in both correctly
+fails the bridge's uncertainty bound and still resets exactly as before this
+stage -- real-data confirmation that the new bridging capability activates
+only where native, Stage-6.8-quality timeline provenance actually supports
+it, not merely because a discontinuity signal is present. `appearance_recall`/`proposal_precision` remain
+unmeasurable through this specific benchmark path independent of tracker
+quality (the temporal-review-capture replay export always emits an empty
+`ExpectedVisit` list by its own existing, documented design -- see
+[temporal-review-capture-contract.md](temporal-review-capture-contract.md)
+-- so nothing can ever match); the honest evidence of improvement is the
+fragmentation, boundary-reason, and cross-segment metrics above. This stage
+changes no detector, detector threshold, burst-scheduler, or evidence-scoring
+behavior and authorizes no Stage 7 activity; live Camera Node wiring is
+unchanged, and the burst-placement gap remains the next separate issue.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

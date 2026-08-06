@@ -382,7 +382,7 @@ class ReplayRunner:
         )
         metrics.update(_pipeline_metrics(
             manifest, frames, proposals, track_updates, evidence_candidates,
-            evidence_selections, pipeline_facts,
+            evidence_selections, pipeline_facts, matches,
             track_supported=track_supported, visit_supported=visit_supported,
         ))
         metrics = dict(sorted(metrics.items()))
@@ -428,6 +428,7 @@ def _pipeline_metrics(
     evidence: tuple[EvidenceCandidate, ...],
     evidence_selections: tuple[EvidenceSelection, ...],
     facts: dict[str, object],
+    matches: tuple[Match, ...],
     *,
     track_supported: bool,
     visit_supported: bool,
@@ -476,7 +477,11 @@ def _pipeline_metrics(
     evidence_state = "evaluated" if visit_supported else "not_evaluated"
     evidence_metrics = _evidence_metrics(manifest, evidence, evidence_selections, visit_supported=visit_supported)
     boundary_metrics = _boundary_metrics(track_updates, facts, track_supported=track_supported)
-    return unavailable | evidence_metrics | boundary_metrics | {
+    reconnect_metrics = _reconnect_metrics(
+        frames, track_updates, proposals, matches, facts,
+        track_supported=track_supported, visit_supported=visit_supported,
+    )
+    return unavailable | evidence_metrics | boundary_metrics | reconnect_metrics | {
         "evidence_candidate_count": _metric(len(evidence) if visit_supported else None, evidence_state),
         "proposals_with_evidence": _metric(
             len(proposal_generations & evidence_generations) if visit_supported else None, evidence_state,
@@ -517,6 +522,85 @@ def _boundary_metrics(
         "episode_confirmed_split_count": _metric(confident_splits, "evaluated"),
         "episode_ambiguous_reentry_count": _metric(facts.get("ambiguous_reentries", 0), "evaluated"),
         "boundary_reason_distribution": _metric(dict(sorted(reasons.items())), "evaluated"),
+    }
+
+
+_RECONNECT_METRICS = (
+    "reconnect_boundary_count", "reconnect_bridges_attempted", "reconnect_bridges_continued",
+    "reconnect_bridges_expired", "reconnect_resets_true_source_change",
+    "reconnect_resets_insufficient_provenance", "reconnect_ambiguous_association_count",
+    "tracks_spanning_multiple_connection_segments", "proposals_spanning_multiple_connection_segments",
+    "reconnect_fragmentation_avoided", "reconnect_related_incorrect_merge_count",
+)
+
+
+def _reconnect_metrics(
+    frames: tuple[FramePacket, ...],
+    track_updates: tuple[TrackUpdate, ...],
+    proposals: tuple[VisitProposal, ...],
+    matches: tuple[Match, ...],
+    facts: dict[str, object],
+    *,
+    track_supported: bool,
+    visit_supported: bool,
+) -> dict[str, object]:
+    """Stage 6.11 reconnect-continuity counts, kept separate from ordinary
+    detector-miss episode-boundary metrics above. The scalar counters
+    (`reconnect_boundary_count` through `reconnect_ambiguous_association_
+    count`) are read directly from already-emitted `FrameDrivenObservation
+    Provider` semantic facts (see `frame_driven_provider._reset_facts`);
+    the segment-membership and merge metrics below are derived only from
+    already-emitted `TrackUpdate.supporting_frame_ids`/`VisitProposal.
+    track_generation_id` plus each frame's own additive `timing_facts`
+    `connection_segment_id` -- no new provider contract field is required.
+    """
+    if not track_supported:
+        return {name: _metric(None, "not_evaluated") for name in _RECONNECT_METRICS}
+    segment_by_frame: dict[str | None, str] = {}
+    for frame in frames:
+        segment = dict(frame.timing_facts).get("connection_segment_id")
+        if isinstance(segment, str) and segment and frame.frame_id is not None:
+            segment_by_frame[frame.frame_id] = segment
+    segments_by_generation: dict[str, set[str]] = {}
+    for update in track_updates:
+        segments = segments_by_generation.setdefault(update.generation_id, set())
+        for frame_id in update.supporting_frame_ids:
+            segment = segment_by_frame.get(frame_id)
+            if segment is not None:
+                segments.add(segment)
+    multi_segment_generations = {
+        generation for generation, segments in segments_by_generation.items() if len(segments) > 1
+    }
+    evaluated = "evaluated" if visit_supported else "not_evaluated"
+    proposals_multi_segment = sum(
+        1 for proposal in proposals if proposal.track_generation_id in multi_segment_generations
+    )
+    incorrectly_merged_keys = {item.proposal_key for item in matches if item.status == "incorrectly_merged"}
+    reconnect_merge_errors = sum(
+        1
+        for proposal in proposals
+        if proposal.proposal_key in incorrectly_merged_keys
+        and proposal.track_generation_id in multi_segment_generations
+    )
+    return {
+        "reconnect_boundary_count": _metric(facts.get("reconnect_boundaries", 0), "evaluated"),
+        "reconnect_bridges_attempted": _metric(facts.get("reconnect_bridges_attempted", 0), "evaluated"),
+        "reconnect_bridges_continued": _metric(facts.get("reconnect_bridges_continued", 0), "evaluated"),
+        "reconnect_bridges_expired": _metric(facts.get("reconnect_bridges_expired", 0), "evaluated"),
+        "reconnect_resets_true_source_change": _metric(facts.get("resets_true_source_change", 0), "evaluated"),
+        "reconnect_resets_insufficient_provenance": _metric(
+            facts.get("resets_insufficient_provenance", 0), "evaluated",
+        ),
+        "reconnect_ambiguous_association_count": _metric(
+            facts.get("reconnect_ambiguous_associations", 0), "evaluated",
+        ),
+        "tracks_spanning_multiple_connection_segments": _metric(len(multi_segment_generations), evaluated),
+        "proposals_spanning_multiple_connection_segments": _metric(proposals_multi_segment, evaluated),
+        # Every bridge that ended in reacquisition is one episode that a
+        # pre-Stage-6.11 tracker would have fragmented at that same
+        # boundary -- a direct, non-speculative count, not an estimate.
+        "reconnect_fragmentation_avoided": _metric(facts.get("reconnect_bridges_continued", 0), "evaluated"),
+        "reconnect_related_incorrect_merge_count": _metric(reconnect_merge_errors, evaluated),
     }
 
 

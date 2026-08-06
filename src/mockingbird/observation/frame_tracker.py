@@ -14,6 +14,7 @@ from math import hypot
 from typing import Literal, NamedTuple, Protocol
 
 from mockingbird.observation.contracts import DetectionObservation, FramePacket, TrackUpdate
+from mockingbird.observation.reconnect_continuity import ReconnectBridgeConfig
 
 
 TRACKER_VERSION = "spatial-frame-tracker-v1"
@@ -101,6 +102,14 @@ class TrackerStep:
     terminals: tuple[TerminalTrack, ...] = ()
     ambiguous_associations: int = 0
     ambiguous_reentries: int = 0
+    # Stage 6.11: internal-only reconnect-bridge outcome counters (not part
+    # of the external `TrackUpdate`/`VisitProposal` product contracts --
+    # `frame_driven_provider` folds these into its own semantic-fact
+    # counters, matching how `ambiguous_associations`/`ambiguous_reentries`
+    # already flow through).
+    reconnect_bridges_continued: int = 0
+    reconnect_bridges_expired: int = 0
+    reconnect_ambiguous_associations: int = 0
 
 
 @dataclass
@@ -125,6 +134,17 @@ class _Track:
     velocity: tuple[float, float] = (0.0, 0.0)
     supporting_frame_ids: list[str] = field(default_factory=list)
     seen_frame_ids: set[str] = field(default_factory=set)
+    # Stage 6.11 bounded reconnect-bridge state (see
+    # docs/reconnect-continuity-contract.md). `reconnect_pending` marks a
+    # track as temporarily lost specifically pending bounded reacquisition
+    # across a recognized benign transport reconnect -- distinct from an
+    # ordinary detector miss, which uses `missed_frames`/`tracker_expiry_ms`
+    # instead. Never persisted, never exposed on `TrackView`/`TrackUpdate`;
+    # purely transient tracker-internal bookkeeping released the moment the
+    # track reacquires or the bridge window closes.
+    reconnect_pending: bool = False
+    reconnect_bridge_deadline_offset_ms: int | None = None
+    reconnect_bridge_frames_remaining: int | None = None
 
     def view(self) -> TrackView:
         return TrackView(
@@ -151,10 +171,12 @@ class ProviderNeutralFrameTracker:
         configuration: TrackerConfiguration,
         *,
         support_resolver: TrackerSupportResolver | None = None,
+        reconnect_bridge_config: ReconnectBridgeConfig | None = None,
     ) -> None:
         self.stream_id = stream_id
         self.configuration = configuration
         self._support_resolver = support_resolver or (lambda _frame, _track: None)
+        self._reconnect_bridge_config = reconnect_bridge_config or ReconnectBridgeConfig()
         self._tracks: dict[str, _Track] = {}
         self._next_track = 1
         self._seen_frames: set[str] = set()
@@ -172,6 +194,40 @@ class ProviderNeutralFrameTracker:
         self._last_frame_offset_ms = None
         self._recent_endings.clear()
         return step
+
+    @property
+    def reconnect_pending_count(self) -> int:
+        """Bounded, read-only count of tracks currently awaiting bounded
+        reacquisition across a benign reconnect (Stage 6.11). Never grows
+        without bound: capped by `active_count`, and every pending track is
+        released (reacquired or expired) within its own bounded budget."""
+        return sum(1 for track in self._tracks.values() if track.reconnect_pending)
+
+    def note_reconnect_boundary(
+        self, *, boundary_offset_ms: int, captured_at: datetime,
+    ) -> TrackerStep:
+        """Mark every currently active track temporarily lost, pending
+        bounded reacquisition, at a recognized benign transport-reconnect
+        boundary (Stage 6.11's `continue_across_transport_reconnect`
+        decision -- see docs/reconnect-continuity-contract.md).
+
+        Does not terminate anything and does not add detector/tracker
+        support by itself -- reconnect survival alone must never create
+        fake evidence. Each track's bounded reacquisition window is
+        enforced lazily by `observe()`/`_assign()` on subsequent frames,
+        exactly like every other tracker bound in this module (checked on
+        the next `observe()` call, never by a background timer).
+        """
+        config = self._reconnect_bridge_config
+        boundary_frame = FramePacket(self.stream_id, "", captured_at, None, boundary_offset_ms)
+        updates: list[TrackUpdate] = []
+        for track in self._tracks.values():
+            track.reconnect_pending = True
+            track.reconnect_bridge_deadline_offset_ms = boundary_offset_ms + config.maximum_reconnect_bridge_duration_ms
+            track.reconnect_bridge_frames_remaining = config.maximum_reconnect_bridge_frames
+            track.lifecycle_state = "temporarily_lost"
+            updates.append(self._update(track, captured_at, boundary_frame, "updated"))
+        return TrackerStep(tuple(updates))
 
     def observe(
         self,
@@ -207,6 +263,16 @@ class ProviderNeutralFrameTracker:
         for track in tuple(self._tracks.values()):
             if offset - track.first_offset_ms >= self.configuration.maximum_track_duration_ms:
                 terminals.append(self._terminate(track, "maximum_duration", captured_at, frame))
+            elif track.reconnect_pending:
+                # A benign-reconnect bridge is in progress for this track:
+                # its own bounded budget (checked below, once reacquisition
+                # is actually attempted this frame) governs expiry instead
+                # of the ordinary negative/unsupported/gap bounds, which a
+                # real reconnect gap routinely exceeds by design. The
+                # absolute `maximum_track_duration_ms` cap above still
+                # applies unconditionally -- a chain of reconnects can never
+                # keep a track alive past its own maximum episode length.
+                continue
             elif track.consecutive_negative_detector_frames >= self.configuration.negative_detector_frames_to_end:
                 terminals.append(self._terminate(track, "negative_interval_reentry", captured_at, frame))
             elif offset - track.last_detector_offset_ms > self.configuration.maximum_unsupported_detector_ms:
@@ -219,24 +285,52 @@ class ProviderNeutralFrameTracker:
             for item in detections
             if item.is_animal is True and item.bounding_box is not None and item.frame_id == frame_id
         )
-        assignments, ambiguous = self._assign(animals)
+        assignments, ambiguous, reconnect_ambiguous = self._assign(animals)
         matched_tracks = {track_id for track_id, _ in assignments}
         matched_detections = {index for _, index in assignments}
 
+        reconnect_bridges_continued = 0
         for track_id, index in assignments:
             track = self._tracks[track_id]
             detection = animals[index]
+            if track.reconnect_pending:
+                reconnect_bridges_continued += 1
             self._observe_detection(track, detection, frame)
             updates.append(self._update(track, captured_at, frame, "updated"))
 
+        reconnect_bridges_expired = 0
         for track in tuple(self._tracks.values()):
             if track.track_id in matched_tracks:
                 continue
             supported_box = self._support_resolver(frame, track.view())
             if supported_box is not None and _valid_box(supported_box):
+                if track.reconnect_pending:
+                    reconnect_bridges_continued += 1
                 track.consecutive_negative_detector_frames = 0
                 self._observe_tracker_support(track, supported_box, frame)
                 updates.append(self._update(track, captured_at, frame, "updated"))
+                continue
+            if track.reconnect_pending:
+                # Bounded reconnect-bridge patience: decrement the frame
+                # budget and check the session-relative deadline. Neither
+                # `missed_frames` nor `consecutive_negative_detector_frames`
+                # is touched here -- the gap itself must not accumulate as
+                # either detector-negative or ordinary-miss evidence; only
+                # real post-reconnect evidence (handled above) clears
+                # `reconnect_pending` (see `_observe_detection`/
+                # `_observe_tracker_support`).
+                assert track.reconnect_bridge_frames_remaining is not None
+                assert track.reconnect_bridge_deadline_offset_ms is not None
+                track.reconnect_bridge_frames_remaining -= 1
+                expired = (
+                    track.reconnect_bridge_frames_remaining <= 0
+                    or offset > track.reconnect_bridge_deadline_offset_ms
+                )
+                if expired:
+                    reconnect_bridges_expired += 1
+                    terminals.append(self._terminate(track, "reconnect_bridge_expired", captured_at, frame))
+                else:
+                    updates.append(self._update(track, captured_at, frame, "updated"))
                 continue
             if detector_ran:
                 track.consecutive_negative_detector_frames += 1
@@ -264,7 +358,10 @@ class ProviderNeutralFrameTracker:
         updates.extend(
             self._terminal_update(item, captured_at, frame) for item in terminals
         )
-        return TrackerStep(tuple(updates), tuple(terminals), ambiguous, ambiguous_reentries)
+        return TrackerStep(
+            tuple(updates), tuple(terminals), ambiguous, ambiguous_reentries,
+            reconnect_bridges_continued, reconnect_bridges_expired, reconnect_ambiguous,
+        )
 
     def finalize(self, reason: str = "end_of_replay") -> TrackerStep:
         updates: list[TrackUpdate] = []
@@ -333,6 +430,16 @@ class ProviderNeutralFrameTracker:
                 return True
         return False
 
+    def _clear_reconnect_pending(self, track: _Track) -> None:
+        """Real post-reconnect evidence just matched this track -- release
+        its bounded bridge budget. Only called from `_observe_detection`/
+        `_observe_tracker_support`, i.e. only when genuine detector or
+        tracker-support evidence was found; reconnect survival alone never
+        reaches here."""
+        track.reconnect_pending = False
+        track.reconnect_bridge_deadline_offset_ms = None
+        track.reconnect_bridge_frames_remaining = None
+
     def _observe_detection(
         self,
         track: _Track,
@@ -340,6 +447,7 @@ class ProviderNeutralFrameTracker:
         frame: FramePacket,
     ) -> None:
         assert detection.bounding_box is not None and frame.source_offset_ms is not None and frame.captured_at is not None
+        self._clear_reconnect_pending(track)
         old_center = _center(track.bounding_box)
         new_center = _center(detection.bounding_box)
         track.velocity = (new_center[0] - old_center[0], new_center[1] - old_center[1])
@@ -361,6 +469,7 @@ class ProviderNeutralFrameTracker:
         frame: FramePacket,
     ) -> None:
         assert frame.source_offset_ms is not None and frame.captured_at is not None
+        self._clear_reconnect_pending(track)
         old_center = _center(track.bounding_box)
         new_center = _center(box)
         track.velocity = (new_center[0] - old_center[0], new_center[1] - old_center[1])
@@ -394,11 +503,18 @@ class ProviderNeutralFrameTracker:
     def _assign(
         self,
         detections: tuple[DetectionObservation, ...],
-    ) -> tuple[list[tuple[str, int]], int]:
+    ) -> tuple[list[tuple[str, int]], int, int]:
         candidates: list[tuple[float, str, int]] = []
         by_detection: dict[int, list[tuple[float, str]]] = {}
+        pending_track_ids = {track.track_id for track in self._tracks.values() if track.reconnect_pending}
         for track in self._tracks.values():
-            predicted = _shift(track.bounding_box, track.velocity)
+            # A pending track's `velocity` reflects motion from *before* the
+            # reconnect gap; extrapolating it forward across an unknown,
+            # possibly multi-second gap is not well-founded (see
+            # docs/reconnect-continuity-contract.md), so reacquisition
+            # compares against the track's last *known* geometry directly
+            # rather than a velocity-shifted prediction.
+            predicted = track.bounding_box if track.reconnect_pending else _shift(track.bounding_box, track.velocity)
             for index, detection in enumerate(detections):
                 if detection.label != track.broad_class or detection.bounding_box is None:
                     continue
@@ -407,6 +523,8 @@ class ProviderNeutralFrameTracker:
                     left - right for left, right in zip(_center(predicted), _center(detection.bounding_box))
                 ))
                 if overlap < self.configuration.minimum_iou and distance > self.configuration.maximum_centroid_distance:
+                    continue
+                if track.reconnect_pending and not self._reconnect_reacquisition_compatible(track, detection.bounding_box):
                     continue
                 score = overlap - distance
                 candidates.append((-score, track.track_id, index))
@@ -418,6 +536,17 @@ class ProviderNeutralFrameTracker:
             and sorted(values, reverse=True)[0][0] - sorted(values, reverse=True)[1][0]
             <= self.configuration.ambiguity_margin
         }
+        # `ambiguity_policy="reject"` (the only implemented policy, see
+        # `ReconnectBridgeConfig`): an ambiguous detection touching at least
+        # one reconnect-pending track is reported separately so a reviewer
+        # can distinguish ordinary tracking ambiguity from reconnect-related
+        # ambiguity, but the outcome is identical either way -- neither
+        # candidate track is assigned from that detection below.
+        reconnect_ambiguous = sum(
+            1
+            for index in ambiguous_indices
+            if any(track_id in pending_track_ids for _, track_id in by_detection.get(index, []))
+        )
         assigned_tracks: set[str] = set()
         assigned_detections: set[int] = set()
         assignments: list[tuple[str, int]] = []
@@ -427,7 +556,30 @@ class ProviderNeutralFrameTracker:
             assigned_tracks.add(track_id)
             assigned_detections.add(index)
             assignments.append((track_id, index))
-        return assignments, len(ambiguous_indices)
+        return assignments, len(ambiguous_indices), reconnect_ambiguous
+
+    def _reconnect_reacquisition_compatible(
+        self, track: _Track, candidate_box: tuple[float, float, float, float],
+    ) -> bool:
+        """Bounded geometry-displacement/size-change gate applied only to a
+        reconnect-pending track's own reacquisition candidates, on top of
+        the ordinary IoU/centroid association test above. A spatially or
+        dimensionally incompatible reentry must start a new generation
+        instead of silently bridging (see docs/reconnect-continuity-contract.md,
+        `ReconnectBridgeConfig.maximum_reconnect_geometry_displacement`/
+        `maximum_reconnect_size_change_ratio`)."""
+        config = self._reconnect_bridge_config
+        distance = hypot(*(
+            left - right for left, right in zip(_center(track.bounding_box), _center(candidate_box))
+        ))
+        if distance > config.maximum_reconnect_geometry_displacement:
+            return False
+        previous_area = max(
+            1e-9, (track.bounding_box[2] - track.bounding_box[0]) * (track.bounding_box[3] - track.bounding_box[1])
+        )
+        candidate_area = (candidate_box[2] - candidate_box[0]) * (candidate_box[3] - candidate_box[1])
+        size_change_ratio = abs(candidate_area - previous_area) / previous_area
+        return size_change_ratio <= config.maximum_reconnect_size_change_ratio
 
     def _terminate(
         self,
@@ -440,6 +592,14 @@ class ProviderNeutralFrameTracker:
         confirmed = track.confirmed
         uncertain_reasons = {
             "tracker_lost", "end_of_replay", "maximum_unsupported_duration", "negative_interval_reentry",
+            # A bounded reconnect-bridge window closing without reacquisition
+            # (Stage 6.11) is the same "bounded tolerance ran out" shape as
+            # `tracker_lost`, not positive evidence of discontinuity -- an
+            # unconfirmed track relabels to `insufficient_support` exactly
+            # like the others, and (see `confident_split` below) a later
+            # plausible reentry can still be honestly reported as ambiguous
+            # rather than treated as confidently a different subject.
+            "reconnect_bridge_expired",
         }
         terminal_reason = reason if confirmed or reason not in uncertain_reasons else "insufficient_support"
         confident_split = reason in {"maximum_unsupported_duration", "negative_interval_reentry"}

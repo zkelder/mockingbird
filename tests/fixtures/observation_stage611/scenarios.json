@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "scenarios": {
+    "benign_transport_reconnect": [
+      "same_source_short_reconnect_preserves_confirmed_track",
+      "multiple_benign_reconnects_preserve_one_episode",
+      "transport_sequence_reset_alone_does_not_reset",
+      "source_offset_reset_alone_does_not_reset",
+      "connection_segment_ordinal_change_alone_does_not_reset",
+      "post_reconnect_detector_support_continues_a_track",
+      "post_reconnect_tracker_support_continues_a_track",
+      "no_post_reconnect_support_expires_the_track"
+    ],
+    "true_source_discontinuity": [
+      "provider_generation_change_resets",
+      "camera_identity_change_resets",
+      "camera_node_identity_change_resets",
+      "stream_change_resets",
+      "analysis_profile_dimension_incompatibility_resets",
+      "explicit_discontinuity_reason_resets",
+      "shutdown_start_boundary_resets",
+      "excessive_reconnect_gap_resets",
+      "excessive_temporal_uncertainty_resets",
+      "missing_connection_segment_identity_rejects_continuity",
+      "missing_source_gap_provenance_rejects_continuity",
+      "missing_temporal_uncertainty_provenance_rejects_continuity",
+      "missing_provider_generation_provenance_rejects_continuity"
+    ],
+    "incorrect_merge_protection": [
+      "bird_leaves_before_reconnect_different_bird_after_does_not_merge",
+      "two_birds_opposite_sides_of_reconnect_survive_independently",
+      "simultaneous_tracks_bridge_independently",
+      "long_reconnect_gap_terminates_tracks",
+      "ambiguous_reentry_does_not_silently_merge",
+      "broad_class_match_alone_is_insufficient_for_continuity",
+      "spatially_incompatible_reentry_starts_a_new_generation"
+    ],
+    "evidence_and_confirmation_safety": [
+      "reconnect_survival_alone_adds_no_support",
+      "repeated_reconnects_cannot_confirm_a_tentative_track",
+      "evidence_candidates_remain_generation_isolated",
+      "terminated_generation_cannot_revive",
+      "connection_segment_provenance_visible_after_bridge"
+    ]
+  }
+}
