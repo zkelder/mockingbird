@@ -439,6 +439,58 @@ Camera Node transport, evidence scoring, saved Ignore region, or
 monitoring policy, opens no product database, and authorizes no Stage 7
 activity.
 
+Stage 6.13 closes a standalone tooling gap Stage 6.7/6.10 acceptance work
+repeatedly disclosed: there was no standalone evidence-scoring benchmark CLI,
+so evidence usefulness was sometimes reported with bounded descriptive
+analysis instead of the same deterministic benchmark/report machinery already
+established for detector, tracker, multi-scale, and burst evaluation.
+`mockingbird.observation.evidence_benchmark`
+(`python -m mockingbird evidence-benchmark`/`evidence-comparison`, see
+[evidence-benchmark-contract.md](evidence-benchmark-contract.md)) evaluates a
+reviewed evidence manifest by calling the existing Stage 6
+`evidence_scoring.score_proposal_evidence` scorer once per reconstructed
+episode -- never a second ranking algorithm -- against reviewed truth whose
+fields mirror Stage 6.6 temporal-review annotation fields, deriving that
+manifest directly from an already-built review packet (`--review`) so a
+caller never hand-copies data that already exists in the reviewed packet. It
+optionally supplements reviewed-manifest episodes with real candidates/
+proposals reconstructed from an already-produced replay report. Every metric
+reports `evaluated`/`not_evaluated`/`insufficient_truth`/`unsupported` rather
+than a fabricated zero, and `evidence-comparison` classifies each metric
+`baseline better`/`candidate better`/`equivalent`/`insufficient truth`/
+`unsupported for one side` without an aggregate winner score, mirroring
+`compare_replay_reports`'s established shape exactly. Real evaluation against
+four historical reviewed Camera Node sessions (session-01, the high-burst
+session-02, session-03, and the late-appearance session-04 from Stage
+6.8/6.10 -- 41/146/114/129 reconstructed episodes respectively) found useful
+identification evidence only among the minority of episodes that selected any
+identification candidate at all (12/41, 6/146, 24/114, 31/129), a useful-
+identification rate of 0.25/0.5/0.25/0.14 among those, and zero episodes
+across all four sessions where a high-resolution burst frame -- rather than
+an ordinary tracked analysis frame -- was the selected identification
+evidence; useful-context rate read 1.0 in all four, which reflects the
+underlying Stage 6.6 annotation convention (broad context usefulness was
+recorded liberally) as much as it reflects evidence quality. Because the
+Stage 6.6 review-packet derivation path does not independently record
+temporal alignment, every selected candidate's temporal-alignment metric
+reads `uncertain` in all four sessions -- an honest limitation of this
+specific offline reconstruction path, not a measurement that the live system
+never produces temporally aligned evidence. `selected_identification_
+correctness`/`selected_context_correctness` read `not_evaluated` throughout
+because this historical corpus never recorded a reviewer's preferred-
+candidate truth. Combining session-04's review packet with its own already-
+produced Stage 6.11 replay report surfaced a genuine, disclosed, pre-existing
+limitation rather than a defect this stage introduces: a replay produced
+through `replay-benchmark` assigns each frame a new, replay-derived identity
+distinct from the original reviewed `frame_id`, so truth could not link to
+any replay-sourced candidate -- honestly reported as a limitation rather than
+a silent zero. It opens no product database (a structural no-write proof
+found an unchanged SQLite hash/size and every tracked table row count before
+and after), changes no detector, tracker, reconnect, burst-scheduler, or
+evidence-scoring behavior, and authorizes no Stage 7 activity; the
+representative Stage 6.10 rerun this tool is meant to support remains a
+separate, not-yet-run step.
+
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
 Stream capabilities and emits only evidence-side `FramePacket`,

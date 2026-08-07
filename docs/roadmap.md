@@ -344,6 +344,27 @@ reconstructed opportunities) nowhere near the pre-Stage-6.9
 confirmation policy, reconnect continuity, Camera Node transport, evidence
 scoring, saved Ignore region, or monitoring policy, opens no product
 database, and authorizes no Stage 7 activity.
+Stage 6.13 closes a standalone tooling gap instead of starting new detector/
+tracker/burst/reconnect research: Stage 6.7/6.10 acceptance work repeatedly
+had to fall back on bounded descriptive analysis because no standalone
+evidence-scoring benchmark CLI existed. `python -m mockingbird
+evidence-benchmark`/`evidence-comparison` (see
+[evidence-benchmark-contract.md](evidence-benchmark-contract.md)) evaluates a
+reviewed evidence manifest -- derived directly from an existing Stage 6.6/6.8
+review packet with no hand-copying -- by calling the existing Stage 6
+evidence scorer unchanged, and compares two such reports metric-by-metric
+without an aggregate winner score. Real evaluation against the four
+historical reviewed sessions used across Stages 6.7-6.12 found useful
+identification evidence only among a minority of episodes (12/41, 6/146,
+24/114, 31/129 episodes ever selected an identification candidate at all)
+and zero episodes across all four sessions where a high-resolution burst
+frame was the selected identification evidence rather than an ordinary
+tracked frame -- alongside honestly disclosed reconstruction limitations
+(no independently recorded temporal alignment or reviewer-preferred-candidate
+truth in this historical corpus). It opens no product database and
+authorizes no Stage 7 activity; the next representative shadow-acceptance
+rerun can regenerate this artifact directly instead of hand-built descriptive
+analysis, but Stage 7 remains blocked pending that rerun.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

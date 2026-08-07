@@ -45,5 +45,11 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "burst-schedule-replay":
         from mockingbird.observation.burst_scheduler_replay_cli import run as burst_schedule_replay_run
         raise SystemExit(burst_schedule_replay_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "evidence-benchmark":
+        from mockingbird.observation.evidence_benchmark_cli import run_benchmark as evidence_benchmark_run
+        raise SystemExit(evidence_benchmark_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "evidence-comparison":
+        from mockingbird.observation.evidence_benchmark_cli import run_comparison as evidence_comparison_run
+        raise SystemExit(evidence_comparison_run(sys.argv[2:]))
     else:
         main()
