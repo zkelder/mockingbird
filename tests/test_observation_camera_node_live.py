@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from mockingbird.observation.burst_scheduler import (
+    DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED,
     DECISION_SUPPRESSED_RECURRING_GEOMETRY,
     DECISION_SUPPRESSED_SESSION_BUDGET,
     RESET_GENERATION_REPLACEMENT,
@@ -482,10 +483,18 @@ async def test_live_shadow_scheduler_suppresses_once_session_budget_exhausted() 
     """A track generation is a burst opportunity, not authority: the
     scheduler -- not generation-id-seen-before bookkeeping -- controls
     whether a second, still-meaningful update actually reaches the
-    transport."""
+    transport. Same-track-generation cooldown and recurrence-group cooldown
+    are both disabled here so the ordinary session budget itself -- with the
+    Stage 6.12 fairness reserve also disabled -- is the one isolated,
+    exhausted channel; without disabling them, this same second, still-
+    meaningful update would correctly be suppressed by whichever bound it
+    reaches first instead."""
 
     transport = _BurstTransport()
-    scheduler = BurstScheduler(session_id="live-shadow-test", config=BurstSchedulerConfig(max_bursts_per_session=1))
+    scheduler = BurstScheduler(session_id="live-shadow-test", config=BurstSchedulerConfig(
+        max_bursts_per_session=1, minimum_burst_interval_ms=0, recurrence_group_cooldown_ms=0,
+        novelty_reserve_capacity=0,
+    ))
     session = LiveCameraNodeShadowSession(
         source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024),
         transport=transport, provider=_live_provider(), evidence_profile_id="evidence-large",
@@ -501,7 +510,15 @@ async def test_live_shadow_scheduler_suppresses_once_session_budget_exhausted() 
     diagnostics = session.status().scheduler_diagnostics
     assert diagnostics is not None
     assert diagnostics.issued_count == 1
-    assert dict(diagnostics.suppression_reason_distribution).get(DECISION_SUPPRESSED_SESSION_BUDGET) == 1
+    # With the ordinary budget exhausted and the fairness reserve disabled,
+    # a materially novel repeat (a genuine time-gap escape past the now-
+    # zeroed recurrence cooldown) is rejected by the more precise Stage 6.12
+    # code -- proven not a suppressible recurrence, but no capacity (ordinary
+    # or reserve) remains -- rather than the older, less specific budget
+    # code, which this stage now reserves for the override channel (see
+    # tests/test_burst_scheduler.py::test_override_respects_hard_session_budget).
+    assert dict(diagnostics.suppression_reason_distribution).get(DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED) == 1
+    assert dict(diagnostics.suppression_reason_distribution).get(DECISION_SUPPRESSED_SESSION_BUDGET) is None
     session.stop()
 
 

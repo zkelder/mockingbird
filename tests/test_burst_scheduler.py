@@ -16,9 +16,11 @@ from mockingbird.observation.burst_scheduler import (
     DECISION_BURST_UNAVAILABLE,
     DECISION_DEFERRED_COOLDOWN,
     DECISION_ENGINEERING_OVERRIDE_ISSUED,
+    DECISION_NOVELTY_RESERVE_ISSUED,
     DECISION_OPERATOR_OVERRIDE_ISSUED,
     DECISION_RETRY_ISSUED,
     DECISION_SUPPRESSED_ACTIVE_REQUEST,
+    DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED,
     DECISION_SUPPRESSED_RATE_BUDGET,
     DECISION_SUPPRESSED_RECURRING_GEOMETRY,
     DECISION_SUPPRESSED_SAME_TRACK_GENERATION,
@@ -30,7 +32,6 @@ from mockingbird.observation.burst_scheduler import (
     NOVELTY_OPERATOR_MARKER,
     NOVELTY_RETRY_PERMITTED,
     NOVELTY_STRONGER_CONFIDENCE,
-    NOVELTY_TIME_GAP,
     RESET_ENGINEERING_RESET,
     RESET_GENERATION_REPLACEMENT,
     RESET_PROVIDER_RESET,
@@ -313,7 +314,13 @@ def test_active_request_prevents_duplicate_concurrent_burst() -> None:
 
 
 def test_session_burst_budget_is_enforced() -> None:
-    scheduler = _scheduler(max_bursts_per_session=2, max_concurrent_requests=10, minimum_burst_interval_ms=0, recurrence_group_cooldown_ms=0)
+    # The Stage 6.12 fairness reserve is explicitly disabled here to isolate
+    # the ordinary session budget's own hard, absolute enforcement -- the
+    # reserve's fallback behavior is covered separately below.
+    scheduler = _scheduler(
+        max_bursts_per_session=2, max_concurrent_requests=10, minimum_burst_interval_ms=0,
+        recurrence_group_cooldown_ms=0, novelty_reserve_capacity=0,
+    )
     outcomes = []
     for index in range(4):
         decision = scheduler.decide(_opportunity(
@@ -322,7 +329,16 @@ def test_session_burst_budget_is_enforced() -> None:
         _resolve(scheduler, decision) if decision.should_issue else None
         outcomes.append(decision.outcome)
     assert outcomes.count(DECISION_BURST_ISSUED) == 2
-    assert outcomes.count(DECISION_SUPPRESSED_SESSION_BUDGET) == 2
+    # Each of these 4 opportunities has spatially distinct geometry, so every
+    # one is a brand-new recurrence group -- i.e. independently proven not a
+    # suppressible recurrence. With the reserve at capacity=0, the third and
+    # fourth are therefore rejected with the more precise Stage 6.12 code
+    # (materially novel, but no capacity anywhere -- ordinary or reserve),
+    # not the older, less specific suppressed_session_budget; that code's own
+    # meaning (an override's dedicated allowance exhausted with no reserve
+    # fallback) is covered by test_override_respects_hard_session_budget.
+    assert outcomes.count(DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED) == 2
+    assert outcomes.count(DECISION_SUPPRESSED_SESSION_BUDGET) == 0
     assert scheduler.diagnostics().issued_count == 2
 
 
@@ -623,24 +639,32 @@ def test_operator_marked_genuine_appearance_retains_burst_eligibility() -> None:
     assert consumed.outcome == DECISION_BURST_ISSUED
     _resolve(scheduler, consumed)
 
-    # The ordinary session budget is now exhausted.
-    blocked = scheduler.decide(_opportunity(
-        track_generation_id="static-structure-generation", subject_geometry=_box(), detector_score=0.05, session_offset_ms=1_000,
+    # Consume the dedicated operator/engineering override allowance too, with
+    # an unrelated engineering validation burst -- both dedicated channels
+    # (ordinary and override) are now fully, absolutely exhausted.
+    override_consumed = scheduler.decide(_opportunity(
+        track_generation_id="unrelated-override-generation", subject_geometry=(0.20, 0.20, 0.25, 0.25),
+        engineering_validation_request=True, session_offset_ms=800,
     ))
-    assert blocked.outcome == DECISION_SUPPRESSED_SESSION_BUDGET
+    assert override_consumed.outcome == DECISION_ENGINEERING_OVERRIDE_ISSUED
+    _resolve(scheduler, override_consumed)
 
-    # An operator-confirmed genuine appearance at the same static-structure
-    # location still reaches a burst through the small, separately bounded
-    # override allowance -- retaining eligibility even after ordinary budget
-    # exhaustion, which is exactly what a real, busy recurring-static-geometry
-    # session (session-02) would otherwise risk starving out.
+    # An operator-confirmed genuine appearance still reaches a burst through
+    # the small, separately bounded, session-relative-time Stage 6.12
+    # fairness reserve -- retaining eligibility even after *both* the
+    # ordinary budget and the dedicated override allowance are exhausted,
+    # which is exactly what a real, busy recurring-static-geometry session
+    # (session-04) proved could otherwise starve a late genuine appearance
+    # completely (see docs/burst-scheduler-contract.md's Stage 6.12 section).
     marked = scheduler.decide(_opportunity(
         track_generation_id="operator-marked-generation",
-        subject_geometry=_box(dx=0.001), detector_score=0.05, operator_marker_present=True,
+        subject_geometry=_box(), detector_score=0.05, operator_marker_present=True,
         session_offset_ms=1_500,
     ))
-    assert marked.outcome == DECISION_OPERATOR_OVERRIDE_ISSUED
+    assert marked.outcome == DECISION_NOVELTY_RESERVE_ISSUED
     assert marked.should_issue is True
+    assert marked.is_override is True
+    assert NOVELTY_OPERATOR_MARKER in marked.novelty_signals
 
 
 # --------------------------------------------------------------------------
@@ -792,3 +816,538 @@ def test_diagnostics_track_suppression_reason_distribution() -> None:
     scheduler.decide(_opportunity(track_generation_id="generation-2", subject_geometry=_box(dx=0.001), session_offset_ms=1_500))
     distribution = dict(scheduler.diagnostics().suppression_reason_distribution)
     assert distribution.get(DECISION_SUPPRESSED_RECURRING_GEOMETRY) == 1
+
+
+# ==========================================================================
+# Stage 6.12: late-session evidence-burst fairness and novelty reserve.
+#
+# Root cause (proven by replaying real session-04 facts through this exact
+# module, see docs/burst-scheduler-contract.md's Stage 6.12 section): the
+# ordinary session budget was a single, undifferentiated counter checked
+# *before* recurrence/novelty evaluation ever ran, so once early-session
+# activity exhausted it, every later opportunity -- including the session's
+# richest, latest, two-simultaneous-bird reviewed appearance -- was rejected
+# unconditionally, regardless of novelty. The fix reorders the existing
+# checks (recurrence/novelty now always evaluated first) and adds one small,
+# bounded, session-relative-time rolling reserve that only an opportunity
+# already proven not to be a suppressible recurrence may draw from once the
+# ordinary/override budget is exhausted. Numbered comments below reference
+# the Stage 6.12 task's own hardware-free test list.
+# ==========================================================================
+
+
+def _static_structure_decisions(
+    scheduler: BurstScheduler, *, count: int, start_offset_ms: int = 1_000, step_ms: int = 1_200,
+) -> list:
+    """Feed `count` low-score, near-identical, brand-new-generation-per-
+    occurrence opportunities through `scheduler` -- the same recurring
+    static-structure fixture used earlier in this file (session-02's
+    shepherd's-hook pattern) -- and return every decision."""
+
+    decisions = []
+    for index in range(count):
+        decision = scheduler.decide(_opportunity(
+            track_generation_id=f"static-structure-generation-{index}",
+            subject_geometry=_box(dx=0.0003 * index),
+            detector_score=0.05,
+            detector_confirmation_count=1,
+            tracker_support_count=0,
+            session_offset_ms=start_offset_ms + index * step_ms,
+        ))
+        if decision.should_issue:
+            _resolve(scheduler, decision)
+        decisions.append(decision)
+    return decisions
+
+
+# --------------------------------------------------------------------------
+# 1 / 4. Early static recurrence cannot consume all later novelty capacity;
+# low-novelty recurrence cannot consume the reserve at all.
+# --------------------------------------------------------------------------
+
+
+def test_low_novelty_recurrence_never_consumes_novelty_reserve() -> None:
+    scheduler = _scheduler(max_bursts_per_session=1, recurrence_group_cooldown_ms=60_000)
+    # Exhaust the ordinary budget with one unrelated issuance first.
+    first = scheduler.decide(_opportunity(
+        track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100,
+    ))
+    assert first.outcome == DECISION_BURST_ISSUED
+    _resolve(scheduler, first)
+
+    # The static structure's first-ever sighting is, by the unmodified
+    # Stage 6.9 rule, never itself a suppressible recurrence -- with the
+    # ordinary budget already exhausted it may draw the reserve exactly
+    # once, same as any other brand-new group would (a separate, pre-
+    # existing rule, not what this test is about). What matters here is
+    # every *subsequent* occurrence of the now-established, genuinely
+    # recurring group: none of the remaining 29 may ever draw the reserve,
+    # no matter how many arrive.
+    decisions = _static_structure_decisions(scheduler, count=30, start_offset_ms=1_000)
+    assert decisions[0].outcome == DECISION_NOVELTY_RESERVE_ISSUED
+    assert all(decision.outcome != DECISION_NOVELTY_RESERVE_ISSUED for decision in decisions[1:])
+    assert scheduler.diagnostics().novelty_reserve_issued == 1
+    assert sum(1 for decision in decisions if decision.outcome == DECISION_SUPPRESSED_RECURRING_GEOMETRY) >= 25
+
+    # The reserve still has room left for a genuinely novel, spatially
+    # distinct opportunity later in the same session.
+    genuine = scheduler.decide(_opportunity(
+        track_generation_id="genuine-generation", subject_geometry=(0.70, 0.70, 0.80, 0.80),
+        detector_score=0.9, session_offset_ms=60_000,
+    ))
+    assert genuine.outcome == DECISION_NOVELTY_RESERVE_ISSUED
+    assert genuine.should_issue is True
+
+
+# --------------------------------------------------------------------------
+# 2. Hard session safety cap remains absolute (ordinary and override
+# channels; test_override_respects_hard_session_budget above covers the
+# override channel specifically).
+# --------------------------------------------------------------------------
+
+
+def test_ordinary_budget_stays_absolute_even_with_reserve_enabled() -> None:
+    scheduler = _scheduler(max_bursts_per_session=3, recurrence_group_cooldown_ms=0)
+    boxes = [(0.05, 0.05, 0.10, 0.10), (0.20, 0.20, 0.25, 0.25), (0.40, 0.40, 0.45, 0.45), (0.60, 0.60, 0.65, 0.65)]
+    issued_ordinary = 0
+    for index in range(3):
+        decision = scheduler.decide(_opportunity(
+            track_generation_id=f"generation-{index}", subject_geometry=boxes[index], session_offset_ms=index * 1_000,
+        ))
+        assert decision.outcome == DECISION_BURST_ISSUED
+        _resolve(scheduler, decision)
+        issued_ordinary += 1
+    assert issued_ordinary == 3
+    # A 4th, spatially distinct (still novel) opportunity can no longer use
+    # the ordinary channel -- max_bursts_per_session's own absolute meaning
+    # is unchanged; it may still fall through to the separately bounded
+    # reserve, but never back into DECISION_BURST_ISSUED.
+    fourth = scheduler.decide(_opportunity(
+        track_generation_id="generation-3", subject_geometry=boxes[3], session_offset_ms=3_000,
+    ))
+    assert fourth.outcome != DECISION_BURST_ISSUED
+    assert fourth.outcome in (DECISION_NOVELTY_RESERVE_ISSUED, DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED)
+
+
+# --------------------------------------------------------------------------
+# 3. Rate cap remains bounded, including reserve-funded issuance.
+# --------------------------------------------------------------------------
+
+
+def test_rate_budget_still_bounds_reserve_issuance() -> None:
+    scheduler = _scheduler(
+        max_bursts_per_session=1, max_bursts_per_minute=1, rate_window_ms=60_000,
+        recurrence_group_cooldown_ms=0,
+    )
+    first = scheduler.decide(_opportunity(
+        track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100,
+    ))
+    assert first.outcome == DECISION_BURST_ISSUED
+    _resolve(scheduler, first)
+
+    # Ordinary budget is exhausted and the rate window (capacity 1) was just
+    # spent by the same issuance -- a materially novel opportunity a moment
+    # later is rate-limited before the reserve is ever consulted.
+    rate_limited = scheduler.decide(_opportunity(
+        track_generation_id="genuine-generation", subject_geometry=(0.70, 0.70, 0.80, 0.80),
+        detector_score=0.9, session_offset_ms=500,
+    ))
+    assert rate_limited.outcome == DECISION_SUPPRESSED_RATE_BUDGET
+
+    # Once the rate window genuinely elapses, the same opportunity can reach
+    # and use the reserve.
+    later = scheduler.decide(_opportunity(
+        track_generation_id="genuine-generation-2", subject_geometry=(0.70, 0.70, 0.80, 0.80),
+        detector_score=0.9, session_offset_ms=61_000,
+    ))
+    assert later.outcome == DECISION_NOVELTY_RESERVE_ISSUED
+
+
+# --------------------------------------------------------------------------
+# 5. Novel opportunity can use the reserve after ordinary allocation is
+# exhausted (the exact reproduced session-04 mechanism).
+# --------------------------------------------------------------------------
+
+
+def test_novel_opportunity_uses_reserve_after_ordinary_exhausted() -> None:
+    scheduler = _scheduler(max_bursts_per_session=1, recurrence_group_cooldown_ms=0)
+    first = scheduler.decide(_opportunity(
+        track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100,
+    ))
+    assert first.outcome == DECISION_BURST_ISSUED
+    _resolve(scheduler, first)
+    assert scheduler.health().session_budget_remaining == 0
+
+    genuine = scheduler.decide(_opportunity(
+        track_generation_id="genuine-generation", subject_geometry=(0.70, 0.70, 0.80, 0.80),
+        detector_score=0.9, session_offset_ms=1_000,
+    ))
+    assert genuine.outcome == DECISION_NOVELTY_RESERVE_ISSUED
+    assert genuine.should_issue is True
+    assert scheduler.diagnostics().novelty_reserve_issued == 1
+
+
+# --------------------------------------------------------------------------
+# 6. Operator wildlife marker can use the reserve: see
+# test_operator_marked_genuine_appearance_retains_burst_eligibility above.
+# --------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------
+# 7 / 8. Engineering override remains explicitly labeled and never falls
+# back to the fairness reserve; still cannot exceed its own absolute cap.
+# --------------------------------------------------------------------------
+
+
+def test_engineering_override_never_falls_back_to_novelty_reserve() -> None:
+    scheduler = _scheduler(max_bursts_per_session=1, operator_override_reserved_bursts=1, recurrence_group_cooldown_ms=0)
+    first = scheduler.decide(_opportunity(track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100))
+    _resolve(scheduler, first)
+    second = scheduler.decide(_opportunity(track_generation_id="engineering-generation", subject_geometry=(0.20, 0.20, 0.25, 0.25), engineering_validation_request=True, session_offset_ms=200))
+    assert second.outcome == DECISION_ENGINEERING_OVERRIDE_ISSUED
+    _resolve(scheduler, second)
+
+    # Both the ordinary and dedicated override allowances are now exhausted.
+    # Unlike an operator marker, an engineering request has no fairness-
+    # reserve fallback -- it remains a deliberately narrow, explicitly
+    # labeled, one-off validation mechanism, not a wildlife-evidence path.
+    third = scheduler.decide(_opportunity(track_generation_id="engineering-generation-2", subject_geometry=(0.40, 0.40, 0.45, 0.45), engineering_validation_request=True, session_offset_ms=300))
+    assert third.outcome == DECISION_SUPPRESSED_SESSION_BUDGET
+    assert third.should_issue is False
+
+
+# --------------------------------------------------------------------------
+# 9. Long session does not require known final duration.
+# --------------------------------------------------------------------------
+
+
+def test_reserve_works_without_knowing_final_session_duration() -> None:
+    """The reserve is configured purely as a capacity-per-rolling-window
+    rate; nothing in its implementation or configuration ever references a
+    total/expected session length. A session that turns out to run for
+    hours behaves identically to a short one at every point along the way."""
+
+    scheduler = _scheduler(max_bursts_per_session=1, recurrence_group_cooldown_ms=0)
+    first = scheduler.decide(_opportunity(track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100))
+    _resolve(scheduler, first)
+
+    # Materially novel opportunities spaced widely across a simulated
+    # multi-hour session (session-relative time only -- no wall-clock sleep).
+    outcomes = []
+    for hour in range(6):
+        decision = scheduler.decide(_opportunity(
+            track_generation_id=f"genuine-generation-{hour}",
+            subject_geometry=(0.10 + hour * 0.01, 0.10 + hour * 0.01, 0.15 + hour * 0.01, 0.15 + hour * 0.01),
+            detector_score=0.9, session_offset_ms=hour * 3_600_000,
+        ))
+        if decision.should_issue:
+            _resolve(scheduler, decision)
+        outcomes.append(decision.outcome)
+    # Each arrives roughly an hour apart -- far outside the reserve's own
+    # (much shorter) replenishment window -- so every one of them is treated
+    # identically: the reserve has fully replenished by the time each
+    # arrives, regardless of how long the session has already run or will
+    # continue to run.
+    assert outcomes == [DECISION_NOVELTY_RESERVE_ISSUED] * 6
+
+
+# --------------------------------------------------------------------------
+# 10 / 27. Rolling/token reserve state is deterministic; semantic
+# fingerprints repeat.
+# --------------------------------------------------------------------------
+
+
+def test_novelty_reserve_state_is_deterministic() -> None:
+    opportunities = [
+        _opportunity(track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100),
+        *[
+            _opportunity(
+                track_generation_id=f"static-structure-generation-{index}",
+                subject_geometry=_box(dx=0.0003 * index), detector_score=0.05,
+                detector_confirmation_count=1, tracker_support_count=0,
+                session_offset_ms=1_000 + index * 1_200,
+            )
+            for index in range(6)
+        ],
+        _opportunity(track_generation_id="genuine-generation", subject_geometry=(0.70, 0.70, 0.80, 0.80), detector_score=0.9, session_offset_ms=20_000),
+    ]
+
+    def _run() -> list[str]:
+        scheduler = _scheduler(max_bursts_per_session=1, recurrence_group_cooldown_ms=60_000)
+        outcomes = []
+        for opportunity in opportunities:
+            decision = scheduler.decide(opportunity)
+            if decision.should_issue:
+                _resolve(scheduler, decision)
+            outcomes.append(decision.outcome)
+        return outcomes
+
+    first_run, second_run = _run(), _run()
+    assert first_run == second_run
+    assert first_run[-1] == DECISION_NOVELTY_RESERVE_ISSUED
+
+
+# --------------------------------------------------------------------------
+# 13. Session-relative time drives fairness decisions, not wall-clock time.
+# --------------------------------------------------------------------------
+
+
+def test_reserve_replenishment_uses_session_relative_time_only() -> None:
+    scheduler = _scheduler(
+        max_bursts_per_session=1, novelty_reserve_capacity=1, novelty_reserve_window_ms=10_000,
+        recurrence_group_cooldown_ms=0,
+    )
+    first = scheduler.decide(_opportunity(track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100))
+    _resolve(scheduler, first)
+
+    reserved = scheduler.decide(_opportunity(track_generation_id="genuine-generation", subject_geometry=(0.70, 0.70, 0.80, 0.80), detector_score=0.9, session_offset_ms=1_000))
+    assert reserved.outcome == DECISION_NOVELTY_RESERVE_ISSUED
+    _resolve(scheduler, reserved)
+
+    # A second materially novel opportunity only 500ms of *session-relative*
+    # time later (well inside the 10s reserve window) cannot yet reuse the
+    # single reserve slot, no matter how much real wall-clock time this test
+    # process itself takes to execute the two decide() calls.
+    too_soon = scheduler.decide(_opportunity(track_generation_id="genuine-generation-2", subject_geometry=(0.30, 0.30, 0.35, 0.35), detector_score=0.9, session_offset_ms=1_500))
+    assert too_soon.outcome == DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED
+
+    # Once enough *session-relative* time has elapsed, the slot returns.
+    later = scheduler.decide(_opportunity(track_generation_id="genuine-generation-3", subject_geometry=(0.30, 0.30, 0.35, 0.35), detector_score=0.9, session_offset_ms=11_200))
+    assert later.outcome == DECISION_NOVELTY_RESERVE_ISSUED
+
+
+# --------------------------------------------------------------------------
+# 17. Stronger evidence may retain eligibility even when the ordinary
+# budget is already exhausted (novelty escape + reserve, combined).
+# --------------------------------------------------------------------------
+
+
+def test_stronger_confidence_escape_can_use_reserve_after_exhaustion() -> None:
+    scheduler = _scheduler(max_bursts_per_session=1, recurrence_group_cooldown_ms=60_000, stronger_confidence_delta=0.15)
+    first = scheduler.decide(_opportunity(track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100))
+    _resolve(scheduler, first)
+
+    weak_a = scheduler.decide(_opportunity(track_generation_id="generation-a", subject_geometry=_box(), detector_score=0.30, session_offset_ms=1_000))
+    assert weak_a.outcome == DECISION_NOVELTY_RESERVE_ISSUED  # first sighting of this group, ordinary already exhausted
+    _resolve(scheduler, weak_a)
+    weak_b = scheduler.decide(_opportunity(track_generation_id="generation-b", subject_geometry=_box(dx=0.001), detector_score=0.30, session_offset_ms=2_000))
+    assert weak_b.outcome == DECISION_SUPPRESSED_RECURRING_GEOMETRY  # now genuinely recurring, no novelty yet
+
+    stronger = scheduler.decide(_opportunity(
+        track_generation_id="generation-c", subject_geometry=_box(dx=0.001), detector_score=0.85, session_offset_ms=3_000,
+    ))
+    assert stronger.outcome == DECISION_NOVELTY_RESERVE_ISSUED
+    assert NOVELTY_STRONGER_CONFIDENCE in stronger.novelty_signals
+
+
+# --------------------------------------------------------------------------
+# 19. Same Zone does not collapse opportunities automatically -- the real
+# session-04 two-simultaneous-bird geometry, distilled to a fixture.
+# --------------------------------------------------------------------------
+
+
+def test_two_simultaneous_subjects_in_one_zone_remain_independently_eligible() -> None:
+    """Distilled from the real session-04 reviewed two-bird frame: a
+    long-recurring feeder-perch box (`BASE_BOX`) and a second, spatially
+    distinct box near the same feeder structure (same broad_class, same
+    Zone/stream) must not collapse into one recurrence group merely because
+    they share a class and physical structure."""
+
+    scheduler = _scheduler(max_bursts_per_session=1, recurrence_group_cooldown_ms=60_000)
+    first = scheduler.decide(_opportunity(track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100))
+    _resolve(scheduler, first)
+
+    # Establish the long-recurring perch geometry as genuinely recurring.
+    recurring_decisions = _static_structure_decisions(scheduler, count=4, start_offset_ms=1_000)
+    assert recurring_decisions[-1].outcome == DECISION_SUPPRESSED_RECURRING_GEOMETRY
+
+    # A second, simultaneous, geometry-divergent subject near the same
+    # feeder structure (not overlapping the recurring perch box) remains
+    # independently eligible -- it starts its own recurrence group and, the
+    # ordinary budget already being exhausted, reaches a burst via the
+    # fairness reserve rather than being silently folded into the first
+    # subject's already-recurring, suppressed group.
+    second_subject = scheduler.decide(_opportunity(
+        track_generation_id="second-subject-generation",
+        subject_geometry=(0.503, 0.558, 0.557, 0.611),  # the real "near red-glass feeder" box
+        detector_score=0.79, session_offset_ms=6_000,
+    ))
+    assert second_subject.outcome == DECISION_NOVELTY_RESERVE_ISSUED
+    assert second_subject.recurrence_group_id != recurring_decisions[0].recurrence_group_id
+
+
+# --------------------------------------------------------------------------
+# 22 / 23 / 24 / 35. Provider reset / session stop / generation replacement
+# clear fairness state; a benign reconnect (simply continuing to call
+# decide(), with no reset()) leaves it intact.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("reason", [RESET_PROVIDER_RESET, RESET_SESSION_STOP, RESET_GENERATION_REPLACEMENT, RESET_ENGINEERING_RESET])
+def test_reset_clears_novelty_reserve_state_too(reason: str) -> None:
+    scheduler = _scheduler(max_bursts_per_session=1, recurrence_group_cooldown_ms=0)
+    first = scheduler.decide(_opportunity(track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100))
+    _resolve(scheduler, first)
+    reserved = scheduler.decide(_opportunity(track_generation_id="genuine-generation", subject_geometry=(0.70, 0.70, 0.80, 0.80), detector_score=0.9, session_offset_ms=1_000))
+    assert reserved.outcome == DECISION_NOVELTY_RESERVE_ISSUED
+    assert scheduler.diagnostics().novelty_reserve_issued == 1
+
+    scheduler.reset(reason)
+
+    assert scheduler.diagnostics().novelty_reserve_issued == 0
+    assert scheduler.health().novelty_reserve_remaining == scheduler.config.novelty_reserve_capacity
+    # Budgets are fresh, so an identical opportunity issues ordinarily again
+    # rather than needing the reserve.
+    fresh = scheduler.decide(_opportunity(track_generation_id="ordinary-generation-2", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100))
+    assert fresh.outcome == DECISION_BURST_ISSUED
+
+
+def test_benign_reconnect_does_not_clear_novelty_reserve_state() -> None:
+    """A benign transport reconnect never calls reset() at all (see
+    docs/reconnect-continuity-contract.md / camera_node_live.py) -- it is
+    simply more decide() calls with a different connection_segment_id.
+    Fairness state (recurrence groups, reserve window) must survive exactly
+    like every other piece of session-scoped scheduler state already does."""
+
+    scheduler = _scheduler(max_bursts_per_session=1, recurrence_group_cooldown_ms=60_000)
+    first = scheduler.decide(_opportunity(
+        track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10),
+        session_offset_ms=100, connection_segment_id="segment-a",
+    ))
+    _resolve(scheduler, first)
+    reserved = scheduler.decide(_opportunity(
+        track_generation_id="genuine-generation", subject_geometry=(0.70, 0.70, 0.80, 0.80), detector_score=0.9,
+        session_offset_ms=1_000, connection_segment_id="segment-a",
+    ))
+    assert reserved.outcome == DECISION_NOVELTY_RESERVE_ISSUED
+    _resolve(scheduler, reserved)
+
+    # A "reconnect" from this module's point of view is nothing more than a
+    # later opportunity carrying a new connection_segment_id -- no reset()
+    # call happens on the benign path.
+    after_reconnect = scheduler.decide(_opportunity(
+        track_generation_id="genuine-generation-2", subject_geometry=(0.70, 0.70, 0.80, 0.80), detector_score=0.9,
+        session_offset_ms=1_200, connection_segment_id="segment-b",
+    ))
+    # Still inside the reserve window and the recurrence-group cooldown, and
+    # nothing reset either -- the second, near-identical genuine sighting
+    # reads as a recurring, not-yet-novel-again duplicate of the first,
+    # exactly as it would with no reconnect involved at all.
+    assert after_reconnect.outcome == DECISION_SUPPRESSED_RECURRING_GEOMETRY
+    assert scheduler.diagnostics().novelty_reserve_issued == 1  # unchanged, not cleared
+
+
+# --------------------------------------------------------------------------
+# 32 / 33. Session-04 starvation synthetic fixture is fixed: a genuine late
+# opportunity is not suppressed solely because it arrived late.
+# --------------------------------------------------------------------------
+
+
+def test_session_04_starvation_synthetic_fixture_is_fixed() -> None:
+    """A distilled, hardware-free, synthetic replay of the real session-04
+    mechanism proven in docs/burst-scheduler-contract.md: many early,
+    low-value recurring-structure opportunities (and a couple of genuine
+    early sightings) exhaust the ordinary session budget within the first
+    slice of the session; a much later, materially novel, genuinely
+    reviewed-worthy appearance must still retain burst eligibility."""
+
+    scheduler = _scheduler(max_bursts_per_session=8, recurrence_group_cooldown_ms=60_000)
+    outcomes = []
+
+    # Several distinct "first sighting of a new static structure" bursts,
+    # spread across the first minute -- exactly the pattern that spends the
+    # ordinary budget in the real session without any suppression failure.
+    for index in range(8):
+        decision = scheduler.decide(_opportunity(
+            track_generation_id=f"structure-{index}-generation",
+            subject_geometry=(0.05 + index * 0.09, 0.05, 0.10 + index * 0.09, 0.10),
+            detector_score=0.4, session_offset_ms=1_000 + index * 5_000,
+        ))
+        if decision.should_issue:
+            _resolve(scheduler, decision)
+        outcomes.append(decision.outcome)
+    assert outcomes.count(DECISION_BURST_ISSUED) == 8
+    assert scheduler.health().session_budget_remaining == 0
+
+    # A long quiet stretch (session-04's own gap between its early activity
+    # and its late, richest appearance was hundreds of seconds), then a
+    # late, genuinely novel, spatially distinct appearance arrives.
+    late_genuine = scheduler.decide(_opportunity(
+        track_generation_id="late-genuine-generation",
+        subject_geometry=(0.70, 0.70, 0.85, 0.85), detector_score=0.85,
+        session_offset_ms=500_000,
+    ))
+    assert late_genuine.should_issue is True
+    assert late_genuine.outcome == DECISION_NOVELTY_RESERVE_ISSUED
+
+
+# --------------------------------------------------------------------------
+# 34. Ordinary late static recurrence can still be suppressed -- arriving
+# late does not, by itself, grant reserve access to a non-novel repeat.
+# --------------------------------------------------------------------------
+
+
+def test_late_static_recurrence_is_still_suppressed_not_rescued_by_reserve() -> None:
+    scheduler = _scheduler(max_bursts_per_session=1, recurrence_group_cooldown_ms=60_000)
+    first = scheduler.decide(_opportunity(track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100))
+    _resolve(scheduler, first)
+
+    # Establish the group as genuinely recurring already very late in
+    # session-relative time (300s in) -- the ordinary budget would be long
+    # exhausted by this point in a real multi-minute session.
+    _static_structure_decisions(scheduler, count=3, start_offset_ms=300_000, step_ms=1_200)
+
+    # An immediate further repeat right after -- no elapsed cooldown, no
+    # stronger evidence, no operator marker -- remains suppressed. Arriving
+    # at session-relative time ~300s does not, by itself, grant reserve
+    # access; only genuine novelty (evaluated by the unmodified recurrence
+    # rules) ever does, exactly as it would at session-relative time zero.
+    immediate_repeat = scheduler.decide(_opportunity(
+        track_generation_id="static-structure-generation-late",
+        subject_geometry=_box(), detector_score=0.05,
+        detector_confirmation_count=1, tracker_support_count=0,
+        session_offset_ms=303_700,
+    ))
+    assert immediate_repeat.outcome == DECISION_SUPPRESSED_RECURRING_GEOMETRY
+    assert immediate_repeat.should_issue is False
+
+
+# --------------------------------------------------------------------------
+# Additional focused coverage: config validation, exports, and diagnostics
+# shape for the new fields.
+# --------------------------------------------------------------------------
+
+
+def test_config_rejects_invalid_novelty_reserve_bounds() -> None:
+    with pytest.raises(BurstSchedulerError):
+        BurstSchedulerConfig(novelty_reserve_capacity=-1)
+    with pytest.raises(BurstSchedulerError):
+        BurstSchedulerConfig(novelty_reserve_window_ms=0)
+
+
+def test_novelty_reserve_decisions_are_stable_exports() -> None:
+    assert DECISION_NOVELTY_RESERVE_ISSUED in SCHEDULER_DECISIONS
+    assert DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED in SCHEDULER_DECISIONS
+    assert DECISION_NOVELTY_RESERVE_ISSUED in ISSUING_DECISIONS
+    assert DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED not in ISSUING_DECISIONS
+
+
+def test_diagnostics_and_health_partition_reserve_from_dedicated_channels() -> None:
+    scheduler = _scheduler(max_bursts_per_session=1, operator_override_reserved_bursts=1, recurrence_group_cooldown_ms=0)
+    first = scheduler.decide(_opportunity(track_generation_id="ordinary-generation", subject_geometry=(0.05, 0.05, 0.10, 0.10), session_offset_ms=100))
+    _resolve(scheduler, first)
+    override = scheduler.decide(_opportunity(track_generation_id="override-generation", subject_geometry=(0.20, 0.20, 0.25, 0.25), engineering_validation_request=True, session_offset_ms=200))
+    _resolve(scheduler, override)
+    reserved = scheduler.decide(_opportunity(track_generation_id="genuine-generation", subject_geometry=(0.70, 0.70, 0.80, 0.80), detector_score=0.9, session_offset_ms=300))
+    _resolve(scheduler, reserved)
+
+    diagnostics = scheduler.diagnostics()
+    assert diagnostics.issued_count == 3
+    assert diagnostics.novelty_reserve_issued == 1
+    assert diagnostics.engineering_overrides == 1
+    assert diagnostics.operator_overrides == 0
+    # The three channels partition issued_count with no double-count.
+    assert 1 + diagnostics.novelty_reserve_issued + diagnostics.engineering_overrides + diagnostics.operator_overrides == diagnostics.issued_count
+
+    health = scheduler.health()
+    assert 0 <= health.novelty_reserve_remaining <= scheduler.config.novelty_reserve_capacity

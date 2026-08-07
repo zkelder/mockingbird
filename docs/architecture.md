@@ -398,6 +398,47 @@ real reconnects, all classified benign with zero provider resets, and an
 unchanged product database; the burst-placement gap remains separate and
 not yet addressed.
 
+Stage 6.12 closes that burst-placement gap. Reconstructing the complete
+decision timeline for the real session-04 capture (`burst_scheduler_replay`
+against a fresh `BurstScheduler` running the unmodified Stage 6.9
+configuration) proved the exact mechanism: the session-budget gate in
+`decide()` was checked before recurrence/novelty evaluation ever ran, so
+once early-session activity exhausted the fixed 56-slot budget (at
+session-relative 439s, before the 457-551s `appearance-C` even begins),
+every later opportunity -- all 46 of `appearance-C`'s reconstructed
+opportunities -- was rejected unconditionally, regardless of novelty. A
+diagnostic replay with only that budget/rate gate lifted showed the
+existing, unmodified recurrence/novelty logic correctly recognized 38 of
+those 46 as materially novel, disproving the earlier, disclosed-as-
+unverified hypothesis that recurrence-floor bookkeeping itself was at
+fault. `mockingbird.observation.burst_scheduler` now runs
+recurrence/novelty evaluation unconditionally before any budget check
+(changing only *when*, never *whether*, a non-novel recurrence is
+rejected) and adds one small, bounded, session-relative-time rolling
+fairness reserve (`novelty_reserve_capacity` per
+`novelty_reserve_window_ms`, default 8 per 120s) that only an opportunity
+already proven not a suppressible recurrence may draw from once the
+ordinary or operator-override budget is exhausted -- a recurring,
+non-novel opportunity is rejected before ever reaching it and can never
+consume it, and engineering-validation overrides never fall back to it.
+`max_bursts_per_session`, `operator_override_reserved_bursts`,
+`max_concurrent_requests`, and `max_bursts_per_minute` remain exactly as
+absolute as before. Replayed against the real session-01-04 sessions with
+`novelty_reserve_capacity=0` reproducing the exact Stage 6.9 baseline
+byte-for-byte: session-01 (never exhausts its ordinary budget) is
+unaffected; session-02/03 already retained every reviewed appearance and
+gain materially better temporal distribution (longest starved interval
+roughly halved in both) with recurring-geometry suppression counts
+unchanged or higher; session-04's `appearance-C` moves from zero issued
+bursts to burst-eligible (genuine appearances retained: 2/3 to 3/3) while
+`appearance-A`/`appearance-B` retention is unaffected, with issued-burst
+counts moving only modestly (56 to 64 of 266 reconstructed opportunities)
+-- nowhere near the pre-Stage-6.9 123-burst/379-generation volume. It
+changes no detector, tracker confirmation policy, reconnect continuity,
+Camera Node transport, evidence scoring, saved Ignore region, or
+monitoring policy, opens no product database, and authorizes no Stage 7
+activity.
+
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
 Stream capabilities and emits only evidence-side `FramePacket`,

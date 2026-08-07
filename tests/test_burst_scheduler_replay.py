@@ -271,7 +271,14 @@ def test_replay_appearance_retained_if_any_frame_in_a_multi_frame_span_issues() 
 def test_replay_detects_missed_useful_burst_risk() -> None:
     """A frame the old system actually captured, reviewed genuine, but that
     the proposed scheduler would now suppress under a deliberately starved
-    budget -- the honest regression-risk case the report must surface."""
+    budget -- the honest regression-risk case the report must surface. The
+    Stage 6.12 fairness reserve is explicitly disabled: this test is about
+    the report's own missed-risk detection under genuine, total starvation
+    (every channel exhausted), not about the reserve's fallback behavior,
+    which test_burst_scheduler.py covers directly. Without disabling it, a
+    materially novel opportunity like this one (a brand-new recurrence
+    group) would correctly be rescued by the reserve -- proving the exact
+    Stage 6.12 fix this scenario predates."""
 
     frames = [_frame(
         "budget-consumer", 1, source_offset_ms=500, trigger_reasons=["shadow_track_event", "high_resolution_burst"],
@@ -285,13 +292,41 @@ def test_replay_detects_missed_useful_burst_risk() -> None:
         "schema_version": 1, "frames": [_annotation_frame("reviewed-genuine")],
         "appearances": [_appearance("appearance-starved", "reviewed-genuine")],
     }
-    config = BurstSchedulerConfig(max_bursts_per_session=1, operator_override_reserved_bursts=0)
+    config = BurstSchedulerConfig(max_bursts_per_session=1, operator_override_reserved_bursts=0, novelty_reserve_capacity=0)
 
     report = replay_burst_schedule(manifest, session_id="session-starved", config=config, annotation=annotation)
     assert report.genuine_appearance_reviewed == 1
     assert report.genuine_appearance_retained == 0
     assert report.genuine_appearance_lost == ("appearance-starved",)
     assert "appearance-starved" in report.missed_useful_burst_risk
+
+
+def test_replay_rescues_genuine_appearance_via_novelty_reserve() -> None:
+    """The same scenario as test_replay_detects_missed_useful_burst_risk
+    above, but with the Stage 6.12 fairness reserve at its default capacity:
+    the materially novel reviewed appearance is no longer lost merely
+    because an earlier, unrelated opportunity happened to exhaust the
+    ordinary budget first."""
+
+    frames = [_frame(
+        "budget-consumer", 1, source_offset_ms=500, trigger_reasons=["shadow_track_event", "high_resolution_burst"],
+        track_generation_ids=["consumer-generation"], detection_boxes=[(0.05, 0.05, 0.10, 0.10, 0.9)], high_resolution=True,
+    ), _frame(
+        "reviewed-genuine", 2, source_offset_ms=1_000, trigger_reasons=["shadow_track_event", "high_resolution_burst"],
+        track_generation_ids=["genuine-generation"], detection_boxes=[(*STATIC_BOX, 0.8)], high_resolution=True,
+    )]
+    manifest = _manifest(frames)
+    annotation = {
+        "schema_version": 1, "frames": [_annotation_frame("reviewed-genuine")],
+        "appearances": [_appearance("appearance-rescued", "reviewed-genuine")],
+    }
+    config = BurstSchedulerConfig(max_bursts_per_session=1, operator_override_reserved_bursts=0)
+
+    report = replay_burst_schedule(manifest, session_id="session-rescued", config=config, annotation=annotation)
+    assert report.genuine_appearance_reviewed == 1
+    assert report.genuine_appearance_retained == 1
+    assert report.genuine_appearance_lost == ()
+    assert "appearance-rescued" not in report.missed_useful_burst_risk
 
 
 # --------------------------------------------------------------------------

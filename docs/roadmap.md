@@ -309,6 +309,41 @@ unchanged `reconnect_continuity` decision module and still fully reset. It
 changes no detector, tracker confirmation policy, burst-scheduler policy,
 evidence scoring, or monitoring policy and authorizes no Stage 7 activity;
 the burst-placement gap remains the next separate issue.
+Stage 6.12 closes that burst-placement gap with late-session evidence-burst
+fairness and a bounded novelty reserve, described in
+[burst-scheduler-contract.md](burst-scheduler-contract.md). Reconstructing
+the complete burst-decision timeline for the real session-04 capture
+proved the exact starvation mechanism, correcting Stage 6.10's own
+disclosed-as-unverified hypothesis: the Stage 6.9 session-budget gate was
+checked before recurrence/novelty evaluation ever ran, so once
+early-session activity exhausted the fixed 56-slot budget (at
+session-relative 439s) every later opportunity -- all 46 reconstructed for
+the session's richest, latest, two-simultaneous-bird reviewed appearance
+(`appearance-C`, 457-551s) -- was rejected unconditionally regardless of
+novelty; a diagnostic replay with only that gate lifted showed the
+existing, unmodified recurrence/novelty logic already correctly recognized
+38 of those 46 as materially novel. `burst_scheduler.decide()` now
+evaluates recurrence/novelty unconditionally before any budget check
+(changing only *when*, never *whether*, a non-novel recurrence is
+rejected) and adds one small, bounded, session-relative-time rolling
+fairness reserve that only an opportunity already proven not a
+suppressible recurrence may draw from once the ordinary or
+operator-override budget is exhausted; a recurring, non-novel opportunity
+can never consume it, and the existing `max_bursts_per_session`,
+`operator_override_reserved_bursts`, `max_concurrent_requests`, and
+`max_bursts_per_minute` safety bounds remain exactly as absolute as
+before. Replayed against the real session-01-04 sessions: session-01 is
+unaffected (never exhausts its ordinary budget), session-02/03 already
+retained every reviewed appearance and gain materially better temporal
+distribution with recurring-geometry suppression unchanged or higher, and
+session-04's `appearance-C` moves from zero issued bursts to
+burst-eligible (genuine appearances retained: 2/3 to 3/3) with only a
+modest, reserve-attributed issued-burst increase (56 to 64 of 266
+reconstructed opportunities) nowhere near the pre-Stage-6.9
+123-burst/379-generation volume. It changes no detector, tracker
+confirmation policy, reconnect continuity, Camera Node transport, evidence
+scoring, saved Ignore region, or monitoring policy, opens no product
+database, and authorizes no Stage 7 activity.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

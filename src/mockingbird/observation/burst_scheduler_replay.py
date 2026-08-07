@@ -23,6 +23,7 @@ import hashlib
 import json
 
 from mockingbird.observation.burst_scheduler import (
+    ISSUING_DECISIONS,
     BurstDecision,
     BurstOpportunity,
     BurstScheduler,
@@ -482,9 +483,11 @@ def _score_annotation(
     )
 
 
-_ISSUING_OUTCOMES = frozenset((
-    "burst_issued", "operator_override_issued", "engineering_override_issued", "retry_issued",
-))
+# Stage 6.12: reuse the scheduler module's own ISSUING_DECISIONS rather than
+# a second, hand-maintained copy -- the earlier hardcoded duplicate silently
+# missed DECISION_NOVELTY_RESERVE_ISSUED and under-reported genuine-
+# appearance retention until this fix.
+_ISSUING_OUTCOMES = ISSUING_DECISIONS
 
 
 __all__ = [

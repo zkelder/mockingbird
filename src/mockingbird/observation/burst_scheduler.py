@@ -26,6 +26,32 @@ novelty rules. Every semantic decision uses source/session-relative time
 `decide()`. This module never creates or mutates any reviewed, product, or
 monitoring-policy record of any kind, and it never alters detector, tracker,
 or shadow-proposal output -- it only decides whether to *attempt* a burst.
+
+Stage 6.12 adds late-session fairness (see docs/burst-scheduler-contract.md's
+Stage 6.12 section). Real session-04 replay proved the exact starvation
+mechanism: the ordinary session budget (`max_bursts_per_session`) was a
+single, undifferentiated, first-come-first-served counter checked *before*
+recurrence/novelty evaluation ever ran, so once early-session activity (a mix
+of genuine sightings and many distinct structures' first-ever appearances)
+exhausted it, every later opportunity was rejected outright -- regardless of
+novelty -- because the recurrence/novelty machinery that would have
+recognized a later genuinely novel subject was never even reached. The fix
+does not touch that machinery (proven correct by a diagnostic replay with the
+budget gate lifted: the existing novelty signals correctly recognized the
+starved appearance as novel). It only changes *when* the budget check runs
+(after recurrence/novelty evaluation, not before) and adds one small,
+bounded, session-relative-time rolling reserve (`novelty_reserve_capacity`
+per `novelty_reserve_window_ms`) that an opportunity may draw from once the
+ordinary budget is exhausted, but only if this exact call already proved --
+using the unchanged recurrence/novelty rules -- that the opportunity is not a
+suppressible recurrence. A recurring, non-novel opportunity is rejected
+before ever reaching the reserve and can never consume it. The ordinary
+budget and the operator/engineering override reserve remain exactly as
+absolute and non-renewing as before; only the new reserve replenishes over
+session-relative time, which is what lets a session of unknown final
+duration keep offering *some* bounded, fair access to genuinely novel late
+activity instead of a hard, permanent cutoff the moment early activity
+happens to exhaust a fixed lifetime total.
 """
 from __future__ import annotations
 
@@ -35,7 +61,7 @@ import hashlib
 import json
 from typing import NamedTuple
 
-SCHEDULER_VERSION = "burst-scheduler-v1"
+SCHEDULER_VERSION = "burst-scheduler-v2"
 
 # --------------------------------------------------------------------------
 # Stable decision outcomes
@@ -52,6 +78,21 @@ DECISION_OPERATOR_OVERRIDE_ISSUED = "operator_override_issued"
 DECISION_ENGINEERING_OVERRIDE_ISSUED = "engineering_override_issued"
 DECISION_RETRY_ISSUED = "retry_issued"
 DECISION_BURST_UNAVAILABLE = "burst_unavailable"
+# Stage 6.12: issued from the bounded, replenishing fairness reserve once the
+# ordinary (or, for an operator marker, the override) budget is exhausted --
+# only ever reached by an opportunity already proven not to be a suppressible
+# recurrence by the unchanged novelty logic. Kept explicitly distinct from
+# DECISION_BURST_ISSUED so a reviewer can always tell fairness-reserve
+# issuance apart from ordinary issuance, matching how overrides are already
+# distinguished.
+DECISION_NOVELTY_RESERVE_ISSUED = "novelty_reserve_issued"
+# Stage 6.12: the opportunity was proven materially novel (or a brand-new
+# recurrence group) -- it would have issued if any budget had room -- but
+# both its ordinary/override channel and the fairness reserve are currently
+# exhausted. Kept distinct from DECISION_SUPPRESSED_SESSION_BUDGET so a
+# reviewer can tell "the reserve itself is momentarily empty" apart from "no
+# channel was ever eligible to try it."
+DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED = "suppressed_novelty_reserve_exhausted"
 
 SCHEDULER_DECISIONS: tuple[str, ...] = (
     DECISION_BURST_ISSUED,
@@ -65,6 +106,8 @@ SCHEDULER_DECISIONS: tuple[str, ...] = (
     DECISION_ENGINEERING_OVERRIDE_ISSUED,
     DECISION_RETRY_ISSUED,
     DECISION_BURST_UNAVAILABLE,
+    DECISION_NOVELTY_RESERVE_ISSUED,
+    DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED,
 )
 
 # Outcomes for which a caller must actually attempt the burst.
@@ -73,6 +116,7 @@ ISSUING_DECISIONS = frozenset((
     DECISION_OPERATOR_OVERRIDE_ISSUED,
     DECISION_ENGINEERING_OVERRIDE_ISSUED,
     DECISION_RETRY_ISSUED,
+    DECISION_NOVELTY_RESERVE_ISSUED,
 ))
 
 # --------------------------------------------------------------------------
@@ -310,6 +354,17 @@ class BurstSchedulerConfig:
     motion_change_threshold: float = 0.15
     temporal_support_delta: int = 2
     default_estimated_burst_bytes: int = 1_000_000
+    # Stage 6.12 fairness reserve: bounded, session-relative-time rolling
+    # capacity for opportunities the recurrence/novelty logic above has
+    # already independently proven are not a suppressible recurrence, once
+    # the ordinary (or operator-override) budget is exhausted. Recurring,
+    # non-novel opportunities never reach this -- they are already rejected
+    # by _evaluate_recurrence before any budget/reserve check runs. Sized
+    # well under max_bursts_per_minute (its own steady-state rate is capped
+    # at 8 per 120s, versus the 30/min ordinary+reserve ceiling that still
+    # applies on top of it), so it can never itself cause a burst storm.
+    novelty_reserve_capacity: int = 8
+    novelty_reserve_window_ms: int = 120_000
 
     def __post_init__(self) -> None:
         bounds = (
@@ -328,6 +383,8 @@ class BurstSchedulerConfig:
             (self.max_tracked_generations, 1, 10_000),
             (self.temporal_support_delta, 0, 1_000),
             (self.default_estimated_burst_bytes, 1, 50_000_000),
+            (self.novelty_reserve_capacity, 0, 1_000),
+            (self.novelty_reserve_window_ms, 1_000, 3_600_000),
         )
         if any(not (lo <= value <= hi) for value, lo, hi in bounds):
             raise BurstSchedulerError("invalid_burst_scheduler_config")
@@ -403,6 +460,11 @@ class BurstSchedulerDiagnostics:
     evidence_candidates_retained: int
     subjects_suppressed_without_burst: int
     limitations: tuple[str, ...]
+    # Stage 6.12: how many of issued_count came from the fairness reserve
+    # specifically (a subset of issued_count, not additional to it), so a
+    # reviewer can separate ordinary/override volume from fairness-driven
+    # late-session access without re-deriving it from decision_history().
+    novelty_reserve_issued: int = 0
 
 
 @dataclass(frozen=True)
@@ -416,6 +478,10 @@ class BurstSchedulerHealth:
     degraded: bool
     burst_capability_available: bool
     last_sanitized_failure: str | None
+    # Stage 6.12: current instantaneous remaining capacity in the rolling
+    # fairness reserve (0..novelty_reserve_capacity), mirroring how
+    # session_budget_remaining reports the ordinary channel.
+    novelty_reserve_remaining: int = 0
 
 
 # --------------------------------------------------------------------------
@@ -492,6 +558,13 @@ class BurstScheduler:
         self._active_requests: dict[str, _ActiveRequest] = {}
         self._history: deque[BurstDecision] = deque(maxlen=self.config.max_decision_history)
         self._rate_window: deque[int] = deque(maxlen=4096)
+        # Stage 6.12: a second, independent rolling window (same shape as
+        # _rate_window, deliberately not reusing it -- the fairness reserve
+        # and the pathological-storm rate budget answer different questions
+        # and must stay separately bounded) tracking only reserve-channel
+        # issuances, for _novelty_reserve_available()'s replenishment rule.
+        self._novelty_reserve_window: deque[int] = deque(maxlen=4096)
+        self._novelty_reserve_issued = 0
         self._observed_byte_sizes: deque[int] = deque(maxlen=32)
         self._latencies_ms: deque[int] = deque(maxlen=128)
         self._suppression_counters: dict[str, int] = {}
@@ -545,10 +618,6 @@ class BurstScheduler:
         if len(self._active_requests) >= self.config.max_concurrent_requests:
             return self._log(opportunity, self._decision(opportunity, DECISION_SUPPRESSED_ACTIVE_REQUEST, should_issue=False, now_ms=now_ms))
 
-        hard_cap = self.config.max_bursts_per_session + (self.config.operator_override_reserved_bursts if is_override else 0)
-        if self._issued_count >= hard_cap:
-            return self._log(opportunity, self._decision(opportunity, DECISION_SUPPRESSED_SESSION_BUDGET, should_issue=False, now_ms=now_ms))
-
         if not is_override and self._rate_window_count(now_ms) >= self.config.max_bursts_per_minute:
             return self._log(opportunity, self._decision(opportunity, DECISION_SUPPRESSED_RATE_BUDGET, should_issue=False, now_ms=now_ms))
 
@@ -557,6 +626,16 @@ class BurstScheduler:
             if elapsed < self.config.minimum_burst_interval_ms:
                 return self._log(opportunity, self._decision(opportunity, DECISION_SUPPRESSED_SAME_TRACK_GENERATION, should_issue=False, now_ms=now_ms))
 
+        # Stage 6.12: recurrence/novelty evaluation always runs before any
+        # budget/reserve check below (previously the session-budget check
+        # short-circuited here, so a late opportunity could never even be
+        # evaluated for novelty once the ordinary budget ran out -- proven,
+        # via real session-04 replay, to be the exact mechanism that zeroed
+        # out burst access for the session's richest late appearance; see
+        # docs/burst-scheduler-contract.md). This changes only *when* a
+        # recurring, non-novel opportunity is rejected relative to the
+        # budget checks below, never *whether* -- _evaluate_recurrence
+        # itself is unmodified.
         group, is_new_group = self._find_or_create_group(opportunity, now_ms=now_ms)
         novelty: tuple[str, ...] = ()
         recurrence_group_id = group.group_id if group is not None else None
@@ -576,7 +655,49 @@ class BurstScheduler:
                 ))
             novelty = signals
 
+        # -- Safety budget (absolute, per channel, unchanged sizes/meaning)
+        # versus fairness allocation. Every opportunity reaching this point
+        # has already been proven, by the unmodified logic above, not to be
+        # a suppressible recurrence -- what differs by channel is only which
+        # bounded pool of temporary evidence capacity it may draw from.
+        # max_bursts_per_session and operator_override_reserved_bursts are
+        # exactly as absolute and non-renewing as before this stage; only
+        # the fairness reserve (checked as a fallback, never a replacement)
+        # replenishes over session-relative time.
+        ordinary_cap = self.config.max_bursts_per_session
+        override_cap = ordinary_cap + self.config.operator_override_reserved_bursts
+        using_reserve = False
+
+        if is_override:
+            if self._issued_count >= override_cap:
+                # This override's own dedicated allowance is exhausted. Only
+                # an operator wildlife marker (never an engineering request)
+                # may fall back to the fairness reserve -- proven necessary
+                # by real session-04 data, where the dedicated 6-slot
+                # override reserve alone was fully consumed before the
+                # session's own operator-marked late appearance arrived.
+                if not is_operator or not self._novelty_reserve_available(now_ms):
+                    return self._log(opportunity, self._decision(
+                        opportunity, DECISION_SUPPRESSED_SESSION_BUDGET, should_issue=False, now_ms=now_ms,
+                        recurrence_group_id=recurrence_group_id,
+                    ))
+                using_reserve = True
+        elif self._issued_count >= ordinary_cap:
+            if not self._novelty_reserve_available(now_ms):
+                return self._log(opportunity, self._decision(
+                    opportunity, DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED, should_issue=False, now_ms=now_ms,
+                    recurrence_group_id=recurrence_group_id, novelty_signals=novelty,
+                ))
+            using_reserve = True
+
+        # using_reserve takes priority over the operator-override outcome:
+        # an operator marker whose own dedicated allowance is exhausted and
+        # who is only issuing because the fairness reserve had room must be
+        # labeled as such, not silently counted as ordinary dedicated-
+        # allowance usage -- the whole point of a bounded reserve is that a
+        # reviewer can always tell which channel actually paid for a burst.
         outcome = (
+            DECISION_NOVELTY_RESERVE_ISSUED if using_reserve else
             DECISION_OPERATOR_OVERRIDE_ISSUED if is_operator else
             DECISION_ENGINEERING_OVERRIDE_ISSUED if is_engineering else
             DECISION_RETRY_ISSUED if is_retry_eligible else
@@ -597,9 +718,20 @@ class BurstScheduler:
         self._active_requests[request_id] = _ActiveRequest(opportunity.track_generation_id, recurrence_group_id, now_ms)
         self._issued_count += 1
         self._rate_window.append(now_ms)
-        if is_operator:
+        if using_reserve:
+            # Mutually exclusive with the two counters below, mirroring the
+            # outcome field exactly: a reserve-funded operator-marker
+            # fallback is counted here, not also as ordinary dedicated-
+            # allowance usage, so operator_overrides + engineering_overrides
+            # + novelty_reserve_issued + retry/ordinary counts partition
+            # issued_count with no double-count. novelty_signals still
+            # records NOVELTY_OPERATOR_MARKER for that case, so *why* it
+            # issued remains fully visible alongside *which pool* paid for it.
+            self._novelty_reserve_window.append(now_ms)
+            self._novelty_reserve_issued += 1
+        elif is_operator:
             self._operator_overrides += 1
-        if is_engineering:
+        elif is_engineering:
             self._engineering_overrides += 1
         if group is not None:
             group.issued_count += 1
@@ -652,6 +784,8 @@ class BurstScheduler:
         self._active_requests.clear()
         self._history.clear()
         self._rate_window.clear()
+        self._novelty_reserve_window.clear()
+        self._novelty_reserve_issued = 0
         self._observed_byte_sizes.clear()
         self._latencies_ms.clear()
         self._suppression_counters.clear()
@@ -702,6 +836,7 @@ class BurstScheduler:
                 1 for state in self._generations.values() if state.ever_suppressed and not state.ever_issued
             ),
             limitations=limitations,
+            novelty_reserve_issued=self._novelty_reserve_issued,
         )
 
     def health(self) -> BurstSchedulerHealth:
@@ -709,6 +844,7 @@ class BurstScheduler:
         rate_count = self._rate_window_count(reference)
         per_minute = rate_count * (60_000 / self.config.rate_window_ms)
         degraded = self._degraded()
+        reserve_remaining = max(0, self.config.novelty_reserve_capacity - self._novelty_reserve_used_count(reference))
         return BurstSchedulerHealth(
             state="degraded" if degraded else ("running" if self._call_index else "idle"),
             active_requests=len(self._active_requests),
@@ -719,6 +855,7 @@ class BurstScheduler:
             degraded=degraded,
             burst_capability_available=self._burst_available,
             last_sanitized_failure=self._last_sanitized_failure,
+            novelty_reserve_remaining=reserve_remaining,
         )
 
     def recurrence_groups(self) -> tuple[RecurrenceGroupSnapshot, ...]:
@@ -791,6 +928,21 @@ class BurstScheduler:
         while self._rate_window and self._rate_window[0] < threshold:
             self._rate_window.popleft()
         return len(self._rate_window)
+
+    def _novelty_reserve_used_count(self, now_ms: int) -> int:
+        """Purge entries older than the rolling reserve window and return
+        how many reserve issuances remain within it -- the same purge-on-
+        read shape as _rate_window_count, deliberately a separate window
+        (see __init__) so the fairness reserve and the pathological-storm
+        rate budget never share bookkeeping."""
+
+        threshold = now_ms - self.config.novelty_reserve_window_ms
+        while self._novelty_reserve_window and self._novelty_reserve_window[0] < threshold:
+            self._novelty_reserve_window.popleft()
+        return len(self._novelty_reserve_window)
+
+    def _novelty_reserve_available(self, now_ms: int) -> bool:
+        return self._novelty_reserve_used_count(now_ms) < self.config.novelty_reserve_capacity
 
     def _purge_expired_groups(self, now_ms: int) -> None:
         expired = [
@@ -901,9 +1053,11 @@ __all__ = [
     "DECISION_BURST_UNAVAILABLE",
     "DECISION_DEFERRED_COOLDOWN",
     "DECISION_ENGINEERING_OVERRIDE_ISSUED",
+    "DECISION_NOVELTY_RESERVE_ISSUED",
     "DECISION_OPERATOR_OVERRIDE_ISSUED",
     "DECISION_RETRY_ISSUED",
     "DECISION_SUPPRESSED_ACTIVE_REQUEST",
+    "DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED",
     "DECISION_SUPPRESSED_RATE_BUDGET",
     "DECISION_SUPPRESSED_RECURRING_GEOMETRY",
     "DECISION_SUPPRESSED_SAME_TRACK_GENERATION",
