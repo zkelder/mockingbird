@@ -220,6 +220,34 @@ async def test_deterministic_letterbox_normalization_order_bounds_and_close(tmp_
 
 
 @pytest.mark.anyio
+async def test_detection_observation_retains_source_frame_lineage(tmp_path: Path) -> None:
+    """(5) A `DetectionObservation` built from a `FramePacket` that carries
+    reviewed source-lineage provenance (Stage 6.14) retains that provenance
+    explicitly, distinct from its own `frame_id` -- and stays `None` for an
+    ordinary frame with no such provenance, exactly like every other
+    detector-output fact this test file already covers."""
+
+    from dataclasses import replace
+
+    _, bundle = _bundle(tmp_path)
+    output = np.asarray([[[0.0, 0.0, 4.0, 4.0, 0.90, 0]]], dtype=np.float32)
+    session = FakeSession([output])
+    provider = OnnxCudaObservationProvider(runtime=FakeRuntime(session), bundle=bundle)
+    provider.load()
+
+    plain = _frame(tmp_path)
+    lineage = replace(plain, source_capture_frame_id="reviewed-frame-1", source_content_hash="hash-1")
+
+    plain_result = (await provider.replay_frames((plain,)))[0]
+    lineage_result = (await provider.replay_frames((lineage,)))[0]
+    assert plain_result.detection_observations[0].source_capture_frame_id is None
+    detection = lineage_result.detection_observations[0]
+    assert detection.source_capture_frame_id == "reviewed-frame-1"
+    assert detection.frame_id == plain.frame_id  # the replay-local identity is unaffected
+    provider.close()
+
+
+@pytest.mark.anyio
 async def test_live_payload_is_decoded_and_privacy_regions_are_masked(tmp_path: Path) -> None:
     _, bundle = _bundle(tmp_path)
     image = BytesIO()

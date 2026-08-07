@@ -612,6 +612,7 @@ def _observation(
         bounding_box=box,
         class_source_label=str(class_index),
         is_animal=label in bundle.animal_classes,
+        source_capture_frame_id=frame.source_capture_frame_id,
     )
 
 

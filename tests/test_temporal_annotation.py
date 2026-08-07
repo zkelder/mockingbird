@@ -525,7 +525,8 @@ def test_replay_export_matches_the_flat_top_level_schema_replay_io_actually_load
         export["input_id"], export["stream_id"], export["width"], export["height"], export["nominal_fps"],
         tuple(
             # Mirrors exactly what replay_io.load_replay_bundle reads,
-            # including the Stage 6.8 reconnect-safe provenance fields.
+            # including the Stage 6.8 reconnect-safe provenance fields and
+            # the Stage 6.14 reviewed-source-lineage fields.
             ReplayFrame(
                 item["index"], item["source_offset_ms"], item["content_hash"], item["path"],
                 tuple(tuple(box) for box in item.get("analysis_excluded_regions", ())),
@@ -536,6 +537,9 @@ def test_replay_export_matches_the_flat_top_level_schema_replay_io_actually_load
                 provider_generation=item.get("provider_generation"),
                 temporal_discontinuity=bool(item.get("temporal_discontinuity", False)),
                 temporal_uncertainty_ms=item.get("temporal_uncertainty_ms"),
+                source_capture_frame_id=item.get("source_capture_frame_id"),
+                source_capture_session_id=item.get("source_capture_session_id"),
+                session_sequence=item.get("session_sequence"),
             )
             for item in export["frames"]
         ),
@@ -672,6 +676,67 @@ def test_replay_export_refuses_a_manifest_with_insufficient_temporal_provenance(
     session["session_timeline_classification"] = "insufficient_temporal_provenance"
     with pytest.raises(TemporalAnnotationError, match="replay_export_requires_session_timeline"):
         build_replay_export(session, annotations)
+
+
+# --------------------------------------------------------------------------
+# Stage 6.14: reviewed-to-replay evidence identity lineage
+# --------------------------------------------------------------------------
+
+
+def test_replay_export_places_the_reviewed_frame_id_into_the_replay_frame_lineage_contract() -> None:
+    """(1, 20/22 cross-check) `build_replay_export` explicitly places the
+    original reviewed `frame_id` -- what a human annotation actually refers
+    to -- into each exported replay frame's own `source_capture_frame_id`,
+    alongside the session identity and session-timeline sequence, rather
+    than only implying it through the `path` string (never a valid join
+    key). The Stage 6.8 high-resolution exclusion rule keeps applying
+    unchanged: an excluded frame contributes no replay frame and therefore
+    no source lineage entry either."""
+
+    session = _session((
+        _record("f1", 0, 0, session_sequence=0, session_offset_ms=0, animal_detection_count=1),
+        _record("f2", 1, 1000, session_sequence=1, session_offset_ms=1000, animal_detection_count=0),
+        _record("burst", 2, 1500, session_sequence=2, session_offset_ms=1500, high_resolution=True),
+    ), session_id="session-lineage-1")
+    annotations = AnnotationSet(1, "session-lineage-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.3, 0.3, 0.5, 0.5)),), provenance=_provenance()),
+        FrameAnnotation("f2", whole_frame_truth="no", provenance=_provenance()),
+    ))
+
+    export = build_replay_export(session, annotations)
+
+    assert len(export["frames"]) == 2  # the high-resolution burst frame stays excluded, unchanged
+    by_index = {item["index"]: item for item in export["frames"]}
+    assert by_index[0]["source_capture_frame_id"] == "f1"
+    assert by_index[0]["source_capture_session_id"] == "session-lineage-1"
+    assert by_index[0]["session_sequence"] == 0
+    assert by_index[1]["source_capture_frame_id"] == "f2"
+    assert by_index[1]["source_capture_session_id"] == "session-lineage-1"
+    assert by_index[1]["session_sequence"] == 1
+    # Distinct identity spaces: the replay-frame `path`/`index` are never
+    # the join key, and the original frame_id is not derivable from them
+    # without this explicit field.
+    assert by_index[0]["path"] == "images/f1.jpg"
+
+
+def test_replay_export_source_lineage_survives_alongside_privacy_ignore_regions() -> None:
+    """(23) Reviewed source lineage and the existing Privacy/Ignore
+    `analysis_excluded_regions` export are independent, both-present facts
+    on the same exported frame -- neither addition displaced the other."""
+
+    session = _session(
+        (_record("f1", 0, 0, session_sequence=0, session_offset_ms=0),),
+        session_id="session-privacy-1",
+        config=_config(privacy_ignore_regions=((0.1, 0.1, 0.4, 0.4),)),
+    )
+    annotations = AnnotationSet(1, "session-privacy-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.5, 0.5, 0.6, 0.6)),), provenance=_provenance()),
+    ))
+    export = build_replay_export(session, annotations)
+    frame = export["frames"][0]
+    assert list(frame["analysis_excluded_regions"][0]) == [0.1, 0.1, 0.4, 0.4]
+    assert frame["source_capture_frame_id"] == "f1"
+    assert frame["source_capture_session_id"] == "session-privacy-1"
 
 
 # --------------------------------------------------------------------------

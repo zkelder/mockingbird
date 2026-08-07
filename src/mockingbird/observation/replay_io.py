@@ -66,6 +66,11 @@ def load_replay_bundle(frames_directory: Path, manifest_path: Path) -> ReplayBun
             provider_generation=_optional_string(item, "provider_generation"),
             temporal_discontinuity=_optional_bool(item, "temporal_discontinuity"),
             temporal_uncertainty_ms=_optional_int(item, "temporal_uncertainty_ms"),
+            # Stage 6.14 reviewed-source lineage: all optional, absent on
+            # any manifest written before this stage existed.
+            source_capture_frame_id=_optional_string(item, "source_capture_frame_id"),
+            source_capture_session_id=_optional_string(item, "source_capture_session_id"),
+            session_sequence=_optional_int(item, "session_sequence"),
         ))
     replay = ReplayInput(_require_string(document, "input_id"), _require_string(document, "stream_id"),
                          width, height, _require_number(document, "nominal_fps", minimum=0.000001), tuple(frames))

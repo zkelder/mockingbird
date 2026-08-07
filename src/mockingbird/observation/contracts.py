@@ -13,7 +13,21 @@ from typing import Literal, Protocol
 
 @dataclass(frozen=True)
 class FramePacket:
-    """A bounded path/reference or transient payload with provider-neutral identity."""
+    """A bounded path/reference or transient payload with provider-neutral identity.
+
+    `frame_id` is this packet's own identity in whatever space produced it --
+    for a deterministic replay input that is a replay-local, input-fingerprint
+    -derived identity (see `replay.ReplayInput.packets()`), never an absolute
+    path. `source_capture_frame_id`/`source_content_hash` are separate,
+    optional, additive provenance: when this packet was produced by replaying
+    reviewed Stage 6.6/6.8 temporal-review capture data, they carry the
+    *original* retained Camera Node frame's stable identity/content hash --
+    the identity a human reviewer's annotation actually refers to -- so a
+    consumer can join back to reviewed truth without ever needing
+    `frame_id`/`media_asset_id` to double as that identity. Both stay `None`
+    for a generic replay input with no reviewed-capture provenance, or for a
+    pre-Stage-6.14 caller; see docs/reviewed-replay-lineage-contract.md.
+    """
 
     stream_id: str
     media_asset_id: str
@@ -31,11 +45,18 @@ class FramePacket:
     received_at: datetime | None = None
     provider_generation: str | None = None
     timing_facts: tuple[tuple[str, str | int | float | bool | None], ...] = ()
+    source_capture_frame_id: str | None = None
+    source_content_hash: str | None = None
 
 
 @dataclass(frozen=True)
 class DetectionObservation:
-    """Untrusted, provider-neutral detector evidence; never reviewed truth."""
+    """Untrusted, provider-neutral detector evidence; never reviewed truth.
+
+    `source_capture_frame_id` is the same optional, additive reviewed-
+    provenance fact described on `FramePacket` -- the original captured
+    frame this detection's own `frame_id` was replayed from, when known.
+    """
 
     detector_id: str
     label: str
@@ -49,11 +70,20 @@ class DetectionObservation:
     bounding_box: tuple[float, float, float, float] | None = None
     class_source_label: str | None = None
     is_animal: bool | None = None
+    source_capture_frame_id: str | None = None
 
 
 @dataclass(frozen=True)
 class TrackUpdate:
-    """Temporal-support evidence for a provider-neutral track generation."""
+    """Temporal-support evidence for a provider-neutral track generation.
+
+    `supporting_source_capture_frame_ids` mirrors `supporting_frame_ids` in
+    the same optional, additive reviewed-provenance space `FramePacket`
+    describes: the original captured frame identities behind every replay
+    frame this track generation has genuinely observed so far, deduplicated
+    independently of `supporting_frame_ids` (present only for the frames
+    that actually carried known source lineage).
+    """
 
     track_id: str
     generation_id: str
@@ -73,11 +103,22 @@ class TrackUpdate:
     detector_provenance: str | None = None
     tracker_provenance: str | None = None
     terminal_reason: str | None = None
+    supporting_source_capture_frame_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class EvidenceCandidate:
-    """A candidate media reference and its role, before durable product promotion."""
+    """A candidate media reference and its role, before durable product promotion.
+
+    `source_capture_frame_id`/`source_content_hash` are the same optional,
+    additive reviewed-provenance facts described on `FramePacket`: the
+    original captured frame this candidate's own `frame_id`/`media_asset_id`
+    were replayed from, when known. They never replace `frame_id` (which
+    remains this candidate's own replay/source identity) -- they are the
+    explicit bridge a truth-joining consumer (for example the evidence
+    benchmark) uses instead of assuming `frame_id` doubles as reviewed truth's
+    identity.
+    """
 
     media_asset_id: str
     stream_id: str
@@ -94,11 +135,19 @@ class EvidenceCandidate:
     quality_facts: tuple[tuple[str, float | int | bool | str | None], ...] = ()
     temporary: bool = True
     shadow_only: bool = True
+    source_capture_frame_id: str | None = None
+    source_content_hash: str | None = None
 
 
 @dataclass(frozen=True)
 class VisitProposal:
-    """An unpersisted proposal for existing Visit assembly to consider."""
+    """An unpersisted proposal for existing Visit assembly to consider.
+
+    `supporting_source_capture_frame_ids` mirrors `supporting_frame_ids` in
+    the same optional, additive reviewed-provenance space `TrackUpdate`
+    describes -- the original captured frame identities supporting this
+    proposal, when known.
+    """
 
     proposal_key: str
     source_id: str
@@ -118,6 +167,7 @@ class VisitProposal:
     terminal_reason: str | None = None
     provider_key: str | None = None
     provider_version: str | None = None
+    supporting_source_capture_frame_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -365,6 +365,40 @@ truth in this historical corpus). It opens no product database and
 authorizes no Stage 7 activity; the next representative shadow-acceptance
 rerun can regenerate this artifact directly instead of hand-built descriptive
 analysis, but Stage 7 remains blocked pending that rerun.
+Stage 6.13's own real evaluation disclosed exactly one remaining integration
+gap: a replay produced through `replay-benchmark` assigns each frame a
+replay-derived identity distinct from the original reviewed `frame_id`, so
+reviewed truth could not link to a replay-sourced `EvidenceCandidate` even
+when both referred to the same captured frame. Stage 6.14 closes that
+lineage gap, described in
+[reviewed-replay-lineage-contract.md](reviewed-replay-lineage-contract.md):
+the original reviewed frame identity now propagates, as optional additive
+provenance alongside every existing replay-local identity, from
+`temporal_annotation.build_replay_export` through `FramePacket`,
+`DetectionObservation`, `TrackUpdate`, `EvidenceCandidate`, and
+`VisitProposal`, and `evidence_benchmark`'s join now uses that explicit
+identity -- never coincidental equality, filename, ordering, timestamp, or
+geometry -- refusing rather than guessing on a hash mismatch or unknown
+source reference. Real evaluation against session-04's reviewed packet and a
+freshly produced real-CUDA replay, run from two independent absolute
+filesystem roots, reproduced byte-identical semantic fingerprints at every
+layer and the exact pre-existing Stage 6.11/6.12 tracker counts (57 started,
+28 confirmed); 25 of 28 replay-sourced episodes' selected evidence joined
+directly to reviewed truth, moving `useful_identification_rate` from a
+manifest-only 0.143 to a replay-informed 0.176 and
+`episodes_with_identification_candidate` from 31 to 56, while
+`selected_identification_correctness`/`selected_context_correctness`
+honestly remain `not_evaluated` -- this corpus never recorded a reviewer's
+preferred-candidate truth, and lineage makes a join possible without
+inventing that judgment. Session-01/02 spot-checks confirmed the mechanism
+generalizes (100% detection/evidence-candidate lineage propagation in both;
+session-02 reproduced zero confirmed proposals byte-identical to its own
+existing Stage 6.11 record, an unrelated pre-existing fact). A structural
+no-write proof before and after the whole campaign found an unchanged
+SQLite hash/size and every tracked table row count. It changes no detector,
+tracker, reconnect, burst-scheduler, or evidence-scoring behavior and
+authorizes no Stage 7 activity; the representative Stage 6.10 rerun remains
+separate and not yet run, now unblocked at the tooling level.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

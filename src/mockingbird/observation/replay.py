@@ -60,6 +60,30 @@ def _replay_frame_timeline_facts(frame: "ReplayFrame") -> dict[str, object]:
     return facts
 
 
+def _replay_frame_source_lineage_facts(frame: "ReplayFrame") -> dict[str, object]:
+    """The Stage 6.14 reviewed-source-lineage fields present on one
+    `ReplayFrame`, keyed only when actually set -- see
+    docs/reviewed-replay-lineage-contract.md. Source lineage is semantic (it
+    identifies *what was replayed*, not merely how), so it is included in
+    `ReplayInput.fingerprint` exactly like Stage 6.8's timeline facts above;
+    a pre-Stage-6.14 input never sets these, which keeps its fingerprint
+    byte-identical to before. `session_offset_ms` is deliberately not
+    duplicated here: a reconnect-safe temporal-review export already feeds
+    the session-relative offset into this frame's own required
+    `source_offset_ms` (see `temporal_annotation.build_replay_export`), and
+    `content_hash` is already a required top-level fingerprint input for
+    every `ReplayFrame`, lineage or not."""
+
+    facts: dict[str, object] = {}
+    if frame.source_capture_frame_id is not None:
+        facts["source_capture_frame_id"] = frame.source_capture_frame_id
+    if frame.source_capture_session_id is not None:
+        facts["source_capture_session_id"] = frame.source_capture_session_id
+    if frame.session_sequence is not None:
+        facts["session_sequence"] = frame.session_sequence
+    return facts
+
+
 @dataclass(frozen=True)
 class ReplayFrame:
     index: int
@@ -83,6 +107,19 @@ class ReplayFrame:
     provider_generation: str | None = None
     temporal_discontinuity: bool = False
     temporal_uncertainty_ms: int | None = None
+    # Stage 6.14 reviewed-source lineage: all optional and additive, exactly
+    # like the Stage 6.8 fields above. Set only when this frame was replayed
+    # from reviewed Stage 6.6/6.8 temporal-review capture data (see
+    # `temporal_annotation.build_replay_export` and
+    # docs/reviewed-replay-lineage-contract.md); `None` for a generic Stage 2
+    # replay input, which never requires reviewed provenance to work.
+    # `source_capture_frame_id` is the original retained Camera Node/review
+    # frame's own stable identity -- what a human reviewer's annotation
+    # actually refers to -- kept distinct from this dataclass's own `index`/
+    # `source_offset_ms`/`content_hash` replay identity.
+    source_capture_frame_id: str | None = None
+    source_capture_session_id: str | None = None
+    session_sequence: int | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +147,14 @@ class ReplayInput:
             raise ReplayValidationError("invalid_frame")
         if any(a.source_offset_ms >= b.source_offset_ms for a, b in zip(self.frames, self.frames[1:])):
             raise ReplayValidationError("ordered_timestamps")
+        # Stage 6.14: within one replay input, one reviewed source frame may
+        # be referenced at most once -- a duplicate almost always means a
+        # corrupted or hand-edited export, and silently accepting it would
+        # let two different replay frames both claim to *be* the one frame a
+        # human reviewer annotated. See docs/reviewed-replay-lineage-contract.md.
+        source_ids = [frame.source_capture_frame_id for frame in self.frames if frame.source_capture_frame_id]
+        if len(source_ids) != len(set(source_ids)):
+            raise ReplayValidationError("duplicate_source_capture_frame_id")
 
     @property
     def fingerprint(self) -> str:
@@ -131,6 +176,9 @@ class ReplayInput:
             timeline_facts = _replay_frame_timeline_facts(item)
             if timeline_facts:
                 frame["timeline"] = timeline_facts
+            source_lineage_facts = _replay_frame_source_lineage_facts(item)
+            if source_lineage_facts:
+                frame["source_lineage"] = source_lineage_facts
             frames.append(frame)
         return semantic_fingerprint({"version": MANIFEST_VERSION, "input_id": self.input_id,
             "stream_id": self.stream_id, "width": self.width, "height": self.height,
@@ -171,6 +219,11 @@ class ReplayInput:
                 frame_sequence=frame.source_sequence,
                 provider_generation=frame.provider_generation,
                 timing_facts=tuple(timing_facts),
+                # Stage 6.14: additive reviewed-source provenance, never a
+                # replacement for the replay-local `frame_id` fingerprint
+                # just above -- see docs/reviewed-replay-lineage-contract.md.
+                source_capture_frame_id=frame.source_capture_frame_id,
+                source_content_hash=frame.content_hash,
             ))
         return tuple(packets)
 

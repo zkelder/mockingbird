@@ -104,6 +104,12 @@ class ReviewedEvidenceCandidate:
     source_offset_ms: int | None = None
     captured_at_iso: str | None = None
     high_resolution: bool = False
+    # The reviewed source frame's own content hash, when recorded (Stage
+    # 6.6/6.8 `RetainedFrameRecord.content_hash`) -- used only for the
+    # Stage 6.14 source-lineage collision/integrity check against a
+    # replay-sourced candidate's own `source_content_hash`, never fed to the
+    # scorer. See docs/reviewed-replay-lineage-contract.md.
+    content_hash: str | None = None
     request_to_capture_ms: float | None = None
     temporal_alignment: str | None = None
     timing_uncertainty_ms: int | None = None
@@ -230,6 +236,16 @@ class EpisodeResult:
     manifest_candidate_ids: tuple[str, ...]
     selection: EvidenceSelection
     source: Literal["reviewed_manifest", "replay_report"]
+    # Stage 6.14: the scorer's own selected candidate identity
+    # (`selection.identification_candidate_id`/`context_candidate_id`,
+    # unchanged) translated into the reviewed original capture-frame
+    # identity it provably traces back to, via
+    # `EvidenceCandidate.source_capture_frame_id` -- `None` when no source
+    # lineage is known (an old replay report, a non-temporal-review replay
+    # input, or a candidate whose lineage failed an integrity check). See
+    # docs/reviewed-replay-lineage-contract.md.
+    identification_source_capture_frame_id: str | None = None
+    context_source_capture_frame_id: str | None = None
 
 
 def _generation_from_episode_key(episode_key: str, session_id: str) -> str | None:
@@ -270,13 +286,138 @@ def _to_evidence_candidate(item: ReviewedEvidenceCandidate) -> EvidenceCandidate
         subject_geometry=item.subject_geometry,
         track_generation_id=item.track_generation_id,
         quality_facts=_quality_facts_for(item),
+        # A reviewed-manifest-derived candidate's own identity already *is*
+        # the original reviewed frame's identity by construction -- see
+        # docs/reviewed-replay-lineage-contract.md. Setting these explicitly
+        # (rather than leaving them unset) lets every downstream join use
+        # the same "prefer source_capture_frame_id" rule uniformly for both
+        # a reviewed-manifest-derived and a replay-sourced candidate.
+        source_capture_frame_id=item.candidate_id,
+        source_content_hash=item.content_hash,
     )
+
+
+def _source_lineage_join(
+    manifest: ReviewedEvidenceManifest,
+    replay_candidates: tuple[EvidenceCandidate, ...],
+) -> tuple[dict[str, str], tuple[str, ...]]:
+    """Resolve every candidate's scorer-space identity (`media_asset_id`,
+    what `EvidenceSelection.identification_candidate_id`/`context_candidate_id`
+    actually carry) to the reviewed original capture-frame identity it
+    provably traces back to -- the preferred join key -- honestly refusing
+    an ambiguous or conflicting case rather than silently choosing one. See
+    docs/reviewed-replay-lineage-contract.md, "Collision/integrity
+    handling". A reviewed-manifest-derived candidate's join is trivial (its
+    own identity already *is* the reviewed identity by construction, see
+    `_to_evidence_candidate`); a replay-sourced candidate's join depends on
+    its own additive `source_capture_frame_id`/`source_content_hash`
+    provenance, present only once threaded all the way through a Stage
+    6.14-aware replay."""
+
+    limitations: list[str] = []
+    truth_by_id = {item.candidate_id: item for item in manifest.candidates}
+    join_map: dict[str, str] = {item.candidate_id: item.candidate_id for item in manifest.candidates}
+
+    # One reviewed source identity must map to exactly one content hash
+    # across every replay-sourced candidate that declares one; two replay
+    # candidates disagreeing about "what frame this reviewed identity
+    # actually was" is never safe to resolve by picking either side.
+    hashes_by_source_id: dict[str, set[str]] = {}
+    for candidate in replay_candidates:
+        source_id = candidate.source_capture_frame_id
+        if source_id and candidate.source_content_hash:
+            hashes_by_source_id.setdefault(source_id, set()).add(candidate.source_content_hash)
+    conflicting_source_ids = {source_id for source_id, hashes in hashes_by_source_id.items() if len(hashes) > 1}
+    if conflicting_source_ids:
+        limitations.append(
+            "duplicate_source_identity_conflicting_content: replay-sourced candidates disagree about the "
+            "content hash of reviewed source frame(s) " + ",".join(sorted(conflicting_source_ids))
+        )
+
+    any_source_lineage = False
+    unknown_source_ids: set[str] = set()
+    mismatched_source_ids: set[str] = set()
+    for candidate in sorted(replay_candidates, key=lambda item: item.media_asset_id):
+        source_id = candidate.source_capture_frame_id
+        if not source_id:
+            continue
+        any_source_lineage = True
+        if source_id in conflicting_source_ids:
+            continue
+        truth = truth_by_id.get(source_id)
+        if truth is None:
+            unknown_source_ids.add(source_id)
+            continue
+        if candidate.source_content_hash and truth.content_hash and candidate.source_content_hash != truth.content_hash:
+            mismatched_source_ids.add(source_id)
+            continue
+        join_map[candidate.media_asset_id] = source_id
+
+    if unknown_source_ids:
+        limitations.append(
+            "unknown_reviewed_source_frame: replay evidence references reviewed source frame(s) "
+            + ",".join(sorted(unknown_source_ids)) + " not present in the reviewed manifest"
+        )
+    if mismatched_source_ids:
+        limitations.append(
+            "source_hash_mismatch: reviewed and replay content hashes disagree for reviewed source frame(s) "
+            + ",".join(sorted(mismatched_source_ids))
+        )
+    if replay_candidates and not any_source_lineage:
+        limitations.append(
+            "source_lineage_unavailable: no replay-sourced candidate carries a source_capture_frame_id; "
+            "either this replay report predates Stage 6.14 or its input was not derived from reviewed "
+            "temporal-review capture data (see docs/reviewed-replay-lineage-contract.md)"
+        )
+    return join_map, tuple(limitations)
+
+
+def _join(join_map: Mapping[str, str], candidate_id: str | None) -> str | None:
+    return join_map.get(candidate_id) if candidate_id is not None else None
+
+
+def _media_with_source_lineage_fallback(
+    media: Mapping[str, object] | None,
+    replay_candidates: tuple[EvidenceCandidate, ...],
+    join_map: Mapping[str, str],
+) -> Mapping[str, object] | None:
+    """A replay-sourced `EvidenceCandidate`'s own `media_asset_id`
+    (replay-local, e.g. `"replay:17"`) is never a key a caller's `media`
+    mapping (built from the *reviewed* frame root, keyed by reviewed
+    `candidate_id`) can already contain -- without this, every
+    replay-sourced candidate's own rescoring call would see no image bytes
+    at all and score `candidate_unavailable` regardless of lineage,
+    silently defeating the whole point of joining it to reviewed truth.
+    This extends `media` so a replay-sourced candidate can decode the exact
+    same bytes a reviewer looked at, using only a source identity
+    `_source_lineage_join` already verified safe (never a raw, unverified
+    `EvidenceCandidate.source_capture_frame_id` -- a hash mismatch or
+    conflicting-content case must not silently borrow reviewed image bytes
+    either). A caller-supplied entry already keyed by the candidate's own
+    `media_asset_id` is never overwritten; `media` is returned unchanged
+    when there is nothing to add."""
+
+    if not media:
+        return media
+    extended: dict[str, object] | None = None
+    for candidate in replay_candidates:
+        if candidate.media_asset_id in media:
+            continue
+        source_id = join_map.get(candidate.media_asset_id)
+        source_media = media.get(source_id) if source_id is not None else None
+        if source_media is None:
+            continue
+        if extended is None:
+            extended = dict(media)
+        extended.setdefault(candidate.media_asset_id, source_media)
+    return extended if extended is not None else media
 
 
 def _build_manifest_episodes(
     manifest: ReviewedEvidenceManifest,
     media: Mapping[str, object] | None,
     bounds: EvidenceScoringBounds | None,
+    join_map: Mapping[str, str],
 ) -> tuple[EpisodeResult, ...]:
     groups: dict[str, list[ReviewedEvidenceCandidate]] = {}
     for item in sorted(manifest.candidates, key=lambda item: item.candidate_id):
@@ -299,6 +440,8 @@ def _build_manifest_episodes(
         results.append(EpisodeResult(
             episode_id, session_id, generation, proposal.proposal_key,
             tuple(item.candidate_id for item in items), selection, "reviewed_manifest",
+            _join(join_map, selection.identification_candidate_id),
+            _join(join_map, selection.context_candidate_id),
         ))
     return tuple(results)
 
@@ -308,6 +451,7 @@ def _build_replay_episodes(
     replay_proposals: tuple[VisitProposal, ...],
     media: Mapping[str, object] | None,
     bounds: EvidenceScoringBounds | None,
+    join_map: Mapping[str, str],
 ) -> tuple[EpisodeResult, ...]:
     results: list[EpisodeResult] = []
     for proposal in sorted(replay_proposals, key=lambda item: item.proposal_key):
@@ -316,6 +460,8 @@ def _build_replay_episodes(
         results.append(EpisodeResult(
             episode_id, proposal.source_id, proposal.track_generation_id, proposal.proposal_key,
             proposal.evidence_media_asset_ids, selection, "replay_report",
+            _join(join_map, selection.identification_candidate_id),
+            _join(join_map, selection.context_candidate_id),
         ))
     return tuple(results)
 
@@ -397,7 +543,7 @@ def _selection_correctness_metric(
     episodes: Sequence[EpisodeResult],
     truth_by_episode: Mapping[str, tuple[ReviewedEvidenceCandidate, ...]],
     preferred_field: str,
-    selected_id: Callable[[EvidenceSelection], str | None],
+    selected_source_id: Callable[[EpisodeResult], str | None],
 ) -> dict[str, object]:
     all_relevant = tuple(
         item for candidates in truth_by_episode.values() for item in candidates
@@ -414,7 +560,10 @@ def _selection_correctness_metric(
         }
         if not preferred_ids:
             continue
-        judgements.append(selected_id(episode.selection) in preferred_ids)
+        # Joined via each episode's own reviewed source-frame identity
+        # (Stage 6.14), never the scorer's raw, replay-local candidate id --
+        # see docs/reviewed-replay-lineage-contract.md.
+        judgements.append(selected_source_id(episode) in preferred_ids)
     if not judgements:
         return _metric(None, STATE_INSUFFICIENT_TRUTH)
     return _metric(sum(judgements) / len(judgements), STATE_EVALUATED)
@@ -457,6 +606,14 @@ def _compute_metrics(
 
     identification_ids = [episode.selection.identification_candidate_id for episode in episodes]
     context_ids = [episode.selection.context_candidate_id for episode in episodes]
+    # Stage 6.14: the reviewed original capture-frame identity each
+    # episode's own selection actually joins to, when known -- the
+    # preferred join key for every truth-dependent metric below, kept
+    # separate from `identification_ids`/`context_ids` above (which stay in
+    # the scorer's own candidate-id space for purely structural counts that
+    # need no truth join at all). See docs/reviewed-replay-lineage-contract.md.
+    identification_join_ids = [episode.identification_source_capture_frame_id for episode in episodes]
+    context_join_ids = [episode.context_source_capture_frame_id for episode in episodes]
     identification_scores = [
         episode.selection.score_for(episode.selection.identification_candidate_id)
         for episode in episodes if episode.selection.identification_candidate_id is not None
@@ -501,12 +658,12 @@ def _compute_metrics(
             lambda item: item.useful_identification is True,
         ),
         "useful_identification_rate": _selected_rate_metric(
-            all_candidates, identification_ids, lambda item: item.useful_identification is not None,
+            all_candidates, identification_join_ids, lambda item: item.useful_identification is not None,
             lambda item: item.useful_identification is True,
         ),
         "selected_identification_correctness": _selection_correctness_metric(
             episodes, truth_by_episode, "preferred_identification",
-            lambda selection: selection.identification_candidate_id,
+            lambda episode: episode.identification_source_capture_frame_id,
         ),
         "identification_subject_contained_rate": _scorer_rate_metric(
             identification_scores, lambda score: score.containment_status == "contained",
@@ -528,14 +685,15 @@ def _compute_metrics(
             all_candidates, lambda item: item.useful_context is not None, lambda item: item.useful_context is True,
         ),
         "useful_context_rate": _selected_rate_metric(
-            all_candidates, context_ids, lambda item: item.useful_context is not None,
+            all_candidates, context_join_ids, lambda item: item.useful_context is not None,
             lambda item: item.useful_context is True,
         ),
         "selected_context_correctness": _selection_correctness_metric(
-            episodes, truth_by_episode, "preferred_context", lambda selection: selection.context_candidate_id,
+            episodes, truth_by_episode, "preferred_context",
+            lambda episode: episode.context_source_capture_frame_id,
         ),
         "context_subject_visible_rate": _selected_rate_metric(
-            all_candidates, context_ids, lambda item: item.reviewed_subject_visible is not None,
+            all_candidates, context_join_ids, lambda item: item.reviewed_subject_visible is not None,
             lambda item: item.reviewed_subject_visible == "yes",
         ),
         "context_role_distribution": _role_distribution(context_scores),
@@ -648,16 +806,21 @@ def _evidence_latency_from_appearance(
         return _metric(None, STATE_NOT_EVALUATED)
     latencies: list[int] = []
     for episode in episodes:
-        candidate_id = episode.selection.identification_candidate_id
-        if candidate_id is None:
+        # Joined via the reviewed source-frame identity (Stage 6.14), which
+        # also recovers the *real* reviewed session id from truth -- unlike
+        # `episode.session_id`, which for a replay-sourced episode is the
+        # replay provider's own run-mode label ("replay"/"live_shadow"), not
+        # a reviewed session id `appearance_starts_by_session` is keyed by.
+        source_id = episode.identification_source_capture_frame_id
+        if source_id is None:
             continue
-        starts = appearance_starts_by_session.get(episode.session_id)
+        truth = truth_by_id.get(source_id)
+        if truth is None or truth.source_offset_ms is None:
+            continue
+        starts = appearance_starts_by_session.get(truth.session_id)
         if not starts:
             continue
-        truth = truth_by_id.get(candidate_id)
-        offset = truth.source_offset_ms if truth is not None else None
-        if offset is None:
-            continue
+        offset = truth.source_offset_ms
         latencies.append(offset - _nearest_appearance_start(starts, offset))
     if not latencies:
         return _metric(None, STATE_INSUFFICIENT_TRUTH)
@@ -723,6 +886,8 @@ def _semantic_payload(
                 "manifest_candidate_ids": list(episode.manifest_candidate_ids),
                 "source": episode.source,
                 "selection": asdict(episode.selection),
+                "identification_source_capture_frame_id": episode.identification_source_capture_frame_id,
+                "context_source_capture_frame_id": episode.context_source_capture_frame_id,
             }
             for episode in episodes
         ],
@@ -753,11 +918,22 @@ def evaluate_evidence_benchmark(
 
     `replay_candidates`/`replay_proposals` optionally add real
     system-produced episodes (from an already-produced replay report)
-    alongside the reviewed-manifest-derived ones; truth can only ever link
-    to a replay-sourced candidate when its own identity (`media_asset_id`
-    or `frame_id`) matches a `candidate_id` in `manifest` -- when it does
-    not, the affected metrics honestly report `not_evaluated`/
-    `insufficient_truth` rather than a fabricated value.
+    alongside the reviewed-manifest-derived ones. Truth joins a
+    replay-sourced candidate through its explicit
+    `EvidenceCandidate.source_capture_frame_id` provenance (Stage 6.14) --
+    never through its own replay-local `media_asset_id`/`frame_id`,
+    filename/path, frame ordering, timestamp equality, or geometry -- see
+    `_source_lineage_join` and docs/reviewed-replay-lineage-contract.md.
+    When no source lineage is available at all (a pre-Stage-6.14 replay
+    report, or a genuinely generic non-temporal-review replay input), the
+    affected metrics honestly report `not_evaluated`/`insufficient_truth`
+    rather than a fabricated value, and a stable-coded limitation is
+    recorded. `media` is transparently extended (`_media_with_source_
+    lineage_fallback`) so a replay-sourced candidate can decode the same
+    bytes a reviewer looked at, once its lineage is verified safe --
+    without this, a replay-sourced candidate has no image bytes available
+    under its own replay-local `media_asset_id` and would always score
+    `candidate_unavailable` regardless of how correct its lineage is.
     """
 
     policy_identity = {
@@ -779,8 +955,10 @@ def evaluate_evidence_benchmark(
             semantic["limitations"], semantic_fingerprint(semantic),
         )
 
-    manifest_episodes = _build_manifest_episodes(manifest, media, bounds)
-    replay_episodes = _build_replay_episodes(replay_candidates, replay_proposals, media, bounds)
+    join_map, lineage_limitations = _source_lineage_join(manifest, replay_candidates)
+    scoring_media = _media_with_source_lineage_fallback(media, replay_candidates, join_map)
+    manifest_episodes = _build_manifest_episodes(manifest, scoring_media, bounds, join_map)
+    replay_episodes = _build_replay_episodes(replay_candidates, replay_proposals, scoring_media, bounds, join_map)
     episodes = tuple(sorted(manifest_episodes + replay_episodes, key=lambda item: item.episode_id))
 
     ordered_manifest_candidates = sorted(manifest.candidates, key=lambda item: item.candidate_id)
@@ -798,17 +976,7 @@ def evaluate_evidence_benchmark(
 
     metrics = _compute_metrics(episodes, manifest)
 
-    limitations: list[str] = []
-    if replay_proposals and not any(
-        candidate.media_asset_id in {item.candidate_id for item in manifest.candidates}
-        or candidate.frame_id in {item.candidate_id for item in manifest.candidates}
-        for candidate in replay_candidates
-    ):
-        limitations.append(
-            "no_replay_sourced_candidates_matched_reviewed_truth_identity: replay-report candidates and "
-            "reviewed-manifest candidate_ids did not share any identity, so replay-sourced episodes carry "
-            "only structural (non-truth) metrics"
-        )
+    limitations: list[str] = list(lineage_limitations)
     for episode in episodes:
         limitations.extend(episode.selection.limitations)
     # Surface any per-candidate reconstruction caveats (e.g. the ones
@@ -920,6 +1088,7 @@ def build_reviewed_evidence_manifest_from_temporal_review(
             timing_uncertainty_ms=_int_or_none(record.get("temporal_uncertainty_ms")),
             subject_geometry=tuple(box.box) if box is not None else None,
             image_path=f"frames/{frame.frame_id}.jpg",
+            content_hash=record.get("content_hash") if isinstance(record.get("content_hash"), str) else None,
             reviewed_subject_visible=visible,
             ambiguous=frame.whole_frame_truth == "ambiguous",
             useful_broad_confirmation=usefulness.broad_animal_confirmation_useful if usefulness else None,

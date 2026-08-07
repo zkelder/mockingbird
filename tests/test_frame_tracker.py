@@ -241,6 +241,55 @@ def test_invalid_episode_boundary_bounds_are_rejected() -> None:
             _config(**overrides)
 
 
+# --------------------------------------------------------------------------
+# Stage 6.14: reviewed-to-replay evidence identity lineage
+# --------------------------------------------------------------------------
+
+
+def test_track_update_accumulates_supporting_source_capture_frame_ids() -> None:
+    """(6, 30) `TrackUpdate.supporting_source_capture_frame_ids` mirrors
+    `supporting_frame_ids` in reviewed-source-lineage space: it accumulates
+    the original captured frame identity of every frame that genuinely
+    supported this track generation, deduplicated independently, and stays
+    empty for a frame carrying no known source lineage -- ordinary tracker
+    episode-boundary behavior (confirmation, dedup, termination) is
+    otherwise completely unaffected, matching every pre-existing test in
+    this file passing unmodified."""
+
+    tracker = ProviderNeutralFrameTracker("stream", _config())
+    box = (0.2, 0.2, 0.5, 0.5)
+
+    frame0 = _frame(0, 0, source_capture_frame_id="reviewed-frame-a")
+    started = tracker.observe(frame0, (_animal(frame0, box),))
+    assert started.updates[0].supporting_source_capture_frame_ids == ("reviewed-frame-a",)
+
+    # A second, later frame with its own distinct source lineage.
+    frame1 = _frame(1, 500, source_capture_frame_id="reviewed-frame-b")
+    step1 = tracker.observe(frame1, (_animal(frame1, box),))
+    assert step1.updates[0].supporting_source_capture_frame_ids == ("reviewed-frame-a", "reviewed-frame-b")
+    # The replay-local supporting list keeps its own, distinct identities.
+    assert step1.updates[0].supporting_frame_ids == (frame0.frame_id, frame1.frame_id)
+
+    # A frame with no known source lineage (a generic, non-temporal-review
+    # replay input) contributes nothing to the source list, but continues
+    # supporting the replay-local list exactly as before.
+    frame2 = _frame(2, 1000)
+    assert frame2.source_capture_frame_id is None
+    step2 = tracker.observe(frame2, (_animal(frame2, box),))
+    assert step2.updates[0].supporting_source_capture_frame_ids == ("reviewed-frame-a", "reviewed-frame-b")
+    assert step2.updates[0].supporting_frame_ids == (frame0.frame_id, frame1.frame_id, frame2.frame_id)
+
+    # A repeated source identity (re-observing the same reviewed frame,
+    # however that could happen) is deduplicated, matching the existing
+    # replay-local dedup convention (test_repeated_frame_identity_adds_no_support).
+    frame3 = _frame(3, 1500, source_capture_frame_id="reviewed-frame-b")
+    step3 = tracker.observe(frame3, (_animal(frame3, box),))
+    assert step3.updates[0].supporting_source_capture_frame_ids == ("reviewed-frame-a", "reviewed-frame-b")
+
+    terminal = tracker.finalize("end_of_replay")
+    assert terminal.updates[0].supporting_source_capture_frame_ids == ("reviewed-frame-a", "reviewed-frame-b")
+
+
 def test_frame_tracker_module_has_structural_no_write_boundary() -> None:
     from pathlib import Path
 

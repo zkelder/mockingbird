@@ -68,6 +68,12 @@ class TrackView:
     tracker_support_count: int
     confidence: float | None
     supporting_frame_ids: tuple[str, ...]
+    # Stage 6.14: the reviewed-source-lineage counterpart of
+    # `supporting_frame_ids` -- see docs/reviewed-replay-lineage-contract.md.
+    # Defaulted so every pre-existing positional `TrackView(...)` call site
+    # (this module's own `.view()`, `frame_driven_provider._view_from_update`)
+    # remains valid unchanged.
+    supporting_source_frame_ids: tuple[str, ...] = ()
 
 
 class TrackerSupportResolver(Protocol):
@@ -134,6 +140,12 @@ class _Track:
     velocity: tuple[float, float] = (0.0, 0.0)
     supporting_frame_ids: list[str] = field(default_factory=list)
     seen_frame_ids: set[str] = field(default_factory=set)
+    # Stage 6.14: independently deduplicated reviewed-source-lineage
+    # counterpart of `supporting_frame_ids`/`seen_frame_ids` above -- present
+    # only for the supporting frames that actually carried known source
+    # lineage (see `FramePacket.source_capture_frame_id`).
+    supporting_source_frame_ids: list[str] = field(default_factory=list)
+    seen_source_frame_ids: set[str] = field(default_factory=set)
     # Stage 6.11 bounded reconnect-bridge state (see
     # docs/reconnect-continuity-contract.md). `reconnect_pending` marks a
     # track as temporarily lost specifically pending bounded reacquisition
@@ -159,6 +171,7 @@ class _Track:
             self.tracker_support_count,
             self.confidence,
             tuple(self.supporting_frame_ids),
+            tuple(self.supporting_source_frame_ids),
         )
 
 
@@ -407,6 +420,8 @@ class ProviderNeutralFrameTracker:
             frame.source_offset_ms,
             supporting_frame_ids=[frame.frame_id or ""],
             seen_frame_ids={frame.frame_id or ""},
+            supporting_source_frame_ids=[frame.source_capture_frame_id] if frame.source_capture_frame_id else [],
+            seen_source_frame_ids={frame.source_capture_frame_id} if frame.source_capture_frame_id else set(),
         )
         self._tracks[track.track_id] = track
         return track, ambiguous
@@ -459,7 +474,7 @@ class ProviderNeutralFrameTracker:
         track.consecutive_negative_detector_frames = 0
         track.detector_confirmation_count += 1
         track.confidence = max(track.confidence or 0.0, detection.confidence or 0.0)
-        self._remember(track, frame.frame_id or "")
+        self._remember(track, frame)
         self._confirm(track)
 
     def _observe_tracker_support(
@@ -478,13 +493,18 @@ class ProviderNeutralFrameTracker:
         track.last_offset_ms = frame.source_offset_ms
         track.missed_frames = 0
         track.tracker_support_count += 1
-        self._remember(track, frame.frame_id or "")
+        self._remember(track, frame)
         self._confirm(track)
 
-    def _remember(self, track: _Track, frame_id: str) -> None:
+    def _remember(self, track: _Track, frame: FramePacket) -> None:
+        frame_id = frame.frame_id
         if frame_id and frame_id not in track.seen_frame_ids:
             track.seen_frame_ids.add(frame_id)
             track.supporting_frame_ids.append(frame_id)
+        source_id = frame.source_capture_frame_id
+        if source_id and source_id not in track.seen_source_frame_ids:
+            track.seen_source_frame_ids.add(source_id)
+            track.supporting_source_frame_ids.append(source_id)
 
     def _confirm(self, track: _Track) -> None:
         strong = (track.confidence or 0.0) >= self.configuration.strong_detection_threshold
@@ -631,6 +651,7 @@ class ProviderNeutralFrameTracker:
             track.confidence,
             track.detector_provenance,
             TRACKER_VERSION,
+            supporting_source_capture_frame_ids=tuple(track.supporting_source_frame_ids),
         )
 
     def _terminal_update(
@@ -657,6 +678,7 @@ class ProviderNeutralFrameTracker:
             None,
             TRACKER_VERSION,
             terminal.terminal_reason,
+            supporting_source_capture_frame_ids=view.supporting_source_frame_ids,
         )
 
 

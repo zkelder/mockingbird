@@ -724,6 +724,8 @@ class FrameDrivenObservationProvider:
             ),
             True,
             True,
+            source_capture_frame_id=frame.source_capture_frame_id,
+            source_content_hash=frame.source_content_hash,
         )
 
     def _finalize_terminal(self, terminal: TerminalTrack) -> tuple[tuple[EvidenceCandidate, ...], VisitProposal | None]:
@@ -772,6 +774,7 @@ class FrameDrivenObservationProvider:
             terminal.terminal_reason,
             self.provider_id,
             FRAME_DRIVEN_PROVIDER_VERSION,
+            supporting_source_capture_frame_ids=view.supporting_source_frame_ids,
         )
         return ordered, proposal
 
@@ -825,6 +828,7 @@ def _view_from_update(update: TrackUpdate) -> TrackView:
         update.tracker_support_count,
         update.confidence,
         update.supporting_frame_ids,
+        update.supporting_source_capture_frame_ids,
     )
 
 

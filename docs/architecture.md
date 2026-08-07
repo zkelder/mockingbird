@@ -491,6 +491,57 @@ evidence-scoring behavior, and authorizes no Stage 7 activity; the
 representative Stage 6.10 rerun this tool is meant to support remains a
 separate, not-yet-run step.
 
+Stage 6.14 closes that exact gap, described in
+[reviewed-replay-lineage-contract.md](reviewed-replay-lineage-contract.md).
+`replay.ReplayFrame` gains optional, additive reviewed-source-lineage fields
+(`source_capture_frame_id`, `source_capture_session_id`, `session_sequence`),
+which `temporal_annotation.build_replay_export` now explicitly populates from
+the original reviewed `frame_id`/session/session-sequence rather than only
+implying identity through the `path` string; `ReplayInput.packets()` carries
+`source_capture_frame_id`/`source_content_hash` onto each `FramePacket`
+alongside its own unchanged replay-local `frame_id`, and every downstream
+provider-neutral fact (`DetectionObservation`, `TrackUpdate`,
+`EvidenceCandidate`, `VisitProposal`) gains the matching optional provenance
+field, all absent by default so a pre-Stage-6.14 input or report is
+unaffected. `evidence_benchmark._source_lineage_join` then joins a
+replay-sourced candidate to reviewed truth through this explicit identity --
+never coincidental equality, filename, frame ordering, timestamp, or
+geometry -- refusing rather than guessing on a detected hash mismatch,
+content conflict, or unknown source reference, each with its own stable
+limitation code; a companion fix lets the benchmark's own rescoring of a
+replay-sourced candidate decode the exact reviewed image bytes that
+identity provably traces back to, without which no replay-sourced candidate
+could ever be eligible for selection regardless of lineage. Real evaluation
+against the historical session-04 reviewed packet combined with a freshly
+produced Stage 6.14 replay (real RTX 4060 Ti CUDA execution, run from two
+independent absolute filesystem roots) reproduced byte-identical semantic
+fingerprints at the export, replay, and evidence-benchmark layers across both
+roots, and reproduced the exact pre-existing tracker/detector counts already
+established by Stage 6.11/6.12 (57 tracks started, 28 confirmed) -- proving
+no detector, tracker, reconnect, or burst behavior changed. All 451 replayed
+frames, 1679 detections, 282 evidence candidates, 305 track updates, and 28
+proposals carried source lineage; 25 of 28 replay-sourced episodes' selected
+identification and context evidence joined directly to reviewed truth (the
+remaining 3 selected a synthetic boundary frame carrying no source lineage by
+construction), moving `episodes_with_identification_candidate` from 31 to 56
+and `useful_identification_rate` from a manifest-only-informed 0.143 to a
+0.176 now genuinely reflecting replay-sourced evidence too.
+`selected_identification_correctness`/`selected_context_correctness` remain
+honestly `not_evaluated`: this historical corpus never recorded a reviewer's
+preferred-candidate truth, and lineage makes a join possible without
+inventing the human judgment it would be compared against. Session-01 and
+session-02 spot-checks confirmed the mechanism is not special-cased to
+session-04 (100% detection/evidence-candidate lineage propagation in both;
+session-01's one confirmed proposal joined truth directly; session-02
+reproduced zero confirmed proposals byte-identical to its own existing
+Stage 6.11 replay record, an unrelated pre-existing tracker-confirmation
+fact). A structural no-write proof taken before and after the entire
+campaign found an unchanged SQLite hash/size and every tracked table row
+count. It opens no product database, changes no detector, tracker,
+reconnect, burst-scheduler, or evidence-scoring behavior, and authorizes no
+Stage 7 activity; the representative Stage 6.10 rerun remains a separate,
+not-yet-run step, now unblocked at the tooling level.
+
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
 Stream capabilities and emits only evidence-side `FramePacket`,

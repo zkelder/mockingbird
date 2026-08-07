@@ -189,3 +189,123 @@ def test_replay_packets_carry_original_capture_timestamp_and_source_sequence() -
     assert packet.captured_at == datetime(2026, 8, 6, 12, 0, 0, tzinfo=UTC)
     assert packet.frame_sequence == 1
     assert packet.provider_generation == "gen-1"
+
+
+# --------------------------------------------------------------------------
+# Stage 6.14: reviewed-to-replay evidence identity lineage
+# --------------------------------------------------------------------------
+
+
+def test_replay_frame_id_stays_deterministic_for_the_same_logical_input() -> None:
+    """(2) The replay-local `frame_id` `packets()` computes -- a fingerprint
+    of (input root, index, offset, content hash) -- is fully reproducible
+    for the same logical input, including its source lineage: two
+    separately constructed but identical `ReplayInput`s (same reviewed
+    lineage included) produce byte-identical replay frame identities. Source
+    lineage is semantic (see docs/reviewed-replay-lineage-contract.md), so
+    it legitimately participates in the root fingerprint the replay identity
+    is derived from -- exactly like the Stage 6.8 timeline facts already do
+    (test_replay_frame_timeline_facts_are_part_of_the_semantic_fingerprint)
+    -- rather than being invisible to it."""
+
+    def build() -> ReplayInput:
+        return ReplayInput("id", "stream", 4, 4, 1.0, (
+            ReplayFrame(0, 0, "a", source_capture_frame_id="reviewed-frame-1", source_capture_session_id="session-1", session_sequence=7),
+        ))
+    assert build().packets()[0].frame_id == build().packets()[0].frame_id
+
+
+def test_source_and_replay_identities_may_differ_without_losing_lineage() -> None:
+    """(3) A replay frame's own `frame_id` (replay-local) and
+    `source_capture_frame_id` (the original reviewed capture frame) are
+    deliberately distinct identities; both survive onto the produced
+    `FramePacket` rather than one silently replacing the other."""
+
+    replay = ReplayInput("id", "stream", 4, 4, 1.0, (
+        ReplayFrame(0, 0, "a", source_capture_frame_id="reviewed-frame-1"),
+    ))
+    packet = replay.packets()[0]
+    assert packet.frame_id != packet.source_capture_frame_id
+    assert packet.source_capture_frame_id == "reviewed-frame-1"
+    assert packet.source_content_hash == "a"
+
+
+def test_generic_replay_without_reviewed_source_still_works() -> None:
+    """(4) A `ReplayInput` built from a manifest with no reviewed-capture
+    provenance at all (an ordinary Stage 2 frame-directory benchmark input)
+    replays exactly as before: `source_capture_frame_id` stays `None`
+    throughout, and nothing about validation, ordering, or packet
+    production requires it."""
+
+    replay = ReplayInput("id", "stream", 4, 4, 1.0, (
+        ReplayFrame(0, 0, "a"), ReplayFrame(1, 100, "b"), ReplayFrame(2, 200, "c"),
+    ))
+    packets = replay.packets()
+    assert len(packets) == 3
+    assert all(packet.source_capture_frame_id is None for packet in packets)
+    assert all(packet.frame_id is not None for packet in packets)
+
+
+def test_duplicate_source_capture_frame_id_within_one_replay_input_rejects() -> None:
+    """(16) One reviewed source frame may be referenced by at most one
+    replay frame within a single input -- a duplicate is rejected outright
+    rather than silently accepted, regardless of whether the two entries'
+    own content hashes happen to agree."""
+
+    with pytest.raises(ReplayValidationError, match="duplicate_source_capture_frame_id"):
+        ReplayInput("id", "stream", 4, 4, 1.0, (
+            ReplayFrame(0, 0, "hash-a", source_capture_frame_id="reviewed-frame-1"),
+            ReplayFrame(1, 100, "hash-b", source_capture_frame_id="reviewed-frame-1"),
+        ))
+    with pytest.raises(ReplayValidationError, match="duplicate_source_capture_frame_id"):
+        ReplayInput("id", "stream", 4, 4, 1.0, (
+            ReplayFrame(0, 0, "hash-a", source_capture_frame_id="reviewed-frame-1"),
+            ReplayFrame(1, 100, "hash-a", source_capture_frame_id="reviewed-frame-1"),
+        ))
+    # Distinct source identities remain fully supported.
+    ok = ReplayInput("id", "stream", 4, 4, 1.0, (
+        ReplayFrame(0, 0, "hash-a", source_capture_frame_id="reviewed-frame-1"),
+        ReplayFrame(1, 100, "hash-b", source_capture_frame_id="reviewed-frame-2"),
+    ))
+    assert len(ok.frames) == 2
+
+
+def test_stable_derived_ids_remain_deterministic_across_repeated_calls() -> None:
+    """(24) Repeated `packets()` calls over the same `ReplayInput` produce
+    byte-identical replay and source-lineage identities."""
+
+    replay = ReplayInput("id", "stream", 4, 4, 1.0, (
+        ReplayFrame(0, 0, "a", source_capture_frame_id="reviewed-frame-1", session_sequence=3),
+    ))
+    first, second = replay.packets(), replay.packets()
+    assert first[0].frame_id == second[0].frame_id
+    assert first[0].source_capture_frame_id == second[0].source_capture_frame_id == "reviewed-frame-1"
+
+
+def test_source_lineage_fields_are_part_of_the_semantic_fingerprint() -> None:
+    """(25) Two replay inputs that differ only in reviewed source-frame
+    identity are semantically different runs and must fingerprint
+    differently; identical inputs reproduce identical fingerprints, and a
+    frame with no source lineage at all keeps its pre-Stage-6.14
+    fingerprint unchanged (purely additive, see
+    test_replay_frame_without_timeline_fields_keeps_the_pre_stage_6_8_fingerprint
+    for the equivalent Stage 6.8 proof)."""
+
+    plain = ReplayInput("id", "stream", 4, 4, 1.0, (ReplayFrame(0, 0, "a"),))
+    same_shape = ReplayInput("id", "stream", 4, 4, 1.0, (
+        ReplayFrame(0, 0, "a", None, (), None, None, None, None, None, None, False, None, None, None, None),
+    ))
+    assert plain.fingerprint == same_shape.fingerprint
+
+    with_lineage = ReplayInput("id", "stream", 4, 4, 1.0, (
+        ReplayFrame(0, 0, "a", source_capture_frame_id="reviewed-frame-1"),
+    ))
+    other_lineage = ReplayInput("id", "stream", 4, 4, 1.0, (
+        ReplayFrame(0, 0, "a", source_capture_frame_id="reviewed-frame-2"),
+    ))
+    repeat_of_first = ReplayInput("id", "stream", 4, 4, 1.0, (
+        ReplayFrame(0, 0, "a", source_capture_frame_id="reviewed-frame-1"),
+    ))
+    assert plain.fingerprint != with_lineage.fingerprint
+    assert with_lineage.fingerprint != other_lineage.fingerprint
+    assert with_lineage.fingerprint == repeat_of_first.fingerprint

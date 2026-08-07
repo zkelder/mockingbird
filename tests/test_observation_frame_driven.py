@@ -242,6 +242,116 @@ async def test_evidence_ring_roles_bounds_proposal_idempotency_and_reset() -> No
     assert provider.active_track_count == 0
 
 
+# --------------------------------------------------------------------------
+# Stage 6.14: reviewed-to-replay evidence identity lineage
+# --------------------------------------------------------------------------
+
+
+def _frames_with_source_lineage(count: int, *, step_ms: int = 200) -> tuple[FramePacket, ...]:
+    """Every produced frame additionally carries reviewed source-lineage
+    provenance -- mirroring what `replay.ReplayInput.packets()` now
+    produces for a temporal-review-derived input -- distinct from each
+    frame's own replay-local `frame_id`/`media_asset_id`."""
+    from dataclasses import replace
+    return tuple(
+        replace(
+            frame,
+            source_capture_frame_id=f"reviewed-{index}",
+            source_content_hash=f"hash-{index}",
+        )
+        for index, frame in enumerate(_frames(count, step_ms=step_ms))
+    )
+
+
+async def test_evidence_candidate_retains_source_frame_lineage() -> None:
+    """(7) Every `EvidenceCandidate` a confirmed track generation retains
+    carries its own frame's reviewed `source_capture_frame_id`/
+    `source_content_hash` as explicit, additive provenance -- distinct from,
+    and alongside, its own replay-local `frame_id`."""
+
+    frames = _frames_with_source_lineage(12)
+    detector = FakeDetector({frames[2].frame_id or "": (_animal(frames[2], (0.2, 0.2, 0.5, 0.5)),)})
+    provider = FrameDrivenObservationProvider(
+        detector=detector, settings=_settings(evidence_ring_size=4, baseline_detector_fps=5.0),
+        tracker_support=lambda frame, track: track.bounding_box,
+    )
+    provider.load()
+    results = await provider.replay_frames(frames)
+    evidence = [item for result in results for item in result.evidence_candidates]
+    assert evidence
+    for item in evidence:
+        assert item.source_capture_frame_id is not None
+        assert item.source_capture_frame_id != item.frame_id  # distinct identity spaces
+        assert item.source_capture_frame_id.startswith("reviewed-")
+        assert item.source_content_hash is not None
+
+
+async def test_visit_proposal_retains_source_supporting_lineage() -> None:
+    """(8) A confirmed `VisitProposal`'s `supporting_source_capture_frame_ids`
+    mirrors its `supporting_frame_ids` in reviewed-source-lineage space --
+    both cover the same supporting frames, one per identity space."""
+
+    frames = _frames_with_source_lineage(12)
+    detector = FakeDetector({frames[2].frame_id or "": (_animal(frames[2], (0.2, 0.2, 0.5, 0.5)),)})
+    provider = FrameDrivenObservationProvider(
+        detector=detector, settings=_settings(evidence_ring_size=4, baseline_detector_fps=5.0),
+        tracker_support=lambda frame, track: track.bounding_box,
+    )
+    provider.load()
+    results = await provider.replay_frames(frames)
+    (proposal,) = [item for result in results for item in result.visit_proposals]
+    assert proposal.supporting_source_capture_frame_ids
+    assert len(proposal.supporting_source_capture_frame_ids) == len(proposal.supporting_frame_ids)
+    assert all(item.startswith("reviewed-") for item in proposal.supporting_source_capture_frame_ids)
+
+
+async def test_generic_replay_frames_without_source_lineage_still_produce_evidence() -> None:
+    """(4, 24) A generic replay input with no reviewed-capture provenance at
+    all (the pre-Stage-6.14 shape, and every non-temporal-review replay
+    input) still produces evidence/proposals exactly as before -- source
+    lineage fields simply stay `None`/empty throughout, never required."""
+
+    frames = _frames(12)
+    assert all(frame.source_capture_frame_id is None for frame in frames)
+    detector = FakeDetector({frames[2].frame_id or "": (_animal(frames[2], (0.2, 0.2, 0.5, 0.5)),)})
+    provider = FrameDrivenObservationProvider(
+        detector=detector, settings=_settings(evidence_ring_size=4, baseline_detector_fps=5.0),
+        tracker_support=lambda frame, track: track.bounding_box,
+    )
+    provider.load()
+    results = await provider.replay_frames(frames)
+    evidence = [item for result in results for item in result.evidence_candidates]
+    (proposal,) = [item for result in results for item in result.visit_proposals]
+    assert evidence and all(item.source_capture_frame_id is None for item in evidence)
+    assert proposal.supporting_source_capture_frame_ids == ()
+
+
+async def test_source_lineage_propagation_is_deterministic_across_repeated_replay() -> None:
+    """(24) Repeated `replay_frames` calls over the same lineage-carrying
+    input reproduce byte-identical `EvidenceCandidate`/`VisitProposal`
+    source-lineage fields alongside their existing replay-local
+    counterparts (test_evidence_ring_roles_... already proves the latter;
+    this proves the former holds too)."""
+
+    frames = _frames_with_source_lineage(12)
+
+    def _run_detector() -> FakeDetector:
+        return FakeDetector({frames[2].frame_id or "": (_animal(frames[2], (0.2, 0.2, 0.5, 0.5)),)})
+
+    async def _run() -> tuple[object, ...]:
+        provider = FrameDrivenObservationProvider(
+            detector=_run_detector(), settings=_settings(evidence_ring_size=4, baseline_detector_fps=5.0),
+            tracker_support=lambda frame, track: track.bounding_box,
+        )
+        provider.load()
+        results = await provider.replay_frames(frames)
+        return tuple(item for result in results for item in result.evidence_candidates)
+
+    first, second = await _run(), await _run()
+    assert first == second
+    assert first[0].source_capture_frame_id is not None
+
+
 def _frames_with_discontinuity_at(
     count: int, boundary_index: int, *, generation_change: bool, step_ms: int = 200,
 ) -> tuple[FramePacket, ...]:

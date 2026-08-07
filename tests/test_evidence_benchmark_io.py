@@ -155,6 +155,43 @@ def test_replay_candidates_and_proposals_reconstructs_real_dataclasses() -> None
     assert report.metrics["episodes_evaluated"]["value"] == 1
 
 
+def test_old_replay_report_without_lineage_fields_remains_readable() -> None:
+    """(18) A `replay-report.json` written before Stage 6.14 existed --
+    exactly `_replay_report_payload()` above, which carries no
+    `source_capture_frame_id`/`source_content_hash`/
+    `supporting_source_capture_frame_ids` keys at all -- still loads
+    without error, with the new fields simply defaulting to `None`/`()`."""
+
+    document = _replay_report_payload()
+    candidates, proposals, _, _ = replay_candidates_and_proposals(document)
+    assert candidates[0].source_capture_frame_id is None
+    assert candidates[0].source_content_hash is None
+    assert proposals[0].supporting_source_capture_frame_ids == ()
+
+
+def test_old_report_source_linked_scoring_reports_unsupported_honestly() -> None:
+    """(19) Feeding an old, lineage-free replay report's candidates into the
+    benchmark alongside reviewed truth never fabricates a join from
+    coincidentally similar-looking identities (here the old report's own
+    `frame_id` happens to read "frame-0", textually similar to a plausible
+    reviewed id) -- only an explicit `source_capture_frame_id` counts, so
+    source-linked scoring honestly reports unsupported/insufficient truth,
+    with a stable `source_lineage_unavailable` limitation naming why."""
+
+    document = _replay_report_payload()
+    candidates, proposals, _, _ = replay_candidates_and_proposals(document)
+    from mockingbird.observation.evidence_benchmark import ReviewedEvidenceCandidate, ReviewedEvidenceManifest
+    manifest = ReviewedEvidenceManifest(1, "m", "s", (
+        ReviewedEvidenceCandidate(
+            candidate_id="frame-0", session_id="stream-1", role="tracked_best",
+            track_generation_id="track-1", useful_identification=True,
+        ),
+    ))
+    report = evaluate_evidence_benchmark(manifest, replay_candidates=candidates, replay_proposals=proposals)
+    assert report.metrics["useful_identification_rate"]["state"] == "insufficient_truth"
+    assert any(item.startswith("source_lineage_unavailable:") for item in report.limitations)
+
+
 def _minimal_manifest():
     from mockingbird.observation.evidence_benchmark import ReviewedEvidenceManifest
     return ReviewedEvidenceManifest(1, "m", "s", ())

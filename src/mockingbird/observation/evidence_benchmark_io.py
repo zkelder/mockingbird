@@ -112,6 +112,7 @@ def _candidate(value: object) -> ReviewedEvidenceCandidate:
         reviewed_at_iso=_optional_string(value, "reviewed_at_iso"),
         truth_source=_optional_string(value, "truth_source"),
         limitations=tuple(_optional_list(value, "limitations")),
+        content_hash=_optional_string(value, "content_hash"),
     )
 
 
@@ -186,12 +187,17 @@ def _evidence_candidate_from_dict(value: dict[str, Any]) -> EvidenceCandidate:
         quality_facts=tuple(tuple(item) for item in facts if isinstance(item, (list, tuple)) and len(item) == 2),
         temporary=bool(value.get("temporary", True)),
         shadow_only=bool(value.get("shadow_only", True)),
+        # Stage 6.14 reviewed-source lineage: absent on any replay report
+        # written before this stage existed.
+        source_capture_frame_id=value.get("source_capture_frame_id"),
+        source_content_hash=value.get("source_content_hash"),
     )
 
 
 def _visit_proposal_from_dict(value: dict[str, Any]) -> VisitProposal:
     evidence_ids = value.get("evidence_media_asset_ids") or ()
     supporting_ids = value.get("supporting_frame_ids") or ()
+    supporting_source_ids = value.get("supporting_source_capture_frame_ids") or ()
     return VisitProposal(
         proposal_key=str(value.get("proposal_key") or ""),
         source_id=str(value.get("source_id") or ""),
@@ -211,6 +217,11 @@ def _visit_proposal_from_dict(value: dict[str, Any]) -> VisitProposal:
         terminal_reason=value.get("terminal_reason"),
         provider_key=value.get("provider_key"),
         provider_version=value.get("provider_version"),
+        # Stage 6.14 reviewed-source lineage: absent on any replay report
+        # written before this stage existed.
+        supporting_source_capture_frame_ids=(
+            tuple(supporting_source_ids) if isinstance(supporting_source_ids, (list, tuple)) else ()
+        ),
     )
 
 

@@ -16,6 +16,16 @@ hash mismatches, dimension mismatches, and bounded-manifest violations are rejec
 Frame identity is derived from the input fingerprint, ordered index, source
 offset, and content hash. It never includes an absolute path.
 
+A frame originating from reviewed Stage 6.6/6.8 temporal-review capture data
+may additionally carry optional, additive reviewed-source-lineage provenance
+(`source_capture_frame_id`, `source_capture_session_id`, `session_sequence`) --
+the original retained Camera Node/review frame's own stable identity, kept
+explicitly distinct from this contract's own replay-local frame identity
+above. It is `None` for a generic frame directory with no reviewed-capture
+provenance, never required for an ordinary replay to work, and participates in
+the semantic fingerprint only when actually set. See
+[reviewed-replay-lineage-contract.md](reviewed-replay-lineage-contract.md).
+
 ## Matching and metrics
 
 The matcher classifies matched and missed expected Visits, false and duplicate

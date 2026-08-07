@@ -83,15 +83,26 @@ replay_report_fingerprint=None)` supports both required input categories:
   `evidence_candidates`/`proposals` sections (real `EvidenceCandidate`/
   `VisitProposal` dataclasses, not a shortcut that reuses the report's
   already-computed selections) form additional episodes the scorer is called
-  on exactly as for manifest-derived ones. Truth can only link to a
-  replay-sourced candidate when its own identity (`media_asset_id` or
-  `frame_id`) matches a `candidate_id` in `manifest`; when it does not
-  (for example, a replay produced through `replay-benchmark` assigns each
-  frame a new, replay-derived identity distinct from its original captured
-  `frame_id` -- a pre-existing fact of that pipeline this benchmark does not
-  change), the affected metrics honestly report `not_evaluated`/
-  `insufficient_truth` rather than a fabricated value, and a limitation is
-  recorded.
+  on exactly as for manifest-derived ones. Stage 6.14 joins a replay-sourced
+  candidate to reviewed truth through its explicit
+  `EvidenceCandidate.source_capture_frame_id` provenance -- the original
+  reviewed capture-frame identity a replay produced from Stage 6.6/6.8
+  temporal-review data now carries alongside its own replay-local
+  `media_asset_id`/`frame_id` -- never through coincidental identity
+  equality, filename/path, frame ordering, timestamp equality, or
+  geometry. When no source lineage is available at all (a pre-Stage-6.14
+  replay report, or a genuinely generic non-temporal-review replay input),
+  the affected metrics honestly report `not_evaluated`/`insufficient_truth`
+  rather than a fabricated value, and a stable-coded limitation
+  (`source_lineage_unavailable`, `unknown_reviewed_source_frame`,
+  `source_hash_mismatch`, or `duplicate_source_identity_conflicting_content`)
+  is recorded. Once joined, `media` is transparently extended so a
+  replay-sourced candidate can decode the same reviewed image bytes its
+  verified lineage identifies -- otherwise a replay-sourced candidate,
+  whose own `media_asset_id` never appears in a `--review`-resolved `media`
+  mapping, would always score `candidate_unavailable` regardless of
+  lineage. See
+  [reviewed-replay-lineage-contract.md](reviewed-replay-lineage-contract.md).
 
 ## Metrics and states
 
@@ -208,10 +219,16 @@ starts a camera, Camera Node, worker, or model runtime.
 This stage adds no detector, tracker, reconnect, burst-scheduler, or evidence-
 scoring change; it changes no runtime threshold, Ignore region, or monitoring
 policy; and it grants no Stage 7 proposal authority. Truth linkage between a
-`--replay-report`'s candidates and a reviewed manifest's truth depends on
-matching identity, which a report produced through `replay-benchmark` on a
-Stage 6.6 export does not currently share with the original reviewed
-`frame_id` namespace (see "Benchmark inputs" above) -- a pre-existing,
-disclosed limitation of the upstream pipeline this stage does not attempt to
-fix. Role/track-generation reconstruction from a static reviewed packet is a
+`--replay-report`'s candidates and a reviewed manifest's truth now depends on
+explicit reviewed source-frame lineage (Stage 6.14, see "Benchmark inputs"
+above and [reviewed-replay-lineage-contract.md](reviewed-replay-lineage-contract.md))
+rather than the Stage 6.13-disclosed identity-namespace gap; a replay report
+produced before Stage 6.14, or from a genuinely generic non-temporal-review
+input, still carries no such lineage and source-linked metrics honestly stay
+`not_evaluated`/`insufficient_truth` for it. Lineage makes a join possible; it
+does not invent the human preferred-candidate truth
+`selected_identification_correctness`/`selected_context_correctness` need --
+no historical reviewed session recorded that judgment, so those two metrics
+remain `not_evaluated` against the existing corpus regardless of this fix.
+Role/track-generation reconstruction from a static reviewed packet is a
 documented simplification, not a replay of live tracker decisions.

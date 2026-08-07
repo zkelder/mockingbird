@@ -918,6 +918,7 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
     if any(record.get("session_offset_ms") is None for record in ordered_records):
         raise TemporalAnnotationError("replay_export_requires_session_timeline")
     privacy_ignore_regions = session.get("config", {}).get("privacy_ignore_regions", [])  # type: ignore[union-attr]
+    source_capture_session_id = session.get("session_id")
     replay_frames = [
         {
             "index": index, "source_offset_ms": record["session_offset_ms"],
@@ -933,6 +934,17 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
             "provider_generation": record.get("provider_generation"),
             "temporal_discontinuity": bool(record.get("temporal_discontinuity", False)),
             "temporal_uncertainty_ms": record.get("temporal_uncertainty_ms"),
+            # Stage 6.14 reviewed-source lineage, field names matching
+            # `replay.ReplayFrame` exactly (see
+            # `_replay_export_source_lineage_facts` and
+            # docs/reviewed-replay-lineage-contract.md): the original
+            # reviewed `frame_id` a human annotation actually refers to,
+            # explicitly placed into the replay-frame lineage contract
+            # rather than only implied by the `path` string above (which is
+            # never used as a join key).
+            "source_capture_frame_id": record["frame_id"],
+            "source_capture_session_id": source_capture_session_id,
+            "session_sequence": record.get("session_sequence"),
         }
         for index, record in enumerate(ordered_records)
     ]
@@ -998,6 +1010,9 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
         timeline_facts = _replay_export_timeline_facts(frame)
         if timeline_facts:
             entry["timeline"] = timeline_facts
+        source_lineage_facts = _replay_export_source_lineage_facts(frame)
+        if source_lineage_facts:
+            entry["source_lineage"] = source_lineage_facts
         fingerprint_frames.append(entry)
     input_fingerprint = semantic_fingerprint({
         "version": 1, "input_id": input_id, "stream_id": stream_id, "width": width, "height": height,
@@ -1054,6 +1069,25 @@ def _replay_export_timeline_facts(frame: dict[str, object]) -> dict[str, object]
         facts["temporal_discontinuity"] = True
     if frame.get("temporal_uncertainty_ms") is not None:
         facts["temporal_uncertainty_ms"] = frame["temporal_uncertainty_ms"]
+    return facts
+
+
+def _replay_export_source_lineage_facts(frame: dict[str, object]) -> dict[str, object]:
+    """The Stage 6.14 reviewed-source-lineage fields on one exported replay
+    frame dict, present only when actually set -- field names and inclusion
+    rules matching `replay._replay_frame_source_lineage_facts` exactly (this
+    pure module never imports the real `ReplayFrame` dataclass for that
+    purpose), so `input_fingerprint` here always equals `ReplayInput.
+    fingerprint` once the exported JSON is loaded back through
+    `replay_io.load_replay_bundle`. See docs/reviewed-replay-lineage-contract.md."""
+
+    facts: dict[str, object] = {}
+    if frame.get("source_capture_frame_id") is not None:
+        facts["source_capture_frame_id"] = frame["source_capture_frame_id"]
+    if frame.get("source_capture_session_id") is not None:
+        facts["source_capture_session_id"] = frame["source_capture_session_id"]
+    if frame.get("session_sequence") is not None:
+        facts["session_sequence"] = frame["session_sequence"]
     return facts
 
 
