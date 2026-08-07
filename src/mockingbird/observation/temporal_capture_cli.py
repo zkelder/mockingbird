@@ -30,6 +30,7 @@ from mockingbird.observation.camera_node_live import (
     CameraNodeHttpTransport,
     LiveCameraNodeShadowSession,
 )
+from mockingbird.observation.contracts import EvidenceCandidate
 from mockingbird.observation.frame_driven_provider import (
     FrameDrivenObservationProvider,
     FrameDrivenProviderConfiguration,
@@ -460,7 +461,14 @@ class _CaptureLoop:
             self._retain(
                 frame, triggers, detection_boxes, track_generation_ids,
                 proposal_boxes, marker_ids=marker_ids,
-                high_resolution=TRIGGER_HIGH_RESOLUTION_BURST in triggers, privacy_interaction=privacy_interaction,
+                # This retains the low-resolution analysis-stream frame that
+                # triggered the burst, never the burst's own image -- it is
+                # never itself high-resolution. `TRIGGER_HIGH_RESOLUTION_BURST`
+                # stays in its own trigger_reasons above so a reviewer can
+                # still see that a burst correlates with this moment; the
+                # real high-resolution evidence is retained separately below,
+                # once per captured burst, by `_retain_high_resolution_evidence`.
+                high_resolution=False, privacy_interaction=privacy_interaction,
             )
             if frame.frame_id is not None and frame.received_at is not None:
                 self.recent_retained_identities.append((frame.frame_id, frame.received_at))
@@ -473,6 +481,16 @@ class _CaptureLoop:
             # which point new frames are already in the future relative to
             # that marker. Keep it rescue-eligible until it ages out.
             self.recent_frames.append((frame, detection_boxes, track_generation_ids, proposal_boxes))
+
+        # One dedicated high-resolution record per captured burst, never
+        # collapsed onto the single low-resolution trigger frame above: two
+        # simultaneous meaningful track updates on this same processed frame
+        # can each independently win their own scheduler-issued, Camera-
+        # Node-captured burst, and each is genuinely separate high-
+        # resolution evidence with its own real image bytes.
+        for candidate in result.evidence_candidates:
+            if candidate.role == "high_resolution_burst":
+                self._retain_high_resolution_evidence(candidate, frame=frame, provider_generation=generation)
 
         if frame.frame_id is not None:
             self.last_frame_id = frame.frame_id
@@ -509,6 +527,49 @@ class _CaptureLoop:
             connection_segment_id=frame.node_session_id or "",
         )
         self.retained.append(record)
+
+    def _retain_high_resolution_evidence(self, candidate: EvidenceCandidate, *, frame, provider_generation: str) -> None:
+        """Retain one captured evidence-burst's own real image as its own
+        record -- never folded into the low-resolution trigger frame's
+        boolean flag (see `_retain`'s `high_resolution=False` above).
+
+        `EvidenceCandidate` carries no payload of its own (it is a
+        provider-neutral fact record); the real bytes `request_evidence_
+        burst` already fetched from the Camera Node live only in the
+        session's own bounded `temporary_burst_payload` cache, keyed by the
+        `content_hash` quality fact every `high_resolution_burst` candidate
+        carries (see `LiveCameraNodeShadowSession._process_frame`). A
+        content hash this session can no longer resolve -- already evicted
+        from that bounded cache, or a session type that does not expose the
+        lookup at all -- is skipped rather than substituting unrelated
+        bytes: honest omission, never a mislabeled duplicate.
+        """
+        facts = dict(candidate.quality_facts)
+        content_hash = facts.get("content_hash")
+        if not isinstance(content_hash, str) or not content_hash:
+            return
+        fetch = getattr(self.session, "temporary_burst_payload", None)
+        payload = fetch(content_hash) if callable(fetch) else None
+        if not payload:
+            return
+        frame_id = f"burst-{content_hash[:16]}"
+        if any(item.frame_id == frame_id for item in self.retained):
+            return
+        write_frame_bytes(self.output_directory, frame_id=frame_id, payload=payload, high_resolution=True)
+        self.bytes_written += len(payload)
+        track_generation_ids = (candidate.track_generation_id,) if candidate.track_generation_id else ()
+        self.retained.append(RetainedFrameRecord(
+            frame_id=frame_id, sequence=frame.frame_sequence or len(self.retained),
+            source_offset_ms=frame.source_offset_ms or 0, provider_generation=provider_generation,
+            content_hash=sha256(payload).hexdigest(), byte_size=len(payload),
+            trigger_reasons=(TRIGGER_HIGH_RESOLUTION_BURST,), detector_observation_count=0,
+            animal_detection_count=0, max_animal_score=None,
+            active_track_count=len(track_generation_ids), motion_proposal_count=0,
+            high_resolution=True, track_generation_ids=track_generation_ids,
+            host_received_at=frame.received_at.isoformat() if frame.received_at is not None else "",
+            source_capture_timestamp=candidate.captured_at.isoformat() if candidate.captured_at is not None else None,
+            connection_segment_id=frame.node_session_id or "",
+        ))
 
 
 def _tracker_proposal_config_fingerprint(configuration: FrameDrivenProviderConfiguration) -> str:

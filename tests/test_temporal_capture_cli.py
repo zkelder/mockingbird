@@ -76,8 +76,24 @@ def _track(generation_id="track-1", lifecycle="confirmed") -> TrackUpdate:
     return TrackUpdate(track_id="t1", generation_id=generation_id, captured_at=datetime.now(UTC), status="started", lifecycle_state=lifecycle, bounding_box=(0.1, 0.1, 0.2, 0.2))
 
 
+class _FakeBurstSession:
+    """Stand-in for `LiveCameraNodeShadowSession`: the real burst payload
+    bytes a captured evidence-burst already fetched live only ever exist in
+    that session's own bounded `temporary_burst_payload` cache (see
+    `_retain_high_resolution_evidence`) -- never on `EvidenceCandidate`
+    itself. Tests populate `payloads` to simulate a payload still being
+    cached, and leave a hash absent to simulate one already evicted."""
+
+    def __init__(self) -> None:
+        self.provider = SimpleNamespace(active_track_count=0)
+        self.payloads: dict[str, bytes] = {}
+
+    def temporary_burst_payload(self, content_hash: str) -> bytes | None:
+        return self.payloads.get(content_hash)
+
+
 def _loop(tmp_path: Path, **bound_overrides) -> _CaptureLoop:
-    fake_session = SimpleNamespace(provider=SimpleNamespace(active_track_count=0))
+    fake_session = _FakeBurstSession()
     return _CaptureLoop(
         session=fake_session, output_directory=tmp_path, bounds=CaptureBounds(**bound_overrides),
         shadow_operating_point=0.5, review_floor=0.1, privacy_regions=(),
@@ -157,20 +173,125 @@ def test_operator_marker_alone_retains_a_frame_with_zero_detections(tmp_path: Pa
 def test_high_resolution_burst_evidence_marks_the_frame_high_resolution(tmp_path: Path) -> None:
     loop = _loop(tmp_path)
     blank = _jpeg((30, 30, 30))
-    candidate = EvidenceCandidate(media_asset_id="shadow-burst:x", stream_id="stream-1", role="high_resolution_burst", captured_at=datetime.now(UTC))
+    burst_payload = _jpeg((9, 9, 9))
+    burst_hash = hashlib.sha256(burst_payload).hexdigest()
+    loop.session.payloads[burst_hash] = burst_payload
+    candidate = EvidenceCandidate(
+        media_asset_id="shadow-burst:x", stream_id="stream-1", role="high_resolution_burst",
+        captured_at=datetime.now(UTC), quality_facts=(("content_hash", burst_hash),),
+    )
     loop._process_result(_result(_packet("f0", payload=blank, offset_ms=0, sequence=0), evidence_candidates=(candidate,)))
-    assert len(loop.retained) == 1
-    assert loop.retained[0].high_resolution is True
-    assert TRIGGER_HIGH_RESOLUTION_BURST in loop.retained[0].trigger_reasons
-    assert (tmp_path / "high-resolution" / "f0.jpg").is_file()
+    # Two retained records: the low-resolution trigger frame itself (never
+    # high-resolution -- see test_high_resolution_evidence_retains_the_real_burst_payload...
+    # below) plus the dedicated high-resolution record for the captured burst.
+    assert len(loop.retained) == 2
+    high_res = [item for item in loop.retained if item.high_resolution]
+    assert len(high_res) == 1
+    assert TRIGGER_HIGH_RESOLUTION_BURST in high_res[0].trigger_reasons
+    assert (tmp_path / "high-resolution" / f"{high_res[0].frame_id}.jpg").is_file()
+    low_res = [item for item in loop.retained if item.frame_id == "f0"][0]
+    assert low_res.high_resolution is False
+    assert TRIGGER_HIGH_RESOLUTION_BURST in low_res.trigger_reasons  # context is preserved
 
 
 def test_bounds_exceeded_reports_high_resolution_limit(tmp_path: Path) -> None:
     loop = _loop(tmp_path, max_high_resolution_frames=1)
     blank = _jpeg((30, 30, 30))
-    candidate = EvidenceCandidate(media_asset_id="shadow-burst:x", stream_id="stream-1", role="high_resolution_burst", captured_at=datetime.now(UTC))
+    burst_payload = _jpeg((9, 9, 9))
+    burst_hash = hashlib.sha256(burst_payload).hexdigest()
+    loop.session.payloads[burst_hash] = burst_payload
+    candidate = EvidenceCandidate(
+        media_asset_id="shadow-burst:x", stream_id="stream-1", role="high_resolution_burst",
+        captured_at=datetime.now(UTC), quality_facts=(("content_hash", burst_hash),),
+    )
     loop._process_result(_result(_packet("f0", payload=blank, offset_ms=0, sequence=0), evidence_candidates=(candidate,)))
     assert loop._bounds_exceeded() == STOP_HIGH_RESOLUTION_LIMIT
+
+
+def test_high_resolution_evidence_retains_the_real_burst_payload_not_the_analysis_frame(tmp_path: Path) -> None:
+    """Integration/accounting defect (session-01, 2026-08-07): every live
+    high-resolution retention wrote `frame.payload` -- the low-resolution
+    analysis-stream bytes that merely triggered the burst -- because the
+    real bytes `request_evidence_burst` fetched from the Camera Node are
+    never carried on `EvidenceCandidate` and nothing downstream of
+    `_process_result` ever read the live session's own
+    `temporary_burst_payload` cache to recover them. Confirmed against the
+    real session-01 capture: 31/32 retained "high-resolution" files on disk
+    were the same 1920x1440 analysis resolution as every ordinary low-res
+    frame; only the separately-coded validation-burst frame was genuinely
+    4624x3472."""
+    loop = _loop(tmp_path)
+    analysis_payload = _jpeg((30, 30, 30))
+    burst_payload = _jpeg((250, 5, 5))  # deliberately distinct bytes from the analysis frame
+    burst_hash = hashlib.sha256(burst_payload).hexdigest()
+    assert burst_hash != hashlib.sha256(analysis_payload).hexdigest()
+    loop.session.payloads[burst_hash] = burst_payload
+    candidate = EvidenceCandidate(
+        media_asset_id="shadow-burst:x", stream_id="stream-1", role="high_resolution_burst",
+        captured_at=datetime.now(UTC), frame_id="f0", track_generation_id="track-1",
+        quality_facts=(("content_hash", burst_hash),),
+    )
+    loop._process_result(_result(
+        _packet("f0", payload=analysis_payload, offset_ms=0, sequence=0), evidence_candidates=(candidate,),
+    ))
+    high_res = [item for item in loop.retained if item.high_resolution]
+    assert len(high_res) == 1
+    written = (tmp_path / "high-resolution" / f"{high_res[0].frame_id}.jpg").read_bytes()
+    assert written == burst_payload
+    assert written != analysis_payload
+    assert high_res[0].content_hash == burst_hash
+
+
+def test_two_simultaneous_captured_bursts_on_one_frame_are_both_retained_and_counted(tmp_path: Path) -> None:
+    """Integration/accounting defect: two simultaneous meaningful track
+    updates on the same processed analysis frame can each independently win
+    their own scheduler-issued, Camera-Node-captured burst (confirmed
+    structurally possible in session-01: 14/32 retained high-resolution
+    frames had active_track_count >= 2). Before the fix, `_process_result`
+    folded every evidence candidate for one processed frame into a single
+    boolean, so only one of the two captured bursts was ever retained or
+    counted toward `max_high_resolution_frames` -- the other was silently
+    discarded with no trace in the manifest."""
+    loop = _loop(tmp_path, max_high_resolution_frames=2)
+    analysis_payload = _jpeg((30, 30, 30))
+    payload_a, payload_b = _jpeg((250, 5, 5)), _jpeg((5, 250, 5))
+    hash_a, hash_b = hashlib.sha256(payload_a).hexdigest(), hashlib.sha256(payload_b).hexdigest()
+    loop.session.payloads[hash_a] = payload_a
+    loop.session.payloads[hash_b] = payload_b
+    candidate_a = EvidenceCandidate(
+        media_asset_id="shadow-burst:a", stream_id="stream-1", role="high_resolution_burst",
+        captured_at=datetime.now(UTC), frame_id="f0", track_generation_id="track-a",
+        quality_facts=(("content_hash", hash_a),),
+    )
+    candidate_b = EvidenceCandidate(
+        media_asset_id="shadow-burst:b", stream_id="stream-1", role="high_resolution_burst",
+        captured_at=datetime.now(UTC), frame_id="f0", track_generation_id="track-b",
+        quality_facts=(("content_hash", hash_b),),
+    )
+    loop._process_result(_result(
+        _packet("f0", payload=analysis_payload, offset_ms=0, sequence=0),
+        evidence_candidates=(candidate_a, candidate_b),
+    ))
+    high_res = [item for item in loop.retained if item.high_resolution]
+    assert len(high_res) == 2
+    assert {item.content_hash for item in high_res} == {hash_a, hash_b}
+    # The cap must trip on the second real burst, not silently accept a
+    # third without ever having "seen" the second.
+    assert loop._bounds_exceeded() == STOP_HIGH_RESOLUTION_LIMIT
+
+
+def test_high_resolution_evidence_without_a_recoverable_payload_is_not_fabricated(tmp_path: Path) -> None:
+    """An evidence candidate whose real bytes are no longer cached (or whose
+    session cannot supply them at all) must never be retained using
+    substitute bytes -- honest omission, not a mislabeled duplicate."""
+    loop = _loop(tmp_path)
+    blank = _jpeg((30, 30, 30))
+    candidate = EvidenceCandidate(
+        media_asset_id="shadow-burst:x", stream_id="stream-1", role="high_resolution_burst",
+        captured_at=datetime.now(UTC), quality_facts=(("content_hash", "not-cached-anymore"),),
+    )
+    loop._process_result(_result(_packet("f0", payload=blank, offset_ms=0, sequence=0), evidence_candidates=(candidate,)))
+    assert [item.high_resolution for item in loop.retained] == [False]
 
 
 # --------------------------------------------------------------------------

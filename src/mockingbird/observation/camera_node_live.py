@@ -700,6 +700,22 @@ class LiveCameraNodeShadowSession:
         self.provider.start_live(self.source.stream_id)
         self._running = True
 
+    def temporary_burst_payload(self, content_hash: str) -> bytes | None:
+        """Bounded, read-only lookup into this session's own most-recent-8
+        successfully captured evidence-burst payloads (see
+        `_temporary_payloads` above), keyed by content hash.
+
+        `EvidenceCandidate` is a provider-neutral fact record with no
+        payload field, so a caller downstream of `process_envelope`/`run`
+        (a temporal-capture retention loop, for instance) has no other way
+        to recover the real bytes a captured burst already fetched from the
+        Camera Node -- this is that one bounded, explicit path, never a
+        fresh request of its own. Returns `None` once the entry has aged out
+        of the bounded cache; a caller must never substitute unrelated bytes
+        when that happens."""
+
+        return self._temporary_payloads.get(content_hash)
+
     async def process_envelope(
         self, envelope: AnalysisFrameEnvelope, *, received_at: datetime | None = None
     ) -> ObservationResult | None:
