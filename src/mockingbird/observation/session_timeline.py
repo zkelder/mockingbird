@@ -184,6 +184,35 @@ def derive_session_timeline(facts: tuple[SourceFrameFact, ...], *, session_id: s
     return _derive_legacy(facts)
 
 
+def native_reconnect_step(
+    *, previous_received_at: datetime, current_received_at: datetime,
+) -> tuple[int, int]:
+    """The forward-clamped host-receive-time step and uncertainty for one
+    live connection-segment transition -- the identical per-boundary
+    arithmetic `_derive_native` applies post-hoc (same minimum-1ms forward
+    clamp, same `NATIVE_RECONNECT_UNCERTAINTY_MS`/
+    `NATIVE_CLOCK_REGRESSION_UNCERTAINTY_MS` constants), exposed standalone
+    for incremental live use (Stage 6.11B): a live Camera Node consumer
+    derives its own running session-relative coordinate one already-
+    delivered frame at a time rather than only after a whole capture
+    session finishes (`derive_session_timeline`, used post-hoc by
+    `temporal_capture`). Reusing this exact helper keeps the live and
+    offline-replay timelines agreeing on one policy instead of diverging
+    into two independently-tuned ones.
+
+    Returns ``(step_ms, temporal_uncertainty_ms)``; ``step_ms`` is always
+    ``>= 1`` (the same minimum-forward-progress guarantee
+    `derive_session_timeline` provides, so a caller's own running
+    session-relative offset can never go non-monotonic from calling this).
+    """
+    if previous_received_at.tzinfo is None or current_received_at.tzinfo is None:
+        raise SessionTimelineError("invalid_host_received_at")
+    delta_ms = (current_received_at - previous_received_at).total_seconds() * 1000.0
+    if delta_ms < 0:
+        return _MIN_FORWARD_STEP_MS, NATIVE_CLOCK_REGRESSION_UNCERTAINTY_MS
+    return max(round(delta_ms), _MIN_FORWARD_STEP_MS), NATIVE_RECONNECT_UNCERTAINTY_MS
+
+
 def _derive_native(facts: tuple[SourceFrameFact, ...]) -> SessionTimeline:
     """Native derivation: trust the caller's given order as true
     chronological receipt order (the "frame order observed by the
@@ -391,4 +420,5 @@ __all__ = [
     "SessionTimelineError",
     "SourceFrameFact",
     "derive_session_timeline",
+    "native_reconnect_step",
 ]

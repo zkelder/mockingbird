@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from mockingbird.observation.burst_scheduler import (
+    DECISION_SUPPRESSED_RECURRING_GEOMETRY,
     DECISION_SUPPRESSED_SESSION_BUDGET,
     RESET_GENERATION_REPLACEMENT,
     RESET_REASONS,
@@ -65,12 +66,13 @@ def _frame(
     generation: str = "generation-a",
     captured_at: datetime | None = None,
     payload: bytes = b"\xff\xd8frame\xff\xd9",
+    node_session_id: str = "node-session-a",
 ) -> AnalysisFrameEnvelope:
     captured = captured_at or datetime(2026, 8, 4, tzinfo=UTC) + timedelta(milliseconds=sequence * 200)
     digest = hashlib.sha256(payload).hexdigest()
     return AnalysisFrameEnvelope(
         stream_id="stream-yard",
-        node_session_id="node-session-a",
+        node_session_id=node_session_id,
         sequence=sequence,
         frame_id=f"{generation}:{sequence}:{digest[:12]}",
         captured_at=captured,
@@ -538,3 +540,253 @@ def test_default_scheduler_reset_reasons_are_reachable() -> None:
     # Documents which reset reasons the live wiring actually uses -- both
     # are exercised end-to-end by the async tests above.
     assert {RESET_GENERATION_REPLACEMENT, RESET_SESSION_STOP}.issubset(set(RESET_REASONS))
+
+
+# =============================================================================
+# Stage 6.11B: reconnect-safe tracker continuity on the *live* Camera Node
+# path. Before this stage, `CameraNodeAnalysisSource` treated a fresh HTTP
+# connection's restarted sequence header (`x-mockingbird-sequence` back to a
+# low value) as a fatal "analysis_frame_sequence" violation whenever
+# `provider_generation` had not also changed -- forcing `_CaptureLoop` to
+# rebuild the whole source and restart the live tracker generation on every
+# ordinary reconnect (roughly every ten seconds on the real Node). This
+# section proves the source itself now distinguishes a benign transport
+# reconnect (same provider_generation, new node_session_id) from a genuine
+# source-generation reset, using the identical Stage 6.11 decision contract
+# already proven in replay. See docs/reconnect-continuity-contract.md.
+# =============================================================================
+
+
+def test_committed_stage611b_scenario_catalog_exists() -> None:
+    import json
+    from pathlib import Path
+
+    catalog = json.loads(Path("tests/fixtures/observation_stage611b/scenarios.json").read_text(encoding="utf-8"))
+    all_scenarios = [name for group in catalog["scenarios"].values() for name in group]
+    assert len(all_scenarios) == len(set(all_scenarios)) >= 30
+
+
+# --------------------------------------------------------------------------
+# 1/2/3/4/5: source-level reconnect continuity -- same provider_generation,
+# new node_session_id, no exception raised, a new segment recorded, and the
+# delivered source_offset_ms/timing facts remain monotonic across it.
+# --------------------------------------------------------------------------
+
+
+def test_source_reconnect_with_same_generation_preserves_state_and_records_new_segment() -> None:
+    source = CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024)
+    received = datetime(2026, 8, 6, 12, tzinfo=UTC)
+    source.offer(_frame(1, node_session_id="conn-a"), received_at=received)
+    first = source.pop_latest(now=received)
+    assert first is not None
+    assert dict(first.timing_facts)["connection_segment_id"] == "conn-a"
+    assert dict(first.timing_facts)["connection_segment_ordinal"] == 0
+    assert dict(first.timing_facts)["temporal_discontinuity"] is False
+
+    # A fresh HTTP connection: sequence restarts at a low value, a new
+    # node_session_id, but the SAME provider_generation -- must not raise.
+    source.offer(_frame(1, node_session_id="conn-b"), received_at=received + timedelta(seconds=3))
+    second = source.pop_latest(now=received + timedelta(seconds=3))
+    assert second is not None
+    facts = dict(second.timing_facts)
+    assert facts["connection_segment_id"] == "conn-b"
+    assert facts["connection_segment_ordinal"] == 1  # 4. new transport segment is recorded
+    assert facts["temporal_discontinuity"] is True
+    status = source.status(now=received + timedelta(seconds=3))
+    assert status.transport_reconnect_count == 1
+    assert status.current_connection_segment_ordinal == 1
+    assert status.generation_resets == 0  # no generation reset -- this was a benign reconnect
+
+
+def test_sequence_reset_alone_does_not_raise_or_reset_generation() -> None:
+    """Scenario 2: the Node's own per-connection sequence header restarting
+    at 1 on a fresh connection, with provider_generation unchanged, must not
+    raise `analysis_frame_sequence` -- the Stage 6.6-era failure mode this
+    stage removes."""
+    source = CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024)
+    received = datetime(2026, 8, 6, 12, tzinfo=UTC)
+    source.offer(_frame(5, node_session_id="conn-a"), received_at=received)
+    source.pop_latest(now=received)
+    # Sequence goes from 5 back down to 1 -- would have raised before this
+    # stage -- but arrives on a new connection (conn-b).
+    source.offer(_frame(1, node_session_id="conn-b"), received_at=received + timedelta(seconds=2))
+    packet = source.pop_latest(now=received + timedelta(seconds=2))
+    assert packet is not None
+    assert packet.frame_sequence == 1
+    assert source.status().generation_resets == 0
+
+
+def test_source_offset_reset_alone_does_not_reset_generation() -> None:
+    """Scenario 3: a fresh connection's own connection-local source offset
+    resetting near zero (preserved separately as original_source_offset_ms)
+    must not, by itself, force a generation reset or a non-monotonic
+    session-relative source_offset_ms."""
+    source = CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024)
+    received = datetime(2026, 8, 6, 12, tzinfo=UTC)
+    source.offer(_frame(8, node_session_id="conn-a"), received_at=received)
+    source.pop_latest(now=received)
+    source.offer(_frame(9, node_session_id="conn-a"), received_at=received + timedelta(milliseconds=200))
+    first = source.pop_latest(now=received + timedelta(milliseconds=200))
+    source.offer(_frame(1, node_session_id="conn-b"), received_at=received + timedelta(seconds=2))
+    second = source.pop_latest(now=received + timedelta(seconds=2))
+    assert first is not None and second is not None
+    # The connection-local offset resets near zero on the new connection
+    # (preserved, unchanged transport-segment provenance)...
+    assert dict(second.timing_facts)["original_source_offset_ms"] < dict(first.timing_facts)["original_source_offset_ms"]
+    # ...but the session-relative coordinate the tracker actually consumes
+    # never goes backwards.
+    assert second.source_offset_ms > first.source_offset_ms
+    assert source.status().generation_resets == 0
+
+
+def test_session_timeline_remains_monotonic_across_several_reconnects() -> None:
+    """Scenario 5: three connection segments in a row, each delivering a
+    handful of frames -- source_offset_ms strictly increases throughout."""
+    source = CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024)
+    received = datetime(2026, 8, 6, 12, tzinfo=UTC)
+    offsets: list[int] = []
+    moment = received
+    for segment_index, segment in enumerate(("conn-a", "conn-b", "conn-c")):
+        for local_sequence in range(1, 4):
+            moment = moment + timedelta(milliseconds=300)
+            source.offer(_frame(local_sequence, node_session_id=segment), received_at=moment)
+            packet = source.pop_latest(now=moment)
+            assert packet is not None
+            offsets.append(packet.source_offset_ms)
+        moment = moment + timedelta(seconds=2)  # the reconnect gap before the next segment
+    assert offsets == sorted(offsets)
+    assert len(set(offsets)) == len(offsets)
+    status = source.status()
+    assert status.transport_reconnect_count == 2
+    assert status.current_connection_segment_ordinal == 2
+
+
+# --------------------------------------------------------------------------
+# 22/23/26/30: `LiveCameraNodeShadowSession` preserves its provider instance,
+# burst-scheduler continuity, and clean-stop behavior across a benign
+# reconnect, while a true reset still clears both -- exercised through the
+# full session (real CameraNodeAnalysisSource + real
+# FrameDrivenObservationProvider), not just the provider in isolation.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_live_session_preserves_provider_and_burst_scheduler_state_across_benign_reconnect() -> None:
+    provider = _live_provider()
+    scheduler = BurstScheduler(session_id="live-shadow-reconnect-test", config=BurstSchedulerConfig())
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024),
+        transport=_BurstTransport(), provider=provider, evidence_profile_id="evidence-large",
+        scheduler=scheduler,
+    )
+    session.start()
+    same_provider = session.provider
+    received = datetime(2026, 8, 6, tzinfo=UTC)
+    await session.process_envelope(_frame(1, node_session_id="conn-a"), received_at=received)
+    await session.process_envelope(_frame(2, node_session_id="conn-a"), received_at=received + timedelta(milliseconds=200))
+    diagnostics_before = session.scheduler.diagnostics()
+    assert diagnostics_before.issued_count >= 1
+    assert diagnostics_before.recurrence_group_count == 1
+
+    # A benign reconnect: new node_session_id, same provider_generation.
+    await session.process_envelope(_frame(3, node_session_id="conn-b"), received_at=received + timedelta(seconds=3))
+    assert session.provider is same_provider  # never rebuilt
+    diagnostics_after = session.scheduler.diagnostics()
+    # Recurrence-group bookkeeping survives the reconnect -- it is not
+    # rebuilt into a fresh, first-ever-seen group (Stage 6.9's whole point
+    # would otherwise be defeated on every reconnect): still one group, and
+    # the suppressed-as-recurring reason already fired at least once across
+    # the sequence, which could only happen if this group's occurrence
+    # history genuinely carried across the reconnect rather than resetting.
+    assert diagnostics_after.recurrence_group_count == 1
+    assert dict(diagnostics_after.suppression_reason_distribution).get(DECISION_SUPPRESSED_RECURRING_GEOMETRY, 0) >= 1
+
+    status = session.status()
+    assert status.reconnect_diagnostics is not None
+    assert status.reconnect_diagnostics.benign_reconnect_count == 1
+    assert status.reconnect_diagnostics.true_reset_count == 0
+    assert status.reconnect_diagnostics.last_reconnect_classification == "continue_across_transport_reconnect"
+    assert status.reconnect_diagnostics.current_connection_segment_ordinal == 1
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_live_session_true_reset_still_clears_scheduler_and_reports_diagnostics() -> None:
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024),
+        transport=_BurstTransport(), provider=_live_provider(), evidence_profile_id="evidence-large",
+    )
+    session.start()
+    received = datetime(2026, 8, 6, tzinfo=UTC)
+    await session.process_envelope(_frame(1), received_at=received)
+    assert session.status().scheduler_diagnostics.issued_count == 1
+
+    await session.process_envelope(_frame(1, generation="generation-b"), received_at=received + timedelta(seconds=1))
+    status = session.status()
+    assert status.reconnect_diagnostics is not None
+    assert status.reconnect_diagnostics.true_reset_count == 1
+    assert status.reconnect_diagnostics.benign_reconnect_count == 0
+    assert status.reconnect_diagnostics.last_reconnect_classification == "reset_source_generation"
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_live_session_clean_stop_releases_transport_and_tracker_state() -> None:
+    """Scenario 26: a clean stop still releases the transport/source/tracker
+    exactly as before this stage; reconnect diagnostics remain honestly
+    readable afterward rather than silently vanishing."""
+    transport = _BurstTransport()
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024),
+        transport=transport, provider=_live_provider(), evidence_profile_id="evidence-large",
+    )
+    session.start()
+    received = datetime(2026, 8, 6, tzinfo=UTC)
+    await session.process_envelope(_frame(1, node_session_id="conn-a"), received_at=received)
+    await session.process_envelope(_frame(2, node_session_id="conn-b"), received_at=received + timedelta(seconds=3))
+    session.stop()
+    assert transport.closed is True
+    status = session.status()
+    assert status.state == "stopped"
+    assert status.source.state == "stopped"
+    assert status.reconnect_diagnostics is not None
+    assert status.reconnect_diagnostics.benign_reconnect_count == 1  # last-known value, not cleared
+
+
+@pytest.mark.anyio
+async def test_live_privacy_ignore_exclusion_unaffected_by_benign_reconnect_bridging() -> None:
+    """Scenario 29: Privacy/Ignore exclusion still masks a detection inside
+    an excluded region across a benign reconnect through the full live
+    session -- the bridge changes tracker-continuity handling only, never
+    detection filtering."""
+    excluded_region = (0.0, 0.0, 0.5, 0.5)  # covers _LiveDetector's fixed (0.2, 0.2, 0.4, 0.4) box
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024, analysis_excluded_regions=(excluded_region,)),
+        transport=_BurstTransport(), provider=_live_provider(), evidence_profile_id="evidence-large",
+    )
+    session.start()
+    received = datetime(2026, 8, 6, tzinfo=UTC)
+    first = await session.process_envelope(_frame(1, node_session_id="conn-a"), received_at=received)
+    second = await session.process_envelope(_frame(2, node_session_id="conn-b"), received_at=received + timedelta(seconds=3))
+    assert first is not None and second is not None
+    assert first.detection_observations == () and second.detection_observations == ()
+    assert first.track_updates == () and second.track_updates == ()
+    assert first.visit_proposals == () and second.visit_proposals == ()
+    session.stop()
+
+
+def test_generation_change_still_resets_the_source_and_segment_ordinal() -> None:
+    """A true provider_generation change remains a hard reset even when it
+    also happens to coincide with a new node_session_id (the normal shape
+    of a genuine Camera Node/process restart)."""
+    source = CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024)
+    received = datetime(2026, 8, 6, 12, tzinfo=UTC)
+    source.offer(_frame(1, node_session_id="conn-a"), received_at=received)
+    source.pop_latest(now=received)
+    source.offer(_frame(1, generation="generation-b", node_session_id="conn-b"), received_at=received + timedelta(seconds=1))
+    packet = source.pop_latest(now=received + timedelta(seconds=1))
+    assert packet is not None
+    assert source.status().generation_resets == 1
+    assert source.status().transport_reconnect_count == 1  # the connection itself still changed
+    assert source.status().current_connection_segment_ordinal == 0  # segment numbering restarts fresh
+    assert packet.source_offset_ms == 0

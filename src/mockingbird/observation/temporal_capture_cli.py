@@ -85,20 +85,21 @@ from mockingbird.observation.temporal_capture_io import (
 BATCH_FRAMES = 12
 # Each batch opens its own bounded transport connection (see
 # CameraNodeHttpTransport.iter_analysis_frames). Confirmed against the real
-# Camera Node: every fresh connection is itself a discontinuity boundary
-# (its sequence header restarts, forcing a source rebuild + provider
-# generation restart in `_CaptureLoop.run()` below) that clears pretrigger
-# context and blocks motion-proposal generation across the gap. A larger
-# batch means fewer connections per bounded capture and more continuous
-# temporal coverage, at the cost of coarser bound-checking granularity
-# between batches, AND slower operator-marker rescue: `_refresh_markers`
-# can only discover a marker at a batch boundary, so a batch's worth of
-# frames is roughly the worst-case rescue-buffer depth needed (see
-# `CaptureBounds.adjacent_context_frame_count`, max 16). 12 keeps one
-# batch comfortably within that ceiling with headroom, while still being
-# meaningfully less choppy than one-frame-at-a-time polling (12 frames at
-# a 2 fps nominal source is ~6 real seconds between checkpoints).
-MAX_CONSECUTIVE_RECONNECTS = 5
+# Camera Node: every fresh connection restarts its own sequence header, but
+# (Stage 6.11B) an ordinary reconnect like this is now recognized as a
+# benign transport-segment transition -- CameraNodeAnalysisSource/
+# FrameDrivenObservationProvider bridge it transparently, so a batch
+# boundary no longer forces pretrigger/motion-proposal continuity to break
+# by itself (only a genuine source-generation reset still does that; see
+# `_process_result`'s `discontinuity` handling). A larger batch still means
+# fewer bounded transport reconnections and coarser bound-checking
+# granularity between batches, and slower operator-marker rescue:
+# `_refresh_markers` can only discover a marker at a batch boundary, so a
+# batch's worth of frames is roughly the worst-case rescue-buffer depth
+# needed (see `CaptureBounds.adjacent_context_frame_count`, max 16). 12
+# keeps one batch comfortably within that ceiling with headroom, while
+# still being meaningfully less choppy than one-frame-at-a-time polling (12
+# frames at a 2 fps nominal source is ~6 real seconds between checkpoints).
 MAX_PLANE_CACHE = 4
 _ERROR_EXIT_CODES = {
     "unsafe_output_path": 6, "nonempty_output_directory": 7, "invalid_camera_node_config": 6,
@@ -312,7 +313,6 @@ class _CaptureLoop:
                 break
 
     async def run(self, *, started_wall: datetime, duration_seconds: int) -> str:
-        consecutive_reconnects = 0
         while True:
             elapsed = (datetime.now(UTC) - started_wall).total_seconds()
             if elapsed >= duration_seconds:
@@ -325,67 +325,25 @@ class _CaptureLoop:
             self._refresh_markers()
             try:
                 results = await self.session.run(maximum_frames=batch)
-            except CameraNodeClientError:
+            except (CameraNodeClientError, ValueError):
+                # Stage 6.11B: an ordinary HTTP reconnect -- a fresh
+                # transport connection under the same provider_generation,
+                # the Node's per-connection sequence header restarting at 1
+                # -- no longer raises here at all. `CameraNodeAnalysisSource`
+                # recognizes the new connection segment and keeps its
+                # sequence/offset bookkeeping consistent across it, and
+                # `FrameDrivenObservationProvider.observe_live_frame`
+                # classifies the boundary through the same Stage 6.11
+                # decision contract `replay_frames` already uses, bridging
+                # the live tracker across it rather than requiring this loop
+                # to rebuild the source and restart the whole tracker
+                # generation on every batch boundary (the removed Stage
+                # 6.6-era recovery this replaces -- see
+                # docs/reconnect-continuity-contract.md). Anything that
+                # still reaches this handler is a genuine unrecoverable
+                # transport/source error: reported honestly as a stop, never
+                # silently retried.
                 return STOP_TRANSPORT_ERROR
-            except ValueError as error:
-                # Each `session.run()` batch opens its own bounded transport
-                # connection (see CameraNodeHttpTransport.iter_analysis_frames).
-                # Confirmed against the real Camera Node: its per-connection
-                # `x-mockingbird-sequence` header restarts at 1 on *every*
-                # fresh connection while `x-mockingbird-provider-generation`
-                # stays unchanged (it tracks the physical camera process, not
-                # the HTTP connection) -- so this is not a rare instability
-                # case, it is the expected transition at every single batch
-                # boundary. `self.session.source` is one long-lived object
-                # reused across batches; it still remembers the previous
-                # connection's last (higher) sequence number, so the new
-                # connection's first frame ("sequence resets to 1") always
-                # trips CameraNodeAnalysisSource's own single-connection
-                # monotonic-sequence contract on the first `session.run()`
-                # call after a successful batch. That source -- correctly,
-                # for its own contract -- raises "analysis_frame_sequence"
-                # rather than silently accepting a non-increasing sequence
-                # within one generation.
-                #
-                # A fresh source (same bounds/exclusions, cleared
-                # sequence/generation state) treats the next batch as a new,
-                # valid start. But the source also re-zeroes its
-                # source_offset_ms against the new connection's first frame,
-                # and the provider's own live tracker still expects offsets
-                # to keep increasing from the old connection's zero point --
-                # so the very next frame then reads as going backwards in
-                # time and the tracker raises ReplayValidationError
-                # ("non_monotonic_tracking_frame", a ValueError subclass).
-                # Restarting the provider's live generation alongside the
-                # fresh source clears that stale tracker state too, exactly
-                # as a genuine provider_generation change would.
-                recoverable = str(error) in {"analysis_frame_sequence", "non_monotonic_tracking_frame"}
-                if not recoverable or consecutive_reconnects >= MAX_CONSECUTIVE_RECONNECTS:
-                    return STOP_TRANSPORT_ERROR
-                consecutive_reconnects += 1
-                self.session.source = CameraNodeAnalysisSource(
-                    self.session.source.stream_id, maximum_queue_frames=self.session.source.maximum_queue_frames,
-                    maximum_frame_bytes=self.session.source.maximum_frame_bytes,
-                    maximum_frame_age_ms=self.session.source.maximum_frame_age_ms,
-                    analysis_excluded_regions=self.session.source.analysis_excluded_regions,
-                )
-                self.session.provider.restart_live_generation(
-                    self.session.source.stream_id, "capture_transport_reconnect"
-                )
-                # A reconnect breaks frame-to-frame adjacency exactly like a
-                # real generation change does (the same clearing as the
-                # `discontinuity` branch in `_process_result`), even though
-                # the Node's own `provider_generation` label is unchanged --
-                # the gap during reconnect means the next frame is not a
-                # valid predecessor/successor pair for motion-proposal
-                # diffing, and stale pretrigger context would span the gap.
-                self.generation_reset_count += 1
-                self.pretrigger.clear()
-                self.plane_cache.clear()
-                self.plane_order.clear()
-                self.last_frame_id = None
-                continue
-            consecutive_reconnects = 0
             if not results:
                 return STOP_STREAM_ENDED
             for result in results:

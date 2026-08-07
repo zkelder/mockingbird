@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "scenarios": {
+    "live_transport_continuity": [
+      "http_reconnect_same_source_preserves_provider_instance",
+      "sequence_reset_alone_does_not_reset_tracker",
+      "source_offset_reset_alone_does_not_reset_tracker",
+      "new_transport_segment_is_recorded",
+      "session_timeline_remains_monotonic"
+    ],
+    "live_tracker_bridge_safety": [
+      "confirmed_track_bridges_short_benign_reconnect",
+      "tentative_track_gets_no_fake_support",
+      "multiple_reconnects_can_preserve_one_track",
+      "no_post_reconnect_evidence_expires_bridge",
+      "spatially_incompatible_reentry_starts_a_new_generation"
+    ],
+    "live_true_reset": [
+      "provider_generation_change_resets",
+      "camera_identity_change_resets",
+      "stream_change_resets",
+      "profile_dimension_change_resets",
+      "long_reconnect_gap_resets",
+      "missing_provenance_resets_safely",
+      "high_uncertainty_resets_safely",
+      "shutdown_start_resets",
+      "connection_reopen_failure_reports_health_honestly"
+    ],
+    "live_no_duplicate_output": [
+      "reconnect_does_not_duplicate_evidence_candidates",
+      "reconnect_does_not_duplicate_visit_proposal"
+    ],
+    "live_unrelated_subsystem_stability": [
+      "burst_scheduler_state_remains_compatible",
+      "burst_result_generation_isolation_remains_intact",
+      "operator_marker_correlation_still_works",
+      "temporal_capture_remains_bounded",
+      "clean_stop_releases_transport_and_tracker_state",
+      "snapshot_provider_unchanged",
+      "replay_stage_611_behavior_unchanged",
+      "privacy_ignore_behavior_unchanged",
+      "no_product_writes_or_truth_authority"
+    ]
+  }
+}

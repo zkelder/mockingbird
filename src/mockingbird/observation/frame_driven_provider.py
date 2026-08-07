@@ -34,6 +34,7 @@ from mockingbird.observation.reconnect_continuity import (
     CONTINUE_ACROSS_TRANSPORT_RECONNECT,
     RESET_SOURCE_GENERATION,
     ReconnectBridgeConfig,
+    ReconnectContinuityDecision,
     classify_frame_reconnect_boundary,
     is_reconnect_boundary_signal,
 )
@@ -252,6 +253,21 @@ class FrameDrivenObservationProvider:
         self._stream_id: str | None = None
         self._mode = "replay"
         self._loaded = False
+        # Stage 6.11B: live-path reconnect-boundary bookkeeping, mirroring
+        # `replay_frames`'s own local `previous_frame`/decision handling
+        # (see `observe_live_frame` below) rather than a second reconnect
+        # policy. `_previous_live_frame` is cleared only by `start_live`/
+        # `close` (a fresh session has no boundary to compare against yet);
+        # `_last_reconnect_decision` persists across boundary-free frames as
+        # a health-diagnostic snapshot of the most recent classification
+        # (see `LiveReconnectDiagnostics`); `_live_reset_count` is a plain
+        # monotonic counter bumped by every `restart_live_generation` call,
+        # letting a caller detect "did a reset happen during this exact
+        # `observe_live_frame` call" with a cheap before/after comparison
+        # instead of a fragile clear-on-read flag.
+        self._previous_live_frame: FramePacket | None = None
+        self._last_reconnect_decision: ReconnectContinuityDecision | None = None
+        self._live_reset_count = 0
         self._last_detector_offset_ms: int | None = None
         self._pretrigger: deque[FramePacket] = deque(maxlen=max(1, self.settings.pretrigger_frame_count))
         self._evidence: dict[str, dict[str, EvidenceCandidate]] = {}
@@ -265,6 +281,21 @@ class FrameDrivenObservationProvider:
     def active_track_count(self) -> int:
         return self._tracker.active_count if self._tracker is not None else 0
 
+    @property
+    def last_reconnect_decision(self) -> ReconnectContinuityDecision | None:
+        """Bounded, read-only snapshot of the most recent live reconnect-
+        boundary classification (`None` before any boundary has ever been
+        seen in the current live session). A status read starts nothing."""
+        return self._last_reconnect_decision
+
+    @property
+    def live_reset_count(self) -> int:
+        """Lifetime count of `restart_live_generation` calls, for any
+        reason. A caller can detect "did this exact `observe_live_frame`
+        call cause a reset" with a cheap before/after comparison rather
+        than a clear-on-read flag."""
+        return self._live_reset_count
+
     def load(self) -> None:
         if self._loaded:
             raise ReplayValidationError("provider_already_loaded")
@@ -275,6 +306,8 @@ class FrameDrivenObservationProvider:
         self.reset()
         self.detector.close()
         self._loaded = False
+        self._previous_live_frame = None
+        self._last_reconnect_decision = None
 
     def reset(self) -> None:
         if self._tracker is not None:
@@ -415,11 +448,56 @@ class FrameDrivenObservationProvider:
             support_resolver=self._support,
             reconnect_bridge_config=self.reconnect_bridge_config,
         )
+        # A fresh session has no prior frame to compare against yet, and no
+        # boundary has been classified in it -- both Stage 6.11B fields
+        # start clean regardless of what a previous live session left them at.
+        self._previous_live_frame = None
+        self._last_reconnect_decision = None
 
     async def observe_live_frame(self, frame: FramePacket) -> ObservationResult:
         if self._mode != "live_shadow" or self._stream_id != frame.stream_id:
             raise ReplayValidationError("live_stream_not_started")
-        return await self._process_frame(frame)
+        frame = _with_fallback_captured_at(frame)
+        boundary_updates: tuple[TrackUpdate, ...] = ()
+        if self._previous_live_frame is not None and is_reconnect_boundary_signal(self._previous_live_frame, frame):
+            # Stage 6.11B: reuse the identical Stage 6.11 replay decision
+            # path (`reconnect_continuity`, already proven in
+            # `replay_frames` below) instead of a second, live-only
+            # reconnect policy. Before this stage the live capture loop
+            # (`temporal_capture_cli._CaptureLoop`) fully rebuilt this
+            # provider's tracker generation on every ordinary HTTP
+            # reconnect; this is the fix. See
+            # docs/reconnect-continuity-contract.md.
+            decision = classify_frame_reconnect_boundary(self._previous_live_frame, frame, self.reconnect_bridge_config)
+            self._last_reconnect_decision = decision
+            self._facts["reconnect_boundaries"] += 1
+            if decision.decision == CONTINUE_ACROSS_TRANSPORT_RECONNECT:
+                self._facts["reconnect_bridges_attempted"] += 1
+                assert self._tracker is not None and frame.captured_at is not None
+                step = self._tracker.note_reconnect_boundary(
+                    boundary_offset_ms=frame.source_offset_ms or 0, captured_at=frame.captured_at,
+                )
+                boundary_updates = step.updates
+            else:
+                # A confidently evidenced source-generation change or an
+                # insufficient-provenance safety boundary: a full reset,
+                # mirroring the exact shape `restart_live_generation`
+                # already established for an explicit caller-detected
+                # generation change -- not a second reset mechanism. Unlike
+                # replay, the drained results from the *previous* (just-
+                # ended) generation are not folded into this frame's own
+                # `ObservationResult` -- that already-established live
+                # behavior (any caller detecting a generation change and
+                # calling `restart_live_generation` itself) is unchanged.
+                if decision.decision == RESET_SOURCE_GENERATION:
+                    self._facts["resets_true_source_change"] += 1
+                    reset_reason = "provider_reset"
+                else:
+                    self._facts["resets_insufficient_provenance"] += 1
+                    reset_reason = "insufficient_reconnect_provenance"
+                self.restart_live_generation(frame.stream_id, reset_reason)
+        self._previous_live_frame = frame
+        return await self._process_frame(frame, extra_updates=boundary_updates)
 
     def restart_live_generation(self, stream_id: str, reason: str = "provider_reset") -> None:
         """Replace transient track state while retaining one loaded detector session."""
@@ -436,6 +514,12 @@ class FrameDrivenObservationProvider:
             support_resolver=self._support,
             reconnect_bridge_config=self.reconnect_bridge_config,
         )
+        # The just-reset generation's last frame is never a valid boundary
+        # predecessor for whatever comes next; `observe_live_frame` always
+        # reassigns this immediately afterward when it is the caller, so
+        # this only matters for a caller invoking this method directly.
+        self._previous_live_frame = None
+        self._live_reset_count += 1
 
     def stop_live(self, reason: str = "provider_reset") -> tuple[ObservationResult, ...]:
         """Finalize and clear transient live state without durable side effects."""

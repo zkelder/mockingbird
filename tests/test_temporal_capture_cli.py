@@ -28,7 +28,9 @@ from mockingbird.observation.contracts import (
 from mockingbird.observation.media_contracts import AnalysisFrameEnvelope, EvidenceBurstResult
 from mockingbird.observation.onnx_provider import BUNDLE_SCHEMA_VERSION
 from mockingbird.observation.temporal_capture import (
+    STOP_FRAME_LIMIT,
     STOP_HIGH_RESOLUTION_LIMIT,
+    STOP_TRANSPORT_ERROR,
     TRIGGER_GENERATION_OR_SEQUENCE_DISCONTINUITY,
     TRIGGER_HIGH_RESOLUTION_BURST,
     TRIGGER_OPERATOR_MARKER,
@@ -38,6 +40,7 @@ from mockingbird.observation.temporal_capture import (
 )
 from mockingbird.observation.temporal_capture_cli import _CaptureLoop, run_capture
 from mockingbird.observation.temporal_capture_io import write_operator_marker
+from mockingbird.source_providers.camera_node import CameraNodeClientError
 
 
 def _jpeg(color: tuple[int, int, int], *, box=None) -> bytes:
@@ -471,16 +474,47 @@ def test_validation_burst_retains_one_explicitly_labeled_high_resolution_frame_w
 
 
 # --------------------------------------------------------------------------
-# Reconnect resilience: a fresh transport connection per batch is expected
-# to reset the Node's own per-connection sequence counter (observed against
-# real hardware); the loop must recover with a fresh source rather than
-# aborting the whole bounded capture.
+# Stage 6.11B: an ordinary HTTP reconnect -- a fresh transport connection
+# per batch, resetting the Node's own per-connection sequence counter --
+# no longer raises out of `session.run()` at all: CameraNodeAnalysisSource/
+# FrameDrivenObservationProvider recognize and bridge it internally (see
+# docs/reconnect-continuity-contract.md). This removes the Stage 6.6-era
+# "rebuild the source and restart the provider's live generation" recovery
+# entirely -- there is nothing left to recover from on a benign reconnect.
+# Scenario 19 ("connection reopen failure reports health honestly"): a
+# `session.run()` failure that still occurs (a genuine unrecoverable
+# transport/source error, not an ordinary reconnect) now stops the capture
+# cleanly and honestly rather than attempting a rebuild that no longer
+# applies.
 # --------------------------------------------------------------------------
 
 
-def test_run_recovers_from_a_sequence_reset_by_rebuilding_the_source(tmp_path: Path) -> None:
+def test_run_reports_health_honestly_on_a_genuine_unrecoverable_transport_error(tmp_path: Path) -> None:
+    fake_provider = SimpleNamespace(active_track_count=0)
+    calls = {"count": 0}
+
+    class AlwaysRaisingSession:
+        provider = fake_provider
+
+        async def run(self, *, maximum_frames: int):
+            calls["count"] += 1
+            raise CameraNodeClientError("analysis_stream_unavailable")
+
+    loop = _CaptureLoop(session=AlwaysRaisingSession(), output_directory=tmp_path, bounds=CaptureBounds(), shadow_operating_point=0.5, review_floor=0.1, privacy_regions=())
+    import asyncio
+    result = asyncio.run(loop.run(started_wall=datetime.now(UTC), duration_seconds=30))
+    assert result == STOP_TRANSPORT_ERROR
+    assert calls["count"] == 1  # stopped immediately, never silently retried
+    assert loop.generation_reset_count == 0
+
+
+def test_run_does_not_rebuild_the_source_or_restart_the_provider_on_an_ordinary_reconnect_error(tmp_path: Path) -> None:
+    """A stray ValueError from `session.run()` (whatever its message) is now
+    always a genuine, honestly-reported stop -- never a signal to rebuild
+    the source/restart the provider, since an ordinary benign reconnect no
+    longer produces one at all (see the real reconnect-flow test below for
+    that proof)."""
     from mockingbird.observation.camera_node_live import CameraNodeAnalysisSource
-    from mockingbird.observation.temporal_capture_cli import MAX_CONSECUTIVE_RECONNECTS
 
     restart_calls = []
     fake_provider = SimpleNamespace(
@@ -489,77 +523,25 @@ def test_run_recovers_from_a_sequence_reset_by_rebuilding_the_source(tmp_path: P
     )
     calls = {"count": 0}
 
-    class RaisingThenWorkingSession:
+    class AlwaysRaisingSession:
         def __init__(self) -> None:
             self.source = CameraNodeAnalysisSource("stream-1")
             self.provider = fake_provider
 
         async def run(self, *, maximum_frames: int):
             calls["count"] += 1
-            if calls["count"] == 1:
-                raise ValueError("analysis_frame_sequence")
-            return ()  # second attempt: clean stream-ended stop
+            raise ValueError("analysis_frame_sequence")
 
-    session = RaisingThenWorkingSession()
+    session = AlwaysRaisingSession()
     loop = _CaptureLoop(session=session, output_directory=tmp_path, bounds=CaptureBounds(), shadow_operating_point=0.5, review_floor=0.1, privacy_regions=())
     original_source = session.source
     import asyncio
     result = asyncio.run(loop.run(started_wall=datetime.now(UTC), duration_seconds=30))
-    assert result == "stream_ended"
-    assert calls["count"] == 2
-    assert session.source is not original_source  # rebuilt, not reused
-    assert calls["count"] <= MAX_CONSECUTIVE_RECONNECTS + 1
-    # The provider's live tracker must also be restarted against the fresh
-    # source, or its stale offset tracking treats the next frame as going
-    # backwards in time (the real-hardware failure mode this recovers from).
-    assert restart_calls == [("stream-1", "capture_transport_reconnect")]
-    assert loop.generation_reset_count == 1
-
-
-def test_run_recovers_from_a_non_monotonic_tracking_frame_after_reconnect(tmp_path: Path) -> None:
-    """Confirmed against the real Camera Node: its per-connection sequence
-    header restarts at 1 on every fresh connection while
-    provider_generation stays unchanged. A rebuilt source re-zeroes
-    source_offset_ms, which -- if the provider's live tracker is not also
-    restarted -- makes the very next frame look like it goes backwards in
-    time, raising `ReplayValidationError("non_monotonic_tracking_frame")`
-    (a ValueError subclass) from deeper inside `session.run()` than the
-    plain sequence-reset case. This must be recovered the same way."""
-    from mockingbird.observation.camera_node_live import CameraNodeAnalysisSource
-    from mockingbird.observation.replay import ReplayValidationError
-
-    restart_calls = []
-    fake_provider = SimpleNamespace(
-        active_track_count=0,
-        restart_live_generation=lambda stream_id, reason: restart_calls.append((stream_id, reason)),
-    )
-    calls = {"count": 0}
-
-    class RaisingThenWorkingSession:
-        def __init__(self) -> None:
-            self.source = CameraNodeAnalysisSource("stream-1")
-            self.provider = fake_provider
-
-        async def run(self, *, maximum_frames: int):
-            calls["count"] += 1
-            if calls["count"] == 1:
-                raise ReplayValidationError("non_monotonic_tracking_frame")
-            return ()
-
-    session = RaisingThenWorkingSession()
-    loop = _CaptureLoop(session=session, output_directory=tmp_path, bounds=CaptureBounds(), shadow_operating_point=0.5, review_floor=0.1, privacy_regions=())
-    loop.last_frame_id = "some-frame-before-the-reconnect"
-    original_source = session.source
-    import asyncio
-    result = asyncio.run(loop.run(started_wall=datetime.now(UTC), duration_seconds=30))
-    assert result == "stream_ended"
-    assert calls["count"] == 2
-    assert session.source is not original_source
-    assert restart_calls == [("stream-1", "capture_transport_reconnect")]
-    assert loop.generation_reset_count == 1
-    # The pre-reconnect frame is not a valid motion-proposal predecessor for
-    # whatever arrives after the gap.
-    assert loop.last_frame_id is None
+    assert result == STOP_TRANSPORT_ERROR
+    assert calls["count"] == 1
+    assert session.source is original_source  # never rebuilt
+    assert restart_calls == []  # never restarted
+    assert loop.generation_reset_count == 0
 
 
 class FakeTransportMultiConnection:
@@ -602,13 +584,21 @@ def _detecting_envelope(node_session_id: str, sequence: int, *, generation: str 
 def test_run_capture_end_to_end_reconnect_produces_a_native_session_timeline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Full `run_capture` CLI flow across a real reconnect (real
-    `CameraNodeAnalysisSource`/`LiveCameraNodeShadowSession`, only the
-    transport faked): every retained frame across both connection segments
-    ends up with a unique, monotonic `session_sequence`, the boundary frame
-    is flagged `temporal_discontinuity`, and the manifest is classified
+    """Full `run_capture` CLI flow across two real benign reconnects (real
+    `CameraNodeAnalysisSource`/`LiveCameraNodeShadowSession`/
+    `FrameDrivenObservationProvider`, only the transport faked): Stage
+    6.11B means all three connection segments -- not just the first and
+    third -- now retain frames, since a fresh connection under the same
+    provider_generation no longer forces the loop to rebuild the source
+    and drop whatever the reconnecting batch was carrying (the removed
+    Stage 6.6-era failure mode). Every retained frame ends up with a
+    unique, monotonic `session_sequence`, both boundary frames are flagged
+    `temporal_discontinuity`, and the manifest is classified
     `native_session_timeline` since every frame carries a real per-
-    connection id and host receive time."""
+    connection id and host receive time. `generation_reset_count` -- a
+    genuine source-generation reset count, not a transport-reconnect count
+    -- stays 0: provider_generation never changes across any of the three
+    connections."""
     import mockingbird.observation.onnx_provider as onnx_provider_module
     import mockingbird.observation.temporal_capture_cli as cli_module
 
@@ -621,15 +611,10 @@ def test_run_capture_end_to_end_reconnect_produces_a_native_session_timeline(
     config_dir = _bundle_dir(tmp_path)
     camera_node_config = _camera_node_config(tmp_path)
 
-    # Connection 1 delivers sequence 0..2; connection 2's first attempt
-    # (still against the stale, not-yet-rebuilt source) always fails on the
-    # real Camera Node transport contract, so its frames never reach
-    # retention; connection 3 -- against the freshly rebuilt source -- is
-    # what genuinely becomes the second retained connection segment.
     connection_one = [_detecting_envelope("node-session-one", seq, captured_offset_ms=seq * 500) for seq in range(3)]
-    connection_two_failed = [_detecting_envelope("node-session-two", seq, captured_offset_ms=seq * 500) for seq in range(2)]
+    connection_two = [_detecting_envelope("node-session-two", seq, captured_offset_ms=seq * 500) for seq in range(2)]
     connection_three = [_detecting_envelope("node-session-three", seq, captured_offset_ms=seq * 500) for seq in range(3)]
-    fake_transport = FakeTransportMultiConnection([connection_one, connection_two_failed, connection_three])
+    fake_transport = FakeTransportMultiConnection([connection_one, connection_two, connection_three])
     monkeypatch.setattr(cli_module, "CameraNodeHttpTransport", lambda **kwargs: fake_transport)
 
     destination = tmp_path / "capture-out-reconnect"
@@ -640,24 +625,119 @@ def test_run_capture_end_to_end_reconnect_produces_a_native_session_timeline(
     ])
     assert exit_code == 0
     manifest = json.loads((destination / "capture-session-manifest.json").read_text())
-    assert manifest["generation_reset_count"] == 1
+    assert manifest["generation_reset_count"] == 0
     assert manifest["session_timeline_classification"] == "native_session_timeline"
     frames = manifest["frames"]
     # Bounded latest-frame coalescing under host backpressure (an existing,
     # deliberate Stage 5 behavior, unrelated to this fix) means not every
     # supplied frame is guaranteed retained, but at least the newest frame
-    # of each connection always survives -- enough to prove both connection
-    # segments are represented and ordered correctly.
-    assert len(frames) >= 2
+    # of each connection always survives -- enough to prove all three
+    # connection segments are represented and ordered correctly.
+    assert len(frames) >= 3
     session_sequences = [item["session_sequence"] for item in frames]
     assert session_sequences == sorted(session_sequences)
     assert len(set(session_sequences)) == len(frames)
     segment_ids = {item["connection_segment_id"] for item in frames}
-    assert segment_ids == {"node-session-one", "node-session-three"}
+    assert segment_ids == {"node-session-one", "node-session-two", "node-session-three"}
     discontinuous = [item for item in frames if item["temporal_discontinuity"]]
-    assert len(discontinuous) == 1
-    assert discontinuous[0]["connection_segment_id"] == "node-session-three"
-    assert discontinuous[0]["connection_segment_ordinal"] == 1
+    assert len(discontinuous) == 2
+    assert {item["connection_segment_id"] for item in discontinuous} == {"node-session-two", "node-session-three"}
+    assert sorted(item["connection_segment_ordinal"] for item in discontinuous) == [1, 2]
+
+
+def test_run_capture_holds_its_frame_bound_across_multiple_reconnects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scenario 25: `CaptureBounds.max_analysis_frames` still stops the
+    bounded capture even though benign reconnects no longer force a
+    (bound-check-resetting) source rebuild -- Stage 6.11B's continuity fix
+    must never come at the cost of the capture's own hard ceilings."""
+    import mockingbird.observation.onnx_provider as onnx_provider_module
+    import mockingbird.observation.temporal_capture_cli as cli_module
+
+    detecting_output = np.asarray([[[0.2, 0.2, 0.8, 0.8, 0.9, 0]]], dtype=np.float32)
+    monkeypatch.setattr(onnx_provider_module, "OptionalOrtCudaRuntime", lambda: FakeRuntime(lambda: FakeSession([detecting_output])))
+
+    config_dir = _bundle_dir(tmp_path)
+    camera_node_config = _camera_node_config(tmp_path)
+
+    connections = [
+        [_detecting_envelope(f"node-session-{index}", seq, captured_offset_ms=seq * 500) for seq in range(3)]
+        for index in range(5)
+    ]
+    fake_transport = FakeTransportMultiConnection(connections)
+    monkeypatch.setattr(cli_module, "CameraNodeHttpTransport", lambda **kwargs: fake_transport)
+
+    destination = tmp_path / "capture-out-bounded-reconnects"
+    exit_code = run_capture([
+        "--camera-node-config", str(camera_node_config), "--provider", "frame-driven-onnx-cuda",
+        "--provider-config", str(config_dir / "frame-driven-config.json"), "--output", str(destination),
+        "--duration", "5", "--max-analysis-frames", "4",
+    ])
+    assert exit_code == 0
+    manifest = json.loads((destination / "capture-session-manifest.json").read_text())
+    assert manifest["stop_condition"] == STOP_FRAME_LIMIT
+    assert len(manifest["frames"]) <= 4
+    assert manifest["generation_reset_count"] == 0
+
+
+def test_run_capture_operator_marker_correlates_to_a_frame_across_a_reconnect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scenario 24: an operator marker discovered on a later batch boundary
+    still correlates back (by host receive time, unaffected by the
+    per-connection sequence/offset reset) to a frame retained under an
+    *earlier* connection segment -- the marker-rescue mechanism does not
+    care whether the intervening batch boundary was a reconnect."""
+    import mockingbird.observation.onnx_provider as onnx_provider_module
+    import mockingbird.observation.temporal_capture_cli as cli_module
+    from mockingbird.observation.temporal_capture import OperatorMarker
+    from mockingbird.observation.temporal_capture_io import write_operator_marker
+
+    # No detection at all -- every frame relies purely on marker rescue,
+    # isolating this test from the animal-detection trigger path.
+    blank_output = np.asarray([[[0.0, 0.0, 1.0, 1.0, 0.01, 0]]], dtype=np.float32)
+    monkeypatch.setattr(onnx_provider_module, "OptionalOrtCudaRuntime", lambda: FakeRuntime(lambda: FakeSession([blank_output])))
+
+    config_dir = _bundle_dir(tmp_path)
+    camera_node_config = _camera_node_config(tmp_path)
+    destination = tmp_path / "capture-out-marker-reconnect"
+
+    connection_one = [_detecting_envelope("node-session-one", 0, captured_offset_ms=0)]
+    connection_two = [_detecting_envelope("node-session-two", 0, captured_offset_ms=0)]
+
+    class _MarkerWritingTransport(FakeTransportMultiConnection):
+        """Writes the operator marker in between the two connections --
+        mirroring `temporal-capture-mark` running as a separate process
+        while the capture loop is between batches -- so it is only ever
+        discoverable at the *second* connection's batch boundary, after
+        the frame it refers to was already retained under the first."""
+
+        def iter_analysis_frames(self, *, maximum_frames: int):
+            if self._connections and self._connections[0] is connection_two:
+                # The live session stamps each frame's `received_at` from
+                # the real wall clock (`datetime.now(UTC)`, not a
+                # controllable fake one), so the marker must reference that
+                # same real clock to fall inside its own lookback window.
+                write_operator_marker(
+                    destination,
+                    OperatorMarker("marker-1", "wildlife_visible_now", datetime.now(UTC).isoformat(), lookback_seconds=30),
+                )
+            return super().iter_analysis_frames(maximum_frames=maximum_frames)
+
+    fake_transport = _MarkerWritingTransport([connection_one, connection_two])
+    monkeypatch.setattr(cli_module, "CameraNodeHttpTransport", lambda **kwargs: fake_transport)
+
+    exit_code = run_capture([
+        "--camera-node-config", str(camera_node_config), "--provider", "frame-driven-onnx-cuda",
+        "--provider-config", str(config_dir / "frame-driven-config.json"), "--output", str(destination),
+        "--duration", "5",
+    ])
+    assert exit_code == 0
+    manifest = json.loads((destination / "capture-session-manifest.json").read_text())
+    marked = [item for item in manifest["frames"] if "marker-1" in item["operator_marker_ids"]]
+    assert len(marked) == 1
+    assert marked[0]["connection_segment_id"] == "node-session-one"
 
 
 # --------------------------------------------------------------------------

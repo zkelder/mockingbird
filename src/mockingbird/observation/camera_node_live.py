@@ -32,6 +32,7 @@ from mockingbird.observation.media_contracts import (
     EvidenceBurstRequest,
     EvidenceBurstResult,
 )
+from mockingbird.observation.session_timeline import native_reconnect_step
 from mockingbird.source_providers.camera_node import (
     CameraNodeClientError,
     UrlLibCameraNodeRequester,
@@ -62,12 +63,28 @@ class AnalysisSourceStatus:
     newest_frame_age_ms: int | None
     actual_received_fps: float | None
     limitations: tuple[str, ...]
+    # Stage 6.11B: transport-connection-segment facts, kept distinct from
+    # `generation_resets` above (see docs/reconnect-continuity-contract.md's
+    # "three separate concepts"). `transport_reconnect_count` is a lifetime
+    # total of every distinct real HTTP connection observed, regardless of
+    # whether provider_generation also changed; `current_connection_segment_
+    # ordinal` is this source's own current position in that count, reset
+    # to 0 only by a genuine generation change. Neither is cleared by an
+    # ordinary benign reconnect.
+    transport_reconnect_count: int = 0
+    current_connection_segment_ordinal: int = -1
 
 
 @dataclass(frozen=True)
 class _ReceivedFrame:
     envelope: AnalysisFrameEnvelope
     received_at: datetime
+    # Offer-time-authoritative segment ordinal (see
+    # `CameraNodeAnalysisSource._segment_ordinal`): captured per envelope so
+    # a later, possibly-coalesced pop reports the ordinal that was true when
+    # *this* envelope actually arrived, not whatever the running counter has
+    # advanced to by delivery time.
+    segment_ordinal: int
 
 
 class CameraNodeAnalysisSource:
@@ -111,6 +128,32 @@ class CameraNodeAnalysisSource:
         self._stale = 0
         self._generation_resets = 0
         self._stopped = False
+        # Stage 6.11B: transport-connection-segment bookkeeping, kept
+        # distinct from the observation-source-generation bookkeeping above
+        # (see docs/reconnect-continuity-contract.md's "three separate
+        # concepts"). `_node_session_id`/`_segment_ordinal` are updated at
+        # OFFER time, in true wire arrival order: a genuine mid-connection
+        # sequence anomaly is still caught by the monotonic check below --
+        # only a real new HTTP connection (a new node_session_id)
+        # legitimately restarts it.
+        self._node_session_id: str | None = None
+        self._segment_ordinal: int = -1
+        # Lifetime diagnostic: every distinct real HTTP connection observed,
+        # regardless of how its boundary is later classified. Never reset
+        # by an ordinary generation change -- this counter answers "how
+        # many times did the transport actually reconnect," not "how many
+        # of those were judged benign" (that lives in the provider's own
+        # `reconnect_bridges_attempted` fact; see `LiveReconnectDiagnostics`).
+        self._transport_reconnect_count = 0
+        # Delivered-stream bookkeeping (pop-time, coalescing-robust):
+        # computed against the frame actually handed to a caller, never a
+        # frame that was coalesced away, so `temporal_discontinuity`/the
+        # session-relative offset below reflect exactly what the tracker
+        # will see next -- never a transition invisible to it.
+        self._delivered_segment_id: str | None = None
+        self._delivered_received_at: datetime | None = None
+        self._delivered_local_offset_ms: int = 0
+        self._session_base_offset_ms: int = 0
 
     def offer(
         self,
@@ -137,14 +180,44 @@ class CameraNodeAnalysisSource:
         received = received_at or datetime.now(UTC)
         if received.tzinfo is None:
             raise ValueError("analysis_receive_timestamp")
-        if self._generation != envelope.provider_generation:
+        generation_changed = self._generation is not None and self._generation != envelope.provider_generation
+        if self._generation is None or generation_changed:
+            # A genuine observation-source reset: either the very first
+            # frame ever offered, or a real provider_generation change.
+            # Every anchor -- including the session-relative bookkeeping
+            # `_pop_latest` maintains -- restarts fresh; a benign reconnect
+            # below deliberately does not touch the session-relative side.
             if self._generation is not None:
                 self._generation_resets += 1
+            if self._node_session_id is not None and self._node_session_id != envelope.node_session_id:
+                self._transport_reconnect_count += 1
             self._queue.clear()
             self._last_sequence = None
             self._first_monotonic_ns = envelope.source_monotonic_ns
             self._first_captured_at = envelope.captured_at
             self._generation = envelope.provider_generation
+            self._node_session_id = envelope.node_session_id
+            self._segment_ordinal = 0
+            self._delivered_segment_id = None
+            self._delivered_received_at = None
+            self._delivered_local_offset_ms = 0
+            self._session_base_offset_ms = 0
+        elif envelope.node_session_id != self._node_session_id:
+            # Stage 6.11B: a fresh HTTP connection under the SAME
+            # provider_generation -- a benign transport reconnect, not proof
+            # the camera/observation source changed. The Node's own
+            # per-connection sequence header restarts at 1 (see
+            # docs/session-timeline-contract.md), so only the
+            # connection-local sequence/offset anchors reset here; this
+            # must not force a full source rebuild the way it used to
+            # (Stage 6.6-era `_CaptureLoop` behavior, removed in this
+            # stage -- see docs/reconnect-continuity-contract.md).
+            self._transport_reconnect_count += 1
+            self._segment_ordinal += 1
+            self._last_sequence = None
+            self._first_monotonic_ns = envelope.source_monotonic_ns
+            self._first_captured_at = envelope.captured_at
+            self._node_session_id = envelope.node_session_id
         if self._last_sequence is not None:
             if envelope.sequence <= self._last_sequence:
                 raise ValueError("analysis_frame_sequence")
@@ -153,7 +226,7 @@ class CameraNodeAnalysisSource:
         if len(self._queue) >= self.maximum_queue_frames:
             self._queue.popleft()
             self._dropped += 1
-        self._queue.append(_ReceivedFrame(envelope, received))
+        self._queue.append(_ReceivedFrame(envelope, received, self._segment_ordinal))
         self._received += 1
         self._received_times.append(received)
 
@@ -175,18 +248,49 @@ class CameraNodeAnalysisSource:
         self._queue.clear()
         envelope = newest.envelope
         self._delivered += 1
+
+        # Connection-local ("original") source offset: anchored per segment,
+        # unchanged basis from before Stage 6.11B -- resets near zero at
+        # every new connection segment exactly like the transport sequence
+        # does (the "transport connection segment" definition in
+        # docs/reconnect-continuity-contract.md), preserved unmodified as
+        # separate provenance rather than discarded.
         if envelope.source_monotonic_ns is not None and self._first_monotonic_ns is not None:
-            source_offset_ms = max(0, (envelope.source_monotonic_ns - self._first_monotonic_ns) // 1_000_000)
+            local_offset_ms = max(0, (envelope.source_monotonic_ns - self._first_monotonic_ns) // 1_000_000)
         elif self._first_captured_at is not None:
-            source_offset_ms = max(0, int((envelope.captured_at - self._first_captured_at).total_seconds() * 1000))
+            local_offset_ms = max(0, int((envelope.captured_at - self._first_captured_at).total_seconds() * 1000))
         else:
-            source_offset_ms = 0
+            local_offset_ms = 0
+
+        # Session-relative ("logical") offset: continuous across a benign
+        # reconnect. Only the *step* across a genuine segment transition
+        # uses host receive time (the only clock comparable across two
+        # different connections, via the identical Stage 6.8 native-
+        # timeline arithmetic `native_reconnect_step` exposes); within one
+        # segment this tracks local_offset_ms exactly, preserving this
+        # source's existing single-connection precision unchanged.
+        discontinuity = self._delivered_segment_id is not None and envelope.node_session_id != self._delivered_segment_id
+        if self._delivered_segment_id is None:
+            uncertainty_ms = 0
+        elif discontinuity:
+            assert self._delivered_received_at is not None
+            step_ms, uncertainty_ms = native_reconnect_step(
+                previous_received_at=self._delivered_received_at, current_received_at=newest.received_at,
+            )
+            self._session_base_offset_ms += self._delivered_local_offset_ms + step_ms
+        else:
+            uncertainty_ms = 0
+        session_offset_ms = self._session_base_offset_ms + local_offset_ms
+        self._delivered_segment_id = envelope.node_session_id
+        self._delivered_received_at = newest.received_at
+        self._delivered_local_offset_ms = local_offset_ms
+
         return FramePacket(
             stream_id=envelope.stream_id,
             media_asset_id=f"shadow-frame:{envelope.frame_id}",
             captured_at=envelope.captured_at,
             frame_id=envelope.frame_id,
-            source_offset_ms=source_offset_ms,
+            source_offset_ms=session_offset_ms,
             width=envelope.width,
             height=envelope.height,
             analysis_excluded_regions=self.analysis_excluded_regions,
@@ -203,6 +307,17 @@ class CameraNodeAnalysisSource:
                     round((newest.received_at - envelope.captured_at).total_seconds() * 1000, 3),
                 ),
                 ("node_to_host_clock_alignment", "uncertain"),
+                # Stage 6.11B provenance consumed by
+                # `reconnect_continuity.classify_frame_reconnect_boundary`
+                # and by `LiveCameraNodeShadowSession`'s cross-segment
+                # track-span diagnostic -- present on every delivered frame,
+                # not only a discontinuous one, so segment identity/order
+                # remains visible provenance throughout (never discarded).
+                ("original_source_offset_ms", local_offset_ms),
+                ("connection_segment_id", envelope.node_session_id),
+                ("connection_segment_ordinal", newest.segment_ordinal),
+                ("temporal_discontinuity", discontinuity),
+                ("temporal_uncertainty_ms", uncertainty_ms),
             ),
         )
 
@@ -239,6 +354,8 @@ class CameraNodeAnalysisSource:
                 "latest-frame coalescing is intentional under host backpressure",
                 "node-to-host clock alignment remains uncertain without synchronized clocks",
             ),
+            self._transport_reconnect_count,
+            self._segment_ordinal,
         )
 
     def reset(self) -> None:
@@ -251,6 +368,17 @@ class CameraNodeAnalysisSource:
         self._last_sequence = None
         self._first_monotonic_ns = None
         self._first_captured_at = None
+        # Transient, in-flight transport-segment state -- cleared exactly
+        # like the anchors above. `_transport_reconnect_count` is
+        # deliberately NOT cleared here: it is a lifetime diagnostic (see
+        # its own docstring in `__init__`), matching how `_generation_resets`/
+        # `_received`/`_delivered` already survive a reset.
+        self._node_session_id = None
+        self._segment_ordinal = -1
+        self._delivered_segment_id = None
+        self._delivered_received_at = None
+        self._delivered_local_offset_ms = 0
+        self._session_base_offset_ms = 0
 
     def stop(self) -> None:
         with self._lock:
@@ -456,6 +584,35 @@ class CameraNodeHttpTransport:
 
 
 @dataclass(frozen=True)
+class LiveReconnectDiagnostics:
+    """Bounded, read-only Stage 6.11B reconnect-continuity diagnostics for
+    one live Camera Node shadow session. A status read starts nothing --
+    every field is a snapshot of already-recorded, bounded state.
+
+    `transport_reconnect_count` is a transport-level fact (every distinct
+    real HTTP connection the analysis source has observed, from
+    `AnalysisSourceStatus`); `benign_reconnect_count`/`reconnect_bridges_
+    attempted` are the same underlying provider-level count
+    (`reconnect_bridges_attempted` in `FrameDrivenObservationProvider.
+    replay_semantic_facts()`) named twice deliberately -- once for "how many
+    reconnects were judged benign" and once matching the established
+    replay-report field name -- so a reader familiar with either vocabulary
+    finds what they expect.
+    """
+
+    transport_reconnect_count: int
+    benign_reconnect_count: int
+    true_reset_count: int
+    insufficient_provenance_reset_count: int
+    reconnect_bridges_attempted: int
+    reconnect_bridges_continued: int
+    reconnect_bridges_expired: int
+    tracks_spanning_connection_segments: int
+    current_connection_segment_ordinal: int
+    last_reconnect_classification: str | None
+
+
+@dataclass(frozen=True)
 class LiveShadowStatus:
     state: str
     frames_processed: int
@@ -474,6 +631,7 @@ class LiveShadowStatus:
     production_proposal_authority: bool = False
     scheduler_diagnostics: BurstSchedulerDiagnostics | None = None
     scheduler_health: BurstSchedulerHealth | None = None
+    reconnect_diagnostics: LiveReconnectDiagnostics | None = None
 
 
 class LiveCameraNodeShadowSession:
@@ -527,6 +685,16 @@ class LiveCameraNodeShadowSession:
         self._stale_bursts = 0
         self._pending_inference = 0
         self._running = False
+        # Stage 6.11B: bounded, live-computed "does a track generation span
+        # more than one connection segment" bookkeeping -- the live
+        # counterpart of replay's `tracks_spanning_multiple_connection_
+        # segments` metric (see `replay._reconnect_metrics`), computed
+        # incrementally here since a live session has no complete retained
+        # frame list to cross-reference after the fact. Bounded by active
+        # generations only: an entry is removed the moment its generation
+        # ends, so this cannot grow across a long-running session.
+        self._generation_segments: dict[str, set[str]] = {}
+        self._tracks_spanning_segments_count = 0
 
     def start(self) -> None:
         self.provider.start_live(self.source.stream_id)
@@ -547,19 +715,46 @@ class LiveCameraNodeShadowSession:
         generation = frame.provider_generation
         if generation is None:
             raise ValueError("analysis_frame_generation")
-        if self._generation is not None and generation != self._generation:
-            self.provider.restart_live_generation(
-                self.source.stream_id, "provider_generation_changed"
-            )
-            self._temporary_payloads.clear()
-            self.scheduler.reset(RESET_GENERATION_REPLACEMENT)
         self._generation = generation
         self._pending_inference = 1
+        # Stage 6.11B: the provider itself now classifies every reconnect
+        # boundary (benign transport reconnect vs. genuine source-generation
+        # reset) through the identical Stage 6.11 decision contract -- see
+        # `FrameDrivenObservationProvider.observe_live_frame`. This session
+        # no longer makes its own ad hoc "provider_generation changed"
+        # judgment; it only reacts, afterward, to whether a reset actually
+        # happened (compared by a before/after count rather than a
+        # clear-on-read flag, so it cannot miss or double-count one reset).
+        resets_before = self.provider.live_reset_count
         try:
             result = await self.provider.observe_live_frame(frame)
         finally:
             self._pending_inference = 0
+        if self.provider.live_reset_count != resets_before:
+            # A genuine source-generation reset (or an insufficient-
+            # provenance safety reset) just happened inside the provider for
+            # this exact frame -- mirror the pre-Stage-6.11B outer
+            # session-level reset side effects (temporary burst payload
+            # cache, scheduler state) exactly. A benign bridge, in contrast,
+            # leaves both alone: recurrence-group/novelty state surviving a
+            # benign reconnect is the entire point of the Stage 6.9 burst
+            # scheduler (see docs/burst-scheduler-contract.md) -- resetting
+            # it on every ordinary reconnect would defeat that stage's own
+            # fix the same way the pre-6.11B tracker reset did.
+            self._temporary_payloads.clear()
+            self.scheduler.reset(RESET_GENERATION_REPLACEMENT)
+            self._generation_segments.clear()
         self._frames_processed += 1
+        segment_id = frame.node_session_id
+        for update in result.track_updates:
+            if segment_id:
+                segments = self._generation_segments.setdefault(update.generation_id, set())
+                if segment_id not in segments:
+                    segments.add(segment_id)
+                    if len(segments) == 2:
+                        self._tracks_spanning_segments_count += 1
+            if update.status == "ended":
+                self._generation_segments.pop(update.generation_id, None)
         burst_evidence: list[EvidenceCandidate] = []
         for update in result.track_updates:
             meaningful = update.lifecycle_state == "confirmed" or (
@@ -733,6 +928,24 @@ class LiveCameraNodeShadowSession:
             median,
             scheduler_diagnostics=self.scheduler.diagnostics(),
             scheduler_health=self.scheduler.health(),
+            reconnect_diagnostics=self._reconnect_diagnostics(facts, source),
+        )
+
+    def _reconnect_diagnostics(
+        self, facts: dict[str, int], source: AnalysisSourceStatus,
+    ) -> LiveReconnectDiagnostics:
+        decision = self.provider.last_reconnect_decision
+        return LiveReconnectDiagnostics(
+            transport_reconnect_count=source.transport_reconnect_count,
+            benign_reconnect_count=facts.get("reconnect_bridges_attempted", 0),
+            true_reset_count=facts.get("resets_true_source_change", 0),
+            insufficient_provenance_reset_count=facts.get("resets_insufficient_provenance", 0),
+            reconnect_bridges_attempted=facts.get("reconnect_bridges_attempted", 0),
+            reconnect_bridges_continued=facts.get("reconnect_bridges_continued", 0),
+            reconnect_bridges_expired=facts.get("reconnect_bridges_expired", 0),
+            tracks_spanning_connection_segments=self._tracks_spanning_segments_count,
+            current_connection_segment_ordinal=source.current_connection_segment_ordinal,
+            last_reconnect_classification=decision.decision if decision is not None else None,
         )
 
     def stop(self) -> tuple[ObservationResult, ...]:
@@ -751,6 +964,7 @@ class LiveCameraNodeShadowSession:
             self._generation = None
             self._pending_inference = 0
             self.scheduler.reset(RESET_SESSION_STOP)
+            self._generation_segments.clear()
             self._running = False
         if failure is not None:
             raise failure

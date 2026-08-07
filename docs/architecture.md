@@ -380,6 +380,24 @@ Camera Node wiring
 burst-placement gap for late/sustained appearances remains a distinct,
 not-yet-addressed issue.
 
+Stage 6.11B closes that live-wiring gap, reusing the same
+`reconnect_continuity` decision module rather than a second policy:
+`CameraNodeAnalysisSource` recognizes a new connection segment under an
+unchanged `provider_generation` as a benign reconnect, keeping the
+session-relative `source_offset_ms` the tracker consumes continuous across
+it (only the connection-local anchors reset), and
+`FrameDrivenObservationProvider.observe_live_frame` classifies each
+boundary and bridges the live tracker exactly as `replay_frames` already
+did, instead of `temporal_capture_cli._CaptureLoop` rebuilding the
+transport source and restarting the whole live generation on every
+ordinary reconnect. `LiveCameraNodeShadowSession` reacts only to a genuine
+reset (via the provider's own `live_reset_count`) rather than every
+reconnect, so Stage 6.9 burst-scheduler recurrence state now also survives
+a benign reconnect. A bounded 180-second real Camera Node session showed 7
+real reconnects, all classified benign with zero provider resets, and an
+unchanged product database; the burst-placement gap remains separate and
+not yet addressed.
+
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
 Stream capabilities and emits only evidence-side `FramePacket`,

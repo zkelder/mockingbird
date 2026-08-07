@@ -8,14 +8,19 @@ from __future__ import annotations
 
 import pytest
 
+from datetime import UTC, datetime
+
 from mockingbird.observation.session_timeline import (
     DERIVED_SESSION_TIMELINE,
     LEGACY_RECONNECT_GAP_UNCERTAINTY_MS,
     LONG_GAP_THRESHOLD_MS,
+    NATIVE_CLOCK_REGRESSION_UNCERTAINTY_MS,
+    NATIVE_RECONNECT_UNCERTAINTY_MS,
     NATIVE_SESSION_TIMELINE,
     SessionTimelineError,
     SourceFrameFact,
     derive_session_timeline,
+    native_reconnect_step,
 )
 
 
@@ -284,3 +289,39 @@ def test_timeline_frame_limit_is_enforced() -> None:
     facts = tuple(_legacy(f"f{i}", i, i * 10) for i in range(1, 20_002))
     with pytest.raises(SessionTimelineError, match="session_timeline_frame_limit"):
         derive_session_timeline(facts, session_id="s1")
+
+
+# --------------------------------------------------------------------------
+# Stage 6.11B: `native_reconnect_step` is the identical per-boundary
+# forward-clamped step/uncertainty arithmetic `_derive_native` applies
+# post-hoc, exposed standalone so a live Camera Node consumer
+# (`camera_node_live.CameraNodeAnalysisSource`) can apply it incrementally,
+# one already-delivered frame at a time, instead of a second, independently
+# -tuned live timeline policy. See docs/reconnect-continuity-contract.md.
+# --------------------------------------------------------------------------
+
+
+def test_native_reconnect_step_measures_forward_gap_with_reconnect_uncertainty() -> None:
+    step_ms, uncertainty_ms = native_reconnect_step(
+        previous_received_at=datetime(2026, 8, 6, 12, 0, 0, tzinfo=UTC),
+        current_received_at=datetime(2026, 8, 6, 12, 0, 2, 500000, tzinfo=UTC),
+    )
+    assert step_ms == 2500
+    assert uncertainty_ms == NATIVE_RECONNECT_UNCERTAINTY_MS
+
+
+def test_native_reconnect_step_clamps_a_clock_regression_forward() -> None:
+    step_ms, uncertainty_ms = native_reconnect_step(
+        previous_received_at=datetime(2026, 8, 6, 12, 0, 5, tzinfo=UTC),
+        current_received_at=datetime(2026, 8, 6, 12, 0, 4, tzinfo=UTC),
+    )
+    assert step_ms == 1
+    assert uncertainty_ms == NATIVE_CLOCK_REGRESSION_UNCERTAINTY_MS
+
+
+def test_native_reconnect_step_requires_timezone_aware_timestamps() -> None:
+    with pytest.raises(SessionTimelineError, match="invalid_host_received_at"):
+        native_reconnect_step(
+            previous_received_at=datetime(2026, 8, 6, 12, 0, 0),
+            current_received_at=datetime(2026, 8, 6, 12, 0, 1, tzinfo=UTC),
+        )

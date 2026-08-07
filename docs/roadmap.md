@@ -281,6 +281,34 @@ fragmentation, boundary-reason, and cross-segment metrics above. This stage
 changes no detector, detector threshold, burst-scheduler, or evidence-scoring
 behavior and authorizes no Stage 7 activity; live Camera Node wiring is
 unchanged, and the burst-placement gap remains the next separate issue.
+Stage 6.11B closes that live-wiring gap: `CameraNodeAnalysisSource` now
+distinguishes a benign transport reconnect (new connection segment, unchanged
+`provider_generation`) from a genuine source reset -- connection-local
+sequence/offset anchors still reset, but the session-relative
+`source_offset_ms` the tracker consumes stays continuous, only the
+cross-segment step using host receive time (`session_timeline.
+native_reconnect_step`, reusing the Stage 6.8 native-timeline constants
+rather than a second timeline policy). `FrameDrivenObservationProvider.
+observe_live_frame` now runs the identical Stage 6.11 boundary
+classification live and calls `note_reconnect_boundary` to bridge the
+tracker, instead of `temporal_capture_cli._CaptureLoop` rebuilding the
+transport source and restarting the whole live generation on every ordinary
+reconnect (the Stage 6.6-era recovery this removes). `LiveCameraNodeShadowSession`
+no longer force-clears Stage 6.9 burst-scheduler recurrence state on a
+benign reconnect either, closing a related gap where every reconnect used
+to reset burst-novelty bookkeeping too. A bounded 180-second real Camera
+Node session showed 7 real HTTP reconnects, all correctly classified
+benign with zero provider resets, an unchanged product database (hash,
+size, and every tracked table row count), and clean shutdown; no genuine
+wildlife appeared in that quiet window, so live track-spanning-reconnect
+continuity rests on the hardware-free suite and the byte-identical
+session-03/04 replay regression rather than a real live track in this
+smoke. True resets (provider-generation/camera/stream/profile change,
+excessive gap/uncertainty, missing provenance, shutdown boundary) reuse the
+unchanged `reconnect_continuity` decision module and still fully reset. It
+changes no detector, tracker confirmation policy, burst-scheduler policy,
+evidence scoring, or monitoring policy and authorizes no Stage 7 activity;
+the burst-placement gap remains the next separate issue.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

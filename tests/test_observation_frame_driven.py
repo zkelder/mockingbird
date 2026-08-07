@@ -12,7 +12,7 @@ from mockingbird.observation.frame_driven_provider import (
     FrameDrivenObservationProvider,
     FrameDrivenSettings,
 )
-from mockingbird.observation.reconnect_continuity import ReconnectBridgeConfig
+from mockingbird.observation.reconnect_continuity import CONTINUE_ACROSS_TRANSPORT_RECONNECT, ReconnectBridgeConfig
 from mockingbird.observation.replay import (
     BenchmarkManifest,
     ExpectedAppearance,
@@ -877,6 +877,387 @@ async def test_replay_connection_segment_provenance_visible_after_bridge() -> No
     # no reconnect happened.
     segment_ids = {dict(frame.timing_facts).get("connection_segment_id") for frame in packets}
     assert segment_ids == {"conn-a", "conn-b"}
+
+
+# =============================================================================
+# Stage 6.11B: the identical Stage 6.11 reconnect-continuity decision reused
+# through the *live* entry point (`observe_live_frame`) instead of only
+# replay. Before this stage `observe_live_frame` had no boundary handling at
+# all: the live capture loop (`temporal_capture_cli._CaptureLoop`) instead
+# fully rebuilt the transport source and restarted this provider's whole
+# tracker generation on every ordinary HTTP reconnect (roughly every ten
+# seconds on the real Node). This section mirrors the replay-proof tests
+# above through `observe_live_frame` called one frame at a time -- the
+# actual shape a live Camera Node session drives it. See
+# docs/reconnect-continuity-contract.md.
+# =============================================================================
+
+
+async def _observe_live_sequence(
+    provider: FrameDrivenObservationProvider, packets: tuple[FramePacket, ...], *, finalize: bool = False,
+) -> list:
+    """Drive `packets` one at a time through the live entry point, exactly
+    the shape a real `LiveCameraNodeShadowSession` uses. `finalize=True`
+    additionally stops the session afterward (mirroring a real session
+    eventually stopping, and matching how `replay_frames` implicitly
+    finalizes every still-active generation at replay end) -- a still-
+    confirmed-but-not-yet-terminated track otherwise never emits its
+    VisitProposal, since nothing has closed its episode yet."""
+    provider.start_live(packets[0].stream_id)
+    results = []
+    for packet in packets:
+        results.append(await provider.observe_live_frame(packet))
+    if finalize:
+        results.extend(provider.stop_live("live_shadow_stopped"))
+    return results
+
+
+async def test_live_reconnect_with_same_source_preserves_provider_instance_and_bridges_one_episode() -> None:
+    """Scenarios 1/6: the primary Stage 6.11B fix-proof test, live
+    equivalent of `test_replay_benign_reconnect_with_full_provenance_
+    bridges_one_episode` -- one `FrameDrivenObservationProvider` instance,
+    driven only through its live entry point across a benign reconnect,
+    produces exactly one coherent tracker generation and one confirmed
+    VisitProposal, not two."""
+    box = (0.2, 0.2, 0.5, 0.5)
+    replay = ReplayInput("live-bridge", "stream", 100, 100, 5.0, (
+        ReplayFrame(0, 0, "h0", provider_generation="gen-1", connection_segment_id="conn-a", connection_segment_ordinal=0),
+        ReplayFrame(1, 200, "h1", provider_generation="gen-1", connection_segment_id="conn-a", connection_segment_ordinal=0),
+        ReplayFrame(
+            2, 2_700, "h2", provider_generation="gen-1", connection_segment_id="conn-b", connection_segment_ordinal=1,
+            temporal_discontinuity=True, temporal_uncertainty_ms=50, original_source_offset_ms=0,
+        ),
+        ReplayFrame(3, 2_900, "h3", provider_generation="gen-1", connection_segment_id="conn-b", connection_segment_ordinal=1),
+    ))
+    packets = replay.packets()
+    detector = FakeDetector({packet.frame_id or "": (_animal(packet, box),) for packet in packets})
+    provider = FrameDrivenObservationProvider(detector=detector, settings=_settings(baseline_detector_fps=5.0))
+    provider.load()
+    same_provider = provider  # the object under test is never replaced
+    results = await _observe_live_sequence(provider, packets, finalize=True)
+    assert provider is same_provider
+    updates = [item for result in results for item in result.track_updates]
+    proposals = [item for result in results for item in result.visit_proposals]
+
+    assert len({item.generation_id for item in updates}) == 1
+    assert len(proposals) == 1
+    assert not any(item.terminal_reason in {"provider_reset", "insufficient_reconnect_provenance"} for item in updates)
+    assert proposals[0].shadow_only is True
+    assert provider.capabilities.production_proposal_authority is False
+    facts = provider.replay_semantic_facts()
+    assert facts["reconnect_boundaries"] == 1
+    assert facts["reconnect_bridges_attempted"] == 1
+    assert facts["reconnect_bridges_continued"] == 1
+    assert facts["reconnect_bridges_expired"] == 0
+    assert facts["resets_true_source_change"] == 0
+    assert facts["resets_insufficient_provenance"] == 0
+    assert provider.last_reconnect_decision is not None
+    assert provider.last_reconnect_decision.decision == CONTINUE_ACROSS_TRANSPORT_RECONNECT
+
+
+async def test_live_multiple_reconnects_preserve_one_track() -> None:
+    """Scenario 8: three separate live reconnect boundaries, each with a
+    real post-reconnect detection, still produce exactly one coherent
+    episode through the live entry point."""
+    box = (0.2, 0.2, 0.5, 0.5)
+    frames = []
+    offsets = [0, 200, 2_700, 2_900, 5_400, 5_600, 8_100, 8_300]
+    for index, offset in enumerate(offsets):
+        segment_ordinal = index // 2
+        overrides: dict[str, object] = {
+            "provider_generation": "gen-1",
+            "connection_segment_id": f"conn-{segment_ordinal}",
+            "connection_segment_ordinal": segment_ordinal,
+        }
+        if index % 2 == 0 and index > 0:
+            overrides["temporal_discontinuity"] = True
+            overrides["temporal_uncertainty_ms"] = 50
+            overrides["original_source_offset_ms"] = 0
+        frames.append(ReplayFrame(index, offset, f"h{index}", **overrides))
+    replay = ReplayInput("live-multi-bridge", "stream", 100, 100, 5.0, tuple(frames))
+    packets = replay.packets()
+    detector = FakeDetector({packet.frame_id or "": (_animal(packet, box),) for packet in packets})
+    provider = FrameDrivenObservationProvider(detector=detector, settings=_settings(baseline_detector_fps=5.0))
+    provider.load()
+    results = await _observe_live_sequence(provider, packets, finalize=True)
+    updates = [item for result in results for item in result.track_updates]
+    proposals = [item for result in results for item in result.visit_proposals]
+
+    assert len({item.generation_id for item in updates}) == 1
+    assert len(proposals) == 1
+    facts = provider.replay_semantic_facts()
+    assert facts["reconnect_boundaries"] == 3
+    assert facts["reconnect_bridges_continued"] == 3
+    assert facts["reconnect_bridges_expired"] == 0
+
+
+async def _live_bridge_packets_without_post_reconnect_detection(*, reconnect_gap_ms: int = 2_500) -> tuple[FramePacket, ...]:
+    """h0: a real detection starts a tentative track (one confirmation is
+    not enough with `minimum_detector_confirmations=2`). h1: an ordinary
+    same-segment miss. h2: the reconnect boundary itself, deliberately with
+    no detection -- isolates "did merely bridging add support" from "did a
+    real post-reconnect detection add support"."""
+    replay = ReplayInput("live-no-fake-support", "stream", 100, 100, 5.0, (
+        ReplayFrame(0, 0, "h0", provider_generation="gen-1", connection_segment_id="conn-a", connection_segment_ordinal=0),
+        ReplayFrame(1, 200, "h1", provider_generation="gen-1", connection_segment_id="conn-a", connection_segment_ordinal=0),
+        ReplayFrame(
+            2, 200 + reconnect_gap_ms, "h2", provider_generation="gen-1", connection_segment_id="conn-b", connection_segment_ordinal=1,
+            temporal_discontinuity=True, temporal_uncertainty_ms=50, original_source_offset_ms=0,
+        ),
+    ))
+    return replay.packets()
+
+
+async def test_live_tentative_track_gets_no_fake_support_from_reconnect_survival() -> None:
+    """Scenario 7: crossing a benign reconnect boundary by itself must not
+    increment detector_confirmation_count/tracker_support_count or promote
+    a tentative track -- only genuine post-reconnect evidence may."""
+    box = (0.2, 0.2, 0.5, 0.5)
+    packets = await _live_bridge_packets_without_post_reconnect_detection()
+    detector = FakeDetector({packets[0].frame_id or "": (_animal(packets[0], box),)})
+    provider = FrameDrivenObservationProvider(
+        detector=detector,
+        settings=_settings(baseline_detector_fps=5.0, minimum_detector_confirmations=2, maximum_missed_frames=5, maximum_frame_gap_ms=1000, tracker_expiry_ms=1000),
+    )
+    provider.load()
+    results = await _observe_live_sequence(provider, packets)
+    updates = [item for result in results for item in result.track_updates]
+    after_start = next(item for item in updates if item.status == "started")
+    after_boundary = updates[-1]
+    assert after_start.detector_confirmation_count == 1
+    assert after_start.lifecycle_state == "tentative"
+    # The boundary frame is well past the tracker's own ordinary
+    # maximum_frame_gap_ms/tracker_expiry_ms (1000ms) -- only the bridge,
+    # not ordinary tolerance, is what keeps this track alive here.
+    assert after_boundary.lifecycle_state == "temporarily_lost"
+    assert after_boundary.detector_confirmation_count == after_start.detector_confirmation_count
+    assert after_boundary.tracker_support_count == after_start.tracker_support_count == 0
+    assert not any(item.status == "ended" for item in updates)
+
+
+async def test_live_track_without_post_reconnect_evidence_expires_bridge() -> None:
+    """Scenario 9: when no genuine post-reconnect evidence ever arrives,
+    the bridge's own bounded budget still closes it -- reconnect survival
+    is bounded patience, not indefinite immunity. Two pre-reconnect
+    detections confirm the track first (mirroring `test_frame_tracker.
+    test_no_post_reconnect_support_eventually_expires_the_track`), so the
+    raw `reconnect_bridge_expired` reason is visible rather than relabeled
+    `insufficient_support` (which is what an unconfirmed track's expiry
+    reports instead -- a separate, already-covered case)."""
+    box = (0.2, 0.2, 0.5, 0.5)
+    packets = list(await _live_bridge_packets_without_post_reconnect_detection())
+    # Extend well past both the frame-count and duration bridge budgets
+    # (defaults: 8 frames / 8000ms) with frames carrying no detection at all.
+    for index in range(3, 14):
+        packets.append(FramePacket(**{
+            **packets[-1].__dict__,
+            "frame_id": f"h{index}",
+            "source_offset_ms": packets[-1].source_offset_ms + 300,
+            "timing_facts": (),
+        }))
+    detector = FakeDetector({
+        packets[0].frame_id or "": (_animal(packets[0], box),),
+        packets[1].frame_id or "": (_animal(packets[1], box),),
+    })
+    provider = FrameDrivenObservationProvider(
+        detector=detector,
+        settings=_settings(baseline_detector_fps=5.0, minimum_detector_confirmations=2, maximum_missed_frames=5, maximum_frame_gap_ms=1000, tracker_expiry_ms=1000),
+    )
+    provider.load()
+    results = await _observe_live_sequence(provider, tuple(packets))
+    updates = [item for result in results for item in result.track_updates]
+    terminal = [item for item in updates if item.status == "ended"]
+    assert len(terminal) == 1
+    assert terminal[0].terminal_reason == "reconnect_bridge_expired"
+    facts = provider.replay_semantic_facts()
+    assert facts["reconnect_bridges_expired"] == 1
+    assert facts["reconnect_bridges_continued"] == 0
+
+
+async def test_live_spatially_incompatible_reentry_starts_a_new_generation() -> None:
+    """Scenario 10: a post-reconnect detection at a wildly different
+    position/size than the pending track's last known geometry must not be
+    accepted as reacquisition -- it starts its own new generation while the
+    original pending track's bridge keeps counting down independently."""
+    original_box = (0.1, 0.1, 0.2, 0.2)
+    incompatible_box = (0.7, 0.7, 0.95, 0.95)
+    replay = ReplayInput("live-incompatible-reentry", "stream", 100, 100, 5.0, (
+        ReplayFrame(0, 0, "h0", provider_generation="gen-1", connection_segment_id="conn-a", connection_segment_ordinal=0),
+        ReplayFrame(1, 200, "h1", provider_generation="gen-1", connection_segment_id="conn-a", connection_segment_ordinal=0),
+        ReplayFrame(
+            2, 2_700, "h2", provider_generation="gen-1", connection_segment_id="conn-b", connection_segment_ordinal=1,
+            temporal_discontinuity=True, temporal_uncertainty_ms=50, original_source_offset_ms=0,
+        ),
+    ))
+    packets = replay.packets()
+    detector = FakeDetector({
+        packets[0].frame_id or "": (_animal(packets[0], original_box),),
+        packets[2].frame_id or "": (_animal(packets[2], incompatible_box),),
+    })
+    provider = FrameDrivenObservationProvider(detector=detector, settings=_settings(baseline_detector_fps=5.0))
+    provider.load()
+    results = await _observe_live_sequence(provider, packets)
+    updates = [item for result in results for item in result.track_updates]
+    assert len({item.generation_id for item in updates}) == 2
+    started = [item for item in updates if item.status == "started"]
+    assert len(started) == 2
+    # The original (still-pending) track was not reacquired by the
+    # spatially incompatible detection.
+    pending_generation = started[0].generation_id
+    pending_updates = [item for item in updates if item.generation_id == pending_generation]
+    assert not any(item.detector_confirmation_count > 1 for item in pending_updates)
+
+
+_BASE_TIMING_FACTS = (("connection_segment_id", "conn-a"), ("camera_id", "camera-1"), ("analysis_profile_id", "profile-1"))
+_BOUNDARY_TIMING_FACTS = (
+    ("connection_segment_id", "conn-b"), ("camera_id", "camera-1"), ("analysis_profile_id", "profile-1"),
+    ("temporal_discontinuity", True), ("temporal_uncertainty_ms", 50),
+)
+
+_LIVE_RESET_VARIANTS = [
+    pytest.param(
+        {"provider_generation": "gen-2"}, "resets_true_source_change", id="provider_generation_change",
+    ),
+    pytest.param(
+        {"timing_facts": tuple(dict(_BOUNDARY_TIMING_FACTS, camera_id="camera-2").items())},
+        "resets_true_source_change", id="camera_identity_change",
+    ),
+    pytest.param(
+        {"width": 640, "height": 480, "timing_facts": _BOUNDARY_TIMING_FACTS},
+        "resets_true_source_change", id="profile_dimension_change",
+    ),
+    pytest.param(
+        {
+            "source_offset_ms": 200 + 60_000,
+            "timing_facts": tuple(dict(_BOUNDARY_TIMING_FACTS, temporal_uncertainty_ms=50).items()),
+        },
+        "resets_true_source_change", id="excessive_reconnect_gap",
+    ),
+    pytest.param(
+        {"timing_facts": tuple(dict(_BOUNDARY_TIMING_FACTS, temporal_uncertainty_ms=5_000).items())},
+        "resets_true_source_change", id="excessive_temporal_uncertainty",
+    ),
+    pytest.param(
+        {"timing_facts": (("temporal_discontinuity", True), ("temporal_uncertainty_ms", 50))},
+        "resets_insufficient_provenance", id="missing_connection_segment_identity",
+    ),
+    pytest.param(
+        {"timing_facts": _BOUNDARY_TIMING_FACTS + (("shutdown_boundary", True),)},
+        "resets_true_source_change", id="shutdown_start_boundary",
+    ),
+]
+
+
+@pytest.mark.parametrize("overrides,expected_fact", _LIVE_RESET_VARIANTS)
+async def test_live_true_source_reset_variants_still_terminate(overrides: dict, expected_fact: str) -> None:
+    """Scenarios 11/12/14/15/16/17/18: every category of confidently
+    evidenced source-generation discontinuity, and the insufficient-
+    provenance safety net, still fully reset the live tracker -- proving
+    this stage did not trade away true-reset safety for bridging. A true
+    reset's own finalized "ended" update is not surfaced through
+    `observe_live_frame` (pre-existing, unchanged `restart_live_generation`
+    behavior -- see its own docstring), so this checks the reset actually
+    happened through `replay_semantic_facts()`/`last_reconnect_decision`
+    plus a fresh, distinct generation for whatever comes after, rather than
+    a discarded terminal `TrackUpdate`."""
+    box = (0.2, 0.2, 0.5, 0.5)
+    start = datetime(2026, 8, 6, tzinfo=UTC)
+
+    def _packet(frame_id: str, offset_ms: int, timing_facts, *, width: int = 100, height: int = 100, provider_generation: str = "gen-1") -> FramePacket:
+        return FramePacket(
+            "stream", f"live:{frame_id}", start + timedelta(milliseconds=offset_ms), frame_id, offset_ms,
+            width, height, provider_generation=provider_generation, timing_facts=timing_facts,
+        )
+
+    h0 = _packet("h0", 0, _BASE_TIMING_FACTS)
+    h1 = _packet("h1", 200, _BASE_TIMING_FACTS)
+    boundary_kwargs: dict[str, object] = {"provider_generation": "gen-1"}
+    boundary_kwargs.update({key: value for key, value in overrides.items() if key not in {"timing_facts", "source_offset_ms"}})
+    boundary = _packet("h2", overrides.get("source_offset_ms", 2_700), overrides.get("timing_facts", _BOUNDARY_TIMING_FACTS), **boundary_kwargs)
+    after_reset = _packet("h3", boundary.source_offset_ms + 200, (), provider_generation=boundary.provider_generation, width=boundary.width or 100, height=boundary.height or 100)
+    packets = (h0, h1, boundary, after_reset)
+    detector = FakeDetector({packet.frame_id or "": (_animal(packet, box),) for packet in packets})
+    provider = FrameDrivenObservationProvider(detector=detector, settings=_settings(baseline_detector_fps=5.0))
+    provider.load()
+    results = await _observe_live_sequence(provider, packets)
+    updates = [item for result in results for item in result.track_updates]
+    # The pre-reset generation's own started/updated facts are still
+    # visible; only its "ended" update at the exact reset frame is
+    # discarded (pre-existing `restart_live_generation` behavior).
+    assert len({item.generation_id for item in updates}) == 2
+    started = [item for item in updates if item.status == "started"]
+    assert len(started) == 2
+    facts = provider.replay_semantic_facts()
+    assert facts[expected_fact] == 1
+    assert facts["reconnect_bridges_continued"] == 0
+    assert provider.last_reconnect_decision is not None
+    assert provider.last_reconnect_decision.decision != CONTINUE_ACROSS_TRANSPORT_RECONNECT
+
+
+async def test_live_stream_change_remains_hard_rejected_not_silently_bridged() -> None:
+    """Scenario 13 ("stream change resets"): `observe_live_frame`'s own
+    pre-existing guard -- a live session is started for exactly one
+    stream_id -- already made a stream_id mismatch a hard error before this
+    stage; this proves Stage 6.11B's new bridging code path never weakens
+    that into a soft, silently-bridged reset."""
+    frames = _frames(2)
+    detector = FakeDetector()
+    provider = FrameDrivenObservationProvider(detector=detector, settings=_settings())
+    provider.load()
+    provider.start_live("stream")
+    await provider.observe_live_frame(frames[0])
+    other_stream_frame = FramePacket(**{**frames[1].__dict__, "stream_id": "a-different-stream"})
+    with pytest.raises(ReplayValidationError, match="live_stream_not_started"):
+        await provider.observe_live_frame(other_stream_frame)
+
+
+async def test_live_reconnect_does_not_duplicate_evidence_candidates_or_visit_proposals() -> None:
+    """Scenarios 20/21: bridging a reconnect must not duplicate evidence
+    candidates or emit more than one VisitProposal for the one coherent
+    episode that spans it."""
+    box = (0.2, 0.2, 0.5, 0.5)
+    replay = ReplayInput("live-no-duplicates", "stream", 100, 100, 5.0, (
+        ReplayFrame(0, 0, "h0", provider_generation="gen-1", connection_segment_id="conn-a", connection_segment_ordinal=0),
+        ReplayFrame(1, 200, "h1", provider_generation="gen-1", connection_segment_id="conn-a", connection_segment_ordinal=0),
+        ReplayFrame(
+            2, 2_700, "h2", provider_generation="gen-1", connection_segment_id="conn-b", connection_segment_ordinal=1,
+            temporal_discontinuity=True, temporal_uncertainty_ms=50, original_source_offset_ms=0,
+        ),
+        ReplayFrame(3, 2_900, "h3", provider_generation="gen-1", connection_segment_id="conn-b", connection_segment_ordinal=1),
+    ))
+    packets = replay.packets()
+    detector = FakeDetector({packet.frame_id or "": (_animal(packet, box),) for packet in packets})
+    provider = FrameDrivenObservationProvider(detector=detector, settings=_settings(baseline_detector_fps=5.0, evidence_ring_size=4))
+    provider.load()
+    results = await _observe_live_sequence(provider, packets, finalize=True)
+    proposals = [item for result in results for item in result.visit_proposals]
+    evidence = [item for result in results for item in result.evidence_candidates]
+    assert len(proposals) == 1
+    assert len({item.proposal_key for item in proposals}) == 1
+    assert proposals[0].idempotency_key == proposals[0].proposal_key
+    # Every evidence candidate role is distinct: no frame is counted twice.
+    assert len(evidence) == len({(item.role, item.frame_id) for item in evidence})
+
+
+async def test_live_provider_generation_change_resets_scheduler_relevant_reset_signal() -> None:
+    """Supports `LiveCameraNodeShadowSession`'s own outer reset side effects
+    (burst-scheduler state, temporary payload cache): `live_reset_count`
+    changes exactly once per true reset and never for a benign bridge, so a
+    caller can distinguish the two with a cheap before/after comparison."""
+    box = (0.2, 0.2, 0.5, 0.5)
+    bridge_packets = (await _live_bridge_packets_without_post_reconnect_detection())[:3]
+    detector = FakeDetector({bridge_packets[0].frame_id or "": (_animal(bridge_packets[0], box),)})
+    provider = FrameDrivenObservationProvider(detector=detector, settings=_settings(baseline_detector_fps=5.0))
+    provider.load()
+    provider.start_live("stream")
+    before = provider.live_reset_count
+    for packet in bridge_packets:
+        await provider.observe_live_frame(packet)
+    assert provider.live_reset_count == before  # a benign bridge never resets
+
+    reset_frame = FramePacket(**{**bridge_packets[-1].__dict__, "frame_id": "reset-frame", "provider_generation": "gen-2"})
+    await provider.observe_live_frame(reset_frame)
+    assert provider.live_reset_count == before + 1
 
 
 async def test_replay_privacy_ignore_exclusion_unaffected_by_reconnect_bridging() -> None:
