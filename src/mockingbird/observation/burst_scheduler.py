@@ -490,7 +490,11 @@ class BurstSchedulerHealth:
 
 
 class _GenerationState:
-    __slots__ = ("last_issue_offset_ms", "active_request_id", "retry_attempts_used", "retry_eligible", "ever_issued", "ever_suppressed")
+    __slots__ = (
+        "last_issue_offset_ms", "active_request_id", "retry_attempts_used", "retry_eligible",
+        "ever_issued", "ever_suppressed",
+        "support_baseline_group_id", "support_baseline_group_first_seen_offset_ms", "support_baseline",
+    )
 
     def __init__(self) -> None:
         self.last_issue_offset_ms: int | None = None
@@ -499,6 +503,20 @@ class _GenerationState:
         self.retry_eligible: bool = False
         self.ever_issued: bool = False
         self.ever_suppressed: bool = False
+        # Stage 6.15: a frozen snapshot of this generation's recurrence
+        # group's own historic support high-water mark, captured the first
+        # time this generation touches that exact group instance -- see
+        # _apply_support_high_water and docs/burst-scheduler-contract.md.
+        # `(support_baseline_group_id, support_baseline_group_first_seen_offset_ms)`
+        # identifies one specific group *instance*, not merely a group_id
+        # string: group_id is content-addressed from geometry, so a group
+        # purged by expiry and later re-created at the same location gets a
+        # colliding group_id but a strictly later first_seen_offset_ms,
+        # which correctly forces a fresh baseline capture rather than
+        # inheriting a deleted instance's history.
+        self.support_baseline_group_id: str | None = None
+        self.support_baseline_group_first_seen_offset_ms: int | None = None
+        self.support_baseline: int | None = None
 
 
 @dataclass
@@ -515,16 +533,34 @@ class _RecurrenceGroup:
     first_seen_offset_ms: int = 0
     last_seen_offset_ms: int = 0
     last_issued_offset_ms: int | None = None
-    # The group's own historic *minimum* observed score/support -- its noise
-    # floor -- updated from every occurrence (issued or suppressed), never
-    # just the most recent issuance. Comparing a new opportunity against this
-    # floor is order-independent: two genuine sightings close together both
-    # read as clearly stronger than recurring static clutter, whereas
-    # comparing only against "whatever last happened to issue" can under-
-    # count novelty when an earlier, weaker novelty-driven issuance already
-    # raised that single reference point.
+    # The group's own historic *minimum* observed confidence score -- its
+    # noise floor -- updated from every occurrence (issued or suppressed),
+    # never just the most recent issuance. Comparing a new opportunity
+    # against this floor is order-independent: two genuine sightings close
+    # together both read as clearly stronger than recurring static clutter,
+    # whereas comparing only against "whatever last happened to issue" can
+    # under-count novelty when an earlier, weaker novelty-driven issuance
+    # already raised that single reference point.
     score_floor: float | None = None
-    support_floor: int | None = None
+    # Stage 6.15: the group's own historic *maximum* combined
+    # (detector_confirmation_count + tracker_support_count) observed, also
+    # updated from every occurrence. This is deliberately a high-water mark,
+    # not a floor like score_floor: those two counters are monotonic
+    # *track-generation-local* facts that restart near zero on every fresh
+    # generation (see the provider-neutral tracker's own contract in
+    # docs/frame-driven-shadow-provider-contract.md), so a recurring static
+    # object re-detected as a brand-new generation would otherwise pin a
+    # *minimum*-based floor near zero forever and read as "stronger support"
+    # every single time it merely climbed its own first couple of
+    # confirmations -- the exact live issuance-storm mechanism this stage
+    # fixes (see docs/burst-scheduler-contract.md). Comparing against this
+    # group's own established peak instead means a rebirth re-growing only
+    # back to an already-seen level is correctly not novel, while a
+    # generation that genuinely exceeds the group's best-ever support still
+    # is. Read/written through _apply_support_high_water, never compared
+    # directly against a live-updating value -- see
+    # _GenerationState.support_baseline.
+    support_high_water: int | None = None
 
 
 class _ActiveRequest(NamedTuple):
@@ -637,6 +673,14 @@ class BurstScheduler:
         # budget checks below, never *whether* -- _evaluate_recurrence
         # itself is unmodified.
         group, is_new_group = self._find_or_create_group(opportunity, now_ms=now_ms)
+        # Stage 6.15: freeze this generation's temporal-support comparison
+        # baseline -- the group's own support high-water mark as it stood
+        # *before* this call's own support is folded in -- then fold it in.
+        # Must happen before _evaluate_recurrence reads the baseline, and the
+        # freeze must happen before the fold-in, or a single generation's own
+        # monotonic growth could never cross the novelty delta at all (see
+        # _apply_support_high_water).
+        prior_support_high_water = self._apply_support_high_water(generation_state, group, opportunity) if group is not None else None
         novelty: tuple[str, ...] = ()
         recurrence_group_id = group.group_id if group is not None else None
         if is_operator:
@@ -646,7 +690,9 @@ class BurstScheduler:
         elif is_retry_eligible:
             novelty = (NOVELTY_RETRY_PERMITTED,)
         elif group is not None and not is_new_group:
-            suppress, signals = self._evaluate_recurrence(group, opportunity, now_ms=now_ms)
+            suppress, signals = self._evaluate_recurrence(
+                group, opportunity, now_ms=now_ms, prior_support_high_water=prior_support_high_water,
+            )
             if suppress:
                 group.suppressed_count += 1
                 return self._log(opportunity, self._decision(
@@ -1010,20 +1056,84 @@ class BurstScheduler:
         group.last_seen_offset_ms = now_ms
         if opportunity.detector_score is not None:
             group.score_floor = opportunity.detector_score if group.score_floor is None else min(group.score_floor, opportunity.detector_score)
+        # Combined temporal-support bookkeeping deliberately does NOT live
+        # here -- see _apply_support_high_water, called separately from
+        # decide() so the comparison baseline can be frozen before this same
+        # call's own fold-in, which a *maximum*-based high-water mark needs
+        # and a *minimum*-based floor (score_floor, above) does not.
+
+    @staticmethod
+    def _apply_support_high_water(
+        generation_state: "_GenerationState", group: "_RecurrenceGroup", opportunity: BurstOpportunity,
+    ) -> int:
+        """Freeze and return this generation's comparison baseline for the
+        group's own historic support high-water mark, then fold this call's
+        own combined support into the group's persisted record.
+
+        Why a per-generation frozen baseline, not a live read of
+        `group.support_high_water`: detector_confirmation_count/
+        tracker_support_count are monotonic *per-track-generation* counters
+        (see the provider-neutral tracker's own contract in
+        docs/frame-driven-shadow-provider-contract.md) that typically grow by
+        +1 per meaningful update, and one generation can trigger many
+        `decide()` calls across its own lifetime (docs/burst-scheduler-
+        contract.md's live-wiring section).
+        If the high-water mark were updated and then immediately compared
+        against on every call, a generation's own support would always be
+        compared against "the high-water mark as of one call ago" -- which,
+        for +1-per-call growth, is always exactly 1 below the current value,
+        so the gap could never reach `temporal_support_delta` (default 2)
+        through ordinary incremental growth. Freezing the baseline once, the
+        first time this exact generation touches this exact recurrence-group
+        *instance*, and reusing that same frozen value for the rest of the
+        generation's lifetime fixes that: the generation's own growth is
+        compared against a fixed reference point established *before* it
+        started climbing, so genuine growth can still cross the delta, while
+        a fresh rebirth's climb is compared against whatever the group had
+        already shown before *that* generation began -- never against its
+        own still-in-progress steps.
+
+        The group's OWN persisted high-water mark is still updated on every
+        call (issued or suppressed, mirroring score_floor), so future
+        generations compare against the true historical peak. Group-instance
+        identity uses `(group_id, first_seen_offset_ms)` rather than
+        `group_id` alone: group_id is content-addressed from geometry, so a
+        group purged by expiry and later re-created at the same location
+        would otherwise collide with a deleted instance's group_id and
+        incorrectly inherit its baseline.
+        """
+
+        first_touch_of_this_group_instance = (
+            generation_state.support_baseline_group_id != group.group_id
+            or generation_state.support_baseline_group_first_seen_offset_ms != group.first_seen_offset_ms
+        )
+        if first_touch_of_this_group_instance:
+            generation_state.support_baseline_group_id = group.group_id
+            generation_state.support_baseline_group_first_seen_offset_ms = group.first_seen_offset_ms
+            generation_state.support_baseline = group.support_high_water
+        prior_support_high_water = generation_state.support_baseline
+
         support = opportunity.detector_confirmation_count + opportunity.tracker_support_count
-        group.support_floor = support if group.support_floor is None else min(group.support_floor, support)
+        group.support_high_water = support if group.support_high_water is None else max(group.support_high_water, support)
+        return prior_support_high_water
 
     def _evaluate_recurrence(
-        self, group: _RecurrenceGroup, opportunity: BurstOpportunity, *, now_ms: int,
+        self, group: _RecurrenceGroup, opportunity: BurstOpportunity, *, now_ms: int, prior_support_high_water: int | None,
     ) -> tuple[bool, tuple[str, ...]]:
         """Return (suppress, novelty_signals). A recurrence is suppressed
         only when it has genuinely recurred, a prior burst was actually
         issued for the group, that issue is still within the group's own
-        cooldown, and no novelty signal applies. Confidence/support novelty
-        compares against the group's own historic *floor* (its established
-        noise baseline), not merely its most recent issuance -- otherwise an
-        earlier, weaker novelty-driven burst can silently raise the bar for
-        the very next genuine sighting moments later."""
+        cooldown, and no novelty signal applies.
+
+        Confidence novelty compares against the group's own historic *floor*
+        (its established noise baseline, read live from `group.score_floor`)
+        rather than merely its most recent issuance -- otherwise an earlier,
+        weaker novelty-driven burst can silently raise the bar for the very
+        next genuine sighting moments later. Temporal-support novelty instead
+        compares against `prior_support_high_water`, a *maximum*-based
+        reference frozen per generation by `_apply_support_high_water` --
+        see that method for why support needs a different comparison shape
+        than confidence (docs/burst-scheduler-contract.md)."""
 
         if group.occurrence_count < self.config.min_recurrence_to_suppress:
             return False, ()
@@ -1041,7 +1151,7 @@ class BurstScheduler:
         if opportunity.motion_change_score is not None and opportunity.motion_change_score >= self.config.motion_change_threshold:
             signals.append(NOVELTY_MOTION_CHANGE)
         support = opportunity.detector_confirmation_count + opportunity.tracker_support_count
-        if group.support_floor is not None and support - group.support_floor >= self.config.temporal_support_delta:
+        if prior_support_high_water is not None and support - prior_support_high_water >= self.config.temporal_support_delta:
             signals.append(NOVELTY_BETTER_TEMPORAL_SUPPORT)
         if signals:
             return False, tuple(signals)

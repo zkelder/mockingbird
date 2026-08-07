@@ -1351,3 +1351,363 @@ def test_diagnostics_and_health_partition_reserve_from_dedicated_channels() -> N
 
     health = scheduler.health()
     assert 0 <= health.novelty_reserve_remaining <= scheduler.config.novelty_reserve_capacity
+
+
+# --------------------------------------------------------------------------
+# Stage 6.15: recurrence-level temporal-support novelty invariant to
+# track-generation rebirth (docs/burst-scheduler-contract.md).
+#
+# Root cause proven by these tests: detector_confirmation_count/
+# tracker_support_count are monotonic *track-generation-local* facts that
+# restart near zero every time the same recurring geometry is re-detected as
+# a brand-new short-lived generation. Comparing against the group's historic
+# *floor* (a minimum) let every rebirth's own low starting point keep pinning
+# the floor near zero, so any rebirth that climbed a few steps read as
+# "stronger temporal support" every single time -- the live 31-bursts-in-133s
+# issuance storm documented in the session-01 runtime diagnosis. The fix
+# compares against the group's historic support *high-water* (a maximum),
+# frozen per (generation, recurrence-group-instance) pair the first time that
+# generation touches that group -- so a single generation's own genuine
+# growth can still cross the delta, but a rebirth re-growing only back to an
+# already-seen level cannot.
+# --------------------------------------------------------------------------
+
+
+def _rebirth_series(
+    scheduler: BurstScheduler, *, generations: int,
+    steps: tuple[tuple[int, int], ...] = ((1, 0), (2, 0), (2, 1)),
+    detector_score: float = 0.06, start_offset_ms: int = 1_000,
+    generation_gap_ms: int = 2_000, step_gap_ms: int = 100, geometry_jitter: float = 0.0002,
+) -> list:
+    """Model a recurring static object whose track keeps terminating and
+    restarting: each fresh generation's own detector_confirmation_count/
+    tracker_support_count restart at the first `steps` entry and climb
+    through the rest, exactly like the live wiring's one-BurstOpportunity-
+    per-meaningful-TrackUpdate cadence (docs/burst-scheduler-contract.md).
+
+    The *founding* generation (index 0) always issues on its own first step
+    (Stage 6.9's "first opportunity is never suppressed" rule), so its own
+    later steps need at least `BurstSchedulerConfig`'s default
+    `minimum_burst_interval_ms` between them, or its own per-generation
+    cooldown (`DECISION_SUPPRESSED_SAME_TRACK_GENERATION`) would return
+    before those steps ever reach the recurrence group, silently
+    under-recording the group's true early support history. Every later
+    rebirth in this fixture never issues on its own (that is precisely the
+    behavior under test), so it never trips its own per-generation cooldown
+    and the caller's own tighter `step_gap_ms` is realistic and safe for it.
+    The effective generation gap widens automatically so the founder's wider
+    internal spacing can never overlap the next generation's first step."""
+
+    founder_step_gap_ms = max(step_gap_ms, 1_100)
+    founder_span_ms = founder_step_gap_ms * (len(steps) - 1)
+    effective_generation_gap_ms = max(generation_gap_ms, founder_span_ms + step_gap_ms)
+
+    decisions = []
+    for generation_index in range(generations):
+        generation_id = f"rebirth-generation-{generation_index}"
+        gap = founder_step_gap_ms if generation_index == 0 else step_gap_ms
+        generation_start = start_offset_ms + generation_index * effective_generation_gap_ms
+        for step_index, (confirmations, support) in enumerate(steps):
+            decision = scheduler.decide(_opportunity(
+                track_generation_id=generation_id,
+                subject_geometry=_box(dx=geometry_jitter * generation_index),  # sub-pixel jitter only
+                detector_score=detector_score,
+                detector_confirmation_count=confirmations,
+                tracker_support_count=support,
+                session_offset_ms=generation_start + step_index * gap,
+            ))
+            if decision.should_issue:
+                _resolve(scheduler, decision)
+            decisions.append(decision)
+    return decisions
+
+
+def _all_novelty_signals(decisions: list) -> set[str]:
+    return {signal for decision in decisions for signal in decision.novelty_signals}
+
+
+# --------------------------------------------------------------------------
+# 29. Generation-local support reset does not create novelty; repeated static
+# generations remain one recurrence; 0->1->2 growth repeated across
+# generations does not repeatedly issue. (Items 1-3.)
+# --------------------------------------------------------------------------
+
+
+def test_generation_rebirth_does_not_repeatedly_create_temporal_support_novelty() -> None:
+    scheduler = _scheduler()
+    decisions = _rebirth_series(scheduler, generations=6)
+    outcomes = [decision.outcome for decision in decisions]
+
+    # The very first opportunity is never suppressed as a recurrence (Stage
+    # 6.9's own documented rule); every one of the other 17 calls is the same
+    # recurring geometry re-detected as a fresh generation reaching a support
+    # level this group has already shown before, which must never read as
+    # novel merely because a new generation restarted its own counters.
+    assert outcomes[0] == DECISION_BURST_ISSUED
+    assert outcomes.count(DECISION_BURST_ISSUED) == 1
+    assert outcomes.count(DECISION_SUPPRESSED_RECURRING_GEOMETRY) == len(outcomes) - 1
+    assert NOVELTY_BETTER_TEMPORAL_SUPPORT not in _all_novelty_signals(decisions)
+
+
+def test_repeated_static_generations_remain_one_recurrence_group() -> None:
+    scheduler = _scheduler()
+    decisions = _rebirth_series(scheduler, generations=5)
+    groups = scheduler.recurrence_groups()
+    assert len(groups) == 1
+    assert groups[0].occurrence_count == len(decisions)
+
+
+# --------------------------------------------------------------------------
+# 30. Support exceeding recurrence high-water can become novel; same-
+# generation genuine support improvement still works. (Items 4-5.)
+# --------------------------------------------------------------------------
+
+
+def test_support_growth_within_one_generation_can_exceed_group_high_water() -> None:
+    """Once several rebirths have established the group's own support
+    high-water mark (3, from the (1,0)/(2,0)/(2,1) step shape), a *single*
+    generation's own continued growth *past* that established peak -- not
+    merely back up to it -- is real evidence of a materially longer/stronger
+    episode and must still be able to issue. The fix must disable only the
+    generation-rebirth false positive, not the whole novelty channel."""
+
+    scheduler = _scheduler()
+    _rebirth_series(scheduler, generations=3)
+    assert len(scheduler.recurrence_groups()) == 1
+
+    decisions = []
+    for step_index, (confirmations, support) in enumerate(((1, 0), (2, 0), (2, 1), (3, 1), (3, 2))):
+        decision = scheduler.decide(_opportunity(
+            track_generation_id="growing-generation",
+            subject_geometry=_box(dx=0.0002 * 3),
+            detector_score=0.06,
+            detector_confirmation_count=confirmations,
+            tracker_support_count=support,
+            session_offset_ms=1_000 + 3 * 2_000 + step_index * 100,
+        ))
+        if decision.should_issue:
+            _resolve(scheduler, decision)
+        decisions.append(decision)
+
+    outcomes = [decision.outcome for decision in decisions]
+    assert outcomes[:4] == [DECISION_SUPPRESSED_RECURRING_GEOMETRY] * 4
+    assert outcomes[4] == DECISION_BURST_ISSUED
+    assert NOVELTY_BETTER_TEMPORAL_SUPPORT in decisions[4].novelty_signals
+
+
+# --------------------------------------------------------------------------
+# Parallel control scenarios (must remain capable of triggering a new burst
+# after establishing recurrence history): material geometry change, stronger
+# detector confidence, motion/change evidence, operator marker, and
+# engineering override. (Items 6-10.)
+# --------------------------------------------------------------------------
+
+
+def test_rebirth_series_then_materially_different_geometry_still_issues() -> None:
+    scheduler = _scheduler()
+    _rebirth_series(scheduler, generations=4)
+
+    elsewhere = scheduler.decide(_opportunity(
+        track_generation_id="elsewhere-generation",
+        subject_geometry=_box(dx=0.3, dy=0.2),  # far outside the recurring cluster
+        detector_score=0.06, detector_confirmation_count=1, tracker_support_count=0,
+        session_offset_ms=20_000,
+    ))
+    assert elsewhere.outcome == DECISION_BURST_ISSUED
+    assert len(scheduler.recurrence_groups()) == 2
+
+
+def test_rebirth_series_then_stronger_confidence_still_issues_independent_of_support() -> None:
+    """Item 6: confidence-based novelty uses its own historic *floor* and is
+    unaffected by the new support high-water/baseline mechanism -- even a
+    deliberately LOW-support opportunity can still escape suppression on
+    confidence alone."""
+
+    scheduler = _scheduler()
+    _rebirth_series(scheduler, generations=4)
+
+    confident = scheduler.decide(_opportunity(
+        track_generation_id="confident-generation",
+        subject_geometry=_box(dx=0.0002 * 4),
+        detector_score=0.9,  # materially stronger than the ~0.06 static band
+        detector_confirmation_count=1, tracker_support_count=0,  # deliberately low support
+        session_offset_ms=9_500,
+    ))
+    assert confident.outcome == DECISION_BURST_ISSUED
+    assert NOVELTY_STRONGER_CONFIDENCE in confident.novelty_signals
+    assert NOVELTY_BETTER_TEMPORAL_SUPPORT not in confident.novelty_signals
+
+
+def test_rebirth_series_then_motion_change_still_issues() -> None:
+    scheduler = _scheduler(motion_change_threshold=0.2)
+    _rebirth_series(scheduler, generations=4)
+
+    motioned = scheduler.decide(_opportunity(
+        track_generation_id="motion-generation",
+        subject_geometry=_box(dx=0.0002 * 4),
+        detector_score=0.06, detector_confirmation_count=1, tracker_support_count=0,
+        motion_change_score=0.9, session_offset_ms=9_500,
+    ))
+    assert motioned.outcome == DECISION_BURST_ISSUED
+    assert NOVELTY_MOTION_CHANGE in motioned.novelty_signals
+
+
+def test_rebirth_series_then_operator_marker_still_eligible() -> None:
+    scheduler = _scheduler()
+    _rebirth_series(scheduler, generations=4)
+
+    marked = scheduler.decide(_opportunity(
+        track_generation_id="marked-generation",
+        subject_geometry=_box(dx=0.0002 * 4),
+        detector_score=0.06, detector_confirmation_count=1, tracker_support_count=0,
+        operator_marker_present=True, session_offset_ms=9_500,
+    ))
+    assert marked.outcome == DECISION_OPERATOR_OVERRIDE_ISSUED
+    assert NOVELTY_OPERATOR_MARKER in marked.novelty_signals
+
+
+def test_rebirth_series_then_engineering_override_still_eligible() -> None:
+    scheduler = _scheduler()
+    _rebirth_series(scheduler, generations=4)
+
+    override = scheduler.decide(_opportunity(
+        track_generation_id="engineering-generation",
+        subject_geometry=_box(dx=0.0002 * 4),
+        detector_score=0.06, detector_confirmation_count=1, tracker_support_count=0,
+        engineering_validation_request=True, session_offset_ms=9_500,
+    ))
+    assert override.outcome == DECISION_ENGINEERING_OVERRIDE_ISSUED
+    assert NOVELTY_ENGINEERING_REQUEST in override.novelty_signals
+
+
+# --------------------------------------------------------------------------
+# Lifecycle scoping of the new support history: expiry and explicit reset
+# clear it; a benign reconnect (no reset call at all) does not; different
+# provider generations and simultaneous groups never share it. (Items 11-15.)
+# --------------------------------------------------------------------------
+
+
+def test_recurrence_expiry_clears_support_high_water() -> None:
+    scheduler = _scheduler(recurrence_group_expiry_ms=5_000, recurrence_group_cooldown_ms=120_000)
+    _rebirth_series(scheduler, generations=3, start_offset_ms=1_000, generation_gap_ms=1_000, step_gap_ms=50)
+    # Establishes group support high-water at combined support 3.
+
+    # Advance well past recurrence_group_expiry_ms with no intervening touch
+    # so the existing Stage 6.9 expiry mechanism purges the group before the
+    # next opportunity is evaluated.
+    revived = scheduler.decide(_opportunity(
+        track_generation_id="post-expiry-generation-a",
+        subject_geometry=_box(dx=0.0002 * 3), detector_score=0.06,
+        detector_confirmation_count=1, tracker_support_count=0, session_offset_ms=60_000,
+    ))
+    assert revived.outcome == DECISION_BURST_ISSUED  # first opportunity of a genuinely fresh group
+    _resolve(scheduler, revived)
+
+    # A second post-expiry generation reaching combined support 3 -- exactly
+    # the level the *pre-expiry* group had already reached -- must still read
+    # as novel now, because expiry honestly forgot that old evidence instead
+    # of silently carrying it forward across the gap.
+    second = scheduler.decide(_opportunity(
+        track_generation_id="post-expiry-generation-b",
+        subject_geometry=_box(dx=0.0002 * 3), detector_score=0.06,
+        detector_confirmation_count=2, tracker_support_count=1, session_offset_ms=61_000,
+    ))
+    assert second.outcome == DECISION_BURST_ISSUED
+    assert NOVELTY_BETTER_TEMPORAL_SUPPORT in second.novelty_signals
+
+
+@pytest.mark.parametrize("reason", [RESET_SESSION_STOP, RESET_PROVIDER_RESET, RESET_GENERATION_REPLACEMENT, RESET_ENGINEERING_RESET])
+def test_reset_clears_support_high_water(reason: str) -> None:
+    scheduler = _scheduler(recurrence_group_cooldown_ms=120_000)
+    _rebirth_series(scheduler, generations=3)
+    scheduler.reset(reason)
+
+    revived = scheduler.decide(_opportunity(
+        track_generation_id="post-reset-generation-a", subject_geometry=_box(), detector_score=0.06,
+        detector_confirmation_count=1, tracker_support_count=0, session_offset_ms=1_000,
+    ))
+    assert revived.outcome == DECISION_BURST_ISSUED
+    _resolve(scheduler, revived)
+
+    second = scheduler.decide(_opportunity(
+        track_generation_id="post-reset-generation-b", subject_geometry=_box(), detector_score=0.06,
+        detector_confirmation_count=2, tracker_support_count=1, session_offset_ms=1_500,
+    ))
+    assert second.outcome == DECISION_BURST_ISSUED
+    assert NOVELTY_BETTER_TEMPORAL_SUPPORT in second.novelty_signals
+
+
+def test_benign_reconnect_does_not_clear_support_high_water() -> None:
+    """A benign transport reconnect never calls BurstScheduler.reset() at all
+    (docs/reconnect-continuity-contract.md); at this layer that means simply
+    continuing to call decide() with no reset in between -- history must keep
+    reflecting every prior rebirth exactly as if nothing happened, unlike the
+    explicit expiry/reset paths above."""
+
+    scheduler = _scheduler()
+    _rebirth_series(scheduler, generations=3)
+
+    another_rebirth = scheduler.decide(_opportunity(
+        track_generation_id="post-reconnect-generation",
+        subject_geometry=_box(dx=0.0002 * 3), detector_score=0.06,
+        detector_confirmation_count=2, tracker_support_count=1, session_offset_ms=9_000,
+    ))
+    assert another_rebirth.outcome == DECISION_SUPPRESSED_RECURRING_GEOMETRY
+
+
+def test_different_provider_generation_does_not_share_support_high_water() -> None:
+    scheduler = _scheduler()
+    _rebirth_series(scheduler, generations=3)  # provider_generation="generation-a" (the _opportunity default)
+
+    other_provider = scheduler.decide(_opportunity(
+        track_generation_id="other-provider-generation", subject_geometry=_box(),
+        provider_generation="generation-b",  # a different camera/provider identity
+        detector_score=0.06, detector_confirmation_count=1, tracker_support_count=0, session_offset_ms=9_000,
+    ))
+    assert other_provider.outcome == DECISION_BURST_ISSUED
+    assert len(scheduler.recurrence_groups()) == 2
+
+
+def test_multiple_simultaneous_recurrence_groups_have_independent_support_high_water() -> None:
+    scheduler = _scheduler()
+    box_b = _box(dx=0.3)  # far outside _rebirth_series's own geometry jitter around BASE_BOX
+
+    _rebirth_series(scheduler, generations=3)
+    # Group A's own support high-water is now 3 (see
+    # test_generation_rebirth_does_not_repeatedly_create_temporal_support_novelty);
+    # its last issued burst was at session_offset_ms=1_000.
+
+    first_b = scheduler.decide(_opportunity(
+        track_generation_id="group-b-generation-0", subject_geometry=box_b, detector_score=0.06,
+        detector_confirmation_count=1, tracker_support_count=0, session_offset_ms=6_000,
+    ))
+    assert first_b.outcome == DECISION_BURST_ISSUED
+    _resolve(scheduler, first_b)
+    assert len(scheduler.recurrence_groups()) == 2
+
+    # A Group B rebirth reaching combined support 3 now exceeds Group B's OWN
+    # low peak (1) by the delta and should be novel -- proving the two
+    # groups' support high-water marks never merged despite sharing a session.
+    second_b = scheduler.decide(_opportunity(
+        track_generation_id="group-b-generation-1", subject_geometry=box_b, detector_score=0.06,
+        detector_confirmation_count=2, tracker_support_count=1, session_offset_ms=9_000,
+    ))
+    assert second_b.outcome == DECISION_BURST_ISSUED
+    assert NOVELTY_BETTER_TEMPORAL_SUPPORT in second_b.novelty_signals
+
+
+# --------------------------------------------------------------------------
+# Determinism of the new per-generation baseline bookkeeping. (Item 16;
+# item 17 -- decision fingerprint repeats -- is already covered generically
+# by test_stable_ids_and_semantic_fingerprint, which this change does not
+# touch.)
+# --------------------------------------------------------------------------
+
+
+def test_rebirth_support_novelty_is_deterministic_across_instances() -> None:
+    def _run() -> tuple[str, ...]:
+        scheduler = _scheduler()
+        decisions = _rebirth_series(scheduler, generations=5)
+        return tuple(decision.outcome for decision in decisions)
+
+    assert _run() == _run()

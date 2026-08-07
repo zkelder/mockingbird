@@ -111,6 +111,26 @@ def reconstruct_opportunities(manifest: dict[str, object], *, session_id: str) -
     )
 
     opportunities: list[BurstOpportunity] = []
+    # Stage 6.15: a real, per-generation, monotonically increasing proxy for
+    # temporal support -- how many retained triggering frames this exact
+    # generation id has already been the chosen representative generation
+    # for, including this one. Unlike `animal_detection_count`/active-
+    # generation count (frame *busy-ness* -- how many things were on screen
+    # -- not this one generation's own confirmation depth), this is tied to
+    # the specific generation identity the opportunity is attributed to, and
+    # it restarts at 1 whenever a new generation id first appears -- honestly
+    # mirroring the live tracker's own per-track-generation counters
+    # (monotonic, reset on rebirth) with the one fact this manifest schema
+    # cannot recover: which appearances were a fresh detector confirmation
+    # versus bounded tracker support. The whole running count is attributed
+    # to detector_confirmation_count and tracker_support_count stays 0;
+    # BurstScheduler only ever consumes their sum for novelty, so this split
+    # is a safe simplification, not a fabricated distinction the data can't
+    # support. See docs/burst-scheduler-contract.md's temporal-support-
+    # novelty section for why live and replay must share this real,
+    # generation-scoped signal rather than a constant that would leave
+    # replay structurally unable to ever exercise stronger_temporal_support.
+    generation_occurrence_counts: dict[str, int] = {}
     for frame in ordered:
         triggers = frame.get("trigger_reasons") or ()
         if not isinstance(triggers, (list, tuple)):
@@ -156,6 +176,7 @@ def reconstruct_opportunities(manifest: dict[str, object], *, session_id: str) -
         motion_change_score = 1.0 if TRIGGER_MOTION_PROPOSAL_GENERATED in triggers else None
 
         representative_generation = min(str(item) for item in generations)
+        generation_occurrence_counts[representative_generation] = generation_occurrence_counts.get(representative_generation, 0) + 1
         opportunities.append(BurstOpportunity(
             opportunity_id=f"replay-opportunity:{frame_id}",
             stream_id=stream_id,
@@ -171,16 +192,7 @@ def reconstruct_opportunities(manifest: dict[str, object], *, session_id: str) -
             session_offset_ms=session_offset_ms,
             subject_geometry=geometry,
             detector_score=score,
-            # Fixed, neutral constants -- not reconstructed from a per-frame
-            # box/generation count. The manifest's `animal_detection_count`
-            # and active-generation count both reflect frame *busy-ness*
-            # (how many things were on screen), not this one representative
-            # generation's own real confirmation/support depth; using them
-            # directly made the stronger-temporal-support novelty signal
-            # fire on scene clutter rather than genuine per-track evidence.
-            # A constant support value conservatively disables that one
-            # signal in replay rather than reconstructing a misleading one.
-            detector_confirmation_count=1,
+            detector_confirmation_count=generation_occurrence_counts[representative_generation],
             tracker_support_count=0,
             motion_change_score=motion_change_score,
             operator_marker_present=bool(marker_ids),
@@ -268,12 +280,15 @@ _DEFAULT_LIMITATIONS: tuple[str, ...] = (
     "persist a per-detection class label",
     "motion_change_score is reconstructed as a binary 1.0/None from whether a motion proposal "
     "fired on the frame, not the underlying continuous pixel-difference magnitude",
-    "detector_confirmation_count and tracker_support_count are fixed neutral constants (1 and 0) "
-    "for every reconstructed opportunity, not derived from the manifest's per-frame detection/"
-    "generation counts -- those reflect scene busy-ness (how many things were on screen), not "
-    "this one representative generation's own confirmation depth, and using them directly made "
-    "the stronger-temporal-support novelty signal fire on clutter; this conservatively disables "
-    "that one novelty signal in replay rather than reconstructing a misleading version of it",
+    "detector_confirmation_count is reconstructed as a real, per-generation running occurrence "
+    "count (how many retained triggering frames this exact generation id has already been the "
+    "chosen representative generation for, including this one), not derived from the manifest's "
+    "per-frame detection/generation counts, which reflect scene busy-ness (how many things were "
+    "on screen) rather than one generation's own confirmation depth; tracker_support_count stays "
+    "a fixed 0 because the manifest does not record which appearances were a fresh detector "
+    "confirmation versus bounded tracker support, and BurstScheduler only ever consumes their sum "
+    "for novelty, so attributing the whole running count to one field is a safe simplification, "
+    "not a fabricated distinction the data can't support",
     "current_requests is not independently recorded by the capture manifest; only successful "
     "high-resolution captures are, so current behavior is reported as retained frames/track "
     "generations rather than a separate distinguishable request count",

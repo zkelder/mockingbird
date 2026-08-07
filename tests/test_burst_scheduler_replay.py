@@ -139,6 +139,84 @@ def test_reconstruct_opportunities_reads_a_legacy_pre_stage_6_8_manifest() -> No
 
 
 # --------------------------------------------------------------------------
+# Stage 6.15: live/replay temporal-support convergence
+# (docs/burst-scheduler-contract.md). Before this stage,
+# detector_confirmation_count/tracker_support_count were fixed neutral
+# constants (1, 0) in every reconstructed opportunity specifically to
+# conservatively disable the stronger_temporal_support novelty signal in
+# replay -- a workaround for the live floor-based bug, not a fix, that left
+# replay structurally unable to ever exercise that signal at all. Now that
+# BurstScheduler's own comparison is safe against generation rebirth, replay
+# reconstructs a real, per-generation running occurrence count instead.
+# --------------------------------------------------------------------------
+
+
+def _rebirth_frames(
+    generation_count: int, frames_per_generation: int, *, start_offset_ms: int = 1_000, step_ms: int = 1_500,
+) -> list[dict[str, object]]:
+    """Mirror _static_recurrence_frames, but each generation persists across
+    several consecutive frames (its own reconstructed support climbing with
+    each one) before a brand-new generation id takes over -- the
+    manifest-level shape of the live generation-rebirth issuance storm this
+    stage fixes. `step_ms` exceeds BurstSchedulerConfig's default
+    `minimum_burst_interval_ms` so a generation's own later frames are never
+    swallowed by its own per-generation cooldown before reaching the
+    recurrence group, mirroring the same timing consideration
+    test_burst_scheduler.py's `_rebirth_series` fixture documents."""
+
+    frames = []
+    index = 0
+    for generation_index in range(generation_count):
+        generation_id = f"rebirth-generation-{generation_index}"
+        for step in range(frames_per_generation):
+            frames.append(_frame(
+                f"rebirth-frame-{generation_index}-{step}", index + 1,
+                source_offset_ms=start_offset_ms + index * step_ms,
+                trigger_reasons=["shadow_track_event", "recurring_static_geometry", "high_resolution_burst"],
+                track_generation_ids=[generation_id],
+                detection_boxes=[(*STATIC_BOX, 0.06)],
+                high_resolution=True,
+            ))
+            index += 1
+    return frames
+
+
+def test_reconstruct_opportunities_derives_growing_per_generation_support() -> None:
+    manifest = _manifest(_rebirth_frames(2, 3))
+    opportunities = reconstruct_opportunities(manifest, session_id="session-x")
+    assert len(opportunities) == 6
+    # The first generation's own reconstructed support climbs 1, 2, 3 across
+    # its three frames...
+    assert [item.detector_confirmation_count for item in opportunities[:3]] == [1, 2, 3]
+    # ...and a brand-new generation id restarts at 1, honestly mirroring the
+    # live tracker's own monotonic per-generation counters resetting on
+    # rebirth.
+    assert [item.detector_confirmation_count for item in opportunities[3:]] == [1, 2, 3]
+    assert all(item.tracker_support_count == 0 for item in opportunities)
+
+
+def test_replay_generation_rebirth_does_not_repeatedly_issue_via_support_alone() -> None:
+    """The replay-side counterpart of test_burst_scheduler.py's
+    test_generation_rebirth_does_not_repeatedly_create_temporal_support_novelty:
+    many short-lived rebirths at the same static geometry, each honestly
+    reconstructed as climbing its own support exactly like a real generation
+    would, must not each independently escape recurrence suppression through
+    stronger_temporal_support merely because a fresh generation restarted its
+    own counters."""
+
+    manifest = _manifest(_rebirth_frames(10, 3))
+    report = replay_burst_schedule(manifest, session_id="session-rebirth-storm")
+    assert report.current_track_generations == 10
+    assert report.reconstructed_opportunity_count == 30
+    # Only the very first opportunity of the whole session may issue (Stage
+    # 6.9's own "first opportunity is never suppressed" rule); every other
+    # rebirth reaching a previously-seen support level must be suppressed as
+    # a recurrence.
+    assert report.proposed_issued_count == 1
+    assert report.static_recurrence_suppressions == 29
+
+
+# --------------------------------------------------------------------------
 # Replay report: recurrence reduction
 # --------------------------------------------------------------------------
 
