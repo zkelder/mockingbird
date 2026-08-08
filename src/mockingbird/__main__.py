@@ -51,5 +51,8 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "evidence-comparison":
         from mockingbird.observation.evidence_benchmark_cli import run_comparison as evidence_comparison_run
         raise SystemExit(evidence_comparison_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "candidate-authority-trial":
+        from mockingbird.observation.candidate_visit_authority_cli import run_trial as candidate_authority_trial_run
+        raise SystemExit(candidate_authority_trial_run(sys.argv[2:]))
     else:
         main()

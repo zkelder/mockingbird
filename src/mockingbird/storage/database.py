@@ -39,7 +39,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 27
+CURRENT_DATABASE_SCHEMA_VERSION = 28
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -397,6 +397,40 @@ def _migrate_to_high_resolution_crop_refinement(connection: Connection) -> None:
     )
 
 
+def _migrate_to_observation_candidate_authority(connection: Connection) -> None:
+    """Add empty Stage 7 candidate-Visit authority state and ledger tables.
+
+    No row is seeded here: `ProductRepository` lazily creates the single
+    `observation_authority_settings` row, defaulted to `shadow`, on first
+    read or write. An existing installation upgrading through this
+    migration therefore gains no candidate authority -- it stays exactly as
+    absent as every other not-yet-touched settings row until an operator
+    explicitly enables it (see docs/candidate-visit-authority-contract.md,
+    "Default must remain shadow" / "No migration should enable candidate
+    authority automatically")."""
+
+    Base.metadata.tables["observation_authority_settings"].create(bind=connection, checkfirst=True)
+    Base.metadata.tables["observation_candidate_visits"].create(bind=connection, checkfirst=True)
+    # Defensive column check, mirroring `_migrate_to_species_candidate_packs`'s
+    # established pattern: `.create(checkfirst=True)` only creates a table
+    # that does not exist yet, so a table already created by an earlier,
+    # additive version of this same migration (development-time only --
+    # this stage has never shipped) would otherwise be silently missing a
+    # later column forever, since a schema migration only ever runs once
+    # per recorded version.
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Observation candidate-authority migration requires local SQLite storage."
+        )
+    ledger_columns = {
+        column["name"] for column in inspect(connection).get_columns("observation_candidate_visits")
+    }
+    if "supporting_frame_ids_json" not in ledger_columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE observation_candidate_visits ADD COLUMN supporting_frame_ids_json TEXT NOT NULL DEFAULT '[]'"
+        )
+
+
 def _migrate_to_zone_monitoring_policy_overrides(connection: Connection) -> None:
     """Add empty per-Zone overrides without changing existing Zone behavior."""
 
@@ -643,6 +677,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     25: _migrate_to_species_candidate_packs,
     26: _migrate_to_high_resolution_crop_refinement,
     27: _migrate_to_monitoring_exposure_intervals,
+    28: _migrate_to_observation_candidate_authority,
 }
 
 

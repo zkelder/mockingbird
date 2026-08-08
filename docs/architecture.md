@@ -583,6 +583,41 @@ evidence scorer, session timeline, or monitoring policy, and authorizes no
 Stage 7 activity by itself; a real-hardware repeat of the representative-
 acceptance campaign remains the next required step.
 
+Stage 6.19 adds a shadow `VisitEpisodeAssembler` described in
+[tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md),
+separating track lifetime from Visit lifetime: the frame-driven tracker
+stays unmodified, conservative, and allowed to fragment, while a new,
+optional, later pass decides -- from bounded evidence density and geometry
+stability alone, never species identity or wall-clock time -- whether
+temporally-adjacent confirmed tracklets belong to one sustained appearance.
+It is a pure module with no product-repository import, remains shadow-only
+with `shadow_only=true` enforced on every output, and by itself authorizes
+no Stage 7 activity.
+
+Stage 7 adds the first Observation Engine v2 authority migration described
+in
+[candidate-visit-authority-contract.md](candidate-visit-authority-contract.md):
+one explicit, default-off `ObservationAuthorityMode` (`shadow` or
+`candidate_visit`) gates a narrow persistence adapter --
+`mockingbird.observation.candidate_visit_adapter`, the one module that
+imports both the shadow assembler's output type and the product repository
+-- that may turn one accepted Stage 6.19 `AssembledVisitProposal` into at
+most one bounded, needs-review candidate Visit through the existing
+`VisitModel`/`EventModel` schema. `VisitEpisodeAssembler` itself remains
+completely product-repository-independent; `ProductRepository.create_
+candidate_visit_from_proposal` is the one transactional, idempotent,
+concurrency-safe seam where a proposal may actually become a product
+record, gated by a durable activation boundary (so enabling authority never
+retroactively promotes historical shadow output), bounded session/hourly
+rate limits, and Privacy/Ignore Zone safety. It can never create a
+`ReviewLabel`, mark a Visit reviewed, or write species/analytics/export
+truth; only the exact existing, unmodified correction path can. A bounded
+real Camera Node trial (`python -m mockingbird candidate-authority-trial`,
+hard-capped at 10 minutes and 3 candidates) provides live round-trip
+validation without a live incremental assembler -- the trial periodically
+reruns the same bounded, post-hoc `build_tracklets`/`assemble_visit_
+episodes` pass over the live session's own accumulated track updates.
+
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
 Stream capabilities and emits only evidence-side `FramePacket`,

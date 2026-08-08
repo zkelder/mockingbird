@@ -506,6 +506,44 @@ before, honestly disclosed rather than hidden. It changes no detector,
 tracker, reconnect, burst, or evidence-scoring behavior, opens no product
 database, and authorizes no Stage 7 activity; representative hardware
 acceptance remains the next required step.
+Stage 6.19 adds a shadow `VisitEpisodeAssembler` described in
+[tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md):
+track lifetime and Visit lifetime are separated into two layers, so the
+tracker itself stays conservative and bounded while a new, optional,
+product-repository-independent pass decides whether temporally-adjacent
+confirmed tracklets belong to one sustained appearance. It materially
+reduces fragmentation on real reviewed wildlife while introducing no new
+fresh-field incorrect merges, keeping every genuinely ambiguous boundary
+conservatively separate rather than guessed into a merge. It remains
+shadow-only and authorizes no Stage 7 activity by itself. The uncommitted
+Stage 6.18 experiment (`episode_boundary.py`, changing the tracker's own
+boundary logic instead of adding this separate layer) is preserved only on
+`archive/stage6-18-failed-episode-boundary` and must never be merged into
+main.
+
+Stage 7 adds one explicit, bounded, default-off authority mode described in
+[candidate-visit-authority-contract.md](candidate-visit-authority-contract.md):
+`mockingbird.observation.candidate_visit_authority.ObservationAuthorityMode`
+(`shadow`, the only migration-safe default, or `candidate_visit`) gates a
+narrow persistence adapter that may turn one accepted, assembled Stage 6.19
+`AssembledVisitProposal` into at most one bounded, needs-review candidate
+Visit -- reusing the existing `VisitModel`/`EventModel` schema
+(`review_status="needs_review"`,
+`event_type="observation_engine_candidate"`) rather than a parallel
+concept. A durable activation boundary is recorded on every
+shadow-to-candidate transition so enabling authority never retroactively
+promotes historical shadow output; a durable idempotency ledger keyed by
+the proposal's own deterministic id makes retry, restart, reconnect, and
+concurrent attempts all converge on exactly one Visit
+(`ProductRepository.create_candidate_visit_from_proposal`, its own
+transactional, concurrency-safe authority boundary). It can never create a
+`ReviewLabel`, mark a Visit reviewed, write a species guess, or touch Bird
+Log/analytics/export truth -- only the exact existing, unmodified
+`create_review_label` correction path can. It changes no detector, tracker,
+reconnect, burst-scheduler, evidence-scoring, or Privacy/Ignore-masking
+behavior; a bounded real Camera Node trial (`python -m mockingbird
+candidate-authority-trial`, hard-capped at 10 minutes and 3 candidates)
+provides the first genuine live round-trip validation.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.
@@ -519,9 +557,11 @@ replay benchmarks; (3) ONNX Runtime CUDA shadow provider with verified local RTX
 activation and no durable writes; (4) replay-first frame-driven detector/tracker
 shadow pipeline; (5) provider-neutral Camera
 Node analysis-stream/evidence-burst capabilities; (6) multi-frame evidence
-scoring and old/new shadow comparison; (7) controlled proposal-authority
-migration only after measured success; and (8) multi-frame interpretation after
-Visit/evidence reliability. CPU remains functional and vendor-neutral through
+scoring and old/new shadow comparison, extended by 6.19's shadow Visit
+episode assembler; (7) a controlled, bounded, default-off candidate-Visit
+authority mode implemented after that measured success; and (8) multi-frame
+interpretation after Visit/evidence reliability. CPU remains functional and
+vendor-neutral through
 the Snapshot compatibility path; the CUDA replay provider is optional, and
 TensorRT remains only a later optimization. Privacy/Ignore masking, lineage,
 side-effect-free reads, bounded recovery, and correction-as-truth are preserved.

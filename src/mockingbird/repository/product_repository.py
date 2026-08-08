@@ -20,7 +20,7 @@ from typing import Any, Iterable
 from urllib.parse import urlsplit, urlunsplit
 import uuid
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy import Engine, and_, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -65,6 +65,13 @@ from mockingbird.detectors.megadetector_adapter import (
     get_megadetector_status,
     normalize_megadetector_label,
     run_megadetector_on_image,
+)
+from mockingbird.observation.candidate_visit_authority import (
+    AUTHORITY_GATE_VERSION,
+    AuthorityLimits,
+    AuthorityState,
+    ObservationAuthorityMode,
+    evaluate_candidate_authority,
 )
 from mockingbird.species.bioclip_adapter import (
     BIOCLIP_ADAPTER_ID,
@@ -1642,11 +1649,223 @@ class SourceProviderConfigurationModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ObservationAuthoritySettingsModel(Base):
+    """One durable Stage 7 authority-mode row (see
+    docs/candidate-visit-authority-contract.md). Never seeded by a schema
+    migration -- `ProductRepository` lazily creates it, defaulted to
+    `shadow`, the first time authority state is read or written, so an
+    upgraded installation never silently gains candidate authority."""
+
+    __tablename__ = "observation_authority_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('shadow', 'candidate_visit')",
+            name="ck_observation_authority_mode",
+        ),
+    )
+
+    singleton_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mode: Mapped[str] = mapped_column(String, nullable=False)
+    # Deterministic activation/start fact: set fresh every time `mode`
+    # transitions shadow -> candidate_visit, cleared back to `None` whenever
+    # it transitions candidate_visit -> shadow (the kill switch). Only a
+    # proposal observed at or after this timestamp may ever create a
+    # candidate -- see "Activation boundary" in the contract doc.
+    activation_boundary_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    max_candidates_per_session: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_candidates_per_hour: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_evidence_items_per_candidate: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_evidence_bytes_per_candidate: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Bounded, read-only, restart-durable diagnostics (see "Diagnostics" in
+    # the contract doc). Every counter is monotonic for the lifetime of the
+    # installation; only `activation_boundary_at` resets a rate window.
+    proposals_observed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    candidates_attempted_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    candidates_created_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    idempotent_repeat_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    suppressed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_candidate_visit_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_proposal_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ObservationCandidateVisitModel(Base):
+    """Durable Stage 7 idempotency and lineage ledger: exactly one row per
+    assembled shadow proposal that has ever become a candidate Visit.
+
+    `proposal_id` is the primary key and *is* the durable idempotency key --
+    `visit_episode_assembler.AssembledVisitProposal.proposal_id` is already
+    a deterministic sha256 of the assembler version plus sorted constituent
+    generation ids (see docs/tracklet-visit-assembly-contract.md), so it is
+    stable across retry, process restart, reconnect, replayed frames, and
+    repeated finalization without this table inventing a second identity."""
+
+    __tablename__ = "observation_candidate_visits"
+    __table_args__ = (
+        UniqueConstraint("visit_id", name="uq_observation_candidate_visit_visit"),
+        Index("ix_observation_candidate_visits_created_at", "created_at"),
+    )
+
+    proposal_id: Mapped[str] = mapped_column(String, primary_key=True)
+    visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), nullable=False)
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id"), nullable=False)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
+    zone_id: Mapped[str | None] = mapped_column(ForeignKey("zones.id"), nullable=True)
+    broad_class: Mapped[str] = mapped_column(String, nullable=False)
+    start_offset_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_offset_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    assembler_version: Mapped[str] = mapped_column(String, nullable=False)
+    authority_gate_version: Mapped[str] = mapped_column(String, nullable=False)
+    detector_provenance: Mapped[str | None] = mapped_column(String, nullable=True)
+    tracker_provenance: Mapped[str | None] = mapped_column(String, nullable=True)
+    provider_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Full lineage, stored as bounded JSON arrays -- this ledger row, not the
+    # Visit/Event/MediaAsset rows it points at, is the authoritative record
+    # of "which tracklets/frames/evidence produced this candidate."
+    constituent_generation_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    constituent_track_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source_capture_frame_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # Ordinary per-track frame identity -- see the matching field note on
+    # `CandidateVisitProposalFacts` above. Additive, defaults to an empty
+    # JSON array so it is safe for any pre-existing empty ledger table.
+    supporting_frame_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    evidence_candidate_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    selected_identification_media_asset_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    selected_context_media_asset_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    persisted_media_asset_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    limitation_facts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    ambiguous_adjacent_proposal_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 @dataclass(frozen=True)
 class CameraConfigurationApplyResult:
     revision: CameraConfigurationRevision
     preview: CameraConfigurationImpactPreview
     idempotent: bool
+
+
+# =============================================================================
+# Stage 7: candidate-Visit authority (see docs/candidate-visit-authority-
+# contract.md). These request/response shapes are deliberately plain,
+# repository-level dataclasses -- never the observation engine's own
+# `AssembledVisitProposal`/`EvidenceCandidate`/`EvidenceSelection` types --
+# so `product_repository.py` needs nothing from `visit_episode_assembler.py`
+# or `evidence_scoring.py` beyond the shared pure `candidate_visit_authority`
+# gate. The adapter module (`mockingbird.observation.candidate_visit_adapter`)
+# is the one place that translates an engine-side proposal into this shape.
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class CandidateEvidenceItem:
+    """One already-selected, already-bounded evidence item ready to persist.
+
+    `engine_media_id` is the shadow engine's own transient identity (for
+    example `"shadow-burst:<content_hash>"`); it becomes provenance on the
+    persisted MediaAsset, never the persisted record's own id."""
+
+    engine_media_id: str
+    role: str  # "identification" | "context" | "alternate"
+    content: bytes
+    content_type: str
+    width: int | None
+    height: int | None
+    captured_at: datetime | None
+    subject_geometry: tuple[float, float, float, float] | None
+
+
+@dataclass(frozen=True)
+class CandidateVisitProposalFacts:
+    """A plain, repository-level projection of one assembled shadow
+    proposal -- structurally satisfies `candidate_visit_authority.
+    ProposalLineage`, so the same shared gate function re-checks it inside
+    the repository's own transaction without importing the assembler."""
+
+    proposal_id: str
+    stream_id: str
+    zone_id: str | None
+    broad_class: str
+    start_offset_ms: int
+    end_offset_ms: int
+    constituent_generation_ids: tuple[str, ...]
+    constituent_track_ids: tuple[str, ...]
+    source_capture_frame_ids: tuple[str, ...]
+    evidence_candidate_ids: tuple[str, ...]
+    limitation_facts: tuple[str, ...]
+    ambiguous_adjacent_proposal_ids: tuple[str, ...]
+    assembler_version: str
+    # Ordinary per-track frame identity (Stage 4+, always populated live or
+    # replay) -- distinct from `source_capture_frame_ids` (Stage 6.14's
+    # reviewed-source identity, only ever populated when a proposal was
+    # assembled from a temporal-review/replay pipeline). A genuine live
+    # session has no reviewed-source identity to carry; this field is what
+    # actually proves live frame lineage. See "Lineage validity" in
+    # docs/candidate-visit-authority-contract.md.
+    supporting_frame_ids: tuple[str, ...] = ()
+    detector_provenance: str | None = None
+    tracker_provenance: str | None = None
+    provider_key: str | None = None
+
+
+@dataclass(frozen=True)
+class CreateCandidateVisitRequest:
+    proposal: CandidateVisitProposalFacts
+    observed_at: datetime
+    evidence_items: tuple[CandidateEvidenceItem, ...] = ()
+    limits: AuthorityLimits | None = None
+
+
+@dataclass(frozen=True)
+class CandidateVisitCreationOutcome:
+    """Always returned, never raised, for an ordinary policy/validation
+    rejection -- see `create_candidate_visit_from_proposal`. `outcome`
+    reuses `candidate_visit_authority.AuthorityOutcome`'s own stable codes
+    plus two repository-local ones (`blocked_privacy_zone`,
+    `blocked_missing_evidence`) that only the persistence boundary itself
+    -- which alone has Zone/media context -- can detect."""
+
+    outcome: str
+    reason: str
+    visit_id: str | None
+    event_id: str | None
+    proposal_id: str
+    persisted_media_asset_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ObservationAuthorityStatus:
+    """Bounded, read-only Stage 7 authority diagnostics. A status read never
+    creates the settings row -- an installation that has never touched
+    Stage 7 authority reports these exact defaults from nothing on disk."""
+
+    mode: str
+    activation_boundary_at: datetime | None
+    max_candidates_per_session: int
+    max_candidates_per_hour: int
+    max_evidence_items_per_candidate: int
+    max_evidence_bytes_per_candidate: int
+    candidates_created_in_session: int
+    candidates_created_in_trailing_hour: int
+    proposals_observed_count: int
+    candidates_attempted_count: int
+    candidates_created_count: int
+    idempotent_repeat_count: int
+    suppressed_count: int
+    failure_count: int
+    last_failure_code: str | None
+    last_failure_at: datetime | None
+    last_candidate_visit_id: str | None
+    last_proposal_id: str | None
+
+
+_DEFAULT_MAX_CANDIDATES_PER_SESSION = 50
+_DEFAULT_MAX_CANDIDATES_PER_HOUR = 20
+_DEFAULT_MAX_EVIDENCE_ITEMS_PER_CANDIDATE = 4
+_DEFAULT_MAX_EVIDENCE_BYTES_PER_CANDIDATE = 8_000_000
 
 
 def _new_stream_monitoring_records(
@@ -1780,6 +1999,16 @@ class ProductRepository:
         # A local model runner is bounded and request-bound. Keep a second request
         # for the same Visit from producing duplicate evidence while it is active.
         self._review_identification_assistant_lock = threading.Lock()
+        # Stage 7 (docs/candidate-visit-authority-contract.md): serializes the
+        # idempotency-check-then-create critical section the same way every
+        # other single-flight concern in this class already does. SQLite's
+        # own deferred-transaction behavior does not by itself prevent two
+        # concurrent local threads from both reading "no existing candidate
+        # yet" before either commits; this repository's established
+        # concurrency model is a coarse in-process lock (matching the
+        # local-first, single-application-runtime product boundary), not
+        # cross-process database-level locking.
+        self._observation_authority_lock = threading.Lock()
         self.seed_if_empty()
 
     def close(self) -> None:
@@ -2089,6 +2318,438 @@ class ProductRepository:
             for key, value in graph.items()
             if not key.startswith("seed_") and value
         }
+
+    # =========================================================================
+    # Stage 7: candidate-Visit authority (docs/candidate-visit-authority-
+    # contract.md). Persistence adapter boundary: nothing above this comment
+    # in the observation engine's own modules may import this class; this is
+    # the one place `VisitProposal -> authority gate -> product repository
+    # candidate Visit creation` actually touches the product database.
+    # =========================================================================
+
+    def get_observation_authority_state(self) -> ObservationAuthorityStatus:
+        """Side-effect-free status read. Never creates the settings row --
+        an untouched installation reports shadow-mode defaults from nothing
+        on disk, exactly like it would after reading them."""
+
+        with self.session_factory() as session:
+            settings = session.get(ObservationAuthoritySettingsModel, 1)
+            if settings is None:
+                return ObservationAuthorityStatus(
+                    mode=ObservationAuthorityMode.shadow.value,
+                    activation_boundary_at=None,
+                    max_candidates_per_session=_DEFAULT_MAX_CANDIDATES_PER_SESSION,
+                    max_candidates_per_hour=_DEFAULT_MAX_CANDIDATES_PER_HOUR,
+                    max_evidence_items_per_candidate=_DEFAULT_MAX_EVIDENCE_ITEMS_PER_CANDIDATE,
+                    max_evidence_bytes_per_candidate=_DEFAULT_MAX_EVIDENCE_BYTES_PER_CANDIDATE,
+                    candidates_created_in_session=0,
+                    candidates_created_in_trailing_hour=0,
+                    proposals_observed_count=0,
+                    candidates_attempted_count=0,
+                    candidates_created_count=0,
+                    idempotent_repeat_count=0,
+                    suppressed_count=0,
+                    failure_count=0,
+                    last_failure_code=None,
+                    last_failure_at=None,
+                    last_candidate_visit_id=None,
+                    last_proposal_id=None,
+                )
+            return self._observation_authority_status(session, settings, now=datetime.now(UTC))
+
+    def set_observation_authority_mode(
+        self,
+        mode: ObservationAuthorityMode,
+        *,
+        max_candidates_per_session: int | None = None,
+        max_candidates_per_hour: int | None = None,
+        max_evidence_items_per_candidate: int | None = None,
+        max_evidence_bytes_per_candidate: int | None = None,
+        now: datetime | None = None,
+    ) -> ObservationAuthorityStatus:
+        """The one explicit, deliberate authority-mode mutation -- both the
+        activation action and the kill switch (setting `mode` back to
+        `shadow`). Immediate and restart-free: every candidate-creation
+        attempt re-reads this row fresh, never a cached in-process value, so
+        a change made from any process sharing this database takes effect
+        on the very next attempt anywhere. Bumps a fresh `activation_
+        boundary_at` only on an actual shadow -> candidate_visit transition
+        (re-affirming an already-active mode does not reset it, so it
+        cannot be used to sneak a later backlog window in); clears it back
+        to `None` on candidate_visit -> shadow."""
+
+        moment = now or datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                settings = self._get_or_create_authority_settings(session, now=moment)
+                previous_mode = settings.mode
+                settings.mode = mode.value
+                if mode == ObservationAuthorityMode.candidate_visit and previous_mode != mode.value:
+                    settings.activation_boundary_at = moment
+                elif mode == ObservationAuthorityMode.shadow:
+                    settings.activation_boundary_at = None
+                if max_candidates_per_session is not None:
+                    settings.max_candidates_per_session = max_candidates_per_session
+                if max_candidates_per_hour is not None:
+                    settings.max_candidates_per_hour = max_candidates_per_hour
+                if max_evidence_items_per_candidate is not None:
+                    settings.max_evidence_items_per_candidate = max_evidence_items_per_candidate
+                if max_evidence_bytes_per_candidate is not None:
+                    settings.max_evidence_bytes_per_candidate = max_evidence_bytes_per_candidate
+                settings.updated_at = moment
+                session.flush()
+                return self._observation_authority_status(session, settings, now=moment)
+
+    def find_candidate_visit_by_proposal_id(self, proposal_id: str) -> ObservationCandidateVisitModel | None:
+        """Read-only idempotency lookup, exposed for callers/tests that only
+        need the existence check without attempting a create."""
+
+        with self.session_factory() as session:
+            return session.get(ObservationCandidateVisitModel, proposal_id)
+
+    def create_candidate_visit_from_proposal(
+        self, request: CreateCandidateVisitRequest,
+    ) -> CandidateVisitCreationOutcome:
+        """Stage 7's persistence boundary. Idempotent, transactional, and
+        self-contained: re-validates authority mode, activation boundary,
+        rate budgets, lineage, and Privacy/Ignore Zone safety *inside* the
+        same transaction that performs the write, so this method alone --
+        not the caller's own pre-check -- is the actual, concurrency-safe
+        authority boundary. A retried, replayed, reconnected, or racing call
+        for the same `proposal_id` always converges on exactly one Visit.
+
+        Never raises for an ordinary policy/validation rejection -- always
+        returns a typed `CandidateVisitCreationOutcome`. Only a genuine
+        repository/storage failure raises `ValueError`
+        (`observation_candidate_visit_persistence_failed`) with the
+        original error chained via `__cause__` for local diagnostics only;
+        the caller (`candidate_visit_adapter`) is responsible for catching
+        it, recording a sanitized failure code, and never letting it crash
+        live observation."""
+
+        proposal = request.proposal
+        try:
+            with self._observation_authority_lock, self.session_factory() as session:
+                with session.begin():
+                    existing = session.get(ObservationCandidateVisitModel, proposal.proposal_id)
+                    settings = self._get_or_create_authority_settings(session, now=request.observed_at)
+                    settings.proposals_observed_count += 1
+                    if existing is not None:
+                        settings.idempotent_repeat_count += 1
+                        settings.updated_at = request.observed_at
+                        session.flush()
+                        return CandidateVisitCreationOutcome(
+                            "idempotent_repeat",
+                            "existing_candidate_visit_for_proposal",
+                            existing.visit_id,
+                            existing.event_id,
+                            proposal.proposal_id,
+                            tuple(json.loads(existing.persisted_media_asset_ids_json)),
+                        )
+
+                    settings.candidates_attempted_count += 1
+                    state = self._authority_state(session, settings, observed_at=request.observed_at)
+                    limits = request.limits or AuthorityLimits(
+                        max_candidates_per_session=settings.max_candidates_per_session,
+                        max_candidates_per_hour=settings.max_candidates_per_hour,
+                        max_evidence_items_per_candidate=settings.max_evidence_items_per_candidate,
+                        max_evidence_bytes_per_candidate=settings.max_evidence_bytes_per_candidate,
+                    )
+                    decision = evaluate_candidate_authority(
+                        proposal, observed_at=request.observed_at, state=state, limits=limits,
+                    )
+                    if not decision.should_create:
+                        settings.suppressed_count += 1
+                        settings.updated_at = request.observed_at
+                        session.flush()
+                        return CandidateVisitCreationOutcome(
+                            decision.outcome, decision.reason, None, None, proposal.proposal_id, (),
+                        )
+
+                    outcome = self._create_candidate_visit_locked(
+                        session, proposal=proposal, evidence_items=request.evidence_items,
+                        limits=limits, observed_at=request.observed_at,
+                    )
+                    if outcome.outcome == "created":
+                        settings.candidates_created_count += 1
+                        settings.last_candidate_visit_id = outcome.visit_id
+                        settings.last_proposal_id = proposal.proposal_id
+                    else:
+                        settings.suppressed_count += 1
+                    settings.updated_at = request.observed_at
+                    session.flush()
+                    return outcome
+        except ValueError:
+            raise
+        except Exception as error:  # pragma: no cover - defensive repository boundary
+            raise ValueError("observation_candidate_visit_persistence_failed") from error
+
+    def _create_candidate_visit_locked(
+        self,
+        session: Session,
+        *,
+        proposal: CandidateVisitProposalFacts,
+        evidence_items: tuple[CandidateEvidenceItem, ...],
+        limits: AuthorityLimits,
+        observed_at: datetime,
+    ) -> CandidateVisitCreationOutcome:
+        """Called only from inside `create_candidate_visit_from_proposal`'s
+        own transaction, only after the gate already returned `create`."""
+
+        stream_model = session.get(StreamModel, proposal.stream_id)
+        if stream_model is None:
+            raise ValueError("missing_stream")
+        zone_model = session.get(ZoneModel, proposal.zone_id) if proposal.zone_id else None
+        if proposal.zone_id is not None and zone_model is None:
+            raise ValueError("missing_zone")
+        if zone_model is not None and zone_model.zone_type in {ZoneType.privacy.value, ZoneType.ignore.value}:
+            # Defense in depth only: every Observation Engine v2 provider
+            # already excludes a subject inside a Privacy/Ignore region
+            # before a track can form (see docs/candidate-visit-authority-
+            # contract.md, "Privacy / Ignore"). A proposal legitimately
+            # carrying a masked Zone id should never happen; if it ever
+            # does, this boundary still refuses rather than trusting the
+            # upstream exclusion alone.
+            return CandidateVisitCreationOutcome(
+                "blocked_privacy_zone", "zone_is_privacy_or_ignore", None, None, proposal.proposal_id, (),
+            )
+
+        bounded_items = evidence_items[: limits.max_evidence_items_per_candidate]
+        persisted: list[tuple[CandidateEvidenceItem, MediaAssetModel]] = []
+        total_bytes = 0
+        for item in bounded_items:
+            if not item.content or total_bytes + len(item.content) > limits.max_evidence_bytes_per_candidate:
+                continue
+            total_bytes += len(item.content)
+            media_id = self._next_id(session, MediaAssetModel, "media-candidate")
+            extension = "jpg" if item.content_type == "image/jpeg" else "bin"
+            filename, path = self._write_media_file(f"{media_id}.{extension}", item.content)
+            media_model = MediaAssetModel(
+                id=media_id,
+                source_id=stream_model.source_id,
+                stream_id=stream_model.id,
+                filename=filename,
+                content_type=item.content_type,
+                media_type="image",
+                local_path=str(path),
+                original_filename=filename,
+                file_size_bytes=len(item.content),
+                created_at=observed_at,
+                notes=(
+                    "Machine-created Stage 7 candidate evidence "
+                    f"({item.role}) from assembled proposal {proposal.proposal_id}. "
+                    "Needs human review; creates no reviewed truth."
+                ),
+                evidence_role=item.role,
+                image_width=item.width,
+                image_height=item.height,
+                captured_at=item.captured_at,
+                trigger_id=proposal.proposal_id,
+                normalized_track_box_json=(
+                    json.dumps(list(item.subject_geometry)) if item.subject_geometry else None
+                ),
+                derivation_source="observation_engine_candidate",
+            )
+            session.add(media_model)
+            # `_next_id` computes the next candidate from already-flushed
+            # rows; without an explicit flush here, every iteration of this
+            # loop would compute the same id from this transaction's own
+            # not-yet-visible pending inserts.
+            session.flush()
+            persisted.append((item, media_model))
+
+        if not persisted:
+            return CandidateVisitCreationOutcome(
+                "blocked_missing_evidence", "no_persistable_evidence_bytes", None, None, proposal.proposal_id, (),
+            )
+
+        event_id = self._next_id(session, EventModel, "event-observation-candidate")
+        session.add(
+            EventModel(
+                id=event_id,
+                stream_id=stream_model.id,
+                title=f"Machine-observed {proposal.broad_class} activity (needs review)",
+                event_type="observation_engine_candidate",
+                started_at=observed_at,
+                ended_at=observed_at,
+                primary_zone_id=zone_model.id if zone_model is not None else None,
+                review_status=ReviewStatus.needs_review.value,
+            )
+        )
+        visit_id = self._next_id(session, VisitModel, "visit-observation-candidate")
+        primary_media_id = next(
+            (media.id for item, media in persisted if item.role == "identification"),
+            persisted[0][1].id,
+        )
+        session.add(
+            VisitModel(
+                id=visit_id,
+                event_id=event_id,
+                subject_label=proposal.broad_class or "unknown_animal",
+                species_guess=None,
+                confidence=None,
+                reviewed_label=None,
+                review_status=ReviewStatus.needs_review.value,
+                representative_media_path=None,
+                zone_id=zone_model.id if zone_model is not None else None,
+            )
+        )
+        for index, (item, media) in enumerate(persisted):
+            session.add(
+                VisitEvidenceLinkModel(
+                    id=self._next_id(session, VisitEvidenceLinkModel, "visit-evidence-candidate"),
+                    visit_id=visit_id,
+                    media_asset_id=media.id,
+                    captured_at=item.captured_at or observed_at,
+                    frame_sequence=None,
+                    sort_order=index,
+                    is_primary=(media.id == primary_media_id),
+                    evidence_role=item.role,
+                    created_at=observed_at,
+                )
+            )
+            session.flush()  # see the identical `_next_id` note above
+
+        identification_media_id = next(
+            (media.id for item, media in persisted if item.role == "identification"), None,
+        )
+        context_media_id = next((media.id for item, media in persisted if item.role == "context"), None)
+        session.add(
+            ObservationCandidateVisitModel(
+                proposal_id=proposal.proposal_id,
+                visit_id=visit_id,
+                event_id=event_id,
+                stream_id=stream_model.id,
+                zone_id=zone_model.id if zone_model is not None else None,
+                broad_class=proposal.broad_class,
+                start_offset_ms=proposal.start_offset_ms,
+                end_offset_ms=proposal.end_offset_ms,
+                assembler_version=proposal.assembler_version,
+                authority_gate_version=AUTHORITY_GATE_VERSION,
+                detector_provenance=proposal.detector_provenance,
+                tracker_provenance=proposal.tracker_provenance,
+                provider_key=proposal.provider_key,
+                constituent_generation_ids_json=json.dumps(list(proposal.constituent_generation_ids)),
+                constituent_track_ids_json=json.dumps(list(proposal.constituent_track_ids)),
+                source_capture_frame_ids_json=json.dumps(list(proposal.source_capture_frame_ids)),
+                supporting_frame_ids_json=json.dumps(list(proposal.supporting_frame_ids)),
+                evidence_candidate_ids_json=json.dumps(list(proposal.evidence_candidate_ids)),
+                selected_identification_media_asset_id=identification_media_id,
+                selected_context_media_asset_id=context_media_id,
+                persisted_media_asset_ids_json=json.dumps([media.id for _, media in persisted]),
+                limitation_facts_json=json.dumps(list(proposal.limitation_facts)),
+                ambiguous_adjacent_proposal_ids_json=json.dumps(list(proposal.ambiguous_adjacent_proposal_ids)),
+                created_at=observed_at,
+            )
+        )
+        session.flush()
+        visit_for_alert = session.get(VisitModel, visit_id)
+        if visit_for_alert is not None:
+            self._sync_review_alert(session, visit_for_alert, observed_at)
+        return CandidateVisitCreationOutcome(
+            "created", "candidate_visit_created", visit_id, event_id, proposal.proposal_id,
+            tuple(media.id for _, media in persisted),
+        )
+
+    def _get_or_create_authority_settings(
+        self, session: Session, *, now: datetime | None = None,
+    ) -> ObservationAuthoritySettingsModel:
+        settings = session.get(ObservationAuthoritySettingsModel, 1)
+        if settings is not None:
+            return settings
+        moment = now or datetime.now(UTC)
+        settings = ObservationAuthoritySettingsModel(
+            singleton_id=1,
+            mode=AuthorityState.default_mode().value,
+            activation_boundary_at=None,
+            max_candidates_per_session=_DEFAULT_MAX_CANDIDATES_PER_SESSION,
+            max_candidates_per_hour=_DEFAULT_MAX_CANDIDATES_PER_HOUR,
+            max_evidence_items_per_candidate=_DEFAULT_MAX_EVIDENCE_ITEMS_PER_CANDIDATE,
+            max_evidence_bytes_per_candidate=_DEFAULT_MAX_EVIDENCE_BYTES_PER_CANDIDATE,
+            updated_at=moment,
+        )
+        session.add(settings)
+        session.flush()
+        return settings
+
+    def _authority_state(
+        self, session: Session, settings: ObservationAuthoritySettingsModel, *, observed_at: datetime,
+    ) -> AuthorityState:
+        """Compute durable session/hourly candidate counts live from the
+        ledger table -- never an in-memory-only counter a restart could
+        reset. "Session" here means "since the current activation boundary,"
+        matching the contract doc's own definition."""
+
+        # SQLite's `DateTime(timezone=True)` does not itself preserve
+        # tzinfo across a write/read round trip -- normalize every
+        # persisted timestamp back to aware UTC before it is compared in
+        # Python or handed to the (tzinfo-strict) pure gate, matching this
+        # repository's existing `time_utils.normalize_utc` convention.
+        activation_boundary_at = normalize_optional_utc(settings.activation_boundary_at)
+        session_count = 0
+        if settings.mode == ObservationAuthorityMode.candidate_visit.value and activation_boundary_at is not None:
+            session_count = session.scalar(
+                select(func.count(ObservationCandidateVisitModel.proposal_id)).where(
+                    ObservationCandidateVisitModel.created_at >= activation_boundary_at
+                )
+            ) or 0
+        hourly_count = session.scalar(
+            select(func.count(ObservationCandidateVisitModel.proposal_id)).where(
+                ObservationCandidateVisitModel.created_at >= observed_at - timedelta(hours=1)
+            )
+        ) or 0
+        return AuthorityState(
+            mode=ObservationAuthorityMode(settings.mode),
+            activation_boundary_at=activation_boundary_at,
+            candidates_created_in_session=session_count,
+            candidates_created_in_trailing_hour=hourly_count,
+        )
+
+    def _observation_authority_status(
+        self, session: Session, settings: ObservationAuthoritySettingsModel, *, now: datetime,
+    ) -> ObservationAuthorityStatus:
+        state = self._authority_state(session, settings, observed_at=now)
+        return ObservationAuthorityStatus(
+            mode=settings.mode,
+            activation_boundary_at=state.activation_boundary_at,
+            max_candidates_per_session=settings.max_candidates_per_session,
+            max_candidates_per_hour=settings.max_candidates_per_hour,
+            max_evidence_items_per_candidate=settings.max_evidence_items_per_candidate,
+            max_evidence_bytes_per_candidate=settings.max_evidence_bytes_per_candidate,
+            candidates_created_in_session=state.candidates_created_in_session,
+            candidates_created_in_trailing_hour=state.candidates_created_in_trailing_hour,
+            proposals_observed_count=settings.proposals_observed_count,
+            candidates_attempted_count=settings.candidates_attempted_count,
+            candidates_created_count=settings.candidates_created_count,
+            idempotent_repeat_count=settings.idempotent_repeat_count,
+            suppressed_count=settings.suppressed_count,
+            failure_count=settings.failure_count,
+            last_failure_code=settings.last_failure_code,
+            last_failure_at=normalize_optional_utc(settings.last_failure_at),
+            last_candidate_visit_id=settings.last_candidate_visit_id,
+            last_proposal_id=settings.last_proposal_id,
+        )
+
+    def record_observation_authority_failure(self, *, failure_code: str, now: datetime | None = None) -> None:
+        """Bounded, sanitized failure diagnostics for a persistence attempt
+        that raised out of `create_candidate_visit_from_proposal` (for
+        example a repository/storage error). Called by the adapter in a
+        fresh transaction, separate from the failed attempt's own rolled-
+        back one. Never raises: a diagnostics write must not itself be able
+        to cascade into a second failure the caller has to handle."""
+
+        moment = now or datetime.now(UTC)
+        safe_code = (failure_code or "unknown_failure")[:80]
+        try:
+            with self.session_factory() as session:
+                with session.begin():
+                    settings = self._get_or_create_authority_settings(session, now=moment)
+                    settings.failure_count += 1
+                    settings.last_failure_code = safe_code
+                    settings.last_failure_at = moment
+                    settings.updated_at = moment
+        except Exception:  # pragma: no cover - diagnostics must never raise
+            pass
 
     def local_data_status(self) -> LocalDataStatus:
         with self.session_factory() as session:
