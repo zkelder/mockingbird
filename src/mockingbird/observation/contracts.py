@@ -83,6 +83,19 @@ class TrackUpdate:
     frame this track generation has genuinely observed so far, deduplicated
     independently of `supporting_frame_ids` (present only for the frames
     that actually carried known source lineage).
+
+    `weak_detector_support_count`/`support_state` are Stage 6.16's bounded
+    evidence-hierarchy provenance (see
+    docs/sustained-visit-continuity-contract.md): a spatially coherent
+    detector observation below `strong_detection_threshold` but at or above
+    `weak_detector_support_floor` increments `weak_detector_support_count`
+    instead of `detector_confirmation_count` and never by itself confirms a
+    tentative track. `support_state` names what kind of evidence most
+    recently refreshed this update (`strong_detector_supported`,
+    `weak_detector_supported`, `tracker_supported`) or reuses the existing
+    `temporarily_lost` lifecycle vocabulary when nothing did -- the same
+    "reuse existing vocabulary rather than add a new externally-visible
+    state" convention Stage 6.11 established for reconnect bridging.
     """
 
     track_id: str
@@ -104,6 +117,10 @@ class TrackUpdate:
     tracker_provenance: str | None = None
     terminal_reason: str | None = None
     supporting_source_capture_frame_ids: tuple[str, ...] = ()
+    weak_detector_support_count: int = 0
+    support_state: Literal[
+        "strong_detector_supported", "weak_detector_supported", "tracker_supported", "temporarily_lost",
+    ] = "temporarily_lost"
 
 
 @dataclass(frozen=True)

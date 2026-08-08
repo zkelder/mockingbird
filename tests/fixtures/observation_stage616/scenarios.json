@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "scenarios": {
+    "sustained_visit_confidence_dips": [
+      "replay_sustained_visit_survives_confidence_dips_as_one_episode",
+      "strong_weak_strong_remains_one_confirmed_episode",
+      "weak_support_does_not_increment_strong_confirmation_count",
+      "weak_support_alone_cannot_confirm_a_tentative_track",
+      "graduated_track_keeps_widened_tolerance_past_the_provisional_span",
+      "bounded_weak_support_refreshes_continuity",
+      "strong_tracker_only_strong_bridges_within_limit",
+      "tracker_only_support_remains_bounded",
+      "unsupported_interval_terminates",
+      "explicit_negative_frames_still_matter_for_confirmed_track",
+      "real_departure_closes_episode"
+    ],
+    "no_immortal_tracks": [
+      "persistent_weak_static_artifact_confirms_but_never_gets_widened_tolerance",
+      "persistent_weak_static_artifact_cannot_stay_alive_indefinitely",
+      "confirmed_track_still_bounded_by_maximum_track_duration"
+    ],
+    "association_and_merge_safety": [
+      "later_subject_creates_new_generation",
+      "geometry_incompatible_weak_detection_is_ignored",
+      "broad_class_mismatch_is_ignored",
+      "ambiguous_association_does_not_silently_merge",
+      "two_simultaneous_subjects_remain_separate",
+      "crossing_subjects_remain_separate"
+    ],
+    "reconnect_composition": [
+      "replay_reconnect_bridging_remains_unchanged_with_weak_evidence",
+      "replay_reconnect_itself_adds_no_weak_or_strong_support"
+    ],
+    "determinism_and_isolation": [
+      "episode_ids_remain_deterministic",
+      "replay_evidence_remains_generation_isolated_with_weak_dips",
+      "replay_sustained_visit_fingerprint_repeats",
+      "snapshot_provider_capabilities_remain_unchanged_stage616"
+    ],
+    "no_authority_change": [
+      "stage616_modules_have_no_product_repository_or_transport_dependency",
+      "replay_privacy_ignore_exclusion_still_applies_to_weak_detections"
+    ],
+    "hard_negative_regression": [
+      "replay_attempt2_like_static_clutter_scenario_gets_no_widened_tolerance"
+    ]
+  }
+}

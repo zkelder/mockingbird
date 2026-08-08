@@ -79,6 +79,11 @@ class FrameDrivenSettings:
     maximum_unsupported_detector_ms: int = 5000
     negative_detector_frames_to_end: int = 2
     ambiguous_reentry_window_ms: int = 1500
+    # Stage 6.16 bounded evidence hierarchy -- see `TrackerConfiguration`
+    # and docs/sustained-visit-continuity-contract.md for the full
+    # contract and default provenance.
+    weak_detector_support_floor: float = 0.05
+    maximum_weak_support_span_ms: int = 15000
 
     def __post_init__(self) -> None:
         if (
@@ -92,6 +97,8 @@ class FrameDrivenSettings:
             or self.maximum_unsupported_detector_ms < 1
             or self.negative_detector_frames_to_end < 1
             or self.ambiguous_reentry_window_ms < 1
+            or self.maximum_weak_support_span_ms < 1
+            or not 0.0 <= self.weak_detector_support_floor <= self.strong_detection_threshold
         ):
             raise ValueError("invalid_frame_driven_settings")
 
@@ -111,6 +118,8 @@ class FrameDrivenSettings:
             maximum_unsupported_detector_ms=self.maximum_unsupported_detector_ms,
             negative_detector_frames_to_end=self.negative_detector_frames_to_end,
             ambiguous_reentry_window_ms=self.ambiguous_reentry_window_ms,
+            weak_detector_support_floor=self.weak_detector_support_floor,
+            maximum_weak_support_span_ms=self.maximum_weak_support_span_ms,
         )
 
 
@@ -573,6 +582,7 @@ class FrameDrivenObservationProvider:
         self._facts["reconnect_bridges_continued"] += step.reconnect_bridges_continued
         self._facts["reconnect_bridges_expired"] += step.reconnect_bridges_expired
         self._facts["reconnect_ambiguous_associations"] += step.reconnect_ambiguous_associations
+        self._facts["confidence_dip_bridges"] += step.confidence_dip_bridges
         terminal_evidence: list[EvidenceCandidate] = []
         proposals: list[VisitProposal] = []
         for update in all_updates:
@@ -583,6 +593,14 @@ class FrameDrivenObservationProvider:
                 self._update_evidence(frame, update, bool(detections))
             if update.lifecycle_state == "confirmed":
                 self._facts["confirmed_update_count"] += 1
+            # Stage 6.16: tallied from already-emitted `TrackUpdate.
+            # support_state` -- no separate bookkeeping pass.
+            if update.support_state == "strong_detector_supported":
+                self._facts["strong_detector_support_frames"] += 1
+            elif update.support_state == "weak_detector_supported":
+                self._facts["weak_detector_support_frames"] += 1
+            elif update.support_state == "tracker_supported":
+                self._facts["tracker_only_support_frames"] += 1
             if self._patch_support is not None and update.bounding_box is not None and update.lifecycle_state != "temporarily_lost":
                 self._patch_support.remember(frame, _view_from_update(update))
         for terminal in step.terminals:
@@ -741,6 +759,14 @@ class FrameDrivenObservationProvider:
             for role in ("pretrigger", "detector_confirmed", "tracked_best", "final_supported", "alternative")
             if role in selected
         )[: self.settings.evidence_ring_size]
+        # Stage 6.16: this generation's very last recorded support kind
+        # (weak or tracker-only, as opposed to strong or a live-only
+        # `temporarily_lost` snapshot) at the moment it ended -- a
+        # deliberately narrow, precisely-defined signal read directly from
+        # already-emitted `TrackView.support_state`, not a new parallel
+        # bookkeeping pass.
+        if terminal.view.support_state in ("weak_detector_supported", "tracker_supported"):
+            self._facts["terminations_after_weak_support"] += 1
         if not terminal.confirmed:
             self._facts["tracks_rejected_or_lost"] += 1
             return ordered, None
@@ -811,6 +837,21 @@ class FrameDrivenObservationProvider:
             "reconnect_ambiguous_associations": 0,
             "resets_true_source_change": 0,
             "resets_insufficient_provenance": 0,
+            # Stage 6.16 bounded evidence-hierarchy counters -- see
+            # docs/sustained-visit-continuity-contract.md and
+            # `replay._support_metrics`. `strong_detector_support_frames` +
+            # `weak_detector_support_frames` + `tracker_only_support_frames`
+            # count `TrackUpdate`s by `support_state` (a `temporarily_lost`
+            # update contributes to none of the three); `confidence_dip_
+            # bridges` is every frame where the new widened confirmed-track
+            # gap tolerance -- not the ordinary tight bound -- is why a
+            # track was not terminated; `terminations_after_weak_support`
+            # is counted once per generation in `_finalize_terminal`.
+            "strong_detector_support_frames": 0,
+            "weak_detector_support_frames": 0,
+            "tracker_only_support_frames": 0,
+            "confidence_dip_bridges": 0,
+            "terminations_after_weak_support": 0,
         }
 
 

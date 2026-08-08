@@ -399,6 +399,77 @@ SQLite hash/size and every tracked table row count. It changes no detector,
 tracker, reconnect, burst-scheduler, or evidence-scoring behavior and
 authorizes no Stage 7 activity; the representative Stage 6.10 rerun remains
 separate and not yet run, now unblocked at the tooling level.
+Stage 6.15 fixes a live burst-storm defect the first representative-acceptance
+resumption (session-01, 31 live scheduler-driven high-resolution bursts in
+~133s) exposed: `BurstScheduler._evaluate_recurrence`'s `stronger_temporal_
+support` novelty signal compared each opportunity's monotonic per-generation
+`detector_confirmation_count + tracker_support_count` against a recurrence
+group's historic floor, so a recurring static object re-detected as a fresh
+track generation kept re-pinning the floor near zero and read as "stronger
+support" almost immediately on every rebirth; `_RecurrenceGroup` now tracks a
+`support_high_water` (maximum) compared via a frozen per-(generation,
+recurrence-group) baseline, and `burst_scheduler_replay.reconstruct_
+opportunities` derives a real per-generation occurrence count instead of the
+fixed constants it had silently used to hide the same defect offline. It
+changes no detector, tracker-confirmation policy, reconnect continuity, or
+monitoring policy, opens no product database, and authorizes no Stage 7
+activity.
+The representative-acceptance resumption itself (attempt-2/attempt-3, real
+Camera Node, real CUDA, no code changes) confirmed the Stage 6.11 reconnect
+fix directly (zero `provider_reset`, 40-41 of 60-63 boundaries bridged) and
+found a new, independent root cause: attempt-3 directly confirmed one
+genuine ~5-minute feeder-bird visit (three real 4624x3472 bursts spanning
+the visit), but full-session replay still fragmented it into approximately
+37 confirmed track generations purely because natural detector-confidence
+dips exceeded the tracker's ordinary tight bound more often than a sustained
+multi-minute visit's own real cadence tolerates -- a mechanism independent
+of reconnects. Stage 6.16 adds a bounded strong/weak/tracker-only evidence
+hierarchy described in
+[sustained-visit-continuity-contract.md](sustained-visit-continuity-contract.md):
+a matched detection below `strong_detection_threshold` but at or above a new,
+reused-not-invented `weak_detector_support_floor` refreshes an already-
+confirmed track's continuity without counting as a new strong confirmation,
+and a confirmed track gets a widened per-frame gap tolerance (reusing the
+existing `maximum_unsupported_detector_ms` budget) once graduated by any
+genuinely strong hit, or for a bounded, one-time provisional window from its
+own start if it never shows one -- `minimum_detector_confirmations` itself
+keeps its exact pre-existing, unconditional meaning, since real attempt-3
+evidence proved a genuinely continuous subject's own confirming pair is
+routinely both individually weak, and gating confirmation on strength would
+have hurt recall, not just continuity. Raising `maximum_unsupported_
+detector_ms` itself was considered and rejected: the existing ghost-tracker-
+support incorrect-merge regression test proved a materially larger value
+measurably weakens that already-fixed protection. Replayed against the real
+attempt-2/attempt-3 detections (a hardware-free recorded-detection-playback
+harness, since this environment has no CUDA hardware, isolating the tracker
+change against the unchanged, already-real-CUDA-verified detector output) and
+the historical session-01-04 sessions: attempt-3 tracks started fell 63 to
+47, confirmed 37 to 25, and generations geometrically relevant to the
+reviewed appearance fell 47 to 36 (29 to 20 confirmed), with 25 confidence-
+dip bridges and zero incorrect merges or duplicates; `appearance_recall`/
+`proposal_precision` measure `0.0` before and after, proven to be the exact
+same structural limitation Stage 6.11 already disclosed (attempt-3's own
+export carries an empty `ExpectedVisit` list despite two real reviewed
+appearances, so the visit-level matcher has nothing to match against
+independent of tracker quality) rather than a sign of no improvement.
+attempt-2 (real, hard-negative, no genuine wildlife) stayed safe: every
+confirmed generation's `strong_detector_support_frame_count` was zero
+(confirming its real clutter, which never reached the deployed 0.7 threshold
+across its whole session, never left the bounded provisional tier),
+confirmed-proposal count fell 38 to 28, and `proposal_precision` stayed
+exactly `0.0` with zero incorrect merges. Session-01/02/03/04 fragmentation
+improved or held (session-03: 81 to 61 started, 46 to 33 confirmed;
+session-04: 57 to 32 started, 28 to 17 confirmed; session-01/02 unchanged,
+too small to exercise the new logic) with reconnect-fix facts identical
+before and after in every case. It changes no detector, detector threshold,
+detector calibration, burst scheduler, reconnect continuity policy, Camera
+Node transport, evidence scorer, session timeline, Privacy/Ignore
+configuration, or monitoring policy, opens no product database (structural
+SHA-256/size/table-count proof unchanged), and authorizes no Stage 7
+activity by itself; a real-hardware repeat of the representative-acceptance
+campaign, this time able to measure `appearance_recall` through a path that
+does not structurally zero it out, remains the next required step before
+Stage 7 can be reconsidered.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

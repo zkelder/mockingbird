@@ -542,6 +542,47 @@ reconnect, burst-scheduler, or evidence-scoring behavior, and authorizes no
 Stage 7 activity; the representative Stage 6.10 rerun remains a separate,
 not-yet-run step, now unblocked at the tooling level.
 
+Stage 6.15 fixes a live burst-storm defect (`BurstScheduler`'s novelty
+signal compared a monotonic per-generation counter against a recurrence
+group's historic floor instead of a frozen high-water baseline, so a
+recurring static object re-detected as a fresh generation read as
+"stronger support" almost immediately on every rebirth). The representative
+shadow-acceptance resumption that followed (real Camera Node, real CUDA,
+no code changes) confirmed the Stage 6.11 reconnect fix directly and found
+a new, independent root cause: a real, directly confirmed ~5-minute
+feeder-bird visit still fragmented into approximately 37 confirmed track
+generations because natural detector-confidence dips exceeded the
+tracker's ordinary tight bound more often than a sustained multi-minute
+visit's own real cadence tolerates. Stage 6.16 adds a bounded strong/weak/
+tracker-only evidence hierarchy described in
+[sustained-visit-continuity-contract.md](sustained-visit-continuity-contract.md):
+a matched detection below `strong_detection_threshold` but above a reused
+`weak_detector_support_floor` refreshes an already-confirmed track's
+continuity without counting as a new strong confirmation, and a confirmed
+track earns a widened per-frame gap tolerance (reusing the existing
+`maximum_unsupported_detector_ms` budget, never a new ceiling) once
+anchored by any genuinely strong hit, or for a bounded one-time
+provisional window from its own start if it never shows one.
+`minimum_detector_confirmations` itself keeps its exact pre-existing,
+unconditional meaning -- real evidence proved a genuinely continuous
+subject's own confirming pair is routinely both individually weak, so
+gating confirmation on strength would have hurt recall, not just
+continuity. Replayed against the real attempt-2/attempt-3 sessions (a
+hardware-free recorded-detection-playback harness, since real CUDA
+hardware was unavailable in this environment, isolating the tracker change
+against the unchanged, already-real-CUDA-verified detector output) and
+historical sessions 01-04: fragmentation fell or held in every session
+(attempt-3 tracks started 63 to 47, confirmed 37 to 25) with zero incorrect
+merges or duplicates and reconnect-fix facts identical before and after;
+the real hard-negative session's every confirmed generation stayed in the
+bounded provisional tier (zero strong hits, matching its own real
+sub-threshold maximum score) with confirmed-proposal count falling, not
+rising. It opens no product database, changes no detector, detector
+threshold, burst scheduler, reconnect continuity, Camera Node transport,
+evidence scorer, session timeline, or monitoring policy, and authorizes no
+Stage 7 activity by itself; a real-hardware repeat of the representative-
+acceptance campaign remains the next required step.
+
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
 Stream capabilities and emits only evidence-side `FramePacket`,

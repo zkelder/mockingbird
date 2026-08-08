@@ -106,7 +106,14 @@ source-generation change at that boundary, now distinguished from a
 provenance cannot prove which case applies. See
 [reconnect-continuity-contract.md](reconnect-continuity-contract.md) for the
 full benign-reconnect-vs-source-reset decision this boundary now goes
-through before either reason can fire.
+through before either reason can fire. Stage 6.16 adds a bounded
+strong/weak/tracker-only evidence hierarchy so a confirmed track survives a
+detector-confidence dip or brief tracker-only stretch through the *same*
+existing terminal-reason vocabulary above, rather than an unconditional
+tight bound treating every dip as `tracker_lost`; explicit negative-detector
+intervals and true departure still close the episode exactly as before. See
+[sustained-visit-continuity-contract.md](sustained-visit-continuity-contract.md)
+for the full bounded-tolerance/no-immortal-track contract.
 
 When an episode ends without a confident-split reason (for example a plain
 `tracker_lost` or `maximum_duration`) and a new, class/geometry-compatible

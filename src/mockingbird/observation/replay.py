@@ -534,7 +534,8 @@ def _pipeline_metrics(
         frames, track_updates, proposals, matches, facts,
         track_supported=track_supported, visit_supported=visit_supported,
     )
-    return unavailable | evidence_metrics | boundary_metrics | reconnect_metrics | {
+    support_metrics = _support_metrics(track_updates, facts, track_supported=track_supported)
+    return unavailable | evidence_metrics | boundary_metrics | reconnect_metrics | support_metrics | {
         "evidence_candidate_count": _metric(len(evidence) if visit_supported else None, evidence_state),
         "proposals_with_evidence": _metric(
             len(proposal_generations & evidence_generations) if visit_supported else None, evidence_state,
@@ -655,6 +656,75 @@ def _reconnect_metrics(
         "reconnect_fragmentation_avoided": _metric(facts.get("reconnect_bridges_continued", 0), "evaluated"),
         "reconnect_related_incorrect_merge_count": _metric(reconnect_merge_errors, evaluated),
     }
+
+
+_SUPPORT_METRICS = (
+    "strong_detector_support_frame_count", "weak_detector_support_frame_count",
+    "tracker_only_support_frame_count", "confidence_dip_bridge_count",
+    "terminations_after_weak_support_count", "maximum_weak_support_span_ms",
+    "maximum_tracker_only_support_span_ms",
+)
+
+
+def _support_metrics(
+    track_updates: tuple[TrackUpdate, ...],
+    facts: dict[str, object],
+    *,
+    track_supported: bool,
+) -> dict[str, object]:
+    """Stage 6.16 bounded evidence-hierarchy counts (see
+    docs/sustained-visit-continuity-contract.md). The five scalar counters
+    are read directly from already-emitted `FrameDrivenObservationProvider`
+    semantic facts, exactly like `_reconnect_metrics` above; the two
+    maximum-span facts are derived only from already-emitted `TrackUpdate.
+    support_state`, grouped by generation in already-sorted replay order --
+    no new provider contract field is required."""
+    if not track_supported:
+        return {name: _metric(None, "not_evaluated") for name in _SUPPORT_METRICS}
+    by_generation: dict[str, list[TrackUpdate]] = {}
+    for update in track_updates:
+        by_generation.setdefault(update.generation_id, []).append(update)
+    max_weak_span = 0
+    max_tracker_span = 0
+    for updates in by_generation.values():
+        max_weak_span = max(max_weak_span, _longest_support_span_ms(updates, "weak_detector_supported"))
+        max_tracker_span = max(max_tracker_span, _longest_support_span_ms(updates, "tracker_supported"))
+    return {
+        "strong_detector_support_frame_count": _metric(facts.get("strong_detector_support_frames", 0), "evaluated"),
+        "weak_detector_support_frame_count": _metric(facts.get("weak_detector_support_frames", 0), "evaluated"),
+        "tracker_only_support_frame_count": _metric(facts.get("tracker_only_support_frames", 0), "evaluated"),
+        "confidence_dip_bridge_count": _metric(facts.get("confidence_dip_bridges", 0), "evaluated"),
+        "terminations_after_weak_support_count": _metric(
+            facts.get("terminations_after_weak_support", 0), "evaluated",
+        ),
+        "maximum_weak_support_span_ms": _metric(max_weak_span, "evaluated"),
+        "maximum_tracker_only_support_span_ms": _metric(max_tracker_span, "evaluated"),
+    }
+
+
+def _longest_support_span_ms(updates: list[TrackUpdate], support_state: str) -> int:
+    """The longest contiguous run (by replay order, in ms from its first to
+    its last update) of one generation's own updates carrying exactly the
+    given `support_state`. A single matching update contributes a span of
+    0ms (it has no duration by itself yet); this reports duration, not
+    frame count, so it stays meaningful across an uneven real cadence."""
+    longest = 0
+    run_start: int | None = None
+    run_end: int | None = None
+    for update in updates:
+        offset = update.source_offset_ms
+        if update.support_state == support_state and offset is not None:
+            if run_start is None:
+                run_start = offset
+            run_end = offset
+        else:
+            if run_start is not None and run_end is not None:
+                longest = max(longest, run_end - run_start)
+            run_start = None
+            run_end = None
+    if run_start is not None and run_end is not None:
+        longest = max(longest, run_end - run_start)
+    return longest
 
 
 def _evidence_metrics(

@@ -12,6 +12,7 @@ from mockingbird.observation.frame_driven_provider import (
     FrameDrivenObservationProvider,
     FrameDrivenSettings,
 )
+from mockingbird.observation.frame_tracker import ProviderNeutralFrameTracker
 from mockingbird.observation.reconnect_continuity import CONTINUE_ACROSS_TRANSPORT_RECONNECT, ReconnectBridgeConfig
 from mockingbird.observation.replay import (
     BenchmarkManifest,
@@ -180,9 +181,16 @@ async def test_weak_detection_rejects_but_two_coherent_detections_confirm() -> N
     weak_results = await weak_provider.replay_frames(frames)
     assert not [item for result in weak_results for item in result.visit_proposals]
     assert any(item.lifecycle_state == "rejected" and item.terminal_reason == "insufficient_support" for result in weak_results for item in result.track_updates)
+    # Stage 6.16: both scores are >= `_settings()`'s `strong_detection_
+    # threshold` (0.8) so this remains a genuine strong-confirmation pair --
+    # a weak-scored pair can no longer confirm a tentative track by itself
+    # (see the dedicated coverage in tests/test_frame_tracker.py), so this
+    # test's original "spatial/temporal coherence, not just one isolated
+    # hit, is what separates rejected from confirmed" intent now needs both
+    # detections to also individually clear the strong bar.
     coherent = FakeDetector({
-        frames[0].frame_id or "": (_animal(frames[0], (0.1, 0.1, 0.2, 0.2), 0.5),),
-        frames[1].frame_id or "": (_animal(frames[1], (0.11, 0.1, 0.21, 0.2), 0.5),),
+        frames[0].frame_id or "": (_animal(frames[0], (0.1, 0.1, 0.2, 0.2), 0.85),),
+        frames[1].frame_id or "": (_animal(frames[1], (0.11, 0.1, 0.21, 0.2), 0.85),),
     })
     provider = FrameDrivenObservationProvider(detector=coherent, settings=_settings(), tracker_support=lambda *_: None)
     provider.load()
@@ -190,7 +198,14 @@ async def test_weak_detection_rejects_but_two_coherent_detections_confirm() -> N
     proposals = [item for result in results for item in result.visit_proposals]
     assert len(proposals) == 1
     assert proposals[0].shadow_only is True
-    assert proposals[0].terminal_reason == "tracker_lost"
+    # Stage 6.16: this confirmed track's own widened confirmed-track gap
+    # tolerance now comfortably bridges the two trailing undetected frames
+    # (frame_id gaps of only 1000-2000ms, well inside the existing
+    # `maximum_unsupported_detector_ms` default of 5000ms), so it survives
+    # to the end of this short 4-frame replay instead of expiring early via
+    # the ordinary tight `tracker_expiry_ms` -- `end_of_replay`, not
+    # `tracker_lost`, is now the correct, expected terminal reason here.
+    assert proposals[0].terminal_reason == "end_of_replay"
 
 
 async def test_duplicate_frame_support_miss_tolerance_and_expiry_are_bounded() -> None:
@@ -1416,5 +1431,331 @@ def test_stage611_modules_have_no_product_repository_or_transport_dependency() -
         "MotionEvidence", "StreamMonitoringPolicy", "LiveCameraSession", "sqlalchemy",
     )
     for relative in ("reconnect_continuity.py", "frame_tracker.py", "frame_driven_provider.py"):
+        source = Path(f"src/mockingbird/observation/{relative}").read_text(encoding="utf-8")
+        assert not any(token in source for token in forbidden), relative
+
+
+# =============================================================================
+# Stage 6.16: sustained-visit continuity through detector-confidence dips
+#
+# Reproduces, then proves fixed, the real attempt-3 sustained-visit
+# fragmentation: a genuinely continuous ~5-minute feeder-bird appearance
+# fragmented into ~37 confirmed track generations (29 of them geometrically
+# at the reviewed feeder perch -- see the characterization doc below) purely
+# because detector confidence naturally dipped below strong_detection_
+# threshold, and sometimes below the detector's own decode floor entirely,
+# more often than the tracker's ordinary tight tracker_expiry_ms/
+# maximum_frame_gap_ms bound tolerated -- independent of any reconnect (that
+# mechanism is separately, already fixed; see the Stage 6.11 section above).
+# Full real-data proof: data/field-acceptance/2026-08-07-stage6.16-
+# sustained-visit-continuity/fragmentation-characterization.md (ignored,
+# local). Parallel fixtures prove the fix does not create immortal tracks or
+# unsafe merges. See docs/frame-driven-shadow-provider-contract.md.
+# =============================================================================
+
+
+def test_committed_stage616_scenario_catalog_exists() -> None:
+    catalog = json.loads(Path("tests/fixtures/observation_stage616/scenarios.json").read_text(encoding="utf-8"))
+    all_scenarios = [name for group in catalog["scenarios"].values() for name in group]
+    assert len(all_scenarios) == len(set(all_scenarios)) >= 25
+
+
+def _stage616_settings(**updates: object) -> FrameDrivenSettings:
+    """Mirrors the real deployed frame-driven provider configuration
+    (data/models/observation-onnx-cuda/frame-driven-provider-config.json),
+    not arbitrary test-only numbers."""
+    values: dict[str, object] = {
+        "source_nominal_fps": 2.0,
+        "baseline_detector_fps": 2.0,
+        "candidate_detector_fps": 2.0,
+        "strong_detection_threshold": 0.7,
+        "minimum_detector_confirmations": 2,
+        "minimum_tracker_support_frames": 1,
+        "maximum_missed_frames": 3,
+        "maximum_frame_gap_ms": 1500,
+        "tracker_expiry_ms": 1200,
+        "maximum_track_duration_ms": 120_000,
+        "maximum_active_tracks": 8,
+        "evidence_ring_size": 8,
+        "pretrigger_frame_count": 2,
+        "maximum_unsupported_detector_ms": 5000,
+        "negative_detector_frames_to_end": 2,
+        "weak_detector_support_floor": 0.05,
+        "maximum_weak_support_span_ms": 15000,
+    }
+    values.update(updates)
+    return FrameDrivenSettings(**values)
+
+
+async def test_replay_sustained_visit_survives_confidence_dips_as_one_episode() -> None:
+    """The primary Stage 6.16 fix-proof test. A ~37-second single-subject
+    sequence modeled on the proven real attempt-3 mechanism (strong start;
+    repeated below-threshold or entirely-missed dips of 2-2.5s -- past the
+    tight tracker_expiry_ms/maximum_frame_gap_ms bound but each individually
+    inside the existing maximum_unsupported_detector_ms budget -- strong
+    reconfirmation, one tracker-only stretch, repeated several times; then a
+    real departure) fragmented into 12 generations run against unmodified
+    pre-Stage-6.16 HEAD (75eea1c) before this fix was implemented -- see
+    fragmentation-characterization.md. It must now remain one coherent
+    confirmed episode until the final departure."""
+    box = (0.4, 0.4, 0.6, 0.6)
+    # (offset_ms, score) -- score None means no detection this frame at all
+    # (bridged only by the tracker-support resolver, or a true final gap).
+    schedule: list[tuple[int, float | None]] = [
+        (0, 0.8), (500, 0.82),
+        (2600, 0.25), (5100, 0.3), (7600, 0.85), (10100, 0.2), (12300, None), (14700, 0.83),
+        (17200, 0.3), (19600, 0.28), (22000, 0.86),
+        (24500, 0.15), (26900, None), (29300, 0.22), (31700, 0.88),
+        (34200, None), (36700, None),  # true departure: explicit negatives then silence
+    ]
+    frames = tuple(ReplayFrame(index, offset, f"h{index}") for index, (offset, _score) in enumerate(schedule))
+    replay = ReplayInput("sustained-visit", "stream", 100, 100, 2.0, frames)
+    packets = replay.packets()
+    detections = {
+        packet.frame_id or "": (_animal(packet, box, score),)
+        for packet, (_offset, score) in zip(packets, schedule)
+        if score is not None
+    }
+    detector = FakeDetector(detections)
+    provider = FrameDrivenObservationProvider(
+        detector=detector, settings=_stage616_settings(),
+        tracker_support=lambda _frame, track: track.bounding_box,
+    )
+    provider.load()
+    results = await provider.replay_frames(packets)
+    updates = [item for result in results for item in result.track_updates]
+    proposals = [item for result in results for item in result.visit_proposals]
+    generations = {item.generation_id for item in updates}
+
+    assert len(generations) <= 2  # was 12 before this stage's fix
+    assert len(proposals) >= 1
+    assert proposals[0].shadow_only is True
+    assert provider.capabilities.production_proposal_authority is False
+    facts = provider.replay_semantic_facts()
+    assert facts["confidence_dip_bridges"] >= 5
+    assert facts["weak_detector_support_frames"] >= 5
+    assert facts["strong_detector_support_frames"] >= 2
+    assert facts["tracks_confirmed"] == len(proposals)
+
+
+async def test_replay_attempt2_like_static_clutter_scenario_gets_no_widened_tolerance() -> None:
+    """Scenario 30 (hard-negative regression), precisely stated: a static
+    false-positive geometry -- modeled on the real attempt-2 red-glass-
+    feeder pattern, whose maximum score across an entire real session
+    (0.417) never once reached the real deployed strong_detection_threshold
+    (0.7) -- produces a weak detection repeatedly at a fixed location.
+    Confirming from two spatially-coherent weak hits is pre-existing,
+    unchanged behavior (attempt-2's own real session already produced 38
+    such confirmed clutter proposals under pre-Stage-6.16 code; proposal
+    *precision* on genuine clutter is an existing, separate, out-of-scope
+    detector-precision question -- see the hard scope boundary). What this
+    stage must guarantee: such clutter, having never shown a genuinely
+    strong hit, gets only the bounded, one-time "provisional" widened-
+    tolerance allowance (`maximum_weak_support_span_ms`) from its own
+    start, never the permanent one a real strong hit grants -- proven here
+    by a gap well past that bounded allowance still splitting it into a
+    fresh generation."""
+    box = (0.6, 0.3, 0.68, 0.4)  # small, fixed, feeder-ornament-shaped region
+    schedule: list[tuple[int, float]] = [(0, 0.3), (600, 0.35), (9000, 0.3)]
+    frames = tuple(ReplayFrame(index, offset, f"clutter-{index}") for index, (offset, _score) in enumerate(schedule))
+    replay = ReplayInput("attempt2-like-clutter", "stream", 100, 100, 2.0, frames)
+    packets = replay.packets()
+    detections = {
+        packet.frame_id or "": (_animal(packet, box, score),)
+        for packet, (_offset, score) in zip(packets, schedule)
+    }
+    detector = FakeDetector(detections)
+    provider = FrameDrivenObservationProvider(
+        detector=detector, settings=_stage616_settings(maximum_weak_support_span_ms=3000),
+    )
+    provider.load()
+    results = await provider.replay_frames(packets)
+    updates = [item for result in results for item in result.track_updates]
+
+    confirmed_generations = {item.generation_id for item in updates if item.lifecycle_state == "confirmed"}
+    assert len(confirmed_generations) == 1  # two coherent weak hits confirm -- ordinary, unchanged bar
+    generation = next(iter(confirmed_generations))
+    # The 8400ms gap to the third hit is well past the bounded 3000ms
+    # provisional allowance measured from this never-strong track's own
+    # start -- it must not have bridged.
+    third_hit = next(item for item in updates if item.frame_id == packets[2].frame_id and item.status != "ended")
+    assert third_hit.generation_id != generation
+    facts = provider.replay_semantic_facts()
+    assert facts["strong_detector_support_frames"] == 0
+    assert facts["weak_detector_support_frames"] > 0
+
+
+async def test_replay_reconnect_bridging_remains_unchanged_with_weak_evidence() -> None:
+    """Scenario 19: a benign transport reconnect still bridges cleanly
+    (Stage 6.11, unmodified) when the post-reconnect evidence happens to be
+    weak rather than strong -- the two mechanisms compose without either
+    one changing the other's behavior."""
+    box = (0.2, 0.2, 0.5, 0.5)
+    # Offsets (unlike the Stage 6.11 fixtures above, which use a 5fps
+    # candidate cadence) are spaced to clear this test's own 2fps
+    # (500ms-interval) `_stage616_settings` cadence, so both pre-reconnect
+    # frames are actually inferred and the track reaches `confirmed`.
+    replay = ReplayInput("bridge-with-weak-evidence", "stream", 100, 100, 2.0, (
+        ReplayFrame(0, 0, "h0", provider_generation="gen-1", connection_segment_id="conn-a", connection_segment_ordinal=0),
+        ReplayFrame(1, 600, "h1", provider_generation="gen-1", connection_segment_id="conn-a", connection_segment_ordinal=0),
+        ReplayFrame(
+            2, 3_100, "h2", provider_generation="gen-1", connection_segment_id="conn-b", connection_segment_ordinal=1,
+            temporal_discontinuity=True, temporal_uncertainty_ms=50, original_source_offset_ms=0,
+        ),
+        ReplayFrame(3, 3_600, "h3", provider_generation="gen-1", connection_segment_id="conn-b", connection_segment_ordinal=1),
+    ))
+    packets = replay.packets()
+    detector = FakeDetector({
+        packets[0].frame_id or "": (_animal(packets[0], box, 0.85),),
+        packets[1].frame_id or "": (_animal(packets[1], box, 0.85),),
+        # Post-reconnect evidence is deliberately weak.
+        packets[2].frame_id or "": (_animal(packets[2], box, 0.2),),
+        packets[3].frame_id or "": (_animal(packets[3], box, 0.2),),
+    })
+    provider = FrameDrivenObservationProvider(detector=detector, settings=_stage616_settings())
+    provider.load()
+    results = await provider.replay_frames(packets)
+    updates = [item for result in results for item in result.track_updates]
+    proposals = [item for result in results for item in result.visit_proposals]
+
+    assert len({item.generation_id for item in updates}) == 1
+    assert len(proposals) == 1
+    facts = provider.replay_semantic_facts()
+    assert facts["reconnect_bridges_continued"] == 1
+    assert facts["reconnect_bridges_expired"] == 0
+    reacquired = next(item for item in updates if item.frame_id == packets[2].frame_id)
+    assert reacquired.support_state == "weak_detector_supported"
+
+
+async def test_replay_reconnect_itself_adds_no_weak_or_strong_support() -> None:
+    """Scenario 20 (Stage 6.16 variant): surviving a reconnect boundary by
+    itself changes neither `detector_confirmation_count` nor
+    `weak_detector_support_count` -- only genuine post-reconnect evidence
+    (tested above) does."""
+    tracker = ProviderNeutralFrameTracker("stream", _stage616_settings().tracker_configuration())
+    box = (0.2, 0.2, 0.5, 0.5)
+    frames = _frames(2, step_ms=1000)
+    tracker.observe(frames[0], (_animal(frames[0], box, 0.8),))
+    tracker.observe(frames[1], (_animal(frames[1], box, 0.85),))
+    before = next(iter(tracker._tracks.values()))
+    detector_before = before.detector_confirmation_count
+    weak_before = before.weak_detector_support_count
+
+    tracker.note_reconnect_boundary(boundary_offset_ms=6000, captured_at=frames[1].captured_at)
+    after = next(iter(tracker._tracks.values()))
+    assert after.detector_confirmation_count == detector_before
+    assert after.weak_detector_support_count == weak_before
+    assert after.support_state == "temporarily_lost"
+
+
+async def test_replay_evidence_remains_generation_isolated_with_weak_dips() -> None:
+    """Scenario 22/23: even though a confirmed track's episode now spans a
+    confidence dip instead of splitting there, evidence-candidate/burst-role
+    bookkeeping remains correctly scoped to that one (now longer) generation
+    -- it never leaks into whatever starts next."""
+    box = (0.4, 0.4, 0.6, 0.6)
+    schedule: list[tuple[int, float | None]] = [
+        (0, 0.8), (500, 0.85), (3000, 0.2), (6000, 0.86),
+    ]
+    frames = tuple(ReplayFrame(index, offset, f"h{index}") for index, (offset, _score) in enumerate(schedule))
+    replay = ReplayInput("evidence-isolated-weak", "stream", 100, 100, 2.0, frames)
+    packets = replay.packets()
+    detections = {
+        packet.frame_id or "": (_animal(packet, box, score),)
+        for packet, (_offset, score) in zip(packets, schedule)
+        if score is not None
+    }
+    detector = FakeDetector(detections)
+    provider = FrameDrivenObservationProvider(detector=detector, settings=_stage616_settings())
+    provider.load()
+    results = await provider.replay_frames(packets)
+    evidence = [item for result in results for item in result.evidence_candidates]
+    proposals = [item for result in results for item in result.visit_proposals]
+
+    assert len(proposals) == 1
+    generation = proposals[0].track_generation_id
+    assert evidence  # the dip did not wipe out evidence bookkeeping
+    assert all(item.track_generation_id == generation for item in evidence)
+
+
+async def test_replay_sustained_visit_fingerprint_repeats() -> None:
+    """Scenario 24/26: the sustained-visit-with-dips replay is fully
+    deterministic and reproducible -- identical semantic fingerprint,
+    track updates, and proposals across two independent runs."""
+    box = (0.4, 0.4, 0.6, 0.6)
+    schedule: list[tuple[int, float | None]] = [
+        (0, 0.8), (500, 0.85), (3000, 0.2), (5800, None), (8200, 0.87),
+    ]
+    frames = tuple(ReplayFrame(index, offset, f"h{index}") for index, (offset, _score) in enumerate(schedule))
+    replay = ReplayInput("sustained-visit-determinism", "stream", 100, 100, 2.0, frames)
+    manifest = BenchmarkManifest(1, "sustained-visit-determinism", replay.fingerprint, (), ())
+
+    def build_provider() -> FrameDrivenObservationProvider:
+        packets = replay.packets()
+        detections = {
+            packet.frame_id or "": (_animal(packet, box, score),)
+            for packet, (_offset, score) in zip(packets, schedule)
+            if score is not None
+        }
+        instance = FrameDrivenObservationProvider(
+            detector=FakeDetector(detections), settings=_stage616_settings(),
+            tracker_support=lambda _frame, track: track.bounding_box,
+        )
+        instance.load()
+        return instance
+
+    first = await ReplayRunner({"frame-driven-onnx-cuda": build_provider()}).run(
+        replay, manifest, provider_key="frame-driven-onnx-cuda",
+    )
+    second = await ReplayRunner({"frame-driven-onnx-cuda": build_provider()}).run(
+        replay, manifest, provider_key="frame-driven-onnx-cuda",
+    )
+    assert first.semantic_fingerprint == second.semantic_fingerprint
+    assert first.track_updates == second.track_updates
+    assert first.proposals == second.proposals
+    assert first.metrics["confidence_dip_bridge_count"] == second.metrics["confidence_dip_bridge_count"]
+
+
+async def test_snapshot_provider_capabilities_remain_unchanged_stage616() -> None:
+    """Scenario 25."""
+    from mockingbird.observation.snapshot_provider import SnapshotObservationProvider
+
+    assert SnapshotObservationProvider.capabilities.tracking is False
+    assert SnapshotObservationProvider.capabilities.frame_driven is False
+    assert SnapshotObservationProvider.capabilities.production_proposal_authority is False
+
+
+async def test_replay_privacy_ignore_exclusion_still_applies_to_weak_detections() -> None:
+    """Scenario 28: Privacy/Ignore exclusion still masks a detection inside
+    an excluded region regardless of its confidence -- the bounded evidence
+    hierarchy changes tracker-continuity handling only, never detection
+    filtering, which still happens upstream of it in `_process_frame`."""
+    excluded_region = (0.0, 0.0, 0.5, 0.5)
+    box_inside = (0.1, 0.1, 0.2, 0.2)
+    frames = (
+        ReplayFrame(0, 0, "h0", analysis_excluded_regions=(excluded_region,)),
+        ReplayFrame(1, 500, "h1", analysis_excluded_regions=(excluded_region,)),
+    )
+    replay = ReplayInput("privacy-weak", "stream", 100, 100, 2.0, frames)
+    packets = replay.packets()
+    detector = FakeDetector({packet.frame_id or "": (_animal(packet, box_inside, 0.2),) for packet in packets})
+    provider = FrameDrivenObservationProvider(detector=detector, settings=_stage616_settings())
+    provider.load()
+    results = await provider.replay_frames(packets)
+    detections = [item for result in results for item in result.detection_observations]
+    proposals = [item for result in results for item in result.visit_proposals]
+    assert detections == []
+    assert proposals == []
+
+
+def test_stage616_modules_have_no_product_repository_or_transport_dependency() -> None:
+    """Scenario 26/27 (no product writes, no authority change): the same
+    structural, source-grep boundary as every prior Stage 6.x pure module,
+    re-verified after this stage's additions."""
+    forbidden = (
+        "mockingbird.db", "mockingbird.repositories", "mockingbird.api.main", "ReviewLabel",
+        "MotionEvidence", "StreamMonitoringPolicy", "LiveCameraSession", "sqlalchemy",
+    )
+    for relative in ("frame_tracker.py", "frame_driven_provider.py", "replay.py", "contracts.py"):
         source = Path(f"src/mockingbird/observation/{relative}").read_text(encoding="utf-8")
         assert not any(token in source for token in forbidden), relative
