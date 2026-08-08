@@ -11,6 +11,10 @@ from mockingbird.observation.contracts import (
     DetectionObservation, EvidenceCandidate, FramePacket, ObservationResult, TrackUpdate, VisitProposal,
 )
 from mockingbird.observation.evidence_scoring import EvidenceSelection, score_proposal_evidence
+from mockingbird.observation.visit_episode_assembler import (
+    AssembledVisitProposal, VisitAssemblyConfiguration, assemble_visit_episodes, build_tracklets,
+    project_to_visit_proposal,
+)
 
 MANIFEST_VERSION = 1
 FRAME_IDENTITY_VERSION = "ordered-frame-v1"
@@ -1182,3 +1186,164 @@ def _threshold_results(metrics: dict[str, object], thresholds: dict[str, float])
         results.append({"threshold": threshold_name, "metric": metric_name, "direction": direction,
                         "target": target, "value": value, "state": state})
     return results
+
+
+# =============================================================================
+# Stage 6.19: optional shadow Visit episode assembly (see
+# docs/tracklet-visit-assembly-contract.md). Purely additive -- nothing above
+# this line is touched by, or needs to know about, this section.
+# `ReplayRunner.run` itself is completely unmodified; every pre-existing
+# report/metric it produces is byte-identical to before this stage. A caller
+# opts in explicitly by calling `assemble_visit_episode_report` on an
+# already-produced `ReplayReport`.
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class VisitEpisodeAssemblyReport:
+    """The Stage 6.19 shadow assembly pass over one already-produced
+    `ReplayReport`. Kept deliberately separate from `ReplayReport` itself:
+    an existing caller that never calls `assemble_visit_episode_report` sees
+    no change whatsoever. `track_metrics`/`assembly_metrics`/`visit_truth_
+    metrics` are reported separately on purpose -- tracker-level
+    fragmentation must never be hidden merely because assembly repairs it;
+    a consumer can always see both layers independently."""
+
+    proposals: tuple[AssembledVisitProposal, ...]
+    matches: tuple[Match, ...]
+    track_metrics: dict[str, object]
+    assembly_metrics: dict[str, object]
+    visit_truth_metrics: dict[str, object]
+    semantic_fingerprint: str
+
+
+# Read-only subset of the already-existing `ReplayReport.metrics` reported
+# alongside assembly output for convenience -- computed nowhere new, just
+# referenced. Tracker fragmentation, exactly as Stage 6.16/6.17 already
+# measure it, unaffected by whatever this stage's assembler does next.
+_TRACK_METRIC_KEYS = (
+    "tracks_started", "tracks_confirmed", "tracks_lost_or_rejected",
+    "episode_temporary_loss_count", "episode_rejected_count", "episode_confirmed_split_count",
+    "episode_ambiguous_reentry_count", "boundary_reason_distribution",
+    "confidence_dip_bridge_count", "strong_detector_support_frame_count",
+    "weak_detector_support_frame_count", "tracker_only_support_frame_count",
+)
+
+
+def assemble_visit_episode_report(
+    report: ReplayReport,
+    manifest: BenchmarkManifest,
+    config: VisitAssemblyConfiguration | None = None,
+) -> VisitEpisodeAssemblyReport:
+    """Run the Stage 6.19 shadow `VisitEpisodeAssembler` over an already-
+    produced `ReplayReport`'s own `track_updates`, and re-score the result
+    against the *same* manifest through the completely unmodified `_match`
+    -- the same reuse pattern the Stage 6.17 `rescore_visit_truth.py`
+    real-acceptance tooling already established. Opens no database, no new
+    filesystem path, and no network connection; every fact used is already
+    present on `report`/`manifest`.
+    """
+    stream_id = report.frames[0].stream_id if report.frames else manifest.benchmark_id
+    tracklets = build_tracklets(
+        report.track_updates,
+        stream_id=stream_id,
+        connection_segment_by_frame_id=_connection_segment_lookup(report.frames),
+        evidence_candidate_ids_by_generation=_evidence_media_asset_ids_by_generation(report.evidence_candidates),
+    )
+    assembly = assemble_visit_episodes(tracklets, config)
+    projected = tuple(project_to_visit_proposal(item) for item in assembly.proposals)
+    matches = _match(manifest.visits, projected)
+
+    track_metrics = {key: report.metrics[key] for key in _TRACK_METRIC_KEYS if key in report.metrics}
+    assembly_metrics = {
+        "tracklets_input": _metric(assembly.tracklets_input, "evaluated"),
+        "episode_merges": _metric(assembly.episode_merges, "evaluated"),
+        "separate_decisions": _metric(assembly.separate_decisions, "evaluated"),
+        "ambiguous_decisions": _metric(assembly.ambiguous_decisions, "evaluated"),
+        "incompatible_decisions": _metric(assembly.incompatible_decisions, "evaluated"),
+        "assembled_visit_proposals": _metric(assembly.assembled_proposal_count, "evaluated"),
+    }
+    visit_truth_metrics = _assembled_visit_truth_metrics(manifest, projected, matches)
+    semantic = {
+        "schema_version": 1,
+        "input_report_fingerprint": report.semantic_fingerprint,
+        "manifest_fingerprint": manifest.fingerprint,
+        "proposals": [asdict(item) for item in assembly.proposals],
+        "matches": [asdict(item) for item in matches],
+        "assembly_metrics": assembly_metrics,
+        "visit_truth_metrics": visit_truth_metrics,
+    }
+    return VisitEpisodeAssemblyReport(
+        proposals=assembly.proposals,
+        matches=matches,
+        track_metrics=track_metrics,
+        assembly_metrics=assembly_metrics,
+        visit_truth_metrics=visit_truth_metrics,
+        semantic_fingerprint=semantic_fingerprint(semantic),
+    )
+
+
+def _connection_segment_lookup(frames: tuple[FramePacket, ...]) -> dict[str, str]:
+    """The same `connection_segment_id` timing fact `_reconnect_metrics`
+    already reads -- no new segment-membership mechanism."""
+    lookup: dict[str, str] = {}
+    for frame in frames:
+        segment = dict(frame.timing_facts).get("connection_segment_id")
+        if isinstance(segment, str) and segment and frame.frame_id is not None:
+            lookup[frame.frame_id] = segment
+    return lookup
+
+
+def _evidence_media_asset_ids_by_generation(evidence: tuple[EvidenceCandidate, ...]) -> dict[str, tuple[str, ...]]:
+    by_generation: dict[str, list[str]] = {}
+    for item in evidence:
+        if item.track_generation_id is None:
+            continue
+        bucket = by_generation.setdefault(item.track_generation_id, [])
+        if item.media_asset_id not in bucket:
+            bucket.append(item.media_asset_id)
+    return {key: tuple(value) for key, value in by_generation.items()}
+
+
+def _assembled_visit_truth_metrics(
+    manifest: BenchmarkManifest, proposals: tuple[VisitProposal, ...], matches: tuple[Match, ...],
+) -> dict[str, object]:
+    """Same shape, same counting rules as the existing Visit-level subset of
+    `_metrics` -- restricted to exactly the facts the Stage 6.19 acceptance
+    gate needs, computed fresh from the *assembled* proposals/matches
+    instead of the raw per-tracklet ones. No new matching rule: `_match`
+    above is the one, unmodified, already-proven Stage 6.17 matcher."""
+    matched_ids = {item.expected_visit_id for item in matches if item.status == "matched"}
+    captured = {
+        appearance for visit in manifest.visits if visit.visit_id in matched_ids for appearance in visit.appearance_ids
+    }
+    counts = {
+        status: sum(item.status == status for item in matches)
+        for status in ("matched", "missed", "false", "duplicate", "fragmented", "incorrectly_merged", "ambiguous")
+    }
+    expected_count = len(manifest.visits)
+    proposal_count = len(proposals)
+    return {
+        "expected_appearance_count": _metric(len(manifest.appearances), "evaluated"),
+        "captured_appearance_count": _metric(len(captured), "evaluated"),
+        "appearance_recall": _metric(
+            len(captured) / len(manifest.appearances) if manifest.appearances else None,
+            "evaluated" if manifest.appearances else "insufficient_truth",
+        ),
+        "expected_visit_count": _metric(expected_count, "evaluated"),
+        "assembled_proposal_count": _metric(proposal_count, "evaluated"),
+        "matched_visit_count": _metric(counts["matched"], "evaluated"),
+        "proposal_precision": _metric(
+            counts["matched"] / proposal_count if proposal_count else None,
+            "evaluated" if proposal_count else "not_evaluated",
+        ),
+        "duplicate_count": _metric(counts["duplicate"], "evaluated"),
+        "fragmentation_count": _metric(counts["fragmented"], "evaluated"),
+        "fragmentation_rate": _metric(
+            counts["fragmented"] / expected_count if expected_count else None,
+            "evaluated" if expected_count else "insufficient_truth",
+        ),
+        "incorrect_merge_count": _metric(counts["incorrectly_merged"], "evaluated"),
+        "false_proposal_count": _metric(counts["false"], "evaluated"),
+        "missed_visit_count": _metric(counts["missed"], "evaluated"),
+    }

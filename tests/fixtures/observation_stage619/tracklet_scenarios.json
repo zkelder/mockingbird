@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "note": "Committed synthetic tracklet-assembly fixtures (Stage 6.19). Provider-neutral, resolution/species/path-independent; never real Visit ids or private media. Validated first, before any real-data acceptance run -- see docs/tracklet-visit-assembly-contract.md.",
+  "scenarios": {
+    "long_visit_fragmented_into_many_tracklets": {
+      "description": "One genuine sustained appearance the tracker fragmented into 8 confirmed tracklets on ordinary bounded-tolerance expiry (never a negative-evidence terminal reason) -- models real attempt-3. All gaps stay within merge_gap_ms; geometry drifts slightly but stays well within tolerance; none ever reach strong detector confidence (provisional throughout, matching Stage 6.16's own attempt-3 finding).",
+      "stream_id": "s-long-visit",
+      "tracklets": [
+        {"generation_id": "lv-1", "start_offset_ms": 0, "end_offset_ms": 2000, "start_bounding_box": [0.40, 0.40, 0.46, 0.46], "end_bounding_box": [0.41, 0.41, 0.47, 0.47], "terminal_reason": "maximum_unsupported_duration"},
+        {"generation_id": "lv-2", "start_offset_ms": 6000, "end_offset_ms": 8000, "start_bounding_box": [0.41, 0.41, 0.47, 0.47], "end_bounding_box": [0.42, 0.42, 0.48, 0.48], "terminal_reason": "tracker_lost"},
+        {"generation_id": "lv-3", "start_offset_ms": 12000, "end_offset_ms": 14000, "start_bounding_box": [0.42, 0.42, 0.48, 0.48], "end_bounding_box": [0.43, 0.43, 0.49, 0.49], "terminal_reason": "maximum_unsupported_duration"},
+        {"generation_id": "lv-4", "start_offset_ms": 18500, "end_offset_ms": 20500, "start_bounding_box": [0.43, 0.43, 0.49, 0.49], "end_bounding_box": [0.44, 0.44, 0.50, 0.50], "terminal_reason": "maximum_duration"},
+        {"generation_id": "lv-5", "start_offset_ms": 24000, "end_offset_ms": 26000, "start_bounding_box": [0.44, 0.44, 0.50, 0.50], "end_bounding_box": [0.43, 0.43, 0.49, 0.49], "terminal_reason": "tracker_lost"},
+        {"generation_id": "lv-6", "start_offset_ms": 30000, "end_offset_ms": 32000, "start_bounding_box": [0.43, 0.43, 0.49, 0.49], "end_bounding_box": [0.42, 0.42, 0.48, 0.48], "terminal_reason": "maximum_unsupported_duration"},
+        {"generation_id": "lv-7", "start_offset_ms": 35000, "end_offset_ms": 37000, "start_bounding_box": [0.42, 0.42, 0.48, 0.48], "end_bounding_box": [0.42, 0.42, 0.48, 0.48], "terminal_reason": "tracker_lost"},
+        {"generation_id": "lv-8", "start_offset_ms": 40000, "end_offset_ms": 42000, "start_bounding_box": [0.42, 0.42, 0.48, 0.48], "end_bounding_box": [0.43, 0.43, 0.49, 0.49], "terminal_reason": "end_of_replay"}
+      ],
+      "expected": {"proposal_count": 1, "episode_merges": 7, "span": [0, 42000]}
+    },
+    "two_separate_appearances_10_20s_apart": {
+      "description": "Two genuinely separate reviewed appearances (B, C) ~16.2s apart -- models real session-04. Neither ends with explicit negative evidence; the gap alone (past merge_gap_ms, inside ambiguous_gap_ms) keeps them from a confident merge.",
+      "stream_id": "s-separate",
+      "tracklets": [
+        {"generation_id": "sep-b", "start_offset_ms": 0, "end_offset_ms": 3000, "start_bounding_box": [0.30, 0.30, 0.36, 0.36], "end_bounding_box": [0.30, 0.30, 0.36, 0.36], "terminal_reason": "maximum_unsupported_duration"},
+        {"generation_id": "sep-c", "start_offset_ms": 19200, "end_offset_ms": 23000, "start_bounding_box": [0.30, 0.30, 0.36, 0.36], "end_bounding_box": [0.31, 0.31, 0.37, 0.37], "terminal_reason": "maximum_unsupported_duration"}
+      ],
+      "expected": {"proposal_count": 2, "boundary_decision": "ambiguous_boundary", "gap_ms": 16200}
+    },
+    "persistent_static_false_positive_tracklets": {
+      "description": "Attempt-2-like hard-negative clutter: repeated short, provisional (never-strong), spatially-static tracklets. Must stay bounded -- neither an ever-growing single confident Visit, nor pathological over-fragmentation of what is genuinely one bounded burst of clutter.",
+      "stream_id": "s-clutter",
+      "tracklets": [
+        {"generation_id": "cl-1", "start_offset_ms": 0, "end_offset_ms": 1000, "start_bounding_box": [0.90, 0.90, 0.94, 0.94], "end_bounding_box": [0.90, 0.90, 0.94, 0.94], "terminal_reason": "maximum_unsupported_duration"},
+        {"generation_id": "cl-2", "start_offset_ms": 5000, "end_offset_ms": 6000, "start_bounding_box": [0.90, 0.90, 0.94, 0.94], "end_bounding_box": [0.90, 0.90, 0.94, 0.94], "terminal_reason": "maximum_unsupported_duration"},
+        {"generation_id": "cl-3", "start_offset_ms": 10000, "end_offset_ms": 11000, "start_bounding_box": [0.90, 0.90, 0.94, 0.94], "end_bounding_box": [0.90, 0.90, 0.94, 0.94], "terminal_reason": "maximum_unsupported_duration"},
+        {"generation_id": "cl-4", "start_offset_ms": 70000, "end_offset_ms": 71000, "start_bounding_box": [0.90, 0.90, 0.94, 0.94], "end_bounding_box": [0.90, 0.90, 0.94, 0.94], "terminal_reason": "maximum_unsupported_duration"},
+        {"generation_id": "cl-5", "start_offset_ms": 75000, "end_offset_ms": 76000, "start_bounding_box": [0.90, 0.90, 0.94, 0.94], "end_bounding_box": [0.90, 0.90, 0.94, 0.94], "terminal_reason": "maximum_unsupported_duration"},
+        {"generation_id": "cl-6", "start_offset_ms": 80000, "end_offset_ms": 81000, "start_bounding_box": [0.90, 0.90, 0.94, 0.94], "end_bounding_box": [0.90, 0.90, 0.94, 0.94], "terminal_reason": "maximum_unsupported_duration"}
+      ],
+      "expected": {"proposal_count": 2, "group_sizes": [3, 3]}
+    },
+    "reconnect_boundary_inside_true_visit": {
+      "description": "One true visit's tracklets happen to span a benign transport reconnect (different connection_segment_ids either side). A reconnect crossing alone must be neither positive nor negative evidence -- outcome must be identical to an equivalent same-segment control pair.",
+      "stream_id": "s-reconnect",
+      "tracklets": [
+        {"generation_id": "rc-a1", "start_offset_ms": 0, "end_offset_ms": 3000, "start_bounding_box": [0.5, 0.5, 0.58, 0.58], "end_bounding_box": [0.5, 0.5, 0.58, 0.58], "terminal_reason": "tracker_lost", "connection_segment_ids": ["seg-1"]},
+        {"generation_id": "rc-a2", "start_offset_ms": 5000, "end_offset_ms": 8000, "start_bounding_box": [0.5, 0.5, 0.58, 0.58], "end_bounding_box": [0.5, 0.5, 0.58, 0.58], "terminal_reason": "tracker_lost", "connection_segment_ids": ["seg-2"]},
+        {"generation_id": "rc-b1", "start_offset_ms": 40000, "end_offset_ms": 43000, "start_bounding_box": [0.5, 0.5, 0.58, 0.58], "end_bounding_box": [0.5, 0.5, 0.58, 0.58], "terminal_reason": "tracker_lost", "connection_segment_ids": ["seg-3"]},
+        {"generation_id": "rc-b2", "start_offset_ms": 45000, "end_offset_ms": 48000, "start_bounding_box": [0.5, 0.5, 0.58, 0.58], "end_bounding_box": [0.5, 0.5, 0.58, 0.58], "terminal_reason": "tracker_lost", "connection_segment_ids": ["seg-3"]}
+      ],
+      "expected": {"proposal_count": 2, "pair_decisions": {"rc-a1|rc-a2": "merge_same_visit", "rc-b1|rc-b2": "merge_same_visit"}}
+    },
+    "detector_skipped_gap": {
+      "description": "The gap before this tracklet's own end is composed of idle-cadence frames the detector never inspected (detector_skipped_frame_count > 0, negative_detector_frame_count == 0), ending on the ordinary bounded-tolerance reason. A skipped gap must not imply departure.",
+      "stream_id": "s-skipped",
+      "tracklets": [
+        {"generation_id": "sk-1", "start_offset_ms": 0, "end_offset_ms": 4000, "start_bounding_box": [0.2, 0.6, 0.28, 0.68], "end_bounding_box": [0.21, 0.6, 0.29, 0.68], "terminal_reason": "tracker_lost", "detector_skipped_frame_count": 4, "negative_detector_frame_count": 0},
+        {"generation_id": "sk-2", "start_offset_ms": 12000, "end_offset_ms": 15000, "start_bounding_box": [0.22, 0.6, 0.30, 0.68], "end_bounding_box": [0.22, 0.6, 0.30, 0.68], "terminal_reason": "maximum_unsupported_duration"}
+      ],
+      "expected": {"proposal_count": 1, "boundary_decision": "merge_same_visit", "gap_ms": 8000}
+    },
+    "detector_negative_gap": {
+      "description": "The tracker itself confirmed absence (genuine, repeated, detector-evaluated negative frames, negative_detector_frame_count > 0) right at this tracklet's own boundary, terminal_reason='negative_interval_reentry'. Must keep separate even with a short gap and compatible geometry.",
+      "stream_id": "s-negative",
+      "tracklets": [
+        {"generation_id": "ng-1", "start_offset_ms": 0, "end_offset_ms": 5000, "start_bounding_box": [0.6, 0.2, 0.68, 0.28], "end_bounding_box": [0.6, 0.2, 0.68, 0.28], "terminal_reason": "negative_interval_reentry", "negative_detector_frame_count": 2},
+        {"generation_id": "ng-2", "start_offset_ms": 7000, "end_offset_ms": 10000, "start_bounding_box": [0.6, 0.2, 0.68, 0.28], "end_bounding_box": [0.6, 0.2, 0.68, 0.28], "terminal_reason": "maximum_unsupported_duration"}
+      ],
+      "expected": {"proposal_count": 2, "boundary_decision": "keep_separate", "reason": "detector_confirmed_negative_interval"}
+    },
+    "ambiguous_separation": {
+      "description": "Gap (20s) beyond merge_gap_ms but inside ambiguous_gap_ms, compatible geometry, no explicit separation evidence, both tracklets provisional. Evidence cannot safely tell -- must not guess a merge.",
+      "stream_id": "s-ambiguous",
+      "tracklets": [
+        {"generation_id": "am-1", "start_offset_ms": 0, "end_offset_ms": 4000, "start_bounding_box": [0.35, 0.55, 0.43, 0.63], "end_bounding_box": [0.35, 0.55, 0.43, 0.63], "terminal_reason": "maximum_unsupported_duration"},
+        {"generation_id": "am-2", "start_offset_ms": 24000, "end_offset_ms": 28000, "start_bounding_box": [0.35, 0.55, 0.43, 0.63], "end_bounding_box": [0.35, 0.55, 0.43, 0.63], "terminal_reason": "maximum_unsupported_duration"}
+      ],
+      "expected": {"proposal_count": 2, "boundary_decision": "ambiguous_boundary", "mutually_ambiguous": true}
+    },
+    "simultaneous_subjects": {
+      "description": "Two animals present at the same time at different positions -- confirmed, temporally-overlapping tracklets. Must never merge regardless of matching broad_class.",
+      "stream_id": "s-simultaneous",
+      "tracklets": [
+        {"generation_id": "sim-left", "start_offset_ms": 0, "end_offset_ms": 10000, "start_bounding_box": [0.05, 0.05, 0.20, 0.20], "end_bounding_box": [0.06, 0.06, 0.21, 0.21], "terminal_reason": "tracker_lost"},
+        {"generation_id": "sim-right", "start_offset_ms": 3000, "end_offset_ms": 13000, "start_bounding_box": [0.80, 0.80, 0.95, 0.95], "end_bounding_box": [0.81, 0.81, 0.96, 0.96], "terminal_reason": "tracker_lost"}
+      ],
+      "expected": {"proposal_count": 2, "boundary_decision": "incompatible", "reason": "temporal_overlap"}
+    },
+    "crossing_subjects": {
+      "description": "Two simultaneous animals whose paths cross near the middle of the frame (each tracklet's own geometry approaches, then passes, the other's). Confirmed as two distinct, temporally-overlapping tracklets by the tracker (out of this layer's scope to second-guess) -- must not collapse into one.",
+      "stream_id": "s-crossing",
+      "tracklets": [
+        {"generation_id": "cross-left-to-right", "start_offset_ms": 0, "end_offset_ms": 6000, "start_bounding_box": [0.05, 0.40, 0.20, 0.60], "end_bounding_box": [0.45, 0.40, 0.60, 0.60], "terminal_reason": "tracker_lost"},
+        {"generation_id": "cross-right-to-left", "start_offset_ms": 0, "end_offset_ms": 6000, "start_bounding_box": [0.80, 0.40, 0.95, 0.60], "end_bounding_box": [0.40, 0.40, 0.55, 0.60], "terminal_reason": "tracker_lost"}
+      ],
+      "expected": {"proposal_count": 2, "boundary_decision": "incompatible", "reason": "temporal_overlap"}
+    },
+    "spatially_incompatible_reentry": {
+      "description": "Short gap (3s, well within merge_gap_ms), same broad_class, but the next tracklet starts at a spatially implausible position for that gap duration (opposite corner of frame). Geometry must veto the merge despite the short gap.",
+      "stream_id": "s-incompatible-reentry",
+      "tracklets": [
+        {"generation_id": "sp-1", "start_offset_ms": 0, "end_offset_ms": 4000, "start_bounding_box": [0.02, 0.02, 0.10, 0.10], "end_bounding_box": [0.02, 0.02, 0.10, 0.10], "terminal_reason": "tracker_lost"},
+        {"generation_id": "sp-2", "start_offset_ms": 7000, "end_offset_ms": 11000, "start_bounding_box": [0.85, 0.85, 0.95, 0.95], "end_bounding_box": [0.85, 0.85, 0.95, 0.95], "terminal_reason": "maximum_unsupported_duration"}
+      ],
+      "expected": {"proposal_count": 2, "boundary_decision": "keep_separate", "reason": "spatial_discontinuity"}
+    }
+  }
+}

@@ -113,6 +113,10 @@ class TrackView:
     support_state: Literal[
         "strong_detector_supported", "weak_detector_supported", "tracker_supported", "temporarily_lost",
     ] = "temporarily_lost"
+    # Stage 6.19: mirrors `_Track.ambiguous_start` below -- see
+    # docs/tracklet-visit-assembly-contract.md. Defaulted for the same
+    # backward-compatibility reason as the two fields above.
+    ambiguous_start: bool = False
 
 
 class TrackerSupportResolver(Protocol):
@@ -217,6 +221,12 @@ class _Track:
     support_state: Literal[
         "strong_detector_supported", "weak_detector_supported", "tracker_supported", "temporarily_lost",
     ] = "temporarily_lost"
+    # Stage 6.19: fixed at `_start()` time from the same `_is_ambiguous_
+    # reentry` check already computed there (see docs/tracklet-visit-
+    # assembly-contract.md); never changes for the rest of this generation's
+    # life, so every update simply carries the value the generation was born
+    # with -- a consumer inspecting only a terminal update still sees it.
+    ambiguous_start: bool = False
 
     def view(self) -> TrackView:
         return TrackView(
@@ -234,6 +244,7 @@ class _Track:
             tuple(self.supporting_source_frame_ids),
             self.weak_detector_support_count,
             self.support_state,
+            self.ambiguous_start,
         )
 
 
@@ -302,7 +313,11 @@ class ProviderNeutralFrameTracker:
             track.reconnect_bridge_frames_remaining = config.maximum_reconnect_bridge_frames
             track.lifecycle_state = "temporarily_lost"
             track.support_state = "temporarily_lost"
-            updates.append(self._update(track, captured_at, boundary_frame, "updated"))
+            # Stage 6.19: a reconnect boundary is a synthetic bookkeeping
+            # marker, not a real per-frame detector evaluation -- honestly
+            # `detector_ran=False` here, exactly like `finalize()`'s own
+            # synthetic terminal frame below.
+            updates.append(self._update(track, captured_at, boundary_frame, "updated", detector_ran=False))
         return TrackerStep(tuple(updates))
 
     def observe(
@@ -394,7 +409,7 @@ class ProviderNeutralFrameTracker:
             if track.reconnect_pending:
                 reconnect_bridges_continued += 1
             self._observe_detection(track, detection, frame)
-            updates.append(self._update(track, captured_at, frame, "updated"))
+            updates.append(self._update(track, captured_at, frame, "updated", detector_ran=detector_ran))
 
         reconnect_bridges_expired = 0
         for track in tuple(self._tracks.values()):
@@ -406,7 +421,7 @@ class ProviderNeutralFrameTracker:
                     reconnect_bridges_continued += 1
                 track.consecutive_negative_detector_frames = 0
                 self._observe_tracker_support(track, supported_box, frame)
-                updates.append(self._update(track, captured_at, frame, "updated"))
+                updates.append(self._update(track, captured_at, frame, "updated", detector_ran=detector_ran))
                 continue
             if track.reconnect_pending:
                 # Bounded reconnect-bridge patience: decrement the frame
@@ -428,7 +443,7 @@ class ProviderNeutralFrameTracker:
                     reconnect_bridges_expired += 1
                     terminals.append(self._terminate(track, "reconnect_bridge_expired", captured_at, frame))
                 else:
-                    updates.append(self._update(track, captured_at, frame, "updated"))
+                    updates.append(self._update(track, captured_at, frame, "updated", detector_ran=detector_ran))
                 continue
             if detector_ran:
                 track.consecutive_negative_detector_frames += 1
@@ -451,7 +466,12 @@ class ProviderNeutralFrameTracker:
             else:
                 if widened and (gap > tight_bound or missed_exceeded):
                     confidence_dip_bridges += 1
-                updates.append(self._update(track, captured_at, frame, "updated"))
+                # Stage 6.19: this is the one honest source of a genuine
+                # detector-negative-vs-skipped-frame distinction (see
+                # docs/tracklet-visit-assembly-contract.md) -- `detector_ran`
+                # here is this exact frame's own already-known value, carried
+                # onto the emitted update rather than discarded.
+                updates.append(self._update(track, captured_at, frame, "updated", detector_ran=detector_ran))
 
         ambiguous_reentries = 0
         for index, detection in enumerate(animals):
@@ -462,10 +482,10 @@ class ProviderNeutralFrameTracker:
             track, reentry_ambiguous = self._start(detection, frame)
             if reentry_ambiguous:
                 ambiguous_reentries += 1
-            updates.append(self._update(track, captured_at, frame, "started"))
+            updates.append(self._update(track, captured_at, frame, "started", detector_ran=detector_ran))
 
         updates.extend(
-            self._terminal_update(item, captured_at, frame) for item in terminals
+            self._terminal_update(item, captured_at, frame, detector_ran=detector_ran) for item in terminals
         )
         return TrackerStep(
             tuple(updates), tuple(terminals), ambiguous, ambiguous_reentries,
@@ -488,7 +508,9 @@ class ProviderNeutralFrameTracker:
             )
             terminal = self._terminate(track, terminal_reason, captured_at, frame)
             terminals.append(terminal)
-            updates.append(self._terminal_update(terminal, captured_at, frame))
+            # Stage 6.19: synthetic end-of-replay/reset frame, not a real
+            # per-frame detector evaluation -- honestly `detector_ran=False`.
+            updates.append(self._terminal_update(terminal, captured_at, frame, detector_ran=False))
         return TrackerStep(tuple(updates), tuple(terminals))
 
     def _start(self, detection: DetectionObservation, frame: FramePacket) -> tuple[_Track, bool]:
@@ -530,6 +552,7 @@ class ProviderNeutralFrameTracker:
             weak_detector_support_count=0 if strong else 1,
             last_strong_detector_offset_ms=frame.source_offset_ms if strong else None,
             support_state="strong_detector_supported" if strong else "weak_detector_supported",
+            ambiguous_start=ambiguous,
         )
         self._tracks[track.track_id] = track
         return track, ambiguous
@@ -828,6 +851,8 @@ class ProviderNeutralFrameTracker:
         captured_at: datetime,
         frame: FramePacket,
         status: Literal["started", "updated"],
+        *,
+        detector_ran: bool,
     ) -> TrackUpdate:
         return TrackUpdate(
             track.track_id,
@@ -848,6 +873,8 @@ class ProviderNeutralFrameTracker:
             supporting_source_capture_frame_ids=tuple(track.supporting_source_frame_ids),
             weak_detector_support_count=track.weak_detector_support_count,
             support_state=track.support_state,
+            detector_ran=detector_ran,
+            ambiguous_start=track.ambiguous_start,
         )
 
     def _terminal_update(
@@ -855,6 +882,8 @@ class ProviderNeutralFrameTracker:
         terminal: TerminalTrack,
         captured_at: datetime,
         frame: FramePacket,
+        *,
+        detector_ran: bool,
     ) -> TrackUpdate:
         view = terminal.view
         return TrackUpdate(
@@ -877,6 +906,8 @@ class ProviderNeutralFrameTracker:
             supporting_source_capture_frame_ids=view.supporting_source_frame_ids,
             weak_detector_support_count=view.weak_detector_support_count,
             support_state=view.support_state,
+            detector_ran=detector_ran,
+            ambiguous_start=view.ambiguous_start,
         )
 
 

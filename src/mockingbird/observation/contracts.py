@@ -121,6 +121,29 @@ class TrackUpdate:
     support_state: Literal[
         "strong_detector_supported", "weak_detector_supported", "tracker_supported", "temporarily_lost",
     ] = "temporarily_lost"
+    # Stage 6.19 (see docs/tracklet-visit-assembly-contract.md): two small,
+    # additive, already-known-internally facts the tracker itself never
+    # exposed, needed by the shadow `VisitEpisodeAssembler` to summarize a
+    # *finalized* tracklet honestly without redesigning tracker association
+    # or confirmation. Both default to their pre-Stage-6.19 implicit value,
+    # so every existing positional/keyword `TrackUpdate(...)` call site (in
+    # this module's own tests and every other provider) remains valid
+    # unchanged. `detector_ran` mirrors `ProviderNeutralFrameTracker.observe`'s
+    # own already-existing `detector_ran` parameter -- whether the detector
+    # actually evaluated the frame this update was produced for, independent
+    # of whether it matched *this* track -- so a consumer can finally tell a
+    # genuine detector-negative frame (`support_state="temporarily_lost"` and
+    # `detector_ran=True`) apart from an idle-cadence frame the detector
+    # never inspected at all (`detector_ran=False`); see the assembly
+    # contract's "skipped gaps are not negative evidence" rule. `ambiguous_
+    # start` mirrors the track's own already-computed `_is_ambiguous_reentry`
+    # result at the moment its generation began -- true when this generation
+    # started plausibly-but-not-confidently continuing a recently-ended one
+    # -- carried onto every update of the generation (not just the `started`
+    # one) so a consumer inspecting only a generation's *terminal* update
+    # still sees it.
+    detector_ran: bool = False
+    ambiguous_start: bool = False
 
 
 @dataclass(frozen=True)

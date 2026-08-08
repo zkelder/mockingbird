@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "scenarios": {
+    "basic_assembly": [
+      "test_one_tracklet_produces_one_visit",
+      "test_compatible_adjacent_tracklets_merge",
+      "test_many_fragmented_tracklets_merge_deterministically"
+    ],
+    "gap_evidence": [
+      "test_detector_skipped_gap_does_not_imply_departure",
+      "test_detector_negative_interval_contributes_separation_evidence",
+      "test_strong_separation_evidence_prevents_merge"
+    ],
+    "weak_signals_alone_insufficient": [
+      "test_same_broad_class_alone_does_not_merge",
+      "test_same_zone_alone_does_not_merge",
+      "test_reconnect_alone_does_not_split",
+      "test_reconnect_alone_does_not_merge"
+    ],
+    "spatial_continuity": [
+      "test_spatial_continuity_supports_merge",
+      "test_spatial_discontinuity_prevents_merge"
+    ],
+    "ambiguity": [
+      "test_ambiguous_boundary_remains_explicit",
+      "test_persistent_static_weak_tracklets_remain_bounded"
+    ],
+    "multi_subject_safety": [
+      "test_two_simultaneous_animals_remain_separate",
+      "test_crossing_animals_do_not_collapse"
+    ],
+    "lineage": [
+      "test_source_lineage_survives_assembly",
+      "test_evidence_candidate_lineage_survives_assembly",
+      "test_constituent_track_ids_preserved"
+    ],
+    "determinism": [
+      "test_proposal_id_deterministic",
+      "test_input_order_normalization_deterministic",
+      "test_repeated_semantic_fingerprint_identical"
+    ],
+    "structural_purity": [
+      "test_no_product_repository_dependency",
+      "test_no_product_writes",
+      "test_no_stage7_authority"
+    ],
+    "regression_unchanged": [
+      "test_snapshot_behavior_unchanged",
+      "test_tracker_behavior_unchanged",
+      "test_existing_reconnect_behavior_unchanged",
+      "test_existing_burst_behavior_unchanged",
+      "test_stage617_visit_truth_matcher_works_unchanged"
+    ]
+  }
+}
