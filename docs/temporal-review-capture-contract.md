@@ -188,17 +188,20 @@ All three reuse an existing schema unchanged:
 - **Replay**: the Stage 2 `ReplayInput`/`BenchmarkManifest` shape
   (`ExpectedAppearance`/`ExpectedDetection`/`ExpectedEvidence`).
   `EvidenceUsefulness`'s fields were deliberately chosen to mirror
-  `ExpectedEvidence`'s fields one-to-one. `visits` is always empty: this
-  annotation contract records appearance intervals, not reviewed Visit
-  boundaries, and inventing a one-appearance-per-Visit mapping would claim a
-  review judgment nobody made. Stage 6.14: each exported replay frame also
-  explicitly carries the original reviewed `frame_id`/session identity/
-  session-sequence as additive `source_capture_frame_id`/
+  `ExpectedEvidence`'s fields one-to-one. Stage 6.14: each exported replay
+  frame also explicitly carries the original reviewed `frame_id`/session
+  identity/session-sequence as additive `source_capture_frame_id`/
   `source_capture_session_id`/`session_sequence` lineage -- never only
   implied by the `path`/`images/<frame_id>.jpg` string, which is not a valid
   join key -- so reviewed truth can join directly to whatever the replay it
   feeds later produces. See
   [reviewed-replay-lineage-contract.md](reviewed-replay-lineage-contract.md).
+  Stage 6.17: `visits` (`ExpectedVisit`) is deterministically populated, one
+  Visit per eligible reviewed `AppearanceInterval` -- never an invented
+  multi-appearance grouping, never inferred from detector/tracker/product
+  output. An ambiguous, unscorable, or unresolved-overlap interval is
+  excluded and the exclusion is reported, never silent. See
+  [reviewed-visit-truth-contract.md](reviewed-visit-truth-contract.md).
 
 `temporal-review-export` refuses to write anything when
 `validate_annotations` reports any `reject`-severity issue.

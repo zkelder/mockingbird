@@ -111,6 +111,138 @@ def test_matcher_records_every_shadow_diagnostic_deterministically() -> None:
     assert {item.status for item in matches} >= {"matched", "missed", "false", "duplicate", "fragmented", "incorrectly_merged", "ambiguous"}
 
 
+# --------------------------------------------------------------------------
+# Stage 6.17: reviewed appearance intervals as deterministic replay Visit
+# truth -- see docs/reviewed-visit-truth-contract.md.
+# --------------------------------------------------------------------------
+
+
+def test_expected_visit_new_fields_default_safely_and_round_trip_through_replay_io() -> None:
+    """`broad_class`/`entry_uncertain`/`exit_uncertain`/
+    `source_capture_frame_ids`/`reviewer` are optional, additive reviewed-
+    Visit-truth provenance -- absent (safe defaults) on any pre-Stage-6.17
+    construction, and round-tripping through the same JSON shape
+    `replay_io._visit` loads."""
+
+    from mockingbird.observation.replay_io import _visit as load_expected_visit
+
+    bare = ExpectedVisit("visit-1", ("a",), 0, 1000)
+    assert bare.broad_class is None
+    assert bare.entry_uncertain is False and bare.exit_uncertain is False
+    assert bare.source_capture_frame_ids == ()
+    assert bare.reviewer is None
+
+    document = {
+        "visit_id": "visit-1", "appearance_ids": ["a"], "start_offset_ms": 0, "end_offset_ms": 1000,
+        "outcome": None, "zone_id": "feeder", "ambiguous": False, "broad_class": "bird",
+        "entry_uncertain": True, "exit_uncertain": False, "source_capture_frame_ids": ["f1", "f2"], "reviewer": "alice",
+    }
+    loaded = load_expected_visit(document)
+    assert loaded.broad_class == "bird"
+    assert loaded.entry_uncertain is True and loaded.exit_uncertain is False
+    assert loaded.source_capture_frame_ids == ("f1", "f2")
+    assert loaded.reviewer == "alice"
+
+
+def test_expected_visit_loader_accepts_a_pre_stage_6_17_document_without_new_fields() -> None:
+    from mockingbird.observation.replay_io import _visit as load_expected_visit
+
+    loaded = load_expected_visit({"visit_id": "visit-1", "appearance_ids": ["a"], "start_offset_ms": 0, "end_offset_ms": 1000})
+    assert loaded.broad_class is None
+    assert loaded.source_capture_frame_ids == ()
+
+
+@pytest.mark.anyio
+async def test_fragmentation_and_duplicate_metrics_evaluate_against_reviewed_visit_truth() -> None:
+    """(27, 29) Once real reviewed Visit truth exists, the pre-existing
+    fragmentation/duplicate counters -- computed by the unchanged matcher --
+    report real, non-trivial values against genuine ground truth instead of
+    a structurally-forced zero. No matcher/threshold change."""
+
+    @dataclass
+    class ThreeProposalProvider:
+        provider_id: str = "three"
+        capabilities: ObservationProviderCapabilities = ObservationProviderCapabilities(False, True, False, False, True, True)
+
+        async def describe(self, *, stream_id: str | None = None) -> ObservationProviderDescriptor:
+            return ObservationProviderDescriptor(self.provider_id, "Three", self.capabilities,
+                                                  ObservationProviderHealth("idle", True, "ready"))
+
+        async def replay_frames(self, frames: tuple[FramePacket, ...]) -> tuple[ObservationResult, ...]:
+            proposals = (
+                VisitProposal("p1", "source", frames[0].stream_id, ("m1",), "reason-a", start_offset_ms=0, end_offset_ms=30, shadow_only=True),
+                # An exact signature duplicate of p1.
+                VisitProposal("p2", "source", frames[0].stream_id, ("m1",), "reason-a", start_offset_ms=0, end_offset_ms=30, shadow_only=True),
+                # A distinct proposal over the same expected visit -> fragmented.
+                VisitProposal("p3", "source", frames[0].stream_id, ("m3",), "reason-b", start_offset_ms=10, end_offset_ms=30, shadow_only=True),
+            )
+            return (ObservationResult(self.provider_id, "source", frames[0].stream_id,
+                    datetime(2026, 1, 1, tzinfo=UTC), frame_packets=frames, visit_proposals=proposals),)
+
+    one_visit = BenchmarkManifest(1, "benchmark-frag", replay_input().fingerprint,
+        (ExpectedAppearance("appearance-1", 0, 30),), (ExpectedVisit("visit-1", ("appearance-1",), 0, 30),))
+
+    runner = ReplayRunner({"three": ThreeProposalProvider()})
+    report = await runner.run(replay_input(), one_visit, provider_key="three")
+
+    assert report.metrics["matched_visit_count"] == {"state": "evaluated", "value": 1}
+    assert report.metrics["duplicate_count"] == {"state": "evaluated", "value": 1}
+    assert report.metrics["fragmentation_count"] == {"state": "evaluated", "value": 1}
+    assert report.metrics["incorrect_merge_count"] == {"state": "evaluated", "value": 0}
+
+
+@pytest.mark.anyio
+async def test_incorrect_merge_metric_evaluates_against_reviewed_visit_truth() -> None:
+    """(28) A single proposal spanning two distinct reviewed Visits is
+    honestly counted as an incorrect merge -- the pre-existing matcher rule,
+    now genuinely exercised because real Visit truth exists to merge
+    across."""
+
+    @dataclass
+    class MergingProvider:
+        provider_id: str = "merge"
+        capabilities: ObservationProviderCapabilities = ObservationProviderCapabilities(False, True, False, False, True, True)
+
+        async def describe(self, *, stream_id: str | None = None) -> ObservationProviderDescriptor:
+            return ObservationProviderDescriptor(self.provider_id, "Merge", self.capabilities,
+                                                  ObservationProviderHealth("idle", True, "ready"))
+
+        async def replay_frames(self, frames: tuple[FramePacket, ...]) -> tuple[ObservationResult, ...]:
+            proposal = VisitProposal("p4", "source", frames[0].stream_id, ("m4",), "reason-c",
+                                     start_offset_ms=0, end_offset_ms=1030, shadow_only=True)
+            return (ObservationResult(self.provider_id, "source", frames[0].stream_id,
+                    datetime(2026, 1, 1, tzinfo=UTC), frame_packets=frames, visit_proposals=(proposal,)),)
+
+    two_visits = BenchmarkManifest(1, "benchmark-merge", replay_input().fingerprint,
+        (ExpectedAppearance("appearance-1", 0, 30), ExpectedAppearance("appearance-2", 1000, 1030)),
+        (ExpectedVisit("visit-1", ("appearance-1",), 0, 30), ExpectedVisit("visit-2", ("appearance-2",), 1000, 1030)))
+
+    runner = ReplayRunner({"merge": MergingProvider()})
+    report = await runner.run(replay_input(), two_visits, provider_key="merge")
+
+    assert report.metrics["incorrect_merge_count"] == {"state": "evaluated", "value": 1}
+    assert report.metrics["matched_visit_count"] == {"state": "evaluated", "value": 1}
+    assert report.metrics["missed_visit_count"] == {"state": "evaluated", "value": 1}
+
+
+@pytest.mark.anyio
+async def test_zone_attribution_accuracy_evaluates_once_reviewed_zone_truth_exists() -> None:
+    """`zone_attribution_accuracy` moves from a permanent `insufficient_truth`
+    stub to a real value once at least one matched Visit carries reviewed
+    Zone truth; stays honestly `insufficient_truth` when no Visit in the
+    manifest carries a `zone_id` at all. No matcher/threshold change."""
+
+    runner = ReplayRunner({"fake": FakeProvider()})
+    with_zone_truth = await runner.run(replay_input(), manifest(), provider_key="fake")
+    assert with_zone_truth.metrics["zone_attribution_accuracy"] == {"state": "evaluated", "value": 1.0}
+
+    without_zone_truth = BenchmarkManifest(1, "benchmark-1", replay_input().fingerprint,
+        (ExpectedAppearance("appearance-1", 1000, 2000, "unknown_bird"),),
+        (ExpectedVisit("visit-1", ("appearance-1",), 1000, 2000, "unknown_bird"),))  # no zone_id
+    report = await runner.run(replay_input(), without_zone_truth, provider_key="fake")
+    assert report.metrics["zone_attribution_accuracy"]["state"] == "insufficient_truth"
+
+
 def test_onnx_cuda_provider_import_is_optional_and_probe_is_side_effect_free() -> None:
     from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider
     provider = OnnxCudaObservationProvider.unconfigured()

@@ -470,6 +470,42 @@ activity by itself; a real-hardware repeat of the representative-acceptance
 campaign, this time able to measure `appearance_recall` through a path that
 does not structurally zero it out, remains the next required step before
 Stage 7 can be reconsidered.
+Stage 6.17 closes the measurement gap itself, independent of that hardware
+rerun: temporal-review replay export's `visits` list was always empty, so
+Visit-level metrics were structurally `0.0`/meaningless no matter how good
+the tracker was. `temporal_annotation._expected_visits_from_appearances`
+now deterministically converts each eligible, explicitly reviewed
+`AppearanceInterval` into exactly one `replay.ExpectedVisit` -- never an
+invented multi-appearance grouping, never inferred from detector/tracker/
+product output or species identity -- excluding (and always honestly
+reporting) an interval that is ambiguous, unscorable, missing session-
+timeline provenance, structurally invalid, or an unresolved same-vs-
+separate overlap with another appearance; see
+[reviewed-visit-truth-contract.md](reviewed-visit-truth-contract.md). The
+existing matcher and every matching threshold are unchanged. Re-exported and
+re-scored (hardware-free, reusing each session's own already-real-CUDA-
+verified proposals) against attempt-3, attempt-2, and sessions 03-04:
+attempt-3's two reviewed appearances (the ~5-minute feeder-bird visit and a
+separate instantaneous ground sighting) finally produce a real
+`appearance_recall` of 0.5 (unchanged before/after -- the ground sighting,
+a single retained frame with no repeat detection nearby, was never
+confirmed into a proposal either side) and a real fragmentation count that
+dropped 28 to 19 (32% fewer proposals fragmenting the one reviewed feeder-
+bird Visit, `proposal_precision` 0.027 to 0.040) -- the first genuine,
+non-structurally-zero evidence that Stage 6.16 improved Visit-level
+outcomes, not just track counts. attempt-2 (hard negative) correctly
+produced zero `ExpectedVisit`s before and after (review found no genuine
+wildlife), so its unchanged 38-to-28 proposal count counts entirely as
+false proposals both times, `proposal_precision` staying honestly `0.0`.
+Session-03 (recall 1.0 unchanged, fragmentation 2 unchanged, precision
+0.043 to 0.061) and session-04 (recall 1.0 unchanged, fragmentation 18 to
+11, precision 0.107 to 0.176) both fully recalled every reviewed appearance
+both before and after; session-04 also surfaced one new incorrectly-merged
+proposal after Stage 6.16's widened gap tolerance that did not exist
+before, honestly disclosed rather than hidden. It changes no detector,
+tracker, reconnect, burst, or evidence-scoring behavior, opens no product
+database, and authorizes no Stage 7 activity; representative hardware
+acceptance remains the next required step.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

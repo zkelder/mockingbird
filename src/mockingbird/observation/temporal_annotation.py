@@ -90,6 +90,12 @@ class AppearanceInterval:
     entry_uncertain: bool = False
     exit_uncertain: bool = False
     continuity_ambiguous: bool = False
+    # Stage 6.17: optional, additive reviewed-Visit-truth fact -- see
+    # docs/reviewed-visit-truth-contract.md. There is no other Zone concept
+    # anywhere in the Stage 6.6+ temporal-review pipeline, so this stays
+    # `None` (honest, never fabricated) unless a reviewer explicitly recorded
+    # which Zone this appearance occupied.
+    zone_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.appearance_id or not self.start_frame_id or not self.end_frame_id:
@@ -865,12 +871,158 @@ def build_motion_proposal_export(session: dict[str, object], annotations: Annota
     }
 
 
+# --------------------------------------------------------------------------
+# Stage 6.17: reviewed appearance intervals as deterministic replay Visit
+# truth -- see docs/reviewed-visit-truth-contract.md. Only an explicit,
+# reviewed `AppearanceInterval` may create an `ExpectedVisit`: never detector
+# output, tracker output, a product Visit record, a ReviewLabel, a burst
+# event, or a motion event, and never species identity.
+# --------------------------------------------------------------------------
+
+# Honest, stable exclusion-reason codes reported in `visit_truth_exclusions`
+# whenever a reviewed appearance interval does not become an ExpectedVisit.
+# Distinct from the `V_*` `ValidationIssue` codes above: those describe
+# annotation-*set* validity (checked before export is even attempted); these
+# describe Visit-truth *eligibility* of an already-valid annotation set, and
+# a caller never has to infer why one appearance produced no Visit.
+VISIT_TRUTH_EXCLUDED_INVALID_ENDPOINT = "invalid_endpoint"
+VISIT_TRUTH_EXCLUDED_MISSING_SESSION_TIMELINE = "missing_session_timeline"
+VISIT_TRUTH_EXCLUDED_REVERSED_INTERVAL = "reversed_interval"
+VISIT_TRUTH_EXCLUDED_AMBIGUOUS_TRUTH = "ambiguous_endpoint_truth"
+VISIT_TRUTH_EXCLUDED_UNSCORABLE_TRUTH = "unscorable_endpoint_truth"
+VISIT_TRUTH_EXCLUDED_UNRESOLVED_CONTINUITY = "same_or_separate_continuity_unresolved"
+
+
+def _visit_id(appearance_id: str) -> str:
+    """Deterministic, semantic `ExpectedVisit.visit_id`, derived only from
+    the reviewer's own appearance identity -- never an absolute path,
+    filesystem order, PID, or wall-clock value -- so repeated export, and
+    export from a different absolute root, reproduces the identical id."""
+
+    return f"visit:{appearance_id}"
+
+
+def _endpoint_frame_annotations(item: AppearanceInterval, annotations: AnnotationSet) -> tuple[FrameAnnotation, FrameAnnotation] | None:
+    start, end = annotations.frame(item.start_frame_id), annotations.frame(item.end_frame_id)
+    return None if start is None or end is None else (start, end)
+
+
+def _primary_broad_class(frame: FrameAnnotation) -> str | None:
+    """The reviewed broad class from this frame's own primary (first)
+    reviewed box, mirroring `_export_frame_dicts`'s existing convention.
+    `None` -- never fabricated -- when the frame carries no reviewed box."""
+
+    return frame.boxes[0].broad_class if frame.boxes else None
+
+
+def _endpoint_reviewer(frame: FrameAnnotation) -> str | None:
+    return frame.provenance.reviewer if frame.provenance else None
+
+
+def _expected_visits_from_appearances(
+    annotations: AnnotationSet, frames_by_id: dict[str, dict[str, object]],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Deterministically convert each eligible, explicitly reviewed
+    `AppearanceInterval` into exactly one replay `ExpectedVisit` fact -- a
+    1:1 conversion, never an invented grouping of multiple appearances into
+    one Visit. Returns `(visits, exclusions)`; every appearance that does not
+    become a Visit is reported by `appearance_id` and reason in `exclusions`
+    rather than silently dropped. See docs/reviewed-visit-truth-contract.md
+    for the full eligibility contract this function implements.
+    """
+
+    seen_ids: set[str] = set()
+    for item in annotations.appearances:
+        if item.appearance_id in seen_ids:
+            # A structural identity corruption, not a soft eligibility
+            # exclusion: two intervals sharing one id would collide under
+            # `_visit_id` and violate the one-deterministic-owner identity
+            # invariant `BenchmarkManifest.validate` already enforces for
+            # this same field elsewhere.
+            raise TemporalAnnotationError(V_DUPLICATE_LOGICAL_IDENTITY)
+        seen_ids.add(item.appearance_id)
+
+    visits: list[dict[str, object]] = []
+    exclusions: list[dict[str, object]] = []
+
+    for item in annotations.appearances:
+        start_record, end_record = frames_by_id.get(item.start_frame_id), frames_by_id.get(item.end_frame_id)
+        if start_record is None or end_record is None:
+            exclusions.append({"appearance_id": item.appearance_id, "reason": VISIT_TRUTH_EXCLUDED_INVALID_ENDPOINT})
+            continue
+        start_offset, end_offset = _session_offset(start_record), _session_offset(end_record)
+        if start_offset is None or end_offset is None:
+            exclusions.append({"appearance_id": item.appearance_id, "reason": VISIT_TRUTH_EXCLUDED_MISSING_SESSION_TIMELINE})
+            continue
+        if start_offset > end_offset:
+            exclusions.append({"appearance_id": item.appearance_id, "reason": VISIT_TRUTH_EXCLUDED_REVERSED_INTERVAL})
+            continue
+        endpoints = _endpoint_frame_annotations(item, annotations)
+        if endpoints is None:
+            exclusions.append({"appearance_id": item.appearance_id, "reason": VISIT_TRUTH_EXCLUDED_INVALID_ENDPOINT})
+            continue
+        start_truth, end_truth = endpoints
+        if start_truth.whole_frame_truth == "ambiguous" or end_truth.whole_frame_truth == "ambiguous":
+            exclusions.append({"appearance_id": item.appearance_id, "reason": VISIT_TRUTH_EXCLUDED_AMBIGUOUS_TRUTH})
+            continue
+        if start_truth.yes_but_unscorable or end_truth.yes_but_unscorable:
+            exclusions.append({"appearance_id": item.appearance_id, "reason": VISIT_TRUTH_EXCLUDED_UNSCORABLE_TRUTH})
+            continue
+        # Same-vs-separate appearance review: an appearance that overlaps
+        # another in session time is only Visit-truth-eligible once a
+        # reviewer has explicitly acknowledged the overlap (on either side)
+        # via `continuity_ambiguous` -- the identical signal
+        # `validate_annotations` already surfaces as
+        # `V_APPEARANCE_CONTINUITY_UNMARKED`. An unacknowledged overlap
+        # leaves it genuinely unresolved whether the two reviewed intervals
+        # are the same underlying Visit reviewed twice or two truly separate
+        # simultaneous Visits, so neither exports rather than guessing.
+        unresolved_overlap = any(
+            _appearance_overlaps(item, other, frames_by_id) and not (item.continuity_ambiguous or other.continuity_ambiguous)
+            for other in annotations.appearances
+            if other.appearance_id != item.appearance_id
+        )
+        if unresolved_overlap:
+            exclusions.append({"appearance_id": item.appearance_id, "reason": VISIT_TRUTH_EXCLUDED_UNRESOLVED_CONTINUITY})
+            continue
+
+        source_frame_ids = list(dict.fromkeys((item.start_frame_id, item.end_frame_id)))
+        visits.append({
+            "visit_id": _visit_id(item.appearance_id),
+            "appearance_ids": [item.appearance_id],
+            "start_offset_ms": start_offset,
+            "end_offset_ms": end_offset,
+            "outcome": None,
+            # Zone truth only when a reviewer explicitly established it;
+            # broad class only from the reviewer's own boxes -- never
+            # species identity, never fabricated when absent.
+            "zone_id": item.zone_id,
+            # Deliberately always False: an interval whose own continuity or
+            # truth was genuinely uncertain was already excluded above
+            # rather than exported with a soft "ambiguous" flag, because the
+            # matcher treats `ambiguous=True` as "never eligible to match" --
+            # which would silently defeat the whole point of promoting a
+            # confidently reviewed appearance to scorable Visit truth.
+            "ambiguous": False,
+            "broad_class": _primary_broad_class(start_truth) or _primary_broad_class(end_truth),
+            "entry_uncertain": item.entry_uncertain,
+            "exit_uncertain": item.exit_uncertain,
+            "source_capture_frame_ids": source_frame_ids,
+            "reviewer": _endpoint_reviewer(start_truth) or _endpoint_reviewer(end_truth),
+        })
+    return visits, exclusions
+
+
 def build_replay_export(session: dict[str, object], annotations: AnnotationSet) -> dict[str, object]:
     """The existing Stage 2 `replay.ReplayInput`/`BenchmarkManifest` shape,
-    unchanged -- see docs/observation-replay-benchmark-contract.md. Visit-
-    level grouping is left empty (`visits: []`) rather than invented: this
-    annotation contract records appearance intervals, not reviewed Visit
-    boundaries.
+    unchanged -- see docs/observation-replay-benchmark-contract.md.
+
+    Stage 6.17: `visits` is deterministically populated from eligible,
+    explicitly reviewed `AppearanceInterval`s via
+    `_expected_visits_from_appearances` -- a 1:1 conversion, never an
+    invented multi-appearance grouping. `visit_truth_exclusions` honestly
+    reports every appearance that did not become a Visit and why. See
+    docs/reviewed-visit-truth-contract.md.
 
     `replay_io.load_replay_bundle` reads `version`/`width`/`height`/
     `input_id`/`stream_id`/`nominal_fps`/`frames`/`input_fingerprint` at the
@@ -961,6 +1113,11 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
             "outcome": None, "ambiguous": item.continuity_ambiguous,
         })
 
+    # Stage 6.17: deterministic, eligibility-gated Visit truth -- see
+    # docs/reviewed-visit-truth-contract.md. Uses the same `frames_by_id`
+    # capture-manifest lookup as the `appearances` loop just above.
+    visits, visit_truth_exclusions = _expected_visits_from_appearances(annotations, frames_by_id)
+
     detections = []
     evidence = []
     for frame in annotations.frames:
@@ -1030,7 +1187,7 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
         "frames": replay_frames,
         "input_fingerprint": input_fingerprint,
         "appearances": appearances,
-        "visits": [],
+        "visits": visits,
         "detections": detections,
         "evidence": evidence,
         # Explicit, honest reporting of the existing high-resolution
@@ -1040,6 +1197,9 @@ def build_replay_export(session: dict[str, object], annotations: AnnotationSet) 
             "excluded_frame_ids": excluded_high_resolution,
             "reason": "high_resolution_burst_frames_are_not_analysis_resolution",
         },
+        # Stage 6.17: every reviewed appearance that did not become Visit
+        # truth, and why -- never silent. See docs/reviewed-visit-truth-contract.md.
+        "visit_truth_exclusions": visit_truth_exclusions,
     }
 
 
@@ -1141,6 +1301,12 @@ __all__ = [
     "V_STALE_GENERATION_EVIDENCE",
     "V_TEMPORAL_INTERVAL_OUTSIDE_SEQUENCE_BOUNDS",
     "V_UNKNOWN_FRAME_REFERENCE",
+    "VISIT_TRUTH_EXCLUDED_AMBIGUOUS_TRUTH",
+    "VISIT_TRUTH_EXCLUDED_INVALID_ENDPOINT",
+    "VISIT_TRUTH_EXCLUDED_MISSING_SESSION_TIMELINE",
+    "VISIT_TRUTH_EXCLUDED_REVERSED_INTERVAL",
+    "VISIT_TRUTH_EXCLUDED_UNRESOLVED_CONTINUITY",
+    "VISIT_TRUTH_EXCLUDED_UNSCORABLE_TRUTH",
     "WHOLE_FRAME_TRUTH_VALUES",
     "AnnotationSet",
     "AppearanceInterval",

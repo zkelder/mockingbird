@@ -246,6 +246,19 @@ class ExpectedVisit:
     outcome: str | None = None
     zone_id: str | None = None
     ambiguous: bool = False
+    # Stage 6.17: optional, additive reviewed-Visit-truth provenance that a
+    # deterministic `AppearanceInterval` -> `ExpectedVisit` conversion
+    # populates -- see docs/reviewed-visit-truth-contract.md. Absent/default
+    # for any manifest that predates this stage or was built by a different
+    # caller (for example the hand-authored manifests throughout this
+    # module's own tests), which keeps every existing positional/keyword
+    # construction, `BenchmarkManifest.fingerprint`, and matcher behavior
+    # unaffected until a caller actually sets them.
+    broad_class: str | None = None
+    entry_uncertain: bool = False
+    exit_uncertain: bool = False
+    source_capture_frame_ids: tuple[str, ...] = ()
+    reviewer: str | None = None
 
 
 @dataclass(frozen=True)
@@ -905,6 +918,39 @@ def _metric(value: object, state: str) -> dict[str, object]:
     return {"state": state, "value": value}
 
 
+def _zone_attribution_metric(
+    manifest: BenchmarkManifest, proposals: tuple[VisitProposal, ...], matches: tuple[Match, ...],
+    *, visit_supported: bool,
+) -> dict[str, object]:
+    """Stage 6.17: honest Zone-attribution accuracy among matched Visits that
+    actually carry reviewed Zone truth (`ExpectedVisit.zone_id`, populated
+    only when a reviewer explicitly established it -- see
+    docs/reviewed-visit-truth-contract.md). `insufficient_truth` -- exactly
+    like every other truth-dependent metric in this module -- when no
+    `ExpectedVisit` in the manifest carries a `zone_id` at all, or none of
+    those matched a proposal that itself declared a `zone_id`. Reads only
+    already-computed matches/proposals; the matcher itself is unchanged."""
+
+    if not visit_supported:
+        return {"zone_attribution_accuracy": _metric(None, "not_evaluated")}
+    visits_with_zone_truth = {item.visit_id: item.zone_id for item in manifest.visits if item.zone_id is not None}
+    if not visits_with_zone_truth:
+        return {"zone_attribution_accuracy": _metric(None, "insufficient_truth")}
+    proposals_by_key = {item.proposal_key: item for item in proposals}
+    evaluated = correct = 0
+    for match in matches:
+        if match.status != "matched" or match.expected_visit_id not in visits_with_zone_truth:
+            continue
+        proposal = proposals_by_key.get(match.proposal_key) if match.proposal_key else None
+        if proposal is None or proposal.zone_id is None:
+            continue
+        evaluated += 1
+        correct += proposal.zone_id == visits_with_zone_truth[match.expected_visit_id]
+    if not evaluated:
+        return {"zone_attribution_accuracy": _metric(None, "insufficient_truth")}
+    return {"zone_attribution_accuracy": _metric(correct / evaluated, "evaluated")}
+
+
 def _metrics(
     manifest: BenchmarkManifest,
     proposals: tuple[VisitProposal, ...],
@@ -973,7 +1019,7 @@ def _metrics(
             counts["incorrectly_merged"] / proposal_count if visit_supported and proposal_count else None,
             precision_state,
         ),
-        "zone_attribution_accuracy": _metric(None, "insufficient_truth" if visit_supported else "not_evaluated"),
+        **_zone_attribution_metric(manifest, proposals, matches, visit_supported=visit_supported),
         "evidence_candidate_coverage": _metric(
             sum(bool(item.evidence_media_asset_ids) for item in proposals) / proposal_count
             if visit_supported and proposal_count else None,

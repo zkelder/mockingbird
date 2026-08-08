@@ -205,9 +205,15 @@ def _visit(value: object) -> ExpectedVisit:
     if not isinstance(value, dict): raise ReplayValidationError("invalid_visit")
     ids = _require_list(value, "appearance_ids")
     if not all(isinstance(item, str) and item for item in ids): raise ReplayValidationError("invalid_visit_membership")
+    # Stage 6.17: optional, absent on any pre-Stage-6.17 manifest.
+    source_frame_ids = _optional_list(value, "source_capture_frame_ids")
+    if not all(isinstance(item, str) and item for item in source_frame_ids):
+        raise ReplayValidationError("invalid_visit_source_capture_frame_ids")
     return ExpectedVisit(_require_string(value, "visit_id"), tuple(ids), _require_int(value, "start_offset_ms", minimum=0),
                          _require_int(value, "end_offset_ms", minimum=0), _optional_string(value, "outcome"),
-                         _optional_string(value, "zone_id"), _optional_bool(value, "ambiguous"))
+                         _optional_string(value, "zone_id"), _optional_bool(value, "ambiguous"),
+                         _optional_string(value, "broad_class"), _optional_bool(value, "entry_uncertain"),
+                         _optional_bool(value, "exit_uncertain"), tuple(source_frame_ids), _optional_string(value, "reviewer"))
 
 
 def _detection(value: object) -> ExpectedDetection:

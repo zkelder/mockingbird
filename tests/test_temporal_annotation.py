@@ -5,6 +5,8 @@ Numbered sections mirror the task's required hardware-free-test list.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from mockingbird.observation.temporal_annotation import (
@@ -25,6 +27,11 @@ from mockingbird.observation.temporal_annotation import (
     V_SCORABLE_YES_REQUIRES_BOX,
     V_STALE_GENERATION_EVIDENCE,
     V_TEMPORAL_INTERVAL_OUTSIDE_SEQUENCE_BOUNDS,
+    VISIT_TRUTH_EXCLUDED_AMBIGUOUS_TRUTH,
+    VISIT_TRUTH_EXCLUDED_INVALID_ENDPOINT,
+    VISIT_TRUTH_EXCLUDED_REVERSED_INTERVAL,
+    VISIT_TRUTH_EXCLUDED_UNRESOLVED_CONTINUITY,
+    VISIT_TRUTH_EXCLUDED_UNSCORABLE_TRUTH,
     AnnotationSet,
     AppearanceInterval,
     BoxAnnotation,
@@ -496,7 +503,16 @@ def test_replay_export_produces_frame_indices_and_evidence_facts() -> None:
     assert len(export["frames"]) == 2
     assert export["appearances"] == [{"appearance_id": "a1", "start_offset_ms": 0, "end_offset_ms": 0, "outcome": None, "ambiguous": False}]
     assert export["detections"][0]["frame_index"] == 0
-    assert export["visits"] == []  # no invented Visit grouping
+    # Stage 6.17: the single reviewed, unambiguous, scorable appearance
+    # interval deterministically becomes exactly one ExpectedVisit -- see
+    # docs/reviewed-visit-truth-contract.md. No Visit grouping is invented:
+    # this is a 1:1 conversion of the reviewer's own appearance interval.
+    assert export["visits"] == [{
+        "visit_id": "visit:a1", "appearance_ids": ["a1"], "start_offset_ms": 0, "end_offset_ms": 0,
+        "outcome": None, "zone_id": None, "ambiguous": False, "broad_class": "animal",
+        "entry_uncertain": False, "exit_uncertain": False, "source_capture_frame_ids": ["f1"], "reviewer": "alice",
+    }]
+    assert export["visit_truth_exclusions"] == []
 
 
 def test_replay_export_matches_the_flat_top_level_schema_replay_io_actually_loads() -> None:
@@ -737,6 +753,421 @@ def test_replay_export_source_lineage_survives_alongside_privacy_ignore_regions(
     assert list(frame["analysis_excluded_regions"][0]) == [0.1, 0.1, 0.4, 0.4]
     assert frame["source_capture_frame_id"] == "f1"
     assert frame["source_capture_session_id"] == "session-privacy-1"
+
+
+# --------------------------------------------------------------------------
+# Stage 6.17: reviewed appearance intervals as deterministic replay Visit
+# truth -- see docs/reviewed-visit-truth-contract.md. Numbered comments below
+# mirror this stage's own required hardware-free-test list.
+# --------------------------------------------------------------------------
+
+
+def _yes_box(frame_id: str, *, broad_class: str = "animal", reviewer: str = "alice",
+             box: tuple[float, float, float, float] = (0.1, 0.1, 0.2, 0.2)) -> FrameAnnotation:
+    return FrameAnnotation(
+        frame_id, whole_frame_truth="yes", boxes=(BoxAnnotation(box, broad_class=broad_class),),
+        provenance=_provenance(reviewer=reviewer),
+    )
+
+
+def _reconnect_session_with_appearance():
+    """Same two-segment reconnect shape as `_reconnect_session_and_annotations`
+    above, with one reviewed appearance spanning the reconnect boundary."""
+
+    session = _session((
+        _record(
+            "f1", 12, 6825, connection_segment_id="segment-a", connection_segment_ordinal=0,
+            session_sequence=0, session_offset_ms=0, provider_generation="gen-1",
+        ),
+        _record(
+            "f2", 1, 0, connection_segment_id="segment-b", connection_segment_ordinal=1,
+            session_sequence=1, session_offset_ms=6826, temporal_discontinuity=True,
+            temporal_uncertainty_ms=50, provider_generation="gen-1",
+        ),
+        _record(
+            "f3", 2, 500, connection_segment_id="segment-b", connection_segment_ordinal=1,
+            session_sequence=2, session_offset_ms=7326, provider_generation="gen-1",
+        ),
+    ), session_timeline_classification="native_session_timeline")
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"), FrameAnnotation("f2", whole_frame_truth="no", provenance=_provenance()), _yes_box("f3"),
+    ), appearances=(AppearanceInterval("a1", "f1", "f3"),))
+    return session, annotations
+
+
+def _overlapping_session(*, first_ambiguous: bool = False, second_ambiguous: bool = False):
+    session = _session((
+        _record("f1", 0, 0), _record("f2", 1, 1000), _record("f3", 2, 2000), _record("f4", 3, 3000),
+    ))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"), _yes_box("f2"), _yes_box("f3"), _yes_box("f4"),
+    ), appearances=(
+        AppearanceInterval("a1", "f1", "f3", continuity_ambiguous=first_ambiguous),
+        AppearanceInterval("a2", "f2", "f4", continuity_ambiguous=second_ambiguous),
+    ))
+    return session, annotations
+
+
+# 1. One reviewed interval creates one ExpectedVisit.
+def test_one_reviewed_appearance_interval_creates_exactly_one_expected_visit() -> None:
+    session = _session((_record("f1", 0, 0), _record("f2", 1, 1000)))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"), _yes_box("f2"),
+    ), appearances=(AppearanceInterval("a1", "f1", "f2"),))
+    export = build_replay_export(session, annotations)
+    assert len(export["visits"]) == 1
+    visit = export["visits"][0]
+    assert visit["visit_id"] == "visit:a1"
+    assert visit["appearance_ids"] == ["a1"]
+    assert visit["start_offset_ms"] == 0 and visit["end_offset_ms"] == 1000
+    assert export["visit_truth_exclusions"] == []
+
+
+# 2. Two separate reviewed intervals create two ExpectedVisits.
+def test_two_separate_reviewed_appearance_intervals_create_two_expected_visits() -> None:
+    session = _session((
+        _record("f1", 0, 0), _record("f2", 1, 1000), _record("f3", 2, 5000), _record("f4", 3, 6000),
+    ))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"), _yes_box("f2"), _yes_box("f3"), _yes_box("f4"),
+    ), appearances=(AppearanceInterval("a1", "f1", "f2"), AppearanceInterval("a2", "f3", "f4")))
+    export = build_replay_export(session, annotations)
+    assert {item["visit_id"] for item in export["visits"]} == {"visit:a1", "visit:a2"}
+    assert {tuple(item["appearance_ids"]) for item in export["visits"]} == {("a1",), ("a2",)}
+
+
+# 3. Instantaneous reviewed appearance is supported.
+def test_instantaneous_reviewed_appearance_creates_a_zero_duration_visit() -> None:
+    session = _session((_record("f1", 0, 0),))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"),
+    ), appearances=(AppearanceInterval("a1", "f1", "f1", instantaneous=True),))
+    export = build_replay_export(session, annotations)
+    assert export["visits"] == [{
+        "visit_id": "visit:a1", "appearance_ids": ["a1"], "start_offset_ms": 0, "end_offset_ms": 0,
+        "outcome": None, "zone_id": None, "ambiguous": False, "broad_class": "animal",
+        "entry_uncertain": False, "exit_uncertain": False, "source_capture_frame_ids": ["f1"], "reviewer": "alice",
+    }]
+
+
+# 4. Ambiguous interval does not export.
+def test_appearance_with_an_ambiguous_endpoint_frame_does_not_export_a_visit() -> None:
+    session = _session((_record("f1", 0, 0), _record("f2", 1, 1000)))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="ambiguous"), _yes_box("f2"),
+    ), appearances=(AppearanceInterval("a1", "f1", "f2"),))
+    export = build_replay_export(session, annotations)
+    assert export["visits"] == []
+    assert export["visit_truth_exclusions"] == [{"appearance_id": "a1", "reason": VISIT_TRUTH_EXCLUDED_AMBIGUOUS_TRUTH}]
+    # The exclusion is Visit-level only: the appearance interval itself is
+    # still honestly reported as an ExpectedAppearance.
+    assert len(export["appearances"]) == 1
+
+
+# 5. Unscorable interval does not export.
+def test_appearance_with_a_yes_but_unscorable_endpoint_does_not_export_a_visit() -> None:
+    session = _session((_record("f1", 0, 0), _record("f2", 1, 1000)))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"),
+        FrameAnnotation("f2", whole_frame_truth="yes", yes_but_unscorable=True, provenance=_provenance()),
+    ), appearances=(AppearanceInterval("a1", "f1", "f2"),))
+    export = build_replay_export(session, annotations)
+    assert export["visits"] == []
+    assert export["visit_truth_exclusions"] == [{"appearance_id": "a1", "reason": VISIT_TRUTH_EXCLUDED_UNSCORABLE_TRUTH}]
+
+
+# 6. Reconnect-spanning interval exports in session-relative order.
+def test_reconnect_spanning_appearance_exports_a_visit_in_session_relative_order() -> None:
+    session, annotations = _reconnect_session_with_appearance()
+    export = build_replay_export(session, annotations)
+    assert len(export["visits"]) == 1
+    visit = export["visits"][0]
+    assert visit["start_offset_ms"] == 0     # f1's session-relative offset
+    assert visit["end_offset_ms"] == 7326    # f3's session-relative offset
+
+
+# 7. Source-local offset resets do not corrupt Visit truth.
+def test_source_local_offset_reset_across_a_reconnect_does_not_corrupt_visit_bounds() -> None:
+    session, annotations = _reconnect_session_with_appearance()
+    export = build_replay_export(session, annotations)
+    visit = export["visits"][0]
+    # f3's raw, connection-local source_offset_ms (500) is lower than f1's
+    # (6825) purely because its connection reset; the exported Visit must use
+    # the reconnect-safe session-relative coordinate, never the raw one.
+    assert visit["start_offset_ms"] < visit["end_offset_ms"]
+
+
+# 8. Same-vs-separate review is respected.
+def test_unresolved_overlapping_appearances_export_neither_visit() -> None:
+    session, annotations = _overlapping_session()
+    export = build_replay_export(session, annotations)
+    assert export["visits"] == []
+    reasons = {item["appearance_id"]: item["reason"] for item in export["visit_truth_exclusions"]}
+    assert reasons == {"a1": VISIT_TRUTH_EXCLUDED_UNRESOLVED_CONTINUITY, "a2": VISIT_TRUTH_EXCLUDED_UNRESOLVED_CONTINUITY}
+
+
+def test_overlap_acknowledged_with_continuity_ambiguous_exports_both_as_separate_visits() -> None:
+    session, annotations = _overlapping_session(first_ambiguous=True)
+    export = build_replay_export(session, annotations)
+    assert {item["visit_id"] for item in export["visits"]} == {"visit:a1", "visit:a2"}
+    assert export["visit_truth_exclusions"] == []
+
+
+# 9. Reviewed broad class preserved.
+def test_visit_preserves_the_reviewed_broad_class() -> None:
+    session = _session((_record("f1", 0, 0),))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1", broad_class="bird"),
+    ), appearances=(AppearanceInterval("a1", "f1", "f1", instantaneous=True),))
+    export = build_replay_export(session, annotations)
+    assert export["visits"][0]["broad_class"] == "bird"
+
+
+# 10. Missing broad class remains honest/optional.
+def test_visit_without_any_reviewed_box_leaves_broad_class_none() -> None:
+    session = _session((_record("f1", 0, 0),))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="yes", boxes=(), provenance=_provenance()),
+    ), appearances=(AppearanceInterval("a1", "f1", "f1", instantaneous=True),))
+    export = build_replay_export(session, annotations)
+    assert len(export["visits"]) == 1
+    assert export["visits"][0]["broad_class"] is None
+
+
+# 11. Reviewed Zone preserved only when explicit.
+def test_visit_zone_id_preserved_only_when_explicitly_reviewed() -> None:
+    session = _session((_record("f1", 0, 0), _record("f2", 1, 1000)))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"), _yes_box("f2"),
+    ), appearances=(
+        AppearanceInterval("a1", "f1", "f1", instantaneous=True, zone_id="feeder-zone"),
+        AppearanceInterval("a2", "f2", "f2", instantaneous=True),
+    ))
+    export = build_replay_export(session, annotations)
+    by_id = {item["visit_id"]: item for item in export["visits"]}
+    assert by_id["visit:a1"]["zone_id"] == "feeder-zone"
+    assert by_id["visit:a2"]["zone_id"] is None
+
+
+# 12. No product Visit dependency.
+def test_expected_visit_conversion_reads_nothing_but_the_annotation_set_and_capture_manifest() -> None:
+    """A `session`/`annotations` pair carrying no field that could plausibly
+    be a product Visit record still exports the Visit correctly -- proving
+    conversion never depends on one existing. See also the module-wide
+    source-grep test asserting no product-repository import at all
+    (test_stage_6_6_modules_never_reference_product_truth_tables)."""
+
+    session = _session((_record("f1", 0, 0),))
+    assert "visit_id" not in session and "product_visit_id" not in session
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"),
+    ), appearances=(AppearanceInterval("a1", "f1", "f1", instantaneous=True),))
+    export = build_replay_export(session, annotations)
+    assert len(export["visits"]) == 1
+
+
+# 13. Frame-level positive alone does not create ExpectedVisit.
+def test_frame_level_yes_truth_without_an_appearance_interval_creates_no_visit() -> None:
+    session = _session((_record("f1", 0, 0),))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (_yes_box("f1"),))  # no appearances
+    assert build_replay_export(session, annotations)["visits"] == []
+
+
+# 14. Detector output alone does not create ExpectedVisit.
+def test_strong_detector_output_alone_creates_no_visit() -> None:
+    session = _session((
+        _record("f1", 0, 0, animal_detection_count=3, detector_observation_count=3, max_animal_score=0.95),
+    ))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="unreviewed"),
+    ))
+    assert build_replay_export(session, annotations)["visits"] == []
+
+
+# 15. Track output alone does not create ExpectedVisit.
+def test_active_track_count_alone_creates_no_visit() -> None:
+    session = _session((_record("f1", 0, 0, active_track_count=4),))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation("f1", whole_frame_truth="unreviewed"),
+    ))
+    assert build_replay_export(session, annotations)["visits"] == []
+
+
+# 16. Product false_positive label cannot create or suppress ExpectedVisit.
+def test_product_false_positive_label_neither_creates_nor_suppresses_a_visit() -> None:
+    session = _session((_record("f1", 0, 0), _record("f2", 1, 1000)))
+    # f1 carries a product false_positive label but the reviewer
+    # independently confirmed real animal presence anyway (the existing
+    # V_PRODUCT_FALSE_POSITIVE_AS_FRAME_NEGATIVE acceptance path).
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation(
+            "f1", whole_frame_truth="yes", boxes=(BoxAnnotation((0.1, 0.1, 0.2, 0.2)),),
+            provenance=Provenance("alice", "2026-08-05T20:05:00+00:00", "session-1", "full_frame_inspection",
+                                   product_review_label="false_positive", whole_frame_independently_confirmed=True),
+        ),
+        _yes_box("f2"),
+    ), appearances=(AppearanceInterval("a1", "f1", "f2"),))
+    export = build_replay_export(session, annotations)
+    # The product label neither suppressed this eligible interval nor is it
+    # what created the Visit -- the explicit AppearanceInterval did, wholly
+    # independent of any product_review_label value.
+    assert len(export["visits"]) == 1
+
+    # Conversely: a product false_positive label alone, with no
+    # AppearanceInterval at all, creates nothing either.
+    no_appearance_annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        FrameAnnotation(
+            "f1", whole_frame_truth="no",
+            provenance=Provenance("alice", "2026-08-05T20:05:00+00:00", "session-1", "full_frame_inspection",
+                                   product_review_label="false_positive"),
+        ),
+        FrameAnnotation("f2", whole_frame_truth="no", provenance=_provenance()),
+    ))
+    assert build_replay_export(session, no_appearance_annotations)["visits"] == []
+
+
+# 17. Stable ExpectedVisit IDs.
+def test_expected_visit_id_is_derived_from_the_appearance_id_only() -> None:
+    session = _session((_record("f1", 0, 0),))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"),
+    ), appearances=(AppearanceInterval("attempt3-appearance-feeder-bird", "f1", "f1", instantaneous=True),))
+    export = build_replay_export(session, annotations)
+    assert export["visits"][0]["visit_id"] == "visit:attempt3-appearance-feeder-bird"
+
+
+# 18. Repeated export fingerprint identical.
+def test_repeated_export_with_populated_visits_is_byte_identical() -> None:
+    session, annotations = _reviewed_pair()
+    first = build_replay_export(session, annotations)
+    second = build_replay_export(session, annotations)
+    assert first["visits"]
+    assert first == second
+    assert first["input_fingerprint"] == second["input_fingerprint"]
+
+
+# 19. Different absolute roots produce identical semantic output.
+def test_visit_export_is_identical_from_two_independent_absolute_roots(tmp_path) -> None:
+    from mockingbird.observation.temporal_capture_io import load_capture_manifest, write_capture_manifest
+    from mockingbird.observation.temporal_review_io import load_annotation_set, write_annotation_set
+
+    session, annotations = _reviewed_pair()
+    root_a = tmp_path / "root-a" / "nested" / "review"
+    root_b = tmp_path / "completely" / "different" / "root-b" / "review"
+    for root in (root_a, root_b):
+        root.mkdir(parents=True)
+        write_capture_manifest(root, session)
+        write_annotation_set(root, annotations)
+
+    export_a = build_replay_export(load_capture_manifest(root_a), load_annotation_set(root_a))
+    export_b = build_replay_export(load_capture_manifest(root_b), load_annotation_set(root_b))
+    assert export_a["visits"]
+    assert export_a == export_b
+    assert "root-a" not in json.dumps(export_a, default=str)
+    assert "root-b" not in json.dumps(export_b, default=str)
+
+
+# 20. Existing generic replay without Visit truth still works.
+def test_generic_replay_manifest_with_empty_visits_still_validates() -> None:
+    """A manifest that legitimately carries no Visit truth at all (a plain
+    Stage 2 frame-directory benchmark, or a reviewed session with zero
+    reviewed appearances) keeps working exactly as before: an empty `visits`
+    list is a normal, well-supported case, not a defect."""
+
+    from mockingbird.observation.replay import BenchmarkManifest, ReplayFrame, ReplayInput
+
+    replay_input = ReplayInput("id", "stream", 4, 4, 1.0, (ReplayFrame(0, 0, "a"), ReplayFrame(1, 100, "b")))
+    manifest = BenchmarkManifest(1, "generic", replay_input.fingerprint, appearances=(), visits=())
+    manifest.validate(replay_input)  # must not raise
+
+
+# 21. Old reviewed packets without intervals remain backward-compatible.
+def test_old_annotation_json_without_appearances_or_zone_id_loads_and_exports_cleanly(tmp_path) -> None:
+    from mockingbird.observation.temporal_capture_io import load_capture_manifest, write_capture_manifest
+    from mockingbird.observation.temporal_review_io import load_annotation_set
+
+    session = _session((_record("f1", 0, 0),))
+    review_directory = tmp_path / "review"
+    review_directory.mkdir()
+    write_capture_manifest(review_directory, session)
+    # Hand-written, pre-Stage-6.17 annotation.json: no "appearances" key at
+    # all, and the one box never mentions a Zone (it didn't exist yet).
+    (review_directory / "annotation.json").write_text(json.dumps({
+        "schema_version": 1, "capture_session_id": "session-1",
+        "capture_manifest_fingerprint": session["semantic_fingerprint"],
+        "frames": [{
+            "frame_id": "f1", "whole_frame_truth": "yes",
+            "boxes": [{"box": [0.1, 0.1, 0.2, 0.2], "broad_class": "bird"}],
+            "provenance": {"reviewer": "alice", "reviewed_at_iso": "2026-08-05T20:05:00+00:00",
+                           "source_capture_session": "session-1", "truth_source": "full_frame_inspection"},
+        }],
+    }))
+    annotations = load_annotation_set(review_directory)
+    assert annotations.appearances == ()
+    export = build_replay_export(load_capture_manifest(review_directory), annotations)
+    assert export["visits"] == [] and export["visit_truth_exclusions"] == []
+
+
+# 22. Invalid endpoint rejects.
+def test_appearance_referencing_an_unknown_frame_does_not_export_a_visit() -> None:
+    session = _session((_record("f1", 0, 0),))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"),
+    ), appearances=(AppearanceInterval("a1", "f1", "does-not-exist"),))
+    export = build_replay_export(session, annotations)
+    assert export["visits"] == []
+    assert export["visit_truth_exclusions"] == [{"appearance_id": "a1", "reason": VISIT_TRUTH_EXCLUDED_INVALID_ENDPOINT}]
+
+
+# 23. Reversed interval rejects.
+def test_reversed_appearance_interval_does_not_export_a_visit() -> None:
+    session = _session((_record("f1", 0, 0), _record("f2", 1, 1000)))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"), _yes_box("f2"),
+    ), appearances=(AppearanceInterval("a1", "f2", "f1"),))  # end before start
+    export = build_replay_export(session, annotations)
+    assert export["visits"] == []
+    assert export["visit_truth_exclusions"] == [{"appearance_id": "a1", "reason": VISIT_TRUTH_EXCLUDED_REVERSED_INTERVAL}]
+
+
+# 24. Duplicate interval identity rejects.
+def test_duplicate_appearance_identity_raises_when_converting_to_visit_truth() -> None:
+    session = _session((_record("f1", 0, 0), _record("f2", 1, 1000)))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"), _yes_box("f2"),
+    ), appearances=(
+        AppearanceInterval("a1", "f1", "f1", instantaneous=True), AppearanceInterval("a1", "f2", "f2", instantaneous=True),
+    ))
+    with pytest.raises(TemporalAnnotationError, match="duplicate_logical_identity"):
+        build_replay_export(session, annotations)
+
+
+# 25. Appearance uncertainty retained.
+def test_visit_retains_entry_and_exit_uncertainty_flags() -> None:
+    session = _session((_record("f1", 0, 0), _record("f2", 1, 1000)))
+    annotations = AnnotationSet(1, "session-1", session["semantic_fingerprint"], (
+        _yes_box("f1"), _yes_box("f2"),
+    ), appearances=(AppearanceInterval("a1", "f1", "f2", entry_uncertain=True, exit_uncertain=False),))
+    export = build_replay_export(session, annotations)
+    assert export["visits"][0]["entry_uncertain"] is True
+    assert export["visits"][0]["exit_uncertain"] is False
+
+
+# 26. Matcher receives exported Visits unchanged.
+def test_matcher_consumes_an_exported_visit_exactly_as_produced() -> None:
+    from mockingbird.observation.contracts import VisitProposal
+    from mockingbird.observation.replay import Match, _match
+    from mockingbird.observation.replay_io import _visit as load_expected_visit
+
+    session, annotations = _reviewed_pair()
+    export = build_replay_export(session, annotations)
+    visit = load_expected_visit(export["visits"][0])
+    assert visit.visit_id == "visit:a1"
+
+    proposal = VisitProposal("proposal-1", "source", "stream", ("media",), "fake",
+                             start_offset_ms=visit.start_offset_ms, end_offset_ms=visit.end_offset_ms)
+    matches = _match((visit,), (proposal,))
+    assert matches == (Match(visit.visit_id, "proposal-1", "matched"),)
 
 
 # --------------------------------------------------------------------------

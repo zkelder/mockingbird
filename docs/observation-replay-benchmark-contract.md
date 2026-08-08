@@ -26,6 +26,14 @@ provenance, never required for an ordinary replay to work, and participates in
 the semantic fingerprint only when actually set. See
 [reviewed-replay-lineage-contract.md](reviewed-replay-lineage-contract.md).
 
+Stage 6.17: `visits` (`ExpectedVisit`) is deterministically populated from a
+reviewed temporal-review packet's own explicit `AppearanceInterval`s -- never
+inferred from detector/tracker output, a product Visit record, or a
+ReviewLabel -- when the manifest was produced by `temporal_annotation.
+build_replay_export`. A hand-authored or generic manifest may still leave it
+empty; both shapes load and match unchanged. See
+[reviewed-visit-truth-contract.md](reviewed-visit-truth-contract.md).
+
 ## Matching and metrics
 
 The matcher classifies matched and missed expected Visits, false and duplicate

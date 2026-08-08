@@ -137,6 +137,8 @@ def load_annotation_set(review_directory: Path) -> AnnotationSet:
             appearance_id=item["appearance_id"], start_frame_id=item["start_frame_id"], end_frame_id=item["end_frame_id"],
             instantaneous=item.get("instantaneous", False), entry_uncertain=item.get("entry_uncertain", False),
             exit_uncertain=item.get("exit_uncertain", False), continuity_ambiguous=item.get("continuity_ambiguous", False),
+            # Stage 6.17: optional, absent on any pre-Stage-6.17 annotation.json.
+            zone_id=item.get("zone_id"),
         )
         for item in payload.get("appearances", [])
     )
